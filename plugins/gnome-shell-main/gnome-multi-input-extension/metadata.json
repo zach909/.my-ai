@@ -1,0 +1,16 @@
+{
+  "name": "GNOME Multi-Input Isolation",
+  "description": "Per-workspace virtual input device routing for AI isolation",
+  "uuid": "multi-input@neuroclaw.local",
+  "shell-version": [
+    "42",
+    "43",
+    "44",
+    "45",
+    "46",
+    "47",
+    "48"
+  ],
+  "url": "https://neuroclaw.local/multi-input",
+  "version": 1
+}
