@@ -1,12 +1,1 @@
-```
-# Dependencies
-node_modules/
-
-# Package lock file
-package-lock.json
-
-# TypeScript build output
-*.tsbuildinfo
-dist/
-build/
-```
+Nothing needs to be added to .gitignore since the changes only include source/config files (.md and .json) without any build artifacts, dependencies, or temporary files.
