@@ -1,1 +1,52 @@
-Nothing needs to be added to .gitignore since the changes only include source/config files (.md and .json) without any build artifacts, dependencies, or temporary files.
+```
+# Build artifacts
+dist/
+build/
+target/
+
+# Dependencies
+node_modules/
+
+# TypeScript
+*.tsbuildinfo
+*.d.ts
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Package manager
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Python (in case of mixed project)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+pip-log.txt
+pip-selfcheck.json
+```
