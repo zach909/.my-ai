@@ -1,3 +1,7 @@
+```markdown
+# Wiki files are documentation, not build artifacts
+# No need to ignore markdown files in wiki/
+```
 ```
 # Build artifacts
 dist/
