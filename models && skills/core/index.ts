@@ -18,3 +18,5 @@ export { NeuroLangInterpreter } from './neuro-lang';
 export type { ParseResult } from './neuro-lang';
 export { NeuroPipeline } from './pipeline';
 export type { PipelineConfig, PipelineStep, PipelineResult } from './pipeline';
+export { QuantumNeuralNet, quantumNet } from './quantum-net';
+export type { QuantumState, QuantumNeuron } from './quantum-net';
