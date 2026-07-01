@@ -67,3 +67,6 @@ Thumbs.db
 *.tar.xz
 *.tar.zst
 ```
+# Package lock
+package-lock.json
+```
