@@ -2,3 +2,11 @@
 # Wiki files are documentation, not build artifacts
 # No need to ignore markdown files in wiki/
 ```
+```
+# Dependencies
+node_modules/
+# Build artifacts
+dist/
+# Package lock
+package-lock.json
+```
