@@ -1,12 +1,52 @@
 ```
+# Build artifacts
+dist/
+build/
+target/
+
 # Dependencies
 node_modules/
 
-# Package lock file
-package-lock.json
-
-# TypeScript build output
+# TypeScript
 *.tsbuildinfo
-dist/
-build/
+*.d.ts
+
+# Logs
+*.log
+
+# Environment
+.env
+.env.local
+.env.*
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Package manager
+package-lock.json
+yarn.lock
+pnpm-lock.yaml
+
+# Python (in case of mixed project)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+venv/
+.venv/
+pip-log.txt
+pip-selfcheck.json
 ```
