@@ -15,6 +15,24 @@ export class ThornsEngine {
         this.maxHistoryLength = 100;
     }
     /**
+     * Connect THORNS to core subsystems (value allocator, mesh, hyperdimensional engine, RLM, MoE)
+     */
+    connectCore(valueAllocator, mesh, hyperEngine, rlmTrainer, moeRouter) {
+        // Integration point for core subsystems - stores references for cross-engine reasoning
+        this._valueAllocator = valueAllocator;
+        this._mesh = mesh;
+        this._hyperEngine = hyperEngine;
+        this._rlmTrainer = rlmTrainer;
+        this._moeRouter = moeRouter;
+    }
+    /**
+     * Connect THORNS to an external thesaurus dictionary
+     */
+    connectThesaurus(thesaurusDict) {
+        // Override internal thesaurus with external one
+        this._externalThesaurus = thesaurusDict;
+    }
+    /**
      * Main thinking entry point — analyzes input through all THORNS dimensions
      */
     async think(input) {

@@ -90,6 +90,37 @@ export class ThornsEngine {
   }
 
   /**
+   * Connect THORNS to core subsystems (value allocator, mesh, hyperdimensional engine, RLM, MoE)
+   */
+  connectCore(
+    valueAllocator: any,
+    mesh: any,
+    hyperEngine: any,
+    rlmTrainer: any,
+    moeRouter: any
+  ): void {
+    // Integration point for core subsystems - stores references for cross-engine reasoning
+    (this as any)._valueAllocator = valueAllocator;
+    (this as any)._mesh = mesh;
+    (this as any)._hyperEngine = hyperEngine;
+    (this as any)._rlmTrainer = rlmTrainer;
+    (this as any)._moeRouter = moeRouter;
+  }
+
+  /**
+   * Connect THORNS to an external thesaurus dictionary
+   */
+  connectThesaurus(thesaurusDict: {
+    getSynonyms: (word: string) => string[];
+    getDefinition: (word: string) => string;
+    getExamples: (word: string) => string[];
+    lookup: (word: string) => { word: string; definition: string; synonyms: string[]; examples: string[] } | undefined;
+  }): void {
+    // Override internal thesaurus with external one
+    (this as any)._externalThesaurus = thesaurusDict;
+  }
+
+  /**
    * Main thinking entry point — analyzes input through all THORNS dimensions
    */
   async think(input: string): Promise<ThornsOutput> {
