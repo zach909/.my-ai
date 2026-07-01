@@ -77,7 +77,7 @@ export declare class NeuroclawLLM {
         connectionCount: number;
         layerCount: number;
         expertCount: number;
-        moeUtilization: import("./core/moe-router.js").ExpertUtilizationStats[];
+        moeUtilization: import("./index.js").ExpertUtilizationStats[];
         valueDistribution: {
             totalPoints: number;
             neuronCount: number;
