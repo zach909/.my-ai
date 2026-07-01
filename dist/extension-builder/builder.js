@@ -314,7 +314,8 @@ export class ExtensionBuilder {
         const project = this.projects.get(projectId);
         if (!project)
             return null;
-        const topology = this.codeToNet.convert(binaryCode);
+        const byteArray = Array.from(binaryCode);
+        const topology = this.codeToNet.importCode(byteArray, name);
         const id = `codenet_${Date.now()}_${this.neuronCounter++}`;
         const neuron = {
             id,
@@ -322,7 +323,7 @@ export class ExtensionBuilder {
             type: 'codenet',
             value: topology.neurons.length,
             dims: project.dims,
-            definition: `CodeNet with ${topology.neurons.length} neurons, ${topology.inputCount} inputs, ${topology.outputCount} outputs`,
+            definition: `CodeNet with ${topology.neurons.length} neurons`,
             code: `binary_code_${binaryCode.length}_bytes`,
             corpus: '',
             netPath: '',

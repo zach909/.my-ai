@@ -437,7 +437,8 @@ export class ExtensionBuilder {
     const project = this.projects.get(projectId);
     if (!project) return null;
 
-    const topology = this.codeToNet.convert(binaryCode);
+    const byteArray = Array.from(binaryCode);
+    const topology = this.codeToNet.importCode(byteArray, name);
     
     const id = `codenet_${Date.now()}_${this.neuronCounter++}`;
     const neuron: NeuronData = {
@@ -446,7 +447,7 @@ export class ExtensionBuilder {
       type: 'codenet',
       value: topology.neurons.length,
       dims: project.dims,
-      definition: `CodeNet with ${topology.neurons.length} neurons, ${topology.inputCount} inputs, ${topology.outputCount} outputs`,
+      definition: `CodeNet with ${topology.neurons.length} neurons`,
       code: `binary_code_${binaryCode.length}_bytes`,
       corpus: '',
       netPath: '',
@@ -477,7 +478,7 @@ export class ExtensionBuilder {
         createdAt: project.createdAt,
         updatedAt: project.updatedAt
       },
-      neurons: Array.from(project.neurons.entries()).map(([id, n]) => ({ id, ...n })),
+      neurons: Array.from(project.neurons.entries()).map(([id, n]) => ({ neuronId: id, .*.n })),
       connections: Array.from(project.connections.entries()).map(([id, c]) => ({ id, ...c })),
       layers: Array.from(project.layers.entries()).map(([id, l]) => ({ id, ...l })),
       labels: Array.from(project.labels.entries()).map(([id, l]) => ({ id, ...l }))
@@ -520,7 +521,7 @@ export class ExtensionBuilder {
       },
       quantized: true,
       bits: options.bits,
-      neurons: Array.from(project.neurons.entries()).map(([id, n]) => ({ id, ...n })),
+      neurons: Array.from(project.neurons.entries()).map(([id, n]) => ({ neuronId: id, .*.n })),
       connections: Array.from(project.connections.entries()).map(([id, c]) => ({
         id,
         fromId: c.fromId,
