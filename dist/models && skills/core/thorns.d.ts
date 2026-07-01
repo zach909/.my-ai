@@ -72,6 +72,24 @@ export declare class ThornsEngine {
     private maxHistoryLength;
     constructor();
     /**
+     * Connect THORNS to core subsystems (value allocator, mesh, hyperdimensional engine, RLM, MoE)
+     */
+    connectCore(valueAllocator: any, mesh: any, hyperEngine: any, rlmTrainer: any, moeRouter: any): void;
+    /**
+     * Connect THORNS to an external thesaurus dictionary
+     */
+    connectThesaurus(thesaurusDict: {
+        getSynonyms: (word: string) => string[];
+        getDefinition: (word: string) => string;
+        getExamples: (word: string) => string[];
+        lookup: (word: string) => {
+            word: string;
+            definition: string;
+            synonyms: string[];
+            examples: string[];
+        } | undefined;
+    }): void;
+    /**
      * Main thinking entry point — analyzes input through all THORNS dimensions
      */
     think(input: string): Promise<ThornsOutput>;

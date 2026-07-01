@@ -478,10 +478,10 @@ export class ExtensionBuilder {
         createdAt: project.createdAt,
         updatedAt: project.updatedAt
       },
-      neurons: Array.from(project.neurons.entries()).map(([id, n]) => ({ neuronId: id, .*.n })),
-      connections: Array.from(project.connections.entries()).map(([id, c]) => ({ id, ...c })),
-      layers: Array.from(project.layers.entries()).map(([id, l]) => ({ id, ...l })),
-      labels: Array.from(project.labels.entries()).map(([id, l]) => ({ id, ...l }))
+      neurons: Array.from(project.neurons.entries()).map(([id, n]) => ({ ...n })),
+      connections: Array.from(project.connections.entries()).map(([, c]) => ({ ...c })),
+      layers: Array.from(project.layers.entries()).map(([, l]) => ({ ...l })),
+      labels: Array.from(project.labels.entries()).map(([, l]) => ({ ...l }))
     };
 
     return JSON.stringify(data, null, 2);
@@ -521,16 +521,16 @@ export class ExtensionBuilder {
       },
       quantized: true,
       bits: options.bits,
-      neurons: Array.from(project.neurons.entries()).map(([id, n]) => ({ neuronId: id, .*.n })),
-      connections: Array.from(project.connections.entries()).map(([id, c]) => ({
-        id,
+      neurons: Array.from(project.neurons.entries()).map(([, n]) => ({ ...n })),
+      connections: Array.from(project.connections.entries()).map(([connId, c]) => ({
+        id: connId,
         fromId: c.fromId,
         toId: c.toId,
-        weight: quantizedWeights[id]?.[0] ?? c.weight,
-        bias: quantizedWeights[id]?.[1] ?? c.bias
+        weight: quantizedWeights[connId]?.[0] ?? c.weight,
+        bias: quantizedWeights[connId]?.[1] ?? c.bias
       })),
-      layers: Array.from(project.layers.entries()).map(([id, l]) => ({ id, ...l })),
-      labels: Array.from(project.labels.entries()).map(([id, l]) => ({ id, ...l }))
+      layers: Array.from(project.layers.entries()).map(([, l]) => ({ ...l })),
+      labels: Array.from(project.labels.entries()).map(([, l]) => ({ ...l }))
     };
 
     return JSON.stringify(data, null, 2);
