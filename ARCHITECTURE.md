@@ -95,24 +95,41 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
 - **Why**: Long context support
 - **Example**: Runs more efficiently
 
-#### 1.10 Zip I/O Loop
-- **Purpose**: Extended context and output capacity
+#### 1.10 Zip I/O Loop (InfiniteZipLoop, ZipIOSystem)
+- **Purpose**: Extended context and output capacity via circular compressed buffers
 - **Mechanism**: 
-  - AI takes inputs as zips and emits outputs as zips
-  - Both run as loops
-  - When space runs out, starts again at beginning until everything consumed
+  - AI takes inputs as zips (compressed) and emits outputs as zips
+  - Both run as loops with head/tail pointers
+  - When space runs out, starts again at beginning (overwrites oldest)
+  - Uses gzip compression for "zipping" data
+  - Dual loop system: one for input context, one for output history
 - **Why**: AI can hold more context and produce more output
 - **Example**: The 200,000 GB worked with the model
+- **Features**:
+  - `zipInput(data)`: Compress and inject into circular loop
+  - `unzipAt(index)`: Retrieve and decompress specific chunk
+  - `iterateContext()`: Async generator to stream entire context
+  - `getTotalContextSize()`: Calculate uncompressed size of current window
+  - Circular overwrite: tail moves forward when capacity reached
+- **Integration**: Step 0 in NeuroPipeline - ingests input text before MoE routing
 
 #### 1.12 Quantum Neural Net
 - **Purpose**: Enable quantum conversion and超越 classical domain
 - **Mechanism**: 
-  - Uses quantum interference
-  - Neuron's input defines wave height
-  - Wave is neuron's signature
+  - Uses quantum interference where neuron's input defines wave height
+  - Wave is the neuron's signature
   - Applies when neuron exclusively has input
+  - Superposition of multiple states until collapse
+  - Phase evolution for interference patterns
 - **Why**: Easy to convert to quantum, reaches beyond classical domain
 - **Example**: Neuron 2's signature was 4.5 and its height was 10
+- **Features**:
+  - `addNeuron(id, input)`: Register neuron with exclusive input
+  - `createSuperposition()`: Create multiple potential states
+  - `interfere(neuronA, neuronB)`: Apply quantum interference between neurons
+  - `collapse(neuronId)`: Collapse wave function to single state
+  - `evolvePhase()`: Time-based phase evolution
+- **Integration**: Runs as Step 4 in NeuroPipeline after hyper-dimensional processing
 
 ### Extension System & Runtime
 

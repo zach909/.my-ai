@@ -1,3 +1,4 @@
+import { ZipIOSystem } from './zip-io.js';
 export interface PipelineConfig {
     embeddingDim: number;
     hiddenDim: number;
@@ -22,26 +23,34 @@ export declare class NeuroPipeline {
     private hyperEngine;
     private rlm;
     private valueRange;
+    private quantumNet;
+    private zipIO;
     private runHistory;
     constructor(config?: Partial<PipelineConfig>);
     private ensureSubsystems;
     /**
-     * Run all 5 subsystems in sequence on an embedding vector.
+     * Run all 7 subsystems in sequence on an embedding vector.
      *
      * Sequence:
+     *   0. ZipIO   — infinite loop context ingestion (Section 1.10)
      *   1. MoE     — mixture-of-experts routing on the embedding
      *   2. Mesh    — propagation through the neuron mesh
      *   3. HyperDim — hyper-dimensional state processing
-     *   4. RLM     — reinforcement-learning action selection
-     *   5. Token gen — combine outputs → final output vector
+     *   4. Quantum — quantum interference for exclusive input neurons
+     *   5. RLM     — reinforcement-learning action selection
+     *   6. Token gen — combine outputs → final output vector
      */
-    run(embedding: Float32Array): Promise<PipelineResult>;
+    run(embedding: Float32Array, inputText?: string): Promise<PipelineResult>;
     getStats(): {
         avgDurationMs: number;
         stepBreakdown: Map<string, number>;
         runsCount: number;
     };
     reset(): void;
+    /**
+     * Access the Zip I/O system for context iteration
+     */
+    getZipIO(): ZipIOSystem | null;
     /**
      * Resize a Float32Array to targetLength, zero-padding or truncating.
      */
