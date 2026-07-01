@@ -4,6 +4,10 @@
 ```
 ```
 # Build artifacts
+"dist/
+# Models directory (appears to be build/output)
+"models
+```
 dist/
 build/
 *.js

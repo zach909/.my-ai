@@ -3,6 +3,7 @@ import { NeuronMesh } from './mesh.js';
 import { HyperDimensionalEngine } from './hyperdimensional.js';
 import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
+import { QuantumNeuralNet } from './quantum-net.js';
 const DEFAULT_CONFIG = {
     embeddingDim: 768,
     hiddenDim: 512,
@@ -17,6 +18,7 @@ export class NeuroPipeline {
     hyperEngine = null;
     rlm = null;
     valueRange = null;
+    quantumNet = null;
     // Timing history for stats
     runHistory = [];
     constructor(config = {}) {
@@ -74,17 +76,19 @@ export class NeuroPipeline {
             batchSize: 32,
             thinkSteps: 3,
         });
+        this.quantumNet = new QuantumNeuralNet();
     }
     // ─── Core pipeline ────────────────────────────────────────────────────────
     /**
-     * Run all 5 subsystems in sequence on an embedding vector.
+     * Run all 6 subsystems in sequence on an embedding vector.
      *
      * Sequence:
      *   1. MoE     — mixture-of-experts routing on the embedding
      *   2. Mesh    — propagation through the neuron mesh
      *   3. HyperDim — hyper-dimensional state processing
-     *   4. RLM     — reinforcement-learning action selection
-     *   5. Token gen — combine outputs → final output vector
+     *   4. Quantum — quantum interference for exclusive input neurons
+     *   5. RLM     — reinforcement-learning action selection
+     *   6. Token gen — combine outputs → final output vector
      */
     async run(embedding) {
         this.ensureSubsystems();
@@ -143,13 +147,38 @@ export class NeuroPipeline {
                 durationMs,
             });
         }
-        // ── Step 4: RLM decision ────────────────────────────────────────────────
+        // ── Step 4: Quantum neural net processing ───────────────────────────────
+        let quantumOutput;
+        {
+            const t0 = Date.now();
+            // Register neurons with exclusive inputs and apply quantum interference
+            const quantumNeurons = [];
+            for (let i = 0; i < Math.min(10, hyperOutput.length); i++) {
+                const neuronId = `q_neuron_${i}`;
+                this.quantumNet.addNeuron(neuronId, hyperOutput[i]);
+                quantumNeurons.push(neuronId);
+            }
+            // Apply interference between adjacent neurons
+            for (let i = 0; i < quantumNeurons.length - 1; i++) {
+                this.quantumNet.interfere(quantumNeurons[i], quantumNeurons[i + 1]);
+            }
+            // Collapse and collect outputs
+            quantumOutput = quantumNeurons.map(id => this.quantumNet.collapse(id));
+            const durationMs = Date.now() - t0;
+            steps.push({
+                name: 'quantum-interference',
+                inputShape: [quantumNeurons.length],
+                outputShape: [quantumOutput.length],
+                durationMs,
+            });
+        }
+        // ── Step 5: RLM decision ────────────────────────────────────────────────
         let rlmAction;
         let rlmThinkingSteps;
         {
             const t0 = Date.now();
-            // Build state vector from hyper output, sized to rlm stateDim
-            const stateVec = new Float32Array(this.resizeArray(hyperOutput, this.config.hiddenDim));
+            // Build state vector from quantum output, sized to rlm stateDim
+            const stateVec = new Float32Array(this.resizeArray(quantumOutput, this.config.hiddenDim));
             const decision = this.rlm.selectAction(stateVec);
             rlmAction = decision.action;
             rlmThinkingSteps = decision.thinkingSteps;
@@ -161,15 +190,15 @@ export class NeuroPipeline {
                 durationMs,
             });
         }
-        // ── Step 5: Token generation (combination) ──────────────────────────────
+        // ── Step 6: Token generation (combination) ──────────────────────────────
         let finalOutput;
         {
             const t0 = Date.now();
-            finalOutput = this.generateOutput(hyperOutput, moeOutput, rlmAction, rlmThinkingSteps);
+            finalOutput = this.generateOutput(quantumOutput, moeOutput, rlmAction, rlmThinkingSteps);
             const durationMs = Date.now() - t0;
             steps.push({
                 name: 'token-generation',
-                inputShape: [hyperOutput.length + moeOutput.length],
+                inputShape: [quantumOutput.length + moeOutput.length],
                 outputShape: [finalOutput.length],
                 durationMs,
             });

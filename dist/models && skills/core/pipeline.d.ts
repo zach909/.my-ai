@@ -22,18 +22,20 @@ export declare class NeuroPipeline {
     private hyperEngine;
     private rlm;
     private valueRange;
+    private quantumNet;
     private runHistory;
     constructor(config?: Partial<PipelineConfig>);
     private ensureSubsystems;
     /**
-     * Run all 5 subsystems in sequence on an embedding vector.
+     * Run all 6 subsystems in sequence on an embedding vector.
      *
      * Sequence:
      *   1. MoE     — mixture-of-experts routing on the embedding
      *   2. Mesh    — propagation through the neuron mesh
      *   3. HyperDim — hyper-dimensional state processing
-     *   4. RLM     — reinforcement-learning action selection
-     *   5. Token gen — combine outputs → final output vector
+     *   4. Quantum — quantum interference for exclusive input neurons
+     *   5. RLM     — reinforcement-learning action selection
+     *   6. Token gen — combine outputs → final output vector
      */
     run(embedding: Float32Array): Promise<PipelineResult>;
     getStats(): {

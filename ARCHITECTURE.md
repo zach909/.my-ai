@@ -107,12 +107,20 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
 #### 1.12 Quantum Neural Net
 - **Purpose**: Enable quantum conversion and超越 classical domain
 - **Mechanism**: 
-  - Uses quantum interference
-  - Neuron's input defines wave height
-  - Wave is neuron's signature
+  - Uses quantum interference where neuron's input defines wave height
+  - Wave is the neuron's signature
   - Applies when neuron exclusively has input
+  - Superposition of multiple states until collapse
+  - Phase evolution for interference patterns
 - **Why**: Easy to convert to quantum, reaches beyond classical domain
 - **Example**: Neuron 2's signature was 4.5 and its height was 10
+- **Features**:
+  - `addNeuron(id, input)`: Register neuron with exclusive input
+  - `createSuperposition()`: Create multiple potential states
+  - `interfere(neuronA, neuronB)`: Apply quantum interference between neurons
+  - `collapse(neuronId)`: Collapse wave function to single state
+  - `evolvePhase()`: Time-based phase evolution
+- **Integration**: Runs as Step 4 in NeuroPipeline after hyper-dimensional processing
 
 ### Extension System & Runtime
 
