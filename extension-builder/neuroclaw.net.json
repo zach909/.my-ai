@@ -1,0 +1,268 @@
+{
+  "neurons": [
+    {
+      "name": "test_a",
+      "value": 5.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "test_b",
+      "value": 9.992064487833586,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "integ_test",
+      "value": null,
+      "definition": "test extension",
+      "has_value": false
+    },
+    {
+      "name": "__fn__:add",
+      "value": "add",
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__fn__:mul",
+      "value": "mul",
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__fn__:and",
+      "value": "and",
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__fn__:or",
+      "value": "or",
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__fn__:not",
+      "value": "not",
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__fn__:echo",
+      "value": "echo",
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "dsl",
+      "value": 99.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__c__:139910336494432:1",
+      "value": "x",
+      "definition": "ref:x",
+      "has_value": true
+    },
+    {
+      "name": "__c__:139910336494432:2",
+      "value": "y",
+      "definition": "ref:y",
+      "has_value": true
+    },
+    {
+      "name": "__c__:139910336494432:3",
+      "value": 2.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__c__:139910336494432:4",
+      "value": 2.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__c__:139910336494432:5",
+      "value": 2.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "built",
+      "value": 42.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "it",
+      "value": null,
+      "definition": "test",
+      "has_value": false
+    },
+    {
+      "name": "d",
+      "value": 99.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__c__:140476488973152:1",
+      "value": "x",
+      "definition": "ref:x",
+      "has_value": true
+    },
+    {
+      "name": "__c__:140476488973152:2",
+      "value": "y",
+      "definition": "ref:y",
+      "has_value": true
+    },
+    {
+      "name": "__c__:140476488973152:3",
+      "value": 2.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__c__:140476488973152:4",
+      "value": 2.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "__c__:140476488973152:5",
+      "value": 2.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "b",
+      "value": 42.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "",
+      "value": null,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "neuroclaw_query",
+      "value": null,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "demo_a",
+      "value": 42.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "demo_b",
+      "value": 7.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "demo_c",
+      "value": 49.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "demo_extension",
+      "value": null,
+      "definition": "Demo extension from system test",
+      "has_value": false
+    },
+    {
+      "name": "ext_input",
+      "value": 42.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "ext_output",
+      "value": 42.0,
+      "definition": "",
+      "has_value": true
+    },
+    {
+      "name": "verify_ext",
+      "value": 1.0,
+      "definition": "",
+      "has_value": true
+    }
+  ],
+  "edges": [
+    {
+      "src": "test_a",
+      "dst": "test_b",
+      "weight": 2.0
+    },
+    {
+      "src": "__c__:139910336494432:2",
+      "dst": "__c__:139910336494432:4",
+      "weight": 1.0
+    },
+    {
+      "src": "__c__:139910336494432:3",
+      "dst": "__c__:139910336494432:4",
+      "weight": 1.0
+    },
+    {
+      "src": "__c__:139910336494432:1",
+      "dst": "__c__:139910336494432:5",
+      "weight": 1.0
+    },
+    {
+      "src": "__c__:139910336494432:4",
+      "dst": "__c__:139910336494432:5",
+      "weight": 1.0
+    },
+    {
+      "src": "__c__:140476488973152:2",
+      "dst": "__c__:140476488973152:4",
+      "weight": 1.0
+    },
+    {
+      "src": "__c__:140476488973152:3",
+      "dst": "__c__:140476488973152:4",
+      "weight": 1.0
+    },
+    {
+      "src": "__c__:140476488973152:1",
+      "dst": "__c__:140476488973152:5",
+      "weight": 1.0
+    },
+    {
+      "src": "__c__:140476488973152:4",
+      "dst": "__c__:140476488973152:5",
+      "weight": 1.0
+    },
+    {
+      "src": "demo_a",
+      "dst": "demo_c",
+      "weight": 1
+    },
+    {
+      "src": "demo_b",
+      "dst": "demo_c",
+      "weight": 1
+    },
+    {
+      "src": "ext_input",
+      "dst": "ext_output",
+      "weight": 1.0
+    }
+  ],
+  "moe_experts": 32,
+  "torch_available": false,
+  "step": 2,
+  "timestamp": 1782048175.0559375
+}

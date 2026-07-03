@@ -1,0 +1,36 @@
+{
+  "name": "prometheus-elastic-core",
+  "version": "1.0.0",
+  "description": "Prometheus Elastic Core / NeuroLang AI - A private, autonomous AI system with elastic value budgets, all-to-all connectivity, and self-created extensions",
+  "main": "dist/interface/runner.js",
+  "type": "module",
+  "bin": {
+    "prometheus": "./dist/interface/cli.js"
+  },
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js web",
+    "cli": "node dist/index.js cli",
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "keywords": [
+    "ai",
+    "neural-network",
+    "mixture-of-experts",
+    "quantization",
+    "autonomous",
+    "local-ai",
+    "privacy",
+    "neuro-lang"
+  ],
+  "author": "Zach",
+  "license": "PRIVATE",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/zach909/.my-ai.git"
+  },
+  "devDependencies": {
+    "@types/node": "^26.1.0",
+    "typescript": "^6.0.3"
+  }
+}
