@@ -43,7 +43,7 @@ export { FileSystemPlugin } from "./file-system";
 export { PasskeysPlugin } from "./passkeys";
 export { MultiInputPlugin } from "./multi-input";
 export { CodingExtension } from "./extensions/coding";
-export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension } from "./extensions";
+export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions";
 export function createPluginInstance(name, definition, skillDefinition) {
     const lower = name.toLowerCase();
     if (lower === "location")
@@ -102,6 +102,8 @@ export function createPluginInstance(name, definition, skillDefinition) {
         return new PluginMakerExtension(definition);
     if (lower === "multi-input" || lower === "multi input" || lower === "multiinput" || lower.includes("desktop"))
         return new MultiInputPlugin(definition);
+    if (lower.includes("language") || lower.includes("universal-language"))
+        return new UniversalLanguageSkill(definition);
     throw new Error(`Unknown plugin: ${name}`);
 }
 const pluginExtensions = {
@@ -133,6 +135,7 @@ const pluginExtensions = {
     "multi-input": { id: "multi-input", name: "Multi Input", type: "api-connection", capabilities: ["multi-desktop", "multi-input", "virtual-devices"] },
     "skill-maker": { id: "skill-maker", name: "Skill Maker", type: "api-connection", capabilities: ["skill-maker"] },
     "plugin-maker": { id: "plugin-maker", name: "Plugin Maker", type: "api-connection", capabilities: ["plugin-maker"] },
+    "universal-language-skill": { id: "universal-language-skill", name: "Universal Language Skill", type: "skill-expert", capabilities: ["language-support", "code-detection", "neuron-clusters"] },
 };
 const allExtensions = Object.entries(pluginExtensions).map(([key, def]) => ({
     id: def.id,

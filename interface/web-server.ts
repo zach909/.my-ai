@@ -236,7 +236,7 @@ export class WebServer {
           intent: thornsOut.intent,
           crossCheck: thornsOut.crossCheck,
           simulation: thornsOut.simulation,
-          confidence: thornsOut.confidence,
+          noveltyScore: thornsOut.noveltyScore,
           timestamp: Date.now(),
         });
       } catch (err) {

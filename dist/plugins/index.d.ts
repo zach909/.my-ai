@@ -22,7 +22,7 @@ export { FileSystemPlugin } from "./file-system";
 export { PasskeysPlugin } from "./passkeys";
 export { MultiInputPlugin } from "./multi-input";
 export { CodingExtension } from "./extensions/coding";
-export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension } from "./extensions";
+export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions";
 export declare function createPluginInstance(name: string, definition: PluginDefinition, skillDefinition?: SkillDefinition): BasePlugin;
 declare const pluginExtensions: Record<string, PluginDefinition>;
 declare const allExtensions: ExtensionManifest[];
