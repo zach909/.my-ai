@@ -88,7 +88,7 @@ export class NeuroclawLLM {
     connectThesaurus(thesaurus) {
         this.thornsEngine.connectThesaurus({
             getSynonyms: (w) => thesaurus.getSynonyms(w),
-            getDefinition: (w) => thesaurus.getDefinition(w),
+            getDefinition: (w) => thesaurus.getDefinition(w) ?? '',
             getExamples: (w) => thesaurus.getExamples(w),
             lookup: (w) => {
                 const e = thesaurus.lookup(w);
@@ -426,7 +426,7 @@ export class NeuroclawLLM {
     async quantize() {
         if (!this.built)
             return null;
-        return this.builder.installWithQuantization(this.projectId);
+        return this.builder.installWithQuantization(this.projectId, { bits: 4 });
     }
     save() {
         if (!this.built)

@@ -1,4 +1,4 @@
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 import { execSync } from "node:child_process";
 import { cpus, totalmem, freemem, loadavg, uptime } from "node:os";
 export class AppDiagnosticsPlugin extends BasePlugin {

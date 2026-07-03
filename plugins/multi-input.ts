@@ -1,11 +1,11 @@
-import type { PluginDefinition } from "../plugin_manager/types";
-import { BasePlugin } from "../plugin_manager/sdk";
-import { MultiDesktopManager } from "../interface/multi-desktop";
+import type { PluginDefinition } from "../plugin_manager/types.js";
+import { BasePlugin } from "../plugin_manager/sdk.js";
+import { MultiDesktopManager } from "../interface/multi-desktop.js";
 
 export class MultiInputPlugin extends BasePlugin {
   private desktopManager: MultiDesktopManager;
-  private virtualPointerId: number | null = null;
-  private virtualKeyboardId: number | null = null;
+  private virtualPointerId: string | null = null;
+  private virtualKeyboardId: string | null = null;
 
   constructor(definition: PluginDefinition) {
     super(definition);
@@ -105,7 +105,7 @@ export class MultiInputPlugin extends BasePlugin {
 
   private async _releaseVirtualInput(msg: Record<string, unknown>): Promise<unknown> {
     const { x, y, button, key, type } = msg as Record<string, unknown>;
-    const virtualPointer = this.desktopManager.getVirtualDevices().find(d => d.type === 'pointer');
+    const virtualPointer = this.desktopManager.getVirtualDevices().find(d => d.type === 'mouse');
     const virtualKeyboard = this.desktopManager.getVirtualDevices().find(d => d.type === 'keyboard');
 
     if (!virtualPointer || !virtualKeyboard) {
@@ -158,8 +158,8 @@ export class MultiInputPlugin extends BasePlugin {
   private async _simulateButton(button: number, action: "press" | "release" | "click"): Promise<void> {
     const btnArg = button === 3 ? 3 : button === 2 ? 2 : 1;
     if (this.desktopManager.hasXinput()) {
-      const dev = this.desktopManager.getVirtualDevices().find(d => d.type === 'pointer');
-      if (dev) {
+      const dev = this.desktopManager.getVirtualDevices().find(d => d.type === 'mouse');
+      if (dev && dev.masterId !== undefined) {
         try {
           const cmd = `xinput click ${dev.masterId} ${btnArg}`;
           require("child_process").execSync(cmd, { timeout: 2000 });
@@ -170,7 +170,7 @@ export class MultiInputPlugin extends BasePlugin {
 
   private async _simulateMotion(x: number, y: number): Promise<void> {
     if (this.desktopManager.hasXinput()) {
-      const dev = this.desktopManager.getVirtualDevices().find(d => d.type === 'pointer');
+      const dev = this.desktopManager.getVirtualDevices().find(d => d.type === 'mouse');
       if (dev) {
         try {
           const cmd = `DISPLAY=:0 xdotool mousemove ${Math.round(x)} ${Math.round(y)}`;
@@ -192,11 +192,12 @@ export class MultiInputPlugin extends BasePlugin {
 
   private async _bindDevice(msg: Record<string, unknown>): Promise<unknown> {
     const { deviceId, workspace } = msg as Record<string, unknown>;
-    if (typeof deviceId !== "string" || typeof workspace !== "number") {
-      return { error: "deviceId (string) and workspace (number) required" };
+    if (typeof deviceId !== "string" || (typeof workspace !== "string" && typeof workspace !== "number")) {
+      return { error: "deviceId (string) and workspace (string) required" };
     }
-    const ok = this.desktopManager.bindDeviceToWorkspace(deviceId, workspace);
-    return { bound: ok, deviceId, workspace };
+    const workspaceId = String(workspace);
+    const ok = this.desktopManager.bindDeviceToWorkspace(deviceId, workspaceId);
+    return { bound: ok, deviceId, workspace: workspaceId };
   }
 
   private async _unbindDevice(msg: Record<string, unknown>): Promise<unknown> {

@@ -2,7 +2,7 @@ import { execSync, spawn } from 'node:child_process';
 import { existsSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 export class VoiceActivationPlugin extends BasePlugin {
     listening = false;
     commands = [];

@@ -20,6 +20,8 @@ export interface HyperDimensionalOutput {
     dimensionalEntropy: number;
     noveltyScore: number;
     transitionCount: number;
+    /** Sum of absolute per-dimension state change this tick, keyed by neuron id */
+    stateDeltas: Map<number, number>;
 }
 export interface HyperConfig {
     neuronCount: number;
@@ -45,7 +47,7 @@ export declare class HyperDimensionalEngine {
     private history;
     private iteration;
     constructor(config?: Record<string, any>);
-    process(inputVector: number[] | Map<string, Float32Array>): HyperDimensionalOutput;
+    process(inputVector: number[] | Map<string, Float32Array>, learningRates?: Map<number, number>): HyperDimensionalOutput;
     hasSeenPattern(patternHash: string): boolean;
     getPatternNovelty(patternHash: string): number;
     getSeenPatternCount(): number;

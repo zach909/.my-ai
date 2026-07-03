@@ -1,4 +1,4 @@
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 export class OtherDevicesPlugin extends BasePlugin {
     devices = [];
     constructor(definition) { super(definition); }

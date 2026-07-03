@@ -22,6 +22,8 @@ export interface HyperDimensionalOutput {
   dimensionalEntropy: number;
   noveltyScore: number;
   transitionCount: number;
+  /** Sum of absolute per-dimension state change this tick, keyed by neuron id */
+  stateDeltas: Map<number, number>;
 }
 
 export interface HyperConfig {
@@ -67,7 +69,10 @@ export class HyperDimensionalEngine {
     this.initializeNeurons();
   }
 
-  process(inputVector: number[] | Map<string, Float32Array>): HyperDimensionalOutput {
+  process(
+    inputVector: number[] | Map<string, Float32Array>,
+    learningRates?: Map<number, number>
+  ): HyperDimensionalOutput {
     let resolvedInput: number[];
     if (inputVector instanceof Map) {
       const arrays = Array.from(inputVector.values());
@@ -81,10 +86,19 @@ export class HyperDimensionalEngine {
     }
 
     const transitions: StateTransition[] = [];
+    const stateDeltas = new Map<number, number>();
 
     for (const neuron of this.neurons) {
       const prevState = [...neuron.state];
-      this.updateNeuronState(neuron, resolvedInput);
+      const rate = learningRates?.get(neuron.id) ?? this.config.learningRate;
+      this.updateNeuronState(neuron, resolvedInput, rate);
+
+      let delta = 0;
+      for (let d = 0; d < neuron.state.length; d++) {
+        delta += Math.abs(neuron.state[d] - prevState[d]);
+      }
+      stateDeltas.set(neuron.id, delta);
+
       const energy = this.computeStateEnergy(neuron.state);
 
       if (energy !== neuron.energy) {
@@ -121,6 +135,7 @@ export class HyperDimensionalEngine {
       dimensionalEntropy,
       noveltyScore,
       transitionCount: resolvedTransitions.length,
+      stateDeltas,
     };
   }
 
@@ -166,10 +181,10 @@ export class HyperDimensionalEngine {
     }
   }
 
-  private updateNeuronState(neuron: HyperNeuron, input: number[]): void {
+  private updateNeuronState(neuron: HyperNeuron, input: number[], learningRate: number): void {
     for (let d = 0; d < this.config.dimensions; d++) {
       const inputVal = input[d] || 0;
-      const delta = (inputVal - neuron.state[d]) * this.config.learningRate;
+      const delta = (inputVal - neuron.state[d]) * learningRate;
       neuron.state[d] += delta;
       neuron.state[d] = Math.max(-1, Math.min(1, neuron.state[d]));
     }

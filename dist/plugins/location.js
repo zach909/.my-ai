@@ -1,6 +1,6 @@
 import { execSync } from 'node:child_process';
 import { networkInterfaces } from 'node:os';
-import { APIPlugin } from "../plugin_manager/sdk";
+import { APIPlugin } from "../plugin_manager/sdk.js";
 const CITY_DATABASE = {
     "New York": { lat: 40.7128, lon: -74.006 }, London: { lat: 51.5074, lon: -0.1278 },
     Tokyo: { lat: 35.6762, lon: 139.6503 }, Paris: { lat: 48.8566, lon: 2.3522 },

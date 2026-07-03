@@ -2,8 +2,8 @@ import { execSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
-import type { PluginDefinition } from "../plugin_manager/types";
-import { BasePlugin } from "../plugin_manager/sdk";
+import type { PluginDefinition } from "../plugin_manager/types.js";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 
 export interface Email {
   id: string;

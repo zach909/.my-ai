@@ -1,7 +1,7 @@
 import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 export class BrowserPlugin extends BasePlugin {
     history = [];
     bookmarks = [];

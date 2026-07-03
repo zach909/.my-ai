@@ -5,12 +5,14 @@ import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
 import { QuantumNeuralNet } from './quantum-net.js';
 import { ZipIOSystem } from './zip-io.js';
+import { pluginExtensions } from '../../plugins/index.js';
 const DEFAULT_CONFIG = {
     embeddingDim: 768,
     hiddenDim: 512,
     meshNodes: 32,
     hyperDimensions: 64,
 };
+const HYPER_NEURON_COUNT = 64;
 export class NeuroPipeline {
     config;
     // Subsystem instances — initialized lazily on first run to keep construction fast
@@ -21,6 +23,14 @@ export class NeuroPipeline {
     valueRange = null;
     quantumNet = null;
     zipIO = null;
+    // Elastic value budget: how many neuron slots it covers, and whether
+    // initializeNeurons() has been called yet for this pipeline instance.
+    valueBudgetSize = 0;
+    valueInitialized = false;
+    // MoE expert index → real plugin/skill id, populated once at subsystem
+    // init so routing decisions name an actual capability instead of an
+    // anonymous randomly-initialized expert network.
+    expertPluginMap = new Map();
     // Timing history for stats
     runHistory = [];
     constructor(config = {}) {
@@ -30,9 +40,13 @@ export class NeuroPipeline {
     ensureSubsystems() {
         if (this.moeRouter)
             return; // already initialised
+        // The value budget must cover every neuron that consults it for a
+        // learning rate — both the mesh nodes and the (separately-indexed)
+        // hyperdimensional neurons — so size it to the larger of the two.
+        this.valueBudgetSize = Math.max(this.config.meshNodes, HYPER_NEURON_COUNT);
         this.valueRange = new ValueRangeAllocator({
             enabled: true,
-            totalPoints: this.config.meshNodes * 10,
+            totalPoints: this.valueBudgetSize * 10,
             minLearningRate: 0.0001,
             maxLearningRate: 0.01,
             redistributionInterval: 100,
@@ -46,9 +60,22 @@ export class NeuroPipeline {
             expertHiddenDim: this.config.hiddenDim,
             loadBalancingLoss: 0.01,
         });
+        // Register every plugin/skill (Section 1.11) as a real MoE expert so
+        // routing decisions can be traced back to an actual capability — not
+        // left as 8 anonymous, randomly-initialized experts with nothing behind
+        // their index.
+        this.expertPluginMap.clear();
+        for (const def of Object.values(pluginExtensions)) {
+            const expertId = this.moeRouter.addExpert({
+                id: def.id,
+                name: def.name,
+                specialization: def.capabilities.join(',') || def.type,
+            });
+            this.expertPluginMap.set(expertId, def.id);
+        }
         this.mesh = new NeuronMesh({
             nodeCount: this.config.meshNodes,
-            connectionDensity: 0.3,
+            connectionDensity: 1.0,
             propagationSteps: 20,
             convergenceThreshold: 0.01,
             activationFn: 'relu',
@@ -60,7 +87,7 @@ export class NeuroPipeline {
         this.hyperEngine = new HyperDimensionalEngine({
             dimensions: this.config.hyperDimensions,
             ballStates: 8,
-            neuronCount: 64,
+            neuronCount: HYPER_NEURON_COUNT,
             stateTransitionThreshold: 0.4,
             noveltyDecay: 0.05,
             historyLength: 500,
@@ -80,6 +107,52 @@ export class NeuroPipeline {
         });
         this.quantumNet = new QuantumNeuralNet();
         this.zipIO = new ZipIOSystem(50000); // 50k chunks for massive context loop
+    }
+    /**
+     * Elastic value budget → per-neuron learning rates (Section 1.3 / audit
+     * item 1). Higher value points → lower learning rate (stable, "locked in"
+     * knowledge); lower value points → higher learning rate (plastic, still
+     * adapting). Node ids from both the mesh and the hyperdimensional engine
+     * share this one budget space, sized to the larger of the two in
+     * ensureSubsystems().
+     */
+    getValueLearningRates() {
+        if (!this.valueInitialized) {
+            const neuronStates = [];
+            for (let i = 0; i < this.valueBudgetSize; i++) {
+                neuronStates.push({
+                    id: String(i),
+                    name: `neuron_${i}`,
+                    value: 0,
+                    learningRate: 0,
+                    states: new Map(),
+                    connections: new Map(),
+                    expertGroup: null,
+                    active: true,
+                });
+            }
+            this.valueRange.initializeNeurons(neuronStates);
+            this.valueInitialized = true;
+        }
+        const { neuronAllocations } = this.valueRange.getDistribution();
+        const rates = new Map();
+        for (const alloc of neuronAllocations) {
+            rates.set(Number(alloc.id), alloc.learningRate);
+        }
+        return rates;
+    }
+    /**
+     * Feed a subsystem's per-neuron activity (how much each neuron just
+     * changed) back into the value budget: neurons that changed a lot give up
+     * value points (become more plastic / lower-value); neurons that barely
+     * changed keep theirs and gradually accrue points redistributed from
+     * unstable neighbors (the zero-sum "learn but don't forget" mechanism).
+     */
+    feedbackToValueBudget(deltaByNode) {
+        for (const [id, delta] of deltaByNode) {
+            this.valueRange.updateNeuronValue(String(id), -delta);
+        }
+        this.valueRange.applyDecay();
     }
     // ─── Core pipeline ────────────────────────────────────────────────────────
     /**
@@ -106,12 +179,16 @@ export class NeuroPipeline {
         const pipelineStart = Date.now();
         // ── Step 1: MoE routing ─────────────────────────────────────────────────
         let moeOutput;
+        let selectedPlugins = [];
         {
             const t0 = Date.now();
             // Resize embedding to match inputDim if needed
             const inputVec = this.resizeVector(embedding, this.config.embeddingDim);
             const layerOut = this.moeRouter.forward(inputVec, 0);
             moeOutput = layerOut.output;
+            selectedPlugins = layerOut.decision.expertIndices
+                .map(i => this.expertPluginMap.get(i))
+                .filter((id) => id !== undefined);
             const durationMs = Date.now() - t0;
             steps.push({
                 name: 'moe-router',
@@ -133,6 +210,12 @@ export class NeuroPipeline {
             const propagation = this.mesh.propagate(meshInputs);
             // Collect final state values as an ordered array
             meshOutput = Array.from(propagation.finalStates.values());
+            // Elastic value budget gates how much each mesh node's connections are
+            // allowed to change this tick, then the resulting change feeds back
+            // into the budget itself.
+            const learningRates = this.getValueLearningRates();
+            const meshDeltas = this.mesh.applyValueWeightedLearning(learningRates);
+            this.feedbackToValueBudget(meshDeltas);
             const durationMs = Date.now() - t0;
             steps.push({
                 name: 'mesh-propagation',
@@ -147,8 +230,10 @@ export class NeuroPipeline {
             const t0 = Date.now();
             // Pad/truncate mesh output to hyperDimensions
             const hyperInput = this.resizeArray(meshOutput, this.config.hyperDimensions);
-            const hyperResult = this.hyperEngine.process(hyperInput);
+            const learningRates = this.getValueLearningRates();
+            const hyperResult = this.hyperEngine.process(hyperInput, learningRates);
             hyperOutput = hyperResult.outputVector;
+            this.feedbackToValueBudget(hyperResult.stateDeltas);
             const durationMs = Date.now() - t0;
             steps.push({
                 name: 'hyper-dimensional',
@@ -161,19 +246,46 @@ export class NeuroPipeline {
         let quantumOutput;
         {
             const t0 = Date.now();
-            // Register neurons with exclusive inputs and apply quantum interference
+            // Register neurons with exclusive inputs, each carrying a candidate
+            // superposition drawn from its own value plus its neighbors' — this is
+            // what makes phase-consensus and Grover amplification meaningful; a
+            // neuron with only one possible state has nothing to interfere with.
             const quantumNeurons = [];
-            for (let i = 0; i < Math.min(10, hyperOutput.length); i++) {
+            const n = Math.min(10, hyperOutput.length);
+            for (let i = 0; i < n; i++) {
                 const neuronId = `q_neuron_${i}`;
                 this.quantumNet.addNeuron(neuronId, hyperOutput[i]);
+                const candidates = [
+                    hyperOutput[i],
+                    hyperOutput[(i + 1) % hyperOutput.length],
+                    hyperOutput[(i + hyperOutput.length - 1) % hyperOutput.length],
+                ];
+                this.quantumNet.createSuperposition(neuronId, candidates);
                 quantumNeurons.push(neuronId);
             }
-            // Apply interference between adjacent neurons
-            for (let i = 0; i < quantumNeurons.length - 1; i++) {
-                this.quantumNet.interfere(quantumNeurons[i], quantumNeurons[i + 1]);
+            // Phase-consensus across the whole group: with randomized phases this
+            // can genuinely cancel (destructive) as well as reinforce (constructive),
+            // unlike the old always-in-phase (phase=0) setup.
+            const consensusMagnitude = this.quantumNet.phaseConsensus(quantumNeurons);
+            // Grover-style amplification: mark and amplify whichever neuron currently
+            // carries the strongest signal, separately from the consensus step above.
+            let target = quantumNeurons[0];
+            let targetHeight = -Infinity;
+            for (const id of quantumNeurons) {
+                const state = this.quantumNet.getState(id);
+                if (state && state.height > targetHeight) {
+                    targetHeight = state.height;
+                    target = id;
+                }
             }
-            // Collapse and collect outputs
+            this.quantumNet.groverAmplify(quantumNeurons, target);
+            // Collapse — amplitude-weighted sampling from the (now amplified)
+            // Born-rule distribution built by createSuperposition/groverAmplify.
             quantumOutput = quantumNeurons.map(id => this.quantumNet.collapse(id));
+            // Fold the group-level consensus magnitude in as a shared bias term so
+            // destructive cancellation actually shows up in the pipeline output.
+            const consensusBias = consensusMagnitude / (quantumNeurons.length || 1);
+            quantumOutput = quantumOutput.map(v => v + consensusBias * 0.1);
             const durationMs = Date.now() - t0;
             steps.push({
                 name: 'quantum-interference',
@@ -227,6 +339,7 @@ export class NeuroPipeline {
             output: finalOutput,
             steps,
             totalDurationMs,
+            selectedPlugins,
         };
     }
     // ─── Stats ────────────────────────────────────────────────────────────────
@@ -262,12 +375,20 @@ export class NeuroPipeline {
         this.valueRange = null;
         this.quantumNet = null;
         this.zipIO = null;
+        this.valueInitialized = false;
     }
     /**
      * Access the Zip I/O system for context iteration
      */
     getZipIO() {
         return this.zipIO;
+    }
+    /**
+     * MoE expert index → real plugin/skill id, for introspection of which
+     * concrete capability each expert slot represents.
+     */
+    getExpertPluginMap() {
+        return new Map(this.expertPluginMap);
     }
     // ─── Private helpers ──────────────────────────────────────────────────────
     /**

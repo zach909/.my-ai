@@ -326,7 +326,8 @@ export class CLI {
         console.log('');
         console.log(this.colorize(BOLD, '  THORNS Analysis:'));
         console.log(`    Intent:      ${this.colorize(YELLOW, out.intent.intent)} (${(out.intent.confidence * 100).toFixed(1)}%)`);
-        console.log(`    Dimensions:  ${Array.from(out.intent.dimensions.keys()).join(', ')}`);
+        console.log(`    Keywords:    ${out.intent.keywords.join(', ')}`);
+        console.log(`    Entities:    ${out.intent.entities.join(', ')}`);
         console.log(`    Cross-check: ${(out.crossCheck.overallConfidence * 100).toFixed(1)}% confidence`);
         console.log(`    Action plan: ${this.colorize(GREEN, out.actionPlan.join(' → '))}`);
         console.log(`    Best action: ${out.simulation.bestAction}`);
@@ -355,7 +356,7 @@ export class CLI {
         }
         console.log(this.colorize(BOLD, `  Found ${results.length} neuron(s) for "${query}":`));
         for (const n of results.slice(0, 10)) {
-            console.log(`    ${this.colorize(CYAN, n.id)} ${this.colorize(GRAY, n.name)} layer:${n.layerIndex} value:${n.value.toFixed(4)}`);
+            console.log(`    ${this.colorize(CYAN, n.id)} ${this.colorize(GRAY, n.name)} value:${n.value.toFixed(4)}`);
         }
         console.log('');
     }
@@ -409,7 +410,7 @@ export class CLI {
             if (n.isNetSearch && n.netLocation) {
                 const hits = this.llm.netSearch(n.netLocation);
                 if (hits.length > 0) {
-                    console.log(`      ${this.colorize(YELLOW, '↳')} netsearch(${n.netLocation}): ${hits.slice(0, 3).map(h => `${h.name}(${h.score.toFixed(2)})`).join(', ')}`);
+                    console.log(`      ${this.colorize(YELLOW, '↳')} netsearch(${n.netLocation}): ${hits.slice(0, 3).map(h => `${h.results[0] || 'result'}(${h.confidence.toFixed(2)})`).join(', ')}`);
                 }
                 else {
                     console.log(`      ${this.colorize(GRAY, '↳')} netsearch(${n.netLocation}): no results`);

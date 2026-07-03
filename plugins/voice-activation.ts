@@ -2,8 +2,8 @@ import { execSync, spawn } from 'node:child_process';
 import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import type { PluginDefinition } from "../plugin_manager/types";
-import { BasePlugin } from "../plugin_manager/sdk";
+import type { PluginDefinition } from "../plugin_manager/types.js";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 
 export interface VoiceCommand {
   transcript: string;

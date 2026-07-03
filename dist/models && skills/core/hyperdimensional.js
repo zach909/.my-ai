@@ -20,7 +20,7 @@ export class HyperDimensionalEngine {
         this.history = [];
         this.initializeNeurons();
     }
-    process(inputVector) {
+    process(inputVector, learningRates) {
         let resolvedInput;
         if (inputVector instanceof Map) {
             const arrays = Array.from(inputVector.values());
@@ -35,9 +35,16 @@ export class HyperDimensionalEngine {
             resolvedInput = inputVector;
         }
         const transitions = [];
+        const stateDeltas = new Map();
         for (const neuron of this.neurons) {
             const prevState = [...neuron.state];
-            this.updateNeuronState(neuron, resolvedInput);
+            const rate = learningRates?.get(neuron.id) ?? this.config.learningRate;
+            this.updateNeuronState(neuron, resolvedInput, rate);
+            let delta = 0;
+            for (let d = 0; d < neuron.state.length; d++) {
+                delta += Math.abs(neuron.state[d] - prevState[d]);
+            }
+            stateDeltas.set(neuron.id, delta);
             const energy = this.computeStateEnergy(neuron.state);
             if (energy !== neuron.energy) {
                 transitions.push({
@@ -68,6 +75,7 @@ export class HyperDimensionalEngine {
             dimensionalEntropy,
             noveltyScore,
             transitionCount: resolvedTransitions.length,
+            stateDeltas,
         };
     }
     hasSeenPattern(patternHash) {
@@ -106,10 +114,10 @@ export class HyperDimensionalEngine {
             });
         }
     }
-    updateNeuronState(neuron, input) {
+    updateNeuronState(neuron, input, learningRate) {
         for (let d = 0; d < this.config.dimensions; d++) {
             const inputVal = input[d] || 0;
-            const delta = (inputVal - neuron.state[d]) * this.config.learningRate;
+            const delta = (inputVal - neuron.state[d]) * learningRate;
             neuron.state[d] += delta;
             neuron.state[d] = Math.max(-1, Math.min(1, neuron.state[d]));
         }

@@ -1,5 +1,5 @@
-import type { PluginDefinition, ExtensionManifest } from "./types";
-import { BasePlugin } from "./sdk";
+import type { PluginDefinition, ExtensionManifest } from "./types.js";
+import { BasePlugin } from "./sdk.js";
 export declare class PluginLoader {
     loadPluginFromPath(pluginPath: string): Promise<{
         definition: PluginDefinition;

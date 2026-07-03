@@ -1,5 +1,5 @@
-import type { PluginDefinition } from "../plugin_manager/types";
-import { BasePlugin } from "../plugin_manager/sdk";
+import type { PluginDefinition } from "../plugin_manager/types.js";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 export interface AudioData {
     data: string;
     duration: number;

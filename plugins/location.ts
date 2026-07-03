@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
 import { networkInterfaces } from 'node:os';
-import type { PluginDefinition } from "../plugin_manager/types";
-import { APIPlugin } from "../plugin_manager/sdk";
+import type { PluginDefinition } from "../plugin_manager/types.js";
+import { APIPlugin } from "../plugin_manager/sdk.js";
 
 export interface Coordinates {
   latitude: number;

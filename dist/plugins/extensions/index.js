@@ -2,10 +2,10 @@ import { execSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join } from 'node:path';
-import { BasePlugin } from "../../plugin_manager/sdk";
-import { ExtensionBuilder } from "../../extension-builder/builder";
-import { Neuron } from "../../models && skills/neuron";
-import { MixtureOfExperts } from "../../models && skills/moe";
+import { BasePlugin } from "../../plugin_manager/sdk.js";
+import { ExtensionBuilder } from "../../extension-builder/builder.js";
+import { Neuron } from "../../models && skills/neuron.js";
+import { MixtureOfExperts } from "../../models && skills/moe.js";
 // Language skill neuron templates for 200+ languages
 const LANGUAGE_SKILLS = {
     'ABAP': ['perceive', 'parse', 'execute'],
@@ -418,8 +418,8 @@ export class PluginMakerExtension extends BasePlugin {
     generatePlugin(name, desc, caps) {
         const capStr = caps.length > 0 ? caps.map(c => `"${c}"`).join(', ') : '"custom"';
         return [
-            `import type { PluginDefinition } from "../plugin_manager/types";`,
-            `import { BasePlugin } from "../plugin_manager/sdk";`,
+            `import type { PluginDefinition } from "../plugin_manager/types.js";`,
+            `import { BasePlugin } from "../plugin_manager/sdk.js";`,
             ``,
             `export class ${name.replace(/-./g, c => c[1].toUpperCase())}Plugin extends BasePlugin {`,
             `  constructor(definition: PluginDefinition) { super(definition); }`,

@@ -1,4 +1,4 @@
-import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data";
+import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
 export class PluginRegistry {
     plugins = new Map();
     definitions = new Map();

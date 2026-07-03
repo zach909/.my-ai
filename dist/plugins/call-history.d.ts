@@ -1,6 +1,6 @@
-import type { PluginDefinition } from "../plugin_manager/types";
-import { BasePlugin } from "../plugin_manager/sdk";
-import { PhoneCallsPlugin } from "./phone-calls";
+import type { PluginDefinition } from "../plugin_manager/types.js";
+import { BasePlugin } from "../plugin_manager/sdk.js";
+import { PhoneCallsPlugin } from "./phone-calls.js";
 export declare class CallHistoryPlugin extends BasePlugin {
     private source?;
     constructor(definition: PluginDefinition);

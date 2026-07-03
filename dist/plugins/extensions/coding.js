@@ -1,4 +1,4 @@
-import { SkillPlugin } from "../../plugin_manager/sdk";
+import { SkillPlugin } from "../../plugin_manager/sdk.js";
 export class CodingExtension extends SkillPlugin {
     constructor(definition, skillDefinition) {
         super(definition, skillDefinition);

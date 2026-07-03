@@ -147,6 +147,32 @@ export class NeuronMesh {
     };
   }
 
+  /**
+   * Hebbian weight update gated per-node by an externally supplied learning
+   * rate (from the elastic value budget: high-value nodes get a low rate and
+   * barely move, low-value nodes get a high rate and adapt quickly). Returns
+   * the total absolute weight change applied from each node, so the caller
+   * can feed it back into the value budget as a "how much did this node just
+   * change" signal.
+   */
+  applyValueWeightedLearning(learningRates: Map<number, number>): Map<number, number> {
+    const deltaByNode = new Map<number, number>();
+    for (const [id, node] of this.nodes) {
+      const rate = learningRates.get(id) ?? this.config.learningRate;
+      let totalDelta = 0;
+      for (const [neighborId, weight] of node.connections) {
+        const neighbor = this.nodes.get(neighborId);
+        if (!neighbor) continue;
+        const hebbian = rate * node.activation * neighbor.activation;
+        const newWeight = Math.max(-2, Math.min(2, weight + hebbian));
+        node.connections.set(neighborId, newWeight);
+        totalDelta += Math.abs(newWeight - weight);
+      }
+      deltaByNode.set(id, totalDelta);
+    }
+    return deltaByNode;
+  }
+
   addNode(layer: number): number {
     const id = this.nextId++;
     const node: NeuronNode = {

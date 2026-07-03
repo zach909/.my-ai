@@ -42,6 +42,15 @@ export declare class NeuronMesh {
     private nextId;
     constructor(config?: Partial<MeshConfig>);
     propagate(inputActivations: Map<number, number> | Map<string, number>): PropagationResult;
+    /**
+     * Hebbian weight update gated per-node by an externally supplied learning
+     * rate (from the elastic value budget: high-value nodes get a low rate and
+     * barely move, low-value nodes get a high rate and adapt quickly). Returns
+     * the total absolute weight change applied from each node, so the caller
+     * can feed it back into the value budget as a "how much did this node just
+     * change" signal.
+     */
+    applyValueWeightedLearning(learningRates: Map<number, number>): Map<number, number>;
     addNode(layer: number): number;
     removeNode(id: number): boolean;
     updateConnection(fromId: number, toId: number, newWeight: number): void;

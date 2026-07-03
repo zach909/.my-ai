@@ -1,5 +1,5 @@
-import type { PluginDefinition, SkillDefinition } from "./types";
-import type { BasePlugin, PluginContext } from "./sdk";
+import type { PluginDefinition, SkillDefinition } from "./types.js";
+import type { BasePlugin, PluginContext } from "./sdk.js";
 export declare class PluginRegistry {
     private plugins;
     private definitions;

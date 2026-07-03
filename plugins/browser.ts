@@ -1,8 +1,8 @@
 import http from 'node:http';
 import https from 'node:https';
 import { URL } from 'node:url';
-import type { PluginDefinition } from "../plugin_manager/types";
-import { BasePlugin } from "../plugin_manager/sdk";
+import type { PluginDefinition } from "../plugin_manager/types.js";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 
 export interface HistoryEntry {
   url: string;

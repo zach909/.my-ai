@@ -46,7 +46,23 @@ export declare class QuantumNeuralNet {
      */
     interfere(neuronIdA: string, neuronIdB: string): number;
     /**
-     * Collapse the wave function to a single state based on probabilities
+     * Phase-consensus across a group of neurons — true destructive interference.
+     * Sums each neuron's amplitude as a complex phasor (height at its phase angle);
+     * phasors that disagree in phase cancel toward zero, phasors that agree
+     * reinforce toward the sum of their heights. Returns the resultant magnitude.
+     */
+    phaseConsensus(neuronIds: string[]): number;
+    /**
+     * Grover-style amplitude amplification: flips the sign of the target
+     * neuron's amplitude (oracle), then reflects every amplitude in the group
+     * about their mean (diffuser). Iterating this grows the target's share of
+     * total probability mass at the expense of the rest of the group.
+     */
+    groverAmplify(neuronIds: string[], targetId: string): void;
+    /**
+     * Collapse the wave function to a single state, sampling from the
+     * amplitude-weighted (Born rule) probability distribution built by
+     * createSuperposition / groverAmplify — not a plain uniform draw.
      */
     collapse(neuronId: string): number;
     /**
