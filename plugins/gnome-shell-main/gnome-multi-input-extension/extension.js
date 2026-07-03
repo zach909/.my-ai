@@ -21,6 +21,7 @@ import Meta from 'gi://Meta';
 import Shell from 'gi://Shell';
 
 import * as Main from 'resource:///org/gnome/shell/ui/main.js';
+import {Extension} from 'resource:///org/gnome/shell/extensions/extension.js';
 
 /* DBus interface — allows Neuroclaw's TypeScript layer to talk to this
  * extension without needing to write xinput commands.
@@ -74,9 +75,9 @@ const DBUS_PATH = '/org/gnome/Shell/Extensions/MultiInput';
 const DBUS_IFACE = 'org.gnome.Shell.Extensions.MultiInput';
 const DBUS_NAME = 'org.gnome.Shell.Extensions.MultiInput';
 
-export default class MultiInputExtension {
+export default class MultiInputExtension extends Extension {
     constructor(metadata) {
-        this._metadata = metadata;
+        super(metadata);
         this._virtualPointer = null;
         this._virtualKeyboard = null;
         this._virtualDevices = [];
@@ -87,7 +88,7 @@ export default class MultiInputExtension {
     }
 
     enable() {
-        log('[MultiInput] Enabling multi-input extension');
+        console.debug('[MultiInput] Enabling multi-input extension');
 
         const seat = global.stage.context.get_backend().get_default_seat();
 
@@ -117,11 +118,11 @@ export default class MultiInputExtension {
         /* Register DBus service */
         this._registerDBus();
 
-        log('[MultiInput] Extension enabled');
+        console.debug('[MultiInput] Extension enabled');
     }
 
     disable() {
-        log('[MultiInput] Disabling multi-input extension');
+        console.debug('[MultiInput] Disabling multi-input extension');
 
         /* Disconnect signals */
         for (const id of this._signals) {
@@ -140,12 +141,12 @@ export default class MultiInputExtension {
             try {
                 this._dbusImpl.unexport();
             } catch (e) {
-                log(`[MultiInput] DBus unexport error: ${e}`);
+                console.warn(`[MultiInput] DBus unexport error: ${e}`);
             }
             this._dbusImpl = null;
         }
 
-        log('[MultiInput] Extension disabled');
+        console.debug('[MultiInput] Extension disabled');
     }
 
     /* ─── AI Workspace ─────────────────────────────────────────────────── */
@@ -159,11 +160,11 @@ export default class MultiInputExtension {
         try {
             global.workspace_manager.append_new_workspace(false, global.get_current_time());
         } catch (e) {
-            log(`[MultiInput] Failed to append workspace: ${e}`);
+            console.warn(`[MultiInput] Failed to append workspace: ${e}`);
         }
 
         this._aiWorkspace = newIdx;
-        log(`[MultiInput] AI workspace created at index ${newIdx}`);
+        console.debug(`[MultiInput] AI workspace created at index ${newIdx}`);
         return newIdx;
     }
 
@@ -190,10 +191,10 @@ export default class MultiInputExtension {
                 device: this._virtualPointer,
             });
             this._emitSignal('VirtualDeviceCreated', new GLib.Variant('(us)', [id, 'pointer']));
-            log(`[MultiInput] Created virtual pointer (id=${id})`);
+            console.debug(`[MultiInput] Created virtual pointer (id=${id})`);
             return id;
         } catch (e) {
-            log(`[MultiInput] Failed to create virtual pointer: ${e}`);
+            console.warn(`[MultiInput] Failed to create virtual pointer: ${e}`);
             return 0;
         }
     }
@@ -215,10 +216,10 @@ export default class MultiInputExtension {
                 device: this._virtualKeyboard,
             });
             this._emitSignal('VirtualDeviceCreated', new GLib.Variant('(us)', [id, 'keyboard']));
-            log(`[MultiInput] Created virtual keyboard (id=${id})`);
+            console.debug(`[MultiInput] Created virtual keyboard (id=${id})`);
             return id;
         } catch (e) {
-            log(`[MultiInput] Failed to create virtual keyboard: ${e}`);
+            console.warn(`[MultiInput] Failed to create virtual keyboard: ${e}`);
             return 0;
         }
     }
@@ -232,13 +233,13 @@ export default class MultiInputExtension {
             try {
                 dev.device.run_dispose();
             } catch (e) {
-                log(`[MultiInput] Error disposing device ${dev.id}: ${e}`);
+                console.warn(`[MultiInput] Error disposing device ${dev.id}: ${e}`);
             }
         }
         this._virtualDevices = [];
         this._virtualPointer = null;
         this._virtualKeyboard = null;
-        log('[MultiInput] All virtual devices destroyed');
+        console.debug('[MultiInput] All virtual devices destroyed');
     }
 
     getVirtualDevices() {
@@ -257,7 +258,7 @@ export default class MultiInputExtension {
     /* ─── Input Routing ───────────────────────────────────────────────── */
 
     _onWorkspaceSwitch(from, to) {
-        log(`[MultiInput] Workspace switched: ${from} -> ${to}`);
+        console.debug(`[MultiInput] Workspace switched: ${from} -> ${to}`);
 
         this._emitSignal('WorkspaceSwitched',
             new GLib.Variant('(uu)', [from, to]));
@@ -274,12 +275,12 @@ export default class MultiInputExtension {
     }
 
     _onDeviceAdded(device) {
-        log(`[MultiInput] Device added: ${device.get_device_name()} ` +
+        console.debug(`[MultiInput] Device added: ${device.get_device_name()} ` +
             `(type=${device.get_device_type()})`);
     }
 
     _onDeviceRemoved(device) {
-        log(`[MultiInput] Device removed: ${device.get_device_name()}`);
+        console.debug(`[MultiInput] Device removed: ${device.get_device_name()}`);
     }
 
     focusAiWorkspace() {
@@ -292,7 +293,7 @@ export default class MultiInputExtension {
                 ws.activate(global.get_current_time());
             }
         } catch (e) {
-            log(`[MultiInput] Error focusing AI workspace: ${e}`);
+            console.warn(`[MultiInput] Error focusing AI workspace: ${e}`);
         }
     }
 
@@ -303,7 +304,7 @@ export default class MultiInputExtension {
                 ws.activate(global.get_current_time());
             }
         } catch (e) {
-            log(`[MultiInput] Error focusing user workspace: ${e}`);
+            console.warn(`[MultiInput] Error focusing user workspace: ${e}`);
         }
     }
 
@@ -319,12 +320,12 @@ export default class MultiInputExtension {
                 if (win.get_title() === windowId ||
                     String(win.get_stable_sequence()) === windowId) {
                     win.change_workspace(ws);
-                    log(`[MultiInput] Moved window "${win.get_title()}" to AI workspace`);
+                    console.debug(`[MultiInput] Moved window "${win.get_title()}" to AI workspace`);
                     return;
                 }
             }
         } catch (e) {
-            log(`[MultiInput] Error moving window: ${e}`);
+            console.warn(`[MultiInput] Error moving window: ${e}`);
         }
     }
 
@@ -337,9 +338,9 @@ export default class MultiInputExtension {
 
             this._dbusImpl = Gio.DBusExportedObject.wrapJSObject(iface, this);
             this._dbusImpl.export(Gio.DBus.session, DBUS_PATH);
-            log('[MultiInput] DBus service registered at ' + DBUS_PATH);
+            console.debug('[MultiInput] DBus service registered at ' + DBUS_PATH);
         } catch (e) {
-            log(`[MultiInput] DBus registration error: ${e}`);
+            console.warn(`[MultiInput] DBus registration error: ${e}`);
         }
     }
 
@@ -349,7 +350,7 @@ export default class MultiInputExtension {
                 this._dbusImpl.emit_signal(name, variant);
             }
         } catch (e) {
-            log(`[MultiInput] Signal emit error: ${e}`);
+            console.warn(`[MultiInput] Signal emit error: ${e}`);
         }
     }
 
