@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { BasePlugin } from "./sdk";
+import { BasePlugin } from "./sdk.js";
 export class PluginLoader {
     async loadPluginFromPath(pluginPath) {
         const manifestPath = path.join(pluginPath, "manifest.json");

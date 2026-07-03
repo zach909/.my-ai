@@ -2,7 +2,7 @@ import { execSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 const DATA_DIR = join(homedir(), '.neuroclaw', 'email');
 export class EmailPlugin extends BasePlugin {
     emails = [];

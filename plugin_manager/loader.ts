@@ -1,7 +1,7 @@
 import * as fs from "fs";
 import * as path from "path";
-import type { PluginDefinition, ExtensionManifest } from "./types";
-import { BasePlugin } from "./sdk";
+import type { PluginDefinition, ExtensionManifest } from "./types.js";
+import { BasePlugin } from "./sdk.js";
 
 export class PluginLoader {
   async loadPluginFromPath(pluginPath: string): Promise<{

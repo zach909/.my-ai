@@ -1,4 +1,4 @@
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 export class RadiosPlugin extends BasePlugin {
     devices = [
         { name: "Wi-Fi", type: "wifi", enabled: true, power: 100 },

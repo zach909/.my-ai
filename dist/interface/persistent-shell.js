@@ -18,7 +18,7 @@ export class PersistentShell extends EventEmitter {
             env: { ...process.env, TERM: 'xterm-256color', PS1: '\nNEURO_SHELL_READY\n' },
         });
         const session = {
-            id, pid: proc.pid, active: true,
+            id, pid: proc.pid ?? null, active: true,
             cwd: cwd ?? process.cwd(),
             created: Date.now(), lastActivity: Date.now(),
         };

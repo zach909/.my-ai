@@ -1,4 +1,4 @@
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 import { execSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, mkdtempSync } from "node:fs";
 import { join } from "node:path";

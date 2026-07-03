@@ -1,6 +1,6 @@
-import type { PluginDefinition, SkillDefinition } from "./types";
-import type { BasePlugin, PluginContext, PluginLogger } from "./sdk";
-import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data";
+import type { PluginDefinition, SkillDefinition } from "./types.js";
+import type { BasePlugin, PluginContext, PluginLogger } from "./sdk.js";
+import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
 
 export class PluginRegistry {
   private plugins: Map<string, BasePlugin> = new Map();

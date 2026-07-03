@@ -1,5 +1,5 @@
-import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/types";
-import { SkillPlugin } from "../../plugin_manager/sdk";
+import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/types.js";
+import { SkillPlugin } from "../../plugin_manager/sdk.js";
 export declare class CodingExtension extends SkillPlugin {
     constructor(definition: PluginDefinition, skillDefinition: SkillDefinition);
     execute(input: unknown): Promise<unknown>;

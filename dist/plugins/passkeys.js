@@ -1,5 +1,5 @@
 import { generateKeyPairSync, createSign, createVerify } from 'node:crypto';
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 export class PasskeysPlugin extends BasePlugin {
     keys = [];
     constructor(definition) {

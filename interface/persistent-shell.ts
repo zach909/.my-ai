@@ -31,7 +31,7 @@ export class PersistentShell extends EventEmitter {
     });
 
     const session: ShellSession = {
-      id, pid: proc.pid, active: true,
+      id, pid: proc.pid ?? null, active: true,
       cwd: cwd ?? process.cwd(),
       created: Date.now(), lastActivity: Date.now(),
     };

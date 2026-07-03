@@ -1,6 +1,10 @@
 /**
  * Multi-desktop management for GNOME-based systems.
  * Provides isolated desktop environments for AI and user to prevent interference.
+ *
+ * Backed by real system integration (gsettings/xinput/uinput/wmctrl/gdbus) when
+ * available, falling back to a simulated session model otherwise. This is the
+ * single canonical MultiDesktopManager — do not duplicate it elsewhere.
  */
 export interface DesktopSession {
     id: string;
@@ -20,6 +24,8 @@ export interface VirtualDevice {
     type: 'keyboard' | 'mouse';
     name: string;
     created: number;
+    /** xinput master device id, present only when backed by a real xinput device */
+    masterId?: number;
 }
 export interface DeviceBinding {
     deviceId: string;
@@ -35,11 +41,16 @@ export declare class MultiDesktopManager {
     private gnomeAvailable;
     private xinputAvailable;
     private uinputAvailable;
+    /** Real GNOME workspace index backing the 'ai' session, once initialized */
+    private aiGnomeWorkspaceIndex;
     constructor();
     private checkSystemCapabilities;
+    private checkGnome;
+    private checkXinput;
     private initializeDefaultSessions;
     /**
-     * Initialize AI workspace - activates AI desktop session
+     * Initialize AI workspace - activates AI desktop session, creating a real
+     * GNOME workspace for it when GNOME is available.
      */
     initAiWorkspace(): Promise<string>;
     /**
@@ -50,73 +61,42 @@ export declare class MultiDesktopManager {
      * Create virtual keyboard device for AI
      */
     createAiVirtualKeyboard(): VirtualDevice;
+    private createVirtualDevice;
     /**
      * Get AI workspace status
      */
     getAiWorkspace(): string;
-    /**
-     * Check if GNOME is available
-     */
     isGnomeAvailable(): boolean;
-    /**
-     * Check if xinput is available
-     */
     hasXinput(): boolean;
-    /**
-     * Check if uinput is available
-     */
     hasUinput(): boolean;
-    /**
-     * Get current desktop ID
-     */
     getCurrentDesktop(): string;
-    /**
-     * List all desktops
-     */
     listDesktops(): string[];
-    /**
-     * Get desktop count
-     */
+    private getRealGnomeWorkspaceCount;
     getDesktopCount(): number;
-    /**
-     * Get virtual devices
-     */
     getVirtualDevices(): VirtualDevice[];
-    /**
-     * Get all device bindings
-     */
     getAllBindings(): DeviceBinding[];
     /**
-     * Focus AI desktop
+     * Focus AI desktop — switches the real GNOME workspace when available.
      */
     focusAiDesktop(): boolean;
-    /**
-     * Focus user desktop
-     */
     focusUserDesktop(): boolean;
+    private switchRealGnomeWorkspace;
     /**
-     * List physical input devices
+     * List physical input devices — queried live via xinput when available.
      */
     listPhysicalInputDevices(): InputDevice[];
-    /**
-     * Remove virtual device
-     */
     removeVirtualDevice(deviceId: string): boolean;
     /**
-     * Isolate AI input
+     * Isolate AI input — floats real physical devices off the core pointer/keyboard
+     * (via xinput) in addition to the simulated assignment bookkeeping.
      */
     isolateAiInput(): boolean;
     /**
-     * Restore user input
+     * Restore user input — reattaches physical devices to the core pointer/keyboard
+     * (via xinput) in addition to clearing simulated assignments.
      */
     restoreUserInput(): boolean;
-    /**
-     * Bind device to workspace
-     */
     bindDeviceToWorkspace(deviceId: string, workspaceId: string, mode?: 'exclusive' | 'shared'): boolean;
-    /**
-     * Unbind device
-     */
     unbindDevice(deviceId: string): boolean;
     createSession(name: string, ownerId: string): DesktopSession;
     getSession(sessionId: string): DesktopSession | undefined;

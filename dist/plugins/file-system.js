@@ -1,6 +1,6 @@
 import * as fs from "fs";
 import * as path from "path";
-import { BasePlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 export class FileSystemPlugin extends BasePlugin {
     rootDir = process.cwd();
     constructor(definition) {

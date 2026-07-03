@@ -15,6 +15,8 @@ export interface PipelineResult {
     output: number[];
     steps: PipelineStep[];
     totalDurationMs: number;
+    /** Real plugin/skill ids the MoE router picked for this run, if any */
+    selectedPlugins: string[];
 }
 export declare class NeuroPipeline {
     private config;
@@ -25,9 +27,29 @@ export declare class NeuroPipeline {
     private valueRange;
     private quantumNet;
     private zipIO;
+    private valueBudgetSize;
+    private valueInitialized;
+    private expertPluginMap;
     private runHistory;
     constructor(config?: Partial<PipelineConfig>);
     private ensureSubsystems;
+    /**
+     * Elastic value budget → per-neuron learning rates (Section 1.3 / audit
+     * item 1). Higher value points → lower learning rate (stable, "locked in"
+     * knowledge); lower value points → higher learning rate (plastic, still
+     * adapting). Node ids from both the mesh and the hyperdimensional engine
+     * share this one budget space, sized to the larger of the two in
+     * ensureSubsystems().
+     */
+    private getValueLearningRates;
+    /**
+     * Feed a subsystem's per-neuron activity (how much each neuron just
+     * changed) back into the value budget: neurons that changed a lot give up
+     * value points (become more plastic / lower-value); neurons that barely
+     * changed keep theirs and gradually accrue points redistributed from
+     * unstable neighbors (the zero-sum "learn but don't forget" mechanism).
+     */
+    private feedbackToValueBudget;
     /**
      * Run all 7 subsystems in sequence on an embedding vector.
      *
@@ -53,6 +75,11 @@ export declare class NeuroPipeline {
      * Access the Zip I/O system for context iteration
      */
     getZipIO(): ZipIOSystem | null;
+    /**
+     * MoE expert index → real plugin/skill id, for introspection of which
+     * concrete capability each expert slot represents.
+     */
+    getExpertPluginMap(): Map<number, string>;
     /**
      * Resize a Float32Array to targetLength, zero-padding or truncating.
      */

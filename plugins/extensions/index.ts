@@ -3,12 +3,12 @@ import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { tmpdir, homedir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/types";
-import { BasePlugin } from "../../plugin_manager/sdk";
-import { CodingExtension } from "./coding";
-import { ExtensionBuilder } from "../../extension-builder/builder";
-import { Neuron } from "../../models && skills/neuron";
-import { MixtureOfExperts } from "../../models && skills/moe";
+import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/types.js";
+import { BasePlugin } from "../../plugin_manager/sdk.js";
+import { CodingExtension } from "./coding.js";
+import { ExtensionBuilder } from "../../extension-builder/builder.js";
+import { Neuron } from "../../models && skills/neuron.js";
+import { MixtureOfExperts } from "../../models && skills/moe.js";
 
 // Language skill neuron templates for 200+ languages
 const LANGUAGE_SKILLS: Record<string, string[]> = {
@@ -424,8 +424,8 @@ export class PluginMakerExtension extends BasePlugin {
   private generatePlugin(name: string, desc: string, caps: string[]): string {
     const capStr = caps.length > 0 ? caps.map(c => `"${c}"`).join(', ') : '"custom"';
     return [
-      `import type { PluginDefinition } from "../plugin_manager/types";`,
-      `import { BasePlugin } from "../plugin_manager/sdk";`,
+      `import type { PluginDefinition } from "../plugin_manager/types.js";`,
+      `import { BasePlugin } from "../plugin_manager/sdk.js";`,
       ``,
       `export class ${name.replace(/-./g, c => c[1].toUpperCase())}Plugin extends BasePlugin {`,
       `  constructor(definition: PluginDefinition) { super(definition); }`,

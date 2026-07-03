@@ -36,14 +36,18 @@ export class QuantumNeuralNet {
   addNeuron(id: string, inputValue: number): QuantumNeuron {
     const signature = this.calculateSignature(id, inputValue);
     const height = this.calculateWaveHeight(inputValue);
-    
+
     const neuron: QuantumNeuron = {
       id,
       inputExclusive: true,
       state: {
         signature,
         height,
-        phase: 0,
+        // Random initial phase — with phase fixed at 0 for every neuron,
+        // phaseDiff was always 0 and destructive interference (cos(phaseDiff) < 0)
+        // was mathematically unreachable. Randomizing lets neurons actually
+        // land out of phase with each other.
+        phase: Math.random() * Math.PI * 2,
         probability: 1.0
       },
       superposition: []
@@ -81,11 +85,21 @@ export class QuantumNeuralNet {
     const neuron = this.neurons.get(neuronId);
     if (!neuron) throw new Error(`Neuron ${neuronId} not found`);
 
-    neuron.superposition = possibleInputs.map(input => ({
+    const candidates = possibleInputs.map(input => ({
       signature: this.calculateSignature(neuronId, input),
       height: this.calculateWaveHeight(input),
       phase: Math.random() * Math.PI * 2,
-      probability: 1 / possibleInputs.length
+    }));
+
+    // Born rule: probability ∝ amplitude² (height²), not a uniform 1/N split.
+    // A uniform split makes every candidate state equally likely regardless
+    // of how strong its wave actually is, which isn't "amplitude-weighted"
+    // at all — it just looks like it because collapse() samples a distribution.
+    const totalSq = candidates.reduce((s, c) => s + c.height * c.height, 0) || 1;
+
+    neuron.superposition = candidates.map(c => ({
+      ...c,
+      probability: (c.height * c.height) / totalSq,
     }));
   }
 
@@ -120,7 +134,60 @@ export class QuantumNeuralNet {
   }
 
   /**
-   * Collapse the wave function to a single state based on probabilities
+   * Phase-consensus across a group of neurons — true destructive interference.
+   * Sums each neuron's amplitude as a complex phasor (height at its phase angle);
+   * phasors that disagree in phase cancel toward zero, phasors that agree
+   * reinforce toward the sum of their heights. Returns the resultant magnitude.
+   */
+  phaseConsensus(neuronIds: string[]): number {
+    let real = 0;
+    let imag = 0;
+    for (const id of neuronIds) {
+      const neuron = this.neurons.get(id);
+      if (!neuron) continue;
+      const { height, phase } = neuron.state;
+      real += height * Math.cos(phase);
+      imag += height * Math.sin(phase);
+    }
+    return Math.sqrt(real * real + imag * imag);
+  }
+
+  /**
+   * Grover-style amplitude amplification: flips the sign of the target
+   * neuron's amplitude (oracle), then reflects every amplitude in the group
+   * about their mean (diffuser). Iterating this grows the target's share of
+   * total probability mass at the expense of the rest of the group.
+   */
+  groverAmplify(neuronIds: string[], targetId: string): void {
+    const ids = neuronIds.filter(id => this.neurons.has(id));
+    const targetIdx = ids.indexOf(targetId);
+    if (targetIdx === -1 || ids.length === 0) return;
+
+    const amplitudes = ids.map(id => this.neurons.get(id)!.state.height);
+
+    // Oracle: mark the target by flipping its amplitude's sign.
+    amplitudes[targetIdx] = -amplitudes[targetIdx];
+
+    // Diffuser: inversion about the mean amplifies whatever was marked.
+    const mean = amplitudes.reduce((a, b) => a + b, 0) / amplitudes.length;
+    for (let i = 0; i < amplitudes.length; i++) {
+      amplitudes[i] = 2 * mean - amplitudes[i];
+    }
+
+    // Write back heights and re-derive Born-rule probabilities from the
+    // new amplitudes so collapse() reflects the amplification.
+    const totalSq = amplitudes.reduce((s, a) => s + a * a, 0) || 1;
+    ids.forEach((id, i) => {
+      const neuron = this.neurons.get(id)!;
+      neuron.state.height = Math.abs(amplitudes[i]);
+      neuron.state.probability = (amplitudes[i] * amplitudes[i]) / totalSq;
+    });
+  }
+
+  /**
+   * Collapse the wave function to a single state, sampling from the
+   * amplitude-weighted (Born rule) probability distribution built by
+   * createSuperposition / groverAmplify — not a plain uniform draw.
    */
   collapse(neuronId: string): number {
     const neuron = this.neurons.get(neuronId);

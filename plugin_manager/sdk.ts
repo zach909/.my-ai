@@ -1,4 +1,4 @@
-import type { PluginDefinition, SkillDefinition } from "./types";
+import type { PluginDefinition, SkillDefinition } from "./types.js";
 
 export type PluginLogger = {
   info: (message: string, ...args: unknown[]) => void;

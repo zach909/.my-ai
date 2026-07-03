@@ -1,4 +1,4 @@
-import type { PluginDefinition } from "./types";
+import type { PluginDefinition } from "./types.js";
 
 export const PLUGIN_LIST: string[] = [
   "Location",
