@@ -30,6 +30,7 @@ export declare class NeuroPipeline {
     private ensureSubsystems;
     /**
      * Run all 7 subsystems in sequence on an embedding vector.
+     *
      * Run all 6 subsystems in sequence on an embedding vector.
      *
      * Sequence:

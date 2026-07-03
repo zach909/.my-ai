@@ -56,7 +56,7 @@ export class AppLauncher extends EventEmitter {
         env,
       });
 
-      app.pid = proc.pid;
+      app.pid = proc.pid ?? null;
       app.active = true;
 
       if (options.waitForWindow !== false) {

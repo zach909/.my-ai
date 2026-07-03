@@ -1,31 +1,12 @@
-```markdown
-# Wiki files are documentation, not build artifacts
-# No need to ignore markdown files in wiki/
-```
 ```
 # Build artifacts
-"dist/
-# Models directory (appears to be build/output)
-"models
-```
 dist/
 build/
+*.d.ts
 *.js
 
 # Dependencies
 node_modules/
-
-# Build artifacts
-dist/
-"dist/
-"models/
-
-# TypeScript declarations
-*.d.ts
-
-# Logs and temp files
-*.log
-*.tmp
 
 # Environment
 .env
@@ -36,45 +17,38 @@ dist/
 .vscode/
 .idea/
 
+# Logs and temp files
+*.log
+*.tmp
+*.swp
+
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Compiled and binary files
-*.exe
-*.dll
-*.so
-*.a
+# Compiled files
 *.o
 *.obj
+*.so
+*.a
+*.dll
+*.exe
 *.out
 
-# Compression
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
-```
-# Package lock
-package-lock.json
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Testing
+.pytest_cache/
+.mypy_cache/
+.nyc_output/
+coverage/
+
+# System
+.DS_Store
+Thumbs.db
 ```
