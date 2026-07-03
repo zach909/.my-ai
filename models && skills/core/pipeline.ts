@@ -4,6 +4,7 @@ import { HyperDimensionalEngine } from './hyperdimensional.js';
 import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
 import { QuantumNeuralNet } from './quantum-net.js';
+import { ZipIOSystem } from './zip-io.js';
 
 export interface PipelineConfig {
   embeddingDim: number;
@@ -47,6 +48,7 @@ export class NeuroPipeline {
   private rlm: RLMTrainer | null = null;
   private valueRange: ValueRangeAllocator | null = null;
   private quantumNet: QuantumNeuralNet | null = null;
+  private zipIO: ZipIOSystem | null = null;
 
   // Timing history for stats
   private runHistory: RunRecord[] = [];
@@ -114,14 +116,19 @@ export class NeuroPipeline {
     });
 
     this.quantumNet = new QuantumNeuralNet();
+
+    this.zipIO = new ZipIOSystem(50000); // 50k chunks for massive context loop
   }
 
   // ─── Core pipeline ────────────────────────────────────────────────────────
 
   /**
+   * Run all 7 subsystems in sequence on an embedding vector.
+   * 
    * Run all 6 subsystems in sequence on an embedding vector.
    *
    * Sequence:
+   *   0. ZipIO   — infinite loop context ingestion (Section 1.10)
    *   1. MoE     — mixture-of-experts routing on the embedding
    *   2. Mesh    — propagation through the neuron mesh
    *   3. HyperDim — hyper-dimensional state processing
@@ -129,8 +136,13 @@ export class NeuroPipeline {
    *   5. RLM     — reinforcement-learning action selection
    *   6. Token gen — combine outputs → final output vector
    */
-  async run(embedding: Float32Array): Promise<PipelineResult> {
+  async run(embedding: Float32Array, inputText?: string): Promise<PipelineResult> {
     this.ensureSubsystems();
+
+    // Step 0: Ingest input into Zip I/O Loop if text provided
+    if (inputText) {
+      await this.zipIO!.ingest(inputText);
+    }
 
     const steps: PipelineStep[] = [];
     const pipelineStart = Date.now();
@@ -244,6 +256,11 @@ export class NeuroPipeline {
     let finalOutput: number[];
     {
       const t0 = Date.now();
+      
+      // Emit output to Zip I/O Loop
+      const outputText = `Action:${rlmAction}|Quantum:${quantumOutput.slice(0,3).join(',')}|Steps:${rlmThinkingSteps.length}`;
+      await this.zipIO!.emit(outputText);
+      
       finalOutput = this.generateOutput(
         quantumOutput,
         moeOutput,
@@ -313,6 +330,15 @@ export class NeuroPipeline {
     this.hyperEngine = null;
     this.rlm = null;
     this.valueRange = null;
+    this.quantumNet = null;
+    this.zipIO = null;
+  }
+
+  /**
+   * Access the Zip I/O system for context iteration
+   */
+  getZipIO(): ZipIOSystem | null {
+    return this.zipIO;
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────

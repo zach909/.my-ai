@@ -9,3 +9,4 @@ export { ThornsEngine, CodeToNet } from './thorns';
 export { NeuroLangInterpreter } from './neuro-lang';
 export { NeuroPipeline } from './pipeline';
 export { QuantumNeuralNet, quantumNet } from './quantum-net';
+export { InfiniteZipLoop, ZipIOSystem } from './zip-io';

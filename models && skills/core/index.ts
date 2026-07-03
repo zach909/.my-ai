@@ -20,3 +20,5 @@ export { NeuroPipeline } from './pipeline';
 export type { PipelineConfig, PipelineStep, PipelineResult } from './pipeline';
 export { QuantumNeuralNet, quantumNet } from './quantum-net';
 export type { QuantumState, QuantumNeuron } from './quantum-net';
+export { InfiniteZipLoop, ZipIOSystem } from './zip-io';
+export type { ZipChunk } from './zip-io';
