@@ -84,6 +84,10 @@ export class NeuroPipeline {
     // ─── Core pipeline ────────────────────────────────────────────────────────
     /**
      * Run all 7 subsystems in sequence on an embedding vector.
+    }
+    // ─── Core pipeline ────────────────────────────────────────────────────────
+    /**
+     * Run all 6 subsystems in sequence on an embedding vector.
      *
      * Sequence:
      *   0. ZipIO   — infinite loop context ingestion (Section 1.10)

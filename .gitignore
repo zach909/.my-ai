@@ -1,4 +1,17 @@
+```markdown
+# Wiki files are documentation, not build artifacts
+# No need to ignore markdown files in wiki/
 ```
+```
+# Build artifacts
+"dist/
+# Models directory (appears to be build/output)
+"models
+```
+dist/
+build/
+*.js
+
 # Dependencies
 node_modules/
 
@@ -57,17 +70,11 @@ __pycache__/
 *.Z
 *.lz
 *.lzo
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Testing
-.mypy_cache/
-.pytest_cache/
-
-# System
-.DS_Store
-Thumbs.db
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+```
+# Package lock
+package-lock.json
 ```
