@@ -1,4 +1,4 @@
-import { MultiDesktopManager } from '../plugins/multi-desktop.js';
+import { MultiDesktopManager } from './multi-desktop.js';
 import { execSync } from 'node:child_process';
 import { platform } from 'node:os';
 export class SystemAccess {

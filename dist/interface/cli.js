@@ -239,10 +239,11 @@ export class CLI {
             const gnome = this.multiDesktop.isGnomeAvailable();
             const xinput = this.multiDesktop.hasXinput();
             const current = this.multiDesktop.getCurrentDesktop();
-            console.log(`    ${ws >= 0 ? this.colorize(GREEN, '✓') : this.colorize(YELLOW, '○')} Multi-desktop: ${ws >= 0 ? `AI on workspace ${ws}` : 'not initialized'} ${gnome ? '(GNOME)' : '(simulated)'}`);
+            const wsActive = ws === 'active';
+            console.log(`    ${wsActive ? this.colorize(GREEN, '✓') : this.colorize(YELLOW, '○')} Multi-desktop: ${wsActive ? `AI on workspace ${current}` : 'not initialized'} ${gnome ? '(GNOME)' : '(simulated)'}`);
             console.log(`    ${xinput ? this.colorize(GREEN, '✓') : this.colorize(GRAY, '○')} Xinput: ${xinput ? 'available' : 'not available'}`);
             if (gnome)
-                console.log(`    ${this.colorize(GRAY, '  Current desktop:')} ${current}${current === ws ? this.colorize(CYAN, ' ← AI') : ''}`);
+                console.log(`    ${this.colorize(GRAY, '  Current desktop:')} ${current}${current === 'ai' ? this.colorize(CYAN, ' ← AI') : ''}`);
         }
         console.log('');
     }
@@ -257,21 +258,24 @@ export class CLI {
         const aiWs = this.multiDesktop.getAiWorkspace();
         console.log(this.colorize(BOLD, '  Desktop Status:'));
         console.log(`    ${this.colorize(GREEN, 'Workspaces:')} ${desktops.length}`);
-        for (const d of desktops) {
-            const marker = d.active ? this.colorize(CYAN, '→') : ' ';
-            const aiTag = d.isAiDesktop ? this.colorize(MAGENTA, ' [AI]') : '';
-            console.log(`      ${marker} ${d.name}${aiTag}${d.active ? this.colorize(GRAY, ' (active)') : ''}`);
+        for (const desktopId of desktops) {
+            const session = this.multiDesktop.getSession(desktopId);
+            if (!session)
+                continue;
+            const marker = session.isActive ? this.colorize(CYAN, '→') : ' ';
+            const aiTag = desktopId === 'ai' ? this.colorize(MAGENTA, ' [AI]') : '';
+            console.log(`      ${marker} ${session.name}${aiTag}${session.isActive ? this.colorize(GRAY, ' (active)') : ''}`);
         }
         console.log(`    ${this.colorize(GREEN, 'Virtual devices:')} ${devices.length}`);
         for (const d of devices) {
-            console.log(`      ${this.colorize(CYAN, '•')} ${d.name} (${d.type}) workspace:${d.workspace}`);
+            console.log(`      ${this.colorize(CYAN, '•')} ${d.name} (${d.type})`);
         }
         console.log(`    ${this.colorize(GREEN, 'Device bindings:')} ${bindings.length}`);
         for (const b of bindings) {
-            console.log(`      ${this.colorize(CYAN, '•')} ${b.physicalDeviceName} → workspace ${b.boundWorkspace}`);
+            console.log(`      ${this.colorize(CYAN, '•')} ${b.deviceId} → workspace ${b.desktopId} (${b.mode})`);
         }
         console.log(`    ${this.colorize(GREEN, 'Input isolation:')} ${this.multiDesktop.hasXinput() ? this.colorize(GREEN, 'xinput available') : this.colorize(GRAY, 'none')}`);
-        console.log(`    ${this.colorize(GREEN, 'AI workspace:')} ${aiWs >= 0 ? aiWs : this.colorize(GRAY, 'not initialized')}`);
+        console.log(`    ${this.colorize(GREEN, 'AI workspace:')} ${aiWs === 'active' ? this.colorize(GREEN, 'active') : this.colorize(GRAY, 'not initialized')}`);
         console.log('');
     }
     async startChat() {

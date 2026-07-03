@@ -1,4 +1,4 @@
-import { MultiDesktopManager } from '../plugins/multi-desktop.js';
+import { MultiDesktopManager } from './multi-desktop.js';
 export interface SystemAccessConfig {
     multiDesktop: boolean;
     multiMouse: boolean;
