@@ -75,10 +75,16 @@ export class FileSystemPlugin extends BasePlugin {
   }
 
   private resolvePath(relativePath: string): string {
-    if (path.isAbsolute(relativePath)) {
-      return relativePath;
+    const absoluteRoot = path.resolve(this.rootDir);
+    const fullPath = path.resolve(absoluteRoot, relativePath);
+
+    const relative = path.relative(absoluteRoot, fullPath);
+    if (relative.startsWith("..") || path.isAbsolute(relative)) {
+      throw new Error(
+        `Security Error: Path traversal detected for path: ${relativePath}`
+      );
     }
-    return path.resolve(this.rootDir, relativePath);
+    return fullPath;
   }
 
   override async onMessage(message: unknown): Promise<unknown> {
