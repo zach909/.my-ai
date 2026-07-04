@@ -92,13 +92,19 @@ export class MoERouter {
       const expertIdx = topKIndices[i];
       const expert = this.experts.get(expertIdx)!;
       const output = new Float32Array(this.config.outputDim);
-      for (let j = 0; j < this.config.outputDim; j++) {
-        let sum = expert.bias[j] || 0;
-        for (let k = 0; k < input.length; k++) {
-          sum += input[k] * (expert.weights[k * this.config.expertHiddenDim + j] || 0);
+
+      // Initialize with bias
+      output.set(expert.bias);
+
+      // Optimized matrix-vector multiplication with sequential memory access
+      for (let k = 0; k < input.length; k++) {
+        const inputVal = input[k];
+        const offset = k * this.config.expertHiddenDim;
+        for (let j = 0; j < this.config.outputDim; j++) {
+          output[j] += inputVal * expert.weights[offset + j];
         }
-        output[j] = sum;
       }
+
       expertOutputs.push(output);
       this.trackUtilization(expertIdx, routerWeights[i]);
     }
@@ -218,15 +224,22 @@ export class MoERouter {
   }
 
   private computeRouterScores(input: Float32Array): number[] {
-    const scores: number[] = [];
-    for (let e = 0; e < this.config.expertCount; e++) {
-      let score = this.routerBias[e] || 0;
-      for (let i = 0; i < input.length; i++) {
-        score += input[i] * (this.routerWeights[i * this.config.expertCount + e] || 0);
+    const expertCount = this.config.expertCount;
+    const scores = new Float64Array(expertCount);
+
+    // Initialize with router bias
+    scores.set(this.routerBias);
+
+    // Optimized router scoring with sequential memory access
+    for (let i = 0; i < input.length; i++) {
+      const inputVal = input[i];
+      const offset = i * expertCount;
+      for (let e = 0; e < expertCount; e++) {
+        scores[e] += inputVal * this.routerWeights[offset + e];
       }
-      scores.push(score);
     }
-    return scores;
+
+    return Array.from(scores);
   }
 
   private selectTopK(scores: number[]): number[] {
