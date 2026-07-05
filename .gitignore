@@ -1,5 +1,7 @@
 ```
 # Dependencies
+pennylane/
+pytorch/
 ollama/
 pennylane/
 
