@@ -99,6 +99,8 @@
     addMessage('user', msg);
     chatHistory.push({role: 'user', content: msg});
     input.value = '';
+    input.disabled = true;
+    sendBtn.disabled = true;
     addThinking();
     try {
       const res = await fetch('/api/chat', {
@@ -117,6 +119,10 @@
     } catch (e) {
       removeThinking();
       addMessage('error', 'Error: Unable to reach server');
+    } finally {
+      input.disabled = false;
+      sendBtn.disabled = false;
+      input.focus();
     }
   }
 

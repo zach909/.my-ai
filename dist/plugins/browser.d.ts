@@ -33,5 +33,6 @@ export declare class BrowserPlugin extends BasePlugin {
     getCurrentUrl(): string;
     clearHistory(): Promise<void>;
     clearBookmarks(): Promise<void>;
+    private isPrivateHost;
     onMessage(message: unknown): Promise<unknown>;
 }

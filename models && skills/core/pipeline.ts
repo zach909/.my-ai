@@ -13,6 +13,14 @@ export interface PipelineConfig {
   hiddenDim: number;
   meshNodes: number;
   hyperDimensions: number;
+  /**
+   * Directory for the zip-loop's periodic disk checkpoints. When set, the
+   * ring buffer's context survives past its own live window (and past
+   * process restarts) by reloading the last checkpoint on startup. Omit to
+   * keep the loop purely in-memory (checkpoints still get a tmpdir path but
+   * are never auto-restored).
+   */
+  zipPersistDir?: string;
 }
 
 export interface PipelineStep {
@@ -152,7 +160,22 @@ export class NeuroPipeline {
 
     this.quantumNet = new QuantumNeuralNet();
 
-    this.zipIO = new ZipIOSystem(50000); // 50k chunks for massive context loop
+    // 50k chunks for the ring buffer's live window; when zipPersistDir is
+    // set, periodic checkpoints there let context survive past that window
+    // (and past process restarts) — restored below before the first run.
+    this.zipIO = new ZipIOSystem(50000, this.config.zipPersistDir);
+  }
+
+  /**
+   * Reload the zip-loop's last disk checkpoint, if zipPersistDir is
+   * configured and a checkpoint exists. Call once after construction/reset
+   * and before the first run() to pick up context from a prior process.
+   */
+  async restorePersistedState(): Promise<void> {
+    this.ensureSubsystems();
+    if (this.config.zipPersistDir) {
+      await this.zipIO!.restore();
+    }
   }
 
   /**

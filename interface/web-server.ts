@@ -94,6 +94,8 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     addMessage('user', msg);
     chatHistory.push({role: 'user', content: msg});
     input.value = '';
+    input.disabled = true;
+    sendBtn.disabled = true;
     addThinking();
     try {
       const res = await fetch('/api/chat', {
@@ -108,6 +110,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
         chatHistory.push({role: 'assistant', content: data.response});
       } else if (data.error) { addMessage('error', 'Error: ' + data.error); }
     } catch { removeThinking(); addMessage('error', 'Error: Unable to reach server'); }
+    finally {
+      input.disabled = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
   }
   sendBtn.addEventListener('click', () => sendMessage(input.value));
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value); });
@@ -133,7 +140,8 @@ export class WebServer {
     await this.runner.start();
     return new Promise<void>((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
-      this.server.listen(port, () => resolve());
+      // Security: Bind to localhost only to prevent external access to the AI's capabilities
+      this.server.listen(port, '127.0.0.1', () => resolve());
       this.server.on('error', (err: Error) => { this.server = null; reject(err); });
     });
   }
@@ -148,7 +156,7 @@ export class WebServer {
   getPort(): number { return this.port; }
 
   private setCorsHeaders(res: http.ServerResponse): void {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // Security: Restricted CORS to prevent cross-origin attacks on local AI endpoints
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   }

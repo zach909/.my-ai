@@ -52,12 +52,16 @@ export class MoERouter {
             const expertIdx = topKIndices[i];
             const expert = this.experts.get(expertIdx);
             const output = new Float32Array(this.config.outputDim);
-            for (let j = 0; j < this.config.outputDim; j++) {
-                let sum = expert.bias[j] || 0;
-                for (let k = 0; k < input.length; k++) {
-                    sum += input[k] * (expert.weights[k * this.config.expertHiddenDim + j] || 0);
+            // Optimization: Using bias directly and swapping loops for row-major access
+            output.set(expert.bias);
+            const weights = expert.weights;
+            const hiddenDim = this.config.expertHiddenDim;
+            for (let k = 0; k < input.length; k++) {
+                const inputVal = input[k];
+                const weightOffset = k * hiddenDim;
+                for (let j = 0; j < hiddenDim; j++) {
+                    output[j] += inputVal * weights[weightOffset + j];
                 }
-                output[j] = sum;
             }
             expertOutputs.push(output);
             this.trackUtilization(expertIdx, routerWeights[i]);
@@ -164,15 +168,18 @@ export class MoERouter {
         return Array.from(this.experts.keys());
     }
     computeRouterScores(input) {
-        const scores = [];
-        for (let e = 0; e < this.config.expertCount; e++) {
-            let score = this.routerBias[e] || 0;
-            for (let i = 0; i < input.length; i++) {
-                score += input[i] * (this.routerWeights[i * this.config.expertCount + e] || 0);
+        const scores = new Float32Array(this.config.expertCount);
+        scores.set(this.routerBias);
+        const weights = this.routerWeights;
+        const expertCount = this.config.expertCount;
+        for (let i = 0; i < input.length; i++) {
+            const inputVal = input[i];
+            const weightOffset = i * expertCount;
+            for (let e = 0; e < expertCount; e++) {
+                scores[e] += inputVal * weights[weightOffset + e];
             }
-            scores.push(score);
         }
-        return scores;
+        return Array.from(scores);
     }
     selectTopK(scores) {
         const indexed = scores.map((s, i) => ({ score: s, index: i }));
