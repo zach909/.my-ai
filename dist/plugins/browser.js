@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import dns from 'node:dns/promises';
 import { URL } from 'node:url';
 import { BasePlugin } from "../plugin_manager/sdk.js";
 export class BrowserPlugin extends BasePlugin {
@@ -58,6 +59,27 @@ export class BrowserPlugin extends BasePlugin {
     }
     async fetchUrl(urlStr) {
         const url = new URL(urlStr);
+        // Security Check: Prevent SSRF by blocking private/local addresses
+        const hostname = url.hostname.toLowerCase();
+        // 1. Check hostname string
+        if (this.isPrivateHost(hostname)) {
+            throw new Error(`Security Error: Access to private/local host "${hostname}" is forbidden.`);
+        }
+        // 2. DNS resolution check to prevent DNS Rebinding
+        try {
+            // dns.lookup doesn't like brackets for IPv6 literals
+            const dnsHostname = url.hostname.replace(/^\[|\]$/g, "");
+            const lookup = await dns.lookup(dnsHostname);
+            if (this.isPrivateHost(lookup.address)) {
+                throw new Error(`Security Error: Access to private/local address "${lookup.address}" is forbidden.`);
+            }
+        }
+        catch (err) {
+            // If DNS lookup fails, it's likely an invalid host, but we let the client handle it.
+            // However, if we want to be strict, we could block it.
+            if (err instanceof Error && err.message.includes('Security Error'))
+                throw err;
+        }
         const client = url.protocol === 'https:' ? https : http;
         return new Promise((resolve, reject) => {
             const req = client.get(urlStr, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0 (Neuroclaw)' } }, (res) => {
@@ -112,6 +134,42 @@ export class BrowserPlugin extends BasePlugin {
     }
     async clearBookmarks() {
         this.bookmarks = [];
+    }
+    isPrivateHost(hostname) {
+        // Exact matches for common local hosts
+        // Note: url.hostname for [::1] returns "[::1]", but dns.lookup returns "::1"
+        const host = hostname.replace(/^\[|\]$/g, "");
+        if (host === "localhost" ||
+            host === "127.0.0.1" ||
+            host === "::1" ||
+            host === "0.0.0.0" ||
+            host === "::") {
+            return true;
+        }
+        // IPv4 private ranges
+        const ipv4Regex = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/;
+        const match = host.match(ipv4Regex);
+        if (match) {
+            const a = Number(match[1]);
+            const b = Number(match[2]);
+            if (a === 10)
+                return true; // 10.0.0.0/8
+            if (a === 127)
+                return true; // 127.0.0.0/8
+            if (a === 172 && b >= 16 && b <= 31)
+                return true; // 172.16.0.0/12
+            if (a === 192 && b === 168)
+                return true; // 192.168.0.0/16
+            if (a === 169 && b === 254)
+                return true; // 169.254.0.0/16 (Link-local)
+        }
+        // IPv6 private/link-local ranges
+        if (host.startsWith("fe8") ||
+            host.startsWith("fc") ||
+            host.startsWith("fd")) {
+            return true;
+        }
+        return false;
     }
     async onMessage(message) {
         const input = String(message).trim();
