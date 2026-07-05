@@ -120,7 +120,8 @@ export class WebServer {
         await this.runner.start();
         return new Promise((resolve, reject) => {
             this.server = http.createServer((req, res) => this.handleRequest(req, res));
-            this.server.listen(port, () => resolve());
+            // Security: Bind to localhost only to prevent external access to the AI's capabilities
+            this.server.listen(port, '127.0.0.1', () => resolve());
             this.server.on('error', (err) => { this.server = null; reject(err); });
         });
     }
@@ -133,7 +134,7 @@ export class WebServer {
     }
     getPort() { return this.port; }
     setCorsHeaders(res) {
-        res.setHeader('Access-Control-Allow-Origin', '*');
+        // Security: Restricted CORS to prevent cross-origin attacks on local AI endpoints
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     }
