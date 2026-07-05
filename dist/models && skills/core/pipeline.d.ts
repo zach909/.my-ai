@@ -4,6 +4,14 @@ export interface PipelineConfig {
     hiddenDim: number;
     meshNodes: number;
     hyperDimensions: number;
+    /**
+     * Directory for the zip-loop's periodic disk checkpoints. When set, the
+     * ring buffer's context survives past its own live window (and past
+     * process restarts) by reloading the last checkpoint on startup. Omit to
+     * keep the loop purely in-memory (checkpoints still get a tmpdir path but
+     * are never auto-restored).
+     */
+    zipPersistDir?: string;
 }
 export interface PipelineStep {
     name: string;
@@ -33,6 +41,12 @@ export declare class NeuroPipeline {
     private runHistory;
     constructor(config?: Partial<PipelineConfig>);
     private ensureSubsystems;
+    /**
+     * Reload the zip-loop's last disk checkpoint, if zipPersistDir is
+     * configured and a checkpoint exists. Call once after construction/reset
+     * and before the first run() to pick up context from a prior process.
+     */
+    restorePersistedState(): Promise<void>;
     /**
      * Elastic value budget → per-neuron learning rates (Section 1.3 / audit
      * item 1). Higher value points → lower learning rate (stable, "locked in"

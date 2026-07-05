@@ -106,7 +106,21 @@ export class NeuroPipeline {
             thinkSteps: 3,
         });
         this.quantumNet = new QuantumNeuralNet();
-        this.zipIO = new ZipIOSystem(50000); // 50k chunks for massive context loop
+        // 50k chunks for the ring buffer's live window; when zipPersistDir is
+        // set, periodic checkpoints there let context survive past that window
+        // (and past process restarts) — restored below before the first run.
+        this.zipIO = new ZipIOSystem(50000, this.config.zipPersistDir);
+    }
+    /**
+     * Reload the zip-loop's last disk checkpoint, if zipPersistDir is
+     * configured and a checkpoint exists. Call once after construction/reset
+     * and before the first run() to pick up context from a prior process.
+     */
+    async restorePersistedState() {
+        this.ensureSubsystems();
+        if (this.config.zipPersistDir) {
+            await this.zipIO.restore();
+        }
     }
     /**
      * Elastic value budget → per-neuron learning rates (Section 1.3 / audit

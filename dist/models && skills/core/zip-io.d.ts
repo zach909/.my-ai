@@ -25,12 +25,29 @@ export declare class InfiniteZipLoop {
     private tail;
     private size;
     private diskSpillPath;
-    constructor(capacity?: number, useDiskSpill?: boolean);
+    private checkpointInterval;
+    private writesSinceCheckpoint;
+    constructor(capacity?: number, useDiskSpill?: boolean, checkpointInterval?: number, diskSpillPath?: string);
     /**
      * "Zip" an input: Compresses data and injects it into the circular loop.
      * If full, overwrites the oldest data (tail), moving the tail forward.
      */
     zipInput(data: string | Buffer): Promise<ZipChunk>;
+    /**
+     * Serialize the current window (oldest to newest, already-compressed
+     * chunks) to disk so it survives past the ring buffer's live window /
+     * process lifetime. Called automatically every `checkpointInterval`
+     * writes, and can be called directly for an on-demand snapshot.
+     */
+    snapshotToDisk(filePath?: string): Promise<string>;
+    /**
+     * Reload a previously snapshotted window from disk, replacing the current
+     * in-memory buffer. Chunks are replayed oldest-to-newest, preserving loop
+     * order; if the snapshot's capacity differs the buffer is resized to fit.
+     */
+    loadFromDisk(filePath?: string): Promise<void>;
+    /** Whether this loop has a disk checkpoint available to restore from. */
+    getDiskSpillPath(): string;
     /**
      * Unzip and retrieve a specific chunk by index (logical index, not physical).
      * Handles the circular wrap-around math.
@@ -63,7 +80,16 @@ export declare class InfiniteZipLoop {
 export declare class ZipIOSystem {
     inputLoop: InfiniteZipLoop;
     outputLoop: InfiniteZipLoop;
-    constructor(contextSize?: number);
+    private persistDir;
+    constructor(contextSize?: number, persistDir?: string, checkpointInterval?: number);
+    /** Snapshot both loops to disk immediately (in addition to their automatic periodic checkpoints). */
+    persist(): Promise<void>;
+    /**
+     * Reload both loops from their last disk checkpoint, restoring context
+     * beyond the ring buffer's live in-memory window (e.g. after a restart).
+     * No-ops per loop if no checkpoint file exists yet.
+     */
+    restore(): Promise<void>;
     ingest(input: string): Promise<void>;
     emit(output: string): Promise<void>;
     getFullContext(): AsyncGenerator<string>;
