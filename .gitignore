@@ -1,45 +1,5 @@
 ```
-# Build artifacts
-dist/
-build/
-*.o
-*.obj
-*.out
-
 # Dependencies
-node_modules/
-.venv/
-venv/
-__pycache__/
-*.egg-info/
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Environment
-.env
-.env.local
-*.env.*
-
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Distribution / packaging
-*.tar.gz
-*.zip
-*.gz
-
-# OS generated files
-.DS_Store
-Thumbs.db
+pennylane/
+pytorch/
 ```
