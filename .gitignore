@@ -1,45 +1,41 @@
 ```
-# Build artifacts
-dist/
-build/
-*.o
-*.obj
-*.out
-
 # Dependencies
-node_modules/
-.venv/
-venv/
-__pycache__/
-*.egg-info/
+ollama/
+pennylane/
+
+# Environment
+.env
+.env.local
+.env.*
 
 # Logs and temp files
 *.log
 *.tmp
 *.swp
 
-# Environment
-.env
-.env.local
-*.env.*
-
 # Editors
 .vscode/
 .idea/
-*.swp
-*.swo
 
-# Coverage
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+*.so
+.coverage
 coverage/
 htmlcov/
-.coverage
+.pytest_cache/
+.mypy_cache/
 
-# Distribution / packaging
-*.tar.gz
-*.zip
-*.gz
+# Build artifacts
+dist/
+build/
+*.egg-info/
 
-# OS generated files
+# System files
 .DS_Store
 Thumbs.db
 ```
