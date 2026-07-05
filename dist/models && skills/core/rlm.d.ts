@@ -12,6 +12,9 @@ export interface RLMConfig {
     targetUpdateFrequency: number;
     lookaheadSteps: number;
     loopDetectionWindow: number;
+    /** Quantization-aware training: forward pass reads quantized weights/bias. */
+    quantizationEnabled: boolean;
+    quantizationBits: number;
 }
 export interface Experience {
     state: Float32Array;
@@ -64,7 +67,22 @@ export declare class RLMTrainer {
     private episodeCount;
     private recentActions;
     private currentExplorationRate;
+    private quantizer;
+    private quantizedWeights;
+    private quantizedBias;
+    private weightResidual;
+    private biasResidual;
     constructor(config?: Record<string, any>);
+    /**
+     * Re-quantize the current full-precision weights/bias (plus carried-over
+     * residual from the last refresh) into the cache the forward pass reads.
+     * Called once per train() tick — not on every forward call — so the
+     * residual reflects genuine drift between ticks rather than compounding
+     * across repeated reads of an unchanged weight matrix.
+     */
+    private refreshQuantizedForward;
+    /** Mean absolute quantization residual currently carried for the weight matrix — a drift diagnostic. */
+    getQuantizationDrift(): number;
     selectAction(state: Float32Array, availableActions?: number[]): {
         action: number;
         thinkingSteps: number[];

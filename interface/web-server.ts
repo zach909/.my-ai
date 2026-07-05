@@ -28,6 +28,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   #send-btn { background: #003300; color: #00ff41; border: 1px solid #00ff41; padding: 10px 20px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 4px; }
   #send-btn:hover { background: #005500; }
   .thinking { color: #888; font-style: italic; font-size: 11px; align-self: flex-start; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
 </style>
 </head>
 <body>
@@ -35,8 +36,9 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   <h1><span id="status-dot" class="offline"></span>Neuroclaw v0.1.0</h1>
   <div id="status-text" style="font-size:12px;color:#555;">Starting...</div>
 </div>
-<div id="chat-container"></div>
+<div id="chat-container" role="log" aria-live="polite" aria-atomic="false"></div>
 <div id="input-area">
+  <label for="input" class="sr-only">Message</label>
   <input type="text" id="input" placeholder="Type a message..." autofocus>
   <button id="send-btn">Send</button>
 </div>
@@ -85,6 +87,8 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     addMessage('user', msg);
     chatHistory.push({role: 'user', content: msg});
     input.value = '';
+    input.disabled = true;
+    sendBtn.disabled = true;
     addThinking();
     try {
       const res = await fetch('/api/chat', {
@@ -99,6 +103,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
         chatHistory.push({role: 'assistant', content: data.response});
       } else if (data.error) { addMessage('error', 'Error: ' + data.error); }
     } catch { removeThinking(); addMessage('error', 'Error: Unable to reach server'); }
+    finally {
+      input.disabled = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
   }
   sendBtn.addEventListener('click', () => sendMessage(input.value));
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value); });
@@ -124,7 +133,8 @@ export class WebServer {
     await this.runner.start();
     return new Promise<void>((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
-      this.server.listen(port, () => resolve());
+      // Security: Bind to localhost only to prevent external access to the AI's capabilities
+      this.server.listen(port, '127.0.0.1', () => resolve());
       this.server.on('error', (err: Error) => { this.server = null; reject(err); });
     });
   }
@@ -139,7 +149,7 @@ export class WebServer {
   getPort(): number { return this.port; }
 
   private setCorsHeaders(res: http.ServerResponse): void {
-    res.setHeader('Access-Control-Allow-Origin', '*');
+    // Security: Restricted CORS to prevent cross-origin attacks on local AI endpoints
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
   }

@@ -12,6 +12,7 @@
  * - Supports massive context (theoretical 200,000 GB via streaming)
  */
 import { createGzip, createGunzip } from 'zlib';
+import { mkdir, writeFile, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
@@ -22,11 +23,18 @@ export class InfiniteZipLoop {
     tail = 0; // Next read position (oldest valid)
     size = 0; // Current number of items
     diskSpillPath = '';
-    constructor(capacity = 10000, useDiskSpill = true) {
+    // Long-term persistence beyond the ring buffer's live window: every
+    // `checkpointInterval` writes, the whole current window is snapshotted to
+    // disk so it can be reloaded after the process restarts, independent of
+    // whether any individual chunk has since been overwritten in-memory.
+    checkpointInterval;
+    writesSinceCheckpoint = 0;
+    constructor(capacity = 10000, useDiskSpill = true, checkpointInterval = 500, diskSpillPath) {
         this.capacity = capacity;
         this.buffer = new Array(capacity).fill(null);
+        this.checkpointInterval = checkpointInterval;
         if (useDiskSpill) {
-            this.diskSpillPath = join(tmpdir(), `prometheus-zip-${randomUUID()}`);
+            this.diskSpillPath = diskSpillPath ?? join(tmpdir(), `prometheus-zip-${randomUUID()}.json`);
         }
     }
     /**
@@ -55,7 +63,77 @@ export class InfiniteZipLoop {
         }
         this.buffer[this.head] = chunk;
         this.head = (this.head + 1) % this.capacity;
+        this.writesSinceCheckpoint++;
+        if (this.diskSpillPath && this.writesSinceCheckpoint >= this.checkpointInterval) {
+            this.writesSinceCheckpoint = 0;
+            // Fire-and-forget: a failed checkpoint should never block ingestion,
+            // the ring buffer itself is still the live source of truth.
+            this.snapshotToDisk().catch(err => {
+                console.error(`[ZipLoop] Checkpoint failed: ${err.message}`);
+            });
+        }
         return chunk;
+    }
+    /**
+     * Serialize the current window (oldest to newest, already-compressed
+     * chunks) to disk so it survives past the ring buffer's live window /
+     * process lifetime. Called automatically every `checkpointInterval`
+     * writes, and can be called directly for an on-demand snapshot.
+     */
+    async snapshotToDisk(filePath) {
+        const path = filePath ?? this.diskSpillPath;
+        if (!path)
+            throw new Error('No disk spill path configured for this loop');
+        const chunks = [];
+        for (let count = 0; count < this.size; count++) {
+            const physicalIndex = (this.tail + count) % this.capacity;
+            const chunk = this.buffer[physicalIndex];
+            if (chunk) {
+                chunks.push({
+                    id: chunk.id,
+                    timestamp: chunk.timestamp,
+                    data: chunk.data.toString('base64'),
+                    originalSize: chunk.originalSize,
+                    compressedSize: chunk.compressedSize,
+                });
+            }
+        }
+        await mkdir(join(path, '..'), { recursive: true });
+        await writeFile(path, JSON.stringify({ capacity: this.capacity, chunks }), 'utf-8');
+        return path;
+    }
+    /**
+     * Reload a previously snapshotted window from disk, replacing the current
+     * in-memory buffer. Chunks are replayed oldest-to-newest, preserving loop
+     * order; if the snapshot's capacity differs the buffer is resized to fit.
+     */
+    async loadFromDisk(filePath) {
+        const path = filePath ?? this.diskSpillPath;
+        if (!path)
+            throw new Error('No disk spill path configured for this loop');
+        const raw = await readFile(path, 'utf-8');
+        const parsed = JSON.parse(raw);
+        this.capacity = Math.max(parsed.capacity, parsed.chunks.length);
+        this.buffer = new Array(this.capacity).fill(null);
+        this.head = 0;
+        this.tail = 0;
+        this.size = 0;
+        for (const c of parsed.chunks) {
+            const chunk = {
+                id: c.id,
+                timestamp: c.timestamp,
+                data: Buffer.from(c.data, 'base64'),
+                originalSize: c.originalSize,
+                compressedSize: c.compressedSize,
+            };
+            this.buffer[this.head] = chunk;
+            this.head = (this.head + 1) % this.capacity;
+            this.size++;
+        }
+    }
+    /** Whether this loop has a disk checkpoint available to restore from. */
+    getDiskSpillPath() {
+        return this.diskSpillPath;
     }
     /**
      * Unzip and retrieve a specific chunk by index (logical index, not physical).
@@ -157,11 +235,28 @@ export class InfiniteZipLoop {
 export class ZipIOSystem {
     inputLoop;
     outputLoop;
-    constructor(contextSize = 50000) {
+    persistDir;
+    constructor(contextSize = 50000, persistDir, checkpointInterval = 500) {
+        this.persistDir = persistDir ?? null;
         // Input loop holds the context history
-        this.inputLoop = new InfiniteZipLoop(contextSize);
+        this.inputLoop = new InfiniteZipLoop(contextSize, true, checkpointInterval, this.persistDir ? join(this.persistDir, 'input-loop.json') : undefined);
         // Output loop holds the generated response stream
-        this.outputLoop = new InfiniteZipLoop(contextSize / 2);
+        this.outputLoop = new InfiniteZipLoop(Math.floor(contextSize / 2), true, checkpointInterval, this.persistDir ? join(this.persistDir, 'output-loop.json') : undefined);
+    }
+    /** Snapshot both loops to disk immediately (in addition to their automatic periodic checkpoints). */
+    async persist() {
+        await Promise.all([this.inputLoop.snapshotToDisk(), this.outputLoop.snapshotToDisk()]);
+    }
+    /**
+     * Reload both loops from their last disk checkpoint, restoring context
+     * beyond the ring buffer's live in-memory window (e.g. after a restart).
+     * No-ops per loop if no checkpoint file exists yet.
+     */
+    async restore() {
+        await Promise.all([
+            this.inputLoop.loadFromDisk().catch(() => undefined),
+            this.outputLoop.loadFromDisk().catch(() => undefined),
+        ]);
     }
     async ingest(input) {
         await this.inputLoop.zipInput(input);
