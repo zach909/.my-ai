@@ -207,9 +207,39 @@ export class MoERouter {
 
   removeExpert(expertId: number): boolean {
     if (!this.experts.has(expertId)) return false;
-    this.experts.delete(expertId);
-    this.utilization.delete(expertId);
-    this.config.expertCount = this.experts.size;
+
+    // The router indexes routerWeights as input[i] * routerWeights[i *
+    // expertCount + e] and selectTopK returns dense positions 0..expertCount-1,
+    // so experts must stay a contiguous 0..n-1 block. A bare delete would
+    // shrink expertCount while leaving routerWeights at the old width and the
+    // id space sparse, and the next forward() would index out of bounds.
+    // Rebuild everything densely, dropping the removed expert's router column
+    // and preserving each survivor's learned column.
+    const inputDim = this.config.inputDim;
+    const oldCount = this.routerBias.length;
+    const survivors = Array.from(this.experts.keys())
+      .filter(id => id !== expertId)
+      .sort((a, b) => a - b);
+
+    const newExperts = new Map<number, { weights: Float32Array; bias: Float32Array }>();
+    const newUtil = new Map<number, { calls: number; tokens: number; weightSum: number }>();
+    const newWeights = new Float32Array(inputDim * survivors.length);
+    const newBias = new Float32Array(survivors.length);
+
+    survivors.forEach((oldId, newId) => {
+      newExperts.set(newId, this.experts.get(oldId)!);
+      newUtil.set(newId, this.utilization.get(oldId) ?? { calls: 0, tokens: 0, weightSum: 0 });
+      newBias[newId] = this.routerBias[oldId] ?? 0;
+      for (let i = 0; i < inputDim; i++) {
+        newWeights[i * survivors.length + newId] = this.routerWeights[i * oldCount + oldId] ?? 0;
+      }
+    });
+
+    this.experts = newExperts;
+    this.utilization = newUtil;
+    this.routerWeights = newWeights;
+    this.routerBias = newBias;
+    this.config.expertCount = survivors.length;
     return true;
   }
 

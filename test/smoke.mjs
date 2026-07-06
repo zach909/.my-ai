@@ -43,6 +43,22 @@ async function testMoE() {
   for (let i = 0; i < 6; i++) withExperts.addExpert({ id: `p${i}`, name: `plugin${i}`, specialization: 'x' });
   const out = Array.from(withExperts.forward(embedding(32, 2), 0).output);
   check(out.length === 32 && allFinite(out), 'MoE routing stays finite after addExpert (NaN regression)');
+
+  // removeExpert must keep the dense (input x expert) invariant so the next
+  // forward() doesn't index out of bounds.
+  const rm = new MoERouter(cfg);
+  for (let i = 0; i < 4; i++) rm.addExpert({ id: `e${i}`, name: `e${i}`, specialization: 'x' });
+  const beforeCount = rm.getExpertCount();
+  rm.removeExpert(3); // delete a middle expert
+  let removeOk = true;
+  try {
+    const o = Array.from(rm.forward(embedding(32, 3), 0).output);
+    removeOk = o.length === 32 && allFinite(o) && rm.getExpertCount() === beforeCount - 1;
+    rm.addExpert({ id: 'again', name: 'again', specialization: 'x' });
+    const o2 = Array.from(rm.forward(embedding(32, 4), 0).output);
+    removeOk = removeOk && allFinite(o2);
+  } catch { removeOk = false; }
+  check(removeOk, 'MoE forward works after removeExpert and remove+add (out-of-bounds regression)');
 }
 
 async function testPipeline() {
