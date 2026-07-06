@@ -175,6 +175,12 @@ async function testBootstrap() {
   const { bootstrap } = await load('interface/main.js');
   const cli = await bootstrap();
   check(cli && typeof cli.startInteractive === 'function', 'App bootstrap wires a startable CLI');
+
+  // Bootstrap must populate the plugin/skill catalog, not launch empty.
+  const { PluginRegistry } = await load('plugin_manager/registry.js');
+  const reg = new PluginRegistry();
+  await reg.bootstrap();
+  check(reg.getPluginCount() > 0, `App bootstrap registers a plugin catalog (${reg.getPluginCount()} plugins)`);
 }
 
 async function main() {

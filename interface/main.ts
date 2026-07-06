@@ -20,6 +20,9 @@ export async function bootstrap(): Promise<CLI> {
   const pipeline = new NeuroPipeline();
   const thesaurus = new ThesaurusDictionary();
   const pluginRegistry = new PluginRegistry();
+  // Populate the plugin/skill catalog so the app launches with its real
+  // registry (the `plugins` command and status counts) instead of an empty one.
+  await pluginRegistry.bootstrap();
   const systemAccess = new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
 
   return new CLI(
