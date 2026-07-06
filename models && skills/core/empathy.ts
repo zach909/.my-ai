@@ -268,6 +268,28 @@ export class EmpathyEngine {
   }
 
   /**
+   * Section 3 alignment veto: returns true when the proposed action should
+   * be blocked because the model's alignment with the user is too low.
+   *
+   * Drift fails safe: when we can't be confident the action matches the
+   * idealized user's preferences, we block it rather than guess.
+   *
+   * @param actionId  The RLM action index (or any numeric action id)
+   * @param confidence  How confident the model is in this action (0-1).
+   *                    Low confidence + low alignment = hard veto.
+   */
+  shouldVeto(actionId: number, confidence: number = 0.5): boolean {
+    const alignmentOk = this.userContext.alignmentScore >= this.config.alignmentThreshold;
+    // Always allow if well-aligned.
+    if (alignmentOk) return false;
+    // Veto if confidence is also low (double uncertainty).
+    if (confidence < 0.5) return true;
+    // If somewhat confident but alignment is low, veto only "high-impact"
+    // actions (indices ≥ 5 are conventionally the more significant actions).
+    return actionId >= 5;
+  }
+
+  /**
    * Reset empathy engine state
    */
   reset(): void {

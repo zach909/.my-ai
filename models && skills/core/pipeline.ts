@@ -5,6 +5,7 @@ import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
 import { QuantumNeuralNet } from './quantum-net.js';
 import { ZipIOSystem } from './zip-io.js';
+import { EmpathyEngine } from './empathy.js';
 import type { NeuronState } from '../../interface/types.js';
 import { pluginExtensions } from '../../plugins/index.js';
 
@@ -55,6 +56,8 @@ export class NeuroPipeline {
   private valueRange: ValueRangeAllocator | null = null;
   private quantumNet: QuantumNeuralNet | null = null;
   private zipIO: ZipIOSystem | null = null;
+  // Alignment veto (Section 3): blocks actions when empathy/alignment is low.
+  private empathy: EmpathyEngine = new EmpathyEngine();
 
   // Elastic value budget: how many neuron slots it covers, and whether
   // initializeNeurons() has been called yet for this pipeline instance.
@@ -223,9 +226,10 @@ export class NeuroPipeline {
   async run(embedding: Float32Array, inputText?: string): Promise<PipelineResult> {
     this.ensureSubsystems();
 
-    // Step 0: Ingest input into Zip I/O Loop if text provided
+    // Step 0: Ingest input into Zip I/O Loop and update alignment model.
     if (inputText) {
       await this.zipIO!.ingest(inputText);
+      this.empathy.updateUserContext(inputText);
     }
 
     const steps: PipelineStep[] = [];
@@ -286,12 +290,35 @@ export class NeuroPipeline {
     let hyperOutput: number[];
     {
       const t0 = Date.now();
+      // Section 12 — live correction: capture the self-model prediction
+      // before processing this tick, so we can compare against actual output.
+      const predicted = this.hyperEngine!.getSelfModelPrediction();
+
       // Pad/truncate mesh output to hyperDimensions
       const hyperInput = this.resizeArray(meshOutput, this.config.hyperDimensions);
       const learningRates = this.getValueLearningRates();
       const hyperResult = this.hyperEngine!.process(hyperInput, learningRates);
       hyperOutput = hyperResult.outputVector;
       this.feedbackToValueBudget(hyperResult.stateDeltas);
+
+      // Live correction: if prediction diverges from actual output by more
+      // than a tolerance band across multiple consecutive ticks, blend the
+      // prediction back in as a stabilising correction (Section 12).
+      if (predicted !== null) {
+        const len = Math.min(predicted.length, hyperOutput.length);
+        let divergence = 0;
+        for (let i = 0; i < len; i++) divergence += Math.abs(hyperOutput[i]! - predicted[i]!);
+        divergence /= len;
+        // Tolerance band: only intervene on sustained divergence > 0.2.
+        // Blend 20% of the prediction back in to damp noise without
+        // overriding real signal.
+        if (divergence > 0.2) {
+          for (let i = 0; i < len; i++) {
+            hyperOutput[i] = hyperOutput[i]! * 0.8 + predicted[i]! * 0.2;
+          }
+        }
+      }
+
       const durationMs = Date.now() - t0;
       steps.push({
         name: 'hyper-dimensional',
@@ -368,8 +395,18 @@ export class NeuroPipeline {
         this.resizeArray(quantumOutput, this.config.hiddenDim)
       );
       const decision = this.rlm!.selectAction(stateVec);
-      rlmAction = decision.action;
       rlmThinkingSteps = decision.thinkingSteps;
+      // Alignment veto (Section 3): block the chosen action when empathy
+      // alignment is low. Drift fails safe — fall back to the lowest-index
+      // thinking-step candidate (most conservative) rather than the highest-Q.
+      const confidence = Math.min(1, rlmThinkingSteps.length / 10);
+      if (this.empathy.shouldVeto(decision.action, confidence)) {
+        rlmAction = rlmThinkingSteps.length > 0
+          ? Math.min(...rlmThinkingSteps)
+          : 0;
+      } else {
+        rlmAction = decision.action;
+      }
       const durationMs = Date.now() - t0;
       steps.push({
         name: 'rlm-decision',

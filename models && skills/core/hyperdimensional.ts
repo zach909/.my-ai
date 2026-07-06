@@ -51,6 +51,10 @@ export class HyperDimensionalEngine {
   private seenPatterns: Map<string, SeenPattern>;
   private history: StateTransition[];
   private iteration: number = 0;
+  // Self-model: last output vector used as next-tick prediction.
+  // |prediction - actual| is the divergence (meta-awareness / surprise) signal
+  // that dynamically adjusts influenceDecay.
+  private selfModelPrediction: number[] | null = null;
 
   constructor(config: Record<string, any> = {}) {
     this.config = {
@@ -124,6 +128,22 @@ export class HyperDimensionalEngine {
     const patternHash = this.hashVector(outputVector);
     const noveltyScore = this.computeNoveltyScore(patternHash);
 
+    // Self-model meta-awareness: measure surprise = |prediction − actual|.
+    // High divergence → less stable → reduce influenceDecay (more plastic).
+    // Low divergence → stable → nudge influenceDecay back toward 0.95.
+    if (this.selfModelPrediction !== null) {
+      const pred = this.selfModelPrediction;
+      const len = Math.min(pred.length, outputVector.length);
+      let divergence = 0;
+      for (let d = 0; d < len; d++) divergence += Math.abs(pred[d] - outputVector[d]);
+      divergence /= len;
+      // Clamp divergence to [0,1], use it to steer influenceDecay
+      const d01 = Math.min(1, divergence);
+      this.config.influenceDecay = this.config.influenceDecay * 0.95 + (1 - d01) * 0.95 * 0.05;
+      this.config.influenceDecay = Math.max(0.5, Math.min(0.99, this.config.influenceDecay));
+    }
+    this.selfModelPrediction = outputVector;
+
     this.recordPattern(patternHash, noveltyScore);
     this.history.push(...resolvedTransitions);
     this.iteration++;
@@ -164,6 +184,33 @@ export class HyperDimensionalEngine {
     return this.neurons.map(n => ({ ...n, state: [...n.state] }));
   }
 
+  /**
+   * Section 12 — live correction: return the self-model's predicted output
+   * vector so the pipeline can compare it to the actual output after each
+   * propagation step. Null on the very first tick (no prior output to predict from).
+   */
+  getSelfModelPrediction(): number[] | null {
+    return this.selfModelPrediction ? [...this.selfModelPrediction] : null;
+  }
+
+  /**
+   * Section 7 — expose the current settled state S as a flat matrix
+   * (neurons × dimensions) in row-major Float32Array order.
+   * Reused by self-reading (Section 3), quantization (Section 5), and the
+   * alignment veto (Section 3 alignment). The shape is [neuronCount, dimensions].
+   */
+  getStateMatrix(): { data: Float32Array; neuronCount: number; dimensions: number } {
+    const { neuronCount, dimensions } = this.config;
+    const data = new Float32Array(neuronCount * dimensions);
+    for (let i = 0; i < this.neurons.length; i++) {
+      const state = this.neurons[i]!.state;
+      for (let d = 0; d < dimensions; d++) {
+        data[i * dimensions + d] = state[d] ?? 0;
+      }
+    }
+    return { data, neuronCount, dimensions };
+  }
+
   private initializeNeurons(): void {
     for (let i = 0; i < this.config.neuronCount; i++) {
       const state: number[] = [];
@@ -202,7 +249,7 @@ export class HyperDimensionalEngine {
         similarity /= this.config.dimensions;
 
         const influence = similarity * this.config.crossInfluenceStrength;
-        const decayedInfluence = influence * Math.pow(this.config.influenceDecay, this.iteration);
+        const decayedInfluence = influence * this.config.influenceDecay;
 
         for (let d = 0; d < this.config.dimensions; d++) {
           const peerInfluence = nj.state[d] * decayedInfluence;

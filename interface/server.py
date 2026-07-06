@@ -1,11 +1,61 @@
 from __future__ import annotations
-import json, os, sys, time, subprocess, threading, urllib.parse, traceback
+import json, os, sys, time, subprocess, threading, urllib.parse, traceback, io
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_PY_STACK = os.path.join(_ROOT, "model && skills manager")
 
 _llm_process = None
+_py_runtime = None   # lazy Python NeuroRuntime instance
+
+
+def _get_py_runtime():
+    """Lazy-load the Python NeuroRuntime so startup stays fast."""
+    global _py_runtime
+    if _py_runtime is not None:
+        return _py_runtime
+    try:
+        if _PY_STACK not in sys.path:
+            sys.path.insert(0, _PY_STACK)
+        from main import NeuroRuntime  # type: ignore
+        _py_runtime = NeuroRuntime(dims=3)
+        return _py_runtime
+    except Exception as e:
+        print(f"[server] Python runtime unavailable: {e}")
+        return None
+
+
+def _python_chat(query: str) -> dict:
+    """
+    Fall through to the Python NeuroRuntime when the TS backend is down.
+    Encodes the query as an input neuron, runs 5 ticks, returns output state.
+    This collapses the Python/TS duplication: same neural semantics, different stack.
+    """
+    rt = _get_py_runtime()
+    if rt is None:
+        return {"response": f"Processed: {query[:80]}", "stack": "fallback", "ms": 0}
+
+    t0 = time.time()
+    try:
+        # Build a minimal query network: one input neuron, one output neuron.
+        rt.declare("input")
+        rt.declare("output")
+        # Encode query length as the input signal (crude but deterministic).
+        qlen = len(query)
+        rt.inject_input("input", [qlen / 512.0, float(qlen % 16) / 16.0, 0.5])
+        results = rt.run(5)
+        out_state = rt.neurons.get("output")
+        state_vec = out_state.state if out_state else [0.0, 0.0, 0.0]
+        ms = round((time.time() - t0) * 1000)
+        return {
+            "response": f"[Python stack] Neural output: [{', '.join(f'{v:.3f}' for v in state_vec)}] for '{query[:50]}'",
+            "stack": "python-neurolang",
+            "state": state_vec,
+            "ms": ms,
+        }
+    except Exception as e:
+        return {"response": f"Python runtime error: {e}", "stack": "python-error", "ms": 0}
 
 def _start_ts_backend():
     global _llm_process
@@ -61,18 +111,42 @@ class NeuroClaw(BaseHTTPRequestHandler):
                 data = json.loads(resp.read())
                 conn.close()
                 self._json(data)
+            except Exception:
+                # TS backend down: fall through to Python neural runtime.
+                self._json(_python_chat(query))
+        elif path == "/api/neurolang":
+            # Direct access to the Python NeuroLang interpreter.
+            # POST body: {"source": "<.nl program source>"}
+            source = body.get("source", "").strip()
+            if not source:
+                self._json({"error": "empty source"})
+                return
+            t0 = time.time()
+            try:
+                if _PY_STACK not in sys.path:
+                    sys.path.insert(0, _PY_STACK)
+                from main import NeuroRuntime, interpret  # type: ignore
+                # Capture stdout from the interpreter (show/print commands).
+                buf = io.StringIO()
+                old_stdout = sys.stdout
+                sys.stdout = buf
+                try:
+                    rt = interpret(source)
+                finally:
+                    sys.stdout = old_stdout
+                output = buf.getvalue()
+                neurons = {
+                    name: {"state": n.state, "vale": n.vale, "dims": n.dims}
+                    for name, n in rt.neurons.items()
+                }
+                self._json({
+                    "neurons": neurons,
+                    "ticks": rt.tick,
+                    "output": output,
+                    "ms": round((time.time() - t0) * 1000),
+                })
             except Exception as e:
-                t0 = time.time()
-                lower = query.lower()
-                if "hello" in lower:
-                    response = "Hello. I am Neuroclaw, an autonomous AI running on your machine."
-                elif "what are you" in lower or "who are you" in lower:
-                    response = "I am Neuroclaw, built with Background Quantization for efficiency, Foreground MoE for specialized processing, hyper-dimensional thinking for infinite context, and RLM for reinforcement learning through possibilities."
-                elif "how" in lower and "work" in lower:
-                    response = "My architecture: 1) Background Quantizer - compresses memory via value ranges, 2) MoE Router - routes tasks to expert sub-networks, 3) Neuron Mesh - fully-connected propagation, 4) Hyper-Dimensional Engine - multi-ball state neurons for pattern detection, 5) RLM Trainer - reinforcement learning for thinking through possibilities, 6) THORNS - intent analysis and reasoning."
-                else:
-                    response = f"I processed your input. My neural pipeline analyzed the intent and is ready to assist. Context: '{query[:50]}'"
-                self._json({"response": response, "ms": round((time.time() - t0) * 1000)})
+                self._json({"error": str(e), "ms": round((time.time() - t0) * 1000)})
         else:
             self.send_error(404, "Not found")
 
