@@ -150,31 +150,10 @@ export class MoERouter {
   addExpert(weights: Float32Array, bias: Float32Array): number;
   addExpert(config: { id: string; name: string; specialization: string }): number;
   addExpert(first: Float32Array | { id: string; name: string; specialization: string }, bias?: Float32Array): number {
+    const expertId = this.experts.size;
     if (first instanceof Float32Array) {
-      const expertId = this.experts.size;
       this.experts.set(expertId, { weights: first, bias: bias || new Float32Array(0) });
-      this.utilization.set(expertId, { calls: 0, tokens: 0, weightSum: 0 });
-
-      const newRouterWeights = new Float32Array(this.config.inputDim * (this.experts.size));
-      for (let i = 0; i < this.routerWeights.length; i++) {
-        newRouterWeights[i] = this.routerWeights[i];
-      }
-      const scale = Math.sqrt(2.0 / this.config.inputDim);
-      for (let i = this.routerWeights.length; i < newRouterWeights.length; i++) {
-        newRouterWeights[i] = (Math.random() * 2 - 1) * scale;
-      }
-      this.routerWeights = newRouterWeights;
-
-      const newBias = new Float32Array(this.experts.size);
-      for (let i = 0; i < this.routerBias.length; i++) {
-        newBias[i] = this.routerBias[i];
-      }
-      this.routerBias = newBias;
-
-      this.config.expertCount = this.experts.size;
-      return expertId;
     } else {
-      const expertId = this.experts.size;
       const dim = this.config.expertHiddenDim || 128;
       const weights = new Float32Array(this.config.inputDim * dim);
       const scale = Math.sqrt(2.0 / this.config.inputDim);
@@ -182,10 +161,48 @@ export class MoERouter {
         weights[i] = (Math.random() * 2 - 1) * scale;
       }
       this.experts.set(expertId, { weights, bias: new Float32Array(dim) });
-      this.utilization.set(expertId, { calls: 0, tokens: 0, weightSum: 0 });
-      this.config.expertCount = this.experts.size;
-      return expertId;
     }
+    this.utilization.set(expertId, { calls: 0, tokens: 0, weightSum: 0 });
+    this.growRouterCapacity();
+    return expertId;
+  }
+
+  /**
+   * Grow routerWeights/routerBias to cover every expert currently registered.
+   * Both addExpert overloads must call this: the router-scoring loop indexes
+   * routerWeights as `input[i] * routerWeights[i * expertCount + e]`, so a
+   * bumped expertCount without a resized routerWeights reads past the end of
+   * the array (undefined -> NaN, which then poisons the whole pipeline).
+   * The old flat-copy grow also silently scrambled the row-major
+   * (inputDim x expertCount) layout whenever expertCount changed; this
+   * rebuild copies element-by-element in (input, expert) coordinates so
+   * existing experts keep their learned router weights.
+   */
+  private growRouterCapacity(): void {
+    const inputDim = this.config.inputDim;
+    const oldCount = this.routerBias.length;
+    const newCount = this.experts.size;
+    if (newCount <= oldCount) {
+      this.config.expertCount = newCount;
+      return;
+    }
+
+    const scale = Math.sqrt(2.0 / inputDim);
+    const newWeights = new Float32Array(inputDim * newCount);
+    for (let i = 0; i < inputDim; i++) {
+      for (let e = 0; e < newCount; e++) {
+        newWeights[i * newCount + e] = e < oldCount
+          ? this.routerWeights[i * oldCount + e]
+          : (Math.random() * 2 - 1) * scale;
+      }
+    }
+    this.routerWeights = newWeights;
+
+    const newBias = new Float32Array(newCount);
+    newBias.set(this.routerBias);
+    this.routerBias = newBias;
+
+    this.config.expertCount = newCount;
   }
 
   removeExpert(expertId: number): boolean {
