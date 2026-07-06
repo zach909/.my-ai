@@ -104,11 +104,11 @@ class NeuroClaw(BaseHTTPRequestHandler):
         self.wfile.write(payload)
 
     def _cors(self) -> None:
-        self.send_header("Access-Control-Allow-Origin", "*")
+        # Security: Restricted CORS to prevent cross-origin attacks on local AI endpoints
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
 
-def run(host: str = "0.0.0.0", port: int = 7860) -> None:
+def run(host: str = "127.0.0.1", port: int = 7860) -> None:
     print(f"Neuroclaw initialising systems...")
     _start_ts_backend()
     print(f"Neuroclaw ready on http://{host}:{port}")

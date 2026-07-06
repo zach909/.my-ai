@@ -11,3 +11,8 @@
 **Vulnerability:** The `BrowserPlugin.fetchUrl` method allowed fetching from any URL, including `localhost` and other private IP ranges. This could be used to access internal services or cloud metadata endpoints.
 **Learning:** Checking only the hostname string in a URL is insufficient to prevent SSRF because of DNS Rebinding. An attacker-controlled domain can resolve to a local IP address after the initial string check.
 **Prevention:** Perform a dual check: 1) Validate the hostname string to catch immediate local/private references. 2) Resolve the hostname using `dns.lookup` and validate the resulting IP address against private/local ranges before initiating the network request.
+
+## 2026-07-06 - Insecure Web Server Configuration (Python wrapper)
+**Vulnerability:** The Python-based `server.py` wrapper was binding to `0.0.0.0` and using `Access-Control-Allow-Origin: *`.
+**Learning:** Hardening only the core TS service is insufficient if a proxy/wrapper server exists that re-exposes the endpoints insecurely.
+**Prevention:** Apply the same local-only binding and restrictive CORS policies to all entry points (wrappers, proxies, or main servers).
