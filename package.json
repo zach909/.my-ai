@@ -5,12 +5,12 @@
   "main": "dist/interface/runner.js",
   "type": "module",
   "bin": {
-    "prometheus": "./dist/interface/cli.js"
+    "prometheus": "./dist/interface/main.js"
   },
   "scripts": {
     "build": "tsc",
-    "start": "node dist/interface/runner.js",
-    "cli": "node dist/interface/cli.js",
+    "start": "node dist/interface/main.js",
+    "cli": "node dist/interface/main.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "keywords": [
