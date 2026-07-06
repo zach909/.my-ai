@@ -11,7 +11,7 @@
     "build": "tsc",
     "start": "node dist/interface/main.js",
     "cli": "node dist/interface/main.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "test": "tsc && node test/smoke.mjs"
   },
   "keywords": [
     "ai",
