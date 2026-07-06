@@ -119,6 +119,58 @@ async function testZipPersistence() {
   }
 }
 
+async function testProductionConfigAndEdges() {
+  const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
+  const p = new NeuroPipeline(); // default 768/512/32/64 production config
+  const r1 = await p.run(embedding(768, 1), 'production config');
+  check(r1.output.length === 768 && allFinite(r1.output), 'Pipeline finite at default production config');
+  const r2 = await p.run(embedding(768, 2), '');
+  check(allFinite(r2.output), 'Pipeline finite on empty input text');
+  const r3 = await p.run(embedding(768, 3), 'word '.repeat(5000));
+  check(allFinite(r3.output), 'Pipeline finite on very long input');
+  const r4 = await p.run(new Float32Array(768), 'zeros');
+  check(allFinite(r4.output), 'Pipeline finite on all-zero embedding');
+  const r5 = await p.run(embedding(768, 5));
+  check(allFinite(r5.output), 'Pipeline finite with no input-text arg');
+}
+
+async function testHyperdimensional() {
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const hd = new HyperDimensionalEngine({ dimensions: 8, neuronCount: 12 });
+  const a = hd.process(Array.from({ length: 8 }, (_, i) => Math.sin(i)));
+  check(allFinite(a.outputVector) && a.selfModelSurprise === 0, 'Hyper first tick finite, surprise=0');
+  const b = hd.process(Array.from({ length: 8 }, (_, i) => Math.cos(i)));
+  check(Number.isFinite(b.selfModelSurprise) && b.selfModelSurprise >= 0, 'Hyper self-model surprise finite and >= 0');
+  check(b.inputTopography instanceof Map && b.inputTopography.size === 12, 'Hyper reports per-neuron input topography');
+  hd.process(new Array(8).fill(0.5), undefined, new Set([0]));
+  check(typeof hd.isExclusiveInput(0.9).exclusive === 'boolean', 'Hyper isExclusiveInput returns a verdict');
+  const ctx = hd.getContextMatrix();
+  check(ctx.data.length === 12 * 9 && allFinite(ctx.data), 'Hyper getContextMatrix sized (neurons x totalDims) and finite');
+}
+
+async function testQuantum() {
+  const { QuantumNeuralNet } = await load('models && skills/core/quantum-net.js');
+  const q = new QuantumNeuralNet();
+  q.addNeuron('a', 0.3); q.addNeuron('b', -0.6);
+  q.createSuperposition('a', [0.3, 0.4, 0.2]); q.createSuperposition('b', [-0.6, -0.5, -0.7]);
+  check(Number.isFinite(q.interfere('a', 'b')), 'Quantum interfere() finite');
+  check(Number.isFinite(q.phaseConsensus(['a', 'b'])), 'Quantum phaseConsensus() finite');
+  q.evolvePhase('a', 0.1);
+  check(Number.isFinite(q.collapse('a')), 'Quantum collapse() finite after phase evolution');
+}
+
+async function testMeshStability() {
+  const { NeuronMesh } = await load('models && skills/core/mesh.js');
+  const mesh = new NeuronMesh({ nodeCount: 24, connectionDensity: 1.0, propagationSteps: 15, convergenceThreshold: 0.01, activationFn: 'tanh', learningRate: 0.01, initialConnectionWeight: 0.01, dampingFactor: 0.85, seed: 7 });
+  let ok = true;
+  for (let t = 0; t < 10; t++) {
+    const inputs = new Map();
+    for (let i = 0; i < 12; i++) inputs.set(i, Math.sin(i + t));
+    if (!allFinite(Array.from(mesh.propagate(inputs).finalStates.values()))) ok = false;
+  }
+  check(ok, 'Mesh stays finite/stable over 10 propagation cycles');
+}
+
 async function testBootstrap() {
   const { bootstrap } = await load('interface/main.js');
   const cli = await bootstrap();
@@ -131,6 +183,10 @@ async function main() {
     ['Pipeline', testPipeline],
     ['LLM generate', testLLM],
     ['RLM select', testRLM],
+    ['Production config & edges', testProductionConfigAndEdges],
+    ['Hyperdimensional', testHyperdimensional],
+    ['Quantum interference', testQuantum],
+    ['Mesh stability', testMeshStability],
     ['ZipIO persistence', testZipPersistence],
     ['App bootstrap', testBootstrap],
   ];
