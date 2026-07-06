@@ -108,33 +108,6 @@ export class ValueRangeAllocator {
   }
 
   /**
-   * Vale-lock: raise a neuron to near-maximum value points so it receives
-   * the minimum learning rate and is effectively frozen. Used by the
-   * ConstraintTrainer when a neuron's definishon contract is satisfied —
-   * "learn but don't forget" becomes a mechanical consequence of locking.
-   * Zero-sum: the acquired points are taken from all other neurons equally.
-   */
-  lockNeuron(id: string): void {
-    if (!this.allocations.has(id)) return;
-    const current = this.allocations.get(id)!;
-    // Target: 90% of totalPoints for this single neuron (near min learning rate).
-    const target = this.config.totalPoints * 0.9;
-    const gain = Math.max(0, target - current);
-    if (gain === 0) return;
-    this.allocations.set(id, current + gain);
-
-    // Take the gain from other neurons proportionally.
-    const otherIds = Array.from(this.allocations.keys()).filter(k => k !== id);
-    if (otherIds.length === 0) return;
-    const takeEach = gain / otherIds.length;
-    for (const otherId of otherIds) {
-      const val = this.allocations.get(otherId) ?? 0;
-      this.allocations.set(otherId, Math.max(0, val - takeEach));
-    }
-    this._normalise();
-  }
-
-  /**
    * Demotion: takes 50% of neuron's points and gives them to others equally.
    */
   demoteNeuron(id: string): void {

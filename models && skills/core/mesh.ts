@@ -23,12 +23,6 @@ export interface PropagationResult {
   converged: boolean;
   residual: number;
   nodeHistory: Map<number, number[]>;
-  /**
-   * Input-flag dimension (Section 3): 1.0 for each node that received
-   * external activation this tick, 0.0 for all others. Propagates through
-   * the mesh so every node can observe the full input topography.
-   */
-  inputFlags: Map<number, number>;
 }
 
 export interface MeshConfig {
@@ -44,30 +38,12 @@ export interface MeshConfig {
   learningRate: number;
   dampingFactor?: number;
   seed: number;
-  /**
-   * Section 8: per-connection dimension count. When > 1, each connection stores
-   * D per-dimension weights (diagonal of the D×D block) and each node gets a
-   * bias vector of length D. Use propagateMulti() with Float32Array inputs.
-   * Defaults to 1 (scalar, backward-compatible).
-   */
-  stateDim?: number;
-}
-
-export interface MultiPropagationResult {
-  states: Map<number, Float32Array>;
-  iterations: number;
-  converged: boolean;
 }
 
 export class NeuronMesh {
   private config: MeshConfig;
   private nodes: Map<number, NeuronNode>;
   private nextId: number = 0;
-  // Section 8: per-connection dimension weights (from-id → to-id → Float32Array(D)).
-  // Only populated when config.stateDim > 1.
-  private dimWeights: Map<number, Map<number, Float32Array>> = new Map();
-  // Per-node bias vectors for multi-dimensional propagation.
-  private biasVecs: Map<number, Float32Array> = new Map();
 
   constructor(config: Partial<MeshConfig> = {}) {
     const nodeCount = config.nodeCount || config.initialNodeCount || 10;
@@ -99,28 +75,10 @@ export class NeuronMesh {
     for (let i = 0; i < tempIds.length; i++) {
       for (let j = 0; j < tempIds.length; j++) {
         if (i === j) continue;
-        const from = tempIds[i]!;
-        const to = tempIds[j]!;
+        const from = tempIds[i];
+        const to = tempIds[j];
         const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / tempIds.length);
         this.nodes.get(from)!.connections.set(to, weight);
-      }
-    }
-
-    // Section 8: initialize per-dimension weights when stateDim > 1.
-    const D = this.config.stateDim ?? 1;
-    if (D > 1) {
-      for (const fromId of tempIds) {
-        const fromMap = new Map<number, Float32Array>();
-        for (const toId of tempIds) {
-          if (fromId === toId) continue;
-          // Diagonal weights: each dimension d maps to itself with a small
-          // random scale. Cross-terms omitted for Pi-class hardware.
-          const diagW = new Float32Array(D);
-          for (let d = 0; d < D; d++) diagW[d] = (Math.random() * 0.4 - 0.2) * Math.sqrt(1 / tempIds.length);
-          fromMap.set(toId!, diagW);
-        }
-        this.dimWeights.set(fromId!, fromMap);
-        this.biasVecs.set(fromId!, new Float32Array(D));
       }
     }
   }
@@ -129,32 +87,12 @@ export class NeuronMesh {
     const nodeHistory = new Map<number, number[]>();
     const state = this.captureState();
 
-    // Input-flag dimension: track which node ids are externally driven this tick.
-    const inputFlags = new Map<number, number>();
-    for (const [id] of this.nodes) inputFlags.set(id, 0);
-
     for (const [id, val] of inputActivations) {
       const numericId = typeof id === 'string' ? parseInt(id.replace('neuron_', ''), 10) : id;
       const node = this.nodes.get(numericId);
       if (node) {
         node.activation = val;
         node.activationHistory = [val];
-        inputFlags.set(numericId, 1.0);
-      }
-    }
-
-    // Propagate the input-flag signal through the all-to-all mesh so every
-    // node can observe which nodes are externally driven (Section 3).
-    const flagNodes = Array.from(inputFlags.entries()).filter(([, f]) => f > 0).map(([id]) => id);
-    if (flagNodes.length > 0) {
-      for (const [id] of this.nodes) {
-        if (inputFlags.get(id)) continue;
-        let flagSum = 0;
-        const node = this.nodes.get(id)!;
-        for (const [neighborId, weight] of node.connections) {
-          flagSum += (inputFlags.get(neighborId) ?? 0) * Math.abs(weight);
-        }
-        inputFlags.set(id, Math.min(1, flagSum));
       }
     }
 
@@ -206,7 +144,6 @@ export class NeuronMesh {
       converged,
       residual,
       nodeHistory,
-      inputFlags,
     };
   }
 
@@ -234,82 +171,6 @@ export class NeuronMesh {
       deltaByNode.set(id, totalDelta);
     }
     return deltaByNode;
-  }
-
-  /**
-   * Section 8 — multi-dimensional propagation with per-connection dimension
-   * weights (diagonal of the D×D block) and per-neuron bias vector.
-   *
-   * Formula for target node i at each propagation step:
-   *   stateVec_i[d] = activate( Σ_j (stateVec_j[d] × dimWeights[j→i][d]) + biasVec_i[d] )
-   *
-   * Single bias per neuron (not per connection) — added once after the full
-   * summed product, so it doesn't scale with connection count (Section 8 fix).
-   *
-   * Falls back to scalar propagate() if stateDim ≤ 1 or no dimWeights exist.
-   */
-  propagateMulti(inputActivations: Map<number, Float32Array>): MultiPropagationResult {
-    const D = this.config.stateDim ?? 1;
-    if (D <= 1 || this.dimWeights.size === 0) {
-      // Scalar fallback: extract first dimension or zero.
-      const scalarInputs = new Map<number, number>();
-      for (const [id, vec] of inputActivations) scalarInputs.set(id, vec[0] ?? 0);
-      const scalar = this.propagate(scalarInputs);
-      const states = new Map<number, Float32Array>();
-      for (const [id, v] of scalar.finalStates) {
-        const vec = new Float32Array(1);
-        vec[0] = v;
-        states.set(id, vec);
-      }
-      return { states, iterations: scalar.iterations, converged: scalar.converged };
-    }
-
-    const nodeIds = Array.from(this.nodes.keys());
-
-    // Initialise state vectors: external input or zeros.
-    const stateVecs = new Map<number, Float32Array>();
-    for (const id of nodeIds) {
-      const ext = inputActivations.get(id);
-      stateVecs.set(id, ext ? new Float32Array(ext) : new Float32Array(D));
-    }
-
-    let iterations = 0;
-    let converged = false;
-
-    for (; iterations < this.config.maxIterations; iterations++) {
-      const nextVecs = new Map<number, Float32Array>();
-      let maxDelta = 0;
-
-      for (const toId of nodeIds) {
-        const newVec = new Float32Array(this.biasVecs.get(toId) ?? new Float32Array(D));
-        for (const fromId of nodeIds) {
-          if (fromId === toId) continue;
-          const diagW = this.dimWeights.get(fromId)?.get(toId);
-          if (!diagW) continue;
-          const srcVec = stateVecs.get(fromId)!;
-          for (let d = 0; d < D; d++) {
-            newVec[d] += srcVec[d]! * diagW[d]!;
-          }
-        }
-        // Activate per dimension
-        for (let d = 0; d < D; d++) newVec[d] = this.activate(newVec[d]!);
-
-        // Measure convergence (L1 across all dims)
-        const prev = stateVecs.get(toId)!;
-        for (let d = 0; d < D; d++) maxDelta = Math.max(maxDelta, Math.abs(newVec[d]! - prev[d]!));
-        nextVecs.set(toId, newVec);
-      }
-
-      for (const [id, vec] of nextVecs) stateVecs.set(id, vec);
-
-      if (maxDelta < this.config.convergenceThreshold) {
-        converged = true;
-        iterations++;
-        break;
-      }
-    }
-
-    return { states: stateVecs, iterations, converged };
   }
 
   addNode(layer: number): number {

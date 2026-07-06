@@ -159,7 +159,7 @@ export class MultiInputPlugin extends BasePlugin {
     const btnArg = button === 3 ? 3 : button === 2 ? 2 : 1;
     if (this.desktopManager.hasXinput()) {
       const dev = this.desktopManager.getVirtualDevices().find(d => d.type === 'mouse');
-      if (dev) {
+      if (dev && dev.masterId !== undefined) {
         try {
           const cmd = `xinput click ${dev.masterId} ${btnArg}`;
           require("child_process").execSync(cmd, { timeout: 2000 });
@@ -192,11 +192,12 @@ export class MultiInputPlugin extends BasePlugin {
 
   private async _bindDevice(msg: Record<string, unknown>): Promise<unknown> {
     const { deviceId, workspace } = msg as Record<string, unknown>;
-    if (typeof deviceId !== "string" || typeof workspace !== "number") {
-      return { error: "deviceId (string) and workspace (number) required" };
+    if (typeof deviceId !== "string" || (typeof workspace !== "string" && typeof workspace !== "number")) {
+      return { error: "deviceId (string) and workspace (string) required" };
     }
-    const ok = this.desktopManager.bindDeviceToWorkspace(deviceId, String(workspace));
-    return { bound: ok, deviceId, workspace };
+    const workspaceId = String(workspace);
+    const ok = this.desktopManager.bindDeviceToWorkspace(deviceId, workspaceId);
+    return { bound: ok, deviceId, workspace: workspaceId };
   }
 
   private async _unbindDevice(msg: Record<string, unknown>): Promise<unknown> {

@@ -14,6 +14,9 @@ export interface RLMConfig {
   targetUpdateFrequency: number;
   lookaheadSteps: number;
   loopDetectionWindow: number;
+  /** Quantization-aware training: forward pass reads quantized weights/bias. */
+  quantizationEnabled: boolean;
+  quantizationBits: number;
 }
 
 export interface Experience {
@@ -72,10 +75,20 @@ export class RLMTrainer {
   private episodeCount: number;
   private recentActions: number[];
   private currentExplorationRate: number;
-  // QAT: quantizer applied during training (straight-through estimator);
-  // residual from last train step fed back into the next forward pass.
-  private quantizer: BackgroundQuantizer;
+
+  // Section 6: quantization-aware training. The forward pass (both action
+  // selection and TD-target computation) reads quantizedWeights/Bias, a
+  // cached quantize(full-precision + residual) snapshot refreshed once per
+  // train() tick; updatePolicy() still writes full-precision weights
+  // directly (straight-through: gradient bypasses the quantization op).
+  // The leftover (full-precision - quantized) each refresh is carried
+  // forward as the residual folded into the *next* tick's quantize() call,
+  // so rounding error isn't just discarded but corrected over time.
+  private quantizer: BackgroundQuantizer | null;
+  private quantizedWeights: Float32Array;
+  private quantizedBias: Float32Array;
   private weightResidual: Float32Array;
+  private biasResidual: Float32Array;
 
   constructor(config: Record<string, any> = {}) {
     this.config = {
@@ -92,6 +105,8 @@ export class RLMTrainer {
       targetUpdateFrequency: config.targetUpdateFrequency ?? 100,
       lookaheadSteps: config.thinkSteps ?? config.lookaheadSteps ?? 3,
       loopDetectionWindow: config.loopDetectionWindow ?? 20,
+      quantizationEnabled: config.quantizationEnabled ?? true,
+      quantizationBits: config.quantizationBits ?? 8,
     };
     this.replayBuffer = new Array(this.config.replayBufferSize);
     this.bufferPosition = 0;
@@ -106,8 +121,60 @@ export class RLMTrainer {
     this.targetBias = new Float32Array(this.config.actionDim);
     this.initializePolicy(this.policyWeights, this.policyBias);
     this.initializePolicy(this.targetWeights, this.targetBias);
-    this.quantizer = new BackgroundQuantizer({ enabled: true, bits: 8, method: 'symmetric', calibrationSamples: 0, excludeLayers: [] });
+
+    this.quantizer = this.config.quantizationEnabled
+      ? new BackgroundQuantizer({
+          enabled: true,
+          bits: this.config.quantizationBits,
+          method: 'symmetric',
+          calibrationSamples: 0,
+          excludeLayers: [],
+        })
+      : null;
     this.weightResidual = new Float32Array(this.policyWeights.length);
+    this.biasResidual = new Float32Array(this.policyBias.length);
+    this.quantizedWeights = new Float32Array(this.policyWeights);
+    this.quantizedBias = new Float32Array(this.policyBias);
+    this.refreshQuantizedForward();
+  }
+
+  /**
+   * Re-quantize the current full-precision weights/bias (plus carried-over
+   * residual from the last refresh) into the cache the forward pass reads.
+   * Called once per train() tick — not on every forward call — so the
+   * residual reflects genuine drift between ticks rather than compounding
+   * across repeated reads of an unchanged weight matrix.
+   */
+  private refreshQuantizedForward(): void {
+    if (!this.quantizer) return;
+
+    const wPlusResidual = new Float32Array(this.policyWeights.length);
+    for (let i = 0; i < wPlusResidual.length; i++) {
+      wPlusResidual[i] = this.policyWeights[i] + this.weightResidual[i];
+    }
+    const wq = this.quantizer.quantize(wPlusResidual);
+    for (let i = 0; i < wq.length; i++) {
+      this.weightResidual[i] = wPlusResidual[i] - wq[i];
+    }
+    this.quantizedWeights = wq;
+
+    const bPlusResidual = new Float32Array(this.policyBias.length);
+    for (let i = 0; i < bPlusResidual.length; i++) {
+      bPlusResidual[i] = this.policyBias[i] + this.biasResidual[i];
+    }
+    const bq = this.quantizer.quantize(bPlusResidual);
+    for (let i = 0; i < bq.length; i++) {
+      this.biasResidual[i] = bPlusResidual[i] - bq[i];
+    }
+    this.quantizedBias = bq;
+  }
+
+  /** Mean absolute quantization residual currently carried for the weight matrix — a drift diagnostic. */
+  getQuantizationDrift(): number {
+    if (!this.quantizer || this.weightResidual.length === 0) return 0;
+    let sum = 0;
+    for (let i = 0; i < this.weightResidual.length; i++) sum += Math.abs(this.weightResidual[i]);
+    return sum / this.weightResidual.length;
   }
 
   selectAction(state: Float32Array, availableActions?: number[]): { action: number; thinkingSteps: number[] } {
@@ -182,19 +249,13 @@ export class RLMTrainer {
       };
     }
 
-    // QAT: train against quantized weights; update the full-precision copy
-    // (straight-through estimator — gradient passes through quantization unchanged).
-    const { quantized: qWeights, residual } = this.quantizer.quantizeWithResidual(this.policyWeights);
-    const savedWeights = this.policyWeights;
-    this.policyWeights = qWeights;
-
     const tdErrors: number[] = [];
     let totalLoss = 0;
 
     for (const exp of batch) {
       const qValues = this.computeQValues(exp.state);
       const targetQValues = this.computeQValues(exp.nextState);
-      const currentQ = qValues[exp.action]!;
+      const currentQ = qValues[exp.action];
 
       const maxNextQ = Math.max(...Array.from(targetQValues));
       const targetQ = exp.reward + (exp.done ? 0 : this.config.discountFactor * maxNextQ);
@@ -202,21 +263,19 @@ export class RLMTrainer {
       tdErrors.push(tdError);
       totalLoss += tdError * tdError;
 
-      // Apply gradient to the full-precision weights (straight-through).
-      this.policyWeights = savedWeights;
       this.updatePolicy(exp.state, exp.action, tdError);
-      this.policyWeights = qWeights;
     }
-
-    // Restore full-precision and capture new residual for next forward pass.
-    this.policyWeights = savedWeights;
-    this.weightResidual = residual;
 
     if (this.stepCount % this.config.targetUpdateFrequency === 0) {
       this.syncTargetPolicy();
     }
 
     this.decayExploration();
+
+    // Once per tick: fold this batch's full-precision weight changes back
+    // through the quantizer, carrying forward whatever rounding error is
+    // left over as the residual for the next tick's forward pass.
+    this.refreshQuantizedForward();
 
     const avgReward = batch.reduce((s, e) => s + e.reward, 0) / batch.length;
 
@@ -231,15 +290,17 @@ export class RLMTrainer {
   }
 
   private computeQValues(state: Float32Array): number[] {
+    // QAT: forward reads the quantized snapshot when enabled, so action
+    // selection and TD-targets both "think" in the same reduced-precision
+    // representation the network will actually run under after export.
+    const weights = this.quantizer ? this.quantizedWeights : this.policyWeights;
+    const bias = this.quantizer ? this.quantizedBias : this.policyBias;
+
     const qValues: number[] = [];
     for (let a = 0; a < this.config.actionDim; a++) {
-      let q = this.policyBias[a]!;
+      let q = bias[a];
       for (let s = 0; s < state.length; s++) {
-        const idx = s * this.config.actionDim + a;
-        // Error-feedback residual: add the carry-forward quantization error so
-        // the next forward pass self-corrects without changing the stored weight.
-        const w = (this.policyWeights[idx] ?? 0) + (this.weightResidual[idx] ?? 0);
-        q += state[s]! * w;
+        q += state[s] * weights[s * this.config.actionDim + a];
       }
       qValues.push(q);
     }

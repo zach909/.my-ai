@@ -1,7 +1,7 @@
 import { execSync } from 'node:child_process';
 import { networkInterfaces } from 'node:os';
 import type { PluginDefinition } from "../plugin_manager/types.js";
-import { BasePlugin } from "../plugin_manager/sdk.js";
+import { APIPlugin } from "../plugin_manager/sdk.js";
 
 export interface Coordinates {
   latitude: number;
@@ -38,7 +38,7 @@ const CITY_DATABASE: Record<string, { lat: number; lon: number }> = {
   Rome: { lat: 41.9028, lon: 12.4964 }, Madrid: { lat: 40.4168, lon: -3.7038 },
 };
 
-export class LocationPlugin extends BasePlugin {
+export class LocationPlugin extends APIPlugin {
   private watchId: number = 0;
   private watchCallbacks: Map<number, (data: LocationData) => void> = new Map();
   private lastPosition: LocationData | null = null;

@@ -1,32 +1,34 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 
-export interface CallRecord {
+export interface PhoneCall {
   id: string;
   number: string;
-  direction: "missed" | "outgoing" | "incoming";
+  contactName?: string;
+  direction: "incoming" | "outgoing" | "missed";
+  duration: number;
   timestamp: number;
-  duration: number; // in seconds
+  notes?: string;
 }
 
 export class PhoneCallsPlugin extends BasePlugin {
-  private history: CallRecord[] = [];
+  private calls: PhoneCall[] = [];
 
-  constructor(definition: PluginDefinition) {
-    super(definition);
-    // Seed some initial data
-    this.history = [
-      { id: "1", number: "+15550199", direction: "incoming", timestamp: Date.now() - 3600000, duration: 120 },
-      { id: "2", number: "+15550188", direction: "outgoing", timestamp: Date.now() - 7200000, duration: 45 },
-      { id: "3", number: "+15550177", direction: "missed", timestamp: Date.now() - 86400000, duration: 0 },
-    ];
+  constructor(definition: PluginDefinition) { super(definition); }
+
+  async log(number: string, direction: PhoneCall["direction"], duration: number = 0, contactName?: string): Promise<PhoneCall> {
+    const call: PhoneCall = {
+      id: `call-${Date.now()}-${Math.random().toString(36).slice(2,9)}`,
+      number, direction, duration, timestamp: Date.now(), contactName,
+    };
+    this.calls.push(call); return call;
   }
 
-  async getHistory(limit?: number): Promise<CallRecord[]> {
-    return limit ? this.history.slice(0, limit) : this.history;
+  async getHistory(limit: number = 50): Promise<PhoneCall[]> {
+    return [...this.calls].sort((a, b) => b.timestamp - a.timestamp).slice(0, limit);
   }
 
-  async onMessage(message: unknown): Promise<unknown> {
-    return { type: "phone-calls", history: this.history };
+  async getMissed(): Promise<PhoneCall[]> {
+    return this.calls.filter(c => c.direction === "missed").sort((a, b) => b.timestamp - a.timestamp);
   }
 }

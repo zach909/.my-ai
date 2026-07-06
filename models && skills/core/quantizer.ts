@@ -101,24 +101,6 @@ export class BackgroundQuantizer {
     });
   }
 
-  /**
-   * QAT helper: returns both the quantized weights AND the residual
-   * (full-precision − quantized). The caller trains against the quantized
-   * weights but updates the full-precision copy, and feeds the residual back
-   * into the next forward pass — Quantization-Aware Training + error-feedback.
-   */
-  quantizeWithResidual(weights: Float32Array, bits?: number): {
-    quantized: Float32Array;
-    residual: Float32Array;
-  } {
-    const quantized = this.quantize(weights, bits);
-    const residual = new Float32Array(weights.length);
-    for (let i = 0; i < weights.length; i++) {
-      residual[i] = weights[i]! - quantized[i]!;
-    }
-    return { quantized, residual };
-  }
-
   getConfig(): QuantizerConfig {
     return { ...this.config };
   }
