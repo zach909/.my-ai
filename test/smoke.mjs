@@ -148,6 +148,29 @@ async function testHyperdimensional() {
   check(ctx.data.length === 12 * 9 && allFinite(ctx.data), 'Hyper getContextMatrix sized (neurons x totalDims) and finite');
 }
 
+async function testSymbolicTrace() {
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, crossInfluenceStrength: 0.3, propagationSteps: 30, convergenceThreshold: 0.01 });
+  // Drive only neuron 0, so neurons 1..9 settle purely via tanh(W·S) and their traces are faithful.
+  hd.process([0.4, -0.2, 0.7, -0.5, 0.1, 0.9], undefined, new Set([0]));
+  const states = hd.getNeuronStates();
+
+  // Exact algebra: bias + sum(all term contributions) === preActivation, value === tanh(preActivation).
+  const full = hd.traceNeuron(5, 2, 999);
+  const summed = full.bias + full.terms.reduce((s, t) => s + t.contribution, 0);
+  check(Math.abs(summed - full.preActivation) < 1e-5, 'Symbolic trace terms sum exactly to pre-activation');
+  check(Math.abs(full.value - Math.tanh(full.preActivation)) < 1e-9, 'Symbolic trace value is tanh(pre-activation)');
+
+  // Faithful to the settled mesh within the convergence residual, and flags clamping.
+  check(!full.inputClamped && Math.abs(full.value - states[5].state[2]) < 0.05, 'Symbolic trace matches settled state (non-driven neuron)');
+  check(hd.traceNeuron(0, 2, 3).inputClamped === true, 'Symbolic trace flags an input-clamped neuron as counterfactual');
+
+  // Ranked by magnitude and out-of-range safe.
+  const ranked = hd.traceNeuron(5, 2, 4);
+  check(ranked.terms.length === 4 && Math.abs(ranked.terms[0].contribution) >= Math.abs(ranked.terms[3].contribution), 'Symbolic trace returns topK terms ranked by magnitude');
+  check(hd.traceNeuron(5, 999, 3) === null && hd.traceNeuron(9999, 0, 3) === null, 'Symbolic trace returns null for out-of-range neuron/dim');
+}
+
 async function testQuantum() {
   const { QuantumNeuralNet } = await load('models && skills/core/quantum-net.js');
   const q = new QuantumNeuralNet();
@@ -191,6 +214,7 @@ async function main() {
     ['RLM select', testRLM],
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
+    ['Symbolic trace', testSymbolicTrace],
     ['Quantum interference', testQuantum],
     ['Mesh stability', testMeshStability],
     ['ZipIO persistence', testZipPersistence],

@@ -308,6 +308,93 @@ export class HyperDimensionalEngine {
     return hot.length === 1 ? { exclusive: true, neuronId: hot[0] } : { exclusive: false };
   }
 
+  /**
+   * Section 9: on-demand symbolic trace. The mesh computes numerically (fast,
+   * Pi-feasible); this reconstructs the *literal* pre-activation equation for
+   * one neuron's dimension by walking backward through the weighted
+   * connections that fed it, using the current settled state. Each term is
+   * evaluated so callers see both the algebra and the numeric contribution,
+   * ranked by magnitude — the human-readable version of the autograd graph.
+   *
+   * The settle rule reproduced here is:
+   *   state_i[d] = tanh( bias_i[d]
+   *     + Σ_j ( state_j[d]·Wdiag_ij[d]
+   *           + state_j[(d-1)%D]·Wshift_ij[d]·crossInfluenceStrength ) )
+   *
+   * @returns null if the neuron/dimension is out of range.
+   */
+  traceNeuron(
+    neuronId: number,
+    dim: number,
+    topK: number = 8
+  ): {
+    neuronId: number;
+    dim: number;
+    bias: number;
+    preActivation: number;
+    value: number;
+    /**
+     * True when this neuron was clamped to external input on the last tick
+     * (its input-flag dimension is hot). Its stored state then comes from the
+     * input, not from tanh(W·S), so `value` here is the *counterfactual* the
+     * mesh would have settled to from its incoming connections alone, not the
+     * clamped value actually held.
+     */
+    inputClamped: boolean;
+    terms: Array<{ source: string; weight: number; sourceValue: number; contribution: number }>;
+    equation: string;
+  } | null {
+    const D = this.totalDims;
+    if (dim < 0 || dim >= D) return null;
+    const target = this.neurons.find(n => n.id === neuronId);
+    if (!target) return null;
+
+    const bias = this.bias.get(neuronId)![dim];
+    const diagRow = this.connDiag.get(neuronId)!;
+    const shiftRow = this.connShift.get(neuronId)!;
+    const srcD = (dim - 1 + D) % D;
+    const cross = this.config.crossInfluenceStrength;
+
+    const terms: Array<{ source: string; weight: number; sourceValue: number; contribution: number }> = [];
+    let preActivation = bias;
+    for (const nj of this.neurons) {
+      if (nj.id === neuronId) continue;
+      const wd = diagRow.get(nj.id)![dim];
+      const ws = shiftRow.get(nj.id)![dim];
+
+      const diagContribution = nj.state[dim] * wd;
+      preActivation += diagContribution;
+      terms.push({ source: `n${nj.id}.d${dim}`, weight: wd, sourceValue: nj.state[dim], contribution: diagContribution });
+
+      const shiftWeight = ws * cross;
+      const shiftContribution = nj.state[srcD] * shiftWeight;
+      preActivation += shiftContribution;
+      terms.push({ source: `n${nj.id}.d${srcD}`, weight: shiftWeight, sourceValue: nj.state[srcD], contribution: shiftContribution });
+    }
+
+    terms.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+    const top = terms.slice(0, topK);
+
+    const inputClamped = target.state[0] >= 0.9;
+
+    const fmt = (v: number) => (v >= 0 ? '+' : '-') + Math.abs(v).toFixed(4);
+    const body = top.map(t => `${fmt(t.weight)}·${t.source}`).join(' ');
+    const omitted = terms.length > top.length ? ` … (+${terms.length - top.length} smaller terms)` : '';
+    const clampNote = inputClamped ? ' [input-clamped: counterfactual]' : '';
+    const equation = `n${neuronId}.d${dim} = tanh( ${fmt(bias)} ${body}${omitted} ) = ${Math.tanh(preActivation).toFixed(4)}${clampNote}`;
+
+    return {
+      neuronId,
+      dim,
+      bias,
+      preActivation,
+      value: Math.tanh(preActivation),
+      inputClamped,
+      terms: top,
+      equation,
+    };
+  }
+
   private initializeNeurons(): void {
     for (let i = 0; i < this.config.neuronCount; i++) {
       const state: number[] = [0]; // index 0: input-flag, starts cold
