@@ -180,6 +180,32 @@ async function testSymbolicTrace() {
   check(hd.traceNeuron(5, 999, 3) === null && hd.traceNeuron(9999, 0, 3) === null, 'Symbolic trace returns null for out-of-range neuron/dim');
 }
 
+async function testDefinitionTraining() {
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const mk = () => new HyperDimensionalEngine({ dimensions: 4, neuronCount: 8, propagationSteps: 12, convergenceThreshold: 0.01 });
+
+  // A satisfiable definishon converges and reports its readout satisfied.
+  const c1 = mk().trainDefinitions(
+    [{ driveNeuronId: 0, input: [1, 0, -1, 0.5], readoutNeuronId: 5, target: [0.5, -0.5, 0.5, -0.5] }],
+    { epochs: 300 },
+  );
+  check(c1.converged && c1.satisfied.includes(5) && c1.conflicts.length === 0, 'Definishon training satisfies a solvable contract');
+
+  // Contradictory contracts (same readout, opposite targets) are flagged, neither satisfied.
+  const c2 = mk().trainDefinitions([
+    { driveNeuronId: 0, input: [1, 0, 0, 0], readoutNeuronId: 5, target: [0.9, 0.9, 0.9, 0.9] },
+    { driveNeuronId: 0, input: [1, 0, 0, 0], readoutNeuronId: 5, target: [-0.9, -0.9, -0.9, -0.9] },
+  ], { epochs: 300 });
+  check(!c2.converged && c2.satisfied.length === 0 && c2.conflicts.some(x => x.a === 0 && x.b === 1), 'Definishon training detects a contradictory pair');
+
+  // Independent contracts on different readouts both satisfy, no false conflict.
+  const c3 = mk().trainDefinitions([
+    { driveNeuronId: 0, input: [1, 0, 0, 0], readoutNeuronId: 5, target: [0.3, -0.3, 0.3, -0.3] },
+    { driveNeuronId: 1, input: [0, 1, 0, 0], readoutNeuronId: 6, target: [-0.4, 0.4, -0.4, 0.4] },
+  ], { epochs: 300 });
+  check(c3.satisfied.length === 2 && c3.conflicts.length === 0, 'Definishon training satisfies independent contracts without false conflict');
+}
+
 async function testQuantum() {
   const { QuantumNeuralNet } = await load('models && skills/core/quantum-net.js');
   const q = new QuantumNeuralNet();
@@ -257,6 +283,7 @@ async function main() {
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
     ['Symbolic trace', testSymbolicTrace],
+    ['Definishon training', testDefinitionTraining],
     ['Quantum interference', testQuantum],
     ['Mesh stability', testMeshStability],
     ['Alignment veto', testAlignmentVeto],
