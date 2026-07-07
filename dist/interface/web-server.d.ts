@@ -7,7 +7,7 @@ export declare class WebServer {
     start(port?: number): Promise<void>;
     stop(): Promise<void>;
     getPort(): number;
-    private setCorsHeaders;
+    private setSecurityHeaders;
     private sendJson;
     private sendHtml;
     private parseBody;
