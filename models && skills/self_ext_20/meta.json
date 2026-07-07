@@ -1,0 +1,9 @@
+{
+  "id": "self_ext_20",
+  "name": "Memory: Thinking about this,",
+  "description": "Self-authored extension storing learned patterns from generation 20",
+  "createdAt": 1782416133690,
+  "prompt": "Thinking about this,",
+  "neuronCount": 20,
+  "connectionCount": 100
+}
