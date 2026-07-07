@@ -155,29 +155,43 @@ export class WebServer {
 
   getPort(): number { return this.port; }
 
-  private setCorsHeaders(res: http.ServerResponse): void {
-    // Security: Restricted CORS to prevent cross-origin attacks on local AI endpoints
+  private setSecurityHeaders(res: http.ServerResponse): void {
+    // Security: Restricted CORS and standard security headers
     res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';");
   }
 
   private sendJson(res: http.ServerResponse, data: unknown, statusCode = 200): void {
-    this.setCorsHeaders(res);
+    this.setSecurityHeaders(res);
     res.writeHead(statusCode, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify(data));
   }
 
   private sendHtml(res: http.ServerResponse, html: string): void {
-    this.setCorsHeaders(res);
+    this.setSecurityHeaders(res);
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
     res.end(html);
   }
 
   private async parseBody(req: http.IncomingMessage): Promise<unknown> {
+    const LIMIT = 1024 * 1024; // 1MB limit
+    let totalSize = 0;
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
-      req.on('data', (chunk: Buffer) => chunks.push(chunk));
+      req.on('data', (chunk: Buffer) => {
+        totalSize += chunk.length;
+        if (totalSize > LIMIT) {
+          req.destroy();
+          reject(new Error('Request body too large (limit: 1MB)'));
+        } else {
+          chunks.push(chunk);
+        }
+      });
       req.on('end', () => {
+        if (totalSize > LIMIT) return;
         const raw = Buffer.concat(chunks).toString('utf8');
         if (!raw) { resolve(null); return; }
         try { resolve(JSON.parse(raw)); }
@@ -193,7 +207,7 @@ export class WebServer {
     const method = req.method?.toUpperCase() ?? 'GET';
 
     if (method === 'OPTIONS') {
-      this.setCorsHeaders(res);
+      this.setSecurityHeaders(res);
       res.writeHead(204);
       res.end();
       return;

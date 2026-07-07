@@ -147,6 +147,7 @@ export class CLI {
         this.enqueue(() => this.handleGenerate(prompt)); return;
       }
       if (lower.startsWith('think ')) { this.enqueue(() => this.handleThink(trimmed.slice(6))); return; }
+      if (lower.startsWith('trace ')) { this.enqueue(() => this.handleTrace(trimmed.slice(6))); return; }
       // Default: THORNS → plugin dispatch → LLM fallback
       this.enqueue(async () => {
         const before = Date.now();
@@ -172,6 +173,7 @@ export class CLI {
     console.log(`    ${this.colorize(GREEN, 'chat')}            ${this.colorize(GRAY, 'Start interactive chat session')}`);
     console.log(`    ${this.colorize(GREEN, 'generate')} ${this.colorize(YELLOW, '<text>')} ${this.colorize(GRAY, 'Generate AI response')}`);
     console.log(`    ${this.colorize(GREEN, 'think')} ${this.colorize(YELLOW, '<prompt>')}  ${this.colorize(GRAY, 'Show THORNS intent analysis')}`);
+    console.log(`    ${this.colorize(GREEN, 'trace')} ${this.colorize(YELLOW, '<id> <dim>')} ${this.colorize(GRAY, 'Symbolic trace of a hyperdimensional neuron')}`);
     console.log(`    ${this.colorize(GREEN, 'train')} ${this.colorize(YELLOW, '<text>')}    ${this.colorize(GRAY, 'Train LLM on custom text')}`);
     console.log(`    ${this.colorize(GREEN, 'search')} ${this.colorize(YELLOW, '<query>')}  ${this.colorize(GRAY, 'Search neurons by name/label')}`);
     console.log(`    ${this.colorize(GREEN, 'neuri')} ${this.colorize(YELLOW, '<code>')}    ${this.colorize(GRAY, 'Run NeuriLang neuron definition')}`);
@@ -278,6 +280,28 @@ export class CLI {
     const ms = Date.now() - before;
     console.log(this.colorize(CYAN, '  ai> ') + response);
     console.log(this.colorize(GRAY, `       (${ms}ms)`));
+    console.log('');
+  }
+
+  private async handleTrace(args: string): Promise<void> {
+    const parts = args.trim().split(/\s+/);
+    const neuronId = Number(parts[0]);
+    const dim = Number(parts[1] ?? 0);
+    if (!Number.isInteger(neuronId) || !Number.isInteger(dim)) {
+      console.log(this.colorize(GRAY, '  Usage: trace <neuronId> <dim>   (Section 9 symbolic trace)'));
+      return;
+    }
+    const trace = this.llm.traceNeuron(neuronId, dim);
+    if (!trace) {
+      console.log(this.colorize(RED, `  No neuron ${neuronId} / dim ${dim} to trace.`));
+      return;
+    }
+    console.log('');
+    console.log(this.colorize(BOLD, '  Symbolic trace:'));
+    console.log(`    ${this.colorize(GREEN, trace.equation)}`);
+    if (trace.inputClamped) {
+      console.log(this.colorize(GRAY, '    (this neuron was input-clamped; the equation is the counterfactual it would settle to)'));
+    }
     console.log('');
   }
 
