@@ -65,14 +65,18 @@ async function testPipeline() {
   const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
   const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 16, hyperDimensions: 16 });
   let bad = 0;
-  let stages = 0;
+  let stageNames = [];
+  let lastAlignment = null;
   for (let t = 0; t < 3; t++) {
     const res = await p.run(embedding(32, t + 1), `tick ${t}`);
     if (!allFinite(res.output)) bad++;
-    stages = res.steps.length;
+    stageNames = res.steps.map(s => s.name);
+    lastAlignment = res.alignment;
   }
   check(bad === 0, 'Pipeline output finite across 3 ticks (NaN regression)');
-  check(stages === 6, `Pipeline runs all 6 stages (got ${stages})`);
+  check(stageNames.includes('alignment-veto'), 'Pipeline runs the alignment-veto stage');
+  check(lastAlignment && typeof lastAlignment.allowed === 'boolean' && Array.isArray(lastAlignment.reasons),
+    'Pipeline result carries an alignment verdict');
 }
 
 async function testLLM() {
