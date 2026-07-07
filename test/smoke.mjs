@@ -95,6 +95,10 @@ async function testLLM() {
   check(empties === 0, 'LLM.generate returns non-empty output');
   check(suspect === 0, 'LLM.generate output free of NaN/undefined');
 
+  // A query-intent generation must not duplicate its Plan line (fallback path).
+  const q = await llm.generate('hello world');
+  check((q.match(/Plan:/g) || []).length <= 1, 'LLM.generate does not duplicate the Plan line on query intent');
+
   // Section 9 symbolic trace is reachable through the LLM (the `trace` CLI command).
   const tr = llm.traceNeuron(3, 2, 5);
   check(tr && typeof tr.equation === 'string' && Number.isFinite(tr.value), 'LLM.traceNeuron exposes a symbolic trace');
