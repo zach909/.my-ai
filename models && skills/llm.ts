@@ -508,6 +508,15 @@ export class NeuroclawLLM {
 
   getHyperHistory() { return this.hyperEngine.getHistory(); }
 
+  /**
+   * Section 9 on-demand symbolic trace: the human-readable equation behind one
+   * hyperdimensional neuron's current settled value. Reflects whatever state
+   * the engine last settled to (run a generation first for a meaningful read).
+   */
+  traceNeuron(neuronId: number, dim: number, topK: number = 6) {
+    return this.hyperEngine.traceNeuron(neuronId, dim, topK);
+  }
+
   demoteFailingNeurons(failureId: string): void {
     this.valueAllocator.demoteNeuron(failureId);
   }

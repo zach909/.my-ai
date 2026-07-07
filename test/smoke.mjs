@@ -94,6 +94,11 @@ async function testLLM() {
   check(errs === 0, 'LLM.generate does not throw (repeated addExpert path)');
   check(empties === 0, 'LLM.generate returns non-empty output');
   check(suspect === 0, 'LLM.generate output free of NaN/undefined');
+
+  // Section 9 symbolic trace is reachable through the LLM (the `trace` CLI command).
+  const tr = llm.traceNeuron(3, 2, 5);
+  check(tr && typeof tr.equation === 'string' && Number.isFinite(tr.value), 'LLM.traceNeuron exposes a symbolic trace');
+  check(llm.traceNeuron(999999, 0, 5) === null, 'LLM.traceNeuron returns null for an out-of-range neuron');
 }
 
 async function testRLM() {
