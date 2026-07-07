@@ -78,6 +78,22 @@ function clamp(v: number, lo: number, hi: number): number {
   return Math.max(lo, Math.min(hi, v));
 }
 
+/** Pearson correlation of two equal-length series; 0 if undefined (no variance). */
+function pearson(a: number[], b: number[]): number {
+  const n = Math.min(a.length, b.length);
+  if (n < 2) return 0;
+  let ma = 0, mb = 0;
+  for (let i = 0; i < n; i++) { ma += a[i]; mb += b[i]; }
+  ma /= n; mb /= n;
+  let cov = 0, va = 0, vb = 0;
+  for (let i = 0; i < n; i++) {
+    const da = a[i] - ma, db = b[i] - mb;
+    cov += da * db; va += da * da; vb += db * db;
+  }
+  if (va === 0 || vb === 0) return 0;
+  return cov / Math.sqrt(va * vb);
+}
+
 export class HyperDimensionalEngine {
   private config: HyperConfig;
   private neurons: HyperNeuron[];
@@ -313,6 +329,200 @@ export class HyperDimensionalEngine {
       if (n.state[0] >= threshold) hot.push(n.id);
     }
     return hot.length === 1 ? { exclusive: true, neuronId: hot[0] } : { exclusive: false };
+  }
+
+  /**
+   * Section 9: on-demand symbolic trace. The mesh computes numerically (fast,
+   * Pi-feasible); this reconstructs the *literal* pre-activation equation for
+   * one neuron's dimension by walking backward through the weighted
+   * connections that fed it, using the current settled state. Each term is
+   * evaluated so callers see both the algebra and the numeric contribution,
+   * ranked by magnitude — the human-readable version of the autograd graph.
+   *
+   * The settle rule reproduced here is:
+   *   state_i[d] = tanh( bias_i[d]
+   *     + Σ_j ( state_j[d]·Wdiag_ij[d]
+   *           + state_j[(d-1)%D]·Wshift_ij[d]·crossInfluenceStrength ) )
+   *
+   * @returns null if the neuron/dimension is out of range.
+   */
+  traceNeuron(
+    neuronId: number,
+    dim: number,
+    topK: number = 8
+  ): {
+    neuronId: number;
+    dim: number;
+    bias: number;
+    preActivation: number;
+    value: number;
+    /**
+     * True when this neuron was clamped to external input on the last tick
+     * (its input-flag dimension is hot). Its stored state then comes from the
+     * input, not from tanh(W·S), so `value` here is the *counterfactual* the
+     * mesh would have settled to from its incoming connections alone, not the
+     * clamped value actually held.
+     */
+    inputClamped: boolean;
+    terms: Array<{ source: string; weight: number; sourceValue: number; contribution: number }>;
+    equation: string;
+  } | null {
+    const D = this.totalDims;
+    if (dim < 0 || dim >= D) return null;
+    const target = this.neurons.find(n => n.id === neuronId);
+    if (!target) return null;
+
+    const bias = this.bias.get(neuronId)![dim];
+    const diagRow = this.connDiag.get(neuronId)!;
+    const shiftRow = this.connShift.get(neuronId)!;
+    const srcD = (dim - 1 + D) % D;
+    const cross = this.config.crossInfluenceStrength;
+
+    const terms: Array<{ source: string; weight: number; sourceValue: number; contribution: number }> = [];
+    let preActivation = bias;
+    for (const nj of this.neurons) {
+      if (nj.id === neuronId) continue;
+      const wd = diagRow.get(nj.id)![dim];
+      const ws = shiftRow.get(nj.id)![dim];
+
+      const diagContribution = nj.state[dim] * wd;
+      preActivation += diagContribution;
+      terms.push({ source: `n${nj.id}.d${dim}`, weight: wd, sourceValue: nj.state[dim], contribution: diagContribution });
+
+      const shiftWeight = ws * cross;
+      const shiftContribution = nj.state[srcD] * shiftWeight;
+      preActivation += shiftContribution;
+      terms.push({ source: `n${nj.id}.d${srcD}`, weight: shiftWeight, sourceValue: nj.state[srcD], contribution: shiftContribution });
+    }
+
+    terms.sort((a, b) => Math.abs(b.contribution) - Math.abs(a.contribution));
+    const top = terms.slice(0, topK);
+
+    const inputClamped = target.state[0] >= 0.9;
+
+    const fmt = (v: number) => (v >= 0 ? '+' : '-') + Math.abs(v).toFixed(4);
+    const body = top.map(t => `${fmt(t.weight)}·${t.source}`).join(' ');
+    const omitted = terms.length > top.length ? ` … (+${terms.length - top.length} smaller terms)` : '';
+    const clampNote = inputClamped ? ' [input-clamped: counterfactual]' : '';
+    const equation = `n${neuronId}.d${dim} = tanh( ${fmt(bias)} ${body}${omitted} ) = ${Math.tanh(preActivation).toFixed(4)}${clampNote}`;
+
+    return {
+      neuronId,
+      dim,
+      bias,
+      preActivation,
+      value: Math.tanh(preActivation),
+      inputClamped,
+      terms: top,
+      equation,
+    };
+  }
+
+  /**
+   * Section 4: declarative "definishon" training (neuron-level unit testing).
+   * Each definition is a contract: when `driveNeuronId` is the *only*
+   * externally-driven neuron (clamped to `input`), the mesh must settle so
+   * that `readoutNeuronId`'s content matches `target`. We satisfy all
+   * contracts at once by a delta-rule update on each readout neuron's incoming
+   * weights (clamp → settle → check → adjust), plus a weight penalty so the
+   * underdetermined solution prefers small weights.
+   *
+   * Contradictory contracts (e.g. same drive/readout, different targets) can
+   * never all be satisfied; we detect them by tracking each contract's loss
+   * over epochs and flagging pairs whose losses are strongly anti-correlated
+   * (driving one down drives the other up).
+   *
+   * When a contract's loss is under `tolerance` its readout neuron is reported
+   * as satisfied — the hook the notes describe for raising that neuron's vale
+   * (locking it) in the external value budget.
+   */
+  trainDefinitions(
+    definitions: Array<{ driveNeuronId: number; input: number[]; readoutNeuronId: number; target: number[] }>,
+    opts: { epochs?: number; learningRate?: number; weightPenalty?: number; tolerance?: number } = {}
+  ): {
+    converged: boolean;
+    epochs: number;
+    losses: number[];
+    satisfied: number[];
+    conflicts: Array<{ a: number; b: number; correlation: number }>;
+  } {
+    const epochs = opts.epochs ?? 200;
+    const lr = opts.learningRate ?? 0.1;
+    const penalty = opts.weightPenalty ?? 1e-4;
+    const tolerance = opts.tolerance ?? 1e-3;
+    const dims = this.config.dimensions;
+
+    const lossHistory: number[][] = definitions.map(() => []);
+    let losses = definitions.map(() => Infinity);
+    let converged = false;
+    let ranEpochs = 0;
+
+    for (let epoch = 0; epoch < epochs; epoch++) {
+      ranEpochs = epoch + 1;
+      losses = [];
+
+      for (const def of definitions) {
+        // clamp → settle → read
+        this.settle(def.input, new Set([def.driveNeuronId]));
+        const readout = this.neurons.find(n => n.id === def.readoutNeuronId);
+        if (!readout) { losses.push(Infinity); continue; }
+
+        // Delta rule on the readout's incoming diagonal weights, through tanh'.
+        const diagRow = this.connDiag.get(def.readoutNeuronId)!;
+        const bias = this.bias.get(def.readoutNeuronId)!;
+        let sse = 0;
+        for (let d = 0; d < dims; d++) {
+          const cd = d + 1; // content index (0 is the input flag)
+          const actual = readout.state[cd];
+          const err = (def.target[d] ?? 0) - actual;
+          sse += err * err;
+          const grad = err * (1 - actual * actual); // tanh'
+          for (const nj of this.neurons) {
+            if (nj.id === def.readoutNeuronId) continue;
+            const wd = diagRow.get(nj.id)!;
+            wd[cd] = clamp(wd[cd] + lr * grad * nj.state[cd] - penalty * wd[cd], -2, 2);
+          }
+          bias[cd] = clamp(bias[cd] + lr * grad - penalty * bias[cd], -1, 1);
+        }
+        losses.push(sse / dims);
+      }
+
+      for (let i = 0; i < definitions.length; i++) lossHistory[i].push(losses[i]);
+      if (losses.every(l => l < tolerance)) { converged = true; break; }
+    }
+
+    const satisfied = definitions
+      .map((def, i) => ({ id: def.readoutNeuronId, ok: losses[i] < tolerance }))
+      .filter(x => x.ok)
+      .map(x => x.id);
+
+    // Conflict detection. A direct contradiction (same readout, incompatible
+    // targets) drives both losses to a stuck, near-flat equilibrium rather
+    // than a visibly oscillating one, so anti-correlation of loss *levels*
+    // alone misses it. Combine two signals over pairs that did not both
+    // converge: (1) a structural check — they constrain the same readout to
+    // targets further apart than tolerance allows; (2) anti-correlated loss
+    // *deltas* (satisfying one epoch-over-epoch worsens the other).
+    const deltas = lossHistory.map(h => h.slice(1).map((v, k) => v - h[k]));
+    const targetDist = (a: number[], b: number[]) => {
+      let s = 0;
+      for (let d = 0; d < dims; d++) { const e = (a[d] ?? 0) - (b[d] ?? 0); s += e * e; }
+      return Math.sqrt(s / dims);
+    };
+
+    const conflicts: Array<{ a: number; b: number; correlation: number }> = [];
+    for (let i = 0; i < definitions.length; i++) {
+      for (let j = i + 1; j < definitions.length; j++) {
+        if (losses[i] < tolerance && losses[j] < tolerance) continue;
+        const structural =
+          definitions[i].readoutNeuronId === definitions[j].readoutNeuronId &&
+          targetDist(definitions[i].target, definitions[j].target) > Math.sqrt(tolerance);
+        const corr = pearson(deltas[i], deltas[j]);
+        if (structural || corr < -0.5) conflicts.push({ a: i, b: j, correlation: corr });
+      }
+    }
+
+    return { converged, epochs: ranEpochs, losses, satisfied, conflicts };
   }
 
   private initializeNeurons(): void {
