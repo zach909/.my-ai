@@ -153,26 +153,42 @@ export class WebServer {
         });
     }
     getPort() { return this.port; }
-    setCorsHeaders(res) {
-        // Security: Restricted CORS to prevent cross-origin attacks on local AI endpoints
+    setSecurityHeaders(res) {
+        // Security: Restricted CORS and standard security headers
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';");
     }
     sendJson(res, data, statusCode = 200) {
-        this.setCorsHeaders(res);
+        this.setSecurityHeaders(res);
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
     }
     sendHtml(res, html) {
-        this.setCorsHeaders(res);
+        this.setSecurityHeaders(res);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
     }
     async parseBody(req) {
+        const LIMIT = 1024 * 1024; // 1MB limit
+        let totalSize = 0;
         return new Promise((resolve, reject) => {
             const chunks = [];
-            req.on('data', (chunk) => chunks.push(chunk));
+            req.on('data', (chunk) => {
+                totalSize += chunk.length;
+                if (totalSize > LIMIT) {
+                    req.destroy();
+                    reject(new Error('Request body too large (limit: 1MB)'));
+                }
+                else {
+                    chunks.push(chunk);
+                }
+            });
             req.on('end', () => {
+                if (totalSize > LIMIT)
+                    return;
                 const raw = Buffer.concat(chunks).toString('utf8');
                 if (!raw) {
                     resolve(null);
@@ -193,7 +209,7 @@ export class WebServer {
         const pathname = parsedUrl.pathname;
         const method = req.method?.toUpperCase() ?? 'GET';
         if (method === 'OPTIONS') {
-            this.setCorsHeaders(res);
+            this.setSecurityHeaders(res);
             res.writeHead(204);
             res.end();
             return;
