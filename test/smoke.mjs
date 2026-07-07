@@ -274,6 +274,38 @@ async function testBootstrap() {
   check(reg.getPluginCount() > 0, `App bootstrap registers a plugin catalog (${reg.getPluginCount()} plugins)`);
 }
 
+async function testWebBackend() {
+  const http = await import('node:http');
+  const { startWeb } = await load('interface/main.js');
+  const port = 7900 + Math.floor(Math.random() * 90);
+  const web = await startWeb(port);
+  try {
+    const get = (path) => new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      }).on('error', reject);
+    });
+    const post = (path, obj) => new Promise((resolve, reject) => {
+      const payload = JSON.stringify(obj);
+      const req = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', reject); req.write(payload); req.end();
+    });
+
+    const status = await get('/api/status');
+    const statusJson = JSON.parse(status.body);
+    check(status.status === 200 && statusJson.running === true, 'Web backend /api/status returns live status');
+
+    const chat = await post('/api/chat', { message: 'analyze this data' });
+    const chatJson = JSON.parse(chat.body);
+    check(chat.status === 200 && typeof chatJson.response === 'string' && chatJson.response.length > 0,
+      'Web backend /api/chat returns a real neural-pipeline response (server.py bridge target)');
+  } finally {
+    await web.stop();
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -289,6 +321,7 @@ async function main() {
     ['Alignment veto', testAlignmentVeto],
     ['ZipIO persistence', testZipPersistence],
     ['App bootstrap', testBootstrap],
+    ['Web backend (server.py bridge)', testWebBackend],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);

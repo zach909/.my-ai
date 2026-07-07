@@ -7,15 +7,17 @@ import { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
 import { SystemAccess } from "./system-access.js";
 import { CLI } from "./cli.js";
+import { NeuroclawRunner } from "./runner.js";
+import { WebServer } from "./web-server.js";
 
 /**
- * Composition root. Neither cli.ts nor runner.ts instantiate anything on their
- * own — they only export classes — so before this file existed `npm start` and
- * the `prometheus` bin both loaded a class definition and exited without ever
- * launching the app. This wires the dependency graph and starts the
- * interactive CLI.
+ * Composition root. cli.ts, runner.ts and web-server.ts only export classes —
+ * before this file existed nothing instantiated them, so `npm start`, the
+ * `prometheus` bin, and server.py's `web` spawn all loaded a class definition
+ * and exited without launching anything. This wires the dependency graph once
+ * and starts either the interactive CLI or the HTTP backend.
  */
-export async function bootstrap(): Promise<CLI> {
+async function buildCore() {
   const llm = new NeuroclawLLM();
   const pipeline = new NeuroPipeline();
   const thesaurus = new ThesaurusDictionary();
@@ -24,15 +26,26 @@ export async function bootstrap(): Promise<CLI> {
   // registry (the `plugins` command and status counts) instead of an empty one.
   await pluginRegistry.bootstrap();
   const systemAccess = new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
+  return { llm, pipeline, thesaurus, pluginRegistry, systemAccess };
+}
 
-  return new CLI(
-    llm,
-    pipeline,
-    thesaurus,
-    pluginRegistry,
-    systemAccess,
-    systemAccess.getMultiDesktop(),
-  );
+export async function bootstrap(): Promise<CLI> {
+  const { llm, pipeline, thesaurus, pluginRegistry, systemAccess } = await buildCore();
+  return new CLI(llm, pipeline, thesaurus, pluginRegistry, systemAccess, systemAccess.getMultiDesktop());
+}
+
+/**
+ * Start the HTTP backend the Python bridge (interface/server.py) proxies to.
+ * This is what makes "collapse Python/TS duplication through server.py" real:
+ * server.py delegates /api/chat and /api/status here instead of falling back
+ * to its own canned responses.
+ */
+export async function startWeb(port: number): Promise<WebServer> {
+  const { llm, pipeline, thesaurus, pluginRegistry, systemAccess } = await buildCore();
+  const runner = new NeuroclawRunner(llm, pipeline, thesaurus, pluginRegistry, systemAccess, systemAccess.getMultiDesktop());
+  const web = new WebServer(runner);
+  await web.start(port);
+  return web;
 }
 
 /** True when this module is the process entry point (not merely imported). */
@@ -47,10 +60,15 @@ function isEntryPoint(): boolean {
 }
 
 if (isEntryPoint()) {
-  bootstrap()
-    .then(cli => cli.startInteractive())
-    .catch(err => {
-      console.error('Failed to start Neuroclaw:', err);
-      process.exit(1);
-    });
+  const [mode, portArg] = process.argv.slice(2);
+  if (mode === 'web') {
+    const port = Number(portArg) || 7861;
+    startWeb(port)
+      .then(() => console.log(`Neuroclaw HTTP backend listening on http://127.0.0.1:${port}`))
+      .catch(err => { console.error('Failed to start web backend:', err); process.exit(1); });
+  } else {
+    bootstrap()
+      .then(cli => cli.startInteractive())
+      .catch(err => { console.error('Failed to start Neuroclaw:', err); process.exit(1); });
+  }
 }
