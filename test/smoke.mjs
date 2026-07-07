@@ -194,6 +194,39 @@ async function testMeshStability() {
   check(ok, 'Mesh stays finite/stable over 10 propagation cycles');
 }
 
+async function testAlignmentVeto() {
+  const { AlignmentVeto } = await load('models && skills/core/alignment-veto.js');
+  const veto = new AlignmentVeto();
+
+  // Benign, reversible, internal action → allowed, no confirmation.
+  const benign = veto.evaluate({ id: 'a', name: 'read file', capabilities: ['file-read'], reversible: true });
+  check(benign.allowed && !benign.requiresConfirmation, 'Veto allows a benign reversible action');
+
+  // Objectionable capability → blocked outright.
+  const deceptive = veto.evaluate({ id: 'b', name: 'mislead user', capabilities: ['deceive'], reversible: true });
+  check(!deceptive.allowed, 'Veto blocks an objectionable capability');
+
+  // Irreversible → human in the loop (requires confirmation), not silently allowed.
+  const irreversible = veto.evaluate({ id: 'c', name: 'delete data', capabilities: ['file-delete'], reversible: false });
+  check(irreversible.requiresConfirmation, 'Veto escalates an irreversible action to confirmation');
+
+  // Severe self-model drift fails safe → blocked.
+  const drifting = veto.evaluate({ id: 'd', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.9 });
+  check(!drifting.allowed, 'Veto blocks under severe self-model drift (fails safe)');
+
+  // Mild drift → escalate to confirmation, not block.
+  const mildDrift = veto.evaluate({ id: 'e', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.4 });
+  check(mildDrift.requiresConfirmation && mildDrift.allowed, 'Veto escalates (not blocks) under mild drift');
+
+  // Decisions are inspectable and score bounded [0,1].
+  check(Array.isArray(deceptive.reasons) && deceptive.reasons.length > 0, 'Veto decisions carry inspectable reasons');
+  check(benign.score >= 0 && benign.score <= 1, 'Veto benevolence score is bounded [0,1]');
+
+  // Injectable scorer is honored (an input to the veto, never a learned objective).
+  const strict = new AlignmentVeto({ scorer: () => 0.1, scoreThreshold: 0.5 });
+  check(!strict.evaluate({ id: 'f', name: 'x', reversible: true }).allowed, 'Veto honors an injected benevolence scorer');
+}
+
 async function testBootstrap() {
   const { bootstrap } = await load('interface/main.js');
   const cli = await bootstrap();
@@ -217,6 +250,7 @@ async function main() {
     ['Symbolic trace', testSymbolicTrace],
     ['Quantum interference', testQuantum],
     ['Mesh stability', testMeshStability],
+    ['Alignment veto', testAlignmentVeto],
     ['ZipIO persistence', testZipPersistence],
     ['App bootstrap', testBootstrap],
   ];
