@@ -9,15 +9,33 @@ _llm_process = None
 
 def _start_ts_backend():
     global _llm_process
+    # Spawn the compiled composition-root entrypoint in web mode. The old
+    # command (`npx tsx index.ts web 7861`) pointed at index.ts, which is only
+    # a barrel of re-exports with no bootstrap — it exited immediately without
+    # starting a server, so this bridge always fell through to the canned
+    # responses below. dist/interface/main.js web <port> starts the real
+    # NeuroclawRunner-backed WebServer, so /api/chat here reaches the actual
+    # neural pipeline (that is the "collapse Python/TS through server.py" bridge).
     try:
         _llm_process = subprocess.Popen(
-            ["npx", "tsx", os.path.join(_ROOT, "index.ts"), "web", "7861"],
+            ["node", os.path.join(_ROOT, "dist", "interface", "main.js"), "web", "7861"],
             cwd=_ROOT,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
         )
-        import time as _t
-        _t.sleep(2)
+        # Wait for the backend to accept connections (up to ~15s) instead of a
+        # fixed sleep, so a slow cold start doesn't force the canned fallback.
+        import http.client as _hc
+        for _ in range(30):
+            time.sleep(0.5)
+            try:
+                _c = _hc.HTTPConnection("localhost", 7861, timeout=1)
+                _c.request("GET", "/api/status")
+                _c.getresponse().read()
+                _c.close()
+                break
+            except Exception:
+                continue
     except Exception as e:
         print(f"[server] TS backend: {e}")
 

@@ -6,15 +6,15 @@ export interface HyperNeuron {
      * decaying/diffusing otherwise via the same propagation as any other
      * dimension); indices 1..dimensions are content.
      */
-    state: number[];
+    state: Float32Array;
     energy: number;
     transitions: StateTransition[];
     influenceRadius: number;
     activationThreshold: number;
 }
 export interface StateTransition {
-    fromState: number[];
-    toState: number[];
+    fromState: Float32Array;
+    toState: Float32Array;
     energy: number;
     timestamp: number;
     cause: string;
@@ -85,6 +85,8 @@ export declare class HyperDimensionalEngine {
     private emaEnergy;
     private hasEma;
     private sustainedDivergence;
+    private nextStatesBuffer;
+    private tempCtx;
     constructor(config?: Record<string, any>);
     /**
      * Run one tick: settle the mesh to convergence for the given input, apply
@@ -146,7 +148,7 @@ export declare class HyperDimensionalEngine {
      * value budget.
      */
     private applyWeightLearning;
-    private meanContentEnergy;
+    private meanContentEnergyBuffer;
     /** Rank-r compressed self-model: predict(x) = B^T (A^T x). */
     private selfModelPredict;
     /** One online gradient step on the compressed self-model toward reducing predicted-vs-actual error. */

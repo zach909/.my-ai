@@ -1,0 +1,8 @@
+checkpoints/
+*.pt
+*.model
+*.vocab
+__pycache__/
+*.pyc
+.venv/
+venv/
