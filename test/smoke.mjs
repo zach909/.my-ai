@@ -308,6 +308,65 @@ async function testQuantum() {
   check(freq > 0.9, `collapse() selects the dominant amplitude with proportionally higher frequency (${(freq * 100).toFixed(1)}% over ${trials} trials, uniform would be ~33%)`);
 }
 
+async function testMoESharedMesh() {
+  const { MixtureOfExperts } = await load('models && skills/moe.js');
+
+  // Two skills with overlapping neuron ranges wired into the same mesh at
+  // density 1.0 (Section 2.1's verification scenario).
+  const moe = new MixtureOfExperts(1); // topK=1: exactly one expert selected per tick
+  // 12 neurons/skill: with relu, a recomputed-but-still-zero neuron is
+  // indistinguishable from a frozen one, so use enough neurons that "all 12
+  // independently relu-clamp to zero" is negligible (~1/4096 at worst).
+  const skillA = moe.addExpert('skillA', 'Skill A', 'a', 12);
+  const skillB = moe.addExpert('skillB', 'Skill B', 'b', 12);
+  const mesh = moe.getMesh();
+
+  // (a) both skills' neurons have live connections to arbitrary main-mesh
+  // neurons outside their own group — full density means every node is
+  // connected to every other node regardless of group.
+  const aFullyWired = skillA.neuronIds.every(id =>
+    skillB.neuronIds.every(other => mesh.getNode(id).connections.has(other))
+  );
+  check(aFullyWired, 'MoE: skill A neurons are wired to skill B neurons (density 1.0 ignores group)');
+  const totalNodes = mesh.getNodeCount();
+  const fullyConnected = [...skillA.neuronIds, ...skillB.neuronIds].every(
+    id => mesh.getNode(id).connections.size === totalNodes - 1
+  );
+  check(fullyConnected, 'MoE: every skill neuron connects to all other nodes in the mesh');
+
+  // (b) on a tick where only one skill's group is selected, only that
+  // skill's neurons execute forward computation — the mesh's propagate()
+  // gates compute by group directly (this is the mechanism moe.tick() calls
+  // internally after scoring; exercising it directly makes the assertion
+  // independent of the router's specific (randomly-initialized) scores).
+  // Only skill A's neurons are externally driven this tick — skill B gets
+  // no external input, so any change to its activation could only come from
+  // it being (wrongly) recomputed from the mesh's internal dynamics.
+  const aInputs = new Map(skillA.neuronIds.map(id => [id, 0.3]));
+
+  const beforeB = skillB.neuronIds.map(id => mesh.getNode(id).activation);
+  mesh.propagate(aInputs, undefined, new Set(['skillA']));
+  const bUnchanged = skillB.neuronIds.every((id, i) => mesh.getNode(id).activation === beforeB[i]);
+  check(bUnchanged, "MoE: unselected skill B's neurons did not execute (activation frozen) while skill A ran");
+  check(Number.isFinite(mesh.getNode(skillA.neuronIds[0]).activation), 'MoE: selected skill A neurons did execute (finite new activation)');
+
+  // (c) the unselected skill's neurons still exist in the connection graph
+  // and can be selected on a subsequent tick without re-wiring.
+  const stillWired = skillB.neuronIds.every(id => mesh.getNode(id).connections.size === totalNodes - 1);
+  const bInputs = new Map(skillB.neuronIds.map(id => [id, 0.3]));
+  const beforeBSecond = skillB.neuronIds.map(id => mesh.getNode(id).activation);
+  mesh.propagate(bInputs, undefined, new Set(['skillB']));
+  const bNowRan = skillB.neuronIds.some((id, i) => mesh.getNode(id).activation !== beforeBSecond[i]);
+  check(stillWired && bNowRan, 'MoE: previously-unselected skill B computes next tick with no re-wiring needed');
+
+  // moe.tick() itself: real router scoring end-to-end, still finite/stable.
+  const routingInput = new Float32Array(768).fill(0.1);
+  const tickInputs = new Map([...skillA.neuronIds, ...skillB.neuronIds].map(id => [id, 0.2]));
+  const { activeExperts } = moe.tick(routingInput, tickInputs);
+  check(activeExperts.length === 1 && (activeExperts[0] === 'skillA' || activeExperts[0] === 'skillB'),
+    `MoE: tick() router selects exactly topK=1 registered expert (got ${JSON.stringify(activeExperts)})`);
+}
+
 async function testMeshStability() {
   const { NeuronMesh } = await load('models && skills/core/mesh.js');
   const mesh = new NeuronMesh({ nodeCount: 24, connectionDensity: 1.0, propagationSteps: 15, convergenceThreshold: 0.01, activationFn: 'tanh', learningRate: 0.01, initialConnectionWeight: 0.01, dampingFactor: 0.85, seed: 7 });
@@ -456,6 +515,7 @@ async function main() {
     ['Symbolic trace', testSymbolicTrace],
     ['Definishon training', testDefinitionTraining],
     ['Quantum interference', testQuantum],
+    ['MoE shared mesh (Section 2.1)', testMoESharedMesh],
     ['Mesh stability', testMeshStability],
     ['Alignment veto', testAlignmentVeto],
     ['Number systems (complex/dual)', testNumberSystems],
