@@ -1,3 +1,5 @@
+import { type Dual, dual, add as dAdd, scale as dScale } from './dual.js';
+
 export interface HyperNeuron {
   id: number;
   /**
@@ -727,6 +729,40 @@ export class HyperDimensionalEngine {
     return sum / (N * dims);
   }
 
+  /**
+   * Section 13 → §12: evaluate the compressed self-model AND its instantaneous
+   * rate of change in a single forward pass using dual numbers. `velocity` is
+   * the per-dimension rate of change of the input (e.g. current minus previous
+   * output). Each input dimension enters as a dual (value, velocity) and is
+   * propagated through the linear self-model, so the ε-component of the output
+   * is the predicted derivative. Live correction can then react to the trend
+   * (is divergence growing?) rather than only the current level.
+   */
+  predictSelfModelWithDerivative(vec: number[], velocity: number[]): { value: number[]; derivative: number[] } {
+    const dims = this.config.dimensions;
+    const rank = this.config.selfModelRank;
+
+    const h: Dual[] = Array.from({ length: rank }, () => dual(0, 0));
+    for (let d = 0; d < dims; d++) {
+      const x = dual(vec[d] ?? 0, velocity[d] ?? 0);
+      for (let r = 0; r < rank; r++) {
+        h[r] = dAdd(h[r], dScale(x, this.selfModelA[d * rank + r]));
+      }
+    }
+
+    const value = new Array<number>(dims).fill(0);
+    const derivative = new Array<number>(dims).fill(0);
+    for (let r = 0; r < rank; r++) {
+      for (let d = 0; d < dims; d++) {
+        const term = dScale(h[r], this.selfModelB[r * dims + d]);
+        value[d] += term.val;
+        derivative[d] += term.der;
+      }
+    }
+    return { value, derivative };
+  }
+
+  /** Rank-r compressed self-model: predict(x) = B^T (A^T x). */
   private selfModelPredict(vec: number[]): number[] {
     const dims = this.config.dimensions;
     const rank = this.config.selfModelRank;

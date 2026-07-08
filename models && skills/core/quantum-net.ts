@@ -8,6 +8,7 @@
  * Example: Neuron 2's signature was 4.5 and its height was 10.
  */
 
+import { type Complex, fromPolar, add as cAdd, abs as cAbs } from './complex.js';
 /**
  * Genuine complex number, Cartesian form. Interference math is done here
  * (real multiplication/addition) rather than via hand-rolled trig identities,
@@ -150,6 +151,14 @@ export class QuantumNeuralNet {
 
     if (!neuronA || !neuronB) throw new Error('One or both neurons not found');
 
+    // Section 13: interference as genuine complex arithmetic. Each state is
+    // the phasor height·e^{iφ}; the resultant is their complex sum and the
+    // returned amplitude is its magnitude |zA + zB|. This is exactly the old
+    // sqrt(A² + B² + 2AB·cos Δφ) formula, but derived from the complex
+    // substrate the phase-and-height pair actually represents.
+    const zA = this.complexAmplitude(neuronA.state);
+    const zB = this.complexAmplitude(neuronB.state);
+    return cAbs(cAdd(zA, zB));
     // Genuine complex addition of the two phasors — phases that disagree
     // cancel toward zero, phases that agree reinforce, purely as a
     // consequence of the arithmetic (no separately-trusted trig identity).
@@ -160,15 +169,29 @@ export class QuantumNeuralNet {
 
   /**
    * Phase-consensus across a group of neurons — true destructive interference.
-   * Sums each neuron's amplitude as a complex phasor (height at its phase angle);
-   * phasors that disagree in phase cancel toward zero, phasors that agree
-   * reinforce toward the sum of their heights. Returns the resultant magnitude.
+   * Sums each neuron's amplitude as a complex phasor (height·e^{iφ}); phasors
+   * that disagree in phase cancel toward zero, phasors that agree reinforce
+   * toward the sum of their heights. Returns the resultant magnitude.
    */
   phaseConsensus(neuronIds: string[]): number {
     let sum: Complex = { re: 0, im: 0 };
     for (const id of neuronIds) {
       const neuron = this.neurons.get(id);
       if (!neuron) continue;
+      sum = cAdd(sum, this.complexAmplitude(neuron.state));
+    }
+    return cAbs(sum);
+  }
+
+  /** The state's phase-and-amplitude as a single complex number height·e^{iφ}. */
+  private complexAmplitude(state: QuantumState): Complex {
+    return fromPolar(state.height, state.phase);
+  }
+
+  /** Public complex-amplitude accessor: the neuron's genuine complex QIL state. */
+  getComplexAmplitude(neuronId: string): Complex | null {
+    const neuron = this.neurons.get(neuronId);
+    return neuron ? this.complexAmplitude(neuron.state) : null;
       sum = cAdd(sum, cFromPolar(neuron.state.height, neuron.state.phase));
     }
     return cMagnitude(sum);

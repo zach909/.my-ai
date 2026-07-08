@@ -361,6 +361,45 @@ async function testAlignmentVeto() {
   check(!strict.evaluate({ id: 'f', name: 'x', reversible: true }).allowed, 'Veto honors an injected benevolence scorer');
 }
 
+async function testNumberSystems() {
+  const C = await load('models && skills/core/complex.js');
+  const D = await load('models && skills/core/dual.js');
+  const near = (a, b, t = 1e-9) => Math.abs(a - b) < t;
+
+  // Complex: division-algebra laws (Section 13, Hurwitz size 2).
+  check(near(C.mul(C.I, C.I).re, -1) && near(C.mul(C.I, C.I).im, 0), 'Complex: i·i = -1');
+  const z = C.complex(3, -4);
+  check(near(C.abs(z), 5), 'Complex: |3-4i| = 5');
+  check(near(C.abs(C.mul(z, C.complex(1, 2))), C.abs(z) * C.abs(C.complex(1, 2))), 'Complex: |z·w| = |z||w|');
+  const one = C.mul(z, C.inv(z));
+  check(near(one.re, 1) && near(one.im, 0), 'Complex: z·z⁻¹ = 1 (division-algebra inverse)');
+
+  // Dual: forward-mode derivatives (Section 13 → live correction).
+  const x = D.variable(3);
+  const sq = D.mul(x, x);
+  check(near(sq.val, 9) && near(sq.der, 6), 'Dual: d/dx x² at 3 = 6');
+  const th = D.tanh(D.variable(0.5));
+  check(near(th.der, 1 - Math.tanh(0.5) ** 2), 'Dual: tanh carries derivative 1-tanh²');
+
+  // QIL uses the complex substrate; interference is |zA + zB|.
+  const { QuantumNeuralNet } = await load('models && skills/core/quantum-net.js');
+  const q = new QuantumNeuralNet();
+  q.addNeuron('a', 0.5); q.addNeuron('b', 0.5);
+  check(q.getComplexAmplitude('a') && typeof q.getComplexAmplitude('a').re === 'number', 'QIL exposes genuine complex amplitude');
+  check(Number.isFinite(q.interfere('a', 'b')), 'QIL interfere() (complex |zA+zB|) is finite');
+
+  // Self-model derivative in one pass matches finite difference.
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
+  hd.process([0.2, -0.3, 0.5, 0.1, -0.4, 0.6]);
+  const base = [0.2, -0.3, 0.5, 0.1, -0.4, 0.6];
+  const der = hd.predictSelfModelWithDerivative(base, [1, 0, 0, 0, 0, 0]).derivative[0];
+  const eps = 1e-5, bumped = [...base]; bumped[0] += eps;
+  const p0 = hd.predictSelfModelWithDerivative(base, new Array(6).fill(0)).value[0];
+  const p1 = hd.predictSelfModelWithDerivative(bumped, new Array(6).fill(0)).value[0];
+  check(near(der, (p1 - p0) / eps, 1e-3), 'Self-model dual derivative matches finite difference');
+}
+
 async function testBootstrap() {
   const { bootstrap } = await load('interface/main.js');
   const cli = await bootstrap();
@@ -419,6 +458,7 @@ async function main() {
     ['Quantum interference', testQuantum],
     ['Mesh stability', testMeshStability],
     ['Alignment veto', testAlignmentVeto],
+    ['Number systems (complex/dual)', testNumberSystems],
     ['ZipIO persistence', testZipPersistence],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
