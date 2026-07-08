@@ -5,6 +5,7 @@ import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
 import { QuantumNeuralNet } from './quantum-net.js';
 import { ZipIOSystem } from './zip-io.js';
+import { AlignmentVeto } from './alignment-veto.js';
 import { pluginExtensions } from '../../plugins/index.js';
 const DEFAULT_CONFIG = {
     embeddingDim: 768,
@@ -23,6 +24,7 @@ export class NeuroPipeline {
     valueRange = null;
     quantumNet = null;
     zipIO = null;
+    alignmentVeto = null;
     // Elastic value budget: how many neuron slots it covers, and whether
     // initializeNeurons() has been called yet for this pipeline instance.
     valueBudgetSize = 0;
@@ -106,6 +108,7 @@ export class NeuroPipeline {
             thinkSteps: 3,
         });
         this.quantumNet = new QuantumNeuralNet();
+        this.alignmentVeto = new AlignmentVeto();
         // 50k chunks for the ring buffer's live window; when zipPersistDir is
         // set, periodic checkpoints there let context survive past that window
         // (and past process restarts) — restored below before the first run.
@@ -130,30 +133,49 @@ export class NeuroPipeline {
      * share this one budget space, sized to the larger of the two in
      * ensureSubsystems().
      */
-    getValueLearningRates() {
-        if (!this.valueInitialized) {
-            const neuronStates = [];
-            for (let i = 0; i < this.valueBudgetSize; i++) {
-                neuronStates.push({
-                    id: String(i),
-                    name: `neuron_${i}`,
-                    value: 0,
-                    learningRate: 0,
-                    states: new Map(),
-                    connections: new Map(),
-                    expertGroup: null,
-                    active: true,
-                });
-            }
-            this.valueRange.initializeNeurons(neuronStates);
-            this.valueInitialized = true;
+    ensureValueInitialized() {
+        if (this.valueInitialized)
+            return;
+        const neuronStates = [];
+        for (let i = 0; i < this.valueBudgetSize; i++) {
+            neuronStates.push({
+                id: String(i),
+                name: `neuron_${i}`,
+                value: 0,
+                learningRate: 0,
+                states: new Map(),
+                connections: new Map(),
+                expertGroup: null,
+                active: true,
+            });
         }
+        this.valueRange.initializeNeurons(neuronStates);
+        this.valueInitialized = true;
+    }
+    getValueLearningRates() {
+        this.ensureValueInitialized();
         const { neuronAllocations } = this.valueRange.getDistribution();
         const rates = new Map();
         for (const alloc of neuronAllocations) {
             rates.set(Number(alloc.id), alloc.learningRate);
         }
         return rates;
+    }
+    /**
+     * The same zero-sum points as getValueLearningRates(), read as a raw [0,1]
+     * vale fraction instead of a learning rate. This is what gates the
+     * state-transition blend (new_state = vale*old_state + (1-vale)*computed)
+     * in both the mesh and the hyperdimensional engine, so a neuron's
+     * accumulated value simultaneously slows its weight updates *and* makes
+     * its activation resist being overwritten each tick.
+     */
+    getValeFractions() {
+        this.ensureValueInitialized();
+        const fractions = this.valueRange.getValeFractions();
+        const vale = new Map();
+        for (const [id, frac] of fractions)
+            vale.set(Number(id), frac);
+        return vale;
     }
     /**
      * Feed a subsystem's per-neuron activity (how much each neuron just
@@ -168,7 +190,7 @@ export class NeuroPipeline {
         }
         this.valueRange.applyDecay();
     }
-    // ─── Core pipeline ────────────────────────────────────────────────────────
+    // ─── Core pipeline ───────────────────────────────────────────────────────
     /**
      * Run all 7 subsystems in sequence on an embedding vector.
      *
@@ -221,7 +243,7 @@ export class NeuroPipeline {
             for (let i = 0; i < meshNodeCount; i++) {
                 meshInputs.set(i, moeOutput[i] || 0);
             }
-            const propagation = this.mesh.propagate(meshInputs);
+            const propagation = this.mesh.propagate(meshInputs, this.getValeFractions());
             // Collect final state values as an ordered array
             meshOutput = Array.from(propagation.finalStates.values());
             // Elastic value budget gates how much each mesh node's connections are
@@ -240,13 +262,15 @@ export class NeuroPipeline {
         }
         // ── Step 3: Hyper-dimensional processing ────────────────────────────────
         let hyperOutput;
+        let selfModelSurprise = 0;
         {
             const t0 = Date.now();
             // Pad/truncate mesh output to hyperDimensions
             const hyperInput = this.resizeArray(meshOutput, this.config.hyperDimensions);
             const learningRates = this.getValueLearningRates();
-            const hyperResult = this.hyperEngine.process(hyperInput, learningRates);
+            const hyperResult = this.hyperEngine.process(hyperInput, learningRates, undefined, this.getValeFractions());
             hyperOutput = hyperResult.outputVector;
+            selfModelSurprise = hyperResult.selfModelSurprise;
             this.feedbackToValueBudget(hyperResult.stateDeltas);
             const durationMs = Date.now() - t0;
             steps.push({
@@ -326,6 +350,28 @@ export class NeuroPipeline {
                 durationMs,
             });
         }
+        // ── Step 5b: Alignment veto ─────────────────────────────────────────────
+        // Gate the chosen action rather than optimizing toward an alignment score.
+        // Capabilities come from whichever plugin experts the MoE actually picked,
+        // and drift is the self-model surprise from the hyperdimensional stage, so
+        // a run that diverged from what the network expected fails safe.
+        let alignment;
+        {
+            const t0 = Date.now();
+            const capabilities = [];
+            for (const pluginId of selectedPlugins) {
+                const def = pluginExtensions[pluginId];
+                if (def?.capabilities)
+                    capabilities.push(...def.capabilities);
+            }
+            alignment = this.alignmentVeto.evaluate({ id: `rlm-action-${rlmAction}`, name: `action ${rlmAction}`, capabilities, reversible: true }, { selfModelSurprise });
+            steps.push({
+                name: 'alignment-veto',
+                inputShape: [capabilities.length],
+                outputShape: [alignment.allowed ? 1 : 0],
+                durationMs: Date.now() - t0,
+            });
+        }
         // ── Step 6: Token generation (combination) ──────────────────────────────
         let finalOutput;
         {
@@ -354,9 +400,10 @@ export class NeuroPipeline {
             steps,
             totalDurationMs,
             selectedPlugins,
+            alignment,
         };
     }
-    // ─── Stats ────────────────────────────────────────────────────────────────
+    // ─── Stats ──────────────────────────────────────────────────────────
     getStats() {
         const runsCount = this.runHistory.length;
         if (runsCount === 0) {
@@ -378,7 +425,7 @@ export class NeuroPipeline {
         }
         return { avgDurationMs, stepBreakdown, runsCount };
     }
-    // ─── Reset ────────────────────────────────────────────────────────────────
+    // ─── Reset ──────────────────────────────────────────────────────────
     reset() {
         this.runHistory = [];
         // Tear down subsystems so they are re-created fresh on next run

@@ -310,10 +310,13 @@ export class NeuroclawLLM {
                     else if (t && t.X.length > 0)
                         answerParts.push(`${w} (also: ${t.X.slice(0, 3).join(', ')})`);
                 }
-                const answer = answerParts.length > 0
-                    ? answerParts.join('. ')
-                    : thorns.response;
-                return `${answer}${contextLine}\n  Plan: ${plan} | ${novelTag} confidence:${confidence}%`;
+                if (answerParts.length > 0) {
+                    const answer = answerParts.join('. ');
+                    return `${answer}${contextLine}\n  Plan: ${plan} | ${novelTag} confidence:${confidence}%`;
+                }
+                // thorns.response already carries its own intent + plan lines; appending
+                // another "Plan: ${plan}" here duplicated it. Fall back cleanly instead.
+                return `${thorns.response}${contextLine}\n  ${novelTag} confidence:${confidence}%`;
             }
             default:
                 return `${thorns.response}${contextLine}\n  ${novelTag} confidence:${confidence}%`;
@@ -462,6 +465,14 @@ export class NeuroclawLLM {
         };
     }
     getHyperHistory() { return this.hyperEngine.getHistory(); }
+    /**
+     * Section 9 on-demand symbolic trace: the human-readable equation behind one
+     * hyperdimensional neuron's current settled value. Reflects whatever state
+     * the engine last settled to (run a generation first for a meaningful read).
+     */
+    traceNeuron(neuronId, dim, topK = 6) {
+        return this.hyperEngine.traceNeuron(neuronId, dim, topK);
+    }
     demoteFailingNeurons(failureId) {
         this.valueAllocator.demoteNeuron(failureId);
     }

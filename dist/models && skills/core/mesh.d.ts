@@ -41,7 +41,15 @@ export declare class NeuronMesh {
     private nodes;
     private nextId;
     constructor(config?: Partial<MeshConfig>);
-    propagate(inputActivations: Map<number, number> | Map<string, number>): PropagationResult;
+    /**
+     * @param vale Optional per-node vale fraction in [0,1] from the elastic
+     *   value budget. Gates the state-transition itself (not just weight
+     *   learning): new_state = vale*old_state + (1-vale)*computed_state, so a
+     *   high-vale node resists moving to its freshly computed activation while
+     *   a low-vale node adopts it almost entirely. Nodes absent from the map
+     *   are ungated (vale=0, i.e. fully adopt the computed state).
+     */
+    propagate(inputActivations: Map<number, number> | Map<string, number>, vale?: Map<number, number>): PropagationResult;
     /**
      * Hebbian weight update gated per-node by an externally supplied learning
      * rate (from the elastic value budget: high-value nodes get a low rate and

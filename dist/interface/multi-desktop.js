@@ -6,8 +6,11 @@
  * available, falling back to a simulated session model otherwise. This is the
  * single canonical MultiDesktopManager — do not duplicate it elsewhere.
  */
-import { execSync } from 'node:child_process';
+import { execSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
+const EXT_DBUS_DEST = 'org.gnome.Shell.Extensions.MultiInput';
+const EXT_DBUS_PATH = '/org/gnome/Shell/Extensions/MultiInput';
+const EXT_DBUS_IFACE = 'org.gnome.Shell.Extensions.MultiInput';
 export class MultiDesktopManager {
     sessions;
     inputDevices;
@@ -19,6 +22,8 @@ export class MultiDesktopManager {
     uinputAvailable = false;
     /** Real GNOME workspace index backing the 'ai' session, once initialized */
     aiGnomeWorkspaceIndex = -1;
+    /** True when the vendored gnome-multi-input-extension is reachable over D-Bus */
+    extensionAvailable = false;
     constructor() {
         this.sessions = new Map();
         this.inputDevices = new Map();
@@ -31,6 +36,32 @@ export class MultiDesktopManager {
         this.gnomeAvailable = this.checkGnome();
         this.xinputAvailable = this.checkXinput();
         this.uinputAvailable = existsSync('/dev/uinput');
+        this.extensionAvailable = this.checkExtension();
+    }
+    checkExtension() {
+        try {
+            execSync(`gdbus call --session --dest ${EXT_DBUS_DEST} ` +
+                `--object-path ${EXT_DBUS_PATH} ` +
+                `--method ${EXT_DBUS_IFACE}.GetNumWorkspaces 2>/dev/null`, { encoding: 'utf8', timeout: 3000 });
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    /** Calls a method on the vendored gnome-multi-input-extension over D-Bus. */
+    callExtension(method, args = '') {
+        const cmd = `gdbus call --session --dest ${EXT_DBUS_DEST} ` +
+            `--object-path ${EXT_DBUS_PATH} ` +
+            `--method ${EXT_DBUS_IFACE}.${method}${args ? ' ' + args : ''} 2>/dev/null`;
+        return execSync(cmd, { encoding: 'utf8', timeout: 5000 }).trim();
+    }
+    parseExtUint(output) {
+        const m = output.match(/\d+/);
+        return m ? parseInt(m[0], 10) : -1;
+    }
+    isExtensionAvailable() {
+        return this.extensionAvailable;
     }
     checkGnome() {
         try {
@@ -71,13 +102,23 @@ export class MultiDesktopManager {
      * GNOME workspace for it when GNOME is available.
      */
     async initAiWorkspace() {
-        if (this.gnomeAvailable && this.aiGnomeWorkspaceIndex < 0) {
-            try {
-                const count = this.getRealGnomeWorkspaceCount();
-                execSync(`gsettings set org.gnome.desktop.wm.preferences num-workspaces ${count + 1}`, { timeout: 5000 });
-                this.aiGnomeWorkspaceIndex = count;
+        if (this.aiGnomeWorkspaceIndex < 0) {
+            if (this.extensionAvailable) {
+                try {
+                    const idx = this.parseExtUint(this.callExtension('EnsureAiWorkspace'));
+                    if (idx >= 0)
+                        this.aiGnomeWorkspaceIndex = idx;
+                }
+                catch { /* fall through */ }
             }
-            catch { /* fall through to simulated session only */ }
+            if (this.aiGnomeWorkspaceIndex < 0 && this.gnomeAvailable) {
+                try {
+                    const count = this.getRealGnomeWorkspaceCount();
+                    execSync(`gsettings set org.gnome.desktop.wm.preferences num-workspaces ${count + 1}`, { timeout: 5000 });
+                    this.aiGnomeWorkspaceIndex = count;
+                }
+                catch { /* fall through to simulated session only */ }
+            }
         }
         this.activateSession('ai');
         return 'ai_workspace_initialized';
@@ -97,6 +138,21 @@ export class MultiDesktopManager {
     createVirtualDevice(type, name) {
         const id = `virt_${type}_${Date.now()}_${Math.random().toString(36).slice(2, 6)}`;
         let masterId;
+        // Prefer the GNOME Shell extension's Clutter.Seat virtual device (proper API)
+        // over xinput master-device creation, when the extension is reachable.
+        if (this.extensionAvailable) {
+            try {
+                const method = type === 'mouse' ? 'CreateVirtualPointer' : 'CreateVirtualKeyboard';
+                const extId = this.parseExtUint(this.callExtension(method));
+                if (extId > 0) {
+                    const device = { id, type, name: `${name} (Extension)`, created: Date.now(), masterId: extId };
+                    this.virtualDevices.set(id, device);
+                    this.assignDeviceToDevice(id, 'ai');
+                    return device;
+                }
+            }
+            catch { /* fall through to xinput */ }
+        }
         if (this.xinputAvailable) {
             try {
                 execSync(`xinput create-master "${name}" 2>/dev/null`, { encoding: 'utf8', timeout: 5000 });
@@ -158,16 +214,61 @@ export class MultiDesktopManager {
      * Focus AI desktop — switches the real GNOME workspace when available.
      */
     focusAiDesktop() {
+        if (this.extensionAvailable) {
+            try {
+                this.callExtension('FocusAiWorkspace');
+                return this.switchToDesktop('ai');
+            }
+            catch { /* fall through */ }
+        }
         if (this.gnomeAvailable && this.aiGnomeWorkspaceIndex >= 0) {
             this.switchRealGnomeWorkspace(this.aiGnomeWorkspaceIndex);
         }
         return this.switchToDesktop('ai');
     }
     focusUserDesktop() {
+        if (this.extensionAvailable) {
+            try {
+                this.callExtension('FocusUserWorkspace');
+                return this.switchToDesktop('user');
+            }
+            catch { /* fall through */ }
+        }
         if (this.gnomeAvailable) {
             this.switchRealGnomeWorkspace(0);
         }
         return this.switchToDesktop('user');
+    }
+    /**
+     * Move an already-open window (by wmctrl window id) to the GNOME workspace
+     * backing the given desktop session.
+     */
+    moveWindowToDesktop(windowId, desktopId) {
+        const index = desktopId === 'ai' ? this.aiGnomeWorkspaceIndex : 0;
+        if (!this.gnomeAvailable || index < 0)
+            return;
+        try {
+            execSync(`wmctrl -i -r ${windowId} -t ${index} 2>/dev/null`, { timeout: 3000 });
+        }
+        catch { /* best effort */ }
+    }
+    /**
+     * Launch a command on the given desktop session (defaults to 'ai') without
+     * disturbing whichever desktop is currently focused.
+     */
+    launchOnDesktop(command, desktopId = 'ai') {
+        const cur = this.currentDesktop;
+        this.switchToDesktop(desktopId);
+        try {
+            const proc = spawn(command, [], {
+                shell: true, stdio: 'ignore', detached: true,
+                env: { ...process.env, DESKTOP: desktopId },
+            });
+            proc.unref();
+        }
+        catch { /* best effort */ }
+        if (cur !== desktopId)
+            this.switchToDesktop(cur);
     }
     switchRealGnomeWorkspace(index) {
         try {

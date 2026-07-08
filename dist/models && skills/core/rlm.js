@@ -111,25 +111,25 @@ export class RLMTrainer {
     }
     selectAction(state, availableActions) {
         const actions = availableActions || Array.from({ length: this.config.actionDim }, (_, i) => i);
-        const thinkingSteps = [];
         if (Math.random() < this.currentExplorationRate) {
             const idx = Math.floor(Math.random() * actions.length);
             return { action: actions[idx], thinkingSteps: [idx] };
         }
         const qValues = this.computeQValues(state);
-        let bestAction = actions[0];
-        let bestQ = -Infinity;
-        for (let step = 0; step < this.config.lookaheadSteps; step++) {
-            for (const a of actions) {
-                const simulatedReward = this.simulateStep(state, a);
-                const futureQ = qValues[a] + simulatedReward * Math.pow(this.config.discountFactor, step + 1);
-                thinkingSteps.push(a);
-                if (futureQ > bestQ) {
-                    bestQ = futureQ;
-                    bestAction = a;
-                }
-            }
-        }
+        // Predict-before-commit: score every candidate action once (immediate Q
+        // value plus a discounted simulated-reward estimate), then keep the top
+        // `lookaheadSteps` candidates by score. Previously this looped
+        // `lookaheadSteps` times over the *same* undisturbed state with only the
+        // discount exponent changing per iteration, which never simulated a
+        // future state and — since the exponent only shrinks each pass — could
+        // never actually change which action won; it just repeated the same
+        // one-ply evaluation and padded thinkingSteps with duplicates.
+        const scored = actions
+            .map(a => ({ action: a, score: qValues[a] + this.simulateStep(state, a) * this.config.discountFactor }))
+            .sort((x, y) => y.score - x.score);
+        const topK = scored.slice(0, Math.max(1, this.config.lookaheadSteps));
+        const thinkingSteps = topK.map(c => c.action);
+        let bestAction = topK[0].action;
         const loopAction = this.detectLoop(bestAction);
         if (loopAction !== -1) {
             const nonLoopActions = actions.filter(a => a !== loopAction);

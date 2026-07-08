@@ -29,6 +29,7 @@ export declare class CLI {
     private printDesktopStatus;
     private startChat;
     private handleGenerate;
+    private handleTrace;
     private handleThink;
     private handleTrain;
     private handleSearch;

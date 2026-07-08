@@ -14,7 +14,9 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   #status-dot.online { background: #00ff41; box-shadow: 0 0 8px #00ff41; }
   #status-dot.offline { background: #ff0040; box-shadow: 0 0 8px #ff0040; }
   #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
-  .message { max-width: 80%; padding: 10px 14px; border-radius: 4px; line-height: 1.5; font-size: 13px; animation: fadeIn 0.3s ease-out; }
+  .message { position: relative; max-width: 80%; padding: 10px 14px; border-radius: 4px; line-height: 1.5; font-size: 13px; animation: fadeIn 0.3s ease-out; }
+  .copy-btn { position: absolute; top: 4px; right: 4px; opacity: 0; background: #222; color: #00ff41; border: 1px solid #333; border-radius: 3px; font-size: 10px; padding: 2px 6px; cursor: pointer; transition: opacity 0.2s; }
+  .message:hover .copy-btn, .copy-btn:focus { opacity: 1; }
   .message.user { align-self: flex-end; background: #003300; border: 1px solid #00ff4144; }
   .message.ai { align-self: flex-start; background: #111; border: 1px solid #333; }
   .message.system { align-self: center; background: #111; border: 1px solid #333; color: #888; font-style: italic; font-size: 11px; }
@@ -35,7 +37,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 </head>
 <body>
 <div id="header">
-  <h1><span id="status-dot" class="offline"></span>Neuroclaw v0.1.0</h1>
+  <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
   <div id="status-text" style="font-size:12px;color:#555;">Starting...</div>
 </div>
 <div id="chat-container" role="log" aria-live="polite" aria-atomic="false"></div>
@@ -54,6 +56,18 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   function addMessage(type, text) {
     const div = document.createElement('div');
     div.className = 'message ' + type;
+    if (type === 'ai') {
+      const btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.textContent = 'Copy';
+      btn.setAttribute('aria-label', 'Copy AI response');
+      btn.onclick = () => {
+        navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 2000);
+      };
+      div.appendChild(btn);
+    }
     const content = document.createElement('div');
     content.textContent = text;
     div.appendChild(content);
@@ -87,9 +101,20 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     try {
       const res = await fetch('/api/status');
       const data = await res.json();
-      if (data.running) { statusDot.className = 'online'; statusText.textContent = 'Online'; }
-      else { statusDot.className = 'offline'; statusText.textContent = 'Offline'; }
-    } catch { statusDot.className = 'offline'; statusText.textContent = 'Disconnected'; }
+      if (data.running) {
+        statusDot.className = 'online';
+        statusDot.setAttribute('aria-label', 'System status: Online');
+        statusText.textContent = 'Online';
+      } else {
+        statusDot.className = 'offline';
+        statusDot.setAttribute('aria-label', 'System status: Offline');
+        statusText.textContent = 'Offline';
+      }
+    } catch {
+      statusDot.className = 'offline';
+      statusDot.setAttribute('aria-label', 'System status: Offline');
+      statusText.textContent = 'Disconnected';
+    }
   }
   async function sendMessage(msg) {
     if (!msg.trim()) return;

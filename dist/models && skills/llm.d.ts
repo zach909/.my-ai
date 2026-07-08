@@ -95,6 +95,26 @@ export declare class NeuroclawLLM {
         lastSeen: number;
         step: number;
     }[];
+    /**
+     * Section 9 on-demand symbolic trace: the human-readable equation behind one
+     * hyperdimensional neuron's current settled value. Reflects whatever state
+     * the engine last settled to (run a generation first for a meaningful read).
+     */
+    traceNeuron(neuronId: number, dim: number, topK?: number): {
+        neuronId: number;
+        dim: number;
+        bias: number;
+        preActivation: number;
+        value: number;
+        inputClamped: boolean;
+        terms: Array<{
+            source: string;
+            weight: number;
+            sourceValue: number;
+            contribution: number;
+        }>;
+        equation: string;
+    } | null;
     demoteFailingNeurons(failureId: string): void;
     getBuilder(): ExtensionBuilder;
     getTokenizer(): Tokenizer;
