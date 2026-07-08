@@ -4,20 +4,31 @@
  * Syntax summary:
  *   name="example"                             — create neuron named "example"
  *   "name"@value="1.0"                         — set neuron's value
- *   "name"@connections=".other"*0.5+".third"*0.3  — set connections
- *   "name"@definition="text"                   — set definition
+ *   "name"@vale="0.9"                          — set neuron's vale (elasticity/resistance to change)
+ *   "name"@connections=".other"*0.5+".third"*0.3  — set connections (alias: @conections=)
+ *   "name"@definition="text"                   — set definition (alias: @definishon=)
  *   "name"@code="code"                         — attach code
  *   code@name="calc"                           — create code-to-net neuron
  *   "netsearch"@net="location"                 — create netsearch neuron
  *   print "name"                               — print neuron info
  *
+ * @conections= and @definishon= are the DSL's canonical (deliberately
+ * non-standard) spellings from the original neurolang.py; @connections=/
+ * @definition= are accepted as the same primitive under a conventional
+ * spelling. Both parse to the same NeuriNeuron fields.
+ *
  * All neurons are connected by default (weight 0.1) unless an explicit
  * connection is specified.
  */
 
+import type { HyperDimensionalEngine } from './hyperdimensional.js';
+import type { ValueRangeAllocator } from './value-range.js';
+
 export interface NeuriNeuron {
   name: string;
   value: number;
+  /** Elasticity/resistance to change, [0,1]; undefined = not set by the DSL. */
+  vale?: number;
   connections: Map<string, number>; // target name → weight
   definition: string;
   code: string | null;
@@ -223,9 +234,23 @@ export class NeuroLangInterpreter {
       }
     }
 
-    // ── "X"@connections="..." — set connections ─────────────────────────────
+    // ── "X"@vale="0.9" — set elasticity/resistance to change ───────────────
     {
-      const m = line.match(/^"([^"]+)"\s*@\s*connections\s*=\s*"([^"]*)"$/);
+      const m = line.match(/^"([^"]+)"\s*@\s*vale\s*=\s*"?([0-9.]+)"?$/);
+      if (m) {
+        const name = m[1];
+        const val = parseFloat(m[2]);
+        if (isNaN(val)) throw new Error(`Invalid vale "${m[2]}" for neuron "${name}"`);
+        const neuron = neurons.get(name) ?? this.defaultNeuron(name);
+        neuron.vale = Math.max(0, Math.min(1, val));
+        neurons.set(name, neuron);
+        return;
+      }
+    }
+
+    // ── "X"@connections="..." (alias: @conections=) — set connections ──────
+    {
+      const m = line.match(/^"([^"]+)"\s*@\s*con(?:n)?ections\s*=\s*"([^"]*)"$/);
       if (m) {
         const name = m[1];
         const neuron = neurons.get(name) ?? this.defaultNeuron(name);
@@ -237,9 +262,10 @@ export class NeuroLangInterpreter {
       }
     }
 
-    // ── "X"@definition="..." — set definition ──────────────────────────────
+    // ── "X"@definition="..." (alias: @definishon=) — set definition ────────
     {
-      const m = line.match(/^"([^"]+)"\s*@\s*definition\s*=\s*"([^"]*)"$/);
+      const m = line.match(/^"([^"]+)"\s*@\s*definis?hon\s*=\s*"([^"]*)"$/)
+        ?? line.match(/^"([^"]+)"\s*@\s*definition\s*=\s*"([^"]*)"$/);
       if (m) {
         const name = m[1];
         const neuron = neurons.get(name) ?? this.defaultNeuron(name);
@@ -341,5 +367,204 @@ export class NeuroLangInterpreter {
       `code=${n.code !== null ? `"${n.code}"` : 'null'} ` +
       (flags.length > 0 ? `flags=[${flags.join(',')}]` : '')
     ).trim();
+  }
+}
+
+// ── Live materialization (Section 2.3) ───────────────────────────────────────
+
+export interface DefinitionConflict {
+  a: string;
+  b: string;
+  correlation: number;
+}
+
+export interface LiveMaterializeResult {
+  /** Declared neuron name -> the real engine neuron id it was assigned. */
+  nameToId: Map<string, number>;
+  /** Names that didn't fit in the engine's fixed neuron capacity. */
+  overflowed: string[];
+  converged: boolean;
+  epochs: number;
+  losses: number[];
+  /** Names whose @definition constraint converged within tolerance. */
+  satisfied: string[];
+  conflicts: DefinitionConflict[];
+}
+
+/**
+ * Deterministic text -> unit vector, so the same definition text always
+ * produces the same training target (and different text a different one)
+ * without needing an external embedding model. Each dimension gets its own
+ * running hash seeded by its index and folded over every character (not
+ * just one or two fixed character positions), so short or low-diversity
+ * strings (e.g. a single repeated character) still disperse across
+ * dimensions instead of collapsing every dimension to the same value —
+ * and, in turn, so two different definitions reliably land on genuinely
+ * different targets rather than risking an accidental collision.
+ */
+function embedText(text: string, dims: number): number[] {
+  const vec = new Array(dims).fill(0);
+  if (text.length === 0) return vec;
+  for (let d = 0; d < dims; d++) {
+    let h = 2166136261 ^ (d * 2654435761); // FNV-1a offset basis, salted per dimension
+    for (let i = 0; i < text.length; i++) {
+      h ^= text.charCodeAt(i);
+      h = Math.imul(h, 16777619);
+    }
+    // Unsigned 32-bit -> [-1, 1)
+    vec[d] = ((h >>> 0) / 0xffffffff) * 2 - 1;
+  }
+  return vec;
+}
+
+/** A fixed, concept-agnostic "recall your definition" drive vector shared by
+ *  every @definishon constraint. Deliberately the same for every neuron:
+ *  distinguishing meaning has to come from each readout's *learned weights*
+ *  (trained per-neuron below), not from feeding a different input per
+ *  concept — which would make even truly incompatible definitions trivially
+ *  "solvable" as just another input-conditional case instead of a real
+ *  conflict. */
+function definitionTrigger(dims: number): number[] {
+  return new Array(dims).fill(0.7);
+}
+
+/**
+ * Bridges a parsed NeuriLang program into a live HyperDimensionalEngine
+ * (and, optionally, the elastic value budget) instead of leaving it as a
+ * discarded in-memory ParseResult:
+ *   - every declared neuron is assigned a real engine neuron id
+ *   - @vale nudges that neuron's share of the (optional) value budget
+ *   - @connections/@conections writes real connDiag weights between the
+ *     named neurons
+ *   - @definition/@definishon becomes a constraint-loss training sample
+ *     (clamp a shared query neuron to the same fixed "recall" trigger for
+ *     every definition, settle, require the declared neuron to read back
+ *     embed(text)) run through the engine's existing trainDefinitions() —
+ *     same contradiction detection and tolerance-based convergence as any
+ *     other definishon contract — and on
+ *     success raises that neuron's vale (locks it in), per Section 1.2's
+ *     zero-sum mechanism.
+ */
+export class NeuroLangRuntime {
+  private engine: HyperDimensionalEngine;
+  private valeAllocator?: ValueRangeAllocator;
+  /** Reserved neuron id used as the shared "query" drive for @definition
+   *  training — every declared neuron gets a different id starting after it. */
+  private queryNeuronId: number;
+  /**
+   * Persists across materialize() calls on the same runtime, so re-running
+   * DSL snippets (incremental sessions) reuses each name's already-assigned
+   * engine neuron id instead of drifting to a new one every time. Also lets
+   * two distinct DSL names be deliberately pinned to the same underlying
+   * neuron via setNeuronId() (a synonym/alias), which is what makes two
+   * separately-declared @definishon contracts able to genuinely conflict —
+   * without this, every name gets its own readout and nothing can collide.
+   */
+  private nameToId: Map<string, number> = new Map();
+  private nextId: number;
+
+  constructor(engine: HyperDimensionalEngine, valeAllocator?: ValueRangeAllocator, queryNeuronId: number = 0) {
+    this.engine = engine;
+    this.valeAllocator = valeAllocator;
+    this.queryNeuronId = queryNeuronId;
+    this.nextId = queryNeuronId === 0 ? 1 : 0;
+  }
+
+  /** Pin a DSL name to a specific engine neuron id (e.g. to alias two
+   *  declared names onto the same underlying neuron). */
+  setNeuronId(name: string, id: number): void {
+    this.nameToId.set(name, id);
+  }
+
+  materialize(
+    neurons: Map<string, NeuriNeuron>,
+    opts: { epochs?: number; learningRate?: number; weightPenalty?: number; tolerance?: number } = {}
+  ): LiveMaterializeResult {
+    const dims = this.engine.getDimensions();
+    const capacity = this.engine.getNeuronCount();
+
+    // 1. Assign each newly-declared neuron a real engine neuron id (names
+    // seen in a prior materialize() call, or pinned via setNeuronId, keep
+    // their existing id).
+    const overflowed: string[] = [];
+    for (const name of neurons.keys()) {
+      if (this.nameToId.has(name)) continue;
+      if (this.nextId === this.queryNeuronId) this.nextId++;
+      if (this.nextId >= capacity) { overflowed.push(name); continue; }
+      this.nameToId.set(name, this.nextId);
+      this.nextId++;
+    }
+    const nameToId = this.nameToId;
+
+    // 2. @connections/@conections -> real connDiag weights between the
+    // named neurons, across every content dimension.
+    for (const [name, neuron] of neurons) {
+      const targetId = nameToId.get(name);
+      if (targetId === undefined) continue;
+      for (const [otherName, weight] of neuron.connections) {
+        const sourceId = nameToId.get(otherName);
+        if (sourceId === undefined) continue;
+        for (let d = 1; d <= dims; d++) {
+          this.engine.setConnectionWeight(targetId, sourceId, d, weight);
+        }
+      }
+    }
+
+    // 3. @vale/@value -> nudge the neuron's share of the value budget
+    // toward the requested fraction (one-shot delta; the allocator's own
+    // zero-sum redistribution/decay keeps the total conserved afterward).
+    if (this.valeAllocator) {
+      for (const [name, neuron] of neurons) {
+        if (neuron.vale === undefined) continue;
+        const id = nameToId.get(name);
+        if (id === undefined) continue;
+        const current = this.valeAllocator.getValeFractions().get(String(id)) ?? 0;
+        this.valeAllocator.updateNeuronValue(String(id), (neuron.vale - current) / 0.1);
+      }
+    }
+
+    // 4. @definition/@definishon -> constraint-loss training samples.
+    const definitionEntries = Array.from(neurons.entries()).filter(
+      ([name, n]) => n.definition.length > 0 && nameToId.has(name)
+    );
+    if (definitionEntries.length === 0) {
+      return { nameToId: new Map(nameToId), overflowed, converged: true, epochs: 0, losses: [], satisfied: [], conflicts: [] };
+    }
+
+    const trigger = definitionTrigger(dims);
+    const definitions = definitionEntries.map(([name, neuron]) => ({
+      driveNeuronId: this.queryNeuronId,
+      input: trigger,
+      readoutNeuronId: nameToId.get(name)!,
+      target: embedText(neuron.definition, dims),
+    }));
+    const result = this.engine.trainDefinitions(definitions, opts);
+
+    const idToName = new Map(Array.from(nameToId.entries()).map(([n, i]) => [i, n]));
+    const satisfied = result.satisfied
+      .map(id => idToName.get(id))
+      .filter((n): n is string => n !== undefined);
+    const conflicts: DefinitionConflict[] = result.conflicts.map(c => ({
+      a: definitionEntries[c.a][0],
+      b: definitionEntries[c.b][0],
+      correlation: c.correlation,
+    }));
+
+    // 5. On successful satisfaction, raise (lock) that neuron's vale.
+    if (this.valeAllocator) {
+      for (const name of satisfied) {
+        const id = nameToId.get(name);
+        if (id !== undefined) this.valeAllocator.updateNeuronValue(String(id), 5);
+      }
+    }
+
+    return {
+      nameToId: new Map(nameToId), overflowed,
+      converged: result.converged,
+      epochs: result.epochs,
+      losses: result.losses,
+      satisfied,
+      conflicts,
+    };
   }
 }

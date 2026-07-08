@@ -270,6 +270,71 @@ async function testDefinitionTraining() {
   check(c3.satisfied.length === 2 && c3.conflicts.length === 0, 'Definishon training satisfies independent contracts without false conflict');
 }
 
+async function testNeuroLangLiveWiring() {
+  const { NeuroLangInterpreter, NeuroLangRuntime } = await load('models && skills/core/neuro-lang.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
+
+  const mkEngine = () => new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, propagationSteps: 12, convergenceThreshold: 0.01 });
+  const mkVale = (neuronIds) => {
+    const totalPoints = 100;
+    const alloc = new ValueRangeAllocator({ enabled: true, totalPoints, minLearningRate: 0.001, maxLearningRate: 0.5, redistributionInterval: 1000, decayFactor: 0 });
+    alloc.initializeNeurons(neuronIds.map(id => ({ id: String(id), name: `n${id}`, value: 0, learningRate: 0, states: new Map(), connections: new Map(), expertGroup: null, active: true })));
+    return alloc;
+  };
+
+  // Two DSL-declared neurons with compatible (distinct-text) definitions.
+  const interp = new NeuroLangInterpreter();
+  const src = [
+    'name="alpha"',
+    'name="beta"',
+    '"alpha"@vale="0.2"',
+    '"beta"@vale="0.2"',
+    '"alpha"@definishon="the color red"',
+    '"beta"@definishon="the color blue"',
+  ].join('\n');
+  const parsed = interp.parse(src);
+  check(parsed.errors.length === 0, `NeuroLang: DSL with @vale/@definishon aliases parses cleanly (errors: ${JSON.stringify(parsed.errors)})`);
+
+  const engine = mkEngine();
+  const vale = mkVale([0, 1, 2]); // query neuron (0) + alpha/beta's eventual ids (1,2)
+  const runtime = new NeuroLangRuntime(engine, vale);
+  const before = vale.getValeFractions();
+  const result = runtime.materialize(parsed.neurons, { epochs: 400 });
+
+  check(result.overflowed.length === 0, 'NeuroLang: both declared neurons fit in engine capacity');
+  check(result.converged && result.satisfied.length === 2 && result.conflicts.length === 0,
+    `NeuroLang: compatible definitions converge and both satisfy (satisfied=${JSON.stringify(result.satisfied)})`);
+
+  const after = vale.getValeFractions();
+  const alphaId = result.nameToId.get('alpha');
+  const betaId = result.nameToId.get('beta');
+  const valeIncreased = after.get(String(alphaId)) > before.get(String(alphaId))
+    && after.get(String(betaId)) > before.get(String(betaId));
+  check(valeIncreased, 'NeuroLang: vale increases on both satisfied neurons (locked in)');
+
+  // Two DSL-declared neurons with a deliberately contradictory pair of
+  // constraints: aliased via setNeuronId() onto the *same* underlying engine
+  // neuron (a synonym), then given definitions whose embeddings can't both
+  // be satisfied by one readout — the same shape of conflict trainDefinitions
+  // already detects, now reached entirely through the DSL runtime's own
+  // materialize() rather than by poking the engine directly.
+  const src2 = [
+    'name="hot"',
+    'name="cold"',
+    '"hot"@definishon="aaaaaaaaaa"',
+    '"cold"@definishon="zzzzzzzzzz"',
+  ].join('\n');
+  const parsed2 = interp.parse(src2);
+  const engine2 = mkEngine();
+  const runtime2 = new NeuroLangRuntime(engine2);
+  runtime2.setNeuronId('hot', 3);
+  runtime2.setNeuronId('cold', 3); // alias: both names share one readout neuron
+  const conflictResult = runtime2.materialize(parsed2.neurons, { epochs: 300 });
+  check(!conflictResult.converged && conflictResult.conflicts.length > 0 && conflictResult.epochs <= 300,
+    `NeuroLang: contradictory definitions (aliased to one neuron) are detected and reported rather than looping indefinitely (epochs=${conflictResult.epochs}, conflicts=${conflictResult.conflicts.length})`);
+}
+
 async function testQuantum() {
   const { QuantumNeuralNet } = await load('models && skills/core/quantum-net.js');
   const q = new QuantumNeuralNet();
@@ -540,6 +605,7 @@ async function main() {
     ['Vale gating', testValeGating],
     ['Symbolic trace', testSymbolicTrace],
     ['Definishon training', testDefinitionTraining],
+    ['NeuroLang live wiring (Section 2.3)', testNeuroLangLiveWiring],
     ['Quantum interference', testQuantum],
     ['Expert registration completeness (Section 2.2)', testExpertRegistrationCompleteness],
     ['MoE shared mesh (Section 2.1)', testMoESharedMesh],

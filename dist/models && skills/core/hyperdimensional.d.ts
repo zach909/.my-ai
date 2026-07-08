@@ -113,6 +113,18 @@ export declare class HyperDimensionalEngine {
         step: number;
     }>;
     getNeuronStates(): HyperNeuron[];
+    /** Total configured neuron count (fixed at construction). */
+    getNeuronCount(): number;
+    /** Content dimensions per neuron (excludes the reserved input-flag dimension). */
+    getDimensions(): number;
+    /**
+     * Section 2.3: directly set a connection's diagonal weight (targetId's
+     * incoming weight from sourceId, for one content dimension) — the write
+     * path the NeuroLang DSL's `@connections=` primitive uses to wire two
+     * declared neurons together, rather than only ever learning weights
+     * through Hebbian/delta-rule updates.
+     */
+    setConnectionWeight(targetId: number, sourceId: number, dim: number, weight: number): void;
     getContextMatrix(): {
         data: Float32Array;
         neuronCount: number;
