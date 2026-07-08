@@ -191,31 +191,49 @@ export class NeuroPipeline {
    * share this one budget space, sized to the larger of the two in
    * ensureSubsystems().
    */
-  private getValueLearningRates(): Map<number, number> {
-    if (!this.valueInitialized) {
-      const neuronStates: NeuronState[] = [];
-      for (let i = 0; i < this.valueBudgetSize; i++) {
-        neuronStates.push({
-          id: String(i),
-          name: `neuron_${i}`,
-          value: 0,
-          learningRate: 0,
-          states: new Map(),
-          connections: new Map(),
-          expertGroup: null,
-          active: true,
-        });
-      }
-      this.valueRange!.initializeNeurons(neuronStates);
-      this.valueInitialized = true;
+  private ensureValueInitialized(): void {
+    if (this.valueInitialized) return;
+    const neuronStates: NeuronState[] = [];
+    for (let i = 0; i < this.valueBudgetSize; i++) {
+      neuronStates.push({
+        id: String(i),
+        name: `neuron_${i}`,
+        value: 0,
+        learningRate: 0,
+        states: new Map(),
+        connections: new Map(),
+        expertGroup: null,
+        active: true,
+      });
     }
+    this.valueRange!.initializeNeurons(neuronStates);
+    this.valueInitialized = true;
+  }
 
+  private getValueLearningRates(): Map<number, number> {
+    this.ensureValueInitialized();
     const { neuronAllocations } = this.valueRange!.getDistribution();
     const rates = new Map<number, number>();
     for (const alloc of neuronAllocations) {
       rates.set(Number(alloc.id), alloc.learningRate);
     }
     return rates;
+  }
+
+  /**
+   * The same zero-sum points as getValueLearningRates(), read as a raw [0,1]
+   * vale fraction instead of a learning rate. This is what gates the
+   * state-transition blend (new_state = vale*old_state + (1-vale)*computed)
+   * in both the mesh and the hyperdimensional engine, so a neuron's
+   * accumulated value simultaneously slows its weight updates *and* makes
+   * its activation resist being overwritten each tick.
+   */
+  private getValeFractions(): Map<number, number> {
+    this.ensureValueInitialized();
+    const fractions = this.valueRange!.getValeFractions();
+    const vale = new Map<number, number>();
+    for (const [id, frac] of fractions) vale.set(Number(id), frac);
+    return vale;
   }
 
   /**
@@ -232,7 +250,7 @@ export class NeuroPipeline {
     this.valueRange!.applyDecay();
   }
 
-  // ─── Core pipeline ────────────────────────────────────────────────────────
+  // ─── Core pipeline ───────────────────────────────────────────────────────
 
   /**
    * Run all 7 subsystems in sequence on an embedding vector.
@@ -290,7 +308,7 @@ export class NeuroPipeline {
       for (let i = 0; i < meshNodeCount; i++) {
         meshInputs.set(i, moeOutput[i] || 0);
       }
-      const propagation = this.mesh!.propagate(meshInputs);
+      const propagation = this.mesh!.propagate(meshInputs, this.getValeFractions());
       // Collect final state values as an ordered array
       meshOutput = Array.from(propagation.finalStates.values());
 
@@ -318,7 +336,7 @@ export class NeuroPipeline {
       // Pad/truncate mesh output to hyperDimensions
       const hyperInput = this.resizeArray(meshOutput, this.config.hyperDimensions);
       const learningRates = this.getValueLearningRates();
-      const hyperResult = this.hyperEngine!.process(hyperInput, learningRates);
+      const hyperResult = this.hyperEngine!.process(hyperInput, learningRates, undefined, this.getValeFractions());
       hyperOutput = hyperResult.outputVector;
       selfModelSurprise = hyperResult.selfModelSurprise;
       this.feedbackToValueBudget(hyperResult.stateDeltas);
@@ -476,7 +494,7 @@ export class NeuroPipeline {
     };
   }
 
-  // ─── Stats ────────────────────────────────────────────────────────────────
+  // ─── Stats ──────────────────────────────────────────────────────────
 
   getStats(): { avgDurationMs: number; stepBreakdown: Map<string, number>; runsCount: number } {
     const runsCount = this.runHistory.length;
@@ -504,7 +522,7 @@ export class NeuroPipeline {
     return { avgDurationMs, stepBreakdown, runsCount };
   }
 
-  // ─── Reset ────────────────────────────────────────────────────────────────
+  // ─── Reset ──────────────────────────────────────────────────────────
 
   reset(): void {
     this.runHistory = [];
