@@ -31,7 +31,7 @@ The model thinks in NeuroLang - a custom neuron definition language where:
 
 ### Zip I/O Loop
 
-Inputs and outputs work as loops - when space runs out, it starts at the beginning until everything is consumed (supports 200,000+ GB context).
+Inputs and outputs work as loops - when space runs out, it starts at the beginning until everything is consumed (supports infonit GB context).
 
 ### Plugins & Skills
 
