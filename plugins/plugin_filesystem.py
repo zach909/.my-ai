@@ -11,52 +11,47 @@ class FileSystemPlugin(Plugin):
     description = "Local file system access: read, write, list, search, copy, move."
 
     def _setup(self) -> None:
+        self._root = os.getcwd()
         self.tools = {
-            "read":   self._read,
-            "write":  self._write,
-            "list":   self._list,
-            "exists": self._exists,
-            "delete": self._delete,
-            "copy":   self._copy,
-            "move":   self._move,
-            "search": self._search,
-            "mkdir":  self._mkdir,
-            "stat":   self._stat,
-            "tree":   self._tree,
+            "read":   self._read, "write":  self._write, "list":   self._list,
+            "exists": self._exists, "delete": self._delete, "copy":   self._copy,
+            "move":   self._move, "search": self._search, "mkdir":  self._mkdir,
+            "stat":   self._stat, "tree":   self._tree,
         }
 
+    def _resolve(self, path: str) -> str:
+        root = os.path.abspath(self._root)
+        target = os.path.abspath(os.path.join(root, os.path.expanduser(path)))
+        if not os.path.relpath(target, root).startswith("..") and not os.path.isabs(os.path.relpath(target, root)):
+            return target
+        raise PermissionError(f"Path traversal detected: {path}")
+
     def _read(self, path: str, encoding: str = "utf-8") -> str:
-        with open(os.path.expanduser(path), encoding=encoding) as f:
-            return f.read()
+        with open(self._resolve(path), encoding=encoding) as f: return f.read()
 
     def _write(self, path: str, content: str, encoding: str = "utf-8") -> None:
-        path = os.path.expanduser(path)
+        path = self._resolve(path)
         os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
-        with open(path, "w", encoding=encoding) as f:
-            f.write(content)
+        with open(path, "w", encoding=encoding) as f: f.write(content)
 
     def _list(self, path: str = ".", pattern: str = "*") -> List[str]:
-        path = os.path.expanduser(path)
-        return sorted(glob.glob(os.path.join(path, pattern)))
+        return sorted(glob.glob(os.path.join(self._resolve(path), pattern)))
 
     def _exists(self, path: str) -> bool:
-        return os.path.exists(os.path.expanduser(path))
+        return os.path.exists(self._resolve(path))
 
     def _delete(self, path: str) -> None:
-        path = os.path.expanduser(path)
-        if os.path.isdir(path):
-            shutil.rmtree(path)
-        else:
-            os.remove(path)
+        path = self._resolve(path)
+        shutil.rmtree(path) if os.path.isdir(path) else os.remove(path)
 
     def _copy(self, src: str, dst: str) -> None:
-        shutil.copy2(os.path.expanduser(src), os.path.expanduser(dst))
+        shutil.copy2(self._resolve(src), self._resolve(dst))
 
     def _move(self, src: str, dst: str) -> None:
-        shutil.move(os.path.expanduser(src), os.path.expanduser(dst))
+        shutil.move(self._resolve(src), self._resolve(dst))
 
     def _search(self, directory: str, pattern: str, recursive: bool = True) -> List[str]:
-        directory = os.path.expanduser(directory)
+        directory = self._resolve(directory)
         if recursive:
             matches = []
             for root, _, files in os.walk(directory):
@@ -67,10 +62,10 @@ class FileSystemPlugin(Plugin):
         return glob.glob(os.path.join(directory, pattern))
 
     def _mkdir(self, path: str) -> None:
-        os.makedirs(os.path.expanduser(path), exist_ok=True)
+        os.makedirs(self._resolve(path), exist_ok=True)
 
     def _stat(self, path: str) -> dict:
-        s = os.stat(os.path.expanduser(path))
+        s = os.stat(self._resolve(path))
         return {
             "size": s.st_size,
             "mtime": s.st_mtime,
@@ -80,7 +75,7 @@ class FileSystemPlugin(Plugin):
 
     def _tree(self, path: str = ".", max_depth: int = 3) -> str:
         lines: List[str] = []
-        path = os.path.expanduser(path)
+        path = self._resolve(path)
         def _walk(p: str, prefix: str, depth: int) -> None:
             if depth > max_depth:
                 return

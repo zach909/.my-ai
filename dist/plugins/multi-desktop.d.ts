@@ -20,6 +20,7 @@ interface InputBinding {
 export type { DesktopInfo, VirtualInputDevice, InputBinding };
 export declare class MultiDesktopManager {
     private gnomeAvailable;
+    private extensionAvailable;
     private simulatedDesktops;
     private virtualDevices;
     private inputBindings;
@@ -31,7 +32,11 @@ export declare class MultiDesktopManager {
     constructor();
     private checkGnome;
     private checkXinput;
+    private checkExtension;
+    private callExtension;
+    private parseExtUint;
     isGnomeAvailable(): boolean;
+    isExtensionAvailable(): boolean;
     hasXinput(): boolean;
     hasUinput(): boolean;
     initAiWorkspace(): Promise<number>;

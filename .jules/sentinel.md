@@ -16,3 +16,8 @@
 **Vulnerability:** The Python-based `server.py` wrapper was binding to `0.0.0.0` and using `Access-Control-Allow-Origin: *`.
 **Learning:** Hardening only the core TS service is insufficient if a proxy/wrapper server exists that re-exposes the endpoints insecurely.
 **Prevention:** Apply the same local-only binding and restrictive CORS policies to all entry points (wrappers, proxies, or main servers).
+
+## 2026-07-06 - Path Traversal in Python FileSystemPlugin
+**Vulnerability:** The Python implementation of `FileSystemPlugin` lacked path sandboxing, allowing access to any file on the host system via `..` or absolute paths.
+**Learning:** Python's `os.path.join` and `os.path.expanduser` do not provide sandboxing. Even if a root directory is intended, they can be bypassed.
+**Prevention:** Implement a `_resolve` helper that uses `os.path.abspath` to resolve the target and `os.path.relpath(target, root)` to verify it doesn't start with `..` and isn't absolute, effectively jailing operations within the root.

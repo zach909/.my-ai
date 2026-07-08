@@ -47,6 +47,18 @@ export declare class MoERouter {
         name: string;
         specialization: string;
     }): number;
+    /**
+     * Grow routerWeights/routerBias to cover every expert currently registered.
+     * Both addExpert overloads must call this: the router-scoring loop indexes
+     * routerWeights as `input[i] * routerWeights[i * expertCount + e]`, so a
+     * bumped expertCount without a resized routerWeights reads past the end of
+     * the array (undefined -> NaN, which then poisons the whole pipeline).
+     * The old flat-copy grow also silently scrambled the row-major
+     * (inputDim x expertCount) layout whenever expertCount changed; this
+     * rebuild copies element-by-element in (input, expert) coordinates so
+     * existing experts keep their learned router weights.
+     */
+    private growRouterCapacity;
     removeExpert(expertId: number): boolean;
     setExpertWeights(expertId: number, weights: Float32Array, bias: Float32Array): void;
     getUtilizationStats(): ExpertUtilizationStats[];

@@ -76,9 +76,18 @@ export declare class HyperDimensionalEngine {
     private history;
     private iteration;
     private totalDims;
+    /**
+     * Section 8: persistent per-connection weight tensor, all-to-all.
+     * Flattened for cache locality: [targetNeuron][dimension][sourceNeuron]
+     * This ensures that for a fixed target neuron i and dimension d,
+     * we can iterate over all source neurons j sequentially.
+     */
     private connDiag;
     private connShift;
+    /** Bias is per-neuron (added once after the full summed product) */
     private bias;
+    /** Consolidated state buffer: [dimension][neuron] for sequential access in hot loop */
+    private allStates;
     private selfModelA;
     private selfModelB;
     private lastOutputVector;
@@ -87,16 +96,11 @@ export declare class HyperDimensionalEngine {
     private sustainedDivergence;
     private nextStatesBuffer;
     private tempCtx;
+    private stateDeltasBuffer;
     constructor(config?: Record<string, any>);
     /**
      * Run one tick: settle the mesh to convergence for the given input, apply
-     * value-gated Hebbian weight learning, and derive all reported signals
-     * from the resulting settled state S.
-     *
-     * @param directInputNeuronIds Neurons directly clamped to `inputVector`
-     *   this tick (their input-flag dimension goes hot; all others evolve
-     *   purely by propagation from the weight tensor). Omit to drive every
-     *   neuron directly, matching the legacy shared-input behaviour.
+     * value-gated Hebbian weight learning, and derive all reported signals.
      */
     process(inputVector: number[] | Map<string, Float32Array>, learningRates?: Map<number, number>, directInputNeuronIds?: Set<number>): HyperDimensionalOutput;
     hasSeenPattern(patternHash: string): boolean;
@@ -109,53 +113,106 @@ export declare class HyperDimensionalEngine {
         step: number;
     }>;
     getNeuronStates(): HyperNeuron[];
-    /**
-     * The settled state S as a single matrix accessor (neurons x totalDims,
-     * row-major) — "current full context", reused by self-reading,
-     * quantization, and (when built) the alignment veto.
-     */
     getContextMatrix(): {
         data: Float32Array;
         neuronCount: number;
         dims: number;
     };
-    /** Per-neuron reading of the input-flag dimension (section 5 self-reading). */
     getInputTopography(): Map<number, number>;
-    /**
-     * Formalizes "exclusive input": true iff exactly one neuron's input-flag
-     * dimension is hot (>= threshold) this tick.
-     */
     isExclusiveInput(threshold?: number): {
         exclusive: boolean;
         neuronId?: number;
     };
+    /**
+     * Section 9: on-demand symbolic trace. The mesh computes numerically (fast,
+     * Pi-feasible); this reconstructs the *literal* pre-activation equation for
+     * one neuron's dimension by walking backward through the weighted
+     * connections that fed it, using the current settled state. Each term is
+     * evaluated so callers see both the algebra and the numeric contribution,
+     * ranked by magnitude — the human-readable version of the autograd graph.
+     *
+     * The settle rule reproduced here is:
+     *   state_i[d] = tanh( bias_i[d]
+     *     + Σ_j ( state_j[d]·Wdiag_ij[d]
+     *           + state_j[(d-1)%D]·Wshift_ij[d]·crossInfluenceStrength ) )
+     *
+     * @returns null if the neuron/dimension is out of range.
+     */
+    traceNeuron(neuronId: number, dim: number, topK?: number): {
+        neuronId: number;
+        dim: number;
+        bias: number;
+        preActivation: number;
+        value: number;
+        /**
+         * True when this neuron was clamped to external input on the last tick
+         * (its input-flag dimension is hot). Its stored state then comes from the
+         * input, not from tanh(W·S), so `value` here is the *counterfactual* the
+         * mesh would have settled to from its incoming connections alone, not the
+         * clamped value actually held.
+         */
+        inputClamped: boolean;
+        terms: Array<{
+            source: string;
+            weight: number;
+            sourceValue: number;
+            contribution: number;
+        }>;
+        equation: string;
+    } | null;
+    /**
+     * Section 4: declarative "definishon" training (neuron-level unit testing).
+     * Each definition is a contract: when `driveNeuronId` is the *only*
+     * externally-driven neuron (clamped to `input`), the mesh must settle so
+     * that `readoutNeuronId`'s content matches `target`. We satisfy all
+     * contracts at once by a delta-rule update on each readout neuron's incoming
+     * weights (clamp → settle → check → adjust), plus a weight penalty so the
+     * underdetermined solution prefers small weights.
+     *
+     * Contradictory contracts (e.g. same drive/readout, different targets) can
+     * never all be satisfied; we detect them by tracking each contract's loss
+     * over epochs and flagging pairs whose losses are strongly anti-correlated
+     * (driving one down drives the other up).
+     *
+     * When a contract's loss is under `tolerance` its readout neuron is reported
+     * as satisfied — the hook the notes describe for raising that neuron's vale
+     * (locking it) in the external value budget.
+     */
+    trainDefinitions(definitions: Array<{
+        driveNeuronId: number;
+        input: number[];
+        readoutNeuronId: number;
+        target: number[];
+    }>, opts?: {
+        epochs?: number;
+        learningRate?: number;
+        weightPenalty?: number;
+        tolerance?: number;
+    }): {
+        converged: boolean;
+        epochs: number;
+        losses: number[];
+        satisfied: number[];
+        conflicts: Array<{
+            a: number;
+            b: number;
+            correlation: number;
+        }>;
+    };
     private initializeNeurons;
     private initializeConnections;
     /**
-     * Propagate-to-convergence: S <- activate(bias + W . S), repeated, rather
-     * than a single hop. Neurons in `drivenIds` are clamped to the external
-     * input for the whole settle (the "exclusive input" contract); everyone
-     * else evolves purely from the connection tensor, so their input-flag
-     * dimension diffuses outward from the driven neurons and gives every
-     * neuron a reading of the input topography once settled.
+     * Propagate-to-convergence: S <- activate(bias + W . S), repeated.
+     * Optimized for cache locality by using row-major access on weights
+     * and consolidated sequential access on states.
      */
     private settle;
-    /**
-     * Hebbian weight update gated per-node by an externally supplied learning
-     * rate (from the elastic value budget), applied to the connection tensor
-     * built in initializeConnections(). Weight-change magnitude is folded into
-     * `stateDeltas` so callers can feed one combined signal back into the
-     * value budget.
-     */
     private applyWeightLearning;
     private meanContentEnergyBuffer;
-    /** Rank-r compressed self-model: predict(x) = B^T (A^T x). */
     private selfModelPredict;
-    /** One online gradient step on the compressed self-model toward reducing predicted-vs-actual error. */
     private selfModelTrainStep;
     private meanAbsDiff;
     private resolveStateTransitions;
-    /** Content-only energy (excludes the reserved input-flag dimension at index 0). */
     private computeStateEnergy;
     private computeOutputVector;
     private getActiveStates;

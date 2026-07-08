@@ -355,18 +355,18 @@ export class HyperDimensionalEngine {
     const target = this.neurons.find(n => n.id === neuronId);
     if (!target) return null;
 
-    const bias = this.bias.get(neuronId)![dim];
-    const diagRow = this.connDiag.get(neuronId)!;
-    const shiftRow = this.connShift.get(neuronId)!;
+    const bias = this.bias[neuronId * D + dim];
     const srcD = (dim - 1 + D) % D;
     const cross = this.config.crossInfluenceStrength;
 
     const terms: Array<{ source: string; weight: number; sourceValue: number; contribution: number }> = [];
     let preActivation = bias;
+    const N = this.neurons.length;
     for (const nj of this.neurons) {
       if (nj.id === neuronId) continue;
-      const wd = diagRow.get(nj.id)![dim];
-      const ws = shiftRow.get(nj.id)![dim];
+      const rowOffset = (neuronId * D + dim) * N;
+      const wd = this.connDiag[rowOffset + nj.id];
+      const ws = this.connShift[rowOffset + nj.id];
 
       const diagContribution = nj.state[dim] * wd;
       preActivation += diagContribution;
@@ -451,21 +451,24 @@ export class HyperDimensionalEngine {
         if (!readout) { losses.push(Infinity); continue; }
 
         // Delta rule on the readout's incoming diagonal weights, through tanh'.
-        const diagRow = this.connDiag.get(def.readoutNeuronId)!;
-        const bias = this.bias.get(def.readoutNeuronId)!;
         let sse = 0;
+        const readoutId = def.readoutNeuronId;
+        const N = this.neurons.length;
+        const D = this.totalDims;
         for (let d = 0; d < dims; d++) {
           const cd = d + 1; // content index (0 is the input flag)
           const actual = readout.state[cd];
           const err = (def.target[d] ?? 0) - actual;
           sse += err * err;
           const grad = err * (1 - actual * actual); // tanh'
+          const rowOffset = (readoutId * D + cd) * N;
           for (const nj of this.neurons) {
-            if (nj.id === def.readoutNeuronId) continue;
-            const wd = diagRow.get(nj.id)!;
-            wd[cd] = clamp(wd[cd] + lr * grad * nj.state[cd] - penalty * wd[cd], -2, 2);
+            if (nj.id === readoutId) continue;
+            const idx = rowOffset + nj.id;
+            this.connDiag[idx] = clamp(this.connDiag[idx] + lr * grad * nj.state[cd] - penalty * this.connDiag[idx], -2, 2);
           }
-          bias[cd] = clamp(bias[cd] + lr * grad - penalty * bias[cd], -1, 1);
+          const bIdx = readoutId * D + cd;
+          this.bias[bIdx] = clamp(this.bias[bIdx] + lr * grad - penalty * this.bias[bIdx], -1, 1);
         }
         losses.push(sse / dims);
       }

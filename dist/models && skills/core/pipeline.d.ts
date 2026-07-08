@@ -1,4 +1,5 @@
 import { ZipIOSystem } from './zip-io.js';
+import { type VetoDecision } from './alignment-veto.js';
 export interface PipelineConfig {
     embeddingDim: number;
     hiddenDim: number;
@@ -25,6 +26,8 @@ export interface PipelineResult {
     totalDurationMs: number;
     /** Real plugin/skill ids the MoE router picked for this run, if any */
     selectedPlugins: string[];
+    /** Section 3: alignment veto verdict on this run's chosen action. */
+    alignment: VetoDecision;
 }
 export declare class NeuroPipeline {
     private config;
@@ -35,6 +38,7 @@ export declare class NeuroPipeline {
     private valueRange;
     private quantumNet;
     private zipIO;
+    private alignmentVeto;
     private valueBudgetSize;
     private valueInitialized;
     private expertPluginMap;

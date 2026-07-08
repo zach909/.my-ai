@@ -1,7 +1,11 @@
 import { execSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
+const EXT_DBUS_DEST = 'org.gnome.Shell.Extensions.MultiInput';
+const EXT_DBUS_PATH = '/org/gnome/Shell/Extensions/MultiInput';
+const EXT_DBUS_IFACE = 'org.gnome.Shell.Extensions.MultiInput';
 export class MultiDesktopManager {
     gnomeAvailable;
+    extensionAvailable;
     simulatedDesktops;
     virtualDevices;
     inputBindings;
@@ -16,6 +20,7 @@ export class MultiDesktopManager {
         this.inputBindings = new Map();
         this.nextVirtualId = 1;
         this.gnomeAvailable = this.checkGnome();
+        this.extensionAvailable = this.checkExtension();
         this.xinputAvailable = this.checkXinput();
         this.uinputAvailable = existsSync('/dev/uinput');
         if (!this.gnomeAvailable) {
@@ -24,7 +29,6 @@ export class MultiDesktopManager {
     }
     checkGnome() {
         try {
-            // Use 'gsettings get' on a known key to verify both gsettings and a GNOME session exist
             execSync('gsettings get org.gnome.desktop.wm.preferences num-workspaces 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
             return true;
         }
@@ -41,13 +45,45 @@ export class MultiDesktopManager {
             return false;
         }
     }
+    checkExtension() {
+        try {
+            execSync(`gdbus call --session --dest ${EXT_DBUS_DEST} ` +
+                `--object-path ${EXT_DBUS_PATH} ` +
+                `--method ${EXT_DBUS_IFACE}.GetNumWorkspaces 2>/dev/null`, { encoding: 'utf8', timeout: 3000 });
+            return true;
+        }
+        catch {
+            return false;
+        }
+    }
+    callExtension(method, args = '') {
+        const cmd = `gdbus call --session --dest ${EXT_DBUS_DEST} ` +
+            `--object-path ${EXT_DBUS_PATH} ` +
+            `--method ${EXT_DBUS_IFACE}.${method}${args ? ' ' + args : ''} 2>/dev/null`;
+        return execSync(cmd, { encoding: 'utf8', timeout: 5000 }).trim();
+    }
+    parseExtUint(output) {
+        const m = output.match(/\d+/);
+        return m ? parseInt(m[0], 10) : -1;
+    }
     isGnomeAvailable() { return this.gnomeAvailable; }
+    isExtensionAvailable() { return this.extensionAvailable; }
     hasXinput() { return this.xinputAvailable; }
     hasUinput() { return this.uinputAvailable; }
     // ─── AI Workspace Management ─────────────────────────────────────────────
     async initAiWorkspace() {
         if (this.aiWorkspace >= 0)
             return this.aiWorkspace;
+        if (this.extensionAvailable) {
+            // Best path: use the GNOME Shell extension via DBus
+            try {
+                const out = this.callExtension('EnsureAiWorkspace');
+                this.aiWorkspace = this.parseExtUint(out);
+                if (this.aiWorkspace >= 0)
+                    return this.aiWorkspace;
+            }
+            catch { /* fall through */ }
+        }
         if (this.gnomeAvailable) {
             const count = this.getDesktopCount();
             const newId = count;
@@ -71,6 +107,22 @@ export class MultiDesktopManager {
     getAiWorkspace() { return this.aiWorkspace; }
     // ─── Virtual Input Devices (Multi-Mouse/Multi-Keyboard) ─────────────────
     createAiVirtualPointer() {
+        // Prefer the GNOME Shell extension's Clutter.Seat virtual device (proper API)
+        if (this.extensionAvailable) {
+            try {
+                const out = this.callExtension('CreateVirtualPointer');
+                const id = this.parseExtUint(out);
+                if (id > 0) {
+                    const dev = {
+                        id, name: 'AI Virtual Pointer (Extension)', type: 'pointer',
+                        masterId: id, workspace: this.aiWorkspace >= 0 ? this.aiWorkspace : 0, active: true,
+                    };
+                    this.virtualDevices.set(id, dev);
+                    return dev;
+                }
+            }
+            catch { /* fall through */ }
+        }
         if (this.xinputAvailable)
             return this.createXinputPointer('AI Virtual Pointer');
         if (this.uinputAvailable)
@@ -78,6 +130,22 @@ export class MultiDesktopManager {
         return this.createSimulatedDevice('pointer');
     }
     createAiVirtualKeyboard() {
+        // Prefer the GNOME Shell extension's Clutter.Seat virtual device (proper API)
+        if (this.extensionAvailable) {
+            try {
+                const out = this.callExtension('CreateVirtualKeyboard');
+                const id = this.parseExtUint(out);
+                if (id > 0) {
+                    const dev = {
+                        id, name: 'AI Virtual Keyboard (Extension)', type: 'keyboard',
+                        masterId: id, workspace: this.aiWorkspace >= 0 ? this.aiWorkspace : 0, active: true,
+                    };
+                    this.virtualDevices.set(id, dev);
+                    return dev;
+                }
+            }
+            catch { /* fall through */ }
+        }
         if (this.xinputAvailable)
             return this.createXinputKeyboard('AI Virtual Keyboard');
         if (this.uinputAvailable)
@@ -315,11 +383,25 @@ export class MultiDesktopManager {
         return this.simulatedDesktops.size;
     }
     focusAiDesktop() {
+        if (this.extensionAvailable) {
+            try {
+                this.callExtension('FocusAiWorkspace');
+                return;
+            }
+            catch { /* fall through */ }
+        }
         if (this.aiWorkspace < 0)
             this.initAiWorkspace();
         this.switchToDesktop(this.aiWorkspace);
     }
     focusUserDesktop() {
+        if (this.extensionAvailable) {
+            try {
+                this.callExtension('FocusUserWorkspace');
+                return;
+            }
+            catch { /* fall through */ }
+        }
         this.switchToDesktop(this.userWorkspace);
     }
     // ─── Input Isolation ─────────────────────────────────────────────────────
