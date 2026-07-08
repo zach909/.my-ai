@@ -8,10 +8,47 @@
  * Example: Neuron 2's signature was 4.5 and its height was 10.
  */
 
+/**
+ * Genuine complex number, Cartesian form. Interference math is done here
+ * (real multiplication/addition) rather than via hand-rolled trig identities,
+ * so destructive cancellation falls out of the arithmetic instead of having
+ * to be independently re-derived and trusted.
+ */
+export interface Complex {
+  re: number;
+  im: number;
+}
+
+function cFromPolar(magnitude: number, phase: number): Complex {
+  return { re: magnitude * Math.cos(phase), im: magnitude * Math.sin(phase) };
+}
+
+function cAdd(a: Complex, b: Complex): Complex {
+  return { re: a.re + b.re, im: a.im + b.im };
+}
+
+function cMul(a: Complex, b: Complex): Complex {
+  return { re: a.re * b.re - a.im * b.im, im: a.re * b.im + a.im * b.re };
+}
+
+function cMagnitude(a: Complex): number {
+  return Math.sqrt(a.re * a.re + a.im * a.im);
+}
+
+function cPhase(a: Complex): number {
+  return Math.atan2(a.im, a.re);
+}
+
 export interface QuantumState {
   signature: number; // The unique wave identifier
-  height: number;    // Amplitude defined by input
-  phase: number;     // Phase angle for interference
+  /**
+   * Amplitude/phase (polar) is the storage form — a lossless representation
+   * of the same complex number as {re, im}, and the natural one for phase
+   * evolution (phase += frequency*dt). Converted to Complex via cFromPolar
+   * whenever interference/consensus math needs genuine complex arithmetic.
+   */
+  height: number;    // Amplitude defined by input (= magnitude of the complex state)
+  phase: number;     // Phase angle for interference (= argument of the complex state)
   probability: number; // Collapsed probability
 }
 
@@ -113,24 +150,12 @@ export class QuantumNeuralNet {
 
     if (!neuronA || !neuronB) throw new Error('One or both neurons not found');
 
-    const stateA = neuronA.state;
-    const stateB = neuronB.state;
-
-    // Phase difference determines interference type
-    const phaseDiff = Math.abs(stateA.phase - stateB.phase);
-    const interferenceFactor = Math.cos(phaseDiff);
-
-    // Resulting amplitude from interference
-    const amplitudeA = stateA.height;
-    const amplitudeB = stateB.height;
-
-    // Interference formula: A^2 + B^2 + 2AB*cos(theta)
-    const resultantIntensity = 
-      (amplitudeA * amplitudeA) + 
-      (amplitudeB * amplitudeB) + 
-      (2 * amplitudeA * amplitudeB * interferenceFactor);
-
-    return Math.sqrt(Math.max(0, resultantIntensity));
+    // Genuine complex addition of the two phasors — phases that disagree
+    // cancel toward zero, phases that agree reinforce, purely as a
+    // consequence of the arithmetic (no separately-trusted trig identity).
+    const zA = cFromPolar(neuronA.state.height, neuronA.state.phase);
+    const zB = cFromPolar(neuronB.state.height, neuronB.state.phase);
+    return cMagnitude(cAdd(zA, zB));
   }
 
   /**
@@ -140,16 +165,13 @@ export class QuantumNeuralNet {
    * reinforce toward the sum of their heights. Returns the resultant magnitude.
    */
   phaseConsensus(neuronIds: string[]): number {
-    let real = 0;
-    let imag = 0;
+    let sum: Complex = { re: 0, im: 0 };
     for (const id of neuronIds) {
       const neuron = this.neurons.get(id);
       if (!neuron) continue;
-      const { height, phase } = neuron.state;
-      real += height * Math.cos(phase);
-      imag += height * Math.sin(phase);
+      sum = cAdd(sum, cFromPolar(neuron.state.height, neuron.state.phase));
     }
-    return Math.sqrt(real * real + imag * imag);
+    return cMagnitude(sum);
   }
 
   /**
@@ -221,12 +243,17 @@ export class QuantumNeuralNet {
     const neuron = this.neurons.get(neuronId);
     if (!neuron) return;
 
-    // Phase evolution based on signature (frequency)
+    // Phase evolution is a rotation of the complex state: multiplying by the
+    // unit phasor e^{i*frequency*deltaTime} (a genuine complex multiplication)
+    // rather than adding to the stored phase scalar directly.
     const frequency = neuron.state.signature;
-    neuron.state.phase += frequency * deltaTime;
-    
-    // Normalize phase to 0-2PI
-    neuron.state.phase %= (Math.PI * 2);
+    const current = cFromPolar(neuron.state.height, neuron.state.phase);
+    const rotor = cFromPolar(1, frequency * deltaTime);
+    const rotated = cMul(current, rotor);
+
+    neuron.state.phase = cPhase(rotated);
+    // Normalize phase to [0, 2PI)
+    neuron.state.phase = ((neuron.state.phase % (Math.PI * 2)) + Math.PI * 2) % (Math.PI * 2);
   }
 
   /**
