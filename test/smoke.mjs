@@ -161,6 +161,66 @@ async function testHyperdimensional() {
   check(ctx.data.length === 12 * 9 && allFinite(ctx.data), 'Hyper getContextMatrix sized (neurons x totalDims) and finite');
 }
 
+async function testValeGating() {
+  const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { NeuronMesh } = await load('models && skills/core/mesh.js');
+
+  // Zero-sum conservation: many updates/decays must never move the total
+  // away from totalPoints (redistribution, not independent clamping).
+  const totalPoints = 100;
+  const alloc = new ValueRangeAllocator({ enabled: true, totalPoints, minLearningRate: 0.001, maxLearningRate: 0.5, redistributionInterval: 5, decayFactor: 0.05 });
+  const neuronStates = Array.from({ length: 10 }, (_, i) => ({ id: String(i), name: `n${i}`, value: 0, learningRate: 0, states: new Map(), connections: new Map(), expertGroup: null, active: true }));
+  alloc.initializeNeurons(neuronStates);
+  for (let step = 0; step < 20; step++) {
+    for (let i = 0; i < 10; i++) alloc.updateNeuronValue(String(i), Math.random() * 2 - 1);
+    alloc.applyDecay();
+  }
+  const sumPts = alloc.getDistribution().neuronAllocations.reduce((s, a) => s + a.valuePoints, 0);
+  check(Math.abs(sumPts - totalPoints) < 1e-6, `Vale zero-sum conserved after 20 update+decay steps (sum=${sumPts.toFixed(6)}, expected ${totalPoints})`);
+
+  // State-transition gating in the hyperdimensional engine: split the
+  // non-driven neurons into a high-vale and a low-vale group and confirm the
+  // high-vale group's average state change is smaller over one settle tick.
+  // Averaged over many neurons (rather than compared 1-to-1) so the result
+  // isn't sensitive to any single neuron's random initial weights.
+  {
+    const N = 20, dims = 8;
+    const hd = new HyperDimensionalEngine({ dimensions: dims, neuronCount: N, propagationSteps: 1, convergenceThreshold: 0 });
+    const before = hd.getNeuronStates();
+    const vale = new Map();
+    for (let i = 1; i < N; i++) vale.set(i, i % 2 === 0 ? 0.97 : 0.03); // even=high-vale, odd=low-vale
+    hd.process(new Array(dims).fill(0.6), undefined, new Set([0]), vale);
+    const after = hd.getNeuronStates();
+    let highSum = 0, highCount = 0, lowSum = 0, lowCount = 0;
+    for (let i = 1; i < N; i++) {
+      let delta = 0;
+      for (let d = 0; d < before[i].state.length; d++) delta += Math.abs(after[i].state[d] - before[i].state[d]);
+      if (i % 2 === 0) { highSum += delta; highCount++; } else { lowSum += delta; lowCount++; }
+    }
+    const highAvg = highSum / highCount, lowAvg = lowSum / lowCount;
+    check(highAvg < lowAvg, `Hyperdimensional: high-vale neurons change less than low-vale over one tick (high avg Δ=${highAvg.toFixed(4)}, low avg Δ=${lowAvg.toFixed(4)})`);
+  }
+
+  // Same property in the mesh's propagate().
+  {
+    const N = 24;
+    const mesh = new NeuronMesh({ nodeCount: N, connectionDensity: 1.0, maxIterations: 1, convergenceThreshold: 0, seed: 11 });
+    const before = new Map();
+    for (let i = 0; i < N; i++) before.set(i, mesh.getNode(i).activation);
+    const vale = new Map();
+    for (let i = 1; i < N; i++) vale.set(i, i % 2 === 0 ? 0.97 : 0.03);
+    mesh.propagate(new Map([[0, 0.8]]), vale);
+    let highSum = 0, highCount = 0, lowSum = 0, lowCount = 0;
+    for (let i = 1; i < N; i++) {
+      const delta = Math.abs(mesh.getNode(i).activation - before.get(i));
+      if (i % 2 === 0) { highSum += delta; highCount++; } else { lowSum += delta; lowCount++; }
+    }
+    const highAvg = highSum / highCount, lowAvg = lowSum / lowCount;
+    check(highAvg < lowAvg, `Mesh: high-vale nodes change less than low-vale over one tick (high avg Δ=${highAvg.toFixed(4)}, low avg Δ=${lowAvg.toFixed(4)})`);
+  }
+}
+
 async function testSymbolicTrace() {
   const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
   const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, crossInfluenceStrength: 0.3, propagationSteps: 30, convergenceThreshold: 0.01 });
@@ -219,6 +279,33 @@ async function testQuantum() {
   check(Number.isFinite(q.phaseConsensus(['a', 'b'])), 'Quantum phaseConsensus() finite');
   q.evolvePhase('a', 0.1);
   check(Number.isFinite(q.collapse('a')), 'Quantum collapse() finite after phase evolution');
+
+  // Genuine complex-phasor interference: equal-amplitude neurons exactly out
+  // of phase (pi apart) must cancel toward zero (destructive); exactly in
+  // phase must sum to the full 2x amplitude (constructive).
+  const qi = new QuantumNeuralNet();
+  qi.addNeuron('x', 1); qi.addNeuron('y', 1);
+  const sx = qi.getState('x'), sy = qi.getState('y');
+  sx.height = 5; sx.phase = 0;
+  sy.height = 5; sy.phase = Math.PI;
+  const destructive = qi.interfere('x', 'y');
+  check(destructive < 1e-9, `interfere() destructively cancels antiphase equal amplitudes (got ${destructive})`);
+  sy.phase = 0;
+  const constructive = qi.interfere('x', 'y');
+  check(Math.abs(constructive - 10) < 1e-9, `interfere() constructively sums in-phase amplitudes (got ${constructive})`);
+
+  // Born-rule collapse: a dominant-amplitude candidate must be selected far
+  // more often than uniform (1/3) across many independent trials.
+  const qc = new QuantumNeuralNet();
+  qc.addNeuron('d', 1);
+  const trials = 300;
+  let dominantHits = 0;
+  for (let i = 0; i < trials; i++) {
+    qc.createSuperposition('d', [5, 0.1, 0.1]); // heights [50, 1, 1] -> P(dominant) ~ 2500/2502
+    if (Math.abs(qc.collapse('d') - 50) < 1e-9) dominantHits++;
+  }
+  const freq = dominantHits / trials;
+  check(freq > 0.9, `collapse() selects the dominant amplitude with proportionally higher frequency (${(freq * 100).toFixed(1)}% over ${trials} trials, uniform would be ~33%)`);
 }
 
 async function testMeshStability() {
@@ -231,6 +318,14 @@ async function testMeshStability() {
     if (!allFinite(Array.from(mesh.propagate(inputs).finalStates.values()))) ok = false;
   }
   check(ok, 'Mesh stays finite/stable over 10 propagation cycles');
+
+  // Density 1.0 must produce true all-to-all wiring: N*(N-1) directed
+  // connections (every node holds a live weight to every other node).
+  const N = 12;
+  const denseMesh = new NeuronMesh({ nodeCount: N, connectionDensity: 1.0, seed: 3 });
+  let directedTotal = 0;
+  for (let i = 0; i < N; i++) directedTotal += denseMesh.getNode(i).connections.size;
+  check(directedTotal === N * (N - 1), `Mesh at density 1.0 has N*(N-1)=${N * (N - 1)} directed connections (got ${directedTotal})`);
 }
 
 async function testAlignmentVeto() {
@@ -264,6 +359,45 @@ async function testAlignmentVeto() {
   // Injectable scorer is honored (an input to the veto, never a learned objective).
   const strict = new AlignmentVeto({ scorer: () => 0.1, scoreThreshold: 0.5 });
   check(!strict.evaluate({ id: 'f', name: 'x', reversible: true }).allowed, 'Veto honors an injected benevolence scorer');
+}
+
+async function testNumberSystems() {
+  const C = await load('models && skills/core/complex.js');
+  const D = await load('models && skills/core/dual.js');
+  const near = (a, b, t = 1e-9) => Math.abs(a - b) < t;
+
+  // Complex: division-algebra laws (Section 13, Hurwitz size 2).
+  check(near(C.mul(C.I, C.I).re, -1) && near(C.mul(C.I, C.I).im, 0), 'Complex: i·i = -1');
+  const z = C.complex(3, -4);
+  check(near(C.abs(z), 5), 'Complex: |3-4i| = 5');
+  check(near(C.abs(C.mul(z, C.complex(1, 2))), C.abs(z) * C.abs(C.complex(1, 2))), 'Complex: |z·w| = |z||w|');
+  const one = C.mul(z, C.inv(z));
+  check(near(one.re, 1) && near(one.im, 0), 'Complex: z·z⁻¹ = 1 (division-algebra inverse)');
+
+  // Dual: forward-mode derivatives (Section 13 → live correction).
+  const x = D.variable(3);
+  const sq = D.mul(x, x);
+  check(near(sq.val, 9) && near(sq.der, 6), 'Dual: d/dx x² at 3 = 6');
+  const th = D.tanh(D.variable(0.5));
+  check(near(th.der, 1 - Math.tanh(0.5) ** 2), 'Dual: tanh carries derivative 1-tanh²');
+
+  // QIL uses the complex substrate; interference is |zA + zB|.
+  const { QuantumNeuralNet } = await load('models && skills/core/quantum-net.js');
+  const q = new QuantumNeuralNet();
+  q.addNeuron('a', 0.5); q.addNeuron('b', 0.5);
+  check(q.getComplexAmplitude('a') && typeof q.getComplexAmplitude('a').re === 'number', 'QIL exposes genuine complex amplitude');
+  check(Number.isFinite(q.interfere('a', 'b')), 'QIL interfere() (complex |zA+zB|) is finite');
+
+  // Self-model derivative in one pass matches finite difference.
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
+  hd.process([0.2, -0.3, 0.5, 0.1, -0.4, 0.6]);
+  const base = [0.2, -0.3, 0.5, 0.1, -0.4, 0.6];
+  const der = hd.predictSelfModelWithDerivative(base, [1, 0, 0, 0, 0, 0]).derivative[0];
+  const eps = 1e-5, bumped = [...base]; bumped[0] += eps;
+  const p0 = hd.predictSelfModelWithDerivative(base, new Array(6).fill(0)).value[0];
+  const p1 = hd.predictSelfModelWithDerivative(bumped, new Array(6).fill(0)).value[0];
+  check(near(der, (p1 - p0) / eps, 1e-3), 'Self-model dual derivative matches finite difference');
 }
 
 async function testBootstrap() {
@@ -318,11 +452,13 @@ async function main() {
     ['RLM select', testRLM],
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
+    ['Vale gating', testValeGating],
     ['Symbolic trace', testSymbolicTrace],
     ['Definishon training', testDefinitionTraining],
     ['Quantum interference', testQuantum],
     ['Mesh stability', testMeshStability],
     ['Alignment veto', testAlignmentVeto],
+    ['Number systems (complex/dual)', testNumberSystems],
     ['ZipIO persistence', testZipPersistence],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
