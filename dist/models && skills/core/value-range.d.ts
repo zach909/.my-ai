@@ -41,6 +41,15 @@ export declare class ValueRangeAllocator {
         neuronAllocations: NeuronAllocation[];
     };
     /**
+     * Vale as a [0,1] fraction of totalPoints per neuron — the value consulted
+     * by state-transition gating (new_state = vale*old_state + (1-vale)*computed),
+     * as opposed to getDistribution()'s learningRate (which gates weight
+     * plasticity). Both read the same underlying zero-sum points; a
+     * high-points neuron is simultaneously slow to re-weight *and* resistant
+     * to having its state overwritten this tick.
+     */
+    getValeFractions(): Map<string, number>;
+    /**
      * Demotion: takes 50% of neuron's points and gives them to others equally.
      */
     demoteNeuron(id: string): void;

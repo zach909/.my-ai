@@ -7,8 +7,15 @@
  * Why: Easy to convert to quantum, and reaches beyond the classical domain.
  * Example: Neuron 2's signature was 4.5 and its height was 10.
  */
+import { type Complex } from './complex.js';
 export interface QuantumState {
     signature: number;
+    /**
+     * Amplitude/phase (polar) is the storage form — a lossless representation
+     * of the same complex number as {re, im}, and the natural one for phase
+     * evolution. Converted to Complex via fromPolar() whenever
+     * interference/consensus math needs genuine complex arithmetic.
+     */
     height: number;
     phase: number;
     probability: number;
@@ -47,11 +54,15 @@ export declare class QuantumNeuralNet {
     interfere(neuronIdA: string, neuronIdB: string): number;
     /**
      * Phase-consensus across a group of neurons — true destructive interference.
-     * Sums each neuron's amplitude as a complex phasor (height at its phase angle);
-     * phasors that disagree in phase cancel toward zero, phasors that agree
-     * reinforce toward the sum of their heights. Returns the resultant magnitude.
+     * Sums each neuron's amplitude as a complex phasor (height·e^{iφ}); phasors
+     * that disagree in phase cancel toward zero, phasors that agree reinforce
+     * toward the sum of their heights. Returns the resultant magnitude.
      */
     phaseConsensus(neuronIds: string[]): number;
+    /** The state's phase-and-amplitude as a single complex number height·e^{iφ}. */
+    private complexAmplitude;
+    /** Public complex-amplitude accessor: the neuron's genuine complex QIL state. */
+    getComplexAmplitude(neuronId: string): Complex | null;
     /**
      * Grover-style amplitude amplification: flips the sign of the target
      * neuron's amplitude (oracle), then reflects every amplitude in the group

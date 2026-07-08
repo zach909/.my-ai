@@ -43,8 +43,15 @@ export declare class MultiDesktopManager {
     private uinputAvailable;
     /** Real GNOME workspace index backing the 'ai' session, once initialized */
     private aiGnomeWorkspaceIndex;
+    /** True when the vendored gnome-multi-input-extension is reachable over D-Bus */
+    private extensionAvailable;
     constructor();
     private checkSystemCapabilities;
+    private checkExtension;
+    /** Calls a method on the vendored gnome-multi-input-extension over D-Bus. */
+    private callExtension;
+    private parseExtUint;
+    isExtensionAvailable(): boolean;
     private checkGnome;
     private checkXinput;
     private initializeDefaultSessions;
@@ -80,6 +87,16 @@ export declare class MultiDesktopManager {
      */
     focusAiDesktop(): boolean;
     focusUserDesktop(): boolean;
+    /**
+     * Move an already-open window (by wmctrl window id) to the GNOME workspace
+     * backing the given desktop session.
+     */
+    moveWindowToDesktop(windowId: string, desktopId: string): void;
+    /**
+     * Launch a command on the given desktop session (defaults to 'ai') without
+     * disturbing whichever desktop is currently focused.
+     */
+    launchOnDesktop(command: string, desktopId?: string): void;
     private switchRealGnomeWorkspace;
     /**
      * List physical input devices — queried live via xinput when available.

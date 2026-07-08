@@ -84,6 +84,22 @@ export class ValueRangeAllocator {
         return { totalPoints: this.config.totalPoints, neuronAllocations };
     }
     /**
+     * Vale as a [0,1] fraction of totalPoints per neuron — the value consulted
+     * by state-transition gating (new_state = vale*old_state + (1-vale)*computed),
+     * as opposed to getDistribution()'s learningRate (which gates weight
+     * plasticity). Both read the same underlying zero-sum points; a
+     * high-points neuron is simultaneously slow to re-weight *and* resistant
+     * to having its state overwritten this tick.
+     */
+    getValeFractions() {
+        const fractions = new Map();
+        const maxPts = this.config.totalPoints;
+        for (const [id, pts] of this.allocations) {
+            fractions.set(id, maxPts > 0 ? Math.min(1, Math.max(0, pts / maxPts)) : 0);
+        }
+        return fractions;
+    }
+    /**
      * Demotion: takes 50% of neuron's points and gives them to others equally.
      */
     demoteNeuron(id) {

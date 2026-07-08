@@ -40,7 +40,15 @@ export class NeuronMesh {
             }
         }
     }
-    propagate(inputActivations) {
+    /**
+     * @param vale Optional per-node vale fraction in [0,1] from the elastic
+     *   value budget. Gates the state-transition itself (not just weight
+     *   learning): new_state = vale*old_state + (1-vale)*computed_state, so a
+     *   high-vale node resists moving to its freshly computed activation while
+     *   a low-vale node adopts it almost entirely. Nodes absent from the map
+     *   are ungated (vale=0, i.e. fully adopt the computed state).
+     */
+    propagate(inputActivations, vale) {
         const nodeHistory = new Map();
         const state = this.captureState();
         for (const [id, val] of inputActivations) {
@@ -64,7 +72,9 @@ export class NeuronMesh {
                         sum += neighbor.activation * weight;
                     }
                 }
-                const activated = this.activate(sum);
+                const computedState = this.activate(sum);
+                const v = vale?.get(id);
+                const activated = v !== undefined ? v * node.activation + (1 - v) * computedState : computedState;
                 newState.set(id, activated);
                 if (!nodeHistory.has(id))
                     nodeHistory.set(id, []);

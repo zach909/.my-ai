@@ -1,4 +1,5 @@
 import { ZipIOSystem } from './zip-io.js';
+import { type VetoDecision } from './alignment-veto.js';
 export interface PipelineConfig {
     embeddingDim: number;
     hiddenDim: number;
@@ -25,6 +26,8 @@ export interface PipelineResult {
     totalDurationMs: number;
     /** Real plugin/skill ids the MoE router picked for this run, if any */
     selectedPlugins: string[];
+    /** Section 3: alignment veto verdict on this run's chosen action. */
+    alignment: VetoDecision;
 }
 export declare class NeuroPipeline {
     private config;
@@ -35,6 +38,7 @@ export declare class NeuroPipeline {
     private valueRange;
     private quantumNet;
     private zipIO;
+    private alignmentVeto;
     private valueBudgetSize;
     private valueInitialized;
     private expertPluginMap;
@@ -55,7 +59,17 @@ export declare class NeuroPipeline {
      * share this one budget space, sized to the larger of the two in
      * ensureSubsystems().
      */
+    private ensureValueInitialized;
     private getValueLearningRates;
+    /**
+     * The same zero-sum points as getValueLearningRates(), read as a raw [0,1]
+     * vale fraction instead of a learning rate. This is what gates the
+     * state-transition blend (new_state = vale*old_state + (1-vale)*computed)
+     * in both the mesh and the hyperdimensional engine, so a neuron's
+     * accumulated value simultaneously slows its weight updates *and* makes
+     * its activation resist being overwritten each tick.
+     */
+    private getValeFractions;
     /**
      * Feed a subsystem's per-neuron activity (how much each neuron just
      * changed) back into the value budget: neurons that changed a lot give up
