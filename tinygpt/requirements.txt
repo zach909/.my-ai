@@ -1,3 +1,6 @@
+torch>=2.0.0
+sentencepiece>=0.1.99
+numpy>=1.21.0
 # TinyGPT dependencies. Install torch matching your CUDA version from
 # https://pytorch.org/get-started/locally/ if the default wheel doesn't match
 # your GPU. For an RTX 5070 (Blackwell / CUDA 12.x) use a recent PyTorch build.
