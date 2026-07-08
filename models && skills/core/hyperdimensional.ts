@@ -8,7 +8,7 @@ export interface HyperNeuron {
    * decaying/diffusing otherwise via the same propagation as any other
    * dimension); indices 1..dimensions are content.
    */
-  state: number[];
+  state: Float32Array;
   energy: number;
   transitions: StateTransition[];
   influenceRadius: number;
@@ -16,8 +16,8 @@ export interface HyperNeuron {
 }
 
 export interface StateTransition {
-  fromState: number[];
-  toState: number[];
+  fromState: Float32Array;
+  toState: Float32Array;
   energy: number;
   timestamp: number;
   cause: string;
@@ -104,32 +104,35 @@ export class HyperDimensionalEngine {
   private iteration: number = 0;
   private totalDims: number;
 
-  // Section 8: persistent per-connection weight tensor, all-to-all. Each
-  // connection carries a diagonal weight vector (same-dimension coupling)
-  // plus one shift vector (source dim d -> target dim (d+1)%totalDims) —
-  // "diagonal-plus-few" cross terms rather than a full D x D block, so cost
-  // per connection stays linear in D instead of quadratic.
-  private connDiag: Map<number, Map<number, Float32Array>>;
-  private connShift: Map<number, Map<number, Float32Array>>;
-  // Bias is per-neuron (added once after the full summed product), not
-  // per-connection — otherwise it would scale with connection count.
-  private bias: Map<number, Float32Array>;
+  /**
+   * Section 8: persistent per-connection weight tensor, all-to-all.
+   * Flattened for cache locality: [targetNeuron][dimension][sourceNeuron]
+   * This ensures that for a fixed target neuron i and dimension d,
+   * we can iterate over all source neurons j sequentially.
+   */
+  private connDiag: Float32Array;
+  private connShift: Float32Array;
 
-  // Section 10: compressed (rank-r) self-model predicting next tick's
-  // outputVector from this tick's. The prediction/actual gap is the
-  // meta-awareness ("surprise") signal, not the prediction itself.
+  /** Bias is per-neuron (added once after the full summed product) */
+  private bias: Float32Array;
+
+  /** Consolidated state buffer: [dimension][neuron] for sequential access in hot loop */
+  private allStates: Float32Array;
+
+  // Section 10: compressed (rank-r) self-model
   private selfModelA: Float32Array;
   private selfModelB: Float32Array;
   private lastOutputVector: number[] | null = null;
 
   // Section 12: fast intra-settle self-model (EMA over mean content energy)
-  // used for live, per-iteration divergence correction. influenceDecay
-  // drives the EMA smoothing — previously a config field that was consumed
-  // but decayed cross-influence to zero over a long run with no real signal
-  // behind it; here it is the actual self-model smoothing factor.
   private emaEnergy: number = 0;
   private hasEma: boolean = false;
   private sustainedDivergence: number = 0;
+
+  // Pre-allocated scratch buffers
+  private nextStatesBuffer: Float32Array;
+  private tempCtx: Float32Array;
+  private stateDeltasBuffer: Float32Array;
 
   constructor(config: Record<string, any> = {}) {
     this.config = {
@@ -147,13 +150,22 @@ export class HyperDimensionalEngine {
       divergenceTolerance: config.divergenceTolerance ?? 0.05,
       sustainedDivergenceTicks: config.sustainedDivergenceTicks ?? 3,
     };
-    this.totalDims = this.config.dimensions + 1;
+    const N = this.config.neuronCount;
+    const D = this.config.dimensions + 1;
+    this.totalDims = D;
     this.neurons = [];
     this.seenPatterns = new Map();
     this.history = [];
-    this.connDiag = new Map();
-    this.connShift = new Map();
-    this.bias = new Map();
+
+    this.allStates = new Float32Array(D * N);
+    this.connDiag = new Float32Array(N * D * N);
+    this.connShift = new Float32Array(N * D * N);
+    this.bias = new Float32Array(N * D);
+
+    this.nextStatesBuffer = new Float32Array(N * D);
+    this.tempCtx = new Float32Array(D);
+    this.stateDeltasBuffer = new Float32Array(N);
+
     this.initializeNeurons();
     this.initializeConnections();
 
@@ -168,18 +180,13 @@ export class HyperDimensionalEngine {
 
   /**
    * Run one tick: settle the mesh to convergence for the given input, apply
-   * value-gated Hebbian weight learning, and derive all reported signals
-   * from the resulting settled state S.
-   *
-   * @param directInputNeuronIds Neurons directly clamped to `inputVector`
-   *   this tick (their input-flag dimension goes hot; all others evolve
-   *   purely by propagation from the weight tensor). Omit to drive every
-   *   neuron directly, matching the legacy shared-input behaviour.
+   * value-gated Hebbian weight learning, and derive all reported signals.
    */
   process(
     inputVector: number[] | Map<string, Float32Array>,
     learningRates?: Map<number, number>,
-    directInputNeuronIds?: Set<number>
+    directInputNeuronIds?: Set<number>,
+    vale?: Map<number, number>
   ): HyperDimensionalOutput {
     let resolvedInput: number[];
     if (inputVector instanceof Map) {
@@ -195,14 +202,11 @@ export class HyperDimensionalEngine {
 
     const drivenIds = directInputNeuronIds ?? new Set(this.neurons.map(n => n.id));
 
-    const preSettleStates = this.neurons.map(n => [...n.state]);
+    const preSettleStates = this.neurons.map(n => new Float32Array(n.state));
     const preSettleEnergies = new Map(this.neurons.map(n => [n.id, n.energy]));
 
-    const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds);
+    const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds, vale);
 
-    // Value-gated Hebbian learning on the connection tensor, folding the
-    // resulting weight-change magnitude into the same per-neuron delta
-    // signal used to feed the elastic value budget.
     this.applyWeightLearning(learningRates, stateDeltas);
 
     const transitions: StateTransition[] = [];
@@ -212,7 +216,7 @@ export class HyperDimensionalEngine {
       if (newEnergy !== preSettleEnergies.get(neuron.id)) {
         transitions.push({
           fromState: preSettleStates[idx],
-          toState: [...neuron.state],
+          toState: new Float32Array(neuron.state),
           energy: newEnergy - (preSettleEnergies.get(neuron.id) ?? 0),
           timestamp: Date.now(),
           cause: 'input_update',
@@ -230,8 +234,6 @@ export class HyperDimensionalEngine {
     const patternHash = this.hashVector(outputVector);
     const patternNovelty = this.computeNoveltyScore(patternHash);
 
-    // Section 10: compare this tick's actual output to what the compressed
-    // self-model predicted (from last tick's output), then train it one step.
     let selfModelSurprise = 0;
     if (this.lastOutputVector) {
       const predicted = this.selfModelPredict(this.lastOutputVector);
@@ -240,9 +242,6 @@ export class HyperDimensionalEngine {
     }
     this.lastOutputVector = outputVector;
 
-    // Blend pattern-repetition novelty with self-model surprise: a trajectory
-    // can be novel either because the pattern itself is unfamiliar, or
-    // because it diverged from what the network's own model expected.
     const noveltyScore = clamp(0.6 * patternNovelty + 0.4 * selfModelSurprise, 0, 1);
 
     this.recordPattern(patternHash, noveltyScore);
@@ -289,35 +288,27 @@ export class HyperDimensionalEngine {
   }
 
   getNeuronStates(): HyperNeuron[] {
-    return this.neurons.map(n => ({ ...n, state: [...n.state] }));
+    return this.neurons.map(n => ({ ...n, state: new Float32Array(n.state) }));
   }
 
-  /**
-   * The settled state S as a single matrix accessor (neurons x totalDims,
-   * row-major) — "current full context", reused by self-reading,
-   * quantization, and (when built) the alignment veto.
-   */
   getContextMatrix(): { data: Float32Array; neuronCount: number; dims: number } {
+    const N = this.config.neuronCount;
     const D = this.totalDims;
-    const data = new Float32Array(this.neurons.length * D);
-    for (let i = 0; i < this.neurons.length; i++) {
-      const s = this.neurons[i].state;
-      for (let d = 0; d < D; d++) data[i * D + d] = s[d];
+    const data = new Float32Array(N * D);
+    for (let i = 0; i < N; i++) {
+      for (let d = 0; d < D; d++) {
+        data[i * D + d] = this.allStates[d * N + i];
+      }
     }
-    return { data, neuronCount: this.neurons.length, dims: D };
+    return { data, neuronCount: N, dims: D };
   }
 
-  /** Per-neuron reading of the input-flag dimension (section 5 self-reading). */
   getInputTopography(): Map<number, number> {
     const map = new Map<number, number>();
     for (const n of this.neurons) map.set(n.id, n.state[0]);
     return map;
   }
 
-  /**
-   * Formalizes "exclusive input": true iff exactly one neuron's input-flag
-   * dimension is hot (>= threshold) this tick.
-   */
   isExclusiveInput(threshold: number = 0.9): { exclusive: boolean; neuronId?: number } {
     const hot: number[] = [];
     for (const n of this.neurons) {
@@ -367,9 +358,9 @@ export class HyperDimensionalEngine {
     const target = this.neurons.find(n => n.id === neuronId);
     if (!target) return null;
 
-    const bias = this.bias.get(neuronId)![dim];
-    const diagRow = this.connDiag.get(neuronId)!;
-    const shiftRow = this.connShift.get(neuronId)!;
+    const N = this.neurons.length;
+    const bias = this.bias[neuronId * D + dim];
+    const rowOffset = (neuronId * D + dim) * N;
     const srcD = (dim - 1 + D) % D;
     const cross = this.config.crossInfluenceStrength;
 
@@ -377,8 +368,8 @@ export class HyperDimensionalEngine {
     let preActivation = bias;
     for (const nj of this.neurons) {
       if (nj.id === neuronId) continue;
-      const wd = diagRow.get(nj.id)![dim];
-      const ws = shiftRow.get(nj.id)![dim];
+      const wd = this.connDiag[rowOffset + nj.id];
+      const ws = this.connShift[rowOffset + nj.id];
 
       const diagContribution = nj.state[dim] * wd;
       preActivation += diagContribution;
@@ -446,6 +437,7 @@ export class HyperDimensionalEngine {
     const penalty = opts.weightPenalty ?? 1e-4;
     const tolerance = opts.tolerance ?? 1e-3;
     const dims = this.config.dimensions;
+    const D = this.totalDims;
 
     const lossHistory: number[][] = definitions.map(() => []);
     let losses = definitions.map(() => Infinity);
@@ -463,8 +455,8 @@ export class HyperDimensionalEngine {
         if (!readout) { losses.push(Infinity); continue; }
 
         // Delta rule on the readout's incoming diagonal weights, through tanh'.
-        const diagRow = this.connDiag.get(def.readoutNeuronId)!;
-        const bias = this.bias.get(def.readoutNeuronId)!;
+        const N = this.neurons.length;
+        const biasOffset = def.readoutNeuronId * D;
         let sse = 0;
         for (let d = 0; d < dims; d++) {
           const cd = d + 1; // content index (0 is the input flag)
@@ -472,12 +464,13 @@ export class HyperDimensionalEngine {
           const err = (def.target[d] ?? 0) - actual;
           sse += err * err;
           const grad = err * (1 - actual * actual); // tanh'
+          const rowOffset = (def.readoutNeuronId * D + cd) * N;
           for (const nj of this.neurons) {
             if (nj.id === def.readoutNeuronId) continue;
-            const wd = diagRow.get(nj.id)!;
-            wd[cd] = clamp(wd[cd] + lr * grad * nj.state[cd] - penalty * wd[cd], -2, 2);
+            const wdIdx = rowOffset + nj.id;
+            this.connDiag[wdIdx] = clamp(this.connDiag[wdIdx] + lr * grad * nj.state[cd] - penalty * this.connDiag[wdIdx], -2, 2);
           }
-          bias[cd] = clamp(bias[cd] + lr * grad - penalty * bias[cd], -1, 1);
+          this.bias[biasOffset + cd] = clamp(this.bias[biasOffset + cd] + lr * grad - penalty * this.bias[biasOffset + cd], -1, 1);
         }
         losses.push(sse / dims);
       }
@@ -521,10 +514,21 @@ export class HyperDimensionalEngine {
   }
 
   private initializeNeurons(): void {
-    for (let i = 0; i < this.config.neuronCount; i++) {
-      const state: number[] = [0]; // index 0: input-flag, starts cold
-      for (let d = 0; d < this.config.dimensions; d++) {
-        state.push(Math.random() * 2 - 1);
+    const N = this.config.neuronCount;
+    const D = this.totalDims;
+    for (let i = 0; i < N; i++) {
+      // Individual states are now interleaved in allStates,
+      // we can't use subarray() for sequential per-neuron state easily
+      // without sacrificing the hot loop's speed.
+      // We'll keep 'state' as a separate Float32Array in HyperNeuron
+      // for compatibility with other methods, but the hot loop
+      // will use allStates directly.
+      const state = new Float32Array(D);
+      state[0] = 0;
+      for (let d = 1; d < D; d++) {
+        const val = Math.random() * 2 - 1;
+        state[d] = val;
+        this.allStates[d * N + i] = val;
       }
       this.neurons.push({
         id: i,
@@ -539,121 +543,125 @@ export class HyperDimensionalEngine {
 
   private initializeConnections(): void {
     const D = this.totalDims;
-    const ids = this.neurons.map(n => n.id);
-    const scale = Math.sqrt(1 / Math.max(1, ids.length));
-    for (const i of ids) {
-      const diagRow = new Map<number, Float32Array>();
-      const shiftRow = new Map<number, Float32Array>();
-      for (const j of ids) {
-        if (i === j) continue;
-        const wd = new Float32Array(D);
-        const ws = new Float32Array(D);
-        for (let d = 0; d < D; d++) {
-          wd[d] = (Math.random() * 2 - 1) * scale;
-          ws[d] = (Math.random() * 2 - 1) * scale * 0.5;
-        }
-        diagRow.set(j, wd);
-        shiftRow.set(j, ws);
+    const N = this.neurons.length;
+    const scale = Math.sqrt(1 / Math.max(1, N));
+
+    for (let i = 0; i < N; i++) {
+      const biasOffset = i * D;
+      for (let d = 0; d < D; d++) {
+        this.bias[biasOffset + d] = 0;
       }
-      this.connDiag.set(i, diagRow);
-      this.connShift.set(i, shiftRow);
-      this.bias.set(i, new Float32Array(D));
+
+      for (let d = 0; d < D; d++) {
+        const rowOffset = (i * D + d) * N;
+        for (let j = 0; j < N; j++) {
+          if (i === j) continue;
+          this.connDiag[rowOffset + j] = (Math.random() * 2 - 1) * scale;
+          this.connShift[rowOffset + j] = (Math.random() * 2 - 1) * scale * 0.5;
+        }
+      }
     }
   }
 
   /**
-   * Propagate-to-convergence: S <- activate(bias + W . S), repeated, rather
-   * than a single hop. Neurons in `drivenIds` are clamped to the external
-   * input for the whole settle (the "exclusive input" contract); everyone
-   * else evolves purely from the connection tensor, so their input-flag
-   * dimension diffuses outward from the driven neurons and gives every
-   * neuron a reading of the input topography once settled.
+   * Propagate-to-convergence: S <- activate(bias + W . S), repeated.
+   * Optimized for cache locality by using row-major access on weights
+   * and consolidated sequential access on states.
    */
   private settle(
     resolvedInput: number[],
-    drivenIds: Set<number>
+    drivenIds: Set<number>,
+    vale?: Map<number, number>
   ): { stateDeltas: Map<number, number>; liveCorrections: number; iterations: number } {
     const D = this.totalDims;
-    const stateDeltas = new Map<number, number>();
-    for (const n of this.neurons) stateDeltas.set(n.id, 0);
+    const N = this.neurons.length;
+    const deltas = this.stateDeltasBuffer;
+    deltas.fill(0);
 
     let liveCorrections = 0;
     let iterations = 0;
+    const nextStates = this.nextStatesBuffer;
+    const strength = this.config.crossInfluenceStrength;
 
     for (; iterations < this.config.propagationSteps; iterations++) {
-      const prevStates = this.neurons.map(n => n.state);
-      const newStates: number[][] = [];
+      for (let i = 0; i < N; i++) {
+        const biasOffset = i * D;
+        // Elastic value budget: high-vale neurons resist this tick's computed
+        // state and hold closer to their prior value; low-vale neurons adopt
+        // the computed state almost entirely. Applied uniformly across a
+        // neuron's dimensions since vale is a per-neuron (not per-dimension)
+        // quantity.
+        const v = vale?.get(i);
+        const priorState = this.neurons[i].state;
+        for (let d = 0; d < D; d++) {
+          let sum = this.bias[biasOffset + d];
+          const rowOffset = (i * D + d) * N;
 
-      for (const ni of this.neurons) {
-        const b = this.bias.get(ni.id)!;
-        const ctx = new Float32Array(b);
-        const diagRow = this.connDiag.get(ni.id)!;
-        const shiftRow = this.connShift.get(ni.id)!;
+          // Row-major sequential access for fixed i, d
+          const wdRow = this.connDiag.subarray(rowOffset, rowOffset + N);
+          const wsRow = this.connShift.subarray(rowOffset, rowOffset + N);
 
-        for (const nj of this.neurons) {
-          if (nj.id === ni.id) continue;
-          const wd = diagRow.get(nj.id)!;
-          const ws = shiftRow.get(nj.id)!;
-          const sj = nj.state;
-          for (let d = 0; d < D; d++) {
-            const srcD = (d - 1 + D) % D;
-            ctx[d] += sj[d] * wd[d] + sj[srcD] * ws[d] * this.config.crossInfluenceStrength;
+          const sjRow = this.allStates.subarray(d * N, (d + 1) * N);
+          const srcD = (d - 1 + D) % D;
+          const sjShiftRow = this.allStates.subarray(srcD * N, (srcD + 1) * N);
+
+          for (let j = 0; j < N; j++) {
+            sum += sjRow[j] * wdRow[j] + sjShiftRow[j] * wsRow[j] * strength;
+          }
+          const computedState = Math.tanh(sum);
+          nextStates[i * D + d] = v !== undefined ? v * priorState[d] + (1 - v) * computedState : computedState;
+        }
+      }
+
+      for (let i = 0; i < N; i++) {
+        if (drivenIds.has(i)) {
+          const offset = i * D;
+          nextStates[offset] = 1.0;
+          for (let d = 0; d < this.config.dimensions; d++) {
+            nextStates[offset + d + 1] = clamp(resolvedInput[d] ?? 0, -1, 1);
           }
         }
-
-        const squashed = new Array<number>(D);
-        for (let d = 0; d < D; d++) squashed[d] = Math.tanh(ctx[d]);
-        newStates.push(squashed);
       }
 
-      for (let idx = 0; idx < this.neurons.length; idx++) {
-        const ni = this.neurons[idx];
-        if (!drivenIds.has(ni.id)) continue;
-        const s = newStates[idx];
-        s[0] = 1.0;
-        for (let d = 0; d < this.config.dimensions; d++) {
-          s[d + 1] = clamp(resolvedInput[d] ?? 0, -1, 1);
-        }
-      }
-
-      // Section 12 live correction: a cheap EMA over mean content energy is
-      // this fast loop's own compressed self-model. Sustained (not
-      // single-tick) divergence between predicted and actual energy triggers
-      // damping — blending the update back toward the previous, more stable
-      // state — so a noisy tick can't cancel a trajectory that was fine.
-      const actualEnergy = this.meanContentEnergy(newStates);
+      const actualEnergy = this.meanContentEnergyBuffer(nextStates);
       const predictedEnergy = this.hasEma ? this.emaEnergy : actualEnergy;
       const divergence = Math.abs(actualEnergy - predictedEnergy);
 
       this.sustainedDivergence = divergence > this.config.divergenceTolerance ? this.sustainedDivergence + 1 : 0;
 
       if (this.sustainedDivergence >= this.config.sustainedDivergenceTicks) {
-        for (let idx = 0; idx < this.neurons.length; idx++) {
-          if (drivenIds.has(this.neurons[idx].id)) continue;
-          const s = newStates[idx];
-          const prev = prevStates[idx];
-          for (let d = 0; d < D; d++) s[d] = 0.5 * s[d] + 0.5 * prev[d];
+        for (let i = 0; i < N; i++) {
+          if (drivenIds.has(i)) continue;
+          const offset = i * D;
+          const state = this.neurons[i].state;
+          for (let d = 0; d < D; d++) {
+            nextStates[offset + d] = 0.5 * nextStates[offset + d] + 0.5 * state[d];
+          }
         }
         liveCorrections++;
         this.sustainedDivergence = 0;
       }
 
-      const settledEnergy = this.meanContentEnergy(newStates);
+      const settledEnergy = this.meanContentEnergyBuffer(nextStates);
       this.emaEnergy = this.hasEma
         ? this.config.influenceDecay * this.emaEnergy + (1 - this.config.influenceDecay) * settledEnergy
         : settledEnergy;
       this.hasEma = true;
 
       let residual = 0;
-      for (let idx = 0; idx < this.neurons.length; idx++) {
-        const prev = prevStates[idx];
-        const next = newStates[idx];
-        let delta = 0;
-        for (let d = 0; d < D; d++) delta += Math.abs(next[d] - prev[d]);
-        residual += delta;
-        const ni = this.neurons[idx];
-        stateDeltas.set(ni.id, (stateDeltas.get(ni.id) ?? 0) + delta);
-        ni.state = next;
+      for (let i = 0; i < N; i++) {
+        const state = this.neurons[i].state;
+        const offset = i * D;
+        let nodeDelta = 0;
+        for (let d = 0; d < D; d++) {
+          const nextVal = nextStates[offset + d];
+          const diff = Math.abs(nextVal - state[d]);
+          nodeDelta += diff;
+          state[d] = nextVal;
+          this.allStates[d * N + i] = nextVal;
+        }
+        residual += nodeDelta;
+        deltas[i] += nodeDelta;
       }
 
       if (residual < this.config.convergenceThreshold) {
@@ -662,56 +670,63 @@ export class HyperDimensionalEngine {
       }
     }
 
+    const stateDeltas = new Map<number, number>();
+    for (let i = 0; i < N; i++) stateDeltas.set(i, deltas[i]);
+
     return { stateDeltas, liveCorrections, iterations };
   }
 
-  /**
-   * Hebbian weight update gated per-node by an externally supplied learning
-   * rate (from the elastic value budget), applied to the connection tensor
-   * built in initializeConnections(). Weight-change magnitude is folded into
-   * `stateDeltas` so callers can feed one combined signal back into the
-   * value budget.
-   */
   private applyWeightLearning(learningRates: Map<number, number> | undefined, stateDeltas: Map<number, number>): void {
     const D = this.totalDims;
-    for (const ni of this.neurons) {
-      const rate = learningRates?.get(ni.id) ?? this.config.learningRate;
-      const diagRow = this.connDiag.get(ni.id)!;
-      const shiftRow = this.connShift.get(ni.id)!;
+    const N = this.neurons.length;
+    for (let i = 0; i < N; i++) {
+      const rate = learningRates?.get(i) ?? this.config.learningRate;
+      const si = this.neurons[i].state;
+      const biasOffset = i * D;
       let deltaSum = 0;
 
-      for (const nj of this.neurons) {
-        if (nj.id === ni.id) continue;
-        const wd = diagRow.get(nj.id)!;
-        const ws = shiftRow.get(nj.id)!;
-        for (let d = 0; d < D; d++) {
-          const srcD = (d - 1 + D) % D;
+      for (let d = 0; d < D; d++) {
+        const rowOffset = (i * D + d) * N;
+        const srcD = (d - 1 + D) % D;
+        const sid = si[d];
+        for (let j = 0; j < N; j++) {
+          if (i === j) continue;
+          const sj = this.neurons[j].state;
 
-          const newWd = clamp(wd[d] + rate * ni.state[d] * nj.state[d], -2, 2);
-          deltaSum += Math.abs(newWd - wd[d]);
-          wd[d] = newWd;
+          const wdIdx = rowOffset + j;
+          const oldWd = this.connDiag[wdIdx];
+          const newWd = clamp(oldWd + rate * sid * sj[d], -2, 2);
+          this.connDiag[wdIdx] = newWd;
+          deltaSum += Math.abs(newWd - oldWd);
 
-          const newWs = clamp(ws[d] + rate * ni.state[d] * nj.state[srcD], -2, 2);
-          deltaSum += Math.abs(newWs - ws[d]);
-          ws[d] = newWs;
+          const oldWs = this.connShift[wdIdx];
+          const newWs = clamp(oldWs + rate * sid * sj[srcD], -2, 2);
+          this.connShift[wdIdx] = newWs;
+          deltaSum += Math.abs(newWs - oldWs);
         }
       }
 
-      const b = this.bias.get(ni.id)!;
       for (let d = 0; d < D; d++) {
-        b[d] = clamp(b[d] + rate * 0.1 * ni.state[d], -1, 1);
+        this.bias[biasOffset + d] = clamp(this.bias[biasOffset + d] + rate * 0.1 * si[d], -1, 1);
       }
 
-      stateDeltas.set(ni.id, (stateDeltas.get(ni.id) ?? 0) + deltaSum);
+      stateDeltas.set(i, (stateDeltas.get(i) ?? 0) + deltaSum);
     }
   }
 
-  private meanContentEnergy(states: number[][]): number {
+  private meanContentEnergyBuffer(buffer: Float32Array): number {
+    const N = this.config.neuronCount;
+    const dims = this.config.dimensions;
+    const D = this.totalDims;
     let sum = 0;
-    for (const s of states) {
-      for (let d = 1; d < s.length; d++) sum += s[d] * s[d];
+    for (let i = 0; i < N; i++) {
+      const offset = i * D;
+      for (let d = 1; d < D; d++) {
+        const val = buffer[offset + d];
+        sum += val * val;
+      }
     }
-    return sum / (states.length * this.config.dimensions);
+    return sum / (N * dims);
   }
 
   /**
@@ -763,7 +778,6 @@ export class HyperDimensionalEngine {
     return out;
   }
 
-  /** One online gradient step on the compressed self-model toward reducing predicted-vs-actual error. */
   private selfModelTrainStep(prevVec: number[], predicted: number[], actual: number[]): void {
     const dims = this.config.dimensions;
     const rank = this.config.selfModelRank;
@@ -811,11 +825,11 @@ export class HyperDimensionalEngine {
     for (const neuron of this.neurons) {
       if (neuron.energy > this.config.energyThreshold) {
         const fromState = neuron.transitions.length > 0
-          ? [...neuron.transitions[neuron.transitions.length - 1].toState]
-          : [...neuron.state];
+          ? neuron.transitions[neuron.transitions.length - 1].toState
+          : neuron.state;
         const transition: StateTransition = {
-          fromState,
-          toState: [...neuron.state],
+          fromState: new Float32Array(fromState),
+          toState: new Float32Array(neuron.state),
           energy: neuron.energy,
           timestamp: Date.now(),
           cause: 'energy_resolved',
@@ -827,8 +841,7 @@ export class HyperDimensionalEngine {
     return resolved;
   }
 
-  /** Content-only energy (excludes the reserved input-flag dimension at index 0). */
-  private computeStateEnergy(state: number[]): number {
+  private computeStateEnergy(state: Float32Array): number {
     let energy = 0;
     for (let d = 1; d < state.length; d++) {
       energy += state[d] * state[d];
@@ -837,17 +850,20 @@ export class HyperDimensionalEngine {
   }
 
   private computeOutputVector(activeStates: HyperNeuron[]): number[] {
-    const output = new Array(this.config.dimensions).fill(0);
+    const dims = this.config.dimensions;
+    const output = new Array(dims).fill(0);
     if (activeStates.length === 0) return output;
 
     for (const neuron of activeStates) {
-      for (let d = 0; d < this.config.dimensions; d++) {
-        output[d] += neuron.state[d + 1] * neuron.energy;
+      const state = neuron.state;
+      const energy = neuron.energy;
+      for (let d = 0; d < dims; d++) {
+        output[d] += state[d + 1] * energy;
       }
     }
 
     const norm = Math.sqrt(output.reduce((s, v) => s + v * v, 0)) || 1;
-    for (let d = 0; d < this.config.dimensions; d++) {
+    for (let d = 0; d < dims; d++) {
       output[d] /= norm;
     }
 
@@ -859,22 +875,25 @@ export class HyperDimensionalEngine {
   }
 
   private computeDimensionalEntropy(): number {
+    const N = this.neurons.length;
+    const dims = this.config.dimensions;
     let entropy = 0;
-    for (let d = 0; d < this.config.dimensions; d++) {
-      const values = this.neurons.map(n => n.state[d + 1]);
-      const mean = values.reduce((s, v) => s + v, 0) / values.length;
-      const buckets = 10;
-      const hist = new Array(buckets).fill(0);
-      for (const v of values) {
+    const buckets = 10;
+    const hist = new Array(buckets);
+
+    for (let d = 0; d < dims; d++) {
+      hist.fill(0);
+      for (let i = 0; i < N; i++) {
+        const v = this.neurons[i].state[d + 1];
         const idx = Math.min(buckets - 1, Math.floor(((v + 1) / 2) * buckets));
         hist[idx]++;
       }
-      for (const count of hist) {
-        const p = count / values.length;
+      for (let b = 0; b < buckets; b++) {
+        const p = hist[b] / N;
         if (p > 0) entropy -= p * Math.log2(p);
       }
     }
-    return entropy / this.config.dimensions;
+    return entropy / dims;
   }
 
   private computeNoveltyScore(patternHash: string): number {

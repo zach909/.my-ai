@@ -1,0 +1,10 @@
+{
+  "name": "test_ext",
+  "description": "test extension",
+  "step": 0,
+  "expert_index": 33,
+  "network_neurons": 1,
+  "moe_experts": 34,
+  "rlm_transitions": 0,
+  "timestamp": 1781876766.6910589
+}

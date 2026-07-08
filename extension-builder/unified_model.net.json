@@ -1,0 +1,14 @@
+{
+  "neurons": [
+    {
+      "name": "",
+      "value": null,
+      "definition": "",
+      "has_value": true
+    }
+  ],
+  "edges": [],
+  "inference_experts": 32,
+  "step": 1,
+  "timestamp": 1781714591.5593686
+}

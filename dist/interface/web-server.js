@@ -14,7 +14,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   #status-dot.online { background: #00ff41; box-shadow: 0 0 8px #00ff41; }
   #status-dot.offline { background: #ff0040; box-shadow: 0 0 8px #ff0040; }
   #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
-  .message { max-width: 80%; padding: 10px 14px; border-radius: 4px; line-height: 1.5; font-size: 13px; }
+  .message { max-width: 80%; padding: 10px 14px; border-radius: 4px; line-height: 1.5; font-size: 13px; animation: fadeIn 0.3s ease-out; }
   .message.user { align-self: flex-end; background: #003300; border: 1px solid #00ff4144; }
   .message.ai { align-self: flex-start; background: #111; border: 1px solid #333; }
   .message.system { align-self: center; background: #111; border: 1px solid #333; color: #888; font-style: italic; font-size: 11px; }
@@ -23,9 +23,14 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   #input-area { border-top: 1px solid #00ff4144; padding: 12px 20px; background: #111; display: flex; gap: 10px; }
   #input { flex: 1; background: #0a0a0a; border: 1px solid #333; color: #00ff41; padding: 10px 14px; font-family: 'Courier New', monospace; font-size: 13px; outline: none; border-radius: 4px; }
   #input:focus { border-color: #00ff41; }
+  #input:disabled { opacity: 0.5; cursor: not-allowed; }
   #send-btn { background: #003300; color: #00ff41; border: 1px solid #00ff41; padding: 10px 20px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 4px; }
   #send-btn:hover { background: #005500; }
-  .thinking { color: #888; font-style: italic; font-size: 11px; align-self: flex-start; }
+  #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  .thinking { color: #888; font-style: italic; font-size: 11px; align-self: flex-start; animation: pulse 1.5s infinite; }
+  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
+  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
+  @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
 </style>
 </head>
 <body>
@@ -33,8 +38,9 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   <h1><span id="status-dot" class="offline"></span>Neuroclaw v0.1.0</h1>
   <div id="status-text" style="font-size:12px;color:#555;">Starting...</div>
 </div>
-<div id="chat-container"></div>
+<div id="chat-container" role="log" aria-live="polite" aria-atomic="false"></div>
 <div id="input-area">
+  <label for="input" class="sr-only">Message</label>
   <input type="text" id="input" placeholder="Type a message..." autofocus>
   <button id="send-btn">Send</button>
 </div>
@@ -59,6 +65,9 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     chat.scrollTop = chat.scrollHeight;
   }
   function addThinking() {
+    input.disabled = true;
+    sendBtn.disabled = true;
+    chat.setAttribute('aria-busy', 'true');
     const div = document.createElement('div');
     div.className = 'thinking';
     div.id = 'thinking-indicator';
@@ -67,8 +76,12 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     chat.scrollTop = chat.scrollHeight;
   }
   function removeThinking() {
+    input.disabled = false;
+    sendBtn.disabled = false;
+    chat.removeAttribute('aria-busy');
     const el = document.getElementById('thinking-indicator');
     if (el) el.remove();
+    input.focus();
   }
   async function checkStatus() {
     try {
@@ -83,6 +96,8 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     addMessage('user', msg);
     chatHistory.push({role: 'user', content: msg});
     input.value = '';
+    input.disabled = true;
+    sendBtn.disabled = true;
     addThinking();
     try {
       const res = await fetch('/api/chat', {
@@ -97,6 +112,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
         chatHistory.push({role: 'assistant', content: data.response});
       } else if (data.error) { addMessage('error', 'Error: ' + data.error); }
     } catch { removeThinking(); addMessage('error', 'Error: Unable to reach server'); }
+    finally {
+      input.disabled = false;
+      sendBtn.disabled = false;
+      input.focus();
+    }
   }
   sendBtn.addEventListener('click', () => sendMessage(input.value));
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value); });
@@ -133,26 +153,42 @@ export class WebServer {
         });
     }
     getPort() { return this.port; }
-    setCorsHeaders(res) {
-        // Security: Restricted CORS to prevent cross-origin attacks on local AI endpoints
+    setSecurityHeaders(res) {
+        // Security: Restricted CORS and standard security headers
         res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
         res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
+        res.setHeader('X-Content-Type-Options', 'nosniff');
+        res.setHeader('X-Frame-Options', 'DENY');
+        res.setHeader('Content-Security-Policy', "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';");
     }
     sendJson(res, data, statusCode = 200) {
-        this.setCorsHeaders(res);
+        this.setSecurityHeaders(res);
         res.writeHead(statusCode, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify(data));
     }
     sendHtml(res, html) {
-        this.setCorsHeaders(res);
+        this.setSecurityHeaders(res);
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
     }
     async parseBody(req) {
+        const LIMIT = 1024 * 1024; // 1MB limit
+        let totalSize = 0;
         return new Promise((resolve, reject) => {
             const chunks = [];
-            req.on('data', (chunk) => chunks.push(chunk));
+            req.on('data', (chunk) => {
+                totalSize += chunk.length;
+                if (totalSize > LIMIT) {
+                    req.destroy();
+                    reject(new Error('Request body too large (limit: 1MB)'));
+                }
+                else {
+                    chunks.push(chunk);
+                }
+            });
             req.on('end', () => {
+                if (totalSize > LIMIT)
+                    return;
                 const raw = Buffer.concat(chunks).toString('utf8');
                 if (!raw) {
                     resolve(null);
@@ -173,7 +209,7 @@ export class WebServer {
         const pathname = parsedUrl.pathname;
         const method = req.method?.toUpperCase() ?? 'GET';
         if (method === 'OPTIONS') {
-            this.setCorsHeaders(res);
+            this.setSecurityHeaders(res);
             res.writeHead(204);
             res.end();
             return;

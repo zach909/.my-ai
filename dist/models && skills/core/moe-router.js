@@ -52,7 +52,7 @@ export class MoERouter {
             const expertIdx = topKIndices[i];
             const expert = this.experts.get(expertIdx);
             const output = new Float32Array(this.config.outputDim);
-            // Optimization: Using bias directly and swapping loops for row-major access
+            // Initialize with bias
             output.set(expert.bias);
             const weights = expert.weights;
             const hiddenDim = this.config.expertHiddenDim;
@@ -168,10 +168,10 @@ export class MoERouter {
         return Array.from(this.experts.keys());
     }
     computeRouterScores(input) {
-        const scores = new Float32Array(this.config.expertCount);
+        const expertCount = this.config.expertCount;
+        const scores = new Float32Array(expertCount);
         scores.set(this.routerBias);
         const weights = this.routerWeights;
-        const expertCount = this.config.expertCount;
         for (let i = 0; i < input.length; i++) {
             const inputVal = input[i];
             const weightOffset = i * expertCount;
