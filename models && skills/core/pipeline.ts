@@ -232,7 +232,7 @@ export class NeuroPipeline {
     this.valueRange!.applyDecay();
   }
 
-  // ─── Core pipeline ────────────────────────────────────────────────────────
+  // ─── Core pipeline ───────────────────────────────────────────────────────
 
   /**
    * Run all 7 subsystems in sequence on an embedding vector.
@@ -476,7 +476,7 @@ export class NeuroPipeline {
     };
   }
 
-  // ─── Stats ────────────────────────────────────────────────────────────────
+  // ─── Stats ──────────────────────────────────────────────────────────
 
   getStats(): { avgDurationMs: number; stepBreakdown: Map<string, number>; runsCount: number } {
     const runsCount = this.runHistory.length;
@@ -504,7 +504,7 @@ export class NeuroPipeline {
     return { avgDurationMs, stepBreakdown, runsCount };
   }
 
-  // ─── Reset ────────────────────────────────────────────────────────────────
+  // ─── Reset ──────────────────────────────────────────────────────────
 
   reset(): void {
     this.runHistory = [];
