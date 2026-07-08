@@ -308,6 +308,32 @@ async function testQuantum() {
   check(freq > 0.9, `collapse() selects the dominant amplitude with proportionally higher frequency (${(freq * 100).toFixed(1)}% over ${trials} trials, uniform would be ~33%)`);
 }
 
+async function testExpertRegistrationCompleteness() {
+  const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
+  const { pluginExtensions } = await load('plugins/index.js');
+  const { PROGRAMMING_SKILLS } = await load('models && skills/programming-skills.js');
+
+  const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 16, hyperDimensions: 16 });
+  await p.run(embedding(32, 1), 'trigger subsystem init'); // ensureSubsystems() is lazy
+
+  const registered = new Set(p.getExpertPluginMap().values());
+  const expectedPluginIds = Object.values(pluginExtensions).map(d => d.id);
+  const expectedSkillTypes = new Set(PROGRAMMING_SKILLS.map(s => s.expertType));
+  const expectedSkillExpertIds = Array.from(expectedSkillTypes).map(t => `skill_${t}`);
+
+  const allPluginsRegistered = expectedPluginIds.every(id => registered.has(id));
+  check(allPluginsRegistered, `Section 2.2: every plugins/index.ts entry (${expectedPluginIds.length}) is a registered MoE expert`);
+
+  const allSkillTypesRegistered = expectedSkillExpertIds.every(id => registered.has(id));
+  check(allSkillTypesRegistered, `Section 2.2: every programming-skills.ts expertType (${expectedSkillExpertIds.length}) is a registered MoE expert`);
+
+  // No anonymous experts polluting the router: registered count must be
+  // exactly plugins + skill-types, nothing extra with no plugin/skill behind it.
+  const expectedTotal = expectedPluginIds.length + expectedSkillExpertIds.length;
+  check(registered.size === expectedTotal,
+    `Section 2.2: registered expert count matches plugin/skill file count exactly (expected ${expectedTotal}, got ${registered.size})`);
+}
+
 async function testMoESharedMesh() {
   const { MixtureOfExperts } = await load('models && skills/moe.js');
 
@@ -515,6 +541,7 @@ async function main() {
     ['Symbolic trace', testSymbolicTrace],
     ['Definishon training', testDefinitionTraining],
     ['Quantum interference', testQuantum],
+    ['Expert registration completeness (Section 2.2)', testExpertRegistrationCompleteness],
     ['MoE shared mesh (Section 2.1)', testMoESharedMesh],
     ['Mesh stability', testMeshStability],
     ['Alignment veto', testAlignmentVeto],

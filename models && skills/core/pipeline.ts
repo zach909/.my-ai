@@ -8,6 +8,7 @@ import { ZipIOSystem } from './zip-io.js';
 import { AlignmentVeto, type VetoDecision } from './alignment-veto.js';
 import type { NeuronState } from '../../interface/types.js';
 import { pluginExtensions } from '../../plugins/index.js';
+import { PROGRAMMING_SKILLS } from '../programming-skills.js';
 
 export interface PipelineConfig {
   embeddingDim: number;
@@ -105,7 +106,10 @@ export class NeuroPipeline {
     });
 
     this.moeRouter = new MoERouter({
-      numExperts: 8,
+      // numExperts: 0 — every expert must be a real, named plugin/skill
+      // registered below. Pre-seeding anonymous experts here would let them
+      // win top-K routing with nothing behind their index (Section 2.2).
+      numExperts: 0,
       topK: 2,
       inputDim: this.config.embeddingDim,
       outputDim: this.config.hiddenDim,
@@ -113,10 +117,10 @@ export class NeuroPipeline {
       loadBalancingLoss: 0.01,
     });
 
-    // Register every plugin/skill (Section 1.11) as a real MoE expert so
-    // routing decisions can be traced back to an actual capability — not
-    // left as 8 anonymous, randomly-initialized experts with nothing behind
-    // their index.
+    // Register every plugin/skill (Section 1.11 / Section 2.2) as a real MoE
+    // expert so routing decisions can be traced back to an actual
+    // capability — not left as anonymous, randomly-initialized experts with
+    // nothing behind their index.
     this.expertPluginMap.clear();
     for (const def of Object.values(pluginExtensions)) {
       const expertId = this.moeRouter.addExpert({
@@ -125,6 +129,24 @@ export class NeuroPipeline {
         specialization: def.capabilities.join(',') || def.type,
       });
       this.expertPluginMap.set(expertId, def.id);
+    }
+
+    // Section 2.2: every skill in programming-skills.ts must be registered
+    // too. Registering one expert per individual skill (584 entries, each a
+    // full inputDim*hiddenDim weight matrix) would be a multi-hundred-MB
+    // memory blowup for what are really lookup/metadata records, not
+    // independent computational units — so, matching the grouping the
+    // (dead) SkillsManager already used, one expert is registered per
+    // distinct expertType category, and every individual skill maps to it.
+    const skillExpertTypes = new Set(PROGRAMMING_SKILLS.map(s => s.expertType));
+    for (const expertType of skillExpertTypes) {
+      const id = `skill_${expertType}`;
+      const expertId = this.moeRouter.addExpert({
+        id,
+        name: `${expertType} skills`,
+        specialization: expertType,
+      });
+      this.expertPluginMap.set(expertId, id);
     }
 
     this.mesh = new NeuronMesh({
