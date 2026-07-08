@@ -183,7 +183,8 @@ export class HyperDimensionalEngine {
   process(
     inputVector: number[] | Map<string, Float32Array>,
     learningRates?: Map<number, number>,
-    directInputNeuronIds?: Set<number>
+    directInputNeuronIds?: Set<number>,
+    vale?: Map<number, number>
   ): HyperDimensionalOutput {
     let resolvedInput: number[];
     if (inputVector instanceof Map) {
@@ -202,7 +203,7 @@ export class HyperDimensionalEngine {
     const preSettleStates = this.neurons.map(n => new Float32Array(n.state));
     const preSettleEnergies = new Map(this.neurons.map(n => [n.id, n.energy]));
 
-    const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds);
+    const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds, vale);
 
     this.applyWeightLearning(learningRates, stateDeltas);
 
@@ -355,9 +356,9 @@ export class HyperDimensionalEngine {
     const target = this.neurons.find(n => n.id === neuronId);
     if (!target) return null;
 
-    const bias = this.bias.get(neuronId)![dim];
-    const diagRow = this.connDiag.get(neuronId)!;
-    const shiftRow = this.connShift.get(neuronId)!;
+    const N = this.neurons.length;
+    const bias = this.bias[neuronId * D + dim];
+    const rowOffset = (neuronId * D + dim) * N;
     const srcD = (dim - 1 + D) % D;
     const cross = this.config.crossInfluenceStrength;
 
@@ -365,8 +366,8 @@ export class HyperDimensionalEngine {
     let preActivation = bias;
     for (const nj of this.neurons) {
       if (nj.id === neuronId) continue;
-      const wd = diagRow.get(nj.id)![dim];
-      const ws = shiftRow.get(nj.id)![dim];
+      const wd = this.connDiag[rowOffset + nj.id];
+      const ws = this.connShift[rowOffset + nj.id];
 
       const diagContribution = nj.state[dim] * wd;
       preActivation += diagContribution;
@@ -434,6 +435,7 @@ export class HyperDimensionalEngine {
     const penalty = opts.weightPenalty ?? 1e-4;
     const tolerance = opts.tolerance ?? 1e-3;
     const dims = this.config.dimensions;
+    const D = this.totalDims;
 
     const lossHistory: number[][] = definitions.map(() => []);
     let losses = definitions.map(() => Infinity);
@@ -451,8 +453,8 @@ export class HyperDimensionalEngine {
         if (!readout) { losses.push(Infinity); continue; }
 
         // Delta rule on the readout's incoming diagonal weights, through tanh'.
-        const diagRow = this.connDiag.get(def.readoutNeuronId)!;
-        const bias = this.bias.get(def.readoutNeuronId)!;
+        const N = this.neurons.length;
+        const biasOffset = def.readoutNeuronId * D;
         let sse = 0;
         for (let d = 0; d < dims; d++) {
           const cd = d + 1; // content index (0 is the input flag)
@@ -460,12 +462,13 @@ export class HyperDimensionalEngine {
           const err = (def.target[d] ?? 0) - actual;
           sse += err * err;
           const grad = err * (1 - actual * actual); // tanh'
+          const rowOffset = (def.readoutNeuronId * D + cd) * N;
           for (const nj of this.neurons) {
             if (nj.id === def.readoutNeuronId) continue;
-            const wd = diagRow.get(nj.id)!;
-            wd[cd] = clamp(wd[cd] + lr * grad * nj.state[cd] - penalty * wd[cd], -2, 2);
+            const wdIdx = rowOffset + nj.id;
+            this.connDiag[wdIdx] = clamp(this.connDiag[wdIdx] + lr * grad * nj.state[cd] - penalty * this.connDiag[wdIdx], -2, 2);
           }
-          bias[cd] = clamp(bias[cd] + lr * grad - penalty * bias[cd], -1, 1);
+          this.bias[biasOffset + cd] = clamp(this.bias[biasOffset + cd] + lr * grad - penalty * this.bias[biasOffset + cd], -1, 1);
         }
         losses.push(sse / dims);
       }
@@ -565,7 +568,8 @@ export class HyperDimensionalEngine {
    */
   private settle(
     resolvedInput: number[],
-    drivenIds: Set<number>
+    drivenIds: Set<number>,
+    vale?: Map<number, number>
   ): { stateDeltas: Map<number, number>; liveCorrections: number; iterations: number } {
     const D = this.totalDims;
     const N = this.neurons.length;
@@ -580,6 +584,13 @@ export class HyperDimensionalEngine {
     for (; iterations < this.config.propagationSteps; iterations++) {
       for (let i = 0; i < N; i++) {
         const biasOffset = i * D;
+        // Elastic value budget: high-vale neurons resist this tick's computed
+        // state and hold closer to their prior value; low-vale neurons adopt
+        // the computed state almost entirely. Applied uniformly across a
+        // neuron's dimensions since vale is a per-neuron (not per-dimension)
+        // quantity.
+        const v = vale?.get(i);
+        const priorState = this.neurons[i].state;
         for (let d = 0; d < D; d++) {
           let sum = this.bias[biasOffset + d];
           const rowOffset = (i * D + d) * N;
@@ -595,7 +606,8 @@ export class HyperDimensionalEngine {
           for (let j = 0; j < N; j++) {
             sum += sjRow[j] * wdRow[j] + sjShiftRow[j] * wsRow[j] * strength;
           }
-          nextStates[i * D + d] = Math.tanh(sum);
+          const computedState = Math.tanh(sum);
+          nextStates[i * D + d] = v !== undefined ? v * priorState[d] + (1 - v) * computedState : computedState;
         }
       }
 
