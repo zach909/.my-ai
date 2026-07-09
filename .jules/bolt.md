@@ -10,3 +10,6 @@
 ## 2025-05-14 - HyperDimensionalEngine Data Layout Optimization
 **Learning:** Organizing neural engine data (weights and states) in a flattened layout specifically tailored for sequential access in hot loops (row-major for weights, dimension-major for states) significantly improves performance by maximizing CPU cache locality. Moving from nested objects/arrays to flattened `Float32Array` buffers with interleaved/sequential access reduced `hyper-dimensional` processing time by ~28% (from 38.35ms to 27.60ms).
 **Action:** In numerical or neural engines, prioritize flattened data layouts and loop ordering that ensures sequential memory access on large TypedArrays.
+## 2025-05-14 - HyperDimensionalEngine Settle & Learning Optimization
+**Learning:** In high-dimensional neural engines, pre-fetching TypedArray views (via .subarray()) outside of hot loops significantly reduces object creation and garbage collection pressure. Additionally, integrating auxiliary tasks like input clamping and energy calculation into the main state iteration loop, and leveraging the distributive property to reduce multiplications (e.g., sum + dotDiag + dotShift * strength), can yield substantial performance gains.
+**Action:** Always seek to combine multiple passes over large buffers and pre-calculate invariant views or constants before entering deep nested loops.
