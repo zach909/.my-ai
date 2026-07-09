@@ -5,3 +5,7 @@
 ## 2025-05-15 - [Accessible Status and Response Utility]
 **Learning:** Visual status indicators must use `role="img"` and dynamic `aria-label` updates to be accessible. Providing a "Copy" button on AI responses with immediate "Copied!" feedback significantly improves utility and matches modern chat UX expectations.
 **Action:** Implement focus-visible copy buttons on AI messages and ensure all status dots are properly labeled for screen readers.
+
+## 2025-07-09 - [High Contrast for Terminal Themes]
+**Learning:** In dark-themed interfaces like this terminal (#0a0a0a), secondary text colors like #555 fall below the WCAG AA 4.5:1 contrast threshold. Moving to #888 ensures accessibility without sacrificing the "dimmed" feel of metadata.
+**Action:** Audit all secondary text (timestamps, status text) for contrast compliance on dark backgrounds and prefer #888+ over #555.

@@ -21,7 +21,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   .message.ai { align-self: flex-start; background: #111; border: 1px solid #333; }
   .message.system { align-self: center; background: #111; border: 1px solid #333; color: #888; font-style: italic; font-size: 11px; }
   .message.error { align-self: center; background: #330000; border: 1px solid #ff004044; color: #ff6666; }
-  .timestamp { font-size: 10px; color: #555; margin-top: 4px; }
+  .timestamp { font-size: 10px; color: #888; margin-top: 4px; }
   #input-area { border-top: 1px solid #00ff4144; padding: 12px 20px; background: #111; display: flex; gap: 10px; }
   #input { flex: 1; background: #0a0a0a; border: 1px solid #333; color: #00ff41; padding: 10px 14px; font-family: 'Courier New', monospace; font-size: 13px; outline: none; border-radius: 4px; }
   #input:focus { border-color: #00ff41; }
@@ -38,7 +38,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <body>
 <div id="header">
   <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
-  <div id="status-text" style="font-size:12px;color:#555;">Starting...</div>
+  <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
 </div>
 <div id="chat-container" role="log" aria-live="polite" aria-atomic="false"></div>
 <div id="input-area">
