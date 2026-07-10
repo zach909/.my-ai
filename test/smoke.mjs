@@ -161,6 +161,64 @@ async function testHyperdimensional() {
   check(ctx.data.length === 12 * 9 && allFinite(ctx.data), 'Hyper getContextMatrix sized (neurons x totalDims) and finite');
 }
 
+async function testInputFlagSelfModelLiveCorrection() {
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+
+  // Section 3.1: exclusive input is exactly one neuron's flag hot. Confirm
+  // it via the engine's own formalization rather than reading private state.
+  {
+    const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, propagationSteps: 1 });
+    hd.process(new Array(6).fill(0.6), undefined, new Set([3]));
+    const verdict = hd.isExclusiveInput(0.9);
+    check(verdict.exclusive && verdict.neuronId === 3, `Section 3.1: driving only neuron 3 reads back as exclusive input (got ${JSON.stringify(verdict)})`);
+  }
+  // The flag isn't a dead/ignored dimension: with more propagation steps,
+  // it diffuses to other neurons via the same tanh(W.S) update as any other
+  // content dimension (checked via inputTopography, dim 0 of each neuron).
+  {
+    const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, propagationSteps: 15, crossInfluenceStrength: 0.5 });
+    const out = hd.process(new Array(6).fill(0.6), undefined, new Set([3]));
+    const others = Array.from(out.inputTopography.entries()).filter(([id]) => id !== 3).map(([, v]) => v);
+    check(others.some(v => Math.abs(v) > 1e-6), 'Section 3.1: input-flag value propagates to non-driven neurons over multiple ticks');
+  }
+
+  // Section 3.2: novelty/surprise signal must be measurably higher for a
+  // genuinely novel input than for a repeated/familiar one.
+  {
+    const hd = new HyperDimensionalEngine({ dimensions: 8, neuronCount: 12 });
+    const familiar = Array.from({ length: 8 }, (_, i) => Math.sin(i));
+    hd.process(familiar);
+    const repeat = hd.process(familiar); // same input again: should look familiar
+    const novel = hd.process(Array.from({ length: 8 }, () => Math.random() * 2 - 1)); // unrelated input
+    check(novel.noveltyScore > repeat.noveltyScore,
+      `Section 3.2: novelty score is higher for novel input than repeated/familiar input (novel=${novel.noveltyScore.toFixed(4)}, repeat=${repeat.noveltyScore.toFixed(4)})`);
+  }
+
+  // Section 3.3: live correction only fires on *sustained* divergence, not
+  // a single noisy-but-recoverable tick.
+  {
+    const hdA = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, sustainedDivergenceTicks: 3, divergenceTolerance: 0.02 });
+    // One tick with a wildly different input, then back to the same steady
+    // input — a single blip shouldn't accumulate to sustainedDivergenceTicks.
+    hdA.process(new Array(6).fill(0.1));
+    const blip = hdA.process(new Array(6).fill(0.9));
+    check(blip.liveCorrections === 0, 'Section 3.3: no correction fires on one noisy-but-recoverable tick');
+
+    const hdB = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, sustainedDivergenceTicks: 3, divergenceTolerance: 0.001, propagationSteps: 20 });
+    // Sustained: divergence is tracked on *energy* (mean squared state), so
+    // it needs a genuine magnitude swing tick-over-tick — a sign flip at
+    // equal magnitude (e.g. +0.9 <-> -0.9) is invisible to it by
+    // construction (same energy either way). Alternate low/high magnitude
+    // instead, repeated over several ticks.
+    let sawCorrection = false;
+    for (let t = 0; t < 8; t++) {
+      const r = hdB.process(new Array(6).fill(t % 2 === 0 ? 0.05 : 0.95));
+      if (r.liveCorrections > 0) sawCorrection = true;
+    }
+    check(sawCorrection, 'Section 3.3: correction fires under sustained multi-tick magnitude divergence');
+  }
+}
+
 async function testValeGating() {
   const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
   const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
@@ -602,6 +660,7 @@ async function main() {
     ['RLM select', testRLM],
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
+    ['Input-flag / self-model / live-correction (Section 3.1-3.3)', testInputFlagSelfModelLiveCorrection],
     ['Vale gating', testValeGating],
     ['Symbolic trace', testSymbolicTrace],
     ['Definishon training', testDefinitionTraining],
