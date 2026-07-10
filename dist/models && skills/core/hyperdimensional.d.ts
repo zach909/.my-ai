@@ -113,6 +113,18 @@ export declare class HyperDimensionalEngine {
         step: number;
     }>;
     getNeuronStates(): HyperNeuron[];
+    /** Total configured neuron count (fixed at construction). */
+    getNeuronCount(): number;
+    /** Content dimensions per neuron (excludes the reserved input-flag dimension). */
+    getDimensions(): number;
+    /**
+     * Section 2.3: directly set a connection's diagonal weight (targetId's
+     * incoming weight from sourceId, for one content dimension) — the write
+     * path the NeuroLang DSL's `@connections=` primitive uses to wire two
+     * declared neurons together, rather than only ever learning weights
+     * through Hebbian/delta-rule updates.
+     */
+    setConnectionWeight(targetId: number, sourceId: number, dim: number, weight: number): void;
     getContextMatrix(): {
         data: Float32Array;
         neuronCount: number;
@@ -229,6 +241,17 @@ export declare class HyperDimensionalEngine {
     private resolveStateTransitions;
     private computeStateEnergy;
     private computeOutputVector;
+    /**
+     * Neurons salient enough this tick to contribute to the output vector.
+     * Falls back to every neuron when none clear energyThreshold, rather than
+     * an empty set: computeOutputVector() treats "no active states" as "all
+     * zero", so a hard cutoff with no fallback made the output vector (and
+     * everything downstream of it — selfModelSurprise, noveltyScore,
+     * patternHash) silently, permanently zero whenever the whole mesh's
+     * energy happened to sit under the threshold — which, at the default
+     * threshold and typical settled-state magnitudes, was most of the time,
+     * including in the live pipeline's own default configuration.
+     */
     private getActiveStates;
     private computeDimensionalEntropy;
     private computeNoveltyScore;

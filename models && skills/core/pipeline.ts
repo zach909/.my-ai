@@ -8,6 +8,7 @@ import { ZipIOSystem } from './zip-io.js';
 import { AlignmentVeto, type VetoDecision } from './alignment-veto.js';
 import type { NeuronState } from '../../interface/types.js';
 import { pluginExtensions } from '../../plugins/index.js';
+import { PROGRAMMING_SKILLS } from '../programming-skills.js';
 
 export interface PipelineConfig {
   embeddingDim: number;
@@ -22,6 +23,14 @@ export interface PipelineConfig {
    * are never auto-restored).
    */
   zipPersistDir?: string;
+  /** Section 3.3 tuning: consecutive over-tolerance settle iterations
+   *  required before live correction fires. Defaults to the engine's own
+   *  default (3) when omitted. */
+  hyperSustainedDivergenceTicks?: number;
+  /** Section 3.3 tuning: energy-divergence-from-EMA threshold a settle
+   *  iteration must exceed to count toward sustained divergence. Defaults
+   *  to the engine's own default (0.05) when omitted. */
+  hyperDivergenceTolerance?: number;
 }
 
 export interface PipelineStep {
@@ -39,6 +48,10 @@ export interface PipelineResult {
   selectedPlugins: string[];
   /** Section 3: alignment veto verdict on this run's chosen action. */
   alignment: VetoDecision;
+  /** Section 3.2: this tick's self-model prediction-error signal. */
+  selfModelSurprise: number;
+  /** Section 3.3: 1 if live correction fired on this tick's hyperdimensional settle, else 0. */
+  liveCorrections: number;
 }
 
 interface RunRecord {
@@ -105,7 +118,10 @@ export class NeuroPipeline {
     });
 
     this.moeRouter = new MoERouter({
-      numExperts: 8,
+      // numExperts: 0 — every expert must be a real, named plugin/skill
+      // registered below. Pre-seeding anonymous experts here would let them
+      // win top-K routing with nothing behind their index (Section 2.2).
+      numExperts: 0,
       topK: 2,
       inputDim: this.config.embeddingDim,
       outputDim: this.config.hiddenDim,
@@ -113,10 +129,10 @@ export class NeuroPipeline {
       loadBalancingLoss: 0.01,
     });
 
-    // Register every plugin/skill (Section 1.11) as a real MoE expert so
-    // routing decisions can be traced back to an actual capability — not
-    // left as 8 anonymous, randomly-initialized experts with nothing behind
-    // their index.
+    // Register every plugin/skill (Section 1.11 / Section 2.2) as a real MoE
+    // expert so routing decisions can be traced back to an actual
+    // capability — not left as anonymous, randomly-initialized experts with
+    // nothing behind their index.
     this.expertPluginMap.clear();
     for (const def of Object.values(pluginExtensions)) {
       const expertId = this.moeRouter.addExpert({
@@ -125,6 +141,24 @@ export class NeuroPipeline {
         specialization: def.capabilities.join(',') || def.type,
       });
       this.expertPluginMap.set(expertId, def.id);
+    }
+
+    // Section 2.2: every skill in programming-skills.ts must be registered
+    // too. Registering one expert per individual skill (584 entries, each a
+    // full inputDim*hiddenDim weight matrix) would be a multi-hundred-MB
+    // memory blowup for what are really lookup/metadata records, not
+    // independent computational units — so, matching the grouping the
+    // (dead) SkillsManager already used, one expert is registered per
+    // distinct expertType category, and every individual skill maps to it.
+    const skillExpertTypes = new Set(PROGRAMMING_SKILLS.map(s => s.expertType));
+    for (const expertType of skillExpertTypes) {
+      const id = `skill_${expertType}`;
+      const expertId = this.moeRouter.addExpert({
+        id,
+        name: `${expertType} skills`,
+        specialization: expertType,
+      });
+      this.expertPluginMap.set(expertId, id);
     }
 
     this.mesh = new NeuronMesh({
@@ -149,6 +183,10 @@ export class NeuroPipeline {
       learningRate: 0.05,
       influenceDecay: 0.95,
       crossInfluenceStrength: 0.2,
+      ...(this.config.hyperSustainedDivergenceTicks !== undefined
+        ? { sustainedDivergenceTicks: this.config.hyperSustainedDivergenceTicks } : {}),
+      ...(this.config.hyperDivergenceTolerance !== undefined
+        ? { divergenceTolerance: this.config.hyperDivergenceTolerance } : {}),
     });
 
     this.rlm = new RLMTrainer({
@@ -331,6 +369,7 @@ export class NeuroPipeline {
     // ── Step 3: Hyper-dimensional processing ────────────────────────────────
     let hyperOutput: number[];
     let selfModelSurprise = 0;
+    let liveCorrections = 0;
     {
       const t0 = Date.now();
       // Pad/truncate mesh output to hyperDimensions
@@ -339,6 +378,7 @@ export class NeuroPipeline {
       const hyperResult = this.hyperEngine!.process(hyperInput, learningRates, undefined, this.getValeFractions());
       hyperOutput = hyperResult.outputVector;
       selfModelSurprise = hyperResult.selfModelSurprise;
+      liveCorrections = hyperResult.liveCorrections;
       this.feedbackToValueBudget(hyperResult.stateDeltas);
       const durationMs = Date.now() - t0;
       steps.push({
@@ -491,6 +531,8 @@ export class NeuroPipeline {
       totalDurationMs,
       selectedPlugins,
       alignment,
+      selfModelSurprise,
+      liveCorrections,
     };
   }
 

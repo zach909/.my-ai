@@ -3,9 +3,10 @@ import { EncryptionManager } from './encryption.js';
 import { SystemAccess } from './system-access.js';
 import { MultiDesktopManager } from './multi-desktop.js';
 import type { NeuroclawLLM } from "../models && skills/llm.js";
-import type { NeuroPipeline } from "../models && skills/core/pipeline.js";
+import type { NeuroPipeline, PipelineResult } from "../models && skills/core/pipeline.js";
 import type { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import type { PluginRegistry } from "../plugin_manager/registry.js";
+import { embedText } from "../models && skills/core/neuro-lang.js";
 
 export class NeuroclawRunner extends EventEmitter {
   private llm: NeuroclawLLM;
@@ -17,6 +18,18 @@ export class NeuroclawRunner extends EventEmitter {
   private multiDesktopManager: MultiDesktopManager;
   private running = false;
   private startTime: number | null = null;
+
+  // ── Section 4.1: continuous parallel output ─────────────────────────────
+  // Two independent loops communicating only through shared pipeline state
+  // (the mesh/hyperdimensional engine inside this.pipeline), not a blocking
+  // call/return interface: injectInput() is a fire-and-forget write to a
+  // shared queue; the output loop drains it on its own schedule and keeps
+  // ticking (propagate -> QIL collapse -> zip-io append, via pipeline.run())
+  // whether or not anything new was queued.
+  private continuousTimer: ReturnType<typeof setInterval> | null = null;
+  private pendingInputs: string[] = [];
+  private continuousTickInFlight = false;
+  private continuousEmbeddingDim = 768;
 
   constructor(
     llm: NeuroclawLLM,
@@ -78,9 +91,70 @@ export class NeuroclawRunner extends EventEmitter {
   }
 
   async stop(): Promise<void> {
+    this.stopContinuous();
     this.running = false;
     this.startTime = null;
     this.emit('shutdown', { phase: 'complete', message: 'Stopped' });
+  }
+
+  /**
+   * Section 4.1: non-blocking input injection. Returns immediately — never
+   * waits for the output loop to pause or finish a tick. The queued text is
+   * picked up by whichever tick fires next; if none is ever queued, the
+   * output loop keeps running on the mesh's own recurrent dynamics alone.
+   */
+  injectInput(text: string): void {
+    this.pendingInputs.push(text);
+  }
+
+  /** Whether the continuous output loop is currently running. */
+  isContinuousRunning(): boolean {
+    return this.continuousTimer !== null;
+  }
+
+  /**
+   * Section 4.1: starts the continuous output loop. Each tick runs
+   * pipeline.run() — propagate, QIL collapse, RLM thinking-steps, live
+   * correction, and a zip-io append — unconditionally, on `intervalMs`,
+   * regardless of whether injectInput() queued anything new. A tick that's
+   * still in flight when the timer fires again is left to finish rather
+   * than overlapped (Node has one thread; overlapping would race two
+   * concurrent writes into the same mesh state), so "continuous" here means
+   * decoupled and non-blocking for the caller, not literally simultaneous.
+   */
+  startContinuous(intervalMs: number = 200): void {
+    if (this.continuousTimer) return;
+    this.continuousTimer = setInterval(() => {
+      if (this.continuousTickInFlight) return; // previous tick still running; skip this firing
+      this.continuousTickInFlight = true;
+      this.continuousTick()
+        .catch(err => this.emit('continuous-error', err))
+        .finally(() => { this.continuousTickInFlight = false; });
+    }, intervalMs);
+    this.emit('continuous-start', { intervalMs });
+  }
+
+  stopContinuous(): void {
+    if (!this.continuousTimer) return;
+    clearInterval(this.continuousTimer);
+    this.continuousTimer = null;
+    this.emit('continuous-stop', {});
+  }
+
+  private async continuousTick(): Promise<PipelineResult> {
+    // Drain everything queued since the last tick. New injectInput() calls
+    // that land *during* this tick's own (async) run() simply go into the
+    // array for the *next* drain — they are never blocked by this one.
+    const queued = this.pendingInputs.splice(0, this.pendingInputs.length);
+    const text = queued.length > 0 ? queued.join(' ') : undefined;
+    const embedding = new Float32Array(this.continuousEmbeddingDim);
+    if (text) {
+      const vec = embedText(text, this.continuousEmbeddingDim);
+      embedding.set(vec);
+    }
+    const result = await this.pipeline.run(embedding, text);
+    this.emit('continuous-tick', result);
+    return result;
   }
 
   getStatus() {

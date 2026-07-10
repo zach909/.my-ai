@@ -5,3 +5,7 @@
 ## 2025-05-15 - [Accessible Status and Response Utility]
 **Learning:** Visual status indicators must use `role="img"` and dynamic `aria-label` updates to be accessible. Providing a "Copy" button on AI responses with immediate "Copied!" feedback significantly improves utility and matches modern chat UX expectations.
 **Action:** Implement focus-visible copy buttons on AI messages and ensure all status dots are properly labeled for screen readers.
+
+## 2025-05-16 - [Contrast Standards and Session Management]
+**Learning:** To meet WCAG AA standards (4.5:1 ratio) on dark backgrounds, secondary text (like timestamps) requires a higher luminance (e.g., #888 instead of #555). Additionally, providing a "Clear Chat" feature that resets both the UI and the underlying message history state is a critical micro-UX for persistent AI terminals.
+**Action:** Use #888 for secondary text on black/dark themes and ensure session-clearing actions are synchronized across all application state layers.
