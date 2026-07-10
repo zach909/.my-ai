@@ -74,6 +74,7 @@ async function testPipeline() {
     lastAlignment = res.alignment;
   }
   check(bad === 0, 'Pipeline output finite across 3 ticks (NaN regression)');
+  check(stageNames.includes('elastic-core'), 'Pipeline runs the ElasticCoreBlock transformer replacement stage');
   check(stageNames.includes('alignment-veto'), 'Pipeline runs the alignment-veto stage');
   check(lastAlignment && typeof lastAlignment.allowed === 'boolean' && Array.isArray(lastAlignment.reasons),
     'Pipeline result carries an alignment verdict');

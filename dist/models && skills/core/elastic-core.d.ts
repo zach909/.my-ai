@@ -24,6 +24,8 @@ export interface ElasticCoreResult {
     converged: boolean;
     residual: number;
     inputTopography: Map<number, number>;
+    /** Per-neuron L1 state movement during the settle, for vale-budget feedback. */
+    stateDeltas: Map<number, number>;
 }
 /**
  * Experimental transformer-core replacement for Prometheus Elastic Core.
@@ -59,6 +61,7 @@ export declare class ElasticCoreBlock {
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
     private inject;
     private readout;
+    private stateDeltas;
     private inputTopography;
     private weightIndex;
     private rand;

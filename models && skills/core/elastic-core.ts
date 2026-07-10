@@ -26,6 +26,8 @@ export interface ElasticCoreResult {
   converged: boolean;
   residual: number;
   inputTopography: Map<number, number>;
+  /** Per-neuron L1 state movement during the settle, for vale-budget feedback. */
+  stateDeltas: Map<number, number>;
 }
 
 /**
@@ -110,12 +112,15 @@ export class ElasticCoreBlock {
     const driven = options.drivenNeurons ?? new Set([0]);
     for (const n of driven) if (n >= 0 && n < this.neuronCount) this.inject(n, input, true);
 
+    const startState = new Float32Array(this.state);
     let ticks = 0, residual = 0, converged = false;
     for (; ticks < this.maxTicks; ticks++) {
       const next = new Float32Array(this.state.length);
       residual = 0;
       for (let t = 0; t < this.neuronCount; t++) {
         const group = this.groups.get(t);
+        const externallyDriven = driven.has(t);
+        const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
         const frozen = options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
         if (frozen) {
           next.set(this.state.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
@@ -147,6 +152,7 @@ export class ElasticCoreBlock {
       converged,
       residual,
       inputTopography: this.inputTopography(),
+      stateDeltas: this.stateDeltas(startState),
     };
   }
 
@@ -166,6 +172,19 @@ export class ElasticCoreBlock {
     const out = new Float32Array(this.outputDim);
     for (let o = 0; o < this.outputDim; o++) for (let d = 0; d < this.stateDim; d++) out[o] += mean[d] * this.outputProjection[d * this.outputDim + o];
     return out;
+  }
+
+  private stateDeltas(startState: Float32Array): Map<number, number> {
+    const deltas = new Map<number, number>();
+    for (let n = 0; n < this.neuronCount; n++) {
+      let delta = 0;
+      for (let d = 0; d < this.stateDim; d++) {
+        const i = n * this.stateDim + d;
+        delta += Math.abs(this.state[i] - startState[i]);
+      }
+      deltas.set(n, delta);
+    }
+    return deltas;
   }
 
   private inputTopography(): Map<number, number> {
