@@ -23,6 +23,14 @@ export interface PipelineConfig {
    * are never auto-restored).
    */
   zipPersistDir?: string;
+  /** Section 3.3 tuning: consecutive over-tolerance settle iterations
+   *  required before live correction fires. Defaults to the engine's own
+   *  default (3) when omitted. */
+  hyperSustainedDivergenceTicks?: number;
+  /** Section 3.3 tuning: energy-divergence-from-EMA threshold a settle
+   *  iteration must exceed to count toward sustained divergence. Defaults
+   *  to the engine's own default (0.05) when omitted. */
+  hyperDivergenceTolerance?: number;
 }
 
 export interface PipelineStep {
@@ -40,6 +48,10 @@ export interface PipelineResult {
   selectedPlugins: string[];
   /** Section 3: alignment veto verdict on this run's chosen action. */
   alignment: VetoDecision;
+  /** Section 3.2: this tick's self-model prediction-error signal. */
+  selfModelSurprise: number;
+  /** Section 3.3: 1 if live correction fired on this tick's hyperdimensional settle, else 0. */
+  liveCorrections: number;
 }
 
 interface RunRecord {
@@ -171,6 +183,10 @@ export class NeuroPipeline {
       learningRate: 0.05,
       influenceDecay: 0.95,
       crossInfluenceStrength: 0.2,
+      ...(this.config.hyperSustainedDivergenceTicks !== undefined
+        ? { sustainedDivergenceTicks: this.config.hyperSustainedDivergenceTicks } : {}),
+      ...(this.config.hyperDivergenceTolerance !== undefined
+        ? { divergenceTolerance: this.config.hyperDivergenceTolerance } : {}),
     });
 
     this.rlm = new RLMTrainer({
@@ -353,6 +369,7 @@ export class NeuroPipeline {
     // ── Step 3: Hyper-dimensional processing ────────────────────────────────
     let hyperOutput: number[];
     let selfModelSurprise = 0;
+    let liveCorrections = 0;
     {
       const t0 = Date.now();
       // Pad/truncate mesh output to hyperDimensions
@@ -361,6 +378,7 @@ export class NeuroPipeline {
       const hyperResult = this.hyperEngine!.process(hyperInput, learningRates, undefined, this.getValeFractions());
       hyperOutput = hyperResult.outputVector;
       selfModelSurprise = hyperResult.selfModelSurprise;
+      liveCorrections = hyperResult.liveCorrections;
       this.feedbackToValueBudget(hyperResult.stateDeltas);
       const durationMs = Date.now() - t0;
       steps.push({
@@ -513,6 +531,8 @@ export class NeuroPipeline {
       totalDurationMs,
       selectedPlugins,
       alignment,
+      selfModelSurprise,
+      liveCorrections,
     };
   }
 

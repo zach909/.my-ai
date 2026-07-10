@@ -13,6 +13,14 @@ export interface PipelineConfig {
      * are never auto-restored).
      */
     zipPersistDir?: string;
+    /** Section 3.3 tuning: consecutive over-tolerance settle iterations
+     *  required before live correction fires. Defaults to the engine's own
+     *  default (3) when omitted. */
+    hyperSustainedDivergenceTicks?: number;
+    /** Section 3.3 tuning: energy-divergence-from-EMA threshold a settle
+     *  iteration must exceed to count toward sustained divergence. Defaults
+     *  to the engine's own default (0.05) when omitted. */
+    hyperDivergenceTolerance?: number;
 }
 export interface PipelineStep {
     name: string;
@@ -28,6 +36,10 @@ export interface PipelineResult {
     selectedPlugins: string[];
     /** Section 3: alignment veto verdict on this run's chosen action. */
     alignment: VetoDecision;
+    /** Section 3.2: this tick's self-model prediction-error signal. */
+    selfModelSurprise: number;
+    /** Section 3.3: 1 if live correction fired on this tick's hyperdimensional settle, else 0. */
+    liveCorrections: number;
 }
 export declare class NeuroPipeline {
     private config;

@@ -117,6 +117,10 @@ export class NeuroPipeline {
             learningRate: 0.05,
             influenceDecay: 0.95,
             crossInfluenceStrength: 0.2,
+            ...(this.config.hyperSustainedDivergenceTicks !== undefined
+                ? { sustainedDivergenceTicks: this.config.hyperSustainedDivergenceTicks } : {}),
+            ...(this.config.hyperDivergenceTolerance !== undefined
+                ? { divergenceTolerance: this.config.hyperDivergenceTolerance } : {}),
         });
         this.rlm = new RLMTrainer({
             hiddenDim: this.config.hiddenDim,
@@ -284,6 +288,7 @@ export class NeuroPipeline {
         // ── Step 3: Hyper-dimensional processing ────────────────────────────────
         let hyperOutput;
         let selfModelSurprise = 0;
+        let liveCorrections = 0;
         {
             const t0 = Date.now();
             // Pad/truncate mesh output to hyperDimensions
@@ -292,6 +297,7 @@ export class NeuroPipeline {
             const hyperResult = this.hyperEngine.process(hyperInput, learningRates, undefined, this.getValeFractions());
             hyperOutput = hyperResult.outputVector;
             selfModelSurprise = hyperResult.selfModelSurprise;
+            liveCorrections = hyperResult.liveCorrections;
             this.feedbackToValueBudget(hyperResult.stateDeltas);
             const durationMs = Date.now() - t0;
             steps.push({
@@ -422,6 +428,8 @@ export class NeuroPipeline {
             totalDurationMs,
             selectedPlugins,
             alignment,
+            selfModelSurprise,
+            liveCorrections,
         };
     }
     // ─── Stats ──────────────────────────────────────────────────────────

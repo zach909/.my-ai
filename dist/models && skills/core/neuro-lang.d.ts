@@ -83,6 +83,18 @@ export interface LiveMaterializeResult {
     conflicts: DefinitionConflict[];
 }
 /**
+ * Deterministic text -> unit vector, so the same definition text always
+ * produces the same training target (and different text a different one)
+ * without needing an external embedding model. Each dimension gets its own
+ * running hash seeded by its index and folded over every character (not
+ * just one or two fixed character positions), so short or low-diversity
+ * strings (e.g. a single repeated character) still disperse across
+ * dimensions instead of collapsing every dimension to the same value —
+ * and, in turn, so two different definitions reliably land on genuinely
+ * different targets rather than risking an accidental collision.
+ */
+export declare function embedText(text: string, dims: number): number[];
+/**
  * Bridges a parsed NeuriLang program into a live HyperDimensionalEngine
  * (and, optionally, the elastic value budget) instead of leaving it as a
  * discarded in-memory ParseResult:

@@ -312,7 +312,7 @@ export class NeuroLangInterpreter {
  * and, in turn, so two different definitions reliably land on genuinely
  * different targets rather than risking an accidental collision.
  */
-function embedText(text, dims) {
+export function embedText(text, dims) {
     const vec = new Array(dims).fill(0);
     if (text.length === 0)
         return vec;

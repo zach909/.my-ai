@@ -402,7 +402,7 @@ export interface LiveMaterializeResult {
  * and, in turn, so two different definitions reliably land on genuinely
  * different targets rather than risking an accidental collision.
  */
-function embedText(text: string, dims: number): number[] {
+export function embedText(text: string, dims: number): number[] {
   const vec = new Array(dims).fill(0);
   if (text.length === 0) return vec;
   for (let d = 0; d < dims; d++) {
