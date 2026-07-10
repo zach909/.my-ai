@@ -726,6 +726,29 @@ async function testContinuousOutputLoop() {
   }
 }
 
+async function testElasticCoreBlock() {
+  const { ElasticCoreBlock } = await load('models && skills/core/elastic-core.js');
+  const core = new ElasticCoreBlock({ neuronCount: 10, stateDim: 5, inputDim: 4, outputDim: 4, maxTicks: 8, seed: 9 });
+  check(core.connectionDensity() === 1.0, 'ElasticCoreBlock uses true all-to-all density');
+  const block = core.connectionBlock(1, 0);
+  check(block.length === 25 && allFinite(block), 'ElasticCoreBlock connections are full stateDim x stateDim blocks');
+
+  const highVale = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 3 });
+  const lowVale = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 3 });
+  const input = new Float32Array([0.8, -0.4, 0.2, 1]);
+  const high = highVale.forward(input, { vale: new Map([[1, 0.98]]), drivenNeurons: new Set([0]) });
+  const low = lowVale.forward(input, { vale: new Map([[1, 0.02]]), drivenNeurons: new Set([0]) });
+  const highMove = high.settledState.slice(4, 8).reduce((s, v) => s + Math.abs(v), 0);
+  const lowMove = low.settledState.slice(4, 8).reduce((s, v) => s + Math.abs(v), 0);
+  check(highMove < lowMove, 'ElasticCoreBlock vale gates state movement directly');
+
+  const moe = new ElasticCoreBlock({ neuronCount: 6, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 2, seed: 5 });
+  moe.setNeuronGroup(1, 'a'); moe.setNeuronGroup(2, 'b');
+  const before = moe.forward(input, { activeGroups: new Set(['a']), drivenNeurons: new Set([0]) }).settledState;
+  const after = moe.forward(input, { activeGroups: new Set(['a']), drivenNeurons: new Set([0]) }).settledState;
+  check(allFinite(after) && Math.abs(after[2 * 4] - before[2 * 4]) < 1e-12, 'ElasticCoreBlock MoE label freezes unselected groups without disconnecting them');
+}
+
 async function testBootstrap() {
   const { bootstrap } = await load('interface/main.js');
   const cli = await bootstrap();
@@ -792,6 +815,7 @@ async function main() {
     ['Number systems (complex/dual)', testNumberSystems],
     ['ZipIO persistence', testZipPersistence],
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
+    ['Elastic core transformer replacement', testElasticCoreBlock],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
   ];
