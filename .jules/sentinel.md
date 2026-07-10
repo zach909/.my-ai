@@ -17,7 +17,7 @@
 **Learning:** Hardening only the core TS service is insufficient if a proxy/wrapper server exists that re-exposes the endpoints insecurely.
 **Prevention:** Apply the same local-only binding and restrictive CORS policies to all entry points (wrappers, proxies, or main servers).
 
-## 2025-05-30 - Command Injection & Regex Bypass in TerminalPlugin
-**Vulnerability:** The `TerminalPlugin` used a weak regex-based blacklist that could be bypassed using non-word boundaries or shell special characters. Specifically, the fork bomb pattern was unescaped and caused errors, and background execution (`_run_bg`) lacked any validation.
-**Learning:** `\b` word boundaries in regex only work for word characters (`[a-zA-Z0-9_]`). If a blacklisted pattern starts or ends with a non-word character (like `/` or `:`), `\b` will fail to match at those boundaries. Additionally, shell commands can be executed in subshells `()` or backticks `` ` ``, which must be accounted for in boundary checks.
-**Prevention:** Use a more inclusive set of shell delimiters `[;&| \t(`]` for start and `[;&| \t)`]` for end boundaries. Always escape special characters in blacklisted patterns. Ensure all execution entry points (foreground, background, etc.) apply the same security checks.
+## 2026-07-28 - Incomplete Command Filtering and Background Bypass in TerminalPlugin
+**Vulnerability:** The `TerminalPlugin` had a broken command blacklist: 1) The regex used `\b` after non-word characters (like `/` in `rm -rf /`), causing it to fail on exact matches at the end of strings. 2) Background execution (`_run_bg`) completely bypassed the security check. 3) Shell-specific patterns like fork bombs were unescaped in the regex.
+**Learning:** Blacklists are fragile. When using them, word boundaries must be handled carefully, especially with non-alphanumeric characters. Additionally, every entry point for execution must enforce the same security policy.
+**Prevention:** Use more robust boundaries like `(?:\s|$|;)` instead of `\b` for patterns ending in non-word characters. Ensure all execution methods (sync, async, background) call a central validation helper. Always escape special regex characters when matching literal shell syntax.

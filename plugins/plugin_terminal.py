@@ -11,7 +11,8 @@ from typing import Optional
 from .plugin_base import Plugin
 
 _BLOCKED = re.compile(
-    r"(?:^|[;&| \t(`])(rm\s+-rf\s+/|mkfs|dd\s+if=|:\(\)\{\s*:\s*\|\s*:\s*&\s*\}\s*;\s*:|shutdown|reboot|halt|poweroff)(?=[;&| \t)`]|$)",
+    r"(?:\brm\s+-rf\s+/|\bmkfs|:\(\)\{\s*[:\s|&]+\};:|\bshutdown|\breboot|\bhalt|\bpoweroff)(?:\s|$|;)|"
+    r"\bdd\b.*\bof=/dev/(sd[a-z]|nvme|mmcblk)",
     re.I,
 )
 
@@ -52,7 +53,7 @@ class TerminalPlugin(Plugin):
             return {"error": str(e), "stdout": "", "stderr": ""}
 
     def _run_bg(self, cmd: str, cwd: str = None) -> int:
-        """Start a background process, return its PID."""
+        """Start a background process, return its PID. Raises ValueError if blocked."""
         if _BLOCKED.search(cmd):
             raise ValueError("Blocked: destructive command pattern detected")
         proc = subprocess.Popen(cmd, shell=True, cwd=cwd,
