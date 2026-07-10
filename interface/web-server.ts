@@ -42,6 +42,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <body>
 <div id="header">
   <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
+  <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
   <div style="display:flex; align-items:center; gap:15px;">
     <button id="clear-btn" aria-label="Clear chat history">Clear</button>
     <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
