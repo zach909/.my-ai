@@ -15,6 +15,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from .config import ModelConfig
+from .elastic_mesh import ElasticMeshFFN
 
 
 class LayerNorm(nn.Module):
@@ -97,14 +98,31 @@ class MLP(nn.Module):
 
 
 class Block(nn.Module):
-    """Pre-LN transformer block: x = x + attn(ln1(x)); x = x + mlp(ln2(x))."""
+    """Pre-LN transformer block: x = x + attn(ln1(x)); x = x + mlp(ln2(x)).
+
+    Section 5.2: `mlp` is either the standard 2-layer GELU MLP or the
+    elastic mesh block (ModelConfig.use_elastic_mesh), swapped in as the
+    only architectural difference — attention, embeddings, and everything
+    outside this module are identical between the two configurations.
+    """
 
     def __init__(self, cfg: ModelConfig):
         super().__init__()
         self.ln_1 = LayerNorm(cfg.n_embd, cfg.bias)
         self.attn = CausalSelfAttention(cfg)
         self.ln_2 = LayerNorm(cfg.n_embd, cfg.bias)
-        self.mlp = MLP(cfg)
+        self.mlp = (
+            ElasticMeshFFN(
+                cfg,
+                num_experts=cfg.mesh_num_experts,
+                top_k=cfg.mesh_top_k,
+                n_neurons=cfg.mesh_n_neurons,
+                settle_steps=cfg.mesh_settle_steps,
+                n_qubits=cfg.mesh_n_qubits,
+            )
+            if cfg.use_elastic_mesh
+            else MLP(cfg)
+        )
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(self.ln_1(x))
