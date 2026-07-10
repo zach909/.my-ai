@@ -1,9 +1,9 @@
-torch>=2.0.0
-sentencepiece>=0.1.99
-numpy>=1.21.0
 # TinyGPT dependencies. Install torch matching your CUDA version from
 # https://pytorch.org/get-started/locally/ if the default wheel doesn't match
 # your GPU. For an RTX 5070 (Blackwell / CUDA 12.x) use a recent PyTorch build.
 torch>=2.1
 numpy>=1.24
 sentencepiece>=0.1.99
+# Section 5.2: PennyLane simulates the elastic mesh's QIL as a genuine small
+# variational quantum circuit (statevector simulation, no real QPU needed).
+pennylane>=0.35

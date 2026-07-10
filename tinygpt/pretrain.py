@@ -40,6 +40,16 @@ def parse_args():
     ap.add_argument("--n-embd", type=int, default=384)
     ap.add_argument("--block-size", type=int, default=256)
     ap.add_argument("--dropout", type=float, default=0.1)
+    # Section 5.2: swap the model core (position-wise MLP -> elastic mesh),
+    # keeping this entire training loop — data, optimizer, schedule,
+    # checkpointing — identical either way.
+    ap.add_argument("--use-elastic-mesh", action="store_true",
+                     help="Replace the MLP sublayer with the elastic mesh block (Section 5.2)")
+    ap.add_argument("--mesh-num-experts", type=int, default=4)
+    ap.add_argument("--mesh-top-k", type=int, default=2)
+    ap.add_argument("--mesh-n-neurons", type=int, default=64)
+    ap.add_argument("--mesh-settle-steps", type=int, default=3)
+    ap.add_argument("--mesh-n-qubits", type=int, default=4)
     # training
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--grad-accum-steps", type=int, default=4)
@@ -120,6 +130,9 @@ def main():
     model_cfg = ModelConfig(
         vocab_size=tokenizer.vocab_size, block_size=args.block_size,
         n_layer=args.n_layer, n_head=args.n_head, n_embd=args.n_embd, dropout=args.dropout,
+        use_elastic_mesh=args.use_elastic_mesh, mesh_num_experts=args.mesh_num_experts,
+        mesh_top_k=args.mesh_top_k, mesh_n_neurons=args.mesh_n_neurons,
+        mesh_settle_steps=args.mesh_settle_steps, mesh_n_qubits=args.mesh_n_qubits,
     )
     model = GPT(model_cfg).to(device)
     print(f"model parameters: {human_count(model.num_params())}")
