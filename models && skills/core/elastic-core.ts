@@ -121,6 +121,7 @@ export class ElasticCoreBlock {
         const group = this.groups.get(t);
         const externallyDriven = driven.has(t);
         const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
+        const frozen = options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
         if (frozen) {
           next.set(this.state.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
           continue;
