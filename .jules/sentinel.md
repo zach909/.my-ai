@@ -16,3 +16,8 @@
 **Vulnerability:** The Python-based `server.py` wrapper was binding to `0.0.0.0` and using `Access-Control-Allow-Origin: *`.
 **Learning:** Hardening only the core TS service is insufficient if a proxy/wrapper server exists that re-exposes the endpoints insecurely.
 **Prevention:** Apply the same local-only binding and restrictive CORS policies to all entry points (wrappers, proxies, or main servers).
+
+## 2025-05-30 - Command Injection & Regex Bypass in TerminalPlugin
+**Vulnerability:** The `TerminalPlugin` used a weak regex-based blacklist that could be bypassed using non-word boundaries or shell special characters. Specifically, the fork bomb pattern was unescaped and caused errors, and background execution (`_run_bg`) lacked any validation.
+**Learning:** `\b` word boundaries in regex only work for word characters (`[a-zA-Z0-9_]`). If a blacklisted pattern starts or ends with a non-word character (like `/` or `:`), `\b` will fail to match at those boundaries. Additionally, shell commands can be executed in subshells `()` or backticks `` ` ``, which must be accounted for in boundary checks.
+**Prevention:** Use a more inclusive set of shell delimiters `[;&| \t(`]` for start and `[;&| \t)`]` for end boundaries. Always escape special characters in blacklisted patterns. Ensure all execution entry points (foreground, background, etc.) apply the same security checks.
