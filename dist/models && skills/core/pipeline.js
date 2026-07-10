@@ -7,6 +7,7 @@ import { QuantumNeuralNet } from './quantum-net.js';
 import { ZipIOSystem } from './zip-io.js';
 import { AlignmentVeto } from './alignment-veto.js';
 import { pluginExtensions } from '../../plugins/index.js';
+import { PROGRAMMING_SKILLS } from '../programming-skills.js';
 const DEFAULT_CONFIG = {
     embeddingDim: 768,
     hiddenDim: 512,
@@ -55,17 +56,20 @@ export class NeuroPipeline {
             decayFactor: 0.01,
         });
         this.moeRouter = new MoERouter({
-            numExperts: 8,
+            // numExperts: 0 — every expert must be a real, named plugin/skill
+            // registered below. Pre-seeding anonymous experts here would let them
+            // win top-K routing with nothing behind their index (Section 2.2).
+            numExperts: 0,
             topK: 2,
             inputDim: this.config.embeddingDim,
             outputDim: this.config.hiddenDim,
             expertHiddenDim: this.config.hiddenDim,
             loadBalancingLoss: 0.01,
         });
-        // Register every plugin/skill (Section 1.11) as a real MoE expert so
-        // routing decisions can be traced back to an actual capability — not
-        // left as 8 anonymous, randomly-initialized experts with nothing behind
-        // their index.
+        // Register every plugin/skill (Section 1.11 / Section 2.2) as a real MoE
+        // expert so routing decisions can be traced back to an actual
+        // capability — not left as anonymous, randomly-initialized experts with
+        // nothing behind their index.
         this.expertPluginMap.clear();
         for (const def of Object.values(pluginExtensions)) {
             const expertId = this.moeRouter.addExpert({
@@ -74,6 +78,23 @@ export class NeuroPipeline {
                 specialization: def.capabilities.join(',') || def.type,
             });
             this.expertPluginMap.set(expertId, def.id);
+        }
+        // Section 2.2: every skill in programming-skills.ts must be registered
+        // too. Registering one expert per individual skill (584 entries, each a
+        // full inputDim*hiddenDim weight matrix) would be a multi-hundred-MB
+        // memory blowup for what are really lookup/metadata records, not
+        // independent computational units — so, matching the grouping the
+        // (dead) SkillsManager already used, one expert is registered per
+        // distinct expertType category, and every individual skill maps to it.
+        const skillExpertTypes = new Set(PROGRAMMING_SKILLS.map(s => s.expertType));
+        for (const expertType of skillExpertTypes) {
+            const id = `skill_${expertType}`;
+            const expertId = this.moeRouter.addExpert({
+                id,
+                name: `${expertType} skills`,
+                specialization: expertType,
+            });
+            this.expertPluginMap.set(expertId, id);
         }
         this.mesh = new NeuronMesh({
             nodeCount: this.config.meshNodes,
@@ -96,6 +117,10 @@ export class NeuroPipeline {
             learningRate: 0.05,
             influenceDecay: 0.95,
             crossInfluenceStrength: 0.2,
+            ...(this.config.hyperSustainedDivergenceTicks !== undefined
+                ? { sustainedDivergenceTicks: this.config.hyperSustainedDivergenceTicks } : {}),
+            ...(this.config.hyperDivergenceTolerance !== undefined
+                ? { divergenceTolerance: this.config.hyperDivergenceTolerance } : {}),
         });
         this.rlm = new RLMTrainer({
             hiddenDim: this.config.hiddenDim,
@@ -263,6 +288,7 @@ export class NeuroPipeline {
         // ── Step 3: Hyper-dimensional processing ────────────────────────────────
         let hyperOutput;
         let selfModelSurprise = 0;
+        let liveCorrections = 0;
         {
             const t0 = Date.now();
             // Pad/truncate mesh output to hyperDimensions
@@ -271,6 +297,7 @@ export class NeuroPipeline {
             const hyperResult = this.hyperEngine.process(hyperInput, learningRates, undefined, this.getValeFractions());
             hyperOutput = hyperResult.outputVector;
             selfModelSurprise = hyperResult.selfModelSurprise;
+            liveCorrections = hyperResult.liveCorrections;
             this.feedbackToValueBudget(hyperResult.stateDeltas);
             const durationMs = Date.now() - t0;
             steps.push({
@@ -401,6 +428,8 @@ export class NeuroPipeline {
             totalDurationMs,
             selectedPlugins,
             alignment,
+            selfModelSurprise,
+            liveCorrections,
         };
     }
     // ─── Stats ──────────────────────────────────────────────────────────

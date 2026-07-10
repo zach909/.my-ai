@@ -291,6 +291,32 @@ export class HyperDimensionalEngine {
     return this.neurons.map(n => ({ ...n, state: new Float32Array(n.state) }));
   }
 
+  /** Total configured neuron count (fixed at construction). */
+  getNeuronCount(): number {
+    return this.neurons.length;
+  }
+
+  /** Content dimensions per neuron (excludes the reserved input-flag dimension). */
+  getDimensions(): number {
+    return this.config.dimensions;
+  }
+
+  /**
+   * Section 2.3: directly set a connection's diagonal weight (targetId's
+   * incoming weight from sourceId, for one content dimension) — the write
+   * path the NeuroLang DSL's `@connections=` primitive uses to wire two
+   * declared neurons together, rather than only ever learning weights
+   * through Hebbian/delta-rule updates.
+   */
+  setConnectionWeight(targetId: number, sourceId: number, dim: number, weight: number): void {
+    const D = this.totalDims;
+    if (targetId === sourceId || dim < 0 || dim >= D) return;
+    if (!this.neurons.some(n => n.id === targetId) || !this.neurons.some(n => n.id === sourceId)) return;
+    const N = this.neurons.length;
+    const idx = (targetId * D + dim) * N + sourceId;
+    this.connDiag[idx] = clamp(weight, -2, 2);
+  }
+
   getContextMatrix(): { data: Float32Array; neuronCount: number; dims: number } {
     const N = this.config.neuronCount;
     const D = this.totalDims;
@@ -870,8 +896,20 @@ export class HyperDimensionalEngine {
     return output;
   }
 
+  /**
+   * Neurons salient enough this tick to contribute to the output vector.
+   * Falls back to every neuron when none clear energyThreshold, rather than
+   * an empty set: computeOutputVector() treats "no active states" as "all
+   * zero", so a hard cutoff with no fallback made the output vector (and
+   * everything downstream of it — selfModelSurprise, noveltyScore,
+   * patternHash) silently, permanently zero whenever the whole mesh's
+   * energy happened to sit under the threshold — which, at the default
+   * threshold and typical settled-state magnitudes, was most of the time,
+   * including in the live pipeline's own default configuration.
+   */
   private getActiveStates(): HyperNeuron[] {
-    return this.neurons.filter(n => n.energy > this.config.energyThreshold);
+    const active = this.neurons.filter(n => n.energy > this.config.energyThreshold);
+    return active.length > 0 ? active : this.neurons;
   }
 
   private computeDimensionalEntropy(): number {

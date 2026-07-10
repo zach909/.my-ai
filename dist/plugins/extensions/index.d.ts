@@ -58,6 +58,7 @@ export declare class PluginMakerExtension extends BasePlugin {
 export declare class UniversalLanguageSkill extends BasePlugin {
     private builder;
     private moe;
+    /** Language -> node ids in the shared mesh (models && skills/core/mesh.ts). */
     private languageNeurons;
     private activeLanguages;
     constructor(definition: PluginDefinition);
