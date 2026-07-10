@@ -16,3 +16,8 @@
 **Vulnerability:** The Python-based `server.py` wrapper was binding to `0.0.0.0` and using `Access-Control-Allow-Origin: *`.
 **Learning:** Hardening only the core TS service is insufficient if a proxy/wrapper server exists that re-exposes the endpoints insecurely.
 **Prevention:** Apply the same local-only binding and restrictive CORS policies to all entry points (wrappers, proxies, or main servers).
+
+## 2026-07-28 - Incomplete Command Filtering and Background Bypass in TerminalPlugin
+**Vulnerability:** The `TerminalPlugin` had a broken command blacklist: 1) The regex used `\b` after non-word characters (like `/` in `rm -rf /`), causing it to fail on exact matches at the end of strings. 2) Background execution (`_run_bg`) completely bypassed the security check. 3) Shell-specific patterns like fork bombs were unescaped in the regex.
+**Learning:** Blacklists are fragile. When using them, word boundaries must be handled carefully, especially with non-alphanumeric characters. Additionally, every entry point for execution must enforce the same security policy.
+**Prevention:** Use more robust boundaries like `(?:\s|$|;)` instead of `\b` for patterns ending in non-word characters. Ensure all execution methods (sync, async, background) call a central validation helper. Always escape special regex characters when matching literal shell syntax.

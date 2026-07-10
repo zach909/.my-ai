@@ -23,7 +23,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   .message.ai { align-self: flex-start; background: #111; border: 1px solid #333; }
   .message.system { align-self: center; background: #111; border: 1px solid #333; color: #888; font-style: italic; font-size: 11px; }
   .message.error { align-self: center; background: #330000; border: 1px solid #ff004044; color: #ff6666; }
-  .timestamp { font-size: 10px; color: #555; margin-top: 4px; }
+  .timestamp { font-size: 10px; color: #888; margin-top: 4px; }
   #input-area { border-top: 1px solid #00ff4144; padding: 12px 20px; background: #111; display: flex; gap: 10px; }
   #input { flex: 1; background: #0a0a0a; border: 1px solid #333; color: #00ff41; padding: 10px 14px; font-family: 'Courier New', monospace; font-size: 13px; outline: none; border-radius: 4px; }
   #input:focus { border-color: #00ff41; }
@@ -31,6 +31,8 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   #send-btn { background: #003300; color: #00ff41; border: 1px solid #00ff41; padding: 10px 20px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 4px; }
   #send-btn:hover { background: #005500; }
   #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+  #clear-btn { background: transparent; color: #888; border: 1px solid #333; padding: 4px 8px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 11px; border-radius: 4px; transition: all 0.2s; }
+  #clear-btn:hover { color: #00ff41; border-color: #00ff41; background: #003300; }
   .thinking { color: #888; font-style: italic; font-size: 11px; align-self: flex-start; animation: pulse 1.5s infinite; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -40,7 +42,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <body>
 <div id="header">
   <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
-  <div id="status-text" style="font-size:12px;color:#555;">Starting...</div>
+  <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
+  <div style="display:flex; align-items:center; gap:15px;">
+    <button id="clear-btn" aria-label="Clear chat history">Clear</button>
+    <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
+  </div>
 </div>
 <div id="chat-container" role="log" aria-live="polite" aria-atomic="false"></div>
 <div id="input-area">
@@ -52,6 +58,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   const chat = document.getElementById('chat-container');
   const input = document.getElementById('input');
   const sendBtn = document.getElementById('send-btn');
+  const clearBtn = document.getElementById('clear-btn');
   const statusDot = document.getElementById('status-dot');
   const statusText = document.getElementById('status-text');
   let chatHistory = [];
@@ -146,6 +153,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     }
   }
   sendBtn.addEventListener('click', () => sendMessage(input.value));
+  clearBtn.addEventListener('click', () => {
+    chat.innerHTML = '';
+    chatHistory = [];
+    addMessage('system', 'Chat cleared.');
+  });
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value); });
   setInterval(checkStatus, 3000);
   checkStatus();

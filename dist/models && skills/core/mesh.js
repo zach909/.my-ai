@@ -2,8 +2,16 @@ export class NeuronMesh {
     config;
     nodes;
     nextId = 0;
+    /**
+     * Section 2.1: a skill/expert "group" is purely a label used by the MoE
+     * router for gating which neurons compute on a given tick — it has zero
+     * effect on wiring. A grouped node is still created (and wired all-to-all,
+     * same as any other node) by addNode(); the group only matters to
+     * propagate() when an activeGroups set is passed in.
+     */
+    nodeGroups = new Map();
     constructor(config = {}) {
-        const nodeCount = config.nodeCount || config.initialNodeCount || 10;
+        const nodeCount = config.nodeCount ?? config.initialNodeCount ?? 10;
         const actFn = config.activationFn || config.activationFunction || 'relu';
         this.config = {
             initialNodeCount: nodeCount,
@@ -47,8 +55,15 @@ export class NeuronMesh {
      *   high-vale node resists moving to its freshly computed activation while
      *   a low-vale node adopts it almost entirely. Nodes absent from the map
      *   are ungated (vale=0, i.e. fully adopt the computed state).
+     * @param activeGroups Section 2.1: when provided, only ungrouped (core)
+     *   nodes and nodes whose group is in this set get their activation
+     *   recomputed this tick — everyone else holds their last value (frozen,
+     *   not disconnected). Frozen nodes are still read as neighbors by active
+     *   nodes' weighted sums, and still hold live connections both directions,
+     *   so the topology stays total while per-tick compute stays sparse.
+     *   Omit to compute every node (the pre-2.1 behavior).
      */
-    propagate(inputActivations, vale) {
+    propagate(inputActivations, vale, activeGroups) {
         const nodeHistory = new Map();
         const state = this.captureState();
         for (const [id, val] of inputActivations) {
@@ -65,6 +80,17 @@ export class NeuronMesh {
         for (; iteration < this.config.maxIterations; iteration++) {
             const newState = new Map();
             for (const [id, node] of this.nodes) {
+                const group = this.nodeGroups.get(id);
+                const isGated = activeGroups !== undefined && group !== undefined && !activeGroups.has(group);
+                if (isGated) {
+                    // Not selected this tick: hold the current value rather than
+                    // recomputing it. Still fully wired — just not activated.
+                    newState.set(id, node.activation);
+                    if (!nodeHistory.has(id))
+                        nodeHistory.set(id, []);
+                    nodeHistory.get(id).push(node.activation);
+                    continue;
+                }
                 let sum = node.bias;
                 for (const [neighborId, weight] of node.connections) {
                     const neighbor = this.nodes.get(neighborId);
@@ -131,7 +157,12 @@ export class NeuronMesh {
         }
         return deltaByNode;
     }
-    addNode(layer) {
+    /**
+     * @param group Section 2.1: optional skill/expert label. Purely a router
+     *   gating tag — the node is wired all-to-all at connectionDensity exactly
+     *   like any ungrouped node, with zero effect on topology.
+     */
+    addNode(layer, group) {
         const id = this.nextId++;
         const node = {
             id,
@@ -142,6 +173,8 @@ export class NeuronMesh {
             activationHistory: [],
         };
         this.nodes.set(id, node);
+        if (group !== undefined)
+            this.nodeGroups.set(id, group);
         for (const [, other] of this.nodes) {
             if (other.id !== id && Math.random() < this.config.connectionDensity) {
                 const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
@@ -159,7 +192,25 @@ export class NeuronMesh {
             other.connections.delete(id);
         }
         this.nodes.delete(id);
+        this.nodeGroups.delete(id);
         return true;
+    }
+    /** Section 2.1: node ids labeled with the given skill/expert group. */
+    getGroupNodeIds(group) {
+        const ids = [];
+        for (const [id, g] of this.nodeGroups) {
+            if (g === group)
+                ids.push(id);
+        }
+        return ids;
+    }
+    /** The skill/expert group a node was registered under, if any. */
+    getNodeGroup(id) {
+        return this.nodeGroups.get(id);
+    }
+    /** All distinct skill/expert groups currently registered in the mesh. */
+    getGroups() {
+        return Array.from(new Set(this.nodeGroups.values()));
     }
     updateConnection(fromId, toId, newWeight) {
         const from = this.nodes.get(fromId);
