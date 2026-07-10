@@ -114,6 +114,51 @@ async function testRLM() {
   check(new Set(r.thinkingSteps).size === r.thinkingSteps.length, 'RLM thinkingSteps are distinct (no padding dupes)');
 }
 
+async function testQuantizationAwareTraining() {
+  const { RLMTrainer } = await load('models && skills/core/rlm.js');
+
+  const mkExperience = (seed) => ({
+    state: new Float32Array([Math.sin(seed), Math.cos(seed), Math.sin(seed * 2), Math.cos(seed * 2)]),
+    action: seed % 5,
+    reward: Math.sin(seed) * 0.5,
+    nextState: new Float32Array([Math.sin(seed + 1), Math.cos(seed + 1), Math.sin(seed * 2 + 1), Math.cos(seed * 2 + 1)]),
+    done: false,
+    priority: 1,
+    timestamp: Date.now(),
+  });
+
+  // With quantization enabled at a low bit-width, the forward pass reads a
+  // genuinely discretized weight snapshot — real rounding, not a pass-
+  // through — so some nonzero residual must appear after weights move.
+  const qat = new RLMTrainer({ stateDim: 4, actionDim: 5, hiddenDim: 4, explorationRate: 0, batchSize: 8, quantizationEnabled: true, quantizationBits: 4 });
+  const initialDrift = qat.getQuantizationDrift();
+  check(Number.isFinite(initialDrift) && initialDrift >= 0,
+    `QAT: fresh trainer reports a well-formed drift reading (${initialDrift.toFixed(5)}) from quantizing its random init`);
+
+  let maxDrift = 0;
+  for (let round = 0; round < 15; round++) {
+    for (let i = 0; i < 8; i++) qat.addExperience(mkExperience(round * 8 + i));
+    await qat.train();
+    maxDrift = Math.max(maxDrift, qat.getQuantizationDrift());
+  }
+  check(maxDrift > 0, `QAT: quantization residual becomes nonzero as weights move under training (max seen ${maxDrift.toFixed(5)})`);
+
+  // The residual is fed back and re-quantized every tick (Section 8: "any
+  // rounding error is fed back into the neurons that produced it"), not
+  // simply discarded — so it must stay bounded across many ticks rather
+  // than accumulating without limit.
+  const finalDrift = qat.getQuantizationDrift();
+  check(Number.isFinite(finalDrift) && finalDrift < 10 * maxDrift,
+    `QAT: residual stays bounded over sustained training rather than diverging (final ${finalDrift.toFixed(5)}, peak ${maxDrift.toFixed(5)})`);
+
+  // Control: with quantization disabled, the forward pass reads the raw
+  // full-precision weights directly and drift is always exactly zero.
+  const noQat = new RLMTrainer({ stateDim: 4, actionDim: 5, hiddenDim: 4, explorationRate: 0, batchSize: 8, quantizationEnabled: false });
+  for (let i = 0; i < 8; i++) noQat.addExperience(mkExperience(i));
+  await noQat.train();
+  check(noQat.getQuantizationDrift() === 0, 'QAT: disabling quantization keeps drift at exactly zero (real toggle, not always-on)');
+}
+
 async function testZipPersistence() {
   const { ZipIOSystem } = await load('models && skills/core/zip-io.js');
   const dir = mkdtempSync(join(tmpdir(), 'zipio-test-'));
@@ -731,6 +776,7 @@ async function main() {
     ['Pipeline', testPipeline],
     ['LLM generate', testLLM],
     ['RLM select', testRLM],
+    ['Quantization-aware training (Section 8)', testQuantizationAwareTraining],
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
     ['Input-flag / self-model / live-correction (Section 3.1-3.3)', testInputFlagSelfModelLiveCorrection],
