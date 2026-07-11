@@ -74,6 +74,10 @@ async function testPipeline() {
     lastAlignment = res.alignment;
   }
   check(bad === 0, 'Pipeline output finite across 3 ticks (NaN regression)');
+  check(stageNames.includes('elastic-core'), 'Pipeline runs the ElasticCoreBlock transformer replacement stage');
+  const fallback = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 16, hyperDimensions: 16, useElasticCore: false });
+  const fallbackStages = (await fallback.run(embedding(32, 99), 'fallback')).steps.map(s => s.name);
+  check(fallbackStages.includes('mesh-propagation') && !fallbackStages.includes('elastic-core'), 'Pipeline honors legacy mesh fallback when useElasticCore=false');
   check(stageNames.includes('alignment-veto'), 'Pipeline runs the alignment-veto stage');
   check(lastAlignment && typeof lastAlignment.allowed === 'boolean' && Array.isArray(lastAlignment.reasons),
     'Pipeline result carries an alignment verdict');
@@ -726,6 +730,39 @@ async function testContinuousOutputLoop() {
   }
 }
 
+async function testElasticCoreBlock() {
+  const { ElasticCoreBlock } = await load('models && skills/core/elastic-core.js');
+  const core = new ElasticCoreBlock({ neuronCount: 10, stateDim: 5, inputDim: 4, outputDim: 4, maxTicks: 8, seed: 9 });
+  check(core.connectionDensity() === 1.0, 'ElasticCoreBlock uses true all-to-all density');
+  const block = core.connectionBlock(1, 0);
+  check(block.length === 25 && allFinite(block), 'ElasticCoreBlock connections are full stateDim x stateDim blocks');
+  const added = core.addNeuron('new-skill');
+  check(added === 10 && core.getNeuronCount() === 11 && core.connectionDensity() === 1.0, 'ElasticCoreBlock addNeuron preserves true all-to-all density for extension-builder growth');
+  check(core.connectionBlock(added, 0).length === 25 && core.connectionBlock(0, added).length === 25, 'ElasticCoreBlock addNeuron wires full bidirectional state blocks');
+  const explicit = new Float32Array(25).fill(0).map((_, i) => i / 100);
+  core.setConnectionBlock(added, 0, explicit);
+  check(Array.from(core.connectionBlock(added, 0)).every((v, i) => Math.abs(v - explicit[i]) < 1e-7), 'ElasticCoreBlock setConnectionBlock installs explicit cross-dimensional weights');
+
+  const highVale = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 3 });
+  const lowVale = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 3 });
+  const input = new Float32Array([0.8, -0.4, 0.2, 1]);
+  const high = highVale.forward(input, { vale: new Map([[1, 0.98]]), drivenNeurons: new Set([0]) });
+  const low = lowVale.forward(input, { vale: new Map([[1, 0.02]]), drivenNeurons: new Set([0]) });
+  const highMove = high.settledState.slice(4, 8).reduce((s, v) => s + Math.abs(v), 0);
+  const lowMove = low.settledState.slice(4, 8).reduce((s, v) => s + Math.abs(v), 0);
+  check(highMove < lowMove, 'ElasticCoreBlock vale gates state movement directly');
+
+  const moe = new ElasticCoreBlock({ neuronCount: 6, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 2, seed: 5 });
+  moe.setNeuronGroup(1, 'a'); moe.setNeuronGroup(2, 'b');
+  const before = moe.forward(input, { activeGroups: new Set(['a']), drivenNeurons: new Set([0]) }).settledState;
+  const after = moe.forward(input, { activeGroups: new Set(['a']), drivenNeurons: new Set([0]) }).settledState;
+  check(allFinite(after) && Math.abs(after[2 * 4] - before[2 * 4]) < 1e-12, 'ElasticCoreBlock MoE label freezes unselected groups without disconnecting them');
+
+  const qat = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 4, seed: 8, quantizationAware: true, quantizationBits: 4 });
+  const q = qat.forward(input, { drivenNeurons: new Set([0]) });
+  check(Number.isFinite(q.quantizationDrift) && q.quantizationDrift > 0, 'ElasticCoreBlock QAT residual is tracked when quantization-aware settling is enabled');
+}
+
 async function testBootstrap() {
   const { bootstrap } = await load('interface/main.js');
   const cli = await bootstrap();
@@ -792,6 +829,7 @@ async function main() {
     ['Number systems (complex/dual)', testNumberSystems],
     ['ZipIO persistence', testZipPersistence],
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
+    ['Elastic core transformer replacement', testElasticCoreBlock],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
   ];

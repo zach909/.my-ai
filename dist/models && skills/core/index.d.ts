@@ -22,3 +22,5 @@ export { QuantumNeuralNet, quantumNet } from './quantum-net';
 export type { QuantumState, QuantumNeuron } from './quantum-net';
 export { InfiniteZipLoop, ZipIOSystem } from './zip-io';
 export type { ZipChunk } from './zip-io';
+export { ElasticCoreBlock } from './elastic-core';
+export type { ElasticCoreConfig, ElasticCoreRunOptions, ElasticCoreResult } from './elastic-core';

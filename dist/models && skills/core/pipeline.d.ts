@@ -21,6 +21,8 @@ export interface PipelineConfig {
      *  iteration must exceed to count toward sustained divergence. Defaults
      *  to the engine's own default (0.05) when omitted. */
     hyperDivergenceTolerance?: number;
+    /** Use the multidimensional all-to-all ElasticCoreBlock as the transformer-core replacement. */
+    useElasticCore?: boolean;
 }
 export interface PipelineStep {
     name: string;
@@ -51,6 +53,7 @@ export declare class NeuroPipeline {
     private quantumNet;
     private zipIO;
     private alignmentVeto;
+    private elasticCore;
     private valueBudgetSize;
     private valueInitialized;
     private expertPluginMap;
@@ -98,7 +101,7 @@ export declare class NeuroPipeline {
      * Sequence:
      *   0. ZipIO   — infinite loop context ingestion (Section 1.10)
      *   1. MoE     — mixture-of-experts routing on the embedding
-     *   2. Mesh    — propagation through the neuron mesh
+     *   2. Elastic — all-to-all multidimensional transformer-core replacement
      *   3. HyperDim — hyper-dimensional state processing
      *   4. Quantum — quantum interference for exclusive input neurons
      *   5. RLM     — reinforcement-learning action selection

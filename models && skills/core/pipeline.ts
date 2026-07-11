@@ -6,6 +6,7 @@ import { ValueRangeAllocator } from './value-range.js';
 import { QuantumNeuralNet } from './quantum-net.js';
 import { ZipIOSystem } from './zip-io.js';
 import { AlignmentVeto, type VetoDecision } from './alignment-veto.js';
+import { ElasticCoreBlock } from './elastic-core.js';
 import type { NeuronState } from '../../interface/types.js';
 import { pluginExtensions } from '../../plugins/index.js';
 import { PROGRAMMING_SKILLS } from '../programming-skills.js';
@@ -31,6 +32,8 @@ export interface PipelineConfig {
    *  iteration must exceed to count toward sustained divergence. Defaults
    *  to the engine's own default (0.05) when omitted. */
   hyperDivergenceTolerance?: number;
+  /** Use the multidimensional all-to-all ElasticCoreBlock as the transformer-core replacement. */
+  useElasticCore?: boolean;
 }
 
 export interface PipelineStep {
@@ -64,6 +67,7 @@ const DEFAULT_CONFIG: PipelineConfig = {
   hiddenDim: 512,
   meshNodes: 32,
   hyperDimensions: 64,
+  useElasticCore: true,
 };
 
 const HYPER_NEURON_COUNT = 64;
@@ -80,6 +84,7 @@ export class NeuroPipeline {
   private quantumNet: QuantumNeuralNet | null = null;
   private zipIO: ZipIOSystem | null = null;
   private alignmentVeto: AlignmentVeto | null = null;
+  private elasticCore: ElasticCoreBlock | null = null;
 
   // Elastic value budget: how many neuron slots it covers, and whether
   // initializeNeurons() has been called yet for this pipeline instance.
@@ -159,6 +164,23 @@ export class NeuroPipeline {
         specialization: expertType,
       });
       this.expertPluginMap.set(expertId, id);
+    }
+
+    this.elasticCore = new ElasticCoreBlock({
+      neuronCount: this.config.meshNodes,
+      stateDim: Math.max(4, Math.min(64, this.config.hyperDimensions)),
+      inputDim: this.config.hiddenDim,
+      outputDim: this.config.hiddenDim,
+      maxTicks: 20,
+      convergenceThreshold: 0.01,
+      seed: 42,
+      quantizationAware: true,
+      quantizationBits: 8,
+    });
+
+    const expertIds = Array.from(this.expertPluginMap.values());
+    for (let i = 0; i < this.config.meshNodes && expertIds.length > 0; i++) {
+      this.elasticCore.setNeuronGroup(i, expertIds[i % expertIds.length]);
     }
 
     this.mesh = new NeuronMesh({
@@ -298,7 +320,7 @@ export class NeuroPipeline {
    * Sequence:
    *   0. ZipIO   — infinite loop context ingestion (Section 1.10)
    *   1. MoE     — mixture-of-experts routing on the embedding
-   *   2. Mesh    — propagation through the neuron mesh
+   *   2. Elastic — all-to-all multidimensional transformer-core replacement
    *   3. HyperDim — hyper-dimensional state processing
    *   4. Quantum — quantum interference for exclusive input neurons
    *   5. RLM     — reinforcement-learning action selection
@@ -336,32 +358,40 @@ export class NeuroPipeline {
       });
     }
 
-    // ── Step 2: Mesh propagation ────────────────────────────────────────────
-    let meshOutput: number[];
-    {
+    // ── Step 2: Transformer-core replacement / fallback mesh ───────────────
+    let coreOutput: number[];
+    if (this.config.useElasticCore !== false) {
       const t0 = Date.now();
-      // Distribute MoE outputs across mesh input nodes
+      const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
+      const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
+      const result = this.elasticCore!.forward(coreInput, {
+        vale: this.getValeFractions(),
+        activeGroups,
+        drivenNeurons: new Set([0]),
+      });
+      coreOutput = Array.from(result.output);
+      this.feedbackToValueBudget(result.stateDeltas);
+      const durationMs = Date.now() - t0;
+      steps.push({
+        name: 'elastic-core',
+        inputShape: [coreInput.length],
+        outputShape: [coreOutput.length],
+        durationMs,
+      });
+    } else {
+      const t0 = Date.now();
       const meshInputs = new Map<number, number>();
       const meshNodeCount = Math.min(this.config.meshNodes, moeOutput.length);
-      for (let i = 0; i < meshNodeCount; i++) {
-        meshInputs.set(i, moeOutput[i] || 0);
-      }
+      for (let i = 0; i < meshNodeCount; i++) meshInputs.set(i, moeOutput[i] || 0);
       const propagation = this.mesh!.propagate(meshInputs, this.getValeFractions());
-      // Collect final state values as an ordered array
-      meshOutput = Array.from(propagation.finalStates.values());
-
-      // Elastic value budget gates how much each mesh node's connections are
-      // allowed to change this tick, then the resulting change feeds back
-      // into the budget itself.
-      const learningRates = this.getValueLearningRates();
-      const meshDeltas = this.mesh!.applyValueWeightedLearning(learningRates);
+      coreOutput = Array.from(propagation.finalStates.values());
+      const meshDeltas = this.mesh!.applyValueWeightedLearning(this.getValueLearningRates());
       this.feedbackToValueBudget(meshDeltas);
-
       const durationMs = Date.now() - t0;
       steps.push({
         name: 'mesh-propagation',
         inputShape: [meshNodeCount],
-        outputShape: [meshOutput.length],
+        outputShape: [coreOutput.length],
         durationMs,
       });
     }
@@ -372,8 +402,8 @@ export class NeuroPipeline {
     let liveCorrections = 0;
     {
       const t0 = Date.now();
-      // Pad/truncate mesh output to hyperDimensions
-      const hyperInput = this.resizeArray(meshOutput, this.config.hyperDimensions);
+      // Pad/truncate elastic core output to hyperDimensions
+      const hyperInput = this.resizeArray(coreOutput, this.config.hyperDimensions);
       const learningRates = this.getValueLearningRates();
       const hyperResult = this.hyperEngine!.process(hyperInput, learningRates, undefined, this.getValeFractions());
       hyperOutput = hyperResult.outputVector;
