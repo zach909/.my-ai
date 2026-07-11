@@ -130,6 +130,8 @@ export declare class ElasticCoreBlock {
     setConnectionScalar(target: number, source: number, weight: number): void;
     constructor(config?: ElasticCoreConfig);
     setNeuronGroup(neuronId: number, group: string): void;
+    getNeuronCount(): number;
+    addNeuron(group?: string): number;
     addNeuron(group?: string): number;
     getNeuronCount(): number;
     getStateDim(): number;
@@ -158,6 +160,7 @@ export declare class ElasticCoreBlock {
     private stateDeltas;
     private inputTopography;
     private weightIndex;
+    private weightIndexForCount;
     private updateScaleForNeuron;
     private assertGradientLength;
     private rand;

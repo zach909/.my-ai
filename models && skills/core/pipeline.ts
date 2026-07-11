@@ -98,6 +98,12 @@ export class NeuroPipeline {
   // anonymous randomly-initialized expert network.
   private expertPluginMap: Map<number, string> = new Map();
 
+  // Deterministic registry from real expert id -> Elastic Core neuron ids.
+  // Every plugin/skill expert gets at least one concrete neuron; when the
+  // expert catalog outgrows meshNodes, ensureSubsystems() grows the Elastic
+  // Core and value budget instead of silently reusing/folding ids.
+  private expertNeuronRegistry: Map<string, number[]> = new Map();
+
   // Timing history for stats
   private runHistory: RunRecord[] = [];
 
@@ -109,20 +115,6 @@ export class NeuroPipeline {
 
   private ensureSubsystems(): void {
     if (this.moeRouter) return; // already initialised
-
-    // The value budget must cover every neuron that consults it for a
-    // learning rate — both the mesh nodes and the (separately-indexed)
-    // hyperdimensional neurons — so size it to the larger of the two.
-    this.valueBudgetSize = Math.max(this.config.meshNodes, HYPER_NEURON_COUNT);
-
-    this.valueRange = new ValueRangeAllocator({
-      enabled: true,
-      totalPoints: this.valueBudgetSize * 10,
-      minLearningRate: 0.0001,
-      maxLearningRate: 0.01,
-      redistributionInterval: 100,
-      decayFactor: 0.01,
-    });
 
     this.moeRouter = new MoERouter({
       // numExperts: 0 — every expert must be a real, named plugin/skill
@@ -181,9 +173,26 @@ export class NeuroPipeline {
     });
 
     const expertIds = Array.from(this.expertPluginMap.values());
-    for (let i = 0; i < this.config.meshNodes && expertIds.length > 0; i++) {
-      this.elasticCore.setNeuronGroup(i, expertIds[i % expertIds.length]);
+    this.expertNeuronRegistry.clear();
+    for (let i = 0; i < expertIds.length; i++) {
+      const expertId = expertIds[i];
+      const neuronId = i < this.config.meshNodes ? i : this.elasticCore.addNeuron(expertId);
+      this.elasticCore.setNeuronGroup(neuronId, expertId);
+      this.expertNeuronRegistry.set(expertId, [neuronId]);
     }
+
+    // The value budget must cover every neuron that consults it for a
+    // learning rate — mesh nodes, any Elastic Core neurons grown for expert
+    // coverage, and the separately-indexed hyperdimensional neurons.
+    this.valueBudgetSize = Math.max(this.elasticCore.getNeuronCount(), HYPER_NEURON_COUNT);
+    this.valueRange = new ValueRangeAllocator({
+      enabled: true,
+      totalPoints: this.valueBudgetSize * 10,
+      minLearningRate: 0.0001,
+      maxLearningRate: 0.01,
+      redistributionInterval: 100,
+      decayFactor: 0.01,
+    });
 
     this.mesh = new NeuronMesh({
       nodeCount: this.config.meshNodes,
@@ -418,10 +427,11 @@ export class NeuroPipeline {
       const t0 = Date.now();
       const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
       const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
+      const drivenNeurons = this.neuronIdsForExperts(selectedPlugins);
       const result = this.elasticCore!.forward(coreInput, {
         vale: this.getValeFractions(),
         activeGroups,
-        drivenNeurons: new Set([0]),
+        drivenNeurons: drivenNeurons.size > 0 ? drivenNeurons : new Set([0]),
       });
       coreOutput = Array.from(result.output);
       elasticStateDeltas = new Map(result.stateDeltas);
@@ -644,6 +654,8 @@ export class NeuroPipeline {
     this.hyperEngine = null;
     this.rlm = null;
     this.valueRange = null;
+    this.elasticCore = null;
+    this.expertNeuronRegistry.clear();
     this.quantumNet = null;
     this.zipIO = null;
     this.valueInitialized = false;
@@ -662,6 +674,20 @@ export class NeuroPipeline {
    */
   getExpertPluginMap(): Map<number, string> {
     return new Map(this.expertPluginMap);
+  }
+
+  /** Real plugin/skill id -> Elastic Core neuron ids that exist. */
+  getExpertNeuronRegistry(): Map<string, number[]> {
+    this.ensureSubsystems();
+    return new Map(Array.from(this.expertNeuronRegistry, ([id, neurons]) => [id, [...neurons]]));
+  }
+
+  private neuronIdsForExperts(expertIds: string[]): Set<number> {
+    const ids = new Set<number>();
+    for (const expertId of expertIds) {
+      for (const neuronId of this.expertNeuronRegistry.get(expertId) ?? []) ids.add(neuronId);
+    }
+    return ids;
   }
 
   // ─── Private helpers ──────────────────────────────────────────────────────
