@@ -774,6 +774,18 @@ async function testElasticCoreBlock() {
   const after = moe.forward(input, { activeGroups: new Set(['a']), drivenNeurons: new Set([0]) }).settledState;
   check(allFinite(after) && Math.abs(after[2 * 4] - before[2 * 4]) < 1e-12, 'ElasticCoreBlock MoE label freezes unselected groups without disconnecting them');
 
+  const rawCore = new ElasticCoreBlock({ neuronCount: 5, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 12 });
+  const quantizedCore = new ElasticCoreBlock({ neuronCount: 5, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 12, quantizationAware: true, quantizationBits: 2 });
+  const raw = rawCore.forward(input, { drivenNeurons: new Set([0]) });
+  const quantized = quantizedCore.forward(input, { drivenNeurons: new Set([0]) });
+  let quantizationChangedStoredState = false;
+  for (let i = 0; i < raw.settledState.length; i++) {
+    if (Math.abs(raw.settledState[i] - quantized.settledState[i]) > 1e-6) {
+      quantizationChangedStoredState = true;
+      break;
+    }
+  }
+  check(quantizationChangedStoredState && quantized.residual > 0, `ElasticCoreBlock quantization-aware residual sees stored-state quantization changes (residual=${quantized.residual.toFixed(5)})`);
   const opt = new ElasticCoreBlock({ neuronCount: 3, stateDim: 2, inputDim: 2, outputDim: 2, maxTicks: 1, seed: 7 });
   const params = opt.getParameters();
   const wIdx = (((1 * 3 + 0) * 2 + 0) * 2 + 0);

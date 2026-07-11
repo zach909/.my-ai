@@ -8,6 +8,7 @@ export interface ElasticCoreConfig {
     weightScale?: number;
     seed?: number;
     inputFlagDim?: number;
+    quantizationAware?: boolean;
     /** Enable quantization-aware state settling: quantize inside forward and retain residual feedback. */
     quantizationAware?: boolean;
     /** Bit width for quantized state values when quantizationAware is enabled. */
@@ -93,6 +94,9 @@ export declare class ElasticCoreBlock {
     private readonly maxTicks;
     private readonly convergenceThreshold;
     private readonly inputFlagDim;
+    private readonly quantizationAware;
+    private readonly quantizationBits;
+    private quantizationResidual;
     private state;
     private bias;
     private weights;
@@ -145,6 +149,7 @@ export declare class ElasticCoreBlock {
     applyGradients(gradients: ElasticCoreGradients, options?: ElasticCoreGradientOptions): ElasticCoreUpdateSummary;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
     private inject;
+    private quantizeWithResidual;
     private readout;
     private quantizeWithResidual;
     private meanAbs;
