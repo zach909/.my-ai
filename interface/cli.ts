@@ -359,15 +359,18 @@ export class CLI {
       // Execute attached code first so value reflects computed result
       let codeResult: string | null = null;
       if (n.code) {
-        try {
-          const result = new Function(`"use strict"; return (${n.code})`)();
-          if (typeof result === 'number' && isFinite(result)) {
-            n.value = result;
-            codeResult = String(result);
-          } else if (result !== undefined) {
-            codeResult = String(result).slice(0, 80);
-          }
-        } catch { /* code failed to eval — ignore */ }
+        // Security: Only allow safe characters (math, hex) to prevent RCE via NeuriLang @code
+        if (/^[0-9a-fx+\-*/().\s]*$/i.test(n.code)) {
+          try {
+            const result = new Function(`"use strict"; return (${n.code})`)();
+            if (typeof result === 'number' && isFinite(result)) {
+              n.value = result;
+              codeResult = String(result);
+            } else if (result !== undefined) {
+              codeResult = String(result).slice(0, 80);
+            }
+          } catch { /* code failed to eval — ignore */ }
+        }
       }
       const tags: string[] = [];
       if (n.isNetSearch) tags.push(`netsearch:${n.netLocation}`);
