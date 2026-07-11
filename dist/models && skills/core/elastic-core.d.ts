@@ -8,7 +8,6 @@ export interface ElasticCoreConfig {
     weightScale?: number;
     seed?: number;
     inputFlagDim?: number;
-    quantizationAware?: boolean;
     /** Enable quantization-aware state settling: quantize inside forward and retain residual feedback. */
     quantizationAware?: boolean;
     /** Bit width for quantized state values when quantizationAware is enabled. */
@@ -87,7 +86,6 @@ export interface ElasticCoreUpdateSummary {
  */
 export declare class ElasticCoreBlock {
     private neuronCount;
-    private readonly neuronCount;
     private readonly stateDim;
     private readonly inputDim;
     private readonly outputDim;
@@ -106,20 +104,12 @@ export declare class ElasticCoreBlock {
     private groups;
     private definitionTargets;
     private rngState;
-    private readonly quantizationAware;
-    private readonly quantizationBits;
-    private quantizationResidual;
     constructor(config?: ElasticCoreConfig);
     setNeuronGroup(neuronId: number, group: string): void;
-    /**
-     * Add a live neuron to the core and wire it all-to-all with every existing
-     * neuron. This is the Elastic Core side of the extension-builder story:
-     * newly materialized NeuroLang/skill neurons become ordinary mesh neurons,
-     * not a side table or separate adapter layer. Existing weights are preserved.
-     */
-    addNeuron(group?: string): number;
     getNeuronCount(): number;
+    getStateDim(): number;
     connectionDensity(): number;
+    connectionBlock(target: number, source: number): Float32Array;
     /**
      * Program an explicit dense source->target block. This is how extension
      * builder definitions can install cross-dimensional links directly: every
@@ -128,20 +118,15 @@ export declare class ElasticCoreBlock {
     setConnectionBlock(target: number, source: number, block: Float32Array | number[]): void;
     /** Convenience helper for DSL-style scalar connections: fill the whole block. */
     setConnectionScalar(target: number, source: number, weight: number): void;
-    constructor(config?: ElasticCoreConfig);
-    setNeuronGroup(neuronId: number, group: string): void;
-    getNeuronCount(): number;
-    addNeuron(group?: string): number;
-    addNeuron(group?: string): number;
-    getNeuronCount(): number;
-    getStateDim(): number;
-    addNeuron(group?: string): number;
-    setConnectionScalar(target: number, source: number, weight: number): void;
-    setConnectionBlock(target: number, source: number, block: ArrayLike<number>): void;
     setDefinitionTarget(neuronId: number, target: ArrayLike<number>): void;
     checkDefinition(neuronId: number, tolerance?: number): DefinitionCheckResult;
-    connectionDensity(): number;
-    connectionBlock(target: number, source: number): Float32Array;
+    /**
+     * Add a live neuron to the core and wire it all-to-all with every existing
+     * neuron. This is the Elastic Core side of the extension-builder story:
+     * newly materialized NeuroLang/skill neurons become ordinary mesh neurons,
+     * not a side table or separate adapter layer. Existing weights are preserved.
+     */
+    addNeuron(group?: string): number;
     /**
      * Optimizer-facing structured parameter view. The returned typed arrays are
      * live references, so AdamW-style trainers can keep moments keyed to these
@@ -153,9 +138,15 @@ export declare class ElasticCoreBlock {
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
     private clearDirectInputFlags;
     private inject;
+    /**
+     * Quantize a candidate next-state and feed the rounding error back into
+     * `quantizationResidual` so it's compensated for on the following tick,
+     * per the QAT design (Section 8): the network learns to expect its own
+     * quantized form instead of being surprised by compression after training.
+     * Disabling quantization is a real toggle: residual is reset to exactly zero.
+     */
     private quantizeWithResidual;
     private readout;
-    private quantizeWithResidual;
     private meanAbs;
     private stateDeltas;
     private inputTopography;
