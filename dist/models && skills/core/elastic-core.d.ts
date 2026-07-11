@@ -27,6 +27,38 @@ export interface ElasticCoreResult {
     /** Per-neuron L1 state movement during the settle, for vale-budget feedback. */
     stateDeltas: Map<number, number>;
 }
+export interface ElasticCoreParameters {
+    weights: Float32Array;
+    biases: Float32Array;
+    inputProjection: Float32Array;
+    outputProjection: Float32Array;
+    shapes: {
+        weights: [targetNeurons: number, sourceNeurons: number, outDim: number, inDim: number];
+        biases: [neurons: number, stateDim: number];
+        inputProjection: [inputDim: number, stateDim: number];
+        outputProjection: [stateDim: number, outputDim: number];
+    };
+}
+export interface ElasticCoreGradients {
+    weights?: Float32Array;
+    biases?: Float32Array;
+    inputProjection?: Float32Array;
+    outputProjection?: Float32Array;
+}
+export interface ElasticCoreGradientOptions {
+    learningRate?: number;
+    weightDecay?: number;
+    /** Vale fraction per neuron in [0,1]. High vale scales weight/bias updates down. */
+    vale?: Map<number, number>;
+    /** Additional multiplier applied after vale scaling. Defaults to 1. */
+    scale?: number;
+}
+export interface ElasticCoreUpdateSummary {
+    weightsL1: number;
+    biasesL1: number;
+    inputProjectionL1: number;
+    outputProjectionL1: number;
+}
 /**
  * Experimental transformer-core replacement for Prometheus Elastic Core.
  *
@@ -58,12 +90,22 @@ export declare class ElasticCoreBlock {
     setNeuronGroup(neuronId: number, group: string): void;
     connectionDensity(): number;
     connectionBlock(target: number, source: number): Float32Array;
+    /**
+     * Optimizer-facing structured parameter view. The returned typed arrays are
+     * live references, so AdamW-style trainers can keep moments keyed to these
+     * arrays and mutate them directly when needed.
+     */
+    getParameters(): ElasticCoreParameters;
+    /** Apply SGD/AdamW-compatible gradients in-place, with optional vale masks. */
+    applyGradients(gradients: ElasticCoreGradients, options?: ElasticCoreGradientOptions): ElasticCoreUpdateSummary;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
     private inject;
     private readout;
     private stateDeltas;
     private inputTopography;
     private weightIndex;
+    private updateScaleForNeuron;
+    private assertGradientLength;
     private rand;
     private assertNeuron;
 }

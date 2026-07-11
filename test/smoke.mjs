@@ -748,6 +748,31 @@ async function testElasticCoreBlock() {
   const before = moe.forward(input, { activeGroups: new Set(['a']), drivenNeurons: new Set([0]) }).settledState;
   const after = moe.forward(input, { activeGroups: new Set(['a']), drivenNeurons: new Set([0]) }).settledState;
   check(allFinite(after) && Math.abs(after[2 * 4] - before[2 * 4]) < 1e-12, 'ElasticCoreBlock MoE label freezes unselected groups without disconnecting them');
+
+  const opt = new ElasticCoreBlock({ neuronCount: 3, stateDim: 2, inputDim: 2, outputDim: 2, maxTicks: 1, seed: 7 });
+  const params = opt.getParameters();
+  const wIdx = (((1 * 3 + 0) * 2 + 0) * 2 + 0);
+  const bHigh = 1 * 2, bLow = 2 * 2;
+  const wBefore = params.weights[wIdx];
+  const bHighBefore = params.biases[bHigh];
+  const bLowBefore = params.biases[bLow];
+  const grads = { weights: new Float32Array(params.weights.length), biases: new Float32Array(params.biases.length) };
+  grads.weights[wIdx] = 1;
+  grads.biases[bHigh] = 1;
+  grads.biases[bLow] = 1;
+  opt.applyGradients(grads, { learningRate: 0.1, vale: new Map([[1, 0.9], [2, 0.1]]) });
+  const highBiasMove = Math.abs(params.biases[bHigh] - bHighBefore);
+  const lowBiasMove = Math.abs(params.biases[bLow] - bLowBefore);
+  check(Math.abs(params.weights[wIdx] - wBefore + 0.01) < 1e-6, 'ElasticCoreBlock applyGradients updates a known connection block entry through live parameter references');
+  check(highBiasMove < lowBiasMove, 'ElasticCoreBlock applyGradients scales high-vale neuron updates down');
+
+  const { NeuroclawTrainer } = await load('models && skills/trainer.js');
+  const chars = ['<pad>', '<bos>', '<eos>', '<unk>', 'a', 'b', ' '];
+  const charToId = new Map(chars.map((c, i) => [c, i]));
+  const idToChar = new Map(chars.map((c, i) => [i, c]));
+  const trainer = new NeuroclawTrainer(chars.length, charToId, idToChar, { useElasticCore: true, epochs: 1, contextWindow: 2, hiddenDim: 4, elasticNeurons: 4, elasticStateDim: 3, learningRate: 0.05 });
+  trainer.train('ab ab ab ab ');
+  check(trainer.getElasticCore() !== null && trainer.getSamplesProcessed() > 0 && Number.isFinite(trainer.getTrainingLoss()), 'TinyGPT trainer can route hidden-layer training through ElasticCoreBlock and update its parameters');
 }
 
 async function testBootstrap() {
