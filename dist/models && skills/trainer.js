@@ -1,9 +1,13 @@
+import { ElasticCoreBlock } from './core/elastic-core.js';
 const DEFAULT_TRAINING_CONFIG = {
     contextWindow: 8,
     learningRate: 0.08,
     epochs: 3,
     ngramOrder: 8,
     hiddenDim: 48,
+    useElasticCore: false,
+    elasticNeurons: 16,
+    elasticStateDim: 16,
 };
 const TRAINING_CORPUS = "the quick brown fox jumps over the lazy dog the cat sat on the mat hello world this is a test of the emergency broadcast system the rain in spain falls mainly on the plain it was the best of times it was the worst of times to be or not to be that is the question all that glitters is not gold a journey of a thousand miles begins with a single step knowledge is power time is money the early bird catches the worm practice makes perfect actions speak louder than words the pen is mightier than the sword when in rome do as the romans do necessity is the mother of invention a picture is worth a thousand words where there is smoke there is fire if you want something done right do it yourself the squeaky wheel gets the grease birds of a feather flock together dont count your chickens before they hatch every cloud has a silver lining two heads are better than one the grass is always greener on the other side";
 export class NeuroclawTrainer {
@@ -12,6 +16,7 @@ export class NeuroclawTrainer {
     vocabSize;
     charToId;
     idToChar;
+    elasticCore = null;
     constructor(vocabSize, charToId, idToChar, config = {}) {
         this.config = { ...DEFAULT_TRAINING_CONFIG, ...config };
         this.vocabSize = vocabSize;
@@ -34,7 +39,10 @@ export class NeuroclawTrainer {
         const corpus = text ?? TRAINING_CORPUS;
         this.buildNGramTables(corpus);
         this.trainEmbeddings(corpus);
-        this.trainHiddenLayer(corpus);
+        if (this.config.useElasticCore)
+            this.trainElasticCoreLayer(corpus);
+        else
+            this.trainHiddenLayer(corpus);
         this.weights.trained = true;
     }
     buildNGramTables(text) {
@@ -237,6 +245,94 @@ export class NeuroclawTrainer {
         }
         this.weights.trainingLoss = count > 0 ? totalLoss / count : 0;
     }
+    trainElasticCoreLayer(text) {
+        const dim = this.config.hiddenDim;
+        const ctx = this.config.contextWindow;
+        this.elasticCore = new ElasticCoreBlock({
+            neuronCount: this.config.elasticNeurons,
+            stateDim: this.config.elasticStateDim,
+            inputDim: dim,
+            outputDim: dim,
+            maxTicks: 2,
+            convergenceThreshold: 0,
+            seed: 1337,
+        });
+        this.weights.outputWeights = [];
+        for (let i = 0; i < this.vocabSize; i++) {
+            const w = new Float32Array(dim);
+            for (let j = 0; j < dim; j++)
+                w[j] = (Math.random() - 0.5) * Math.sqrt(2.0 / dim);
+            this.weights.outputWeights.push(w);
+        }
+        this.weights.hiddenWeights = [];
+        this.weights.biases = new Float32Array(this.vocabSize);
+        let totalLoss = 0, count = 0;
+        for (let epoch = 0; epoch < this.config.epochs; epoch++) {
+            const lr = this.config.learningRate / (1 + epoch * 0.5);
+            for (let i = ctx; i < text.length - 1; i++) {
+                const hiddenIn = new Float32Array(dim);
+                for (let c = 0; c < ctx; c++) {
+                    const id = this.charToId.get(text[i - ctx + c] ?? '') ?? 3;
+                    const emb = this.weights.embeddings.get(id);
+                    if (emb)
+                        for (let d = 0; d < dim; d++)
+                            hiddenIn[d] += emb[d] / ctx;
+                }
+                const targetId = this.charToId.get(text[i] ?? '') ?? 3;
+                const vale = new Map();
+                for (let n = 0; n < this.config.elasticNeurons; n++)
+                    vale.set(n, n === 1 ? 0.9 : 0.1);
+                const hidden = this.elasticCore.forward(hiddenIn, { vale, drivenNeurons: new Set([0]) }).output;
+                const logits = new Float32Array(this.vocabSize);
+                for (let v = 0; v < this.vocabSize; v++) {
+                    let dot = this.weights.biases[v];
+                    const ow = this.weights.outputWeights[v];
+                    for (let d = 0; d < dim; d++)
+                        dot += hidden[d] * ow[d];
+                    logits[v] = dot;
+                }
+                let maxLogit = -Infinity;
+                for (const l of logits)
+                    if (Number.isFinite(l) && l > maxLogit)
+                        maxLogit = l;
+                if (!Number.isFinite(maxLogit))
+                    maxLogit = 0;
+                const probs = new Float32Array(this.vocabSize);
+                let sumExp = 0;
+                for (let v = 0; v < this.vocabSize; v++) {
+                    probs[v] = Math.exp((Number.isFinite(logits[v]) ? logits[v] : -100) - maxLogit);
+                    sumExp += probs[v];
+                }
+                for (let v = 0; v < this.vocabSize; v++)
+                    probs[v] = sumExp > 0 ? probs[v] / sumExp : 1 / this.vocabSize;
+                totalLoss += -Math.log(Math.max(probs[targetId], 1e-10));
+                count++;
+                const gradOutput = new Float32Array(this.vocabSize);
+                for (let v = 0; v < this.vocabSize; v++)
+                    gradOutput[v] = probs[v];
+                gradOutput[targetId] -= 1;
+                const gradHidden = new Float32Array(dim);
+                for (let v = 0; v < this.vocabSize; v++) {
+                    const ow = this.weights.outputWeights[v];
+                    for (let d = 0; d < dim; d++) {
+                        gradHidden[d] += gradOutput[v] * ow[d];
+                        ow[d] -= lr * gradOutput[v] * hidden[d];
+                    }
+                    this.weights.biases[v] -= lr * gradOutput[v];
+                }
+                const params = this.elasticCore.getParameters();
+                const outputProjection = new Float32Array(params.outputProjection.length);
+                for (let idx = 0; idx < outputProjection.length; idx++)
+                    outputProjection[idx] = gradHidden[idx % dim] / params.outputProjection.length;
+                const biases = new Float32Array(params.biases.length);
+                for (let idx = 0; idx < biases.length; idx++)
+                    biases[idx] = gradHidden[idx % dim] / params.biases.length;
+                this.elasticCore.applyGradients({ outputProjection, biases }, { learningRate: lr, vale });
+                this.weights.samplesProcessed++;
+            }
+        }
+        this.weights.trainingLoss = count > 0 ? totalLoss / count : 0;
+    }
     predict(contextChars) {
         const probs = new Float32Array(this.vocabSize);
         const unigram = this.weights.unigramFrequencies;
@@ -295,5 +391,8 @@ export class NeuroclawTrainer {
     }
     getSamplesProcessed() {
         return this.weights.samplesProcessed;
+    }
+    getElasticCore() {
+        return this.elasticCore;
     }
 }
