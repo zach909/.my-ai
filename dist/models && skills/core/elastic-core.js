@@ -145,6 +145,9 @@ export class ElasticCoreBlock {
     setConnectionScalar(target, source, weight) {
         this.setConnectionBlock(target, source, new Float32Array(this.stateDim * this.stateDim).fill(weight));
     }
+    connectionDensity() {
+        return this.neuronCount <= 1 ? 0 : 1.0;
+    }
     connectionBlock(target, source) {
         this.assertNeuron(target);
         this.assertNeuron(source);
@@ -168,6 +171,8 @@ export class ElasticCoreBlock {
             for (let t = 0; t < this.neuronCount; t++) {
                 const group = this.groups.get(t);
                 const externallyDriven = driven.has(t);
+                const frozen = options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
+                if (frozen && !externallyDriven) {
                 const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
                 if (frozen) {
                     next.set(this.state.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
@@ -191,6 +196,7 @@ export class ElasticCoreBlock {
             }
             const quantized = this.quantizeWithResidual(next);
             this.state = quantized.state;
+            this.state = next;
             for (const n of driven)
                 if (n >= 0 && n < this.neuronCount)
                     this.state[n * this.stateDim + this.inputFlagDim] = 1;

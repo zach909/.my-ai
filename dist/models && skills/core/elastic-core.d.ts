@@ -47,6 +47,7 @@ export interface ElasticCoreResult {
  */
 export declare class ElasticCoreBlock {
     private neuronCount;
+    private readonly neuronCount;
     private readonly stateDim;
     private readonly inputDim;
     private readonly outputDim;
@@ -82,6 +83,9 @@ export declare class ElasticCoreBlock {
     setConnectionBlock(target: number, source: number, block: Float32Array | number[]): void;
     /** Convenience helper for DSL-style scalar connections: fill the whole block. */
     setConnectionScalar(target: number, source: number, weight: number): void;
+    constructor(config?: ElasticCoreConfig);
+    setNeuronGroup(neuronId: number, group: string): void;
+    connectionDensity(): number;
     connectionBlock(target: number, source: number): Float32Array;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
     private inject;

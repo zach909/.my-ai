@@ -30,9 +30,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   #input:disabled { opacity: 0.5; cursor: not-allowed; }
   #send-btn { background: #003300; color: #00ff41; border: 1px solid #00ff41; padding: 10px 20px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 4px; }
   #send-btn:hover { background: #005500; }
+  #send-btn:active, #clear-btn:active { transform: translateY(1px); }
   #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
   #clear-btn { background: transparent; color: #888; border: 1px solid #333; padding: 4px 8px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 11px; border-radius: 4px; transition: all 0.2s; }
   #clear-btn:hover { color: #00ff41; border-color: #00ff41; background: #003300; }
+  *:focus-visible { outline: 1px solid #00ff41; outline-offset: 2px; }
   .thinking { color: #888; font-style: italic; font-size: 11px; align-self: flex-start; animation: pulse 1.5s infinite; }
   .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
   @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
@@ -42,7 +44,6 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <body>
 <div id="header">
   <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
-  <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
   <div style="display:flex; align-items:center; gap:15px;">
     <button id="clear-btn" aria-label="Clear chat history">Clear</button>
     <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
@@ -152,12 +153,15 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
       input.focus();
     }
   }
+  const clearChat = () => {
+    if (confirm('Clear chat history?')) {
+      chat.innerHTML = '';
+      chatHistory = [];
+      addMessage('system', 'Chat cleared.');
+    }
+  };
   sendBtn.addEventListener('click', () => sendMessage(input.value));
-  clearBtn.addEventListener('click', () => {
-    chat.innerHTML = '';
-    chatHistory = [];
-    addMessage('system', 'Chat cleared.');
-  });
+  clearBtn.addEventListener('click', clearChat);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value); });
   setInterval(checkStatus, 3000);
   checkStatus();

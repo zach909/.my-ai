@@ -12,3 +12,7 @@
 ## 2025-05-16 - [Contrast Standards and Session Management]
 **Learning:** To meet WCAG AA standards (4.5:1 ratio) on dark backgrounds, secondary text (like timestamps) requires a higher luminance (e.g., #888 instead of #555). Additionally, providing a "Clear Chat" feature that resets both the UI and the underlying message history state is a critical micro-UX for persistent AI terminals.
 **Action:** Use #888 for secondary text on black/dark themes and ensure session-clearing actions are synchronized across all application state layers.
+
+## 2025-07-10 - [Focus Visibility and Tactile Feedback]
+**Learning:** In terminal-themed interfaces, standard focus outlines are often lost against dark backgrounds. Explicitly styling `:focus-visible` with a high-contrast theme color (e.g., #00ff41) ensures accessibility for keyboard users without adding visual noise for mouse users. Additionally, adding `:active` states (like `transform: translateY(1px)`) provides subtle but essential tactile feedback for button clicks.
+**Action:** Use `:focus-visible` for consistent, accessible focus indicators and `:active` transforms for responsive-feeling interactions.

@@ -391,6 +391,23 @@ export class NeuroPipeline {
       steps.push({
         name: 'mesh-propagation',
         inputShape: [meshNodeCount],
+    // ── Step 2: Elastic core propagation ────────────────────────────────────
+    let coreOutput: number[];
+    {
+      const t0 = Date.now();
+      const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
+      const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
+      const result = this.elasticCore!.forward(coreInput, {
+        vale: this.getValeFractions(),
+        activeGroups,
+        drivenNeurons: new Set([0]),
+      });
+      coreOutput = Array.from(result.output);
+      this.feedbackToValueBudget(result.stateDeltas);
+      const durationMs = Date.now() - t0;
+      steps.push({
+        name: 'elastic-core',
+        inputShape: [coreInput.length],
         outputShape: [coreOutput.length],
         durationMs,
       });

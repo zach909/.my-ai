@@ -21,3 +21,8 @@
 **Vulnerability:** The `TerminalPlugin` had a broken command blacklist: 1) The regex used `\b` after non-word characters (like `/` in `rm -rf /`), causing it to fail on exact matches at the end of strings. 2) Background execution (`_run_bg`) completely bypassed the security check. 3) Shell-specific patterns like fork bombs were unescaped in the regex.
 **Learning:** Blacklists are fragile. When using them, word boundaries must be handled carefully, especially with non-alphanumeric characters. Additionally, every entry point for execution must enforce the same security policy.
 **Prevention:** Use more robust boundaries like `(?:\s|$|;)` instead of `\b` for patterns ending in non-word characters. Ensure all execution methods (sync, async, background) call a central validation helper. Always escape special regex characters when matching literal shell syntax.
+
+## 2025-05-30 - Remote Code Execution via NeuriLang @code attribute
+**Vulnerability:** The NeuriLang interpreter in `interface/cli.ts` used `new Function()` to execute the string contents of the `@code` attribute without any validation. This allowed arbitrary JavaScript execution (RCE) if a user-controlled NeuriLang snippet was processed.
+**Learning:** Even internal-use DSLs can become vectors for RCE if they allow evaluation of arbitrary code. "Code-to-net" features are powerful but must be strictly sandboxed or restricted to safe primitives.
+**Prevention:** Use a strict character whitelist regex (e.g., `/^[0-9a-fx+\-*/().\s]*$/i`) to ensure only safe mathematical or hexadecimal literals are executed if using `new Function()` or `eval()`. For more complex needs, use a dedicated expression parser with no access to the global scope or Node.js APIs.
