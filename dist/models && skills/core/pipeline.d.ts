@@ -42,6 +42,8 @@ export interface PipelineResult {
     selfModelSurprise: number;
     /** Section 3.3: 1 if live correction fired on this tick's hyperdimensional settle, else 0. */
     liveCorrections: number;
+    /** Per-elastic-core-neuron movement from this tick, keyed by neuron id. */
+    elasticStateDeltas: Map<number, number>;
 }
 export declare class NeuroPipeline {
     private config;
@@ -93,6 +95,12 @@ export declare class NeuroPipeline {
      * unstable neighbors (the zero-sum "learn but don't forget" mechanism).
      */
     private feedbackToValueBudget;
+    /**
+     * Grow the Elastic Core by one neuron and enroll the new neuron id in the
+     * zero-sum ValueRangeAllocator without reinitializing existing allocations.
+     */
+    addElasticNeuron(group?: string): number;
+    getValeFraction(neuronId: number): number | undefined;
     /**
      * Run all 7 subsystems in sequence on an embedding vector.
      *

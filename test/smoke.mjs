@@ -80,6 +80,22 @@ async function testPipeline() {
     'Pipeline result carries an alignment verdict');
 }
 
+async function testPipelineElasticGrowth() {
+  const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
+  const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 65, hyperDimensions: 8 });
+  await p.run(embedding(32, 10), 'initialize value budget');
+  const newId = p.addElasticNeuron('smoke-growth');
+  const valeBefore = p.getValeFraction(newId);
+  const res = await p.run(embedding(32, 11), 'after elastic growth');
+  const valeAfter = p.getValeFraction(newId);
+
+  check(Number.isInteger(newId) && newId === 65, `Pipeline addElasticNeuron returns the new Elastic Core neuron id (got ${newId})`);
+  check(Number.isFinite(valeBefore) && valeBefore >= 0 && valeBefore <= 1, `Pipeline-enrolled new neuron has an initial vale fraction (${valeBefore})`);
+  check(Number.isFinite(valeAfter) && valeAfter >= 0 && valeAfter <= 1, `Pipeline-enrolled new neuron keeps a vale fraction after one tick (${valeAfter})`);
+  check(res.elasticStateDeltas instanceof Map && res.elasticStateDeltas.has(newId) && Number.isFinite(res.elasticStateDeltas.get(newId)),
+    'Grown Elastic Core neuron participates in per-tick stateDeltas');
+}
+
 async function testLLM() {
   const { NeuroclawLLM } = await load('models && skills/llm.js');
   const llm = new NeuroclawLLM();
@@ -798,6 +814,7 @@ async function main() {
   const suites = [
     ['MoE router', testMoE],
     ['Pipeline', testPipeline],
+    ['Pipeline elastic growth', testPipelineElasticGrowth],
     ['LLM generate', testLLM],
     ['RLM select', testRLM],
     ['Quantization-aware training (Section 8)', testQuantizationAwareTraining],

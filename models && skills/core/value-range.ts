@@ -39,6 +39,39 @@ export class ValueRangeAllocator {
     }
   }
 
+
+  /**
+   * Add a neuron to the existing zero-sum value budget without resetting the
+   * learned distribution. The new neuron's initial points are taken
+   * proportionally from existing neurons, then the allocation is normalized
+   * back to the fixed totalPoints budget.
+   */
+  addNeuron(id: string, initialPoints?: number): void {
+    if (this.allocations.has(id)) return;
+
+    if (this.allocations.size === 0) {
+      this.allocations.set(id, this.config.totalPoints);
+      return;
+    }
+
+    const requestedInitial = initialPoints ?? (this.config.totalPoints / (this.allocations.size + 1));
+    const clampedInitial = Math.min(
+      this.config.totalPoints,
+      Math.max(0, requestedInitial),
+    );
+
+    const totalBefore = Array.from(this.allocations.values()).reduce((sum, pts) => sum + pts, 0);
+    if (totalBefore > 0 && clampedInitial > 0) {
+      for (const [existingId, pts] of this.allocations) {
+        const contribution = clampedInitial * (pts / totalBefore);
+        this.allocations.set(existingId, Math.max(0, pts - contribution));
+      }
+    }
+
+    this.allocations.set(id, clampedInitial);
+    this._normalise();
+  }
+
   /**
    * Zero-sum update: apply delta*0.1 to target neuron; redistribute
    * the opposite amount proportionally across all other neurons.
