@@ -26,6 +26,7 @@ export class ElasticCoreBlock {
     weights;
     inputProjection;
     outputProjection;
+    directInputFlags;
     groups = new Map();
     definitionTargets = new Map();
     rngState;
@@ -51,6 +52,7 @@ export class ElasticCoreBlock {
         this.weights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
         this.inputProjection = new Float32Array(this.inputDim * this.stateDim);
         this.outputProjection = new Float32Array(this.stateDim * this.outputDim);
+        this.directInputFlags = new Float32Array(this.neuronCount);
         this.quantizationResidual = new Float32Array(this.state.length);
         const scale = config.weightScale ?? Math.sqrt(1 / Math.max(1, this.neuronCount * this.stateDim));
         for (let i = 0; i < this.bias.length; i++)
@@ -359,9 +361,13 @@ export class ElasticCoreBlock {
     }
     forward(input, options = {}) {
         const driven = options.drivenNeurons ?? new Set([0]);
-        for (const n of driven)
-            if (n >= 0 && n < this.neuronCount)
+        this.clearDirectInputFlags();
+        for (const n of driven) {
+            if (n >= 0 && n < this.neuronCount) {
+                this.directInputFlags[n] = 1;
                 this.inject(n, input, true);
+            }
+        }
         const startState = new Float32Array(this.state);
         let ticks = 0, residual = 0, converged = false;
         for (; ticks < this.maxTicks; ticks++) {
@@ -416,6 +422,12 @@ export class ElasticCoreBlock {
             stateDeltas: this.stateDeltas(startState),
             quantizationDrift: this.meanAbs(this.quantizationResidual),
         };
+    }
+    clearDirectInputFlags() {
+        for (let n = 0; n < this.neuronCount; n++) {
+            this.state[n * this.stateDim + this.inputFlagDim] = 0;
+            this.directInputFlags[n] = 0;
+        }
     }
     inject(neuronId, input, flag) {
         const off = neuronId * this.stateDim;
@@ -492,7 +504,7 @@ export class ElasticCoreBlock {
     inputTopography() {
         const topography = new Map();
         for (let n = 0; n < this.neuronCount; n++)
-            topography.set(n, this.state[n * this.stateDim + this.inputFlagDim]);
+            topography.set(n, this.directInputFlags[n]);
         return topography;
     }
     weightIndex(target, source, outDim, inDim) {

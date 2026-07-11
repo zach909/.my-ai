@@ -774,6 +774,12 @@ async function testElasticCoreBlock() {
   const after = moe.forward(input, { activeGroups: new Set(['a']), drivenNeurons: new Set([0]) }).settledState;
   check(allFinite(after) && Math.abs(after[2 * 4] - before[2 * 4]) < 1e-12, 'ElasticCoreBlock MoE label freezes unselected groups without disconnecting them');
 
+  const directFlags = new ElasticCoreBlock({ neuronCount: 4, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 2, seed: 7 });
+  const tick0 = directFlags.forward(input, { drivenNeurons: new Set([0]) });
+  const tick1 = directFlags.forward(input, { drivenNeurons: new Set([1]) });
+  check(tick0.inputTopography.get(0) === 1, 'ElasticCoreBlock direct input flag is hot for neuron 0 when driven');
+  check(tick1.inputTopography.get(0) === 0 && tick1.inputTopography.get(1) === 1,
+    'ElasticCoreBlock direct input flags reset each tick before applying new drivenNeurons');
   const rawCore = new ElasticCoreBlock({ neuronCount: 5, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 12 });
   const quantizedCore = new ElasticCoreBlock({ neuronCount: 5, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 12, quantizationAware: true, quantizationBits: 2 });
   const raw = rawCore.forward(input, { drivenNeurons: new Set([0]) });

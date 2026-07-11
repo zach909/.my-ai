@@ -110,6 +110,7 @@ export class ElasticCoreBlock {
   private weights: Float32Array;
   private inputProjection: Float32Array;
   private outputProjection: Float32Array;
+  private directInputFlags: Float32Array;
   private groups: Map<number, string> = new Map();
   private definitionTargets: Map<number, Float32Array> = new Map();
   private rngState: number;
@@ -137,6 +138,7 @@ export class ElasticCoreBlock {
     this.weights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
     this.inputProjection = new Float32Array(this.inputDim * this.stateDim);
     this.outputProjection = new Float32Array(this.stateDim * this.outputDim);
+    this.directInputFlags = new Float32Array(this.neuronCount);
     this.quantizationResidual = new Float32Array(this.state.length);
 
     const scale = config.weightScale ?? Math.sqrt(1 / Math.max(1, this.neuronCount * this.stateDim));
@@ -441,7 +443,13 @@ export class ElasticCoreBlock {
 
   forward(input: Float32Array, options: ElasticCoreRunOptions = {}): ElasticCoreResult {
     const driven = options.drivenNeurons ?? new Set([0]);
-    for (const n of driven) if (n >= 0 && n < this.neuronCount) this.inject(n, input, true);
+    this.clearDirectInputFlags();
+    for (const n of driven) {
+      if (n >= 0 && n < this.neuronCount) {
+        this.directInputFlags[n] = 1;
+        this.inject(n, input, true);
+      }
+    }
 
     const startState = new Float32Array(this.state);
     let ticks = 0, residual = 0, converged = false;
@@ -492,6 +500,13 @@ export class ElasticCoreBlock {
       stateDeltas: this.stateDeltas(startState),
       quantizationDrift: this.meanAbs(this.quantizationResidual),
     };
+  }
+
+  private clearDirectInputFlags(): void {
+    for (let n = 0; n < this.neuronCount; n++) {
+      this.state[n * this.stateDim + this.inputFlagDim] = 0;
+      this.directInputFlags[n] = 0;
+    }
   }
 
   private inject(neuronId: number, input: Float32Array, flag: boolean): void {
@@ -568,7 +583,7 @@ export class ElasticCoreBlock {
 
   private inputTopography(): Map<number, number> {
     const topography = new Map<number, number>();
-    for (let n = 0; n < this.neuronCount; n++) topography.set(n, this.state[n * this.stateDim + this.inputFlagDim]);
+    for (let n = 0; n < this.neuronCount; n++) topography.set(n, this.directInputFlags[n]);
     return topography;
   }
 

@@ -102,6 +102,7 @@ export declare class ElasticCoreBlock {
     private weights;
     private inputProjection;
     private outputProjection;
+    private directInputFlags;
     private groups;
     private definitionTargets;
     private rngState;
@@ -148,6 +149,7 @@ export declare class ElasticCoreBlock {
     /** Apply SGD/AdamW-compatible gradients in-place, with optional vale masks. */
     applyGradients(gradients: ElasticCoreGradients, options?: ElasticCoreGradientOptions): ElasticCoreUpdateSummary;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
+    private clearDirectInputFlags;
     private inject;
     private quantizeWithResidual;
     private readout;
