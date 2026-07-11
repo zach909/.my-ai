@@ -107,6 +107,8 @@ export class NeuroPipeline {
             maxTicks: 20,
             convergenceThreshold: 0.01,
             seed: 42,
+            quantizationAware: true,
+            quantizationBits: 8,
         });
         const expertIds = Array.from(this.expertPluginMap.values());
         for (let i = 0; i < this.config.meshNodes && expertIds.length > 0; i++) {
@@ -231,6 +233,22 @@ export class NeuroPipeline {
         }
         this.valueRange.applyDecay();
     }
+    /**
+     * Grow the Elastic Core by one neuron and enroll the new neuron id in the
+     * zero-sum ValueRangeAllocator without reinitializing existing allocations.
+     */
+    addElasticNeuron(group) {
+        this.ensureSubsystems();
+        this.ensureValueInitialized();
+        const neuronId = this.elasticCore.addNeuron(group);
+        this.valueRange.addNeuron(String(neuronId));
+        this.valueBudgetSize = Math.max(this.valueBudgetSize, neuronId + 1);
+        return neuronId;
+    }
+    getValeFraction(neuronId) {
+        this.ensureValueInitialized();
+        return this.valueRange.getValeFractions().get(String(neuronId));
+    }
     // ─── Core pipeline ───────────────────────────────────────────────────────
     /**
      * Run all 7 subsystems in sequence on an embedding vector.
@@ -274,8 +292,44 @@ export class NeuroPipeline {
                 durationMs,
             });
         }
+        // ── Step 2: Transformer-core replacement / fallback mesh ───────────────
+        let coreOutput;
+        if (this.config.useElasticCore !== false) {
+            const t0 = Date.now();
+            const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
+            const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
+            const result = this.elasticCore.forward(coreInput, {
+                vale: this.getValeFractions(),
+                activeGroups,
+                drivenNeurons: new Set([0]),
+            });
+            coreOutput = Array.from(result.output);
+            this.feedbackToValueBudget(result.stateDeltas);
+            const durationMs = Date.now() - t0;
+            steps.push({
+                name: 'elastic-core',
+                inputShape: [coreInput.length],
+                outputShape: [coreOutput.length],
+                durationMs,
+            });
+        }
+        else {
+            const t0 = Date.now();
+            const meshInputs = new Map();
+            const meshNodeCount = Math.min(this.config.meshNodes, moeOutput.length);
+            for (let i = 0; i < meshNodeCount; i++)
+                meshInputs.set(i, moeOutput[i] || 0);
+            const propagation = this.mesh.propagate(meshInputs, this.getValeFractions());
+            coreOutput = Array.from(propagation.finalStates.values());
+            const meshDeltas = this.mesh.applyValueWeightedLearning(this.getValueLearningRates());
+            this.feedbackToValueBudget(meshDeltas);
+            const durationMs = Date.now() - t0;
+            steps.push({
+                name: 'mesh-propagation',
+                inputShape: [meshNodeCount],
         // ── Step 2: Elastic core propagation ────────────────────────────────────
         let coreOutput;
+        let elasticStateDeltas = new Map();
         {
             const t0 = Date.now();
             const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
@@ -286,6 +340,7 @@ export class NeuroPipeline {
                 drivenNeurons: new Set([0]),
             });
             coreOutput = Array.from(result.output);
+            elasticStateDeltas = new Map(result.stateDeltas);
             this.feedbackToValueBudget(result.stateDeltas);
             const durationMs = Date.now() - t0;
             steps.push({
@@ -440,6 +495,7 @@ export class NeuroPipeline {
             alignment,
             selfModelSurprise,
             liveCorrections,
+            elasticStateDeltas,
         };
     }
     // ─── Stats ──────────────────────────────────────────────────────────

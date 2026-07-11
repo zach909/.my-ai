@@ -75,9 +75,28 @@ async function testPipeline() {
   }
   check(bad === 0, 'Pipeline output finite across 3 ticks (NaN regression)');
   check(stageNames.includes('elastic-core'), 'Pipeline runs the ElasticCoreBlock transformer replacement stage');
+  const fallback = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 16, hyperDimensions: 16, useElasticCore: false });
+  const fallbackStages = (await fallback.run(embedding(32, 99), 'fallback')).steps.map(s => s.name);
+  check(fallbackStages.includes('mesh-propagation') && !fallbackStages.includes('elastic-core'), 'Pipeline honors legacy mesh fallback when useElasticCore=false');
   check(stageNames.includes('alignment-veto'), 'Pipeline runs the alignment-veto stage');
   check(lastAlignment && typeof lastAlignment.allowed === 'boolean' && Array.isArray(lastAlignment.reasons),
     'Pipeline result carries an alignment verdict');
+}
+
+async function testPipelineElasticGrowth() {
+  const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
+  const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 65, hyperDimensions: 8 });
+  await p.run(embedding(32, 10), 'initialize value budget');
+  const newId = p.addElasticNeuron('smoke-growth');
+  const valeBefore = p.getValeFraction(newId);
+  const res = await p.run(embedding(32, 11), 'after elastic growth');
+  const valeAfter = p.getValeFraction(newId);
+
+  check(Number.isInteger(newId) && newId === 65, `Pipeline addElasticNeuron returns the new Elastic Core neuron id (got ${newId})`);
+  check(Number.isFinite(valeBefore) && valeBefore >= 0 && valeBefore <= 1, `Pipeline-enrolled new neuron has an initial vale fraction (${valeBefore})`);
+  check(Number.isFinite(valeAfter) && valeAfter >= 0 && valeAfter <= 1, `Pipeline-enrolled new neuron keeps a vale fraction after one tick (${valeAfter})`);
+  check(res.elasticStateDeltas instanceof Map && res.elasticStateDeltas.has(newId) && Number.isFinite(res.elasticStateDeltas.get(newId)),
+    'Grown Elastic Core neuron participates in per-tick stateDeltas');
 }
 
 async function testLLM() {
@@ -733,6 +752,12 @@ async function testElasticCoreBlock() {
   check(core.connectionDensity() === 1.0, 'ElasticCoreBlock uses true all-to-all density');
   const block = core.connectionBlock(1, 0);
   check(block.length === 25 && allFinite(block), 'ElasticCoreBlock connections are full stateDim x stateDim blocks');
+  const added = core.addNeuron('new-skill');
+  check(added === 10 && core.getNeuronCount() === 11 && core.connectionDensity() === 1.0, 'ElasticCoreBlock addNeuron preserves true all-to-all density for extension-builder growth');
+  check(core.connectionBlock(added, 0).length === 25 && core.connectionBlock(0, added).length === 25, 'ElasticCoreBlock addNeuron wires full bidirectional state blocks');
+  const explicit = new Float32Array(25).fill(0).map((_, i) => i / 100);
+  core.setConnectionBlock(added, 0, explicit);
+  check(Array.from(core.connectionBlock(added, 0)).every((v, i) => Math.abs(v - explicit[i]) < 1e-7), 'ElasticCoreBlock setConnectionBlock installs explicit cross-dimensional weights');
 
   const highVale = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 3 });
   const lowVale = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 3 });
@@ -755,6 +780,78 @@ async function testElasticCoreBlock() {
   check(tick0.inputTopography.get(0) === 1, 'ElasticCoreBlock direct input flag is hot for neuron 0 when driven');
   check(tick1.inputTopography.get(0) === 0 && tick1.inputTopography.get(1) === 1,
     'ElasticCoreBlock direct input flags reset each tick before applying new drivenNeurons');
+  const rawCore = new ElasticCoreBlock({ neuronCount: 5, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 12 });
+  const quantizedCore = new ElasticCoreBlock({ neuronCount: 5, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 1, convergenceThreshold: 0, seed: 12, quantizationAware: true, quantizationBits: 2 });
+  const raw = rawCore.forward(input, { drivenNeurons: new Set([0]) });
+  const quantized = quantizedCore.forward(input, { drivenNeurons: new Set([0]) });
+  let quantizationChangedStoredState = false;
+  for (let i = 0; i < raw.settledState.length; i++) {
+    if (Math.abs(raw.settledState[i] - quantized.settledState[i]) > 1e-6) {
+      quantizationChangedStoredState = true;
+      break;
+    }
+  }
+  check(quantizationChangedStoredState && quantized.residual > 0, `ElasticCoreBlock quantization-aware residual sees stored-state quantization changes (residual=${quantized.residual.toFixed(5)})`);
+  const opt = new ElasticCoreBlock({ neuronCount: 3, stateDim: 2, inputDim: 2, outputDim: 2, maxTicks: 1, seed: 7 });
+  const params = opt.getParameters();
+  const wIdx = (((1 * 3 + 0) * 2 + 0) * 2 + 0);
+  const bHigh = 1 * 2, bLow = 2 * 2;
+  const wBefore = params.weights[wIdx];
+  const bHighBefore = params.biases[bHigh];
+  const bLowBefore = params.biases[bLow];
+  const grads = { weights: new Float32Array(params.weights.length), biases: new Float32Array(params.biases.length) };
+  grads.weights[wIdx] = 1;
+  grads.biases[bHigh] = 1;
+  grads.biases[bLow] = 1;
+  opt.applyGradients(grads, { learningRate: 0.1, vale: new Map([[1, 0.9], [2, 0.1]]) });
+  const highBiasMove = Math.abs(params.biases[bHigh] - bHighBefore);
+  const lowBiasMove = Math.abs(params.biases[bLow] - bLowBefore);
+  check(Math.abs(params.weights[wIdx] - wBefore + 0.01) < 1e-6, 'ElasticCoreBlock applyGradients updates a known connection block entry through live parameter references');
+  check(highBiasMove < lowBiasMove, 'ElasticCoreBlock applyGradients scales high-vale neuron updates down');
+
+  const { NeuroclawTrainer } = await load('models && skills/trainer.js');
+  const chars = ['<pad>', '<bos>', '<eos>', '<unk>', 'a', 'b', ' '];
+  const charToId = new Map(chars.map((c, i) => [c, i]));
+  const idToChar = new Map(chars.map((c, i) => [i, c]));
+  const trainer = new NeuroclawTrainer(chars.length, charToId, idToChar, { useElasticCore: true, epochs: 1, contextWindow: 2, hiddenDim: 4, elasticNeurons: 4, elasticStateDim: 3, learningRate: 0.05 });
+  trainer.train('ab ab ab ab ');
+  check(trainer.getElasticCore() !== null && trainer.getSamplesProcessed() > 0 && Number.isFinite(trainer.getTrainingLoss()), 'TinyGPT trainer can route hidden-layer training through ElasticCoreBlock and update its parameters');
+  const qat = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 4, seed: 8, quantizationAware: true, quantizationBits: 4 });
+  const q = qat.forward(input, { drivenNeurons: new Set([0]) });
+  check(Number.isFinite(q.quantizationDrift) && q.quantizationDrift > 0, 'ElasticCoreBlock QAT residual is tracked when quantization-aware settling is enabled');
+}
+
+async function testNeuroLangElasticMaterializer() {
+  const { NeuroLangInterpreter, ElasticNeuroLangRuntime } = await load('models && skills/core/neuro-lang.js');
+  const { ElasticCoreBlock } = await load('models && skills/core/elastic-core.js');
+  const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
+
+  const interp = new NeuroLangInterpreter();
+  const parsed = interp.parse([
+    'name="alpha"',
+    '"alpha"@connections=".beta*0.75"',
+    '"alpha"@vale="0.6"',
+    '"alpha"@definition="primary alpha contract"',
+  ].join('\n'));
+  check(parsed.errors.length === 0, `Elastic NeuroLang: parsed DSL snippet without errors (${JSON.stringify(parsed.errors)})`);
+
+  const core = new ElasticCoreBlock({ neuronCount: 1, stateDim: 4, inputDim: 4, outputDim: 4, seed: 11 });
+  const vale = new ValueRangeAllocator({ enabled: true, totalPoints: 100, minLearningRate: 0.001, maxLearningRate: 0.5, redistributionInterval: 1000, decayFactor: 0 });
+  vale.initializeNeurons([0, 1].map(id => ({ id: String(id), name: `n${id}`, value: 0, learningRate: 0, states: new Map(), connections: new Map(), expertGroup: null, active: true })));
+
+  const runtime = new ElasticNeuroLangRuntime(core, vale);
+  const result = runtime.materialize(parsed.neurons, { definitionTolerance: 2 });
+  const alphaId = result.nameToId.get('alpha');
+  const betaId = result.nameToId.get('beta');
+  check(alphaId !== undefined && betaId !== undefined && core.getNeuronCount() >= 2, 'Elastic NeuroLang: materializer creates/grows Elastic Core neurons for parsed and referenced names');
+
+  const installed = core.connectionBlock(alphaId, betaId);
+  check(Math.abs(installed[0] - 0.75) < 1e-6 && Math.abs(installed[5] - 0.75) < 1e-6,
+    'Elastic NeuroLang: explicit @connections weight is installed on the Elastic Core diagonal block');
+
+  const alphaVale = vale.getValeFractions().get(String(alphaId));
+  check(alphaVale !== undefined && alphaVale > 0.5, 'Elastic NeuroLang: @vale is applied through the shared ValueRangeAllocator');
+  check(result.definitionChecks.has('alpha') && result.satisfied.includes('alpha'), 'Elastic NeuroLang: @definition produces a testable settle/readout check');
 }
 
 async function testBootstrap() {
@@ -805,6 +902,7 @@ async function main() {
   const suites = [
     ['MoE router', testMoE],
     ['Pipeline', testPipeline],
+    ['Pipeline elastic growth', testPipelineElasticGrowth],
     ['LLM generate', testLLM],
     ['RLM select', testRLM],
     ['Quantization-aware training (Section 8)', testQuantizationAwareTraining],
@@ -824,6 +922,7 @@ async function main() {
     ['ZipIO persistence', testZipPersistence],
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
     ['Elastic core transformer replacement', testElasticCoreBlock],
+    ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
   ];
