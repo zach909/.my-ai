@@ -8,6 +8,11 @@ export interface ElasticCoreConfig {
     weightScale?: number;
     seed?: number;
     inputFlagDim?: number;
+    quantizationAware?: boolean;
+    /** Enable quantization-aware state settling: quantize inside forward and retain residual feedback. */
+    quantizationAware?: boolean;
+    /** Bit width for quantized state values when quantizationAware is enabled. */
+    quantizationBits?: number;
 }
 export interface ElasticCoreRunOptions {
     /** Vale fraction per neuron in [0,1]. High vale resists state movement. */
@@ -26,6 +31,47 @@ export interface ElasticCoreResult {
     inputTopography: Map<number, number>;
     /** Per-neuron L1 state movement during the settle, for vale-budget feedback. */
     stateDeltas: Map<number, number>;
+    /** Mean absolute residual introduced by the quantizer on this forward pass. */
+    quantizationDrift: number;
+}
+export interface DefinitionCheckResult {
+    neuronId: number;
+    loss: number;
+    satisfied: boolean;
+    readout: Float32Array;
+    target: Float32Array;
+}
+export interface ElasticCoreParameters {
+    weights: Float32Array;
+    biases: Float32Array;
+    inputProjection: Float32Array;
+    outputProjection: Float32Array;
+    shapes: {
+        weights: [targetNeurons: number, sourceNeurons: number, outDim: number, inDim: number];
+        biases: [neurons: number, stateDim: number];
+        inputProjection: [inputDim: number, stateDim: number];
+        outputProjection: [stateDim: number, outputDim: number];
+    };
+}
+export interface ElasticCoreGradients {
+    weights?: Float32Array;
+    biases?: Float32Array;
+    inputProjection?: Float32Array;
+    outputProjection?: Float32Array;
+}
+export interface ElasticCoreGradientOptions {
+    learningRate?: number;
+    weightDecay?: number;
+    /** Vale fraction per neuron in [0,1]. High vale scales weight/bias updates down. */
+    vale?: Map<number, number>;
+    /** Additional multiplier applied after vale scaling. Defaults to 1. */
+    scale?: number;
+}
+export interface ElasticCoreUpdateSummary {
+    weightsL1: number;
+    biasesL1: number;
+    inputProjectionL1: number;
+    outputProjectionL1: number;
 }
 /**
  * Experimental transformer-core replacement for Prometheus Elastic Core.
@@ -41,32 +87,82 @@ export interface ElasticCoreResult {
  */
 export declare class ElasticCoreBlock {
     private neuronCount;
+    private readonly neuronCount;
     private readonly stateDim;
     private readonly inputDim;
     private readonly outputDim;
     private readonly maxTicks;
     private readonly convergenceThreshold;
     private readonly inputFlagDim;
+    private readonly quantizationAware;
+    private readonly quantizationBits;
+    private quantizationResidual;
     private state;
     private bias;
     private weights;
     private inputProjection;
     private outputProjection;
+    private directInputFlags;
     private groups;
+    private definitionTargets;
     private rngState;
+    private readonly quantizationAware;
+    private readonly quantizationBits;
+    private quantizationResidual;
+    constructor(config?: ElasticCoreConfig);
+    setNeuronGroup(neuronId: number, group: string): void;
+    /**
+     * Add a live neuron to the core and wire it all-to-all with every existing
+     * neuron. This is the Elastic Core side of the extension-builder story:
+     * newly materialized NeuroLang/skill neurons become ordinary mesh neurons,
+     * not a side table or separate adapter layer. Existing weights are preserved.
+     */
+    addNeuron(group?: string): number;
+    getNeuronCount(): number;
+    connectionDensity(): number;
+    /**
+     * Program an explicit dense source->target block. This is how extension
+     * builder definitions can install cross-dimensional links directly: every
+     * output dimension of the target can read every input dimension of the source.
+     */
+    setConnectionBlock(target: number, source: number, block: Float32Array | number[]): void;
+    /** Convenience helper for DSL-style scalar connections: fill the whole block. */
+    setConnectionScalar(target: number, source: number, weight: number): void;
     constructor(config?: ElasticCoreConfig);
     setNeuronGroup(neuronId: number, group: string): void;
     getNeuronCount(): number;
     addNeuron(group?: string): number;
+    addNeuron(group?: string): number;
+    getNeuronCount(): number;
+    getStateDim(): number;
+    addNeuron(group?: string): number;
+    setConnectionScalar(target: number, source: number, weight: number): void;
+    setConnectionBlock(target: number, source: number, block: ArrayLike<number>): void;
+    setDefinitionTarget(neuronId: number, target: ArrayLike<number>): void;
+    checkDefinition(neuronId: number, tolerance?: number): DefinitionCheckResult;
     connectionDensity(): number;
     connectionBlock(target: number, source: number): Float32Array;
+    /**
+     * Optimizer-facing structured parameter view. The returned typed arrays are
+     * live references, so AdamW-style trainers can keep moments keyed to these
+     * arrays and mutate them directly when needed.
+     */
+    getParameters(): ElasticCoreParameters;
+    /** Apply SGD/AdamW-compatible gradients in-place, with optional vale masks. */
+    applyGradients(gradients: ElasticCoreGradients, options?: ElasticCoreGradientOptions): ElasticCoreUpdateSummary;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
+    private clearDirectInputFlags;
     private inject;
+    private quantizeWithResidual;
     private readout;
+    private quantizeWithResidual;
+    private meanAbs;
     private stateDeltas;
     private inputTopography;
     private weightIndex;
     private weightIndexForCount;
+    private updateScaleForNeuron;
+    private assertGradientLength;
     private rand;
     private assertNeuron;
 }
