@@ -23,6 +23,7 @@
 
 import type { HyperDimensionalEngine } from './hyperdimensional.js';
 import type { ValueRangeAllocator } from './value-range.js';
+import type { ElasticCoreBlock, DefinitionCheckResult } from './elastic-core.js';
 
 export interface NeuriNeuron {
   name: string;
@@ -391,6 +392,12 @@ export interface LiveMaterializeResult {
   conflicts: DefinitionConflict[];
 }
 
+export interface ElasticMaterializeResult {
+  nameToId: Map<string, number>;
+  definitionChecks: Map<string, DefinitionCheckResult>;
+  satisfied: string[];
+}
+
 /**
  * Deterministic text -> unit vector, so the same definition text always
  * produces the same training target (and different text a different one)
@@ -566,5 +573,76 @@ export class NeuroLangRuntime {
       satisfied,
       conflicts,
     };
+  }
+}
+
+/**
+ * Materializes parsed NeuriLang directly into an ElasticCoreBlock. The runtime
+ * keeps name→id bindings stable across calls, grows the block with addNeuron()
+ * whenever a new parsed neuron needs capacity, installs explicit connection
+ * scalars as diagonal Elastic Core connection blocks, maps @vale through the
+ * shared ValueRangeAllocator, and turns @definition into a deterministic
+ * readout target that callers can smoke-test with checkDefinition().
+ */
+export class ElasticNeuroLangRuntime {
+  private core: ElasticCoreBlock;
+  private valeAllocator?: ValueRangeAllocator;
+  private nameToId: Map<string, number> = new Map();
+  private nextId = 0;
+
+  constructor(core: ElasticCoreBlock, valeAllocator?: ValueRangeAllocator) {
+    this.core = core;
+    this.valeAllocator = valeAllocator;
+  }
+
+  setNeuronId(name: string, id: number): void {
+    this.nameToId.set(name, id);
+    this.nextId = Math.max(this.nextId, id + 1);
+  }
+
+  materialize(neurons: Map<string, NeuriNeuron>, opts: { definitionTolerance?: number } = {}): ElasticMaterializeResult {
+    for (const name of neurons.keys()) this.assignId(name);
+
+    for (const [name, neuron] of neurons) {
+      const targetId = this.nameToId.get(name);
+      if (targetId === undefined) continue;
+
+      for (const [otherName, weight] of neuron.connections) {
+        const sourceId = this.assignId(otherName);
+        this.core.setConnectionScalar(targetId, sourceId, weight);
+      }
+
+      if (neuron.vale !== undefined && this.valeAllocator) {
+        const fractions = this.valeAllocator.getValeFractions();
+        const current = fractions.get(String(targetId)) ?? 0;
+        this.valeAllocator.updateNeuronValue(String(targetId), (neuron.vale - current) / 0.1);
+      }
+
+      if (neuron.definition.length > 0) {
+        this.core.setDefinitionTarget(targetId, embedText(neuron.definition, this.core.getStateDim()));
+      }
+    }
+
+    const definitionChecks = new Map<string, DefinitionCheckResult>();
+    const satisfied: string[] = [];
+    for (const [name, neuron] of neurons) {
+      if (neuron.definition.length === 0) continue;
+      const id = this.nameToId.get(name);
+      if (id === undefined) continue;
+      const check = this.core.checkDefinition(id, opts.definitionTolerance);
+      definitionChecks.set(name, check);
+      if (check.satisfied) satisfied.push(name);
+    }
+
+    return { nameToId: new Map(this.nameToId), definitionChecks, satisfied };
+  }
+
+  private assignId(name: string): number {
+    const existing = this.nameToId.get(name);
+    if (existing !== undefined) return existing;
+    while (this.nextId >= this.core.getNeuronCount()) this.core.addNeuron();
+    const id = this.nextId++;
+    this.nameToId.set(name, id);
+    return id;
   }
 }

@@ -27,6 +27,13 @@ export interface ElasticCoreResult {
     /** Per-neuron L1 state movement during the settle, for vale-budget feedback. */
     stateDeltas: Map<number, number>;
 }
+export interface DefinitionCheckResult {
+    neuronId: number;
+    loss: number;
+    satisfied: boolean;
+    readout: Float32Array;
+    target: Float32Array;
+}
 /**
  * Experimental transformer-core replacement for Prometheus Elastic Core.
  *
@@ -40,7 +47,7 @@ export interface ElasticCoreResult {
  * are summed.
  */
 export declare class ElasticCoreBlock {
-    private readonly neuronCount;
+    private neuronCount;
     private readonly stateDim;
     private readonly inputDim;
     private readonly outputDim;
@@ -53,9 +60,17 @@ export declare class ElasticCoreBlock {
     private inputProjection;
     private outputProjection;
     private groups;
+    private definitionTargets;
     private rngState;
     constructor(config?: ElasticCoreConfig);
     setNeuronGroup(neuronId: number, group: string): void;
+    getNeuronCount(): number;
+    getStateDim(): number;
+    addNeuron(group?: string): number;
+    setConnectionScalar(target: number, source: number, weight: number): void;
+    setConnectionBlock(target: number, source: number, block: ArrayLike<number>): void;
+    setDefinitionTarget(neuronId: number, target: ArrayLike<number>): void;
+    checkDefinition(neuronId: number, tolerance?: number): DefinitionCheckResult;
     connectionDensity(): number;
     connectionBlock(target: number, source: number): Float32Array;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;

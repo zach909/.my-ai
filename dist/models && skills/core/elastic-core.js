@@ -24,6 +24,7 @@ export class ElasticCoreBlock {
     inputProjection;
     outputProjection;
     groups = new Map();
+    definitionTargets = new Map();
     rngState;
     constructor(config = {}) {
         this.neuronCount = config.neuronCount ?? 16;
@@ -62,6 +63,75 @@ export class ElasticCoreBlock {
         this.assertNeuron(neuronId);
         this.groups.set(neuronId, group);
     }
+    getNeuronCount() {
+        return this.neuronCount;
+    }
+    getStateDim() {
+        return this.stateDim;
+    }
+    addNeuron(group) {
+        const id = this.neuronCount;
+        this.neuronCount++;
+        const nextState = new Float32Array(this.neuronCount * this.stateDim);
+        nextState.set(this.state);
+        this.state = nextState;
+        const nextBias = new Float32Array(this.neuronCount * this.stateDim);
+        nextBias.set(this.bias);
+        this.bias = nextBias;
+        const oldN = this.neuronCount - 1;
+        const nextWeights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
+        for (let t = 0; t < oldN; t++) {
+            for (let s = 0; s < oldN; s++) {
+                for (let od = 0; od < this.stateDim; od++) {
+                    for (let idim = 0; idim < this.stateDim; idim++) {
+                        nextWeights[(((t * this.neuronCount + s) * this.stateDim + od) * this.stateDim + idim)] =
+                            this.weights[(((t * oldN + s) * this.stateDim + od) * this.stateDim + idim)];
+                    }
+                }
+            }
+        }
+        this.weights = nextWeights;
+        if (group)
+            this.groups.set(id, group);
+        return id;
+    }
+    setConnectionScalar(target, source, weight) {
+        this.assertNeuron(target);
+        this.assertNeuron(source);
+        const clamped = Math.max(-2, Math.min(2, weight));
+        for (let d = 0; d < this.stateDim; d++)
+            this.weights[this.weightIndex(target, source, d, d)] = clamped;
+    }
+    setConnectionBlock(target, source, block) {
+        this.assertNeuron(target);
+        this.assertNeuron(source);
+        if (block.length !== this.stateDim * this.stateDim) {
+            throw new Error(`connection block length ${block.length} does not match ${this.stateDim * this.stateDim}`);
+        }
+        for (let od = 0; od < this.stateDim; od++)
+            for (let id = 0; id < this.stateDim; id++) {
+                this.weights[this.weightIndex(target, source, od, id)] = Math.max(-2, Math.min(2, block[od * this.stateDim + id] ?? 0));
+            }
+    }
+    setDefinitionTarget(neuronId, target) {
+        this.assertNeuron(neuronId);
+        const v = new Float32Array(this.stateDim);
+        for (let i = 0; i < this.stateDim; i++)
+            v[i] = target[i] ?? 0;
+        this.definitionTargets.set(neuronId, v);
+    }
+    checkDefinition(neuronId, tolerance = 0.25) {
+        this.assertNeuron(neuronId);
+        const target = this.definitionTargets.get(neuronId) ?? new Float32Array(this.stateDim);
+        const readout = new Float32Array(this.state.subarray(neuronId * this.stateDim, (neuronId + 1) * this.stateDim));
+        let loss = 0;
+        for (let d = 0; d < this.stateDim; d++) {
+            const e = target[d] - readout[d];
+            loss += e * e;
+        }
+        loss /= this.stateDim;
+        return { neuronId, loss, satisfied: loss <= tolerance, readout, target };
+    }
     connectionDensity() {
         return this.neuronCount <= 1 ? 0 : 1.0;
     }
@@ -88,8 +158,6 @@ export class ElasticCoreBlock {
             for (let t = 0; t < this.neuronCount; t++) {
                 const group = this.groups.get(t);
                 const externallyDriven = driven.has(t);
-                const frozen = options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
-                if (frozen && !externallyDriven) {
                 const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
                 if (frozen) {
                     next.set(this.state.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
