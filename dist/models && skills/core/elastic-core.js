@@ -227,6 +227,90 @@ export class ElasticCoreBlock {
             }
         return block;
     }
+    /**
+     * Optimizer-facing structured parameter view. The returned typed arrays are
+     * live references, so AdamW-style trainers can keep moments keyed to these
+     * arrays and mutate them directly when needed.
+     */
+    getParameters() {
+        return {
+            weights: this.weights,
+            biases: this.bias,
+            inputProjection: this.inputProjection,
+            outputProjection: this.outputProjection,
+            shapes: {
+                weights: [this.neuronCount, this.neuronCount, this.stateDim, this.stateDim],
+                biases: [this.neuronCount, this.stateDim],
+                inputProjection: [this.inputDim, this.stateDim],
+                outputProjection: [this.stateDim, this.outputDim],
+            },
+        };
+    }
+    /** Apply SGD/AdamW-compatible gradients in-place, with optional vale masks. */
+    applyGradients(gradients, options = {}) {
+        const lr = options.learningRate ?? 1;
+        const decay = options.weightDecay ?? 0;
+        const scale = options.scale ?? 1;
+        const summary = { weightsL1: 0, biasesL1: 0, inputProjectionL1: 0, outputProjectionL1: 0 };
+        if (gradients.weights) {
+            this.assertGradientLength('weights', gradients.weights, this.weights.length);
+            for (let t = 0; t < this.neuronCount; t++) {
+                const tScale = this.updateScaleForNeuron(t, options.vale) * scale;
+                for (let s = 0; s < this.neuronCount; s++)
+                    for (let od = 0; od < this.stateDim; od++)
+                        for (let id = 0; id < this.stateDim; id++) {
+                            const i = this.weightIndex(t, s, od, id);
+                            const update = lr * tScale * (gradients.weights[i] + decay * this.weights[i]);
+                            if (Number.isFinite(update)) {
+                                this.weights[i] -= update;
+                                summary.weightsL1 += Math.abs(update);
+                            }
+                        }
+            }
+        }
+        if (gradients.biases) {
+            this.assertGradientLength('biases', gradients.biases, this.bias.length);
+            for (let n = 0; n < this.neuronCount; n++) {
+                const nScale = this.updateScaleForNeuron(n, options.vale) * scale;
+                for (let d = 0; d < this.stateDim; d++) {
+                    const i = n * this.stateDim + d;
+                    const update = lr * nScale * (gradients.biases[i] + decay * this.bias[i]);
+                    if (Number.isFinite(update)) {
+                        this.bias[i] -= update;
+                        summary.biasesL1 += Math.abs(update);
+                    }
+                }
+            }
+        }
+        if (gradients.inputProjection) {
+            this.assertGradientLength('inputProjection', gradients.inputProjection, this.inputProjection.length);
+            for (let i = 0; i < this.inputProjection.length; i++) {
+                const update = lr * scale * (gradients.inputProjection[i] + decay * this.inputProjection[i]);
+                if (Number.isFinite(update)) {
+                    this.inputProjection[i] -= update;
+                    summary.inputProjectionL1 += Math.abs(update);
+                }
+            }
+        }
+        if (gradients.outputProjection) {
+            this.assertGradientLength('outputProjection', gradients.outputProjection, this.outputProjection.length);
+            for (let d = 0; d < this.stateDim; d++) {
+                let dimScale = 0;
+                for (let n = 0; n < this.neuronCount; n++)
+                    dimScale += this.updateScaleForNeuron(n, options.vale);
+                dimScale = (dimScale / this.neuronCount) * scale;
+                for (let o = 0; o < this.outputDim; o++) {
+                    const i = d * this.outputDim + o;
+                    const update = lr * dimScale * (gradients.outputProjection[i] + decay * this.outputProjection[i]);
+                    if (Number.isFinite(update)) {
+                        this.outputProjection[i] -= update;
+                        summary.outputProjectionL1 += Math.abs(update);
+                    }
+                }
+            }
+        }
+        return summary;
+    }
     forward(input, options = {}) {
         const driven = options.drivenNeurons ?? new Set([0]);
         for (const n of driven)
@@ -240,6 +324,8 @@ export class ElasticCoreBlock {
             for (let t = 0; t < this.neuronCount; t++) {
                 const group = this.groups.get(t);
                 const externallyDriven = driven.has(t);
+                const frozen = options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
+                if (frozen && !externallyDriven) {
                 const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
                 if (frozen) {
                     next.set(this.state.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
@@ -350,6 +436,14 @@ export class ElasticCoreBlock {
     }
     weightIndex(target, source, outDim, inDim) {
         return (((target * this.neuronCount + source) * this.stateDim + outDim) * this.stateDim + inDim);
+    }
+    updateScaleForNeuron(neuronId, vale) {
+        const v = Math.min(1, Math.max(0, vale?.get(neuronId) ?? 0));
+        return 1 - v;
+    }
+    assertGradientLength(name, gradient, expected) {
+        if (gradient.length !== expected)
+            throw new Error(`${name} gradient length ${gradient.length} !== ${expected}`);
     }
     rand() {
         this.rngState = (1664525 * this.rngState + 1013904223) >>> 0;
