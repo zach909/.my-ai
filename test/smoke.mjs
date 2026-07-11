@@ -763,6 +763,39 @@ async function testElasticCoreBlock() {
   check(Number.isFinite(q.quantizationDrift) && q.quantizationDrift > 0, 'ElasticCoreBlock QAT residual is tracked when quantization-aware settling is enabled');
 }
 
+async function testNeuroLangElasticMaterializer() {
+  const { NeuroLangInterpreter, ElasticNeuroLangRuntime } = await load('models && skills/core/neuro-lang.js');
+  const { ElasticCoreBlock } = await load('models && skills/core/elastic-core.js');
+  const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
+
+  const interp = new NeuroLangInterpreter();
+  const parsed = interp.parse([
+    'name="alpha"',
+    '"alpha"@connections=".beta*0.75"',
+    '"alpha"@vale="0.6"',
+    '"alpha"@definition="primary alpha contract"',
+  ].join('\n'));
+  check(parsed.errors.length === 0, `Elastic NeuroLang: parsed DSL snippet without errors (${JSON.stringify(parsed.errors)})`);
+
+  const core = new ElasticCoreBlock({ neuronCount: 1, stateDim: 4, inputDim: 4, outputDim: 4, seed: 11 });
+  const vale = new ValueRangeAllocator({ enabled: true, totalPoints: 100, minLearningRate: 0.001, maxLearningRate: 0.5, redistributionInterval: 1000, decayFactor: 0 });
+  vale.initializeNeurons([0, 1].map(id => ({ id: String(id), name: `n${id}`, value: 0, learningRate: 0, states: new Map(), connections: new Map(), expertGroup: null, active: true })));
+
+  const runtime = new ElasticNeuroLangRuntime(core, vale);
+  const result = runtime.materialize(parsed.neurons, { definitionTolerance: 2 });
+  const alphaId = result.nameToId.get('alpha');
+  const betaId = result.nameToId.get('beta');
+  check(alphaId !== undefined && betaId !== undefined && core.getNeuronCount() >= 2, 'Elastic NeuroLang: materializer creates/grows Elastic Core neurons for parsed and referenced names');
+
+  const installed = core.connectionBlock(alphaId, betaId);
+  check(Math.abs(installed[0] - 0.75) < 1e-6 && Math.abs(installed[5] - 0.75) < 1e-6,
+    'Elastic NeuroLang: explicit @connections weight is installed on the Elastic Core diagonal block');
+
+  const alphaVale = vale.getValeFractions().get(String(alphaId));
+  check(alphaVale !== undefined && alphaVale > 0.5, 'Elastic NeuroLang: @vale is applied through the shared ValueRangeAllocator');
+  check(result.definitionChecks.has('alpha') && result.satisfied.includes('alpha'), 'Elastic NeuroLang: @definition produces a testable settle/readout check');
+}
+
 async function testBootstrap() {
   const { bootstrap } = await load('interface/main.js');
   const cli = await bootstrap();
@@ -830,6 +863,7 @@ async function main() {
     ['ZipIO persistence', testZipPersistence],
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
     ['Elastic core transformer replacement', testElasticCoreBlock],
+    ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
   ];
