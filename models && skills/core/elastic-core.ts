@@ -8,6 +8,8 @@ export interface ElasticCoreConfig {
   weightScale?: number;
   seed?: number;
   inputFlagDim?: number;
+  quantizationAware?: boolean;
+  quantizationBits?: number;
 }
 
 export interface ElasticCoreRunOptions {
@@ -50,6 +52,9 @@ export class ElasticCoreBlock {
   private readonly maxTicks: number;
   private readonly convergenceThreshold: number;
   private readonly inputFlagDim: number;
+  private readonly quantizationAware: boolean;
+  private readonly quantizationBits: number;
+  private quantizationResidual: Float32Array;
   private state: Float32Array;
   private bias: Float32Array;
   private weights: Float32Array;
@@ -66,9 +71,12 @@ export class ElasticCoreBlock {
     this.maxTicks = config.maxTicks ?? 32;
     this.convergenceThreshold = config.convergenceThreshold ?? 1e-3;
     this.inputFlagDim = Math.min(this.stateDim - 1, Math.max(0, config.inputFlagDim ?? 0));
+    this.quantizationAware = config.quantizationAware ?? false;
+    this.quantizationBits = Math.max(2, Math.min(16, Math.floor(config.quantizationBits ?? 8)));
     this.rngState = config.seed ?? 123456789;
 
     this.state = new Float32Array(this.neuronCount * this.stateDim);
+    this.quantizationResidual = new Float32Array(this.state.length);
     this.bias = new Float32Array(this.neuronCount * this.stateDim);
     this.weights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
     this.inputProjection = new Float32Array(this.inputDim * this.stateDim);
@@ -115,34 +123,35 @@ export class ElasticCoreBlock {
     const startState = new Float32Array(this.state);
     let ticks = 0, residual = 0, converged = false;
     for (; ticks < this.maxTicks; ticks++) {
-      const next = new Float32Array(this.state.length);
-      residual = 0;
+      const oldState = this.state;
+      const next = new Float32Array(oldState.length);
       for (let t = 0; t < this.neuronCount; t++) {
         const group = this.groups.get(t);
         const externallyDriven = driven.has(t);
-        const frozen = options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
-        if (frozen && !externallyDriven) {
         const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
         if (frozen) {
-          next.set(this.state.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
+          next.set(oldState.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
           continue;
         }
         for (let od = 0; od < this.stateDim; od++) {
           let sum = this.bias[t * this.stateDim + od];
           for (let s = 0; s < this.neuronCount; s++) {
             if (s === t) continue;
-            for (let id = 0; id < this.stateDim; id++) sum += this.state[s * this.stateDim + id] * this.weights[this.weightIndex(t, s, od, id)];
+            for (let id = 0; id < this.stateDim; id++) sum += oldState[s * this.stateDim + id] * this.weights[this.weightIndex(t, s, od, id)];
           }
           const computed = Math.tanh(sum);
           const v = Math.min(1, Math.max(0, options.vale?.get(t) ?? 0));
-          const old = this.state[t * this.stateDim + od];
-          const value = v * old + (1 - v) * computed;
-          next[t * this.stateDim + od] = value;
-          residual += Math.abs(value - old);
+          const old = oldState[t * this.stateDim + od];
+          next[t * this.stateDim + od] = v * old + (1 - v) * computed;
         }
       }
-      this.state = next;
-      for (const n of driven) if (n >= 0 && n < this.neuronCount) this.state[n * this.stateDim + this.inputFlagDim] = 1;
+
+      const finalState = this.quantizeWithResidual(next);
+      for (const n of driven) if (n >= 0 && n < this.neuronCount) finalState[n * this.stateDim + this.inputFlagDim] = 1;
+
+      residual = 0;
+      for (let i = 0; i < finalState.length; i++) residual += Math.abs(finalState[i] - oldState[i]);
+      this.state = finalState;
       if (residual < this.convergenceThreshold) { converged = true; ticks++; break; }
     }
 
@@ -165,6 +174,21 @@ export class ElasticCoreBlock {
       this.state[off + od] = Math.tanh(sum);
     }
     if (flag) this.state[off + this.inputFlagDim] = 1;
+  }
+
+  private quantizeWithResidual(next: Float32Array): Float32Array {
+    if (!this.quantizationAware) return next;
+
+    const quantized = new Float32Array(next.length);
+    const levels = (1 << this.quantizationBits) - 1;
+    for (let i = 0; i < next.length; i++) {
+      const adjusted = Math.max(-1, Math.min(1, next[i] + this.quantizationResidual[i]));
+      const q = Math.round(((adjusted + 1) / 2) * levels);
+      const value = (q / levels) * 2 - 1;
+      quantized[i] = value;
+      this.quantizationResidual[i] = adjusted - value;
+    }
+    return quantized;
   }
 
   private readout(): Float32Array {

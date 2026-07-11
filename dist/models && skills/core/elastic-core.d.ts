@@ -8,6 +8,8 @@ export interface ElasticCoreConfig {
     weightScale?: number;
     seed?: number;
     inputFlagDim?: number;
+    quantizationAware?: boolean;
+    quantizationBits?: number;
 }
 export interface ElasticCoreRunOptions {
     /** Vale fraction per neuron in [0,1]. High vale resists state movement. */
@@ -47,6 +49,9 @@ export declare class ElasticCoreBlock {
     private readonly maxTicks;
     private readonly convergenceThreshold;
     private readonly inputFlagDim;
+    private readonly quantizationAware;
+    private readonly quantizationBits;
+    private quantizationResidual;
     private state;
     private bias;
     private weights;
@@ -60,6 +65,7 @@ export declare class ElasticCoreBlock {
     connectionBlock(target: number, source: number): Float32Array;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
     private inject;
+    private quantizeWithResidual;
     private readout;
     private stateDeltas;
     private inputTopography;
