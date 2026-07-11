@@ -174,6 +174,8 @@ export class NeuroPipeline {
       maxTicks: 20,
       convergenceThreshold: 0.01,
       seed: 42,
+      quantizationAware: true,
+      quantizationBits: 8,
     });
 
     const expertIds = Array.from(this.expertPluginMap.values());
@@ -356,6 +358,39 @@ export class NeuroPipeline {
       });
     }
 
+    // ── Step 2: Transformer-core replacement / fallback mesh ───────────────
+    let coreOutput: number[];
+    if (this.config.useElasticCore !== false) {
+      const t0 = Date.now();
+      const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
+      const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
+      const result = this.elasticCore!.forward(coreInput, {
+        vale: this.getValeFractions(),
+        activeGroups,
+        drivenNeurons: new Set([0]),
+      });
+      coreOutput = Array.from(result.output);
+      this.feedbackToValueBudget(result.stateDeltas);
+      const durationMs = Date.now() - t0;
+      steps.push({
+        name: 'elastic-core',
+        inputShape: [coreInput.length],
+        outputShape: [coreOutput.length],
+        durationMs,
+      });
+    } else {
+      const t0 = Date.now();
+      const meshInputs = new Map<number, number>();
+      const meshNodeCount = Math.min(this.config.meshNodes, moeOutput.length);
+      for (let i = 0; i < meshNodeCount; i++) meshInputs.set(i, moeOutput[i] || 0);
+      const propagation = this.mesh!.propagate(meshInputs, this.getValeFractions());
+      coreOutput = Array.from(propagation.finalStates.values());
+      const meshDeltas = this.mesh!.applyValueWeightedLearning(this.getValueLearningRates());
+      this.feedbackToValueBudget(meshDeltas);
+      const durationMs = Date.now() - t0;
+      steps.push({
+        name: 'mesh-propagation',
+        inputShape: [meshNodeCount],
     // ── Step 2: Elastic core propagation ────────────────────────────────────
     let coreOutput: number[];
     {
