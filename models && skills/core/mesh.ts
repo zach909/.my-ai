@@ -111,79 +111,67 @@ export class NeuronMesh {
     vale?: Map<number, number>,
     activeGroups?: Set<string>
   ): PropagationResult {
-    const nodeHistory = new Map<number, number[]>();
-    const state = this.captureState();
+    const nodes = Array.from(this.nodes.values());
+    const nodeHistory = new Map(nodes.map(n => [n.id, [] as number[]]));
+    const histories = nodes.map(n => nodeHistory.get(n.id)!);
 
     for (const [id, val] of inputActivations) {
-      const numericId = typeof id === 'string' ? parseInt(id.replace('neuron_', ''), 10) : id;
-      const node = this.nodes.get(numericId);
-      if (node) {
-        node.activation = val;
-        node.activationHistory = [val];
-      }
+      const nId = typeof id === 'string' ? parseInt(id.replace('neuron_', ''), 10) : id;
+      const node = this.nodes.get(nId);
+      if (node) { node.activation = val; node.activationHistory = [val]; }
     }
 
-    let iteration = 0;
-    let converged = false;
-    let residual = 0;
+    const N = nodes.length, idIdx = new Map(nodes.map((n, i) => [n.id, i]));
+    const curr = new Float32Array(nodes.map(n => n.activation));
+    const next = new Float32Array(N), gates = new Uint8Array(N), vs = new Float32Array(N), hasV = new Uint8Array(N);
 
+    nodes.forEach((n, i) => {
+      const g = this.nodeGroups.get(n.id);
+      gates[i] = (activeGroups && g !== undefined && !activeGroups.has(g)) ? 1 : 0;
+      const v = vale?.get(n.id);
+      if (v !== undefined) { vs[i] = v; hasV[i] = 1; }
+    });
+
+    let totalEdges = 0;
+    for (const n of nodes) totalEdges += n.connections.size;
+    const flatWeights = new Float32Array(totalEdges), flatIndices = new Int32Array(totalEdges), rowStarts = new Int32Array(N + 1);
+    let edgePtr = 0;
+    nodes.forEach((n, i) => {
+      rowStarts[i] = edgePtr;
+      for (const [neighborId, weight] of n.connections) {
+        const j = idIdx.get(neighborId);
+        if (j !== undefined) { flatIndices[edgePtr] = j; flatWeights[edgePtr] = weight; edgePtr++; }
+      }
+    });
+    rowStarts[N] = edgePtr;
+
+    let iteration = 0, converged = false, residual = 0;
     for (; iteration < this.config.maxIterations; iteration++) {
-      const newState = new Map<number, number>();
-
-      for (const [id, node] of this.nodes) {
-        const group = this.nodeGroups.get(id);
-        const isGated = activeGroups !== undefined && group !== undefined && !activeGroups.has(group);
-        if (isGated) {
-          // Not selected this tick: hold the current value rather than
-          // recomputing it. Still fully wired — just not activated.
-          newState.set(id, node.activation);
-          if (!nodeHistory.has(id)) nodeHistory.set(id, []);
-          nodeHistory.get(id)!.push(node.activation);
-          continue;
+      for (let i = 0; i < N; i++) {
+        if (gates[i]) next[i] = curr[i];
+        else {
+          let sum = nodes[i].bias;
+          const start = rowStarts[i], end = rowStarts[i + 1];
+          for (let k = start; k < end; k++) sum += curr[flatIndices[k]] * flatWeights[k];
+          const comp = this.activate(sum);
+          next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
         }
-
-        let sum = node.bias;
-        for (const [neighborId, weight] of node.connections) {
-          const neighbor = this.nodes.get(neighborId);
-          if (neighbor) {
-            sum += neighbor.activation * weight;
-          }
-        }
-        const computedState = this.activate(sum);
-        const v = vale?.get(id);
-        const activated = v !== undefined ? v * node.activation + (1 - v) * computedState : computedState;
-        newState.set(id, activated);
-
-        if (!nodeHistory.has(id)) nodeHistory.set(id, []);
-        nodeHistory.get(id)!.push(activated);
+        histories[i].push(next[i]);
       }
 
       residual = 0;
-      for (const [id, val] of newState) {
-        const node = this.nodes.get(id)!;
-        const diff = Math.abs(val - node.activation);
-        residual += diff;
-        node.activation = val;
-        node.activationHistory.push(val);
+      for (let i = 0; i < N; i++) {
+        residual += Math.abs(next[i] - curr[i]);
+        curr[i] = next[i];
+        nodes[i].activation = next[i];
+        nodes[i].activationHistory.push(next[i]);
       }
-
-      if (this.checkConvergence(residual)) {
-        converged = true;
-        break;
-      }
-    }
-
-    const finalStates = new Map<number, number>();
-    for (const [id, node] of this.nodes) {
-      finalStates.set(id, node.activation);
+      if (this.checkConvergence(residual)) { converged = true; break; }
     }
 
     return {
-      finalStates,
-      iterations: iteration + 1,
-      converged,
-      residual,
-      nodeHistory,
+      finalStates: new Map(nodes.map(n => [n.id, n.activation])),
+      iterations: iteration + 1, converged, residual, nodeHistory
     };
   }
 
