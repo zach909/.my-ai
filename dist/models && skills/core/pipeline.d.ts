@@ -105,8 +105,6 @@ export declare class NeuroPipeline {
     /**
      * Run all 7 subsystems in sequence on an embedding vector.
      *
-     * Run all 6 subsystems in sequence on an embedding vector.
-     *
      * Sequence:
      *   0. ZipIO   — infinite loop context ingestion (Section 1.10)
      *   1. MoE     — mixture-of-experts routing on the embedding

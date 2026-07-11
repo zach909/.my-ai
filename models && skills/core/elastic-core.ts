@@ -8,7 +8,6 @@ export interface ElasticCoreConfig {
   weightScale?: number;
   seed?: number;
   inputFlagDim?: number;
-  quantizationAware?: boolean;
   /** Enable quantization-aware state settling: quantize inside forward and retain residual feedback. */
   quantizationAware?: boolean;
   /** Bit width for quantized state values when quantizationAware is enabled. */
@@ -95,7 +94,6 @@ export interface ElasticCoreUpdateSummary {
  */
 export class ElasticCoreBlock {
   private neuronCount: number;
-  private readonly neuronCount: number;
   private readonly stateDim: number;
   private readonly inputDim: number;
   private readonly outputDim: number;
@@ -114,9 +112,6 @@ export class ElasticCoreBlock {
   private groups: Map<number, string> = new Map();
   private definitionTargets: Map<number, Float32Array> = new Map();
   private rngState: number;
-  private readonly quantizationAware: boolean;
-  private readonly quantizationBits: number;
-  private quantizationResidual: Float32Array;
 
   constructor(config: ElasticCoreConfig = {}) {
     this.neuronCount = config.neuronCount ?? 16;
@@ -129,8 +124,6 @@ export class ElasticCoreBlock {
     this.quantizationAware = config.quantizationAware ?? false;
     this.quantizationBits = Math.max(2, Math.min(16, Math.floor(config.quantizationBits ?? 8)));
     this.rngState = config.seed ?? 123456789;
-    this.quantizationAware = config.quantizationAware ?? false;
-    this.quantizationBits = Math.max(2, Math.min(16, config.quantizationBits ?? 8));
 
     this.state = new Float32Array(this.neuronCount * this.stateDim);
     this.quantizationResidual = new Float32Array(this.state.length);
@@ -139,7 +132,6 @@ export class ElasticCoreBlock {
     this.inputProjection = new Float32Array(this.inputDim * this.stateDim);
     this.outputProjection = new Float32Array(this.stateDim * this.outputDim);
     this.directInputFlags = new Float32Array(this.neuronCount);
-    this.quantizationResidual = new Float32Array(this.state.length);
 
     const scale = config.weightScale ?? Math.sqrt(1 / Math.max(1, this.neuronCount * this.stateDim));
     for (let i = 0; i < this.bias.length; i++) this.bias[i] = (this.rand() * 2 - 1) * 0.05;
@@ -166,139 +158,44 @@ export class ElasticCoreBlock {
     return this.neuronCount;
   }
 
-  addNeuron(group?: string): number {
-    const oldCount = this.neuronCount;
-    const newCount = oldCount + 1;
-    const scale = Math.sqrt(1 / Math.max(1, newCount * this.stateDim));
-
-    const oldState = this.state;
-    const oldBias = this.bias;
-    const oldWeights = this.weights;
-    this.state = new Float32Array(newCount * this.stateDim);
-    this.bias = new Float32Array(newCount * this.stateDim);
-    this.weights = new Float32Array(newCount * newCount * this.stateDim * this.stateDim);
-    this.state.set(oldState);
-    this.bias.set(oldBias);
-
-    const oldWeightIndex = (target: number, source: number, outDim: number, inDim: number) =>
-      (((target * oldCount + source) * this.stateDim + outDim) * this.stateDim + inDim);
-    for (let t = 0; t < oldCount; t++) {
-      for (let s = 0; s < oldCount; s++) {
-        if (t === s) continue;
-        for (let od = 0; od < this.stateDim; od++) {
-          for (let id = 0; id < this.stateDim; id++) {
-            this.weights[this.weightIndexForCount(newCount, t, s, od, id)] = oldWeights[oldWeightIndex(t, s, od, id)];
-          }
-        }
-      }
-    }
-
-    this.neuronCount = newCount;
-    const neuronId = oldCount;
-    for (let d = 0; d < this.stateDim; d++) this.bias[neuronId * this.stateDim + d] = (this.rand() * 2 - 1) * 0.05;
-    for (let other = 0; other < newCount; other++) {
-      if (other === neuronId) continue;
-      for (let od = 0; od < this.stateDim; od++) {
-        for (let id = 0; id < this.stateDim; id++) {
-          this.weights[this.weightIndex(neuronId, other, od, id)] = (this.rand() * 2 - 1) * scale;
-          this.weights[this.weightIndex(other, neuronId, od, id)] = (this.rand() * 2 - 1) * scale;
-        }
-      }
-    }
-    if (group !== undefined) this.groups.set(neuronId, group);
-    return neuronId;
-  addNeuron(group?: string): number {
-    const newId = this.neuronCount;
-    const oldCount = this.neuronCount;
-    const oldState = this.state;
-    const oldBias = this.bias;
-    const oldWeights = this.weights;
-    const scale = Math.sqrt(1 / Math.max(1, (oldCount + 1) * this.stateDim));
-
-    this.neuronCount = oldCount + 1;
-    this.state = new Float32Array(this.neuronCount * this.stateDim);
-    this.bias = new Float32Array(this.neuronCount * this.stateDim);
-    this.weights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
-    this.state.set(oldState);
-    this.bias.set(oldBias);
-
-    for (let t = 0; t < oldCount; t++) {
-      for (let s = 0; s < oldCount; s++) {
-        for (let od = 0; od < this.stateDim; od++) {
-          for (let id = 0; id < this.stateDim; id++) {
-            const oldIndex = (((t * oldCount + s) * this.stateDim + od) * this.stateDim + id);
-            this.weights[this.weightIndex(t, s, od, id)] = oldWeights[oldIndex];
-          }
-        }
-      }
-    }
-
-    for (let d = 0; d < this.stateDim; d++) {
-      this.bias[newId * this.stateDim + d] = (this.rand() * 2 - 1) * 0.05;
-    }
-    for (let t = 0; t < this.neuronCount; t++) {
-      for (let s = 0; s < this.neuronCount; s++) {
-        if (t === s || (t < oldCount && s < oldCount)) continue;
-        for (let od = 0; od < this.stateDim; od++) {
-          for (let id = 0; id < this.stateDim; id++) {
-            this.weights[this.weightIndex(t, s, od, id)] = (this.rand() * 2 - 1) * scale;
-          }
-        }
-      }
-    }
-
-    if (group !== undefined) this.groups.set(newId, group);
-    return newId;
-  getNeuronCount(): number {
-    return this.neuronCount;
-  }
-
   getStateDim(): number {
     return this.stateDim;
   }
 
-  addNeuron(group?: string): number {
-    const id = this.neuronCount;
-    this.neuronCount++;
-    const nextState = new Float32Array(this.neuronCount * this.stateDim);
-    nextState.set(this.state);
-    this.state = nextState;
+  connectionDensity(): number {
+    return this.neuronCount <= 1 ? 0 : 1.0;
+  }
 
-    const nextBias = new Float32Array(this.neuronCount * this.stateDim);
-    nextBias.set(this.bias);
-    this.bias = nextBias;
+  connectionBlock(target: number, source: number): Float32Array {
+    this.assertNeuron(target); this.assertNeuron(source);
+    const block = new Float32Array(this.stateDim * this.stateDim);
+    for (let od = 0; od < this.stateDim; od++) for (let id = 0; id < this.stateDim; id++) {
+      block[od * this.stateDim + id] = this.weights[this.weightIndex(target, source, od, id)];
+    }
+    return block;
+  }
 
-    const oldN = this.neuronCount - 1;
-    const nextWeights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
-    for (let t = 0; t < oldN; t++) {
-      for (let s = 0; s < oldN; s++) {
-        for (let od = 0; od < this.stateDim; od++) {
-          for (let idim = 0; idim < this.stateDim; idim++) {
-            nextWeights[(((t * this.neuronCount + s) * this.stateDim + od) * this.stateDim + idim)] =
-              this.weights[(((t * oldN + s) * this.stateDim + od) * this.stateDim + idim)];
-          }
-        }
+  /**
+   * Program an explicit dense source->target block. This is how extension
+   * builder definitions can install cross-dimensional links directly: every
+   * output dimension of the target can read every input dimension of the source.
+   */
+  setConnectionBlock(target: number, source: number, block: Float32Array | number[]): void {
+    this.assertNeuron(target); this.assertNeuron(source);
+    if (target === source) throw new Error('self-connections are not part of the all-to-all core');
+    if (block.length !== this.stateDim * this.stateDim) {
+      throw new Error(`connection block must have ${this.stateDim * this.stateDim} entries`);
+    }
+    for (let od = 0; od < this.stateDim; od++) {
+      for (let id = 0; id < this.stateDim; id++) {
+        this.weights[this.weightIndex(target, source, od, id)] = block[od * this.stateDim + id];
       }
     }
-    this.weights = nextWeights;
-    if (group) this.groups.set(id, group);
-    return id;
   }
 
+  /** Convenience helper for DSL-style scalar connections: fill the whole block. */
   setConnectionScalar(target: number, source: number, weight: number): void {
-    this.assertNeuron(target); this.assertNeuron(source);
-    const clamped = Math.max(-2, Math.min(2, weight));
-    for (let d = 0; d < this.stateDim; d++) this.weights[this.weightIndex(target, source, d, d)] = clamped;
-  }
-
-  setConnectionBlock(target: number, source: number, block: ArrayLike<number>): void {
-    this.assertNeuron(target); this.assertNeuron(source);
-    if (block.length !== this.stateDim * this.stateDim) {
-      throw new Error(`connection block length ${block.length} does not match ${this.stateDim * this.stateDim}`);
-    }
-    for (let od = 0; od < this.stateDim; od++) for (let id = 0; id < this.stateDim; id++) {
-      this.weights[this.weightIndex(target, source, od, id)] = Math.max(-2, Math.min(2, block[od * this.stateDim + id] ?? 0));
-    }
+    this.setConnectionBlock(target, source, new Float32Array(this.stateDim * this.stateDim).fill(weight));
   }
 
   setDefinitionTarget(neuronId: number, target: ArrayLike<number>): void {
@@ -319,6 +216,8 @@ export class ElasticCoreBlock {
     }
     loss /= this.stateDim;
     return { neuronId, loss, satisfied: loss <= tolerance, readout, target };
+  }
+
   /**
    * Add a live neuron to the core and wire it all-to-all with every existing
    * neuron. This is the Elastic Core side of the extension-builder story:
@@ -337,6 +236,8 @@ export class ElasticCoreBlock {
     for (let d = 0; d < this.stateDim; d++) {
       newBias[oldCount * this.stateDim + d] = (this.rand() * 2 - 1) * 0.05;
     }
+    const newDirectFlags = new Float32Array(newCount);
+    newDirectFlags.set(this.directInputFlags);
 
     const oldWeights = this.weights;
     const newWeights = new Float32Array(newCount * newCount * this.stateDim * this.stateDim);
@@ -366,50 +267,10 @@ export class ElasticCoreBlock {
     this.quantizationResidual = newResidual;
     this.bias = newBias;
     this.weights = newWeights;
+    this.directInputFlags = newDirectFlags;
     if (group !== undefined) this.groups.set(oldCount, group);
     return oldCount;
   }
-
-  getNeuronCount(): number {
-    return this.neuronCount;
-  }
-
-  connectionDensity(): number {
-    return this.neuronCount <= 1 ? 0 : 1.0;
-  }
-
-  /**
-   * Program an explicit dense source->target block. This is how extension
-   * builder definitions can install cross-dimensional links directly: every
-   * output dimension of the target can read every input dimension of the source.
-   */
-  setConnectionBlock(target: number, source: number, block: Float32Array | number[]): void {
-    this.assertNeuron(target); this.assertNeuron(source);
-    if (target === source) throw new Error('self-connections are not part of the all-to-all core');
-    if (block.length !== this.stateDim * this.stateDim) {
-      throw new Error(`connection block must have ${this.stateDim * this.stateDim} entries`);
-    }
-    for (let od = 0; od < this.stateDim; od++) {
-      for (let id = 0; id < this.stateDim; id++) {
-        this.weights[this.weightIndex(target, source, od, id)] = block[od * this.stateDim + id];
-      }
-    }
-  }
-
-  /** Convenience helper for DSL-style scalar connections: fill the whole block. */
-  setConnectionScalar(target: number, source: number, weight: number): void {
-    this.setConnectionBlock(target, source, new Float32Array(this.stateDim * this.stateDim).fill(weight));
-  }
-
-  connectionBlock(target: number, source: number): Float32Array {
-    this.assertNeuron(target); this.assertNeuron(source);
-    const block = new Float32Array(this.stateDim * this.stateDim);
-    for (let od = 0; od < this.stateDim; od++) for (let id = 0; id < this.stateDim; id++) {
-      block[od * this.stateDim + id] = this.weights[this.weightIndex(target, source, od, id)];
-    }
-    return block;
-  }
-
 
   /**
    * Optimizer-facing structured parameter view. The returned typed arrays are
@@ -522,16 +383,12 @@ export class ElasticCoreBlock {
         }
       }
 
-      const finalState = this.quantizeWithResidual(next);
-      for (const n of driven) if (n >= 0 && n < this.neuronCount) finalState[n * this.stateDim + this.inputFlagDim] = 1;
+      const { state: settled } = this.quantizeWithResidual(next);
+      for (const n of driven) if (n >= 0 && n < this.neuronCount) settled[n * this.stateDim + this.inputFlagDim] = 1;
 
       residual = 0;
-      for (let i = 0; i < finalState.length; i++) residual += Math.abs(finalState[i] - oldState[i]);
-      this.state = finalState;
-      const quantized = this.quantizeWithResidual(next);
-      this.state = quantized.state;
-      this.state = next;
-      for (const n of driven) if (n >= 0 && n < this.neuronCount) this.state[n * this.stateDim + this.inputFlagDim] = 1;
+      for (let i = 0; i < settled.length; i++) residual += Math.abs(settled[i] - oldState[i]);
+      this.state = settled;
       if (residual < this.convergenceThreshold) { converged = true; ticks++; break; }
     }
 
@@ -564,29 +421,13 @@ export class ElasticCoreBlock {
     if (flag) this.state[off + this.inputFlagDim] = 1;
   }
 
-  private quantizeWithResidual(next: Float32Array): Float32Array {
-    if (!this.quantizationAware) return next;
-
-    const quantized = new Float32Array(next.length);
-    const levels = (1 << this.quantizationBits) - 1;
-    for (let i = 0; i < next.length; i++) {
-      const adjusted = Math.max(-1, Math.min(1, next[i] + this.quantizationResidual[i]));
-      const q = Math.round(((adjusted + 1) / 2) * levels);
-      const value = (q / levels) * 2 - 1;
-      quantized[i] = value;
-      this.quantizationResidual[i] = adjusted - value;
-    }
-    return quantized;
-  }
-
-  private readout(): Float32Array {
-    const mean = new Float32Array(this.stateDim);
-    for (let n = 0; n < this.neuronCount; n++) for (let d = 0; d < this.stateDim; d++) mean[d] += this.state[n * this.stateDim + d] / this.neuronCount;
-    const out = new Float32Array(this.outputDim);
-    for (let o = 0; o < this.outputDim; o++) for (let d = 0; d < this.stateDim; d++) out[o] += mean[d] * this.outputProjection[d * this.outputDim + o];
-    return out;
-  }
-
+  /**
+   * Quantize a candidate next-state and feed the rounding error back into
+   * `quantizationResidual` so it's compensated for on the following tick,
+   * per the QAT design (Section 8): the network learns to expect its own
+   * quantized form instead of being surprised by compression after training.
+   * Disabling quantization is a real toggle: residual is reset to exactly zero.
+   */
   private quantizeWithResidual(next: Float32Array): { state: Float32Array; drift: number } {
     if (!this.quantizationAware) {
       this.quantizationResidual.fill(0);
@@ -605,6 +446,14 @@ export class ElasticCoreBlock {
       drift += Math.abs(this.quantizationResidual[i]);
     }
     return { state: quantized, drift: drift / Math.max(1, next.length) };
+  }
+
+  private readout(): Float32Array {
+    const mean = new Float32Array(this.stateDim);
+    for (let n = 0; n < this.neuronCount; n++) for (let d = 0; d < this.stateDim; d++) mean[d] += this.state[n * this.stateDim + d] / this.neuronCount;
+    const out = new Float32Array(this.outputDim);
+    for (let o = 0; o < this.outputDim; o++) for (let d = 0; d < this.stateDim; d++) out[o] += mean[d] * this.outputProjection[d * this.outputDim + o];
+    return out;
   }
 
   private meanAbs(values: Float32Array): number {

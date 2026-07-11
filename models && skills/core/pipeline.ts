@@ -343,8 +343,6 @@ export class NeuroPipeline {
 
   /**
    * Run all 7 subsystems in sequence on an embedding vector.
-   * 
-   * Run all 6 subsystems in sequence on an embedding vector.
    *
    * Sequence:
    *   0. ZipIO   — infinite loop context ingestion (Section 1.10)
@@ -389,16 +387,19 @@ export class NeuroPipeline {
 
     // ── Step 2: Transformer-core replacement / fallback mesh ───────────────
     let coreOutput: number[];
+    let elasticStateDeltas = new Map<number, number>();
     if (this.config.useElasticCore !== false) {
       const t0 = Date.now();
       const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
       const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
+      const drivenNeurons = this.neuronIdsForExperts(selectedPlugins);
       const result = this.elasticCore!.forward(coreInput, {
         vale: this.getValeFractions(),
         activeGroups,
-        drivenNeurons: new Set([0]),
+        drivenNeurons: drivenNeurons.size > 0 ? drivenNeurons : new Set([0]),
       });
       coreOutput = Array.from(result.output);
+      elasticStateDeltas = new Map(result.stateDeltas);
       this.feedbackToValueBudget(result.stateDeltas);
       const durationMs = Date.now() - t0;
       steps.push({
@@ -420,26 +421,6 @@ export class NeuroPipeline {
       steps.push({
         name: 'mesh-propagation',
         inputShape: [meshNodeCount],
-    // ── Step 2: Elastic core propagation ────────────────────────────────────
-    let coreOutput: number[];
-    let elasticStateDeltas = new Map<number, number>();
-    {
-      const t0 = Date.now();
-      const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
-      const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
-      const drivenNeurons = this.neuronIdsForExperts(selectedPlugins);
-      const result = this.elasticCore!.forward(coreInput, {
-        vale: this.getValeFractions(),
-        activeGroups,
-        drivenNeurons: drivenNeurons.size > 0 ? drivenNeurons : new Set([0]),
-      });
-      coreOutput = Array.from(result.output);
-      elasticStateDeltas = new Map(result.stateDeltas);
-      this.feedbackToValueBudget(result.stateDeltas);
-      const durationMs = Date.now() - t0;
-      steps.push({
-        name: 'elastic-core',
-        inputShape: [coreInput.length],
         outputShape: [coreOutput.length],
         durationMs,
       });
