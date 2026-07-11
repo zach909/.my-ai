@@ -57,6 +57,7 @@ export declare class NeuroPipeline {
     private valueBudgetSize;
     private valueInitialized;
     private expertPluginMap;
+    private expertNeuronRegistry;
     private runHistory;
     constructor(config?: Partial<PipelineConfig>);
     private ensureSubsystems;
@@ -123,6 +124,9 @@ export declare class NeuroPipeline {
      * concrete capability each expert slot represents.
      */
     getExpertPluginMap(): Map<number, string>;
+    /** Real plugin/skill id -> Elastic Core neuron ids that exist. */
+    getExpertNeuronRegistry(): Map<string, number[]>;
+    private neuronIdsForExperts;
     /**
      * Resize a Float32Array to targetLength, zero-padding or truncating.
      */

@@ -40,7 +40,7 @@ export interface ElasticCoreResult {
  * are summed.
  */
 export declare class ElasticCoreBlock {
-    private readonly neuronCount;
+    private neuronCount;
     private readonly stateDim;
     private readonly inputDim;
     private readonly outputDim;
@@ -56,6 +56,8 @@ export declare class ElasticCoreBlock {
     private rngState;
     constructor(config?: ElasticCoreConfig);
     setNeuronGroup(neuronId: number, group: string): void;
+    getNeuronCount(): number;
+    addNeuron(group?: string): number;
     connectionDensity(): number;
     connectionBlock(target: number, source: number): Float32Array;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
@@ -64,6 +66,7 @@ export declare class ElasticCoreBlock {
     private stateDeltas;
     private inputTopography;
     private weightIndex;
+    private weightIndexForCount;
     private rand;
     private assertNeuron;
 }

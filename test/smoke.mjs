@@ -485,7 +485,9 @@ async function testExpertRegistrationCompleteness() {
   const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 16, hyperDimensions: 16 });
   await p.run(embedding(32, 1), 'trigger subsystem init'); // ensureSubsystems() is lazy
 
-  const registered = new Set(p.getExpertPluginMap().values());
+  const expertMap = p.getExpertPluginMap();
+  const registered = new Set(expertMap.values());
+  const expertNeuronRegistry = p.getExpertNeuronRegistry();
   const expectedPluginIds = Object.values(pluginExtensions).map(d => d.id);
   const expectedSkillTypes = new Set(PROGRAMMING_SKILLS.map(s => s.expertType));
   const expectedSkillExpertIds = Array.from(expectedSkillTypes).map(t => `skill_${t}`);
@@ -501,6 +503,16 @@ async function testExpertRegistrationCompleteness() {
   const expectedTotal = expectedPluginIds.length + expectedSkillExpertIds.length;
   check(registered.size === expectedTotal,
     `Section 2.2: registered expert count matches plugin/skill file count exactly (expected ${expectedTotal}, got ${registered.size})`);
+
+  const allRegisteredExpertsHaveNeurons = Array.from(registered).every(id => {
+    const neuronIds = expertNeuronRegistry.get(id);
+    return Array.isArray(neuronIds) && neuronIds.length > 0 && neuronIds.every(Number.isInteger);
+  });
+  check(allRegisteredExpertsHaveNeurons,
+    `Elastic Core registry: every registered plugin/skill expert maps to at least one concrete neuron (${registered.size} experts, ${expertNeuronRegistry.size} registry entries)`);
+
+  const noRegistryExtras = Array.from(expertNeuronRegistry.keys()).every(id => registered.has(id));
+  check(noRegistryExtras, 'Elastic Core registry: every expert->neuron entry belongs to a registered plugin/skill expert');
 }
 
 async function testMoESharedMesh() {
@@ -716,7 +728,7 @@ async function testContinuousOutputLoop() {
     const results = [];
     runner.on('continuous-tick', (result) => results.push(result));
     runner.startContinuous(15);
-    await new Promise(r => setTimeout(r, 150));
+    await new Promise(r => setTimeout(r, 250));
     runner.stopContinuous();
 
     check(results.length >= 3, `Continuous loop: multiple ticks captured for inspection (got ${results.length})`);

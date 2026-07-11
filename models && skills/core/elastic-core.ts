@@ -43,7 +43,7 @@ export interface ElasticCoreResult {
  * are summed.
  */
 export class ElasticCoreBlock {
-  private readonly neuronCount: number;
+  private neuronCount: number;
   private readonly stateDim: number;
   private readonly inputDim: number;
   private readonly outputDim: number;
@@ -95,6 +95,53 @@ export class ElasticCoreBlock {
     this.groups.set(neuronId, group);
   }
 
+  getNeuronCount(): number {
+    return this.neuronCount;
+  }
+
+  addNeuron(group?: string): number {
+    const oldCount = this.neuronCount;
+    const newCount = oldCount + 1;
+    const scale = Math.sqrt(1 / Math.max(1, newCount * this.stateDim));
+
+    const oldState = this.state;
+    const oldBias = this.bias;
+    const oldWeights = this.weights;
+    this.state = new Float32Array(newCount * this.stateDim);
+    this.bias = new Float32Array(newCount * this.stateDim);
+    this.weights = new Float32Array(newCount * newCount * this.stateDim * this.stateDim);
+    this.state.set(oldState);
+    this.bias.set(oldBias);
+
+    const oldWeightIndex = (target: number, source: number, outDim: number, inDim: number) =>
+      (((target * oldCount + source) * this.stateDim + outDim) * this.stateDim + inDim);
+    for (let t = 0; t < oldCount; t++) {
+      for (let s = 0; s < oldCount; s++) {
+        if (t === s) continue;
+        for (let od = 0; od < this.stateDim; od++) {
+          for (let id = 0; id < this.stateDim; id++) {
+            this.weights[this.weightIndexForCount(newCount, t, s, od, id)] = oldWeights[oldWeightIndex(t, s, od, id)];
+          }
+        }
+      }
+    }
+
+    this.neuronCount = newCount;
+    const neuronId = oldCount;
+    for (let d = 0; d < this.stateDim; d++) this.bias[neuronId * this.stateDim + d] = (this.rand() * 2 - 1) * 0.05;
+    for (let other = 0; other < newCount; other++) {
+      if (other === neuronId) continue;
+      for (let od = 0; od < this.stateDim; od++) {
+        for (let id = 0; id < this.stateDim; id++) {
+          this.weights[this.weightIndex(neuronId, other, od, id)] = (this.rand() * 2 - 1) * scale;
+          this.weights[this.weightIndex(other, neuronId, od, id)] = (this.rand() * 2 - 1) * scale;
+        }
+      }
+    }
+    if (group !== undefined) this.groups.set(neuronId, group);
+    return neuronId;
+  }
+
   connectionDensity(): number {
     return this.neuronCount <= 1 ? 0 : 1.0;
   }
@@ -120,8 +167,6 @@ export class ElasticCoreBlock {
       for (let t = 0; t < this.neuronCount; t++) {
         const group = this.groups.get(t);
         const externallyDriven = driven.has(t);
-        const frozen = options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
-        if (frozen && !externallyDriven) {
         const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
         if (frozen) {
           next.set(this.state.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
@@ -195,7 +240,11 @@ export class ElasticCoreBlock {
   }
 
   private weightIndex(target: number, source: number, outDim: number, inDim: number): number {
-    return (((target * this.neuronCount + source) * this.stateDim + outDim) * this.stateDim + inDim);
+    return this.weightIndexForCount(this.neuronCount, target, source, outDim, inDim);
+  }
+
+  private weightIndexForCount(count: number, target: number, source: number, outDim: number, inDim: number): number {
+    return (((target * count + source) * this.stateDim + outDim) * this.stateDim + inDim);
   }
 
   private rand(): number {
