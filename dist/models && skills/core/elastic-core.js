@@ -23,6 +23,7 @@ export class ElasticCoreBlock {
     weights;
     inputProjection;
     outputProjection;
+    directInputFlags;
     groups = new Map();
     rngState;
     constructor(config = {}) {
@@ -39,6 +40,7 @@ export class ElasticCoreBlock {
         this.weights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
         this.inputProjection = new Float32Array(this.inputDim * this.stateDim);
         this.outputProjection = new Float32Array(this.stateDim * this.outputDim);
+        this.directInputFlags = new Float32Array(this.neuronCount);
         const scale = config.weightScale ?? Math.sqrt(1 / Math.max(1, this.neuronCount * this.stateDim));
         for (let i = 0; i < this.bias.length; i++)
             this.bias[i] = (this.rand() * 2 - 1) * 0.05;
@@ -77,9 +79,13 @@ export class ElasticCoreBlock {
     }
     forward(input, options = {}) {
         const driven = options.drivenNeurons ?? new Set([0]);
-        for (const n of driven)
-            if (n >= 0 && n < this.neuronCount)
+        this.clearDirectInputFlags();
+        for (const n of driven) {
+            if (n >= 0 && n < this.neuronCount) {
+                this.directInputFlags[n] = 1;
                 this.inject(n, input, true);
+            }
+        }
         const startState = new Float32Array(this.state);
         let ticks = 0, residual = 0, converged = false;
         for (; ticks < this.maxTicks; ticks++) {
@@ -88,8 +94,6 @@ export class ElasticCoreBlock {
             for (let t = 0; t < this.neuronCount; t++) {
                 const group = this.groups.get(t);
                 const externallyDriven = driven.has(t);
-                const frozen = options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
-                if (frozen && !externallyDriven) {
                 const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
                 if (frozen) {
                     next.set(this.state.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
@@ -131,6 +135,12 @@ export class ElasticCoreBlock {
             stateDeltas: this.stateDeltas(startState),
         };
     }
+    clearDirectInputFlags() {
+        for (let n = 0; n < this.neuronCount; n++) {
+            this.state[n * this.stateDim + this.inputFlagDim] = 0;
+            this.directInputFlags[n] = 0;
+        }
+    }
     inject(neuronId, input, flag) {
         const off = neuronId * this.stateDim;
         for (let od = 0; od < this.stateDim; od++) {
@@ -168,7 +178,7 @@ export class ElasticCoreBlock {
     inputTopography() {
         const topography = new Map();
         for (let n = 0; n < this.neuronCount; n++)
-            topography.set(n, this.state[n * this.stateDim + this.inputFlagDim]);
+            topography.set(n, this.directInputFlags[n]);
         return topography;
     }
     weightIndex(target, source, outDim, inDim) {

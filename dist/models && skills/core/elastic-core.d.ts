@@ -52,6 +52,7 @@ export declare class ElasticCoreBlock {
     private weights;
     private inputProjection;
     private outputProjection;
+    private directInputFlags;
     private groups;
     private rngState;
     constructor(config?: ElasticCoreConfig);
@@ -59,6 +60,7 @@ export declare class ElasticCoreBlock {
     connectionDensity(): number;
     connectionBlock(target: number, source: number): Float32Array;
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
+    private clearDirectInputFlags;
     private inject;
     private readout;
     private stateDeltas;
