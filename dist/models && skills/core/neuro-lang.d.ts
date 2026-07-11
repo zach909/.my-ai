@@ -22,6 +22,7 @@
  */
 import type { HyperDimensionalEngine } from './hyperdimensional.js';
 import type { ValueRangeAllocator } from './value-range.js';
+import type { ElasticCoreBlock, DefinitionCheckResult } from './elastic-core.js';
 export interface NeuriNeuron {
     name: string;
     value: number;
@@ -82,6 +83,11 @@ export interface LiveMaterializeResult {
     satisfied: string[];
     conflicts: DefinitionConflict[];
 }
+export interface ElasticMaterializeResult {
+    nameToId: Map<string, number>;
+    definitionChecks: Map<string, DefinitionCheckResult>;
+    satisfied: string[];
+}
 /**
  * Deterministic text -> unit vector, so the same definition text always
  * produces the same training target (and different text a different one)
@@ -138,4 +144,24 @@ export declare class NeuroLangRuntime {
         weightPenalty?: number;
         tolerance?: number;
     }): LiveMaterializeResult;
+}
+/**
+ * Materializes parsed NeuriLang directly into an ElasticCoreBlock. The runtime
+ * keeps name→id bindings stable across calls, grows the block with addNeuron()
+ * whenever a new parsed neuron needs capacity, installs explicit connection
+ * scalars as diagonal Elastic Core connection blocks, maps @vale through the
+ * shared ValueRangeAllocator, and turns @definition into a deterministic
+ * readout target that callers can smoke-test with checkDefinition().
+ */
+export declare class ElasticNeuroLangRuntime {
+    private core;
+    private valeAllocator?;
+    private nameToId;
+    private nextId;
+    constructor(core: ElasticCoreBlock, valeAllocator?: ValueRangeAllocator);
+    setNeuronId(name: string, id: number): void;
+    materialize(neurons: Map<string, NeuriNeuron>, opts?: {
+        definitionTolerance?: number;
+    }): ElasticMaterializeResult;
+    private assignId;
 }
