@@ -61,18 +61,32 @@ pip install -r requirements.txt
 ## Quickstart
 
 ```bash
-# 1) Train the tokenizer on your corpus
-python train_tokenizer.py --data-dir data/pretrain --vocab-size 2000
+# 0) Build a prose-heavy corpus from in-repo text (Shakespeare + War and Peace
+#    test fixtures + repo docs; ~1.5M words). No external downloads.
+python build_corpus.py
+
+# 1) Train the tokenizer on the corpus
+python train_tokenizer.py --data-dir data/pretrain --vocab-size 8000 \
+    --model-prefix checkpoints_v2/spm
 
 # 2) Pretrain the standard transformer
-python pretrain.py --data-dir data/pretrain \
-    --n-layer 4 --n-head 4 --n-embd 192 --block-size 128 \
-    --batch-size 16 --grad-accum-steps 2 --max-steps 2500 \
-    --device cpu --no-amp
+python pretrain.py --data-dir data/pretrain --tokenizer checkpoints_v2/spm.model \
+    --n-layer 6 --n-head 6 --n-embd 384 --block-size 256 --dropout 0.1 \
+    --batch-size 16 --grad-accum-steps 4 --max-steps 4000 \
+    --early-stopping-patience 8 \
+    --out-dir checkpoints_v2 --ckpt-name gpt_v2.pt --device cpu --no-amp
 
 # 3) Chat with the trained binary checkpoint (the interface)
-python chat.py --ckpt checkpoints/gpt.pt --chat --device cpu
+python chat.py --ckpt checkpoints_v2/gpt_v2.pt --chat --device cpu
 ```
+
+The prose corpus matters far more than model size for fluency: on CPU this
+~14M-param model reaches recognizable dramatic English — character speech tags
+and stage directions — within ~1500 steps, where an earlier 2.2M-param model on
+82K words of terse Markdown only produced disconnected keywords. A smaller/faster
+smoke config (`--vocab-size 2000`, `--n-layer 4 --n-head 4 --n-embd 192
+--block-size 128 --max-steps 2500`, default `checkpoints/`) still works for a
+quick end-to-end check.
 
 To train the experimental elastic-mesh core instead, add `--use-elastic-mesh`
 to the `pretrain.py` command (optionally `--mesh-num-experts`, `--mesh-top-k`,
