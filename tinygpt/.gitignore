@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Generated training corpus (derived from repo docs; regenerable)
+data/pretrain/corpus.md
