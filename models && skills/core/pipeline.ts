@@ -55,6 +55,8 @@ export interface PipelineResult {
   selfModelSurprise: number;
   /** Section 3.3: 1 if live correction fired on this tick's hyperdimensional settle, else 0. */
   liveCorrections: number;
+  /** Per-elastic-core-neuron movement from this tick, keyed by neuron id. */
+  elasticStateDeltas: Map<number, number>;
 }
 
 interface RunRecord {
@@ -310,6 +312,24 @@ export class NeuroPipeline {
     this.valueRange!.applyDecay();
   }
 
+  /**
+   * Grow the Elastic Core by one neuron and enroll the new neuron id in the
+   * zero-sum ValueRangeAllocator without reinitializing existing allocations.
+   */
+  addElasticNeuron(group?: string): number {
+    this.ensureSubsystems();
+    this.ensureValueInitialized();
+    const neuronId = this.elasticCore!.addNeuron(group);
+    this.valueRange!.addNeuron(String(neuronId));
+    this.valueBudgetSize = Math.max(this.valueBudgetSize, neuronId + 1);
+    return neuronId;
+  }
+
+  getValeFraction(neuronId: number): number | undefined {
+    this.ensureValueInitialized();
+    return this.valueRange!.getValeFractions().get(String(neuronId));
+  }
+
   // ─── Core pipeline ───────────────────────────────────────────────────────
 
   /**
@@ -393,6 +413,7 @@ export class NeuroPipeline {
         inputShape: [meshNodeCount],
     // ── Step 2: Elastic core propagation ────────────────────────────────────
     let coreOutput: number[];
+    let elasticStateDeltas = new Map<number, number>();
     {
       const t0 = Date.now();
       const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
@@ -403,6 +424,7 @@ export class NeuroPipeline {
         drivenNeurons: new Set([0]),
       });
       coreOutput = Array.from(result.output);
+      elasticStateDeltas = new Map(result.stateDeltas);
       this.feedbackToValueBudget(result.stateDeltas);
       const durationMs = Date.now() - t0;
       steps.push({
@@ -580,6 +602,7 @@ export class NeuroPipeline {
       alignment,
       selfModelSurprise,
       liveCorrections,
+      elasticStateDeltas,
     };
   }
 

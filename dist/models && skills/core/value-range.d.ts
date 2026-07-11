@@ -23,6 +23,13 @@ export declare class ValueRangeAllocator {
      */
     initializeNeurons(neuronStates: NeuronState[]): void;
     /**
+     * Add a neuron to the existing zero-sum value budget without resetting the
+     * learned distribution. The new neuron's initial points are taken
+     * proportionally from existing neurons, then the allocation is normalized
+     * back to the fixed totalPoints budget.
+     */
+    addNeuron(id: string, initialPoints?: number): void;
+    /**
      * Zero-sum update: apply delta*0.1 to target neuron; redistribute
      * the opposite amount proportionally across all other neurons.
      */

@@ -233,6 +233,22 @@ export class NeuroPipeline {
         }
         this.valueRange.applyDecay();
     }
+    /**
+     * Grow the Elastic Core by one neuron and enroll the new neuron id in the
+     * zero-sum ValueRangeAllocator without reinitializing existing allocations.
+     */
+    addElasticNeuron(group) {
+        this.ensureSubsystems();
+        this.ensureValueInitialized();
+        const neuronId = this.elasticCore.addNeuron(group);
+        this.valueRange.addNeuron(String(neuronId));
+        this.valueBudgetSize = Math.max(this.valueBudgetSize, neuronId + 1);
+        return neuronId;
+    }
+    getValeFraction(neuronId) {
+        this.ensureValueInitialized();
+        return this.valueRange.getValeFractions().get(String(neuronId));
+    }
     // ─── Core pipeline ───────────────────────────────────────────────────────
     /**
      * Run all 7 subsystems in sequence on an embedding vector.
@@ -313,6 +329,7 @@ export class NeuroPipeline {
                 inputShape: [meshNodeCount],
         // ── Step 2: Elastic core propagation ────────────────────────────────────
         let coreOutput;
+        let elasticStateDeltas = new Map();
         {
             const t0 = Date.now();
             const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
@@ -323,6 +340,7 @@ export class NeuroPipeline {
                 drivenNeurons: new Set([0]),
             });
             coreOutput = Array.from(result.output);
+            elasticStateDeltas = new Map(result.stateDeltas);
             this.feedbackToValueBudget(result.stateDeltas);
             const durationMs = Date.now() - t0;
             steps.push({
@@ -477,6 +495,7 @@ export class NeuroPipeline {
             alignment,
             selfModelSurprise,
             liveCorrections,
+            elasticStateDeltas,
         };
     }
     // ─── Stats ──────────────────────────────────────────────────────────

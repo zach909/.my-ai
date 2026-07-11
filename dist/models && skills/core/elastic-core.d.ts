@@ -125,6 +125,7 @@ export declare class ElasticCoreBlock {
     setConnectionScalar(target: number, source: number, weight: number): void;
     constructor(config?: ElasticCoreConfig);
     setNeuronGroup(neuronId: number, group: string): void;
+    addNeuron(group?: string): number;
     getNeuronCount(): number;
     getStateDim(): number;
     addNeuron(group?: string): number;
