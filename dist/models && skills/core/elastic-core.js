@@ -25,6 +25,9 @@ export class ElasticCoreBlock {
     outputProjection;
     groups = new Map();
     rngState;
+    quantizationAware;
+    quantizationBits;
+    quantizationResidual;
     constructor(config = {}) {
         this.neuronCount = config.neuronCount ?? 16;
         this.stateDim = config.stateDim ?? 8;
@@ -34,11 +37,14 @@ export class ElasticCoreBlock {
         this.convergenceThreshold = config.convergenceThreshold ?? 1e-3;
         this.inputFlagDim = Math.min(this.stateDim - 1, Math.max(0, config.inputFlagDim ?? 0));
         this.rngState = config.seed ?? 123456789;
+        this.quantizationAware = config.quantizationAware ?? false;
+        this.quantizationBits = Math.max(2, Math.min(16, config.quantizationBits ?? 8));
         this.state = new Float32Array(this.neuronCount * this.stateDim);
         this.bias = new Float32Array(this.neuronCount * this.stateDim);
         this.weights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
         this.inputProjection = new Float32Array(this.inputDim * this.stateDim);
         this.outputProjection = new Float32Array(this.stateDim * this.outputDim);
+        this.quantizationResidual = new Float32Array(this.state.length);
         const scale = config.weightScale ?? Math.sqrt(1 / Math.max(1, this.neuronCount * this.stateDim));
         for (let i = 0; i < this.bias.length; i++)
             this.bias[i] = (this.rand() * 2 - 1) * 0.05;
@@ -61,6 +67,83 @@ export class ElasticCoreBlock {
     setNeuronGroup(neuronId, group) {
         this.assertNeuron(neuronId);
         this.groups.set(neuronId, group);
+    }
+    /**
+     * Add a live neuron to the core and wire it all-to-all with every existing
+     * neuron. This is the Elastic Core side of the extension-builder story:
+     * newly materialized NeuroLang/skill neurons become ordinary mesh neurons,
+     * not a side table or separate adapter layer. Existing weights are preserved.
+     */
+    addNeuron(group) {
+        const oldCount = this.neuronCount;
+        const newCount = oldCount + 1;
+        const newState = new Float32Array(newCount * this.stateDim);
+        newState.set(this.state);
+        const newResidual = new Float32Array(newCount * this.stateDim);
+        newResidual.set(this.quantizationResidual);
+        const newBias = new Float32Array(newCount * this.stateDim);
+        newBias.set(this.bias);
+        for (let d = 0; d < this.stateDim; d++) {
+            newBias[oldCount * this.stateDim + d] = (this.rand() * 2 - 1) * 0.05;
+        }
+        const oldWeights = this.weights;
+        const newWeights = new Float32Array(newCount * newCount * this.stateDim * this.stateDim);
+        const scale = Math.sqrt(1 / Math.max(1, newCount * this.stateDim));
+        const newIndex = (target, source, outDim, inDim) => (((target * newCount + source) * this.stateDim + outDim) * this.stateDim + inDim);
+        const oldIndex = (target, source, outDim, inDim) => (((target * oldCount + source) * this.stateDim + outDim) * this.stateDim + inDim);
+        for (let t = 0; t < newCount; t++) {
+            for (let src = 0; src < newCount; src++) {
+                if (t === src)
+                    continue;
+                for (let od = 0; od < this.stateDim; od++) {
+                    for (let id = 0; id < this.stateDim; id++) {
+                        if (t < oldCount && src < oldCount) {
+                            newWeights[newIndex(t, src, od, id)] = oldWeights[oldIndex(t, src, od, id)];
+                        }
+                        else {
+                            newWeights[newIndex(t, src, od, id)] = (this.rand() * 2 - 1) * scale;
+                        }
+                    }
+                }
+            }
+        }
+        this.neuronCount = newCount;
+        this.state = newState;
+        this.quantizationResidual = newResidual;
+        this.bias = newBias;
+        this.weights = newWeights;
+        if (group !== undefined)
+            this.groups.set(oldCount, group);
+        return oldCount;
+    }
+    getNeuronCount() {
+        return this.neuronCount;
+    }
+    connectionDensity() {
+        return this.neuronCount <= 1 ? 0 : 1.0;
+    }
+    /**
+     * Program an explicit dense source->target block. This is how extension
+     * builder definitions can install cross-dimensional links directly: every
+     * output dimension of the target can read every input dimension of the source.
+     */
+    setConnectionBlock(target, source, block) {
+        this.assertNeuron(target);
+        this.assertNeuron(source);
+        if (target === source)
+            throw new Error('self-connections are not part of the all-to-all core');
+        if (block.length !== this.stateDim * this.stateDim) {
+            throw new Error(`connection block must have ${this.stateDim * this.stateDim} entries`);
+        }
+        for (let od = 0; od < this.stateDim; od++) {
+            for (let id = 0; id < this.stateDim; id++) {
+                this.weights[this.weightIndex(target, source, od, id)] = block[od * this.stateDim + id];
+            }
+        }
+    }
+    /** Convenience helper for DSL-style scalar connections: fill the whole block. */
+    setConnectionScalar(target, source, weight) {
+        this.setConnectionBlock(target, source, new Float32Array(this.stateDim * this.stateDim).fill(weight));
     }
     connectionDensity() {
         return this.neuronCount <= 1 ? 0 : 1.0;
@@ -111,6 +194,8 @@ export class ElasticCoreBlock {
                     residual += Math.abs(value - old);
                 }
             }
+            const quantized = this.quantizeWithResidual(next);
+            this.state = quantized.state;
             this.state = next;
             for (const n of driven)
                 if (n >= 0 && n < this.neuronCount)
@@ -129,6 +214,7 @@ export class ElasticCoreBlock {
             residual,
             inputTopography: this.inputTopography(),
             stateDeltas: this.stateDeltas(startState),
+            quantizationDrift: this.meanAbs(this.quantizationResidual),
         };
     }
     inject(neuronId, input, flag) {
@@ -152,6 +238,30 @@ export class ElasticCoreBlock {
             for (let d = 0; d < this.stateDim; d++)
                 out[o] += mean[d] * this.outputProjection[d * this.outputDim + o];
         return out;
+    }
+    quantizeWithResidual(next) {
+        if (!this.quantizationAware) {
+            this.quantizationResidual.fill(0);
+            return { state: next, drift: 0 };
+        }
+        const levels = (1 << this.quantizationBits) - 1;
+        const quantized = new Float32Array(next.length);
+        let drift = 0;
+        for (let i = 0; i < next.length; i++) {
+            const compensated = Math.max(-1, Math.min(1, next[i] + this.quantizationResidual[i]));
+            const q = Math.round(((compensated + 1) / 2) * levels);
+            const dequantized = (q / levels) * 2 - 1;
+            quantized[i] = dequantized;
+            this.quantizationResidual[i] = compensated - dequantized;
+            drift += Math.abs(this.quantizationResidual[i]);
+        }
+        return { state: quantized, drift: drift / Math.max(1, next.length) };
+    }
+    meanAbs(values) {
+        let sum = 0;
+        for (const value of values)
+            sum += Math.abs(value);
+        return sum / Math.max(1, values.length);
     }
     stateDeltas(startState) {
         const deltas = new Map();

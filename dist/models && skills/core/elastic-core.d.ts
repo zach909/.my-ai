@@ -8,6 +8,10 @@ export interface ElasticCoreConfig {
     weightScale?: number;
     seed?: number;
     inputFlagDim?: number;
+    /** Enable quantization-aware state settling: quantize inside forward and retain residual feedback. */
+    quantizationAware?: boolean;
+    /** Bit width for quantized state values when quantizationAware is enabled. */
+    quantizationBits?: number;
 }
 export interface ElasticCoreRunOptions {
     /** Vale fraction per neuron in [0,1]. High vale resists state movement. */
@@ -26,6 +30,8 @@ export interface ElasticCoreResult {
     inputTopography: Map<number, number>;
     /** Per-neuron L1 state movement during the settle, for vale-budget feedback. */
     stateDeltas: Map<number, number>;
+    /** Mean absolute residual introduced by the quantizer on this forward pass. */
+    quantizationDrift: number;
 }
 /**
  * Experimental transformer-core replacement for Prometheus Elastic Core.
@@ -40,6 +46,7 @@ export interface ElasticCoreResult {
  * are summed.
  */
 export declare class ElasticCoreBlock {
+    private neuronCount;
     private readonly neuronCount;
     private readonly stateDim;
     private readonly inputDim;
@@ -54,6 +61,28 @@ export declare class ElasticCoreBlock {
     private outputProjection;
     private groups;
     private rngState;
+    private readonly quantizationAware;
+    private readonly quantizationBits;
+    private quantizationResidual;
+    constructor(config?: ElasticCoreConfig);
+    setNeuronGroup(neuronId: number, group: string): void;
+    /**
+     * Add a live neuron to the core and wire it all-to-all with every existing
+     * neuron. This is the Elastic Core side of the extension-builder story:
+     * newly materialized NeuroLang/skill neurons become ordinary mesh neurons,
+     * not a side table or separate adapter layer. Existing weights are preserved.
+     */
+    addNeuron(group?: string): number;
+    getNeuronCount(): number;
+    connectionDensity(): number;
+    /**
+     * Program an explicit dense source->target block. This is how extension
+     * builder definitions can install cross-dimensional links directly: every
+     * output dimension of the target can read every input dimension of the source.
+     */
+    setConnectionBlock(target: number, source: number, block: Float32Array | number[]): void;
+    /** Convenience helper for DSL-style scalar connections: fill the whole block. */
+    setConnectionScalar(target: number, source: number, weight: number): void;
     constructor(config?: ElasticCoreConfig);
     setNeuronGroup(neuronId: number, group: string): void;
     connectionDensity(): number;
@@ -61,6 +90,8 @@ export declare class ElasticCoreBlock {
     forward(input: Float32Array, options?: ElasticCoreRunOptions): ElasticCoreResult;
     private inject;
     private readout;
+    private quantizeWithResidual;
+    private meanAbs;
     private stateDeltas;
     private inputTopography;
     private weightIndex;
