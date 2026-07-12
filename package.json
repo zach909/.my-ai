@@ -11,6 +11,7 @@
     "build": "tsc",
     "start": "node dist/interface/main.js",
     "cli": "node dist/interface/main.js",
+    "web": "node dist/interface/main.js web 7860",
     "test": "tsc && node test/smoke.mjs"
   },
   "keywords": [
