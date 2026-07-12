@@ -364,6 +364,32 @@ def test_mesh_qat():
     check(m.quantization_error() < 0.05, "QAT quantization error stays small")
 
 
+def test_interference():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip interference test (torch not installed)")
+        return
+    import torch
+    from tinygpt.interference import phase_consensus, grover_amplify, collapse
+
+    # contradictory (opposite-phase) candidate cancels; in-phase reinforce
+    w = phase_consensus(torch.tensor([1.0, 1.0, 1.0]), torch.tensor([0.0, 0.0, 3.14159]))
+    check(w[0] > 0.9 and w[2] < 0.05, "interference: contradictory candidate cancels, consistent reinforces")
+
+    # collapse follows the Born rule (probability ∝ amplitude^2)
+    torch.manual_seed(0)
+    counts = [0, 0]
+    for _ in range(4000):
+        i, _ = collapse(torch.tensor([1.0, 2.0])); counts[i] += 1
+    check(3.2 < counts[1] / max(1, counts[0]) < 4.8, "interference: collapse samples ∝ amplitude^2 (Born rule)")
+
+    # Grover amplification boosts a marked candidate; kept separate from consensus
+    _, before = collapse(torch.tensor([1.0, 1.0, 1.0]))
+    _, after = collapse(grover_amplify(torch.tensor([1.0, 1.0, 1.0]), target=1, boost=3.0))
+    check(after[1] > before[1] + 0.2, "interference: Grover amplification boosts the marked candidate")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -392,7 +418,7 @@ def test_moe():
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
-               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_live_guide,
+               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_live_guide,
                test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:
