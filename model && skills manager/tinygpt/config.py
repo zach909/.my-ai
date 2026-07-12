@@ -49,6 +49,8 @@ class ModelConfig:
     sustained_divergence_ticks: int = 3    # §7 consecutive off-track ticks before damping
     skill_groups: int = 1                  # §3 partition neurons into this many skill groups (1 = no routing)
     skill_top_k: int = 1                   # §3 number of skill groups active per input
+    quant_enabled: bool = False            # §8 quantization-aware training (fake-quant W in forward)
+    quant_bits: int = 8                    # §8 bit-width for QAT
 
 
 @dataclass

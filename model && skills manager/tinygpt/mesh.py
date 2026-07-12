@@ -83,6 +83,13 @@ class MeshLM(nn.Module):
         self._skill_usage = torch.zeros(self.n_groups)
         self._last_skill_aux = 0.0
 
+        # §8 quantization-aware training: the quantizer sits inside the forward
+        # pass, so the mesh learns weights that already expect their quantized
+        # form. Straight-through estimator: forward uses quantized W, gradient
+        # flows to the full-precision W unchanged.
+        self.quant_enabled = cfg.quant_enabled
+        self.quant_bits = cfg.quant_bits
+
         # §2 vale / value budget: per-neuron plasticity. vale in [0,1]; high-vale
         # neurons resist change, low-vale neurons learn readily. It gates the
         # weight update — a neuron i's incoming connection + bias gradients are
@@ -144,6 +151,8 @@ class MeshLM(nn.Module):
         """
         B = state.size(0)
         W = self.W * self.self_mask
+        if self.quant_enabled:
+            W = self._fake_quant(W)
         ones = torch.ones(B, self.n_input, 1, device=state.device, dtype=state.dtype)
         zeros = torch.zeros(B, self.N - self.n_input, 1, device=state.device, dtype=state.dtype)
         consecutive_high = 0
@@ -214,6 +223,24 @@ class MeshLM(nn.Module):
     def skill_usage(self) -> dict:
         """§3: fraction of inputs that activated each skill group, last forward."""
         return {self.skills[g]: float(self._skill_usage[g]) for g in range(self.n_groups)}
+
+    def _fake_quant(self, w: torch.Tensor) -> torch.Tensor:
+        """§8 symmetric fake-quantization with a straight-through estimator: the
+        returned tensor equals the quantized weights numerically but carries the
+        full-precision gradient (w + (wq - w).detach())."""
+        qmax = 2 ** (self.quant_bits - 1) - 1
+        scale = w.detach().abs().max() / qmax
+        if scale <= 0:
+            return w
+        wq = torch.clamp(torch.round(w / scale), -qmax - 1, qmax) * scale
+        return w + (wq - w).detach()
+
+    @torch.no_grad()
+    def quantization_error(self) -> float:
+        """Mean abs difference between W and its quantized form — the drift QAT
+        is training the mesh to already expect (should shrink over training)."""
+        W = self.W * self.self_mask
+        return float((self._fake_quant(W) - W).abs().mean())
 
     # ---- §2 vale / value budget --------------------------------------------
     @torch.no_grad()

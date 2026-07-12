@@ -337,6 +337,33 @@ def test_mesh_skills():
     check(l.item() < l0, "mesh skills: routed mesh trains (loss decreases)")
 
 
+def test_mesh_qat():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip mesh QAT test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    torch.manual_seed(0)
+    m = build_model(ModelConfig(vocab_size=16, block_size=12, arch="mesh", mesh_neurons=20,
+                                mesh_dims=4, mesh_input=6, settle_ticks=4,
+                                quant_enabled=True, quant_bits=8))
+    seq = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]])
+    x, y = seq[:, :-1], seq[:, 1:]
+    opt = m.configure_optimizers(0.01, 5e-3, (0.9, 0.95), "cpu")
+    _, l0 = m(x, y); l0 = l0.item()
+    for _ in range(100):
+        opt.zero_grad(); _, loss = m(x, y); loss.backward(); opt.step()
+    check(loss.item() < l0 * 0.5, f"QAT mesh trains with in-forward quantization ({l0:.2f}->{loss.item():.2f})")
+    m.eval()
+    out = m.generate(torch.tensor([[1, 2, 3]]), max_new_tokens=5, temperature=0.0)
+    check(out[0, 3:].tolist() == [4, 5, 6, 7, 8], "QAT mesh reproduces the sequence under quantization")
+    check(m.quantization_error() < 0.05, "QAT quantization error stays small")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -365,7 +392,7 @@ def test_moe():
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
-               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_live_guide,
+               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_live_guide,
                test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:
