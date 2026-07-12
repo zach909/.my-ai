@@ -66,6 +66,23 @@ class MeshLM(nn.Module):
                              (1.0 - torch.eye(n_neurons)).view(n_neurons, n_neurons, 1, 1))
         self.dropout = nn.Dropout(cfg.dropout)
 
+        # §3 skills as neuron-groups: partition neurons into groups; a router
+        # picks which groups are active per input. Non-selected groups stay fully
+        # wired (topology unchanged) but dormant — they hold their state instead
+        # of updating, so per-tick compute is sparse while density stays total.
+        # A neuron's group is just a label the router uses. skill_groups=1 means
+        # no routing (every neuron always active), preserving the base behaviour.
+        self.n_groups = max(1, cfg.skill_groups)
+        self.skill_top_k = max(1, min(cfg.skill_top_k, self.n_groups))
+        group_of = torch.arange(n_neurons) % self.n_groups
+        self.register_buffer("group_of", group_of)
+        self.skills = list(cfg.skills) if cfg.skills and len(cfg.skills) == self.n_groups \
+            else [f"skill_{g}" for g in range(self.n_groups)]
+        if self.n_groups > 1:
+            self.router = nn.Linear(n_input * self.content, self.n_groups, bias=False)
+        self._skill_usage = torch.zeros(self.n_groups)
+        self._last_skill_aux = 0.0
+
         # §2 vale / value budget: per-neuron plasticity. vale in [0,1]; high-vale
         # neurons resist change, low-vale neurons learn readily. It gates the
         # weight update — a neuron i's incoming connection + bias gradients are
@@ -90,7 +107,31 @@ class MeshLM(nn.Module):
         self._continuous = False
         self._carried = None
 
-    def _settle(self, state: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
+    def _skill_mask(self, emb: torch.Tensor):
+        """§3: route this position's input to its top-k skill groups and return a
+        per-neuron active mask (B, N). Neurons in non-selected groups stay
+        dormant. Also records a load-balancing aux loss + usage. Returns None
+        when routing is disabled (single group)."""
+        if self.n_groups <= 1:
+            return None
+        B = emb.size(0)
+        logits = self.router(emb.reshape(B, -1))                 # (B, n_groups)
+        probs = torch.softmax(logits, dim=-1)
+        top = probs.topk(self.skill_top_k, dim=-1).indices       # (B, k)
+        group_active = torch.zeros(B, self.n_groups, device=emb.device, dtype=torch.bool)
+        group_active.scatter_(1, top, True)
+        # expand group activation to neurons via each neuron's group label
+        active = group_active[:, self.group_of]                  # (B, N)
+        # load balance (Switch): groups * mean(fraction_selected * mean_prob)
+        with torch.no_grad():
+            self._skill_usage = group_active.float().mean(dim=0).detach().cpu()
+        f = group_active.float().mean(dim=0)
+        self._last_skill_aux = float((self.n_groups * (f * probs.mean(dim=0)).sum()).detach())
+        self._skill_aux_term = self.n_groups * (f * probs.mean(dim=0)).sum()
+        return active
+
+    def _settle(self, state: torch.Tensor, emb: torch.Tensor,
+                active: Optional[torch.Tensor] = None) -> torch.Tensor:
         """Run the settle loop for one position; `emb` (B, n_input, content) is
         clamped onto the input neurons each tick.
 
@@ -116,6 +157,13 @@ class MeshLM(nn.Module):
             input_block = torch.cat([ones, emb], dim=2)                  # (B, n_input, D)
             rest = torch.cat([zeros, settled[:, self.n_input:, 1:]], dim=2)
             state = torch.cat([input_block, rest], dim=1)
+
+            # §3: neurons in non-selected skill groups stay dormant — hold their
+            # previous state instead of updating. Input neurons always update.
+            if active is not None:
+                hold = ~active.clone()
+                hold[:, :self.n_input] = False
+                state = torch.where(hold.unsqueeze(-1), prev, state)
 
             # tick-to-tick divergence (self-model surprise). Detached: it only
             # drives the control-flow decision, not the gradient.
@@ -143,9 +191,13 @@ class MeshLM(nn.Module):
         else:
             state = torch.zeros(B, self.N, self.D, device=idx.device)
         logits_steps = []
+        skill_aux = torch.zeros((), device=idx.device)
         for t in range(T):
             emb = self.wte(idx[:, t]).view(B, self.n_input, self.content)
-            state = self._settle(state, emb)
+            active = self._skill_mask(emb)                       # §3 routing (or None)
+            if active is not None:
+                skill_aux = skill_aux + self._skill_aux_term
+            state = self._settle(state, emb, active)
             logits_steps.append(self.readout(self.dropout(state.reshape(B, -1))))
         logits = torch.stack(logits_steps, dim=1)  # (B, T, vocab)
         if self._continuous:
@@ -154,8 +206,14 @@ class MeshLM(nn.Module):
         if targets is not None:
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)),
                                    targets.reshape(-1), ignore_index=-1)
+            if self.n_groups > 1:
+                loss = loss + self.cfg.moe_aux_weight * (skill_aux / max(1, T))
             return logits, loss
         return logits[:, [-1], :], None
+
+    def skill_usage(self) -> dict:
+        """§3: fraction of inputs that activated each skill group, last forward."""
+        return {self.skills[g]: float(self._skill_usage[g]) for g in range(self.n_groups)}
 
     # ---- §2 vale / value budget --------------------------------------------
     @torch.no_grad()

@@ -306,6 +306,37 @@ def test_mesh_state_memory():
     check(torch.allclose(m2.get_state(), m.get_state()), "mesh: neuron-state memory saves and reloads (memory = neuron state)")
 
 
+def test_mesh_skills():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip mesh skills test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    torch.manual_seed(0)
+    m = build_model(ModelConfig(vocab_size=16, block_size=10, arch="mesh", mesh_neurons=20,
+                                mesh_dims=4, mesh_input=6, settle_ticks=4,
+                                skill_groups=4, skill_top_k=1, skills=["math", "code", "prose", "chat"]))
+    x = torch.randint(0, 16, (2, 8)); y = torch.randint(0, 16, (2, 8))
+    logits, loss = m(x, y)
+    check(torch.isfinite(loss), "mesh skills: forward + loss finite with routing")
+    usage = m.skill_usage()
+    check(set(usage) == {"math", "code", "prose", "chat"}, "mesh skills: groups are named")
+    active = sum(1 for v in usage.values() if v > 0)
+    check(1 <= active <= x.size(0) * m.skill_top_k and active < 4,
+          "mesh skills: top-1 routing is sparse (not all groups active)")
+    check(m._last_skill_aux > 0, "mesh skills: load-balancing aux loss computed")
+    # routed mesh still trains
+    opt = m.configure_optimizers(0.01, 5e-3, (0.9, 0.95), "cpu")
+    _, l0 = m(x, y); l0 = l0.item()
+    for _ in range(40):
+        opt.zero_grad(); _, l = m(x, y); l.backward(); opt.step()
+    check(l.item() < l0, "mesh skills: routed mesh trains (loss decreases)")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -334,7 +365,7 @@ def test_moe():
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
-               test_mesh_live_correction, test_mesh_state_memory, test_live_guide,
+               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_live_guide,
                test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:

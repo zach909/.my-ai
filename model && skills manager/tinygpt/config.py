@@ -47,6 +47,8 @@ class ModelConfig:
     vale_init: float = 0.1        # §2 initial per-neuron vale (plasticity budget)
     divergence_tolerance: float = 0.5      # §7 per-tick divergence above this is "off track"
     sustained_divergence_ticks: int = 3    # §7 consecutive off-track ticks before damping
+    skill_groups: int = 1                  # §3 partition neurons into this many skill groups (1 = no routing)
+    skill_top_k: int = 1                   # §3 number of skill groups active per input
 
 
 @dataclass
