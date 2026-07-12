@@ -18,8 +18,10 @@ Run:
 from __future__ import annotations
 
 import argparse
+import http.client
 import json
 import os
+import subprocess
 import sys
 import time
 import urllib.parse
@@ -40,6 +42,64 @@ _DEFAULT_CKPTS = [
 ]
 
 _generator = None  # lazily-loaded tinygpt.infer.Generator
+
+# The TypeScript pipeline (all-to-all mesh, MoE, hyperdimensional, quantum
+# interference, NeuroLang/extension builder, plugins) runs as a sibling backend;
+# the dashboard's subsystem panels are proxied to it. Chat is NOT proxied — it
+# is served by the trained model above.
+_TS_PORT = 7861
+_ts_process = None
+# Subsystem endpoints proxied to the TS backend (everything except /api/chat and
+# the model-status/health endpoints this server owns).
+_PROXY_PATHS = {"/api/systems", "/api/neuri", "/api/neurons", "/api/plugins",
+                "/api/thorns", "/api/train"}
+# /api/systems is the dashboard's name for the TS backend's own /api/status.
+_PROXY_REWRITE = {"/api/systems": "/api/status"}
+
+
+def _start_ts_backend() -> None:
+    """Spawn the compiled TS pipeline and wait for it to accept connections."""
+    global _ts_process
+    main_js = os.path.join(_ROOT, "dist", "interface", "main.js")
+    if not os.path.exists(main_js):
+        print("[server] dist/interface/main.js missing — run `npm run build`; "
+              "subsystem panels will be unavailable.")
+        return
+    try:
+        _ts_process = subprocess.Popen(
+            ["node", main_js, "web", str(_TS_PORT)], cwd=_ROOT,
+            stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
+        )
+        for _ in range(30):
+            time.sleep(0.5)
+            try:
+                c = http.client.HTTPConnection("localhost", _TS_PORT, timeout=1)
+                c.request("GET", "/api/status")
+                c.getresponse().read()
+                c.close()
+                print(f"[server] TS subsystem backend ready on :{_TS_PORT}")
+                return
+            except Exception:
+                continue
+        print("[server] TS backend did not come up in time; panels may be empty.")
+    except Exception as e:
+        print(f"[server] could not start TS backend: {e}")
+
+
+def _proxy(method: str, path: str, body: Optional[bytes]) -> tuple[int, bytes]:
+    """Forward a request to the TS backend; return (status, body)."""
+    target = _PROXY_REWRITE.get(path, path)
+    try:
+        c = http.client.HTTPConnection("localhost", _TS_PORT, timeout=30)
+        headers = {"Content-Type": "application/json"} if body else {}
+        c.request(method, target, body, headers)
+        resp = c.getresponse()
+        data = resp.read()
+        status = resp.status
+        c.close()
+        return status, data
+    except Exception as e:
+        return 503, json.dumps({"error": f"subsystem backend unavailable: {e}"}).encode()
 
 
 def _resolve_ckpt(explicit: Optional[str]) -> Optional[str]:
@@ -71,7 +131,8 @@ class NeuroClaw(BaseHTTPRequestHandler):
             self._serve_file(os.path.join(os.path.dirname(__file__), "index.html"), "text/html")
         elif path == "/health":
             self._json({"status": "ok", "ts": time.time()})
-        elif path == "/api/status":
+        elif path in ("/api/status", "/api/model"):
+            # The generator model this server owns (the thing that writes replies).
             if _generator is None:
                 self._json({"running": False, "model": None})
                 return
@@ -90,6 +151,9 @@ class NeuroClaw(BaseHTTPRequestHandler):
                     "mesh_qubits": s["mesh_n_qubits"],
                 },
             })
+        elif path in _PROXY_PATHS:
+            status, data = _proxy("GET", path, None)
+            self._raw_json(status, data)
         else:
             self.send_error(404, "Not found")
 
@@ -101,6 +165,10 @@ class NeuroClaw(BaseHTTPRequestHandler):
             self._json({"error": "invalid JSON"})
             return
         path = urllib.parse.urlparse(self.path).path
+        if path in _PROXY_PATHS:
+            status, data = _proxy("POST", path, json.dumps(body).encode())
+            self._raw_json(status, data)
+            return
         if path != "/api/chat":
             self.send_error(404, "Not found")
             return
@@ -148,7 +216,10 @@ class NeuroClaw(BaseHTTPRequestHandler):
 
     def _json(self, data: Any) -> None:
         payload = json.dumps(data, ensure_ascii=False, default=str).encode()
-        self.send_response(200)
+        self._raw_json(200, payload)
+
+    def _raw_json(self, status: int, payload: bytes) -> None:
+        self.send_response(status)
         self.send_header("Content-Type", "application/json")
         self.send_header("Content-Length", str(len(payload)))
         self._cors()
@@ -174,12 +245,16 @@ def run(host: str = "127.0.0.1", port: int = 7860, ckpt: Optional[str] = None) -
               "... --out-dir checkpoints_mesh_v2 --ckpt-name gpt_mesh_v2.pt")
         sys.exit(1)
     _load_generator(ckpt_path)
+    _start_ts_backend()
     server = HTTPServer((host, port), NeuroClaw)
     print(f"Neuroclaw ready on http://{host}:{port}")
     try:
         server.serve_forever()
     except KeyboardInterrupt:
         print("\nNeuroclaw shutdown")
+    finally:
+        if _ts_process is not None:
+            _ts_process.terminate()
 
 
 def parse_args():
