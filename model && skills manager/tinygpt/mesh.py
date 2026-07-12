@@ -84,6 +84,12 @@ class MeshLM(nn.Module):
         self._live_corrections = 0
         self._last_surprise = 0.0
 
+        # §9 continuous operation: when on, the neuron state carries across
+        # forward calls instead of resetting to zeros — the mesh keeps thinking
+        # from where it was. `_carried` IS the memory (the saved neuron state).
+        self._continuous = False
+        self._carried = None
+
     def _settle(self, state: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
         """Run the settle loop for one position; `emb` (B, n_input, content) is
         clamped onto the input neurons each tick.
@@ -130,13 +136,20 @@ class MeshLM(nn.Module):
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None):
         B, T = idx.shape
         self._live_corrections = 0  # §7: count re-routes applied this pass
-        state = torch.zeros(B, self.N, self.D, device=idx.device)
+        # §9: continue from carried neuron state if running continuously, else
+        # start fresh. Carried state is detached (truncated BPTT across calls).
+        if self._continuous and self._carried is not None and self._carried.size(0) == B:
+            state = self._carried.to(idx.device)
+        else:
+            state = torch.zeros(B, self.N, self.D, device=idx.device)
         logits_steps = []
         for t in range(T):
             emb = self.wte(idx[:, t]).view(B, self.n_input, self.content)
             state = self._settle(state, emb)
             logits_steps.append(self.readout(self.dropout(state.reshape(B, -1))))
         logits = torch.stack(logits_steps, dim=1)  # (B, T, vocab)
+        if self._continuous:
+            self._carried = state.detach()
 
         if targets is not None:
             loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)),
@@ -172,6 +185,36 @@ class MeshLM(nn.Module):
 
     def get_vale(self):
         return self.vale.detach().cpu().tolist()
+
+    # ---- §9 continuous operation + neuron-state memory ---------------------
+    def enable_continuous(self, on: bool = True) -> None:
+        """Turn on continuous mode: the neuron state carries across calls."""
+        self._continuous = on
+        if not on:
+            self._carried = None
+
+    def reset_state(self) -> None:
+        self._carried = None
+
+    def get_state(self):
+        """The current carried neuron state (the mesh's 'thoughts'), or None."""
+        return None if self._carried is None else self._carried.detach().cpu()
+
+    def save_state(self, path: str) -> Optional[str]:
+        """Memory = save the neuron state (the neuron inputs) to disk."""
+        if self._carried is None:
+            return None
+        import os
+        os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+        torch.save({"state": self._carried.detach().cpu(), "N": self.N, "D": self.D}, path)
+        return path
+
+    def load_state(self, path: str) -> None:
+        """Reload a previously saved neuron state, resuming that train of thought."""
+        data = torch.load(path, map_location="cpu")
+        if data.get("N") == self.N and data.get("D") == self.D:
+            self._carried = data["state"]
+            self._continuous = True
 
     def num_params(self, non_embedding: bool = True) -> int:
         n = sum(p.numel() for p in self.parameters())

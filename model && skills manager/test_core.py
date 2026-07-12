@@ -275,6 +275,37 @@ def test_mesh_live_correction():
     check(torch.isfinite(out).all(), "mesh: output stays finite after live correction (re-routed, not halted)")
 
 
+def test_mesh_state_memory():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip mesh state-memory test (torch not installed)")
+        return
+    import torch, tempfile, os
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=16, block_size=8, arch="mesh", mesh_neurons=14,
+                      mesh_dims=4, mesh_input=5, settle_ticks=3)
+    m = build_model(cfg).eval()
+
+    m(torch.randint(0, 16, (1, 5)))
+    check(m.get_state() is None, "mesh: stateless by default (no carried neuron state)")
+
+    m.enable_continuous(True)
+    m(torch.randint(0, 16, (1, 5)))
+    s1 = m.get_state().clone()
+    m(torch.randint(0, 16, (1, 5)))
+    check(not torch.allclose(s1, m.get_state()), "mesh: continuous mode carries neuron state across calls")
+
+    p = os.path.join(tempfile.mkdtemp(), "mem.pt")
+    m.save_state(p)
+    m2 = build_model(cfg)
+    m2.load_state(p)
+    check(torch.allclose(m2.get_state(), m.get_state()), "mesh: neuron-state memory saves and reloads (memory = neuron state)")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -303,7 +334,8 @@ def test_moe():
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
-               test_mesh_live_correction, test_live_guide, test_shell_action_gated):
+               test_mesh_live_correction, test_mesh_state_memory, test_live_guide,
+               test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:
             fn()
