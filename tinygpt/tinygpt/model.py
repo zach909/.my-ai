@@ -118,6 +118,16 @@ class Block(nn.Module):
         return x
 
 
+def build_model(cfg: ModelConfig):
+    """Build the model the config asks for: the transformer (default) or the
+    all-to-all mesh (§1). Both share the same (idx, targets) -> (logits, loss)
+    interface, so the training/inference code is identical for either."""
+    if cfg.arch == "mesh":
+        from .mesh import MeshLM
+        return MeshLM(cfg)
+    return GPT(cfg)
+
+
 class GPT(nn.Module):
     def __init__(self, cfg: ModelConfig):
         super().__init__()

@@ -37,6 +37,13 @@ class ModelConfig:
     moe_top_k: int = 2
     moe_aux_weight: float = 0.01   # weight of the load-balancing auxiliary loss
     skills: Optional[list] = None  # optional expert/skill names (len == n_experts)
+    # Architecture: "transformer" (default GPT) or "mesh" (the all-to-all
+    # neuron mesh, §1). Mesh hyperparameters are ignored when arch is transformer.
+    arch: str = "transformer"
+    mesh_neurons: int = 24
+    mesh_dims: int = 4             # state dimensions per neuron (dim 0 = input flag)
+    mesh_input: int = 8           # number of externally-driven input neurons
+    settle_ticks: int = 4         # propagation ticks per reasoning step
 
 
 @dataclass

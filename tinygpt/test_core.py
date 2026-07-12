@@ -184,6 +184,35 @@ def test_shell_action_gated():
           "terminal action is disabled by default")
 
 
+def test_mesh_learns():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip mesh test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=16, block_size=12, dropout=0.0, arch="mesh",
+                      mesh_neurons=20, mesh_dims=4, mesh_input=6, settle_ticks=4)
+    m = build_model(cfg)
+    check(type(m).__name__ == "MeshLM", "build_model returns the mesh when arch=mesh")
+
+    seq = torch.tensor([[1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12]])
+    x, y = seq[:, :-1], seq[:, 1:]
+    opt = m.configure_optimizers(0.01, 5e-3, (0.9, 0.95), "cpu")
+    _, l0 = m(x, y)
+    l0 = l0.item()
+    for _ in range(100):
+        opt.zero_grad(); _, loss = m(x, y); loss.backward(); opt.step()
+    check(loss.item() < l0 * 0.5, f"mesh learns via the standard AdamW loop ({l0:.2f}->{loss.item():.2f})")
+
+    out = m.generate(torch.tensor([[1, 2, 3]]), max_new_tokens=5, temperature=0.0)
+    check(out[0, 3:].tolist() == [4, 5, 6, 7, 8], "trained mesh reproduces the learned sequence")
+
+
 def test_moe():
     try:
         import torch  # noqa: F401
@@ -215,7 +244,7 @@ def test_moe():
 
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
-               test_extension_builder, test_moe, test_live_guide,
+               test_extension_builder, test_moe, test_mesh_learns, test_live_guide,
                test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:

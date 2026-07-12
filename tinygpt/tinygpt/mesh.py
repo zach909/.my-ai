@@ -1,0 +1,136 @@
+"""MeshLM — the all-to-all neuron mesh (Prometheus §1) as a trainable PyTorch
+module, an experimental alternative to the transformer's attention+MLP block.
+
+This is the substrate the design is really about: instead of attention over a
+sequence, a mesh of N neurons — each holding a D-dimensional state vector — that
+propagates all-to-all until it settles, then reads out the next-token logits. It
+is deliberately built so the *existing* training infrastructure (tokenizer, data
+loader, AdamW loop, checkpointing, sampling) trains it unchanged — the loop is
+"pointed at the mesh instead of at attention layers".
+
+Faithful to the design notes:
+  - true all-to-all density (every neuron reads every other; self excluded);
+  - each connection is a D×D weight block (any source dimension can influence
+    any target dimension — cross-dimensional reasoning), not one scalar;
+  - bias is added once per neuron after the full summed product, never per
+    connection;
+  - a reasoning step is several settle ticks of `state <- tanh(bias + W·state)`;
+  - dimension 0 of every neuron is the reserved input-source flag (§6): 1.0 while
+    externally driven, 0.0 otherwise. Input neurons are clamped each tick (§4:
+    clamp -> settle -> read).
+
+It is recurrent across positions (mesh state carries forward), so it is a real
+language model trained by truncated backprop through the settle loop. It is not
+claimed to beat the transformer — it is the unproven substrate to test.
+"""
+from __future__ import annotations
+
+from typing import Optional
+
+import torch
+import torch.nn as nn
+from torch.nn import functional as F
+
+from .config import ModelConfig
+
+
+class MeshLM(nn.Module):
+    def __init__(self, cfg: ModelConfig, n_neurons: Optional[int] = None,
+                 n_dims: Optional[int] = None, n_input: Optional[int] = None,
+                 settle_ticks: Optional[int] = None):
+        super().__init__()
+        # mesh hyperparameters come from the config (so checkpoints round-trip);
+        # explicit args override for quick experiments.
+        n_neurons = n_neurons if n_neurons is not None else cfg.mesh_neurons
+        n_dims = n_dims if n_dims is not None else cfg.mesh_dims
+        n_input = n_input if n_input is not None else cfg.mesh_input
+        settle_ticks = settle_ticks if settle_ticks is not None else cfg.settle_ticks
+        assert n_dims >= 2, "need dim 0 for the input flag plus >=1 content dim"
+        assert 1 <= n_input < n_neurons
+        self.cfg = cfg
+        self.N = n_neurons
+        self.D = n_dims
+        self.n_input = n_input
+        self.settle_ticks = settle_ticks
+        self.content = n_dims - 1  # content dims per neuron (dim 0 is the flag)
+
+        self.wte = nn.Embedding(cfg.vocab_size, n_input * self.content)
+        # all-to-all connection tensor: W[i, j] is the D×D block from neuron j
+        # into neuron i. Scaled small for a stable settle.
+        scale = 1.0 / (n_neurons * n_dims) ** 0.5
+        self.W = nn.Parameter(torch.randn(n_neurons, n_neurons, n_dims, n_dims) * scale)
+        self.bias = nn.Parameter(torch.zeros(n_neurons, n_dims))
+        self.readout = nn.Linear(n_neurons * n_dims, cfg.vocab_size, bias=True)
+        # mask out self-connections (a neuron reads every *other* neuron)
+        self.register_buffer("self_mask",
+                             (1.0 - torch.eye(n_neurons)).view(n_neurons, n_neurons, 1, 1))
+        self.dropout = nn.Dropout(cfg.dropout)
+
+    def _settle(self, state: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
+        """Run the settle loop for one position; `emb` (B, n_input, content) is
+        clamped onto the input neurons each tick."""
+        B = state.size(0)
+        W = self.W * self.self_mask
+        ones = torch.ones(B, self.n_input, 1, device=state.device, dtype=state.dtype)
+        zeros = torch.zeros(B, self.N - self.n_input, 1, device=state.device, dtype=state.dtype)
+        for _ in range(self.settle_ticks):
+            # context[b,i,d] = bias[i,d] + sum_{j,e} state[b,j,e] * W[i,j,e,d]
+            context = torch.einsum("bje,ijed->bid", state, W) + self.bias
+            settled = torch.tanh(context)
+            # clamp: input neurons hold (flag=1, emb); others keep settled content
+            # with flag=0. Built functionally (no in-place) so autograd is happy.
+            input_block = torch.cat([ones, emb], dim=2)                  # (B, n_input, D)
+            rest = torch.cat([zeros, settled[:, self.n_input:, 1:]], dim=2)
+            state = torch.cat([input_block, rest], dim=1)
+        return state
+
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None):
+        B, T = idx.shape
+        state = torch.zeros(B, self.N, self.D, device=idx.device)
+        logits_steps = []
+        for t in range(T):
+            emb = self.wte(idx[:, t]).view(B, self.n_input, self.content)
+            state = self._settle(state, emb)
+            logits_steps.append(self.readout(self.dropout(state.reshape(B, -1))))
+        logits = torch.stack(logits_steps, dim=1)  # (B, T, vocab)
+
+        if targets is not None:
+            loss = F.cross_entropy(logits.reshape(-1, logits.size(-1)),
+                                   targets.reshape(-1), ignore_index=-1)
+            return logits, loss
+        return logits[:, [-1], :], None
+
+    def num_params(self, non_embedding: bool = True) -> int:
+        n = sum(p.numel() for p in self.parameters())
+        if non_embedding:
+            n -= self.wte.weight.numel()
+        return n
+
+    def configure_optimizers(self, weight_decay: float, learning_rate: float,
+                             betas, device_type: str):
+        decay = [p for p in self.parameters() if p.dim() >= 2]
+        no_decay = [p for p in self.parameters() if p.dim() < 2]
+        groups = [{"params": decay, "weight_decay": weight_decay},
+                  {"params": no_decay, "weight_decay": 0.0}]
+        return torch.optim.AdamW(groups, lr=learning_rate, betas=betas)
+
+    @torch.no_grad()
+    def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0,
+                 top_k: Optional[int] = None, top_p: Optional[float] = None,
+                 repetition_penalty: float = 1.0, eos_id: Optional[int] = None, guide=None):
+        from .sampling import sample_next_token
+        for _ in range(max_new_tokens):
+            idx_cond = idx if idx.size(1) <= self.cfg.block_size else idx[:, -self.cfg.block_size:]
+            logits, _ = self(idx_cond)
+            logits = logits[:, -1, :]
+            t, tk, tp = temperature, top_k, top_p
+            if guide is not None:
+                conf = float(F.softmax(logits, dim=-1).max(dim=-1).values.mean().item())
+                gp = guide.adjust(conf)
+                t, tk, tp = gp.temperature, gp.top_k, gp.top_p
+            next_id = sample_next_token(logits, idx, temperature=t, top_k=tk, top_p=tp,
+                                        repetition_penalty=repetition_penalty)
+            idx = torch.cat((idx, next_id), dim=1)
+            if eos_id is not None and (next_id == eos_id).all():
+                break
+        return idx
