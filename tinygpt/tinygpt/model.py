@@ -57,7 +57,7 @@ class CausalSelfAttention(nn.Module):
             mask = torch.tril(torch.ones(cfg.block_size, cfg.block_size))
             self.register_buffer("causal_mask", mask.view(1, 1, cfg.block_size, cfg.block_size))
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False):
         B, T, C = x.shape
         q, k, v = self.c_attn(x).split(self.n_embd, dim=2)
         # (B, nh, T, hd)
@@ -66,22 +66,36 @@ class CausalSelfAttention(nn.Module):
         k = k.view(B, T, self.n_head, head_dim).transpose(1, 2)
         v = v.view(B, T, self.n_head, head_dim).transpose(1, 2)
 
+        # KV cache: prepend previously-computed keys/values so incremental
+        # decoding attends to the whole context without recomputing it.
+        if past_kv is not None:
+            past_k, past_v = past_kv
+            k = torch.cat((past_k, k), dim=2)
+            v = torch.cat((past_v, v), dim=2)
+        present = (k, v) if use_cache else None
+
+        # When there is no cache we are processing a full (prefill) sequence and
+        # need the causal mask; a single cached decode step (T==1) attends to all
+        # cached keys with no mask, which is causal for the final position.
+        causal = past_kv is None and T > 1
         if self.flash:
             y = F.scaled_dot_product_attention(
                 q, k, v,
                 attn_mask=None,
                 dropout_p=self.dropout if self.training else 0.0,
-                is_causal=True,
+                is_causal=causal,
             )
         else:
             att = (q @ k.transpose(-2, -1)) * (1.0 / math.sqrt(head_dim))
-            att = att.masked_fill(self.causal_mask[:, :, :T, :T] == 0, float("-inf"))
+            if causal:
+                att = att.masked_fill(self.causal_mask[:, :, :T, :T] == 0, float("-inf"))
             att = F.softmax(att, dim=-1)
             att = self.attn_dropout(att)
             y = att @ v
 
         y = y.transpose(1, 2).contiguous().view(B, T, C)
-        return self.resid_dropout(self.c_proj(y))
+        y = self.resid_dropout(self.c_proj(y))
+        return (y, present) if use_cache else y
 
 
 class MLP(nn.Module):
@@ -124,7 +138,12 @@ class Block(nn.Module):
             else MLP(cfg)
         )
 
-    def forward(self, x: torch.Tensor) -> torch.Tensor:
+    def forward(self, x: torch.Tensor, past_kv=None, use_cache: bool = False):
+        if use_cache:
+            attn_out, present = self.attn(self.ln_1(x), past_kv, use_cache=True)
+            x = x + attn_out
+            x = x + self.mlp(self.ln_2(x))
+            return x, present
         x = x + self.attn(self.ln_1(x))
         x = x + self.mlp(self.ln_2(x))
         return x
@@ -168,14 +187,29 @@ class GPT(nn.Module):
             n -= self.transformer.wpe.weight.numel()
         return n
 
-    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None):
+    def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None,
+                past_kvs=None, use_cache: bool = False):
         B, T = idx.shape
-        assert T <= self.cfg.block_size, f"sequence length {T} exceeds block_size {self.cfg.block_size}"
-        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
+        # position offset so cached decode steps get their true absolute position
+        past_len = past_kvs[0][0].size(2) if past_kvs is not None else 0
+        assert past_len + T <= self.cfg.block_size, \
+            f"sequence length {past_len + T} exceeds block_size {self.cfg.block_size}"
+        pos = torch.arange(past_len, past_len + T, dtype=torch.long, device=idx.device)
 
         tok_emb = self.transformer.wte(idx)          # (B, T, C)
         pos_emb = self.transformer.wpe(pos)          # (T, C)
         x = self.transformer.drop(tok_emb + pos_emb)
+
+        if use_cache:
+            presents = []
+            for i, block in enumerate(self.transformer.h):
+                past = past_kvs[i] if past_kvs is not None else None
+                x, present = block(x, past, use_cache=True)
+                presents.append(present)
+            x = self.transformer.ln_f(x)
+            logits = self.lm_head(x[:, [-1], :])
+            return logits, presents
+
         for block in self.transformer.h:
             x = block(x)
         x = self.transformer.ln_f(x)
@@ -217,9 +251,21 @@ class GPT(nn.Module):
                  eos_id: Optional[int] = None):
         """Autoregressive sampling. See tinygpt.sampling for the token-level logic."""
         from .sampling import sample_next_token
+        block_size = self.cfg.block_size
+        past_kvs = None
         for _ in range(max_new_tokens):
-            idx_cond = idx if idx.size(1) <= self.cfg.block_size else idx[:, -self.cfg.block_size:]
-            logits, _ = self(idx_cond)
+            if past_kvs is None:
+                # prefill: process the whole (possibly truncated) prompt once
+                idx_cond = idx if idx.size(1) <= block_size else idx[:, -block_size:]
+                logits, past_kvs = self(idx_cond, use_cache=True)
+            elif past_kvs[0][0].size(2) >= block_size:
+                # context window full — re-prefill the last block_size tokens
+                past_kvs = None
+                idx_cond = idx[:, -block_size:]
+                logits, past_kvs = self(idx_cond, use_cache=True)
+            else:
+                # decode: feed only the newest token, reuse cached keys/values
+                logits, past_kvs = self(idx[:, -1:], past_kvs=past_kvs, use_cache=True)
             logits = logits[:, -1, :]
             next_id = sample_next_token(
                 logits, idx,
