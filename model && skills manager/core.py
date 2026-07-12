@@ -34,7 +34,7 @@ from tinygpt.data import build_chat_prompt
 from tinygpt.extension_builder import Definishon, ExtensionBuilder
 from tinygpt.live_guide import LiveGuide
 from tinygpt.memory import ZipLoopMemory
-from tinygpt.model import GPT
+from tinygpt.model import build_model
 from tinygpt.selection import best_of_n
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
@@ -72,7 +72,7 @@ def parse_args():
 
 def load_model(ckpt_path: str, device: str):
     ckpt = load_checkpoint(ckpt_path, map_location=device)
-    model = GPT(ModelConfig(**ckpt["model_config"])).to(device)
+    model = build_model(ModelConfig(**ckpt["model_config"])).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, ckpt

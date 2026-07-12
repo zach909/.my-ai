@@ -21,7 +21,7 @@ from torch.utils.data import DataLoader
 
 from tinygpt.config import ModelConfig, TrainConfig
 from tinygpt.data import PackedDataset, build_token_stream, train_val_split
-from tinygpt.model import GPT
+from tinygpt.model import build_model
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import (cosine_lr, human_count, load_checkpoint, resolve_device,
                            resolve_dtype, save_checkpoint, set_seed)
@@ -128,7 +128,7 @@ def main():
     )
     if args.use_moe:
         print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")
-    model = GPT(model_cfg).to(device)
+    model = build_model(model_cfg).to(device)
     print(f"model parameters: {human_count(model.num_params())}")
 
     optimizer = model.configure_optimizers(cfg.weight_decay, cfg.learning_rate,

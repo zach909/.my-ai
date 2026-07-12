@@ -23,7 +23,7 @@ import torch
 
 from tinygpt.config import ModelConfig
 from tinygpt.extension_builder import Definishon, ExtensionBuilder
-from tinygpt.model import GPT
+from tinygpt.model import build_model
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
 
@@ -48,7 +48,7 @@ def main():
 
     ckpt = load_checkpoint(args.ckpt, map_location=device)
     model_cfg = ModelConfig(**ckpt["model_config"])
-    model = GPT(model_cfg).to(device)
+    model = build_model(model_cfg).to(device)
     model.load_state_dict(ckpt["model"])
     tok_path = args.tokenizer or ckpt.get("tokenizer", "checkpoints/spm.model")
     tokenizer = Tokenizer(tok_path)

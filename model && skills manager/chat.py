@@ -17,7 +17,7 @@ import torch
 
 from tinygpt.config import ModelConfig
 from tinygpt.data import build_chat_prompt
-from tinygpt.model import GPT
+from tinygpt.model import build_model
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device
 
@@ -41,7 +41,7 @@ def parse_args():
 def load_model(ckpt_path: str, device: str):
     ckpt = load_checkpoint(ckpt_path, map_location=device)
     model_cfg = ModelConfig(**ckpt["model_config"])
-    model = GPT(model_cfg).to(device)
+    model = build_model(model_cfg).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     return model, ckpt

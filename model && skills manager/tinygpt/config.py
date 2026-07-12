@@ -39,7 +39,7 @@ class ModelConfig:
     skills: Optional[list] = None  # optional expert/skill names (len == n_experts)
     # Architecture: "transformer" (default GPT) or "mesh" (the all-to-all
     # neuron mesh, §1). Mesh hyperparameters are ignored when arch is transformer.
-    arch: str = "transformer"
+    arch: str = "mesh"
     mesh_neurons: int = 24
     mesh_dims: int = 4             # state dimensions per neuron (dim 0 = input flag)
     mesh_input: int = 8           # number of externally-driven input neurons

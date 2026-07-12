@@ -23,7 +23,7 @@ from torch.utils.data import DataLoader, random_split
 
 from tinygpt.config import ModelConfig, TrainConfig
 from tinygpt.data import ChatSFTDataset, collate_pad
-from tinygpt.model import GPT
+from tinygpt.model import build_model
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import (cosine_lr, human_count, load_checkpoint, resolve_device,
                            resolve_dtype, save_checkpoint, set_seed)
@@ -92,7 +92,7 @@ def main():
     # load the pretrained model
     ckpt = load_checkpoint(args.init, map_location=device)
     model_cfg = ModelConfig(**ckpt["model_config"])
-    model = GPT(model_cfg).to(device)
+    model = build_model(model_cfg).to(device)
     model.load_state_dict(ckpt["model"])
     print(f"loaded pretrained model ({human_count(model.num_params())} params) from {args.init}")
 

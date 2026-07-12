@@ -71,15 +71,16 @@ def test_selection():
         return
     import torch
     from tinygpt.config import ModelConfig
-    from tinygpt.model import GPT
+    from tinygpt.model import build_model
     from tinygpt.selection import best_of_n
 
     class ToyTok:
         def decode(self, ids):
             return " ".join(map(str, ids))
 
-    cfg = ModelConfig(vocab_size=64, block_size=32, n_layer=2, n_head=2, n_embd=32)
-    model = GPT(cfg).eval()
+    cfg = ModelConfig(vocab_size=64, block_size=32, arch="mesh",
+                      mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=3)
+    model = build_model(cfg).eval()
     best = best_of_n(model, ToyTok(), prompt_ids=[1, 2, 3], n=4, max_new_tokens=6,
                      temperature=0.9, top_k=20, top_p=0.95, repetition_penalty=1.1,
                      eos_id=None, device="cpu")
@@ -112,13 +113,14 @@ def test_extension_builder():
         return
     import torch
     from tinygpt.config import ModelConfig
-    from tinygpt.model import GPT
+    from tinygpt.model import build_model
     from tinygpt.extension_builder import Definishon, ExtensionBuilder
 
     tok = _CharTok()
     torch.manual_seed(0)
-    cfg = ModelConfig(vocab_size=64, block_size=32, n_layer=2, n_head=2, n_embd=64)
-    model = GPT(cfg)
+    cfg = ModelConfig(vocab_size=64, block_size=32, arch="mesh",
+                      mesh_neurons=18, mesh_dims=4, mesh_input=6, settle_ticks=3)
+    model = build_model(cfg)
     eb = ExtensionBuilder(model, tok, device="cpu")
 
     c = [Definishon(when="ping", then="pong")]
@@ -133,7 +135,7 @@ def test_extension_builder():
 
     # contradiction detection
     torch.manual_seed(0)
-    m2 = GPT(cfg)
+    m2 = build_model(cfg)
     eb2 = ExtensionBuilder(m2, tok)
     c2 = [Definishon(when="x", then="a"), Definishon(when="x", then="b")]
     res2 = eb2.train(c2, epochs=30, lr=5e-3, tolerance=0.3)
@@ -214,31 +216,27 @@ def test_mesh_learns():
 
 
 def test_moe():
+    # MoE layer tested in isolation (the transformer that used to host it is
+    # retired; the module is kept to wire into the mesh as skills, §3).
     try:
         import torch  # noqa: F401
     except ImportError:
         print("  skip MoE test (torch not installed)")
         return
     import torch
-    from tinygpt.config import ModelConfig
-    from tinygpt.model import GPT
+    from tinygpt.moe import MoELayer
 
-    cfg = ModelConfig(vocab_size=64, block_size=32, n_layer=2, n_head=2, n_embd=64,
-                      use_moe=True, n_experts=4, moe_top_k=2, skills=["a", "b", "c", "d"])
     torch.manual_seed(0)
-    m = GPT(cfg)
-    x = torch.randint(0, 64, (2, 16))
-    y = torch.randint(0, 64, (2, 16))
-    logits, loss = m(x, y)
-    check(torch.isfinite(loss) and logits.shape == (2, 16, 64), "MoE forward + loss finite")
-    aux = sum(b.mlp.last_aux_loss.item() for b in m.transformer.h)
-    check(aux > 0, "MoE load-balancing auxiliary loss is computed")
-    usage = m.transformer.h[0].mlp.skill_usage()
+    moe = MoELayer(n_embd=32, n_experts=4, top_k=2, bias=True, dropout=0.0,
+                   skills=["a", "b", "c", "d"])
+    x = torch.randn(2, 8, 32)
+    out = moe(x)
+    check(out.shape == x.shape and torch.isfinite(out).all(), "MoE layer forward finite, shape preserved")
+    check(moe.last_aux_loss.item() > 0, "MoE load-balancing auxiliary loss is computed")
+    usage = moe.skill_usage()
     check(set(usage) == {"a", "b", "c", "d"} and abs(sum(usage.values()) - 1.0) < 1e-4,
           "MoE experts are named skills with traceable usage")
-    dense = GPT(ModelConfig(vocab_size=64, block_size=32, n_layer=2, n_head=2, n_embd=64)).num_params()
-    check(m.num_params() > dense, "MoE model has more capacity than the dense model")
-    loss.backward()
+    out.sum().backward()
     check(True, "MoE backward pass runs")
 
 
