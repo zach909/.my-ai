@@ -30,6 +30,13 @@ class ModelConfig:
     dropout: float = 0.1
     bias: bool = True              # bias in Linear/LayerNorm layers
     tie_weights: bool = True       # share token embedding with the LM head
+    # Mixture-of-Experts (skills). When use_moe is True, each block's MLP is
+    # replaced by a sparse MoE layer of n_experts experts routed top-k.
+    use_moe: bool = False
+    n_experts: int = 4
+    moe_top_k: int = 2
+    moe_aux_weight: float = 0.01   # weight of the load-balancing auxiliary loss
+    skills: Optional[list] = None  # optional expert/skill names (len == n_experts)
 
 
 @dataclass

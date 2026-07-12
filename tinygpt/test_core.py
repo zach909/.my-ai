@@ -141,8 +141,38 @@ def test_extension_builder():
           "extension builder detects a contradictory contract pair")
 
 
+def test_moe():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip MoE test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import GPT
+
+    cfg = ModelConfig(vocab_size=64, block_size=32, n_layer=2, n_head=2, n_embd=64,
+                      use_moe=True, n_experts=4, moe_top_k=2, skills=["a", "b", "c", "d"])
+    torch.manual_seed(0)
+    m = GPT(cfg)
+    x = torch.randint(0, 64, (2, 16))
+    y = torch.randint(0, 64, (2, 16))
+    logits, loss = m(x, y)
+    check(torch.isfinite(loss) and logits.shape == (2, 16, 64), "MoE forward + loss finite")
+    aux = sum(b.mlp.last_aux_loss.item() for b in m.transformer.h)
+    check(aux > 0, "MoE load-balancing auxiliary loss is computed")
+    usage = m.transformer.h[0].mlp.skill_usage()
+    check(set(usage) == {"a", "b", "c", "d"} and abs(sum(usage.values()) - 1.0) < 1e-4,
+          "MoE experts are named skills with traceable usage")
+    dense = GPT(ModelConfig(vocab_size=64, block_size=32, n_layer=2, n_head=2, n_embd=64)).num_params()
+    check(m.num_params() > dense, "MoE model has more capacity than the dense model")
+    loss.backward()
+    check(True, "MoE backward pass runs")
+
+
 def main():
-    for fn in (test_veto, test_memory, test_actions, test_selection, test_extension_builder):
+    for fn in (test_veto, test_memory, test_actions, test_selection,
+               test_extension_builder, test_moe):
         print(f"\n{fn.__name__}:")
         try:
             fn()

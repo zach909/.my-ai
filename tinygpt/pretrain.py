@@ -40,6 +40,10 @@ def parse_args():
     ap.add_argument("--n-embd", type=int, default=384)
     ap.add_argument("--block-size", type=int, default=256)
     ap.add_argument("--dropout", type=float, default=0.1)
+    # Mixture-of-Experts (skills)
+    ap.add_argument("--use-moe", action="store_true", help="replace block MLPs with sparse MoE")
+    ap.add_argument("--n-experts", type=int, default=4)
+    ap.add_argument("--moe-top-k", type=int, default=2)
     # training
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--grad-accum-steps", type=int, default=4)
@@ -120,7 +124,10 @@ def main():
     model_cfg = ModelConfig(
         vocab_size=tokenizer.vocab_size, block_size=args.block_size,
         n_layer=args.n_layer, n_head=args.n_head, n_embd=args.n_embd, dropout=args.dropout,
+        use_moe=args.use_moe, n_experts=args.n_experts, moe_top_k=args.moe_top_k,
     )
+    if args.use_moe:
+        print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")
     model = GPT(model_cfg).to(device)
     print(f"model parameters: {human_count(model.num_params())}")
 

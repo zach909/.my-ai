@@ -15,6 +15,7 @@ import torch.nn as nn
 from torch.nn import functional as F
 
 from .config import ModelConfig
+from .moe import MoELayer
 
 
 class LayerNorm(nn.Module):
@@ -104,7 +105,12 @@ class Block(nn.Module):
         self.ln_1 = LayerNorm(cfg.n_embd, cfg.bias)
         self.attn = CausalSelfAttention(cfg)
         self.ln_2 = LayerNorm(cfg.n_embd, cfg.bias)
-        self.mlp = MLP(cfg)
+        self.use_moe = cfg.use_moe
+        if cfg.use_moe:
+            self.mlp = MoELayer(cfg.n_embd, cfg.n_experts, cfg.moe_top_k, cfg.bias,
+                                cfg.dropout, cfg.skills)
+        else:
+            self.mlp = MLP(cfg)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         x = x + self.attn(self.ln_1(x))
@@ -169,6 +175,12 @@ class GPT(nn.Module):
                 targets.view(-1),
                 ignore_index=-1,
             )
+            # add the MoE load-balancing auxiliary loss (0 when MoE is disabled)
+            if self.cfg.use_moe:
+                aux = torch.zeros((), device=x.device)
+                for block in self.transformer.h:
+                    aux = aux + block.mlp.last_aux_loss
+                loss = loss + self.cfg.moe_aux_weight * (aux / max(1, self.cfg.n_layer))
             return logits, loss
 
         # inference: only compute logits for the final position

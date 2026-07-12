@@ -104,6 +104,10 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   autonomous execution** — this is the safe basis for computer control, not
   unattended control.
 
+- **Mixture-of-Experts / skills** (§1.5) — enable `--use-moe` to replace each
+  block's MLP with a sparse MoE of named experts ("skills") routed top-k
+  (`tinygpt/moe.py`), with a load-balancing auxiliary loss and per-skill usage
+  tracking. Train with `python pretrain.py --use-moe --n-experts 8 --moe-top-k 2`.
 - **Extension builder** (§4) — teach the model declarative *definishon*
   contracts (`tinygpt/extension_builder.py`): `when "X" then it must reply "Y"`,
   trained with a constraint loss plus a don't-forget weight penalty, with
