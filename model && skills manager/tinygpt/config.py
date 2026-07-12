@@ -44,6 +44,7 @@ class ModelConfig:
     mesh_dims: int = 4             # state dimensions per neuron (dim 0 = input flag)
     mesh_input: int = 8           # number of externally-driven input neurons
     settle_ticks: int = 4         # propagation ticks per reasoning step
+    vale_init: float = 0.1        # §2 initial per-neuron vale (plasticity budget)
 
 
 @dataclass

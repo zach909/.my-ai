@@ -215,6 +215,40 @@ def test_mesh_learns():
     check(out[0, 3:].tolist() == [4, 5, 6, 7, 8], "trained mesh reproduces the learned sequence")
 
 
+def test_vale_budget():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip vale test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=16, block_size=8, arch="mesh", mesh_neurons=12,
+                      mesh_dims=4, mesh_input=4, settle_ticks=3)
+    m = build_model(cfg)
+    m.set_vale(0, 0.95)   # stable
+    m.set_vale(5, 0.0)    # plastic
+    W0, W5 = m.W[0].detach().clone(), m.W[5].detach().clone()
+
+    opt = m.configure_optimizers(0.0, 1e-2, (0.9, 0.95), "cpu")
+    x = torch.randint(0, 16, (2, 6)); y = torch.randint(0, 16, (2, 6))
+    for _ in range(20):
+        opt.zero_grad(); _, loss = m(x, y); loss.backward(); opt.step()
+    d0 = (m.W[0].detach() - W0).abs().mean().item()
+    d5 = (m.W[5].detach() - W5).abs().mean().item()
+    check(d0 < d5 * 0.3, f"vale gates weight movement (stable {d0:.4f} << plastic {d5:.4f})")
+
+    # raise_vale keeps the total fixed (zero-sum) starting from a uniform budget
+    m2 = build_model(cfg)
+    total = m2.vale.sum().item()
+    m2.raise_vale([1, 2], amount=0.2)
+    check(abs(m2.vale.sum().item() - total) < 1e-3, "raise_vale keeps the vale total fixed (zero-sum)")
+    check(m2.vale[1].item() > m2.vale[3].item(), "raise_vale makes the named neurons more stable than the rest")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -242,8 +276,8 @@ def test_moe():
 
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
-               test_extension_builder, test_moe, test_mesh_learns, test_live_guide,
-               test_shell_action_gated):
+               test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
+               test_live_guide, test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:
             fn()

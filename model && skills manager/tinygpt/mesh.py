@@ -66,6 +66,18 @@ class MeshLM(nn.Module):
                              (1.0 - torch.eye(n_neurons)).view(n_neurons, n_neurons, 1, 1))
         self.dropout = nn.Dropout(cfg.dropout)
 
+        # §2 vale / value budget: per-neuron plasticity. vale in [0,1]; high-vale
+        # neurons resist change, low-vale neurons learn readily. It gates the
+        # weight update — a neuron i's incoming connection + bias gradients are
+        # scaled by (1 - vale[i]) — so it IS the rule for how much each neuron
+        # moves, not a separate freeze. vale is zero-sum (total fixed); raising
+        # one neuron's vale lowers the rest. Buffer, not a learned parameter.
+        self.register_buffer("vale", torch.full((n_neurons,), cfg.vale_init))
+        self._vale_total = float(cfg.vale_init) * n_neurons
+        # gradient hooks apply the vale gate during backward — no trainer change.
+        self.W.register_hook(lambda g: g * (1.0 - self.vale).view(self.N, 1, 1, 1))
+        self.bias.register_hook(lambda g: g * (1.0 - self.vale).view(self.N, 1))
+
     def _settle(self, state: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
         """Run the settle loop for one position; `emb` (B, n_input, content) is
         clamped onto the input neurons each tick."""
@@ -99,6 +111,35 @@ class MeshLM(nn.Module):
                                    targets.reshape(-1), ignore_index=-1)
             return logits, loss
         return logits[:, [-1], :], None
+
+    # ---- §2 vale / value budget --------------------------------------------
+    @torch.no_grad()
+    def raise_vale(self, neuron_ids, amount: float = 0.3) -> None:
+        """Raise the vale (stability) of the given neurons and lower everyone
+        else's proportionally, keeping the total fixed (zero-sum). Used to lock
+        in a neuron once its meaning is verified (extension builder, §4)."""
+        ids = torch.as_tensor(list(neuron_ids), dtype=torch.long, device=self.vale.device)
+        if ids.numel() == 0:
+            return
+        raise_amt = float(amount) * ids.numel()
+        others = torch.ones(self.N, dtype=torch.bool, device=self.vale.device)
+        others[ids] = False
+        self.vale[ids] = torch.clamp(self.vale[ids] + amount, 0.0, 1.0)
+        # remove the same total from the other neurons, proportional to their vale
+        if others.any():
+            pool = self.vale[others]
+            share = pool / (pool.sum() + 1e-9)
+            self.vale[others] = torch.clamp(pool - share * raise_amt, 0.0, 1.0)
+        # renormalise to the fixed total
+        self.vale.mul_(self._vale_total / (self.vale.sum() + 1e-9))
+        self.vale.clamp_(0.0, 1.0)
+
+    @torch.no_grad()
+    def set_vale(self, neuron_id: int, value: float) -> None:
+        self.vale[neuron_id] = max(0.0, min(1.0, value))
+
+    def get_vale(self):
+        return self.vale.detach().cpu().tolist()
 
     def num_params(self, non_embedding: bool = True) -> int:
         n = sum(p.numel() for p in self.parameters())
