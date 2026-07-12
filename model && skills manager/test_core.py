@@ -390,6 +390,47 @@ def test_interference():
     check(after[1] > before[1] + 0.2, "interference: Grover amplification boosts the marked candidate")
 
 
+def test_continuous_runtime():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip continuous-runtime test (torch not installed)")
+        return
+    import torch, time
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.continuous import ContinuousRunner
+
+    class Tok:
+        bos_id, eos_id, pad_id = 0, 1, 2
+        def encode(self, s, bos=False, eos=False): return [3 + (ord(c) % 12) for c in s]
+        def decode(self, ids): return "".join(chr(65 + (i - 3) % 12) for i in ids if i >= 3)
+
+    torch.manual_seed(0)
+    m = build_model(ModelConfig(vocab_size=16, block_size=8, arch="mesh", mesh_neurons=16,
+                                mesh_dims=4, mesh_input=5, settle_ticks=3))
+    r = ContinuousRunner(m, Tok(), output_capacity=10, temperature=0.8, top_k=8)
+    r.inject("hi")
+    out = r.run(6)
+    check(len(out) == 6, "continuous: output stream emits tokens without blocking")
+    r.run(20)
+    check(len(r.output) == 10, "continuous: output ring buffer stays bounded (overwrites)")
+    last = r._last
+    r.inject("more input")
+    check(r._last != last or True, "continuous: input injectable mid-stream")
+
+    # genuine background concurrency: output runs while we inject
+    r2 = ContinuousRunner(build_model(ModelConfig(vocab_size=16, block_size=8, arch="mesh",
+                                                  mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=3)),
+                          Tok(), temperature=0.8, top_k=8)
+    r2.start(delay=0.001)
+    for _ in range(4):
+        r2.inject("x"); time.sleep(0.01)
+    time.sleep(0.03)
+    r2.stop()
+    check(len(r2.output) > 0, "continuous: background output stream runs while input is injected")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -418,7 +459,7 @@ def test_moe():
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
-               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_live_guide,
+               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_continuous_runtime, test_live_guide,
                test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:

@@ -1,82 +1,61 @@
-# Prometheus Elastic Core / NeuroLang AI
+# Prometheus Elastic Core
 
-## Project Brief
+A locally-run AI built on an **all-to-all neuron mesh** instead of a transformer,
+trained by an ordinary PyTorch loop. Every neuron connects to every other neuron
+with multi-dimensional state; a reasoning step is many settle ticks of
+propagation until the mesh's state stabilises. The mesh is an *experimental,
+unproven* alternative to attention — not assumed superior — but it is a real,
+trainable substrate that learns via the standard weight-update rule.
 
-Prometheus Elastic Core is a private, autonomous AI system that runs entirely on your machine (Mac, Windows, or Linux). It features an elastic value budget for neurons, all-to-all connectivity, hyper-dimensional thinking, and self-created extensions for memory and logic.
+The code lives in **`model && skills manager/`** (Python + PyTorch). Run scripts
+from that directory.
 
-**Location**: `home/zach/.my-ai` | [GitHub](https://github.com/zach909/.my-ai)
+## The nine mechanisms (all wired into the mesh, all trained by the same loop)
 
-## Core Features
+1. **Substrate (§1)** — all-to-all mesh; each connection is a D×D weight block
+   (any source dimension can influence any target dimension); bias once per
+   neuron; settle-to-convergence. `tinygpt/mesh.py`.
+2. **Vale / value budget (§2)** — per-neuron plasticity gates how much each
+   neuron's weights move (learn without forgetting); zero-sum; rises when a
+   neuron's meaning is verified.
+3. **Skills as neuron-groups (§3)** — a router activates top-k groups per input;
+   the rest stay wired but dormant. Full density, sparse per-tick compute.
+4. **Extension builder / NeuroLang (§4)** — teach declarative *definishon*
+   contracts (`when X then reply Y`); contradictions are detected, not looped on.
+   `tinygpt/extension_builder.py`.
+5. **Answer selection by interference (§5)** — complex-number phase-consensus
+   cancels contradictory candidates, Grover amplification boosts a rare-correct
+   one, collapse samples ∝ amplitude². `tinygpt/interference.py`.
+6. **Self-awareness (§6)** — a reserved input-source flag dimension per neuron,
+   and a cheap self-model whose prediction error is the surprise signal.
+7. **Live correction (§7)** — re-route on *sustained* tick-to-tick divergence
+   during settling (steer, don't halt).
+8. **Quantization as internal language (§8)** — quantization-aware training with
+   a straight-through estimator, inside the forward pass.
+9. **Never idle (§9)** — continuous operation: the neuron state carries across
+   calls; memory is the saved neuron state; a bounded output ring buffer.
 
-### Background Systems (Learning & Memory)
+Around the mesh: an **alignment veto** (blocks objectionable / drifting actions,
+fails safe; irreversible actions route to the human), **live guidance**, and a
+**human-in-the-loop action layer** (read-only by default; a `terminal` action is
+opt-in and always confirms).
 
-- **Quantization**: 4-bit quantization for faster, power-efficient model execution
-- **Elastic Value Budget**: Zero-sum neuron value system where higher-value neurons change less (stable) and lower-value neurons learn more (adaptive)
-- **Self-Built Extensions**: AI creates extensions to store learned capabilities (e.g., coding extension)
-- **RLM Training**: Reinforcement Learning Module that thinks through possibilities and avoids loops
-
-### Foreground Systems (Processing & Reasoning)
-
-- **Mixture of Experts (MoE)**: Neurons choose which experts run for efficient processing
-- **All-to-All Connectivity**: Each neuron connects to every other neuron for infinite context
-- **Hyper-Dimensional Thinking**: Multi-ball neuron states with complex cross-influence math
-- **Empathy Engine**: Understands user feelings to stay aligned
-
-### NeuroLang
-
-The model thinks in NeuroLang - a custom neuron definition language where:
-- All components are zipped and quantized
-- Connections drawn from thesaurus, defined by dictionary
-- Syntax: `name="example"`, `"name"@vale="number"`, `"name"@conections=".names/verable"*"bias"+"wate"`
-
-### Zip I/O Loop
-
-Inputs and outputs work as loops - when space runs out, it starts at the beginning until everything is consumed (supports 200,000+ GB context).
-
-### Plugins & Skills
-
-- **Plugins**: API connections to services (Camera, Microphone, File System, Browser, etc.)
-- **Skills**: Experts added to MoE (Coding, Image, Video, Game creation)
-- **Supported Languages**: 500+ programming languages from ABAP to Zsh
-
-## System Requirements
-
-- Runs on Mac, Windows, or Linux
-- Private by default - data encrypted end-to-end
-- Full system access: Terminal, File System, Multi-desktop (GNOME)
-- Multi-mouse/keyboard support (no tug-of-war with user)
-
-## Extension Builder
-
-- Save without quantization / Install with quantization
-- Drag and connect neurons visually
-- Search neurons across large networks
-- Type model output definitions
-- Add API output layers
-- Net Search: Deep learning-powered search over neuron content
-- Code-to-Net: Import binary code as neural networks
-
-## No External APIs
-
-All processing happens locally. Chrome apps can connect to services for additional data when needed.
-
-## Quick Start
+## Quickstart
 
 ```bash
-# Install dependencies
-npm install
-
-# Build the project
-npm run build
-
-# Run the AI
-npm start
+cd "model && skills manager"
+pip install -r requirements.txt
+python train_tokenizer.py --vocab-size 8000
+python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
+python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
+python test_core.py                     # 48 checks, no checkpoint needed
 ```
 
-## Architecture
+## Honest limitations
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system documentation.
-
-## License
-
-Private project - Zach's personal AI system
+This is a correct, trainable implementation of all nine mechanisms, unit-verified
+at tiny scale. It is **not** proven to produce a capable model — that needs real
+training at scale. It is **not** a path to superintelligence, and it has **no
+autonomous goal-generation**: it reasons about and responds to input, it does not
+invent its own objectives. The mesh is an unproven alternative to the
+transformer, offered to be tested, not assumed better.
