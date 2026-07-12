@@ -88,8 +88,61 @@ def test_selection():
     check(len(best.ids) > 0, "best-of-N produced a continuation")
 
 
+class _CharTok:
+    """Minimal deterministic tokenizer so the extension test needs no spm model."""
+    bos_id, eos_id, pad_id = 0, 1, 2
+
+    def encode(self, s, bos=False, eos=False):
+        ids = [3 + (ord(c) % 60) for c in s]
+        if bos:
+            ids = [self.bos_id] + ids
+        if eos:
+            ids = ids + [self.eos_id]
+        return ids
+
+    def decode(self, ids):
+        return "".join(chr(64 + (i - 3) % 60) for i in ids if i >= 3)
+
+
+def test_extension_builder():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip extension-builder test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import GPT
+    from tinygpt.extension_builder import Definishon, ExtensionBuilder
+
+    tok = _CharTok()
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=64, block_size=32, n_layer=2, n_head=2, n_embd=64)
+    model = GPT(cfg)
+    eb = ExtensionBuilder(model, tok, device="cpu")
+
+    c = [Definishon(when="ping", then="pong")]
+    res = eb.train(c, epochs=200, lr=5e-3, weight_penalty=1e-4, tolerance=0.3)
+    check(res.converged and c[0].satisfied, "extension builder satisfies a solvable contract")
+
+    # behaviour actually changed: greedy continuation now matches the target
+    ids = torch.tensor([[tok.bos_id] + tok.encode("ping")])
+    out = model.generate(ids, max_new_tokens=len(tok.encode("pong")), temperature=0.0)
+    check(tok.decode(out[0, ids.size(1):].tolist()).startswith(tok.decode(tok.encode("pong"))),
+          "extension builder changes the model's actual output")
+
+    # contradiction detection
+    torch.manual_seed(0)
+    m2 = GPT(cfg)
+    eb2 = ExtensionBuilder(m2, tok)
+    c2 = [Definishon(when="x", then="a"), Definishon(when="x", then="b")]
+    res2 = eb2.train(c2, epochs=30, lr=5e-3, tolerance=0.3)
+    check(any({i, j} == {0, 1} for i, j, _ in res2.conflicts),
+          "extension builder detects a contradictory contract pair")
+
+
 def main():
-    for fn in (test_veto, test_memory, test_actions, test_selection):
+    for fn in (test_veto, test_memory, test_actions, test_selection, test_extension_builder):
         print(f"\n{fn.__name__}:")
         try:
             fn()

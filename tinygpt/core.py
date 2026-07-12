@@ -28,11 +28,12 @@ import torch
 from tinygpt.actions import ActionLayer
 from tinygpt.config import ModelConfig
 from tinygpt.data import build_chat_prompt
+from tinygpt.extension_builder import Definishon, ExtensionBuilder
 from tinygpt.memory import ZipLoopMemory
 from tinygpt.model import GPT
 from tinygpt.selection import best_of_n
 from tinygpt.tokenizer import Tokenizer
-from tinygpt.utils import load_checkpoint, resolve_device
+from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
 from tinygpt.veto import AlignmentVeto
 
 ROLE_MARKERS = ("<|user|>", "<|assistant|>", "<|system|>")
@@ -90,10 +91,13 @@ def main():
     print(f"  selection  : best-of-{args.candidates} (predict-before-commit)")
     print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}")
     print(f"  actions    : {'disabled' if args.no_actions else 'human-in-the-loop (read-only allowlist)'}")
-    print("  Type 'exit' to quit, 'reset' to clear memory.\n")
+    print("  Type 'exit' to quit, 'reset' to clear memory.")
+    print("  Teach the model live:  teach: <prompt> => <required reply>   (extension builder, §4)\n")
     if not args.no_actions:
         print("  The model can propose 'ACTION: time' / 'list_dir <p>' / 'read_file <p>' / "
               "'system_info' — each needs your approval.\n")
+
+    builder = ExtensionBuilder(model, tokenizer, device=device)
 
     while True:
         try:
@@ -106,6 +110,25 @@ def main():
         if user.lower() == "reset":
             memory.clear(); memory.save()
             print("(memory cleared)")
+            continue
+        if user.lower().startswith("teach:") and "=>" in user:
+            # extension builder (§4): teach a definishon contract live, then
+            # persist the modified weights so the new behaviour sticks.
+            spec = user[len("teach:"):]
+            when, then = (s.strip() for s in spec.split("=>", 1))
+            if not when or not then:
+                print("(usage: teach: <prompt> => <required reply>)")
+                continue
+            contract = [Definishon(when=when, then=then)]
+            print(f"[teach] training: when {when!r} => then {then!r} ...")
+            res = builder.train(contract, epochs=200, lr=1e-3, weight_penalty=1e-3,
+                                tolerance=0.5)
+            ok = "learned" if contract[0].satisfied else "did not fully converge"
+            print(f"[teach] {ok} in {res.epochs} epochs (loss {contract[0].final_loss:.3f})")
+            save_checkpoint(args.ckpt, model, None, model.cfg, ckpt.get("step", 0),
+                            ckpt.get("best_val", float('inf')),
+                            extra={"tokenizer": tok_path, "extended": True})
+            print(f"[teach] saved -> {args.ckpt}")
             continue
         if not user:
             continue

@@ -104,11 +104,33 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   autonomous execution** — this is the safe basis for computer control, not
   unattended control.
 
+- **Extension builder** (§4) — teach the model declarative *definishon*
+  contracts (`tinygpt/extension_builder.py`): `when "X" then it must reply "Y"`,
+  trained with a constraint loss plus a don't-forget weight penalty, with
+  contradiction detection. Batch-teach with `extend.py`, or live in the core:
+  `teach: <prompt> => <required reply>`.
+
 Run the core's tests (no checkpoint needed) with:
 
 ```bash
 python test_core.py
 ```
+
+### Teaching the model new behaviour (extension builder)
+
+```bash
+# batch: teach a JSON list of contracts and save an extended model
+python extend.py --ckpt checkpoints/gpt_sft.pt --contracts data/contracts.json \
+    --out checkpoints/gpt_extended.pt
+
+# live, inside the core chat:
+#   you> teach: who are you? => I am TinyGPT.
+# the model trains on the contract, saves, and now answers that way.
+```
+
+A contract holds when the model actually produces the required continuation
+(verified by greedy generation). Contradictory contracts (same prompt, different
+required replies) are detected and reported instead of looping forever.
 
 ## Model size
 
