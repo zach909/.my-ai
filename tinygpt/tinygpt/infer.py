@@ -13,6 +13,7 @@ import re
 from typing import Optional
 
 import torch
+import torch.nn as nn
 
 from .config import ModelConfig
 from .model import GPT
@@ -122,11 +123,19 @@ class Generator:
 
 
 def load_generator(ckpt_path: str, device: str = "cpu",
-                   tokenizer_path: Optional[str] = None) -> Generator:
+                   tokenizer_path: Optional[str] = None,
+                   quantize: bool = False) -> Generator:
     """Load a checkpoint into a ready-to-use `Generator`.
 
     The architecture (standard or elastic-mesh) and the tokenizer path are read
     from the checkpoint itself, so the caller only supplies the `.pt` path.
+
+    `quantize=True` applies int8 dynamic quantization to the Linear layers,
+    ~4x-shrinking their weights for memory-constrained (e.g. Raspberry-Pi)
+    deployment — design doc mechanism 8, quantization as native compression.
+    Measured note: for these tiny models it does NOT speed up CPU inference
+    (quant/dequant overhead outweighs int8 matmul gains), so it's off by default
+    and is a memory optimization, not a latency one.
     """
     device = resolve_device(device)
     ckpt = load_checkpoint(ckpt_path, map_location=device)
@@ -134,10 +143,23 @@ def load_generator(ckpt_path: str, device: str = "cpu",
     model = GPT(config).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
+    if quantize and device == "cpu":
+        model = _quantize_dynamic(model)
     tok_path = _resolve_tokenizer(
         tokenizer_path or ckpt.get("tokenizer", "checkpoints/spm.model"), ckpt_path)
     tokenizer = Tokenizer(tok_path)
     return Generator(model, tokenizer, config, device, ckpt_path)
+
+
+def _quantize_dynamic(model: GPT) -> GPT:
+    """int8-quantize the Linear weights for lighter/faster CPU inference.
+
+    Dynamic quantization swaps nn.Linear for int8 versions that dequantize on
+    the fly; the token embedding and the elastic-mesh PennyLane TorchLayer aren't
+    nn.Linear so they're left untouched.
+    """
+    import torch.ao.quantization as tq
+    return tq.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8, inplace=False)
 
 
 def _resolve_tokenizer(tok_path: str, ckpt_path: str) -> str:
