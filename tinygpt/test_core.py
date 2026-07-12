@@ -141,6 +141,49 @@ def test_extension_builder():
           "extension builder detects a contradictory contract pair")
 
 
+def test_self_monitor():
+    import numpy as np
+    import tempfile, os, json
+    from tinygpt.selfmodel import SelfMonitor
+
+    sm = SelfMonitor(dim=8, halt_surprise=0.5, patience=3)
+    for _ in range(10):
+        sm.observe(np.ones(8) * 0.3)
+    check(not sm.should_halt(), "self-monitor: stable input does not halt")
+
+    sm2 = SelfMonitor(dim=8, halt_surprise=0.5, patience=3)
+    np.random.seed(0)
+    halted = False
+    for _ in range(12):
+        sm2.observe(np.random.randn(8) * 5)
+        if sm2.should_halt():
+            halted = True
+            break
+    check(halted, "self-monitor: volatile input triggers self-halt")
+
+    p = os.path.join(tempfile.mkdtemp(), "snap.json")
+    sm2.snapshot(p, extra={"note": "test"})
+    data = json.load(open(p))
+    check(len(data["recorded_states"]) > 0 and data["context"]["note"] == "test",
+          "self-monitor: snapshot saves neuron state + context")
+
+
+def test_shell_action_gated():
+    from tinygpt.actions import ActionLayer, enable_shell_actions
+    deny = ActionLayer(confirm_fn=lambda _: False)
+    enable_shell_actions(deny)
+    r = deny.maybe_execute("ACTION: terminal echo hi")
+    check(r.proposed and not r.executed, "terminal action never runs without approval")
+    approve = ActionLayer(confirm_fn=lambda _: True)
+    enable_shell_actions(approve)
+    r2 = approve.maybe_execute("ACTION: terminal echo hello_shell")
+    check(r2.executed and "hello_shell" in r2.output, "terminal action runs its command when approved")
+    # shell action is NOT present unless explicitly enabled
+    default = ActionLayer(confirm_fn=lambda _: True)
+    check(default.maybe_execute("ACTION: terminal echo x").executed is False,
+          "terminal action is disabled by default")
+
+
 def test_moe():
     try:
         import torch  # noqa: F401
@@ -172,7 +215,8 @@ def test_moe():
 
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
-               test_extension_builder, test_moe):
+               test_extension_builder, test_moe, test_self_monitor,
+               test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:
             fn()

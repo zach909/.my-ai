@@ -148,6 +148,19 @@ class GPT(nn.Module):
         elif isinstance(module, nn.Embedding):
             nn.init.normal_(module.weight, mean=0.0, std=0.02)
 
+    @torch.no_grad()
+    def hidden_states(self, idx: torch.Tensor) -> torch.Tensor:
+        """Final-layer hidden state (B, T, n_embd) — the model's 'neuron inputs'
+        before the LM head. Used by the self-monitor to read its own state."""
+        B, T = idx.shape
+        idx = idx[:, -self.cfg.block_size:]
+        T = idx.size(1)
+        pos = torch.arange(0, T, dtype=torch.long, device=idx.device)
+        x = self.transformer.drop(self.transformer.wte(idx) + self.transformer.wpe(pos))
+        for block in self.transformer.h:
+            x = block(x)
+        return self.transformer.ln_f(x)
+
     def num_params(self, non_embedding: bool = True) -> int:
         """Total parameter count. By default excludes the (tied) position
         embedding to match the convention used when quoting model sizes."""

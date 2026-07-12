@@ -15,6 +15,7 @@ from __future__ import annotations
 import os
 import platform
 import re
+import subprocess
 from dataclasses import dataclass
 from datetime import datetime
 from typing import Callable, Dict, List, Optional, Tuple
@@ -83,6 +84,34 @@ DEFAULT_ACTIONS: Dict[str, ActionSpec] = {
                             external_effect=False, description="Read a text file (read-only).",
                             requires_confirmation=True),
 }
+
+
+def _act_terminal(arg: str) -> str:
+    """Run a shell command and capture its output. This is the powerful,
+    dangerous action — it is NOT registered by default; enable_shell_actions()
+    must be called deliberately, and every invocation still requires explicit
+    human confirmation via the veto/action layer. Covers gnome/desktop control
+    too (gsettings, wmctrl, xdotool, etc.)."""
+    if not arg.strip():
+        return "No command given."
+    try:
+        proc = subprocess.run(arg, shell=True, capture_output=True, text=True, timeout=60)
+        out = (proc.stdout or "") + (proc.stderr or "")
+        return f"(exit {proc.returncode})\n{out[:4000]}"
+    except subprocess.TimeoutExpired:
+        return "Command timed out (60s limit)."
+    except Exception as e:  # never crash the session on a bad command
+        return f"Command failed: {e}"
+
+
+def enable_shell_actions(layer: "ActionLayer") -> None:
+    """Opt-in registration of the shell/terminal action (and thereby gnome/
+    desktop control). Off by default; always confirmation-required."""
+    layer.register(ActionSpec(
+        "terminal", _act_terminal, ["shell-exec", "external"], reversible=False,
+        external_effect=True, requires_confirmation=True,
+        description="Run a shell command (covers gnome/desktop via gsettings/wmctrl/etc.).",
+    ))
 
 
 class ActionLayer:

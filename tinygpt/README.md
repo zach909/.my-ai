@@ -103,6 +103,16 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   `tinygpt/actions.py`). Read-only actions only by default; there is **no
   autonomous execution** — this is the safe basis for computer control, not
   unattended control.
+- **Terminal / gnome control** — pass `--enable-shell` to register an
+  `ACTION: terminal <command>` action (covers gnome/desktop via
+  `gsettings`/`wmctrl`/`xdotool`). It is **off by default** and **always
+  requires your explicit confirmation** before running anything.
+- **Self-monitoring + self-halt** (§10, §12) — a lightweight self-model
+  (`tinygpt/selfmodel.py`) reads the model's own hidden state ("neuron inputs")
+  each turn and measures *surprise* vs. its prediction. If surprise stays high
+  for several turns, the core **stops itself and snapshots all recorded neuron
+  state + context** to disk (`--halt-surprise`, `--halt-patience`). Type `halt`
+  to trigger it manually. Halting always fails safe.
 
 - **Mixture-of-Experts / skills** (§1.5) — enable `--use-moe` to replace each
   block's MLP with a sparse MoE of named experts ("skills") routed top-k

@@ -25,13 +25,14 @@ import argparse
 
 import torch
 
-from tinygpt.actions import ActionLayer
+from tinygpt.actions import ActionLayer, enable_shell_actions
 from tinygpt.config import ModelConfig
 from tinygpt.data import build_chat_prompt
 from tinygpt.extension_builder import Definishon, ExtensionBuilder
 from tinygpt.memory import ZipLoopMemory
 from tinygpt.model import GPT
 from tinygpt.selection import best_of_n
+from tinygpt.selfmodel import SelfMonitor
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
 from tinygpt.veto import AlignmentVeto
@@ -53,6 +54,13 @@ def parse_args():
     ap.add_argument("--memory", default="checkpoints/memory.json", help="zip-loop persist path")
     ap.add_argument("--memory-turns", type=int, default=8, help="turns of context to condition on")
     ap.add_argument("--no-actions", action="store_true", help="disable the action layer entirely")
+    ap.add_argument("--enable-shell", action="store_true",
+                    help="register the terminal action (gnome/desktop control). Always confirms.")
+    ap.add_argument("--halt-surprise", type=float, default=0.6,
+                    help="self-halt when self-model surprise stays above this")
+    ap.add_argument("--halt-patience", type=int, default=3,
+                    help="consecutive high-surprise steps before self-halt")
+    ap.add_argument("--snapshot", default="checkpoints/halt_snapshot.json")
     ap.add_argument("--seed", type=int, default=None)
     return ap.parse_args()
 
@@ -85,12 +93,18 @@ def main():
     memory = ZipLoopMemory(capacity=512, persist_path=args.memory)
     veto = AlignmentVeto()
     action_layer = None if args.no_actions else ActionLayer(veto=veto)
+    if action_layer is not None and args.enable_shell:
+        enable_shell_actions(action_layer)
+    monitor = SelfMonitor(dim=model.cfg.n_embd, halt_surprise=args.halt_surprise,
+                          patience=args.halt_patience)
 
     print("Prometheus/TinyGPT core.")
     print(f"  model      : {args.ckpt} on {device}")
     print(f"  selection  : best-of-{args.candidates} (predict-before-commit)")
     print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}")
-    print(f"  actions    : {'disabled' if args.no_actions else 'human-in-the-loop (read-only allowlist)'}")
+    shell_note = " + terminal (opt-in, always confirms)" if (not args.no_actions and args.enable_shell) else ""
+    print(f"  actions    : {'disabled' if args.no_actions else 'human-in-the-loop (read-only allowlist)' + shell_note}")
+    print(f"  self-halt  : surprise>{args.halt_surprise} x{args.halt_patience} -> stop + snapshot")
     print("  Type 'exit' to quit, 'reset' to clear memory.")
     print("  Teach the model live:  teach: <prompt> => <required reply>   (extension builder, §4)\n")
     if not args.no_actions:
@@ -111,6 +125,11 @@ def main():
             memory.clear(); memory.save()
             print("(memory cleared)")
             continue
+        if user.lower() == "halt":
+            path = monitor.snapshot(args.snapshot, extra={
+                "reason": "manual halt", "memory": memory.recent(args.memory_turns)})
+            print(f"(manual halt — saved neuron state -> {path})")
+            break
         if user.lower().startswith("teach:") and "=>" in user:
             # extension builder (§4): teach a definishon contract live, then
             # persist the modified weights so the new behaviour sticks.
@@ -152,6 +171,23 @@ def main():
         print(f"bot> {reply}")
         if args.candidates > 1:
             print(f"     (chose best of {args.candidates}, confidence {best.score:.3f})")
+
+        # self-monitor (§10): read the model's own hidden state on this reply and
+        # measure surprise vs. its self-model. Sustained high surprise self-halts.
+        full_ids = torch.tensor([prompt_ids + best.ids], dtype=torch.long, device=device)
+        hidden_mean = model.hidden_states(full_ids).mean(dim=1)[0].float().cpu().numpy()
+        surprise = monitor.observe(hidden_mean)
+        if monitor.should_halt():
+            path = monitor.snapshot(args.snapshot, extra={
+                "reason": "sustained self-model divergence",
+                "surprise": surprise,
+                "memory": memory.recent(args.memory_turns),
+                "last_reply": reply,
+            })
+            print(f"\n[self-halt] surprise stayed high ({surprise:.3f}); stopping and saving "
+                  f"all neuron state -> {path}")
+            memory.add("assistant", reply); memory.save()
+            break
 
         # section 3 + action layer: any proposed ACTION is vetoed + confirmed
         if action_layer is not None:
