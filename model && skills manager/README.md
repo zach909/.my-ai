@@ -1,15 +1,22 @@
-# TinyGPT
+# Prometheus Elastic Core — mesh AI
 
-A complete, from-scratch **decoder-only GPT** language model in Python + PyTorch
-— no Hugging Face Transformers, no Lightning, no distributed training. It trains
-a ~10–30M parameter model on a small English Markdown corpus and runs locally on
-a single consumer GPU (e.g. an RTX 5070).
+> **Note:** the decoder-only GPT transformer described below has been **retired**.
+> The model is now the **all-to-all neuron mesh** (`tinygpt/mesh.py`, §1), which
+> the same training/inference infrastructure trains unchanged (`build_model()`
+> returns the mesh; `arch` defaults to `"mesh"`). See the repository root
+> `README.md` for the nine mechanisms and honest limitations. The
+> tokenizer / data loader / AdamW loop / sampling below all still apply; only the
+> core computation block changed from attention to the mesh.
 
-## Features
+No Hugging Face Transformers, no Lightning, no distributed training. Runs locally
+on a single consumer GPU (e.g. an RTX 5070); `python test_core.py` runs 52 checks
+with no checkpoint needed.
+
+## Infrastructure (applies to the mesh unchanged)
 
 - **SentencePiece tokenizer** with training, save/load, encode/decode (BPE by default).
 - **Markdown dataset loader** with train/validation split and packed token blocks.
-- **GPT transformer built by hand**: token + positional embeddings, pre-LayerNorm
+- **The mesh** (retired transformer detail follows for reference): token + positional embeddings, pre-LayerNorm
   blocks, causal multi-head self-attention (fused FlashAttention when available,
   explicit masked fallback otherwise), GELU MLP, weight-tied LM head.
 - **Configurable hyperparameters** via `tinygpt/config.py` and CLI flags.

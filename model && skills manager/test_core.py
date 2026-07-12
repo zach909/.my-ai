@@ -2,8 +2,8 @@
 """Smoke tests for the unified core layers (veto, memory, actions, selection).
 
 Run: python test_core.py
-The veto/memory/action tests need no trained model. The selection test builds a
-tiny random GPT in-memory, so the whole suite runs without checkpoints.
+The veto/memory/action tests need no trained model. The selection test builds a tiny mesh in-memory, so the whole suite runs
+without checkpoints.
 """
 from __future__ import annotations
 
