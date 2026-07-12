@@ -107,12 +107,15 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   `ACTION: terminal <command>` action (covers gnome/desktop via
   `gsettings`/`wmctrl`/`xdotool`). It is **off by default** and **always
   requires your explicit confirmation** before running anything.
-- **Self-monitoring + self-halt** (§10, §12) — a lightweight self-model
-  (`tinygpt/selfmodel.py`) reads the model's own hidden state ("neuron inputs")
-  each turn and measures *surprise* vs. its prediction. If surprise stays high
-  for several turns, the core **stops itself and snapshots all recorded neuron
-  state + context** to disk (`--halt-surprise`, `--halt-patience`). Type `halt`
-  to trigger it manually. Halting always fails safe.
+- **Live guidance** (§7) — `tinygpt/live_guide.py` steers generation *while it
+  runs*: when the model drifts into sustained low confidence, sampling tightens
+  (lower temperature, tighter nucleus) to pull it back on track instead of
+  stopping. A tolerance band means a single noisy token doesn't over-correct.
+  On by default; `--no-guide` to disable.
+- **Idle power-save** (the kill switch) — when there's nothing to do, the core
+  releases GPU memory to save power and wakes instantly on the next input
+  (`--idle-timeout`, default 120s; type `sleep` to trigger now). It only stops
+  to save power when idle — never on drift.
 
 - **Mixture-of-Experts / skills** (§1.5) — enable `--use-moe` to replace each
   block's MLP with a sparse MoE of named experts ("skills") routed top-k

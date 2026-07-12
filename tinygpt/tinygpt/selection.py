@@ -49,14 +49,18 @@ def _score_continuation(model, prompt_ids: torch.Tensor, cont_ids: torch.Tensor)
 def best_of_n(model, tokenizer, prompt_ids: List[int], n: int, max_new_tokens: int,
               temperature: float, top_k: Optional[int], top_p: Optional[float],
               repetition_penalty: float, eos_id: Optional[int],
-              device: str) -> Candidate:
-    """Generate `n` candidates and return the highest-scoring one."""
+              device: str, guide=None) -> Candidate:
+    """Generate `n` candidates and return the highest-scoring one. When `guide`
+    is given, each candidate is generated under live guidance (section 7)."""
     base = torch.tensor([prompt_ids], dtype=torch.long, device=device)
     candidates: List[Candidate] = []
     for _ in range(max(1, n)):
+        if guide is not None:
+            guide.reset()
         out = model.generate(
             base, max_new_tokens=max_new_tokens, temperature=temperature,
             top_k=top_k, top_p=top_p, repetition_penalty=repetition_penalty, eos_id=eos_id,
+            guide=guide,
         )
         cont = out[:, base.size(1):]
         score = _score_continuation(model, base, cont)

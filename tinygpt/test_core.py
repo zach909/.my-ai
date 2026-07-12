@@ -141,31 +141,31 @@ def test_extension_builder():
           "extension builder detects a contradictory contract pair")
 
 
-def test_self_monitor():
-    import numpy as np
-    import tempfile, os, json
-    from tinygpt.selfmodel import SelfMonitor
+def test_live_guide():
+    from tinygpt.live_guide import LiveGuide
 
-    sm = SelfMonitor(dim=8, halt_surprise=0.5, patience=3)
-    for _ in range(10):
-        sm.observe(np.ones(8) * 0.3)
-    check(not sm.should_halt(), "self-monitor: stable input does not halt")
+    g = LiveGuide(base_temperature=0.8, base_top_k=40, base_top_p=0.95,
+                  low_confidence=0.25, patience=3)
+    # confident tokens -> no guidance, params stay at the base
+    for _ in range(5):
+        gp = g.adjust(0.9)
+    check(not gp.guiding and gp.temperature == 0.8, "live guide: confident output is not steered")
 
-    sm2 = SelfMonitor(dim=8, halt_surprise=0.5, patience=3)
-    np.random.seed(0)
-    halted = False
-    for _ in range(12):
-        sm2.observe(np.random.randn(8) * 5)
-        if sm2.should_halt():
-            halted = True
-            break
-    check(halted, "self-monitor: volatile input triggers self-halt")
+    # sustained low confidence -> guidance kicks in and tightens sampling
+    g2 = LiveGuide(base_temperature=0.8, base_top_k=40, base_top_p=0.95,
+                   low_confidence=0.25, patience=3)
+    steered = False
+    for _ in range(4):
+        gp2 = g2.adjust(0.05)
+        if gp2.guiding:
+            steered = True
+    check(steered and gp2.temperature < 0.8 and gp2.top_p <= 0.8,
+          "live guide: sustained drift tightens temperature and nucleus")
 
-    p = os.path.join(tempfile.mkdtemp(), "snap.json")
-    sm2.snapshot(p, extra={"note": "test"})
-    data = json.load(open(p))
-    check(len(data["recorded_states"]) > 0 and data["context"]["note"] == "test",
-          "self-monitor: snapshot saves neuron state + context")
+    # a single low-confidence blip does NOT over-correct (tolerance band)
+    g3 = LiveGuide(base_temperature=0.8, base_top_k=40, base_top_p=0.95, patience=3)
+    g3.adjust(0.9); g3.adjust(0.05); blip = g3.adjust(0.9)
+    check(not blip.guiding, "live guide: a single low-confidence blip is tolerated")
 
 
 def test_shell_action_gated():
@@ -215,7 +215,7 @@ def test_moe():
 
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
-               test_extension_builder, test_moe, test_self_monitor,
+               test_extension_builder, test_moe, test_live_guide,
                test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:

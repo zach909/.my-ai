@@ -221,16 +221,27 @@ class GPT(nn.Module):
     def generate(self, idx: torch.Tensor, max_new_tokens: int,
                  temperature: float = 1.0, top_k: Optional[int] = None,
                  top_p: Optional[float] = None, repetition_penalty: float = 1.0,
-                 eos_id: Optional[int] = None):
-        """Autoregressive sampling. See tinygpt.sampling for the token-level logic."""
+                 eos_id: Optional[int] = None, guide=None):
+        """Autoregressive sampling. See tinygpt.sampling for the token-level logic.
+
+        If `guide` (a tinygpt.live_guide.LiveGuide) is passed, the per-step
+        sampling parameters are adjusted live from the model's own confidence,
+        steering a drifting trajectory back on track instead of stopping."""
         from .sampling import sample_next_token
         for _ in range(max_new_tokens):
             idx_cond = idx if idx.size(1) <= self.cfg.block_size else idx[:, -self.cfg.block_size:]
             logits, _ = self(idx_cond)
             logits = logits[:, -1, :]
+
+            t, tk, tp = temperature, top_k, top_p
+            if guide is not None:
+                confidence = float(F.softmax(logits, dim=-1).max(dim=-1).values.mean().item())
+                gp = guide.adjust(confidence)
+                t, tk, tp = gp.temperature, gp.top_k, gp.top_p
+
             next_id = sample_next_token(
                 logits, idx,
-                temperature=temperature, top_k=top_k, top_p=top_p,
+                temperature=t, top_k=tk, top_p=tp,
                 repetition_penalty=repetition_penalty,
             )
             idx = torch.cat((idx, next_id), dim=1)

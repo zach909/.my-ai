@@ -25,14 +25,17 @@ import argparse
 
 import torch
 
+import select
+import sys
+
 from tinygpt.actions import ActionLayer, enable_shell_actions
 from tinygpt.config import ModelConfig
 from tinygpt.data import build_chat_prompt
 from tinygpt.extension_builder import Definishon, ExtensionBuilder
+from tinygpt.live_guide import LiveGuide
 from tinygpt.memory import ZipLoopMemory
 from tinygpt.model import GPT
 from tinygpt.selection import best_of_n
-from tinygpt.selfmodel import SelfMonitor
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
 from tinygpt.veto import AlignmentVeto
@@ -56,11 +59,13 @@ def parse_args():
     ap.add_argument("--no-actions", action="store_true", help="disable the action layer entirely")
     ap.add_argument("--enable-shell", action="store_true",
                     help="register the terminal action (gnome/desktop control). Always confirms.")
-    ap.add_argument("--halt-surprise", type=float, default=0.6,
-                    help="self-halt when self-model surprise stays above this")
-    ap.add_argument("--halt-patience", type=int, default=3,
-                    help="consecutive high-surprise steps before self-halt")
-    ap.add_argument("--snapshot", default="checkpoints/halt_snapshot.json")
+    # live guidance (section 7): steer generation back when it drifts
+    ap.add_argument("--no-guide", action="store_true", help="disable live guidance")
+    ap.add_argument("--guide-low-confidence", type=float, default=0.25)
+    ap.add_argument("--guide-patience", type=int, default=3)
+    # idle power-save (the kill switch: sleep when there's nothing to do)
+    ap.add_argument("--idle-timeout", type=float, default=120.0,
+                    help="seconds of no input before releasing GPU memory to save power (0=off)")
     ap.add_argument("--seed", type=int, default=None)
     return ap.parse_args()
 
@@ -80,6 +85,39 @@ def clean_reply(text: str) -> str:
     return text.strip()
 
 
+def _power_save(device: str) -> None:
+    """Kill switch = save power when idle. Release GPU memory; the model stays
+    loaded and wakes instantly on the next input. Never stops on drift."""
+    if device == "cuda":
+        try:
+            torch.cuda.empty_cache()
+        except Exception:
+            pass
+
+
+def read_input(prompt: str, idle_timeout: float, device: str):
+    """Read a line, releasing GPU memory once if the user is idle past
+    idle_timeout (POSIX TTY only; plain readline elsewhere). Returns None on EOF."""
+    sys.stdout.write(prompt)
+    sys.stdout.flush()
+    if idle_timeout and idle_timeout > 0 and sys.stdin.isatty():
+        slept = False
+        while True:
+            ready, _, _ = select.select([sys.stdin], [], [], idle_timeout)
+            if ready:
+                line = sys.stdin.readline()
+                return None if line == "" else line
+            if not slept:
+                _power_save(device)
+                print(f"\n[power-save] idle {idle_timeout:.0f}s — released GPU cache; "
+                      f"waiting (wakes on input)...")
+                sys.stdout.write(prompt)
+                sys.stdout.flush()
+                slept = True
+    line = sys.stdin.readline()
+    return None if line == "" else line
+
+
 def main():
     args = parse_args()
     if args.seed is not None:
@@ -95,8 +133,9 @@ def main():
     action_layer = None if args.no_actions else ActionLayer(veto=veto)
     if action_layer is not None and args.enable_shell:
         enable_shell_actions(action_layer)
-    monitor = SelfMonitor(dim=model.cfg.n_embd, halt_surprise=args.halt_surprise,
-                          patience=args.halt_patience)
+    guide = None if args.no_guide else LiveGuide(
+        base_temperature=args.temperature, base_top_k=args.top_k, base_top_p=args.top_p,
+        low_confidence=args.guide_low_confidence, patience=args.guide_patience)
 
     print("Prometheus/TinyGPT core.")
     print(f"  model      : {args.ckpt} on {device}")
@@ -104,7 +143,8 @@ def main():
     print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}")
     shell_note = " + terminal (opt-in, always confirms)" if (not args.no_actions and args.enable_shell) else ""
     print(f"  actions    : {'disabled' if args.no_actions else 'human-in-the-loop (read-only allowlist)' + shell_note}")
-    print(f"  self-halt  : surprise>{args.halt_surprise} x{args.halt_patience} -> stop + snapshot")
+    print(f"  guidance   : {'off' if args.no_guide else 'live (steer drift back mid-generation, §7)'}")
+    print(f"  power-save : {'off' if args.idle_timeout <= 0 else f'release GPU after {args.idle_timeout:.0f}s idle'}")
     print("  Type 'exit' to quit, 'reset' to clear memory.")
     print("  Teach the model live:  teach: <prompt> => <required reply>   (extension builder, §4)\n")
     if not args.no_actions:
@@ -115,21 +155,24 @@ def main():
 
     while True:
         try:
-            user = input("you> ").strip()
-        except (EOFError, KeyboardInterrupt):
+            line = read_input("you> ", args.idle_timeout, device)
+        except KeyboardInterrupt:
             print()
             break
+        if line is None:
+            print()
+            break
+        user = line.strip()
         if user.lower() in ("exit", "quit"):
             break
         if user.lower() == "reset":
             memory.clear(); memory.save()
             print("(memory cleared)")
             continue
-        if user.lower() == "halt":
-            path = monitor.snapshot(args.snapshot, extra={
-                "reason": "manual halt", "memory": memory.recent(args.memory_turns)})
-            print(f"(manual halt — saved neuron state -> {path})")
-            break
+        if user.lower() == "sleep":
+            _power_save(device)
+            print("(power-save — released GPU cache; keep typing to continue)")
+            continue
         if user.lower().startswith("teach:") and "=>" in user:
             # extension builder (§4): teach a definishon contract live, then
             # persist the modified weights so the new behaviour sticks.
@@ -159,35 +202,25 @@ def main():
         prompt = build_chat_prompt(turns, tokenizer) + "<|assistant|>\n"
         prompt_ids = [tokenizer.bos_id] + tokenizer.encode(prompt)
 
-        # section 11: generate N candidates, commit the model's most-confident one
+        # section 11 (predict-before-commit) + section 7 (live guidance): generate
+        # N candidates under live guidance — when the model drifts into sustained
+        # low confidence mid-generation, sampling tightens to steer it back rather
+        # than stopping — then commit the model's most-confident candidate.
+        if guide is not None:
+            guide.corrections = 0
         best = best_of_n(
             model, tokenizer, prompt_ids, n=args.candidates,
             max_new_tokens=args.max_new_tokens, temperature=args.temperature,
             top_k=args.top_k, top_p=args.top_p,
             repetition_penalty=args.repetition_penalty, eos_id=tokenizer.eos_id,
-            device=device,
+            device=device, guide=guide,
         )
         reply = clean_reply(best.text)
         print(f"bot> {reply}")
         if args.candidates > 1:
             print(f"     (chose best of {args.candidates}, confidence {best.score:.3f})")
-
-        # self-monitor (§10): read the model's own hidden state on this reply and
-        # measure surprise vs. its self-model. Sustained high surprise self-halts.
-        full_ids = torch.tensor([prompt_ids + best.ids], dtype=torch.long, device=device)
-        hidden_mean = model.hidden_states(full_ids).mean(dim=1)[0].float().cpu().numpy()
-        surprise = monitor.observe(hidden_mean)
-        if monitor.should_halt():
-            path = monitor.snapshot(args.snapshot, extra={
-                "reason": "sustained self-model divergence",
-                "surprise": surprise,
-                "memory": memory.recent(args.memory_turns),
-                "last_reply": reply,
-            })
-            print(f"\n[self-halt] surprise stayed high ({surprise:.3f}); stopping and saving "
-                  f"all neuron state -> {path}")
-            memory.add("assistant", reply); memory.save()
-            break
+        if guide is not None and guide.corrections > 0:
+            print(f"     (live guidance steered {guide.corrections} time(s))")
 
         # section 3 + action layer: any proposed ACTION is vetoed + confirmed
         if action_layer is not None:
