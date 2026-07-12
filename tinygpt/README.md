@@ -83,6 +83,33 @@ python finetune.py --init checkpoints/gpt.pt --data data/sft/chat.jsonl \
 python chat.py --ckpt checkpoints/gpt_sft.pt --chat
 ```
 
+## Unified core (`core.py`)
+
+`core.py` runs the whole thing as **one system**: the real TinyGPT model as the
+language engine, wrapped by the genuinely-applicable Prometheus mechanisms as
+real, working layers.
+
+```bash
+python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
+```
+
+- **Zip-loop memory** (§2) — a persistent ring buffer of the conversation
+  (`tinygpt/memory.py`), reloaded across restarts.
+- **Predict-before-commit** (§11) — generates N candidate replies and commits
+  the one the model is most confident in (`tinygpt/selection.py`).
+- **Alignment veto** (§3) + **human-in-the-loop action layer** — the model may
+  propose `ACTION: time | system_info | list_dir <p> | read_file <p>`; each is
+  vetoed and must be **approved by you** before it runs (`tinygpt/veto.py`,
+  `tinygpt/actions.py`). Read-only actions only by default; there is **no
+  autonomous execution** — this is the safe basis for computer control, not
+  unattended control.
+
+Run the core's tests (no checkpoint needed) with:
+
+```bash
+python test_core.py
+```
+
 ## Model size
 
 `GPT.num_params()` prints the parameter count at startup. Approximate sizes
