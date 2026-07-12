@@ -72,12 +72,28 @@ class Generator:
         if seed is not None:
             torch.manual_seed(seed)
         prompt_ids = self.tokenizer.encode(prompt, bos=True)
+        n_prompt = len(prompt_ids)
         idx = torch.tensor([prompt_ids], dtype=torch.long, device=self.device)
+
+        # In paragraph mode, stop once the reply forms a few complete sentences
+        # (past a minimum length), so we don't spend compute generating tokens
+        # that sentence-trimming would only throw away.
+        stop_fn = None
+        if paragraph:
+            min_new, max_sentences = 24, 4
+
+            def stop_fn(cur):  # noqa: E306
+                new_ids = cur[0, n_prompt:].tolist()
+                if len(new_ids) < min_new:
+                    return False
+                text = self.tokenizer.decode(new_ids)
+                return len(_SENTENCE_END.findall(text + " ")) >= max_sentences
+
         with torch.no_grad():
             out = self.model.generate(
                 idx, max_new_tokens=max_new_tokens, temperature=temperature,
                 top_k=top_k, top_p=top_p, repetition_penalty=repetition_penalty,
-                eos_id=self.tokenizer.eos_id,
+                eos_id=self.tokenizer.eos_id, stop_fn=stop_fn,
             )
         text = self.tokenizer.decode(out[0, len(prompt_ids):].tolist())
         if not paragraph:

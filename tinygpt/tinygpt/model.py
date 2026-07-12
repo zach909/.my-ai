@@ -248,8 +248,13 @@ class GPT(nn.Module):
     def generate(self, idx: torch.Tensor, max_new_tokens: int,
                  temperature: float = 1.0, top_k: Optional[int] = None,
                  top_p: Optional[float] = None, repetition_penalty: float = 1.0,
-                 eos_id: Optional[int] = None):
-        """Autoregressive sampling. See tinygpt.sampling for the token-level logic."""
+                 eos_id: Optional[int] = None, stop_fn=None):
+        """Autoregressive sampling. See tinygpt.sampling for the token-level logic.
+
+        `stop_fn(idx)` is an optional predicate checked after each new token; when
+        it returns True generation stops early (e.g. once the reply forms enough
+        complete sentences), so no compute is spent past a natural stopping point.
+        """
         from .sampling import sample_next_token
         block_size = self.cfg.block_size
         past_kvs = None
@@ -274,5 +279,7 @@ class GPT(nn.Module):
             )
             idx = torch.cat((idx, next_id), dim=1)
             if eos_id is not None and (next_id == eos_id).all():
+                break
+            if stop_fn is not None and stop_fn(idx):
                 break
         return idx
