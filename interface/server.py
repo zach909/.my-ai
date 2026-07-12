@@ -123,6 +123,64 @@ def _load_generator(ckpt_path: str):
           f"vocab {s['vocab_size']}")
 
 
+# --- skills built with the extension builder --------------------------------
+# Every extension saved by the builder becomes a live skill: a neuron whose name
+# is a trigger phrase and whose definition is the response. Chat matches a skill
+# before falling back to the generator, so building an extension immediately
+# extends what the AI can answer (design doc: skills as router-gated neurons).
+_skills: list[dict] = []
+_skills_mtime = -1.0
+
+
+def _extensions_dir() -> str:
+    return os.path.join(_ROOT, "extension-builder", "extensions")
+
+
+def _load_skills() -> None:
+    """(Re)load skills from saved extensions, if the directory changed."""
+    global _skills, _skills_mtime
+    d = _extensions_dir()
+    try:
+        mtime = os.path.getmtime(d)
+    except OSError:
+        _skills, _skills_mtime = [], -1.0
+        return
+    if mtime == _skills_mtime and _skills:
+        return
+    skills: list[dict] = []
+    for fn in sorted(os.listdir(d)):
+        if not fn.endswith(".ext.json"):
+            continue
+        try:
+            with open(os.path.join(d, fn), encoding="utf-8") as f:
+                data = json.load(f)
+        except (OSError, json.JSONDecodeError):
+            continue
+        ext_name = (data.get("project") or {}).get("name", fn)
+        for n in data.get("neurons", []):
+            trigger = str(n.get("name", "")).strip().lower()
+            response = str(n.get("definition", "")).strip()
+            if trigger and response:
+                skills.append({"trigger": trigger, "response": response, "extension": ext_name})
+    # longest trigger first, so a more specific skill wins
+    skills.sort(key=lambda s: len(s["trigger"]), reverse=True)
+    _skills, _skills_mtime = skills, mtime
+    if skills:
+        print(f"[server] loaded {len(skills)} skill(s) from extensions")
+
+
+def _match_skill(query: str) -> Optional[dict]:
+    """Return the most specific skill whose trigger appears in the query."""
+    _load_skills()
+    q = f" {query.lower()} "
+    for skill in _skills:
+        t = skill["trigger"]
+        # whole-word / phrase containment
+        if f" {t} " in q or f" {t}" in q or f"{t} " in q or t == query.lower():
+            return skill
+    return None
+
+
 class NeuroClaw(BaseHTTPRequestHandler):
     log_message = lambda self, fmt, *args: None
 
@@ -152,6 +210,9 @@ class NeuroClaw(BaseHTTPRequestHandler):
                     "mesh_qubits": s["mesh_n_qubits"],
                 },
             })
+        elif path == "/api/skills":
+            _load_skills()
+            self._json({"skills": _skills, "total": len(_skills)})
         elif path in _PROXY_PATHS:
             status, data = _proxy("GET", path, None)
             self._raw_json(status, data)
@@ -178,6 +239,13 @@ class NeuroClaw(BaseHTTPRequestHandler):
         if not query:
             self._json({"error": "empty message"})
             return
+        # A built skill (extension) takes precedence over generation.
+        skill = _match_skill(query)
+        if skill is not None:
+            self._json({"response": skill["response"], "skill": skill["trigger"],
+                        "extension": skill["extension"], "timestamp": int(time.time() * 1000)})
+            return
+
         if _generator is None:
             self._json({"response": "(no model loaded — train a checkpoint first)",
                         "timestamp": int(time.time() * 1000)})
@@ -185,8 +253,11 @@ class NeuroClaw(BaseHTTPRequestHandler):
 
         t0 = time.time()
         try:
+            # Fewer tokens keeps CPU latency reasonable; still multi-sentence
+            # after sentence-trimming. The elastic-mesh core is slower per token
+            # than a plain transformer because of its settle loop.
             reply = _generator.generate(
-                query, max_new_tokens=140, temperature=0.8, top_k=40,
+                query, max_new_tokens=100, temperature=0.8, top_k=40,
                 top_p=0.95, repetition_penalty=1.15, paragraph=True,
             ).strip()
         except Exception as e:  # generation must never take the server down
@@ -246,6 +317,7 @@ def run(host: str = "127.0.0.1", port: int = 7860, ckpt: Optional[str] = None) -
               "... --out-dir checkpoints_mesh_v2 --ckpt-name gpt_mesh_v2.pt")
         sys.exit(1)
     _load_generator(ckpt_path)
+    _load_skills()
     _start_ts_backend()
     server = HTTPServer((host, port), NeuroClaw)
     print(f"Neuroclaw ready on http://{host}:{port}")

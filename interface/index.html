@@ -153,7 +153,8 @@ name="reply"
       const r = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: msg }) });
       const d = await r.json();
       thinking.remove();
-      addMsg('ai', d.response || d.error || '(no output)');
+      const m = addMsg('ai', d.response || d.error || '(no output)');
+      if (d.skill) { const tag = document.createElement('div'); tag.className = 'hint'; tag.style.marginTop = '4px'; tag.textContent = '⚡ skill: ' + d.skill + ' (' + (d.extension||'') + ')'; m.appendChild(tag); }
     } catch (e) { thinking.remove(); addMsg('sys', 'error: ' + e); }
   }
   document.getElementById('send-btn').addEventListener('click', send);
