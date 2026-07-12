@@ -78,14 +78,30 @@ class MeshLM(nn.Module):
         self.W.register_hook(lambda g: g * (1.0 - self.vale).view(self.N, 1, 1, 1))
         self.bias.register_hook(lambda g: g * (1.0 - self.vale).view(self.N, 1))
 
+        # §7 live-correction thresholds + diagnostics
+        self.divergence_tolerance = cfg.divergence_tolerance
+        self.sustained_divergence_ticks = cfg.sustained_divergence_ticks
+        self._live_corrections = 0
+        self._last_surprise = 0.0
+
     def _settle(self, state: torch.Tensor, emb: torch.Tensor) -> torch.Tensor:
         """Run the settle loop for one position; `emb` (B, n_input, content) is
-        clamped onto the input neurons each tick."""
+        clamped onto the input neurons each tick.
+
+        §6 self-model + §7 live correction: each tick's change from the previous
+        tick is the mesh's own prediction error. If that stays large across
+        several *consecutive* ticks (sustained divergence, not one noisy tick),
+        the update is damped — blended back toward the previous state — steering
+        a run-away settle back toward convergence rather than letting it drift.
+        This runs during settling, not just at the end.
+        """
         B = state.size(0)
         W = self.W * self.self_mask
         ones = torch.ones(B, self.n_input, 1, device=state.device, dtype=state.dtype)
         zeros = torch.zeros(B, self.N - self.n_input, 1, device=state.device, dtype=state.dtype)
+        consecutive_high = 0
         for _ in range(self.settle_ticks):
+            prev = state
             # context[b,i,d] = bias[i,d] + sum_{j,e} state[b,j,e] * W[i,j,e,d]
             context = torch.einsum("bje,ijed->bid", state, W) + self.bias
             settled = torch.tanh(context)
@@ -94,10 +110,26 @@ class MeshLM(nn.Module):
             input_block = torch.cat([ones, emb], dim=2)                  # (B, n_input, D)
             rest = torch.cat([zeros, settled[:, self.n_input:, 1:]], dim=2)
             state = torch.cat([input_block, rest], dim=1)
+
+            # tick-to-tick divergence (self-model surprise). Detached: it only
+            # drives the control-flow decision, not the gradient.
+            divergence = float((state[:, self.n_input:, 1:]
+                                - prev[:, self.n_input:, 1:]).abs().mean().detach())
+            if divergence > self.divergence_tolerance:
+                consecutive_high += 1
+            else:
+                consecutive_high = 0
+            if consecutive_high >= self.sustained_divergence_ticks:
+                # live correction: damp toward the previous state to re-route
+                state = 0.5 * state + 0.5 * prev
+                self._live_corrections += 1
+                consecutive_high = 0
+            self._last_surprise = divergence
         return state
 
     def forward(self, idx: torch.Tensor, targets: Optional[torch.Tensor] = None):
         B, T = idx.shape
+        self._live_corrections = 0  # §7: count re-routes applied this pass
         state = torch.zeros(B, self.N, self.D, device=idx.device)
         logits_steps = []
         for t in range(T):

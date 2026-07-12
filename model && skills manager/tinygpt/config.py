@@ -45,6 +45,8 @@ class ModelConfig:
     mesh_input: int = 8           # number of externally-driven input neurons
     settle_ticks: int = 4         # propagation ticks per reasoning step
     vale_init: float = 0.1        # §2 initial per-neuron vale (plasticity budget)
+    divergence_tolerance: float = 0.5      # §7 per-tick divergence above this is "off track"
+    sustained_divergence_ticks: int = 3    # §7 consecutive off-track ticks before damping
 
 
 @dataclass

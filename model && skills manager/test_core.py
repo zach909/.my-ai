@@ -249,6 +249,32 @@ def test_vale_budget():
     check(m2.vale[1].item() > m2.vale[3].item(), "raise_vale makes the named neurons more stable than the rest")
 
 
+def test_mesh_live_correction():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip mesh live-correction test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    # default tolerance: normal settling almost never triggers a correction
+    torch.manual_seed(0)
+    calm = build_model(ModelConfig(vocab_size=16, block_size=8, arch="mesh",
+                                   mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=4))
+    calm(torch.randint(0, 16, (1, 6)))
+    check(calm._live_corrections == 0, "mesh: steady settling triggers no live correction")
+
+    # low tolerance over many ticks: sustained divergence re-routes (steers, not halts)
+    hot = build_model(ModelConfig(vocab_size=16, block_size=8, arch="mesh",
+                                  mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=8,
+                                  divergence_tolerance=0.001, sustained_divergence_ticks=2))
+    out, _ = hot(torch.randint(0, 16, (1, 6)))
+    check(hot._live_corrections > 0, "mesh: sustained divergence triggers live correction")
+    check(torch.isfinite(out).all(), "mesh: output stays finite after live correction (re-routed, not halted)")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -277,7 +303,7 @@ def test_moe():
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
-               test_live_guide, test_shell_action_gated):
+               test_mesh_live_correction, test_live_guide, test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:
             fn()
