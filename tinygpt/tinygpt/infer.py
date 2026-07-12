@@ -134,8 +134,15 @@ def _resolve_tokenizer(tok_path: str, ckpt_path: str) -> str:
     """
     if os.path.exists(tok_path):
         return tok_path
-    sibling = os.path.join(os.path.dirname(os.path.abspath(ckpt_path)),
-                           os.path.basename(tok_path))
-    if os.path.exists(sibling):
-        return sibling
+    # The checkpoint and tokenizer may live in different checkpoint dirs (e.g. a
+    # mesh checkpoint that reused a tokenizer trained for another run), so try a
+    # few likely roots: next to the checkpoint, then relative to the tinygpt
+    # package root (checkpoints are usually recorded relative to it).
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(ckpt_path)), os.path.basename(tok_path)),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), tok_path),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
     return tok_path  # let Tokenizer raise a clear FileNotFoundError

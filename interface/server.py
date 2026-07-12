@@ -52,7 +52,8 @@ _ts_process = None
 # Subsystem endpoints proxied to the TS backend (everything except /api/chat and
 # the model-status/health endpoints this server owns).
 _PROXY_PATHS = {"/api/systems", "/api/neuri", "/api/neurons", "/api/plugins",
-                "/api/thorns", "/api/train"}
+                "/api/thorns", "/api/train",
+                "/api/extension/build", "/api/extension/list"}
 # /api/systems is the dashboard's name for the TS backend's own /api/status.
 _PROXY_REWRITE = {"/api/systems": "/api/status"}
 
