@@ -26,6 +26,7 @@ export class ElasticCoreBlock {
     weights;
     inputProjection;
     outputProjection;
+    nextState;
     directInputFlags;
     groups = new Map();
     definitionTargets = new Map();
@@ -47,6 +48,7 @@ export class ElasticCoreBlock {
         this.weights = new Float32Array(this.neuronCount * this.neuronCount * this.stateDim * this.stateDim);
         this.inputProjection = new Float32Array(this.inputDim * this.stateDim);
         this.outputProjection = new Float32Array(this.stateDim * this.outputDim);
+        this.nextState = new Float32Array(this.neuronCount * this.stateDim);
         this.directInputFlags = new Float32Array(this.neuronCount);
         const scale = config.weightScale ?? Math.sqrt(1 / Math.max(1, this.neuronCount * this.stateDim));
         for (let i = 0; i < this.bias.length; i++)
@@ -178,6 +180,7 @@ export class ElasticCoreBlock {
         this.quantizationResidual = newResidual;
         this.bias = newBias;
         this.weights = newWeights;
+        this.nextState = new Float32Array(newCount * this.stateDim);
         this.directInputFlags = newDirectFlags;
         if (group !== undefined)
             this.groups.set(oldCount, group);
@@ -269,48 +272,68 @@ export class ElasticCoreBlock {
     }
     forward(input, options = {}) {
         const driven = options.drivenNeurons ?? new Set([0]);
+        const N = this.neuronCount;
+        const SD = this.stateDim;
         this.clearDirectInputFlags();
         for (const n of driven) {
-            if (n >= 0 && n < this.neuronCount) {
+            if (n >= 0 && n < N) {
                 this.directInputFlags[n] = 1;
                 this.inject(n, input, true);
             }
         }
         const startState = new Float32Array(this.state);
+        const vAlloc = new Float32Array(N);
+        const frozen = new Uint8Array(N);
+        for (let t = 0; t < N; t++) {
+            vAlloc[t] = Math.min(1, Math.max(0, options.vale?.get(t) ?? 0));
+            const group = this.groups.get(t);
+            if (!driven.has(t) && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group)) {
+                frozen[t] = 1;
+            }
+        }
         let ticks = 0, residual = 0, converged = false;
+        const next = this.nextState;
+        const weights = this.weights;
+        const bias = this.bias;
+        const sums = new Float32Array(SD);
         for (; ticks < this.maxTicks; ticks++) {
-            const oldState = this.state;
-            const next = new Float32Array(oldState.length);
-            for (let t = 0; t < this.neuronCount; t++) {
-                const group = this.groups.get(t);
-                const externallyDriven = driven.has(t);
-                const frozen = !externallyDriven && options.activeGroups !== undefined && group !== undefined && !options.activeGroups.has(group);
-                if (frozen) {
-                    next.set(oldState.subarray(t * this.stateDim, (t + 1) * this.stateDim), t * this.stateDim);
+            const curr = this.state;
+            for (let t = 0; t < N; t++) {
+                const off = t * SD;
+                if (frozen[t]) {
+                    for (let d = 0; d < SD; d++)
+                        next[off + d] = curr[off + d];
                     continue;
                 }
-                for (let od = 0; od < this.stateDim; od++) {
-                    let sum = this.bias[t * this.stateDim + od];
-                    for (let s = 0; s < this.neuronCount; s++) {
-                        if (s === t)
-                            continue;
-                        for (let id = 0; id < this.stateDim; id++)
-                            sum += oldState[s * this.stateDim + id] * this.weights[this.weightIndex(t, s, od, id)];
+                sums.set(bias.subarray(off, off + SD));
+                for (let s = 0; s < N; s++) {
+                    if (s === t)
+                        continue;
+                    const sOff = s * SD;
+                    const wBase = (t * N + s) * SD * SD;
+                    for (let od = 0; od < SD; od++) {
+                        const wRowOff = wBase + od * SD;
+                        let dot = 0;
+                        for (let id = 0; id < SD; id++) {
+                            dot += curr[sOff + id] * weights[wRowOff + id];
+                        }
+                        sums[od] += dot;
                     }
-                    const computed = Math.tanh(sum);
-                    const v = Math.min(1, Math.max(0, options.vale?.get(t) ?? 0));
-                    const old = oldState[t * this.stateDim + od];
-                    next[t * this.stateDim + od] = v * old + (1 - v) * computed;
+                }
+                const v = vAlloc[t];
+                for (let od = 0; od < SD; od++) {
+                    next[off + od] = v * curr[off + od] + (1 - v) * Math.tanh(sums[od]);
                 }
             }
-            const { state: settled } = this.quantizeWithResidual(next);
+            this.applyQuantizationInPlace(next);
             for (const n of driven)
-                if (n >= 0 && n < this.neuronCount)
-                    settled[n * this.stateDim + this.inputFlagDim] = 1;
+                if (n >= 0 && n < N)
+                    next[n * SD + this.inputFlagDim] = 1;
             residual = 0;
-            for (let i = 0; i < settled.length; i++)
-                residual += Math.abs(settled[i] - oldState[i]);
-            this.state = settled;
+            for (let i = 0; i < next.length; i++) {
+                residual += Math.abs(next[i] - curr[i]);
+                curr[i] = next[i];
+            }
             if (residual < this.convergenceThreshold) {
                 converged = true;
                 ticks++;
@@ -346,12 +369,26 @@ export class ElasticCoreBlock {
             this.state[off + this.inputFlagDim] = 1;
     }
     /**
-     * Quantize a candidate next-state and feed the rounding error back into
-     * `quantizationResidual` so it's compensated for on the following tick,
-     * per the QAT design (Section 8): the network learns to expect its own
-     * quantized form instead of being surprised by compression after training.
-     * Disabling quantization is a real toggle: residual is reset to exactly zero.
+     * Section 8: In-place quantization with residual feedback. Compares each
+     * state's candidate value (plus its accumulated error) to the nearest
+     * dequantized level, then stores the new rounding error back into the
+     * residual buffer so it is compensated for on the next tick. This lets
+     * the network learn to "expect" its own quantized substrate.
      */
+    applyQuantizationInPlace(next) {
+        if (!this.quantizationAware) {
+            this.quantizationResidual.fill(0);
+            return;
+        }
+        const levels = (1 << this.quantizationBits) - 1;
+        for (let i = 0; i < next.length; i++) {
+            const compensated = Math.max(-1, Math.min(1, next[i] + this.quantizationResidual[i]));
+            const q = Math.round(((compensated + 1) / 2) * levels);
+            const dequantized = (q / levels) * 2 - 1;
+            this.quantizationResidual[i] = compensated - dequantized;
+            next[i] = dequantized;
+        }
+    }
     quantizeWithResidual(next) {
         if (!this.quantizationAware) {
             this.quantizationResidual.fill(0);
