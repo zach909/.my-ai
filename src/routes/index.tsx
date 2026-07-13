@@ -3,7 +3,7 @@ import { useElasticMesh } from '@/features/mesh/use-elastic-mesh'
 import { MeshVisualization } from '@/features/mesh/mesh-visualization'
 import { ControlPanel } from '@/features/mesh/control-panel'
 import { BlinkClientBoundary } from '@/components/BlinkClientBoundary'
-import { Sparkles, Cpu, Github } from 'lucide-react'
+import { Sparkles, Cpu, ExternalLink } from 'lucide-react'
 
 export const Route = createFileRoute('/')({
   head: () => ({
@@ -69,7 +69,7 @@ function MeshLab() {
               rel="noopener noreferrer"
               className="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
             >
-              <Github className="w-3.5 h-3.5" />
+              <ExternalLink className="w-3.5 h-3.5" />
               <span className="hidden sm:inline">zach909/.my-ai</span>
             </a>
           </div>
