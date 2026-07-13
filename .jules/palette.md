@@ -20,3 +20,6 @@
 ## 2025-10-24 - [Persistent Chat Sessions]
 **Learning:** In terminal-style AI interfaces, losing context on page refresh is a major friction point. Implementing LocalStorage persistence for message history, including timestamps and roles, creates a seamless and "always-on" feel that matches user expectations for persistent tools.
 **Action:** Default to persistent chat history via LocalStorage for web-based AI terminals, ensuring a robust 'Clear' mechanism is also provided to reset state.
+## 2025-07-13 - [Resilient Dashboard Status and Screen Reader Feedback]
+**Learning:** For polling-based status indicators, ensuring the error/catch block explicitly resets both visual classes (e.g., `.online`) and ARIA labels (e.g., `aria-label="System status: Offline"`) is critical for reliability. Furthermore, applying `role="log"` and `aria-live="polite"` to chat containers in dashboard views ensures accessibility parity with specialized terminal components.
+**Action:** Always synchronize visual class removal and ARIA attribute updates in status polling error handlers to prevent "stuck" indicators.
