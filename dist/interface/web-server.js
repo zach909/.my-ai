@@ -409,6 +409,82 @@ export class WebServer {
             });
             return;
         }
+        // POST /api/extension/build — build a real extension from NeuroLang and save it
+        if (pathname === '/api/extension/build' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const name = (body?.name ?? '').trim() || `extension_${Date.now()}`;
+                const code = body?.code ?? '';
+                const { ExtensionBuilder } = await import('../extension-builder/builder.js');
+                const builder = new ExtensionBuilder();
+                const project = builder.createProject(name, body?.description ?? '');
+                const parsed = builder.parseNeuroLang(project.id, code);
+                if (!parsed.success) {
+                    this.sendJson(res, { errors: parsed.errors }, 400);
+                    return;
+                }
+                const quantize = body?.quantize === true;
+                const bits = body?.bits ?? 8;
+                const json = quantize
+                    ? await builder.installWithQuantization(project.id, { bits })
+                    : builder.saveWithoutQuantization(project.id);
+                const path = await import('node:path');
+                const { promises: fs } = await import('node:fs');
+                const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+                await fs.mkdir(dir, { recursive: true });
+                const safe = name.replace(/[^a-zA-Z0-9_-]+/g, '_');
+                const filename = `${safe}_${Date.now()}.ext.json`;
+                await fs.writeFile(path.join(dir, filename), json ?? '{}', 'utf8');
+                const proj = builder.getProject(project.id);
+                const neurons = proj
+                    ? Array.from(proj.neurons.values()).map(n => ({ name: n.name, value: n.value, definition: n.definition }))
+                    : [];
+                this.sendJson(res, {
+                    ok: true, name, savedAs: filename, quantized: quantize,
+                    bits: quantize ? bits : null, stats: builder.getStats(project.id), neurons,
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // GET /api/extension/list — list the extensions saved on disk
+        if (pathname === '/api/extension/list' && method === 'GET') {
+            try {
+                const path = await import('node:path');
+                const { promises: fs } = await import('node:fs');
+                const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+                let files = [];
+                try {
+                    files = (await fs.readdir(dir)).filter(f => f.endsWith('.ext.json'));
+                }
+                catch {
+                    files = [];
+                }
+                const extensions = [];
+                for (const f of files) {
+                    try {
+                        const data = JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'));
+                        extensions.push({
+                            file: f, name: data.project?.name ?? f,
+                            neurons: Array.isArray(data.neurons) ? data.neurons.length : 0,
+                            quantized: data.quantized === true, bits: data.bits ?? null,
+                        });
+                    }
+                    catch {
+                        extensions.push({ file: f, name: f, neurons: 0 });
+                    }
+                }
+                this.sendJson(res, { extensions, total: extensions.length });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
         this.sendJson(res, { error: 'Not Found' }, 404);
     }
 }

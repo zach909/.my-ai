@@ -13,6 +13,7 @@ import re
 from typing import Optional
 
 import torch
+import torch.nn as nn
 
 from .config import ModelConfig
 from .model import GPT
@@ -72,12 +73,28 @@ class Generator:
         if seed is not None:
             torch.manual_seed(seed)
         prompt_ids = self.tokenizer.encode(prompt, bos=True)
+        n_prompt = len(prompt_ids)
         idx = torch.tensor([prompt_ids], dtype=torch.long, device=self.device)
+
+        # In paragraph mode, stop once the reply forms a few complete sentences
+        # (past a minimum length), so we don't spend compute generating tokens
+        # that sentence-trimming would only throw away.
+        stop_fn = None
+        if paragraph:
+            min_new, max_sentences = 24, 4
+
+            def stop_fn(cur):  # noqa: E306
+                new_ids = cur[0, n_prompt:].tolist()
+                if len(new_ids) < min_new:
+                    return False
+                text = self.tokenizer.decode(new_ids)
+                return len(_SENTENCE_END.findall(text + " ")) >= max_sentences
+
         with torch.no_grad():
             out = self.model.generate(
                 idx, max_new_tokens=max_new_tokens, temperature=temperature,
                 top_k=top_k, top_p=top_p, repetition_penalty=repetition_penalty,
-                eos_id=self.tokenizer.eos_id,
+                eos_id=self.tokenizer.eos_id, stop_fn=stop_fn,
             )
         text = self.tokenizer.decode(out[0, len(prompt_ids):].tolist())
         if not paragraph:
@@ -106,11 +123,19 @@ class Generator:
 
 
 def load_generator(ckpt_path: str, device: str = "cpu",
-                   tokenizer_path: Optional[str] = None) -> Generator:
+                   tokenizer_path: Optional[str] = None,
+                   quantize: bool = False) -> Generator:
     """Load a checkpoint into a ready-to-use `Generator`.
 
     The architecture (standard or elastic-mesh) and the tokenizer path are read
     from the checkpoint itself, so the caller only supplies the `.pt` path.
+
+    `quantize=True` applies int8 dynamic quantization to the Linear layers,
+    ~4x-shrinking their weights for memory-constrained (e.g. Raspberry-Pi)
+    deployment — design doc mechanism 8, quantization as native compression.
+    Measured note: for these tiny models it does NOT speed up CPU inference
+    (quant/dequant overhead outweighs int8 matmul gains), so it's off by default
+    and is a memory optimization, not a latency one.
     """
     device = resolve_device(device)
     ckpt = load_checkpoint(ckpt_path, map_location=device)
@@ -118,10 +143,23 @@ def load_generator(ckpt_path: str, device: str = "cpu",
     model = GPT(config).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
+    if quantize and device == "cpu":
+        model = _quantize_dynamic(model)
     tok_path = _resolve_tokenizer(
         tokenizer_path or ckpt.get("tokenizer", "checkpoints/spm.model"), ckpt_path)
     tokenizer = Tokenizer(tok_path)
     return Generator(model, tokenizer, config, device, ckpt_path)
+
+
+def _quantize_dynamic(model: GPT) -> GPT:
+    """int8-quantize the Linear weights for lighter/faster CPU inference.
+
+    Dynamic quantization swaps nn.Linear for int8 versions that dequantize on
+    the fly; the token embedding and the elastic-mesh PennyLane TorchLayer aren't
+    nn.Linear so they're left untouched.
+    """
+    import torch.ao.quantization as tq
+    return tq.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8, inplace=False)
 
 
 def _resolve_tokenizer(tok_path: str, ckpt_path: str) -> str:
@@ -134,8 +172,15 @@ def _resolve_tokenizer(tok_path: str, ckpt_path: str) -> str:
     """
     if os.path.exists(tok_path):
         return tok_path
-    sibling = os.path.join(os.path.dirname(os.path.abspath(ckpt_path)),
-                           os.path.basename(tok_path))
-    if os.path.exists(sibling):
-        return sibling
+    # The checkpoint and tokenizer may live in different checkpoint dirs (e.g. a
+    # mesh checkpoint that reused a tokenizer trained for another run), so try a
+    # few likely roots: next to the checkpoint, then relative to the tinygpt
+    # package root (checkpoints are usually recorded relative to it).
+    candidates = [
+        os.path.join(os.path.dirname(os.path.abspath(ckpt_path)), os.path.basename(tok_path)),
+        os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), tok_path),
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
     return tok_path  # let Tokenizer raise a clear FileNotFoundError
