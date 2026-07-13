@@ -26,3 +26,13 @@
 **Vulnerability:** The NeuriLang interpreter in `interface/cli.ts` used `new Function()` to execute the string contents of the `@code` attribute without any validation. This allowed arbitrary JavaScript execution (RCE) if a user-controlled NeuriLang snippet was processed.
 **Learning:** Even internal-use DSLs can become vectors for RCE if they allow evaluation of arbitrary code. "Code-to-net" features are powerful but must be strictly sandboxed or restricted to safe primitives.
 **Prevention:** Use a strict character whitelist regex (e.g., `/^[0-9a-fx+\-*/().\s]*$/i`) to ensure only safe mathematical or hexadecimal literals are executed if using `new Function()` or `eval()`. For more complex needs, use a dedicated expression parser with no access to the global scope or Node.js APIs.
+
+## 2025-05-30 - Incomplete Path Sandboxing in Python FileSystemPlugin
+**Vulnerability:** The Python implementation of  was vulnerable to path traversal and glob-based traversal because it used  directly without validating that the resolved paths remained within the project root.
+**Learning:** Security controls must be synchronized across language-parallel implementations (TypeScript vs. Python). While the TS version had path sandboxing, the Python version was completely open. Additionally, glob patterns are a distinct traversal vector that requires separate sanitization (blocking '..', '/', and '~' in patterns).
+**Prevention:** Use a central `_resolve` helper that combines `os.path.abspath`, `os.path.relpath`, and checks for `..` or absolute results to jail all file operations. Explicitly sanitize glob patterns to prevent escaping the base directory during search or listing.
+
+## 2025-05-30 - Incomplete Path Sandboxing in Python FileSystemPlugin
+**Vulnerability:** The Python implementation of `FileSystemPlugin` was vulnerable to path traversal and glob-based traversal because it used `os.path.expanduser` directly without validating that the resolved paths remained within the project root.
+**Learning:** Security controls must be synchronized across language-parallel implementations (TypeScript vs. Python). While the TS version had path sandboxing, the Python version was completely open. Additionally, glob patterns are a distinct traversal vector that requires separate sanitization (blocking '..', '/', and '~' in patterns).
+**Prevention:** Use a central `_resolve` helper that combines `os.path.abspath`, `os.path.relpath`, and checks for `..` or absolute results to jail all file operations. Explicitly sanitize glob patterns to prevent escaping the base directory during search or listing.
