@@ -47,14 +47,14 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1.0' },
-      { title: 'Prometheus Elastic Core' },
-      { name: 'description', content: 'A locally-run autonomous AI built on an all-to-all non-linear neural mesh with continuous learning and self-correction.' },
-      { name: 'theme-color', content: '#0f111a' },
+      { title: 'Blink App' },
+      { name: 'description', content: 'An app built with Blink.' },
+      { name: 'theme-color', content: '#0a0a0a' },
       { property: 'og:type', content: 'website' },
-      { property: 'og:title', content: 'Prometheus Elastic Core' },
-      { property: 'og:description', content: 'A locally-run autonomous AI built on an all-to-all non-linear neural mesh.' },
+      { property: 'og:title', content: 'Blink App' },
+      { property: 'og:description', content: 'An app built with Blink.' },
       // Shared-shell SEO defaults — set these to the real brand/locale per app.
-      { property: 'og:site_name', content: 'Prometheus Elastic Core' },
+      { property: 'og:site_name', content: 'Blink App' },
       { property: 'og:locale', content: 'en_US' },
       { name: 'twitter:card', content: 'summary_large_image' },
     ],
@@ -86,8 +86,8 @@ function RootDocument({ children }: { children: ReactNode }) {
             __html: JSON.stringify({
               '@context': 'https://schema.org',
               '@graph': [
-                { '@type': 'WebSite', name: 'Prometheus Elastic Core', url: '/' },
-                { '@type': 'Organization', name: 'Prometheus Elastic Core', url: '/', sameAs: [] },
+                { '@type': 'WebSite', name: 'Blink App', url: '/' },
+                { '@type': 'Organization', name: 'Blink App', url: '/', sameAs: [] },
               ],
             }),
           }}
