@@ -62,8 +62,9 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   const clearBtn = document.getElementById('clear-btn');
   const statusDot = document.getElementById('status-dot');
   const statusText = document.getElementById('status-text');
-  let chatHistory = [];
-  function addMessage(type, text) {
+  let chatHistory = JSON.parse(localStorage.getItem('nc_hist') || '[]');
+  const save = () => localStorage.setItem('nc_hist', JSON.stringify(chatHistory));
+  function addMessage(type, text, time) {
     const div = document.createElement('div');
     div.className = 'message ' + type;
     if (type === 'ai') {
@@ -83,7 +84,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     div.appendChild(content);
     const ts = document.createElement('div');
     ts.className = 'timestamp';
-    ts.textContent = new Date().toLocaleTimeString();
+    ts.textContent = time || new Date().toLocaleTimeString();
     div.appendChild(ts);
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
@@ -128,8 +129,10 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   }
   async function sendMessage(msg) {
     if (!msg.trim()) return;
-    addMessage('user', msg);
-    chatHistory.push({role: 'user', content: msg});
+    const time = new Date().toLocaleTimeString();
+    addMessage('user', msg, time);
+    chatHistory.push({role: 'user', content: msg, time});
+    save();
     input.value = '';
     input.disabled = true;
     sendBtn.disabled = true;
@@ -138,13 +141,15 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
       const res = await fetch('/api/chat', {
         method: 'POST',
         headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({message: msg, history: chatHistory})
+        body: JSON.stringify({message: msg, history: chatHistory.map(({role, content}) => ({role, content}))})
       });
       const data = await res.json();
       removeThinking();
       if (data.response) {
-        addMessage('ai', data.response);
-        chatHistory.push({role: 'assistant', content: data.response});
+        const aiTime = new Date().toLocaleTimeString();
+        addMessage('ai', data.response, aiTime);
+        chatHistory.push({role: 'assistant', content: data.response, time: aiTime});
+        save();
       } else if (data.error) { addMessage('error', 'Error: ' + data.error); }
     } catch { removeThinking(); addMessage('error', 'Error: Unable to reach server'); }
     finally {
@@ -157,6 +162,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     if (confirm('Clear chat history?')) {
       chat.innerHTML = '';
       chatHistory = [];
+      localStorage.removeItem('nc_hist');
       addMessage('system', 'Chat cleared.');
     }
   };
@@ -165,7 +171,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value); });
   setInterval(checkStatus, 3000);
   checkStatus();
-  addMessage('system', 'Neuroclaw ready. Type a message.');
+  if (chatHistory.length) {
+    chatHistory.forEach(m => addMessage(m.role === 'user' ? 'user' : 'ai', m.content, m.time));
+  } else {
+    addMessage('system', 'Neuroclaw ready. Type a message.');
+  }
 </script>
 </body>
 </html>`;

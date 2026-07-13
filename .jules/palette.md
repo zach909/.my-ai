@@ -17,6 +17,9 @@
 **Learning:** In terminal-themed interfaces, standard focus outlines are often lost against dark backgrounds. Explicitly styling `:focus-visible` with a high-contrast theme color (e.g., #00ff41) ensures accessibility for keyboard users without adding visual noise for mouse users. Additionally, adding `:active` states (like `transform: translateY(1px)`) provides subtle but essential tactile feedback for button clicks.
 **Action:** Use `:focus-visible` for consistent, accessible focus indicators and `:active` transforms for responsive-feeling interactions.
 
+## 2025-10-24 - [Persistent Chat Sessions]
+**Learning:** In terminal-style AI interfaces, losing context on page refresh is a major friction point. Implementing LocalStorage persistence for message history, including timestamps and roles, creates a seamless and "always-on" feel that matches user expectations for persistent tools.
+**Action:** Default to persistent chat history via LocalStorage for web-based AI terminals, ensuring a robust 'Clear' mechanism is also provided to reset state.
 ## 2025-07-13 - [Resilient Dashboard Status and Screen Reader Feedback]
 **Learning:** For polling-based status indicators, ensuring the error/catch block explicitly resets both visual classes (e.g., `.online`) and ARIA labels (e.g., `aria-label="System status: Offline"`) is critical for reliability. Furthermore, applying `role="log"` and `aria-live="polite"` to chat containers in dashboard views ensures accessibility parity with specialized terminal components.
 **Action:** Always synchronize visual class removal and ARIA attribute updates in status polling error handlers to prevent "stuck" indicators.
