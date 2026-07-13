@@ -435,6 +435,24 @@ class ScriptAI:
 class ParseError(Exception): pass
 
 
+class _MeshCharTok:
+    """Minimal char tokenizer that bridges NeuroLang programs to the trainable
+    mesh (no external deps, no spm model needed)."""
+    bos_id, eos_id, pad_id = 0, 1, 2
+
+    def encode(self, s, bos=False, eos=False):
+        ids = [3 + (ord(c) % 120) for c in str(s)]
+        if bos:
+            ids = [self.bos_id] + ids
+        if eos:
+            ids = ids + [self.eos_id]
+        return ids
+
+    def decode(self, ids):
+        # inverse of encode for ASCII (ord < 120); ids are 3 + ord(c) % 120
+        return "".join(chr((int(i) - 3) % 120) for i in ids if int(i) >= 3)
+
+
 class NeuroRuntime:
     def __init__(self, dims=DEFAULT_DIM, save_dir='.'):
         self.dims = dims; self.save_dir = save_dir; self.tick = 0
@@ -458,6 +476,53 @@ class NeuroRuntime:
 
     def set_def(self, name, text):
         self._req(name); self.neurons[name].definition = text
+
+    def train_as_mesh(self, epochs=300, lr=5e-3, tolerance=0.25):
+        """Connect the NeuroLang extension builder to the trainable mesh.
+
+        Every neuron carrying a @definishon becomes a contract "when this neuron
+        is the input, the network's output must be its definishon" (§4). Those
+        contracts are compiled into the ExtensionBuilder and trained on a real
+        MeshLM (§1) until they hold; satisfied contracts raise the mesh vale so
+        they lock in (§2). This is what "the model is made in extension builder"
+        means concretely — the DSL builds and trains the mesh.
+
+        Returns the ExtensionBuilder TrainResult (or None if no definishons),
+        and stores the trained mesh on self._mesh / tokenizer on self._mesh_tok.
+        """
+        from tinygpt.config import ModelConfig
+        from tinygpt.model import build_model
+        from tinygpt.extension_builder import Definishon, ExtensionBuilder
+
+        contracts_src = [(nm, n.definition) for nm, n in self.neurons.items()
+                         if getattr(n, "definition", "")]
+        if not contracts_src:
+            print("[neurolang] no @definishon contracts to train"); return None
+
+        tok = _MeshCharTok()
+        n_neurons = max(16, len(self.neurons) * 2)
+        cfg = ModelConfig(vocab_size=128, block_size=64, arch="mesh",
+                          mesh_neurons=n_neurons, mesh_dims=4, mesh_input=6, settle_ticks=3)
+        mesh = build_model(cfg)
+        eb = ExtensionBuilder(mesh, tok, device="cpu")
+        contracts = [Definishon(when=nm, then=text) for nm, text in contracts_src]
+        print(f"[neurolang] training {len(contracts)} definishon(s) into the mesh...")
+        result = eb.train(contracts, epochs=epochs, lr=lr, weight_penalty=1e-4,
+                          tolerance=tolerance, verbose=False)
+
+        # §2: lock in satisfied contracts by raising the vale of the mesh neurons
+        # (approximate: one mesh neuron per satisfied contract).
+        for k in result.satisfied:
+            mesh.raise_vale([k % mesh.N], amount=0.3)
+        if result.conflicts:
+            for i, j, _ in result.conflicts:
+                print(f"[neurolang] CONFLICT: definishon {i!r} vs {j!r} cannot both hold")
+
+        self._mesh = mesh
+        self._mesh_tok = tok
+        print(f"[neurolang] converged={result.converged} "
+              f"satisfied {len(result.satisfied)}/{len(contracts)} in {result.epochs} epochs")
+        return result
 
     def inject(self, name, vals):
         self._req(name); self.neurons[name].inject(vals)
@@ -582,6 +647,7 @@ P_CONN   = re.compile(r'^"([^"]+)"\s*@connections\s*=\s*"\.\s*([^/]+)/([^"]+)"\s
 P_DEFN   = re.compile(r'^"([^"]+)"\s*@definishon\s*=\s*"([^"]+)"$')
 P_INPUT  = re.compile(r'^input\s+"([^"]+)"\s*=\s*\[([^\]]+)\]$')
 P_RUN    = re.compile(r'^run\s+(\d+)\s*ticks?$')
+P_TRAIN  = re.compile(r'^train(?:\s+mesh)?$')
 P_SHOW   = re.compile(r'^show\s+"([^"]+)"$')
 P_CDECL  = re.compile(r'^code@name\s*=\s*"([^"]+)"$')
 P_CODE   = re.compile(r'^"([^"]+)"\s*@code\s*=\s*"(.*)"$', re.DOTALL)
@@ -620,6 +686,8 @@ def interpret(source, save_dir='.'):
             m = P_INPUT.match(line);  m and rt.inject(m.group(1),[float(v.strip()) for v in m.group(2).split(',')])
             if m: continue
             m = P_RUN.match(line);    m and rt.run(int(m.group(1)))
+            if m: continue
+            m = P_TRAIN.match(line);  m and rt.train_as_mesh()
             if m: continue
             m = P_SHOW.match(line);   m and rt.show(m.group(1))
             if m: continue

@@ -431,6 +431,32 @@ def test_continuous_runtime():
     check(len(r2.output) > 0, "continuous: background output stream runs while input is injected")
 
 
+def test_neurolang_bridge():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip neurolang-bridge test (torch not installed)")
+        return
+    import torch
+    import neurolang
+
+    torch.manual_seed(0)
+    # a NeuroLang program: declare a neuron, give it a definishon, train the mesh
+    program = '\n'.join([
+        'name="ping"',
+        '"ping"@definishon="pong"',
+        'train',
+    ])
+    rt = neurolang.interpret(program)
+    check(getattr(rt, "_mesh", None) is not None, "NeuroLang 'train' builds a real mesh from the DSL")
+    tok, m = rt._mesh_tok, rt._mesh
+    m.eval()
+    ids = torch.tensor([[tok.bos_id] + tok.encode("ping")])
+    out = m.generate(ids, max_new_tokens=len(tok.encode("pong")), temperature=0.0)
+    check(tok.decode(out[0, ids.size(1):].tolist()) == "pong",
+          "NeuroLang extension builder trains the mesh to satisfy the definishon (ping -> pong)")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -459,7 +485,7 @@ def test_moe():
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
-               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_continuous_runtime, test_live_guide,
+               test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_continuous_runtime, test_neurolang_bridge, test_live_guide,
                test_shell_action_gated):
         print(f"\n{fn.__name__}:")
         try:
