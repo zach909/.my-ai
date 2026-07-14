@@ -1,0 +1,126 @@
+import { ExtensionBuilder } from "../extension-builder/builder.js";
+import { MoERouter } from "./core/moe-router.js";
+import { NeuroPipeline } from "./core/pipeline.js";
+import { Tokenizer } from "./tokenizer.js";
+import { NeuroclawTrainer } from "./trainer.js";
+export interface LLMConfig {
+    embeddingDim: number;
+    hiddenDim: number;
+    numExperts: number;
+    meshNodes: number;
+    hyperNeurons: number;
+    hyperDimensions: number;
+    ballStates: number;
+    thinkSteps: number;
+    valuePoints: number;
+    contextLength: number;
+}
+export interface GenerateOptions {
+    maxTokens: number;
+    temperature: number;
+}
+export declare class NeuroclawLLM {
+    private config;
+    private builder;
+    private tokenizer;
+    private trainer;
+    private quantizer;
+    private valueAllocator;
+    private moeRouter;
+    private mesh;
+    private hyperEngine;
+    private rlmTrainer;
+    private thornsEngine;
+    private projectId;
+    private built;
+    private trained;
+    private context;
+    private selfExtensions;
+    private selfExtensionsDir;
+    private generationCount;
+    private pipeline;
+    constructor(config?: Partial<LLMConfig>);
+    connectThesaurus(thesaurus: import("./thesaurus.js").ThesaurusDictionary): void;
+    build(): void;
+    trainOnText(text: string): void;
+    generate(prompt: string, options?: Partial<GenerateOptions>): Promise<string>;
+    private buildTextResponse;
+    private createSelfExtension;
+    thinkAbout(prompt: string): Promise<import("./core/thorns.js").ThornsOutput>;
+    loadModel(model: {
+        id?: string;
+        name?: string;
+        config?: Record<string, unknown>;
+        weights?: Record<string, number[]>;
+    }): void;
+    unloadModel(): void;
+    getActiveModel(): {
+        id: string;
+        neurons: number;
+        experts: number;
+    } | null;
+    reloadSelfExtensions(): void;
+    quantize(): Promise<string | null>;
+    save(): string | null;
+    searchNeurons(query: string): import("../extension-builder/builder.js").NeuronData[];
+    netSearch(query: string): {
+        results: string[];
+        confidence: number;
+    }[];
+    typeOutput(neuronId: string, inputValue: number): string;
+    getStats(): {
+        built: boolean;
+        trained: boolean;
+        trainingLoss: number;
+        samplesProcessed: number;
+        neuronCount: number;
+        connectionCount: number;
+        layerCount: number;
+        expertCount: number;
+        moeUtilization: import("./index.js").ExpertUtilizationStats[];
+        valueDistribution: {
+            totalPoints: number;
+            neuronCount: number;
+        };
+        hyperPatternsSeen: number;
+        rlmBufferSize: number;
+        rlmExplorationRate: number;
+        selfExtensionCount: number;
+        generationCount: number;
+        contextLength: number;
+    };
+    getHyperHistory(): {
+        hash: string;
+        count: number;
+        lastSeen: number;
+        step: number;
+    }[];
+    /**
+     * Section 9 on-demand symbolic trace: the human-readable equation behind one
+     * hyperdimensional neuron's current settled value. Reflects whatever state
+     * the engine last settled to (run a generation first for a meaningful read).
+     */
+    traceNeuron(neuronId: number, dim: number, topK?: number): {
+        neuronId: number;
+        dim: number;
+        bias: number;
+        preActivation: number;
+        value: number;
+        inputClamped: boolean;
+        terms: Array<{
+            source: string;
+            weight: number;
+            sourceValue: number;
+            contribution: number;
+        }>;
+        equation: string;
+    } | null;
+    demoteFailingNeurons(failureId: string): void;
+    getBuilder(): ExtensionBuilder;
+    getTokenizer(): Tokenizer;
+    getTrainer(): NeuroclawTrainer;
+    getMoERouter(): MoERouter;
+    isBuilt(): boolean;
+    getPipeline(): NeuroPipeline | null;
+    private sampleFromProbs;
+}

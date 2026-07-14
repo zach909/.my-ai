@@ -15,11 +15,14 @@ import argparse
 
 import torch
 
-from tinygpt.config import ModelConfig
 from tinygpt.data import build_chat_prompt
+<<<<<<< HEAD:model && skills manager/chat.py
 from tinygpt.model import build_model
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device
+=======
+from tinygpt.infer import load_generator
+>>>>>>> origin/main:tinygpt/chat.py
 
 
 def parse_args():
@@ -38,6 +41,7 @@ def parse_args():
     return ap.parse_args()
 
 
+<<<<<<< HEAD:model && skills manager/chat.py
 def load_model(ckpt_path: str, device: str):
     ckpt = load_checkpoint(ckpt_path, map_location=device)
     model_cfg = ModelConfig(**ckpt["model_config"])
@@ -51,28 +55,27 @@ def generate_text(model, tokenizer, prompt_ids, args, device):
     idx = torch.tensor([prompt_ids], dtype=torch.long, device=device)
     out = model.generate(
         idx, max_new_tokens=args.max_new_tokens, temperature=args.temperature,
+=======
+def _gen(generator, prompt, args, *, paragraph):
+    return generator.generate(
+        prompt, max_new_tokens=args.max_new_tokens, temperature=args.temperature,
+>>>>>>> origin/main:tinygpt/chat.py
         top_k=args.top_k, top_p=args.top_p, repetition_penalty=args.repetition_penalty,
-        eos_id=tokenizer.eos_id,
+        paragraph=paragraph,
     )
-    new_ids = out[0, len(prompt_ids):].tolist()
-    return tokenizer.decode(new_ids)
 
 
 def main():
     args = parse_args()
     if args.seed is not None:
         torch.manual_seed(args.seed)
-    device = resolve_device(args.device)
 
-    model, ckpt = load_model(args.ckpt, device)
-    tok_path = args.tokenizer or ckpt.get("tokenizer", "checkpoints/spm.model")
-    tokenizer = Tokenizer(tok_path)
-    print(f"loaded {args.ckpt} on {device} | tokenizer {tok_path}")
+    generator = load_generator(args.ckpt, device=args.device, tokenizer_path=args.tokenizer)
+    print(f"loaded {args.ckpt} on {generator.device} | tokenizer {generator.tokenizer.model_path}")
 
-    # one-shot completion
+    # one-shot completion (raw continuation, not sentence-trimmed)
     if args.prompt is not None and not args.chat:
-        ids = tokenizer.encode(args.prompt, bos=True)
-        text = generate_text(model, tokenizer, ids, args, device)
+        text = _gen(generator, args.prompt, args, paragraph=False)
         print(args.prompt + text)
         return
 
@@ -97,13 +100,9 @@ def main():
 
         history.append({"role": "user", "content": user})
         # prompt ends with the assistant header so the model continues as the assistant
-        prompt = build_chat_prompt(history, tokenizer) + f"{assistant_token}\n"
-        ids = [tokenizer.bos_id] + tokenizer.encode(prompt)
-        reply = generate_text(model, tokenizer, ids, args, device).strip()
-        # cut the reply at the next role marker if the model over-generates
-        for marker in ("<|user|>", "<|system|>", "<|assistant|>"):
-            if marker in reply:
-                reply = reply.split(marker)[0].strip()
+        prompt = build_chat_prompt(history, generator.tokenizer) + f"{assistant_token}\n"
+        # paragraph=True trims to whole sentences and stops at any role marker
+        reply = _gen(generator, prompt, args, paragraph=True)
         print(f"bot> {reply}\n")
         history.append({"role": "assistant", "content": reply})
 

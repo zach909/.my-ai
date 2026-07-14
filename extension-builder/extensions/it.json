@@ -1,0 +1,10 @@
+{
+  "name": "it",
+  "description": "test",
+  "step": 0,
+  "expert_index": 32,
+  "network_neurons": 17,
+  "moe_experts": 33,
+  "rlm_transitions": 0,
+  "timestamp": 1781876974.9442244
+}

@@ -1,0 +1,9 @@
+{
+  "id": "self_ext_60",
+  "name": "Memory: One thing I notice is",
+  "description": "Self-authored extension storing learned patterns from generation 60",
+  "createdAt": 1782417094153,
+  "prompt": "One thing I notice is",
+  "neuronCount": 20,
+  "connectionCount": 100
+}
