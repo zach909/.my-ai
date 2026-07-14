@@ -26,3 +26,8 @@
 **Vulnerability:** The NeuriLang interpreter in `interface/cli.ts` used `new Function()` to execute the string contents of the `@code` attribute without any validation. This allowed arbitrary JavaScript execution (RCE) if a user-controlled NeuriLang snippet was processed.
 **Learning:** Even internal-use DSLs can become vectors for RCE if they allow evaluation of arbitrary code. "Code-to-net" features are powerful but must be strictly sandboxed or restricted to safe primitives.
 **Prevention:** Use a strict character whitelist regex (e.g., `/^[0-9a-fx+\-*/().\s]*$/i`) to ensure only safe mathematical or hexadecimal literals are executed if using `new Function()` or `eval()`. For more complex needs, use a dedicated expression parser with no access to the global scope or Node.js APIs.
+
+## 2026-07-14 - Path Traversal in Python FileSystemPlugin
+**Vulnerability:** The Python implementation of `FileSystemPlugin` was vulnerable to path traversal because it lacked any validation of the paths passed to tools like `read`, `write`, and `list`. It also allowed bypassing the current working directory via absolute paths and glob patterns.
+**Learning:** Python's `os.path.join` will return an absolute path if any component is absolute, which can bypass simple prefix checks. Additionally, `glob.glob` can be used to explore the filesystem if the pattern is not sanitized.
+**Prevention:** Use `os.path.realpath` to resolve symlinks and `os.path.relpath` to verify that a resolved path remains within the intended root. Sanitize glob patterns by blocking absolute paths and `..` sequences.
