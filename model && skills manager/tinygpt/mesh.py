@@ -114,6 +114,11 @@ class MeshLM(nn.Module):
         self._continuous = False
         self._carried = None
 
+        # Expert mixture-of-experts: optional learnable experts that produce
+        # contributions to the settle loop. When supplied, experts are routed
+        # by input relevance and their outputs get mixed into the settle context.
+        self.expert_moe = cfg.expert_moe if hasattr(cfg, 'expert_moe') else None
+
     def _skill_mask(self, emb: torch.Tensor):
         """§3: route this position's input to its top-k skill groups and return a
         per-neuron active mask (B, N). Neurons in non-selected groups stay
@@ -155,11 +160,32 @@ class MeshLM(nn.Module):
             W = self._fake_quant(W)
         ones = torch.ones(B, self.n_input, 1, device=state.device, dtype=state.dtype)
         zeros = torch.zeros(B, self.N - self.n_input, 1, device=state.device, dtype=state.dtype)
+
+        # Expert contribution: route based on input and get mixed expert outputs
+        expert_contrib = None
+        if self.expert_moe is not None:
+            emb_flat = emb.reshape(B, -1)
+            expert_out, _ = self.expert_moe(emb_flat)  # (B, out_dim)
+            # Broadcast to neuron dimensions: (B, out_dim) -> (B, N, out_dim//N or pad)
+            if expert_out.size(-1) > 0:
+                # Replicate or project expert output to fill neuron dimensions
+                expert_contrib = expert_out.unsqueeze(1).expand(B, self.N, -1)  # (B, N, out_dim)
+
         consecutive_high = 0
         for _ in range(self.settle_ticks):
             prev = state
             # context[b,i,d] = bias[i,d] + sum_{j,e} state[b,j,e] * W[i,j,e,d]
             context = torch.einsum("bje,ijed->bid", state, W) + self.bias
+            # Mix in expert contributions if available (broadcast to each neuron)
+            if expert_contrib is not None and expert_contrib.size(-1) > 0:
+                # Project expert contrib to match context dimensions
+                target_d = context.size(-1)
+                expert_proj = expert_contrib[:, :, :target_d]
+                if expert_proj.size(-1) < target_d:
+                    expert_proj = torch.cat([expert_proj,
+                                            torch.zeros(B, self.N, target_d - expert_proj.size(-1),
+                                                       device=expert_proj.device)], dim=-1)
+                context = context + 0.1 * expert_proj  # Scale expert contribution
             settled = torch.tanh(context)
             # clamp: input neurons hold (flag=1, emb); others keep settled content
             # with flag=0. Built functionally (no in-place) so autograd is happy.
@@ -223,6 +249,12 @@ class MeshLM(nn.Module):
     def skill_usage(self) -> dict:
         """§3: fraction of inputs that activated each skill group, last forward."""
         return {self.skills[g]: float(self._skill_usage[g]) for g in range(self.n_groups)}
+
+    def expert_usage(self) -> dict:
+        """Expert mixture-of-experts: fraction of inputs that activated each expert."""
+        if self.expert_moe is None:
+            return {}
+        return self.expert_moe.expert_usage()
 
     def _fake_quant(self, w: torch.Tensor) -> torch.Tensor:
         """§8 symmetric fake-quantization with a straight-through estimator: the

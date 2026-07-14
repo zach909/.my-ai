@@ -501,8 +501,15 @@ class NeuroRuntime:
 
         tok = _MeshCharTok()
         n_neurons = max(16, len(self.neurons) * 2)
+        n_input = 6
+        content_dims = 3  # mesh_dims - 1 (dim 0 is input flag)
+
+        # Build expert MoE if we have code/search experts
+        expert_moe = self._build_expert_moe(n_input * content_dims)  # input dim = n_input * content
+
         cfg = ModelConfig(vocab_size=128, block_size=64, arch="mesh",
-                          mesh_neurons=n_neurons, mesh_dims=4, mesh_input=6, settle_ticks=3)
+                          mesh_neurons=n_neurons, mesh_dims=4, mesh_input=6, settle_ticks=3,
+                          expert_moe=expert_moe)
         mesh = build_model(cfg)
         eb = ExtensionBuilder(mesh, tok, device="cpu")
         contracts = [Definishon(when=nm, then=text) for nm, text in contracts_src]
@@ -523,6 +530,29 @@ class NeuroRuntime:
         print(f"[neurolang] converged={result.converged} "
               f"satisfied {len(result.satisfied)}/{len(contracts)} in {result.epochs} epochs")
         return result
+
+    def _build_expert_moe(self, input_dim):
+        """Build an ExpertMoE from declared code/search experts."""
+        from tinygpt.experts import CodeNetExpert, SearchExpert, ExpertMoE
+        experts = []
+        if self.codenets:
+            for name in self.codenets:
+                exp = CodeNetExpert(in_dim=input_dim, out_dim=16)
+                exp.name = f"code_{name}"
+                experts.append(exp)
+        if self.searches:
+            for name in self.searches:
+                exp = SearchExpert(vocab_dim=input_dim, out_dim=16)
+                exp.name = f"search_{name}"
+                experts.append(exp)
+        if self.skills:
+            for name in self.skills:
+                exp = CodeNetExpert(in_dim=input_dim, out_dim=16)
+                exp.name = f"skill_{name}"
+                experts.append(exp)
+        if not experts:
+            return None
+        return ExpertMoE(experts, top_k=min(2, len(experts)))
 
     def inject(self, name, vals):
         self._req(name); self.neurons[name].inject(vals)

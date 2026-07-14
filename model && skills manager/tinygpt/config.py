@@ -51,6 +51,7 @@ class ModelConfig:
     skill_top_k: int = 1                   # §3 number of skill groups active per input
     quant_enabled: bool = False            # §8 quantization-aware training (fake-quant W in forward)
     quant_bits: int = 8                    # §8 bit-width for QAT
+    expert_moe: Optional[object] = None    # optional ExpertMoE module for learned routing
 
 
 @dataclass

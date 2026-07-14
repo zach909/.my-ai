@@ -482,11 +482,91 @@ def test_moe():
     check(True, "MoE backward pass runs")
 
 
+def test_experts():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip experts test (torch not installed)")
+        return
+    import torch
+    from tinygpt.experts import CodeNetExpert, SearchExpert, ExpertMoE
+
+    # Test CodeNetExpert
+    code_expert = CodeNetExpert(in_dim=32, out_dim=16)
+    emb = torch.randn(2, 32)
+    out = code_expert(emb)
+    check(out.shape == (2, 16), "CodeNetExpert output shape correct")
+    score = code_expert.route_score(emb)
+    check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
+          "CodeNetExpert routing scores in [0, 1]")
+
+    # Test SearchExpert
+    search_expert = SearchExpert(vocab_dim=32, out_dim=16)
+    out = search_expert(emb)
+    check(out.shape == (2, 16), "SearchExpert output shape correct")
+    score = search_expert.route_score(emb)
+    check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
+          "SearchExpert routing scores in [0, 1]")
+
+    # Test ExpertMoE
+    moe = ExpertMoE([code_expert, search_expert], top_k=2)
+    out, gates = moe(emb)
+    check(out.shape == (2, 16), "ExpertMoE output shape correct")
+    check(gates.shape == (2, 2), "ExpertMoE gates shape correct")
+    usage = moe.expert_usage()
+    check("code_expert" in usage and "search_expert" in usage,
+          "ExpertMoE usage tracking")
+
+    # Test ExpertMoE backward
+    loss = out.sum()
+    loss.backward()
+    check(True, "ExpertMoE backward pass runs")
+
+
+def test_mesh_with_experts():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip mesh-with-experts test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.experts import CodeNetExpert, SearchExpert, ExpertMoE
+
+    torch.manual_seed(0)
+    # Create experts that match the mesh input dimensions
+    experts = [
+        CodeNetExpert(in_dim=6*3, out_dim=16),  # 6 input neurons * 3 content dims
+        SearchExpert(vocab_dim=6*3, out_dim=16)
+    ]
+    moe = ExpertMoE(experts, top_k=1)
+
+    cfg = ModelConfig(vocab_size=16, block_size=10, arch="mesh", mesh_neurons=20,
+                      mesh_dims=4, mesh_input=6, settle_ticks=4, expert_moe=moe)
+    m = build_model(cfg)
+    x = torch.randint(0, 16, (2, 8))
+    y = torch.randint(0, 16, (2, 8))
+    logits, loss = m(x, y)
+    check(torch.isfinite(loss), "mesh with experts: forward + loss finite")
+    usage = m.expert_usage()
+    check(len(usage) == 2, "mesh with experts: expert usage tracked")
+    check(all(0 <= v <= 1 for v in usage.values()),
+          "mesh with experts: expert usage in [0, 1]")
+
+    # Test training
+    opt = m.configure_optimizers(0.01, 5e-3, (0.9, 0.95), "cpu")
+    _, l0 = m(x, y); l0 = l0.item()
+    for _ in range(30):
+        opt.zero_grad(); _, l = m(x, y); l.backward(); opt.step()
+    check(l.item() < l0, "mesh with experts: trains (loss decreases)")
+
+
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
                test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_continuous_runtime, test_neurolang_bridge, test_live_guide,
-               test_shell_action_gated):
+               test_shell_action_gated, test_experts, test_mesh_with_experts):
         print(f"\n{fn.__name__}:")
         try:
             fn()
