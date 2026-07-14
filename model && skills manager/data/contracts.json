@@ -1,0 +1,5 @@
+[
+  {"when": "ping", "then": "pong"},
+  {"when": "who are you?", "then": "I am TinyGPT, a small language model."},
+  {"when": "what can you do?", "then": "I can chat and propose approved actions."}
+]

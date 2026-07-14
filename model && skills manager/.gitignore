@@ -1,3 +1,16 @@
+<<<<<<< HEAD
+checkpoints/
+*.pt
+*.model
+*.vocab
+__pycache__/
+*.pyc
+.venv/
+venv/
+
+# Generated training corpus (derived from repo docs; regenerable)
+data/pretrain/corpus.md
+=======
 .DS_Store
 .vscode
 .env
@@ -16,3 +29,4 @@ llama/build
 llama/vendor
 /ollama
 integration/testdata/models/
+>>>>>>> origin/main

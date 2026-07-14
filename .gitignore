@@ -17,8 +17,13 @@ dist-ssr
 !.vscode/extensions.json
 .idea
 .DS_Store
+<<<<<<< HEAD
+Thumbs.db
+```*.codenet
+=======
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
+>>>>>>> origin/main
