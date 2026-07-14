@@ -6,8 +6,10 @@ are sparse — only top-k selected experts produce outputs each tick.
 """
 from __future__ import annotations
 
+import ast
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Expert(nn.Module):
@@ -52,6 +54,136 @@ class CodeNetExpert(Expert):
 
     def route_score(self, emb: torch.Tensor) -> torch.Tensor:
         """Score likelihood that input is code-related (0-1)."""
+        logit = self.router_head(emb)
+        return torch.sigmoid(logit).squeeze(-1)
+
+
+class CodeExecutionExpert(Expert):
+    """Code execution expert: runs Python code safely and captures behavioral
+    outputs as neural signals.
+
+    Executes code snippets in a sandboxed environment, captures execution traces
+    (execution path, return values, exceptions), and encodes them as a contribution
+    vector that the mesh can learn from.
+    """
+
+    def __init__(self, in_dim: int, out_dim: int = 64, hidden: int = 128, max_depth: int = 5):
+        super().__init__(in_dim, out_dim, name="exec_expert")
+        self.max_depth = max_depth
+        # Encoder: execution trace → contribution vector
+        trace_dim = 32  # max trace features
+        self.trace_encoder = nn.Sequential(
+            nn.Linear(trace_dim, hidden),
+            nn.Tanh(),
+            nn.Linear(hidden, out_dim),
+        )
+        # Router: detect code in input
+        self.router_head = nn.Linear(in_dim, 1)
+        # Behavior classifier: categorize execution patterns
+        self.behavior_classifier = nn.Linear(trace_dim, 4)  # classes: success, error, loop, recursion
+
+    def _safe_execute(self, code: str, timeout: float = 1.0) -> dict:
+        """Execute code safely in sandbox, capture trace/output/exceptions.
+
+        Returns dict with keys:
+          - success: bool
+          - output: captured print output
+          - return_value: last expr value if any
+          - exception: error message if any
+          - trace: execution path features
+          - depth: max call depth reached
+        """
+        import sys
+        import io
+        from contextlib import redirect_stdout
+
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            return {
+                "success": False,
+                "exception": str(e),
+                "trace": torch.zeros(32),
+                "depth": 0,
+                "output": "",
+                "return_value": None,
+            }
+
+        # Sanitize: reject dangerous operations
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                return {
+                    "success": False,
+                    "exception": "imports not allowed",
+                    "trace": torch.zeros(32),
+                    "depth": 0,
+                    "output": "",
+                    "return_value": None,
+                }
+
+        # Execute with output capture
+        ns = {"__builtins__": {"len": len, "range": range, "str": str, "int": int, "float": float}}
+        out_buf = io.StringIO()
+        try:
+            with redirect_stdout(out_buf):
+                exec(compile(tree, "<exec>", "exec"), ns)  # noqa: S102
+            output = out_buf.getvalue()
+            return_value = ns.get("_result", None)
+            # Build execution trace from namespace
+            trace = self._build_trace(ns, len(output))
+            return {
+                "success": True,
+                "output": output,
+                "return_value": return_value,
+                "exception": None,
+                "trace": trace,
+                "depth": self._measure_depth(tree),
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "exception": str(e)[:100],
+                "trace": torch.zeros(32),
+                "depth": 0,
+                "output": out_buf.getvalue(),
+                "return_value": None,
+            }
+
+    def _build_trace(self, ns: dict, output_len: int) -> torch.Tensor:
+        """Build a feature vector from execution namespace."""
+        trace = torch.zeros(32)
+        trace[0] = float(len(ns))  # variable count
+        trace[1] = float(output_len) / 100.0  # output length (normalized)
+        # Count numeric/string/callable values
+        nums = sum(1 for v in ns.values() if isinstance(v, (int, float)))
+        strs = sum(1 for v in ns.values() if isinstance(v, str))
+        trace[2] = float(nums) / 10.0
+        trace[3] = float(strs) / 10.0
+        return torch.clamp(trace, -1, 1)
+
+    def _measure_depth(self, tree: ast.AST) -> int:
+        """Measure AST depth (nesting level)."""
+        def depth(node):
+            if isinstance(node, ast.AST):
+                children = [depth(c) for c in ast.iter_child_nodes(node)]
+                return 1 + max(children) if children else 1
+            return 0
+        return min(depth(tree), self.max_depth)
+
+    def forward(self, emb: torch.Tensor) -> torch.Tensor:
+        """Execute code from embedding context and produce behavior contribution.
+
+        In practice, the embedding would contain or reference code to execute.
+        Here, we use the embedding values to simulate code behavior patterns.
+        """
+        # For now: use embedding to predict execution trace
+        # (full version would decode embedding → code string → execute)
+        B = emb.size(0)
+        predicted_trace = torch.tanh(emb[:, :32])  # simulate trace from embedding
+        return self.trace_encoder(predicted_trace)
+
+    def route_score(self, emb: torch.Tensor) -> torch.Tensor:
+        """Score likelihood that input contains executable code."""
         logit = self.router_head(emb)
         return torch.sigmoid(logit).squeeze(-1)
 

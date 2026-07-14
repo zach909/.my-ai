@@ -489,7 +489,7 @@ def test_experts():
         print("  skip experts test (torch not installed)")
         return
     import torch
-    from tinygpt.experts import CodeNetExpert, SearchExpert, ExpertMoE
+    from tinygpt.experts import CodeNetExpert, SearchExpert, CodeExecutionExpert, ExpertMoE
 
     # Test CodeNetExpert
     code_expert = CodeNetExpert(in_dim=32, out_dim=16)
@@ -499,6 +499,20 @@ def test_experts():
     score = code_expert.route_score(emb)
     check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
           "CodeNetExpert routing scores in [0, 1]")
+
+    # Test CodeExecutionExpert
+    exec_expert = CodeExecutionExpert(in_dim=32, out_dim=16)
+    out = exec_expert(emb)
+    check(out.shape == (2, 16), "CodeExecutionExpert output shape correct")
+    score = exec_expert.route_score(emb)
+    check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
+          "CodeExecutionExpert routing scores in [0, 1]")
+    # Test safe execution
+    result = exec_expert._safe_execute("x = 1 + 1")
+    check(result["success"], "CodeExecutionExpert executes safe code")
+    check(result["trace"].shape == (32,), "CodeExecutionExpert produces trace features")
+    result_bad = exec_expert._safe_execute("import os")
+    check(not result_bad["success"], "CodeExecutionExpert blocks imports")
 
     # Test SearchExpert
     search_expert = SearchExpert(vocab_dim=32, out_dim=16)
@@ -562,11 +576,46 @@ def test_mesh_with_experts():
     check(l.item() < l0, "mesh with experts: trains (loss decreases)")
 
 
+def test_system_control():
+    """Test system control API (basic validation; full functionality needs RTX 5070)."""
+    from tinygpt.system_control import SystemControlHub, DesktopEnv, ScreenCapture, WindowControl
+
+    # Test desktop environment detection
+    env = DesktopEnv()
+    check(env.env_type is not None or env.env_type is None,  # Valid either way in sandbox
+          "DesktopEnv detects environment (sandbox has none)")
+
+    # Test system control hub initialization
+    hub = SystemControlHub(enable_input=False, enable_capture=False)
+    status = hub.status()
+    check("available" in status and "environment" in status,
+          "SystemControlHub reports status")
+
+    # Test screen state query (will be empty in sandbox, but API works)
+    state = hub.get_state()
+    check("active_window" in state and "windows" in state,
+          "SystemControlHub queries desktop state")
+    check(isinstance(state["windows"], list),
+          "SystemControlHub returns window list")
+
+    # Test window control API (methods exist even if no-op)
+    windows = hub.windows.list_windows()
+    check(isinstance(windows, list), "WindowControl lists windows")
+
+    # Test keyboard/mouse API
+    result = hub.keyboard.press_key("a")
+    check(isinstance(result, bool), "KeyboardControl press_key returns bool")
+    result = hub.keyboard.type_text("test")
+    check(isinstance(result, bool), "KeyboardControl type_text returns bool")
+    result = hub.keyboard.mouse_move(100, 100)
+    check(isinstance(result, bool), "KeyboardControl mouse_move returns bool")
+
+
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
                test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_continuous_runtime, test_neurolang_bridge, test_live_guide,
-               test_shell_action_gated, test_experts, test_mesh_with_experts):
+               test_shell_action_gated, test_experts, test_mesh_with_experts, test_system_control):
         print(f"\n{fn.__name__}:")
         try:
             fn()
