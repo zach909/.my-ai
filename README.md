@@ -1,82 +1,59 @@
-# Prometheus Elastic Core / NeuroLang AI
+# Enhanced Vite React TypeScript Template
 
-## Project Brief
+This template includes built-in detection for missing CSS variables between your Tailwind config and CSS files.
 
-Prometheus Elastic Core is a private, autonomous AI system that runs entirely on your machine (Mac, Windows, or Linux). It features an elastic value budget for neurons, all-to-all connectivity, hyper-dimensional thinking, and self-created extensions for memory and logic.
+## Features
 
-**Location**: `home/zach/.my-ai` | [GitHub](https://github.com/zach909/.my-ai)
+- **CSS Variable Detection**: Automatically detects if CSS variables referenced in `tailwind.config.cjs` are defined in `src/index.css`
+- **Enhanced Linting**: Includes ESLint, Stylelint, and custom CSS variable validation
+- **Shadcn/ui**: Pre-configured with all Shadcn components
+- **Modern Stack**: Vite + React + TypeScript + Tailwind CSS
 
-## Core Features
-
-### Background Systems (Learning & Memory)
-
-- **Quantization**: 4-bit quantization for faster, power-efficient model execution
-- **Elastic Value Budget**: Zero-sum neuron value system where higher-value neurons change less (stable) and lower-value neurons learn more (adaptive)
-- **Self-Built Extensions**: AI creates extensions to store learned capabilities (e.g., coding extension)
-- **RLM Training**: Reinforcement Learning Module that thinks through possibilities and avoids loops
-
-### Foreground Systems (Processing & Reasoning)
-
-- **Mixture of Experts (MoE)**: Neurons choose which experts run for efficient processing
-- **All-to-All Connectivity**: Each neuron connects to every other neuron for infinite context
-- **Hyper-Dimensional Thinking**: Multi-ball neuron states with complex cross-influence math
-- **Empathy Engine**: Understands user feelings to stay aligned
-
-### NeuroLang
-
-The model thinks in NeuroLang - a custom neuron definition language where:
-- All components are zipped and quantized
-- Connections drawn from thesaurus, defined by dictionary
-- Syntax: `name="example"`, `"name"@vale="number"`, `"name"@conections=".names/verable"*"bias"+"wate"`
-
-### Zip I/O Loop
-
-Inputs and outputs work as loops - when space runs out, it starts at the beginning until everything is consumed (supports infonit GB context).
-
-### Plugins & Skills
-
-- **Plugins**: API connections to services (Camera, Microphone, File System, Browser, etc.)
-- **Skills**: Experts added to MoE (Coding, Image, Video, Game creation)
-- **Supported Languages**: 500+ programming languages from ABAP to Zsh
-
-## System Requirements
-
-- Runs on Mac, Windows, or Linux
-- Private by default - data encrypted end-to-end
-- Full system access: Terminal, File System, Multi-desktop (GNOME)
-- Multi-mouse/keyboard support (no tug-of-war with user)
-
-## Extension Builder
-
-- Save without quantization / Install with quantization
-- Drag and connect neurons visually
-- Search neurons across large networks
-- Type model output definitions
-- Add API output layers
-- Net Search: Deep learning-powered search over neuron content
-- Code-to-Net: Import binary code as neural networks
-
-## No External APIs
-
-All processing happens locally. Chrome apps can connect to services for additional data when needed.
-
-## Quick Start
+## Available Scripts
 
 ```bash
-# Install dependencies
-npm install
+# Run all linting (includes CSS variable check)
+npm run lint
 
-# Build the project
-npm run build
+# Check only CSS variables
+npm run check:css-vars
 
-# Run the AI
-npm start
+# Individual linting
+npm run lint:js    # ESLint
+npm run lint:css   # Stylelint
 ```
 
-## Architecture
+## CSS Variable Detection
 
-See [ARCHITECTURE.md](./ARCHITECTURE.md) for detailed system documentation.
+The template includes a custom script that:
 
-## License
+1. **Parses `tailwind.config.cjs`** to find all `var(--variable)` references
+2. **Parses `src/index.css`** to find all defined CSS variables (`--variable:`)
+3. **Cross-references** them to find missing definitions
+4. **Reports undefined variables** with clear error messages
 
-Private project - Zach's personal AI system
+### Example Output
+
+When CSS variables are missing:
+```
+❌ Undefined CSS variables found in tailwind.config.cjs:
+   --sidebar-background
+   --sidebar-foreground
+   --sidebar-primary
+
+Add these variables to src/index.css
+```
+
+When all variables are defined:
+```
+✅ All CSS variables in tailwind.config.cjs are defined
+```
+
+## How It Works
+
+The detection happens during the `npm run lint` command, which will:
+- Exit with error code 1 if undefined variables are found
+- Show exactly which variables need to be added to your CSS file
+- Integrate seamlessly with your development workflow
+
+This prevents runtime CSS issues where Tailwind classes reference undefined CSS variables.

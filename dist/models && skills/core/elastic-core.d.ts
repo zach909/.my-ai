@@ -100,6 +100,7 @@ export declare class ElasticCoreBlock {
     private weights;
     private inputProjection;
     private outputProjection;
+    private nextState;
     private directInputFlags;
     private groups;
     private definitionTargets;
@@ -139,12 +140,13 @@ export declare class ElasticCoreBlock {
     private clearDirectInputFlags;
     private inject;
     /**
-     * Quantize a candidate next-state and feed the rounding error back into
-     * `quantizationResidual` so it's compensated for on the following tick,
-     * per the QAT design (Section 8): the network learns to expect its own
-     * quantized form instead of being surprised by compression after training.
-     * Disabling quantization is a real toggle: residual is reset to exactly zero.
+     * Section 8: In-place quantization with residual feedback. Compares each
+     * state's candidate value (plus its accumulated error) to the nearest
+     * dequantized level, then stores the new rounding error back into the
+     * residual buffer so it is compensated for on the next tick. This lets
+     * the network learn to "expect" its own quantized substrate.
      */
+    private applyQuantizationInPlace;
     private quantizeWithResidual;
     private readout;
     private meanAbs;

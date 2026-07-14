@@ -1,25 +1,37 @@
 {
   "compilerOptions": {
-    "target": "ES2022",
+    "target": "ES2020",
+    "useDefineForClassFields": true,
+    "lib": ["ES2020", "DOM", "DOM.Iterable"],
     "module": "ESNext",
+    "skipLibCheck": true,
     "moduleResolution": "bundler",
     "esModuleInterop": true,
     "allowSyntheticDefaultImports": true,
-    "strict": true,
-    "skipLibCheck": true,
-    "forceConsistentCasingInFileNames": true,
-    "declaration": true,
-    "outDir": "./dist",
-    "rootDir": ".",
+    "forceConsistentCasingInFileNames": false,
+    "allowImportingTsExtensions": true,
     "resolveJsonModule": true,
-    "types": ["node"]
+    "isolatedModules": true,
+    "noEmit": true,
+    "jsx": "react-jsx",
+    "strict": false,
+    "noUnusedLocals": false,
+    "noUnusedParameters": false,
+    "noImplicitAny": false,
+    "strictNullChecks": true,
+    "noFallthroughCasesInSwitch": false,
+    "skipDefaultLibCheck": true,
+    "noImplicitReturns": false,
+    "noPropertyAccessFromIndexSignature": false,
+    "exactOptionalPropertyTypes": false,
+    "noUncheckedIndexedAccess": false,
+    "noImplicitOverride": false,
+    "allowUnreachableCode": true,
+    "allowUnusedLabels": true,
+    "paths": {
+      "@/*": ["./src/*"]
+    }
   },
-  "include": [
-    "interface/**/*.ts",
-    "models && skills/**/*.ts",
-    "extension-builder/**/*.ts",
-    "plugin_manager/**/*.ts",
-    "plugins/**/*.ts"
-  ],
-  "exclude": ["node_modules", "dist"]
-}
+  "include": ["src"],
+  "references": [{ "path": "./tsconfig.node.json" }]
+} 
