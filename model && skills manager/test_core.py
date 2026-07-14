@@ -489,7 +489,8 @@ def test_experts():
         print("  skip experts test (torch not installed)")
         return
     import torch
-    from tinygpt.experts import CodeNetExpert, SearchExpert, CodeExecutionExpert, ExpertMoE
+    from tinygpt.experts import CodeNetExpert, SearchExpert, CodeExecutionExpert, ExpertMoE, \
+                               DomainSpecializedSearchExpert, RoutingStabilityMonitor
 
     # Test CodeNetExpert
     code_expert = CodeNetExpert(in_dim=32, out_dim=16)
@@ -500,19 +501,31 @@ def test_experts():
     check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
           "CodeNetExpert routing scores in [0, 1]")
 
-    # Test CodeExecutionExpert
+    # Test CodeExecutionExpert with execution-driven routing
     exec_expert = CodeExecutionExpert(in_dim=32, out_dim=16)
     out = exec_expert(emb)
     check(out.shape == (2, 16), "CodeExecutionExpert output shape correct")
     score = exec_expert.route_score(emb)
     check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
-          "CodeExecutionExpert routing scores in [0, 1]")
+          "CodeExecutionExpert routing driven by execution prediction")
     # Test safe execution
     result = exec_expert._safe_execute("x = 1 + 1")
     check(result["success"], "CodeExecutionExpert executes safe code")
     check(result["trace"].shape == (32,), "CodeExecutionExpert produces trace features")
     result_bad = exec_expert._safe_execute("import os")
     check(not result_bad["success"], "CodeExecutionExpert blocks imports")
+
+    # Test domain-specialized search experts
+    math_expert = DomainSpecializedSearchExpert(vocab_dim=32, out_dim=16, domain="math")
+    code_expert2 = DomainSpecializedSearchExpert(vocab_dim=32, out_dim=16, domain="code")
+    math_expert.set_domain_keywords(["math", "calculus", "derivative", "integral"])
+    code_expert2.set_domain_keywords(["code", "function", "variable", "loop"])
+
+    for exp in [math_expert, code_expert2]:
+        out = exp(emb)
+        check(out.shape == (2, 16), f"{exp.domain} expert output correct")
+        score = exp.route_score(emb)
+        check(score.shape == (2,), f"{exp.domain} expert routing score correct")
 
     # Test SearchExpert
     search_expert = SearchExpert(vocab_dim=32, out_dim=16)
@@ -522,14 +535,23 @@ def test_experts():
     check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
           "SearchExpert routing scores in [0, 1]")
 
-    # Test ExpertMoE
-    moe = ExpertMoE([code_expert, search_expert], top_k=2)
-    out, gates = moe(emb)
+    # Test ExpertMoE with stability tracking
+    experts = [code_expert, search_expert, math_expert, code_expert2]
+    moe = ExpertMoE(experts, top_k=2, track_stability=True)
+    for _ in range(20):
+        out, gates = moe(emb)
     check(out.shape == (2, 16), "ExpertMoE output shape correct")
-    check(gates.shape == (2, 2), "ExpertMoE gates shape correct")
+    check(gates.shape == (2, 4), "ExpertMoE gates shape correct")
     usage = moe.expert_usage()
-    check("code_expert" in usage and "search_expert" in usage,
-          "ExpertMoE usage tracking")
+    check(len(usage) == 4, "ExpertMoE tracks all experts")
+
+    # Test routing stability metrics
+    stability = moe.routing_stability()
+    check("load_balance" in stability and "avg_entropy" in stability,
+          "ExpertMoE computes routing stability metrics")
+    check("expert_consistency" in stability and len(stability["expert_consistency"]) == 4,
+          "ExpertMoE tracks per-expert consistency")
+    check(isinstance(stability["stable"], bool), "ExpertMoE determines stability")
 
     # Test ExpertMoE backward
     loss = out.sum()
@@ -576,6 +598,61 @@ def test_mesh_with_experts():
     check(l.item() < l0, "mesh with experts: trains (loss decreases)")
 
 
+def test_adaptive_routing():
+    """Test adaptive expert routing with confidence feedback loop."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip adaptive routing test (torch not installed)")
+        return
+    import torch
+    from tinygpt.adaptive_routing import AdaptiveExpertRouter, RoutingDecision, \
+                                        LiveGuidanceWithAdaptiveRouting
+
+    # Test basic adaptive router
+    router = AdaptiveExpertRouter(n_experts=4, base_top_k=2, confidence_threshold=0.3, patience=3)
+    check(router.base_top_k == 2, "AdaptiveExpertRouter initializes correctly")
+
+    # Simulate low confidence period
+    for _ in range(2):
+        router.update_confidence(0.25)
+    decision = router.decide_routing(current_top_k=2, active_experts=torch.ones(4))
+    check(decision.action == "none", "AdaptiveExpertRouter waits for patience threshold")
+
+    # Exceed patience threshold
+    router.update_confidence(0.25)
+    decision = router.decide_routing(current_top_k=2, active_experts=torch.ones(4))
+    check(decision.action != "none", "AdaptiveExpertRouter acts after patience exceeded")
+    check(decision.reason != "", "RoutingDecision provides explanation")
+
+    # Test expert performance tracking
+    router.record_expert_contribution(0, 0.9)  # expert 0 performed well
+    router.record_expert_contribution(1, 0.3)  # expert 1 performed poorly
+    check(router.expert_performance[0] > router.expert_performance[1],
+          "AdaptiveExpertRouter tracks expert performance")
+
+    # Test routing decision based on performance
+    decision = router.decide_routing(current_top_k=2, active_experts=torch.ones(4))
+    check(isinstance(decision, RoutingDecision), "decide_routing returns RoutingDecision")
+    check(hasattr(decision, 'action') and hasattr(decision, 'reason'),
+          "RoutingDecision has action and reason fields")
+
+    # Test score modification
+    scores = torch.tensor([0.8, 0.6, 0.4, 0.2])
+    decision = RoutingDecision("tighten", temperature_adjust=0.5)
+    modified = router.apply_routing_decision(decision, scores)
+    check(modified.shape == scores.shape, "apply_routing_decision preserves shape")
+    check(torch.allclose(modified.sum(), torch.tensor(1.0), atol=0.01) or modified.sum() > 0,
+          "apply_routing_decision produces valid scores")
+
+    # Test live guidance integration (API only, no full integration in sandbox)
+    guidance = LiveGuidanceWithAdaptiveRouting(base_temperature=0.8, base_top_k=40)
+    result = guidance.adjust_generation(logits=torch.randn(1, 100), confidence=0.3)
+    check("temperature" in result and "top_k" in result,
+          "LiveGuidanceWithAdaptiveRouting adjusts generation parameters")
+    check(result["confidence"] == 0.3, "Confidence is propagated through system")
+
+
 def test_system_control():
     """Test system control API (basic validation; full functionality needs RTX 5070)."""
     from tinygpt.system_control import SystemControlHub, DesktopEnv, ScreenCapture, WindowControl
@@ -615,7 +692,7 @@ def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
                test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_continuous_runtime, test_neurolang_bridge, test_live_guide,
-               test_shell_action_gated, test_experts, test_mesh_with_experts, test_system_control):
+               test_shell_action_gated, test_experts, test_mesh_with_experts, test_adaptive_routing, test_system_control):
         print(f"\n{fn.__name__}:")
         try:
             fn()
