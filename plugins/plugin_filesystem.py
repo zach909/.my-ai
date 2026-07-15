@@ -10,6 +10,17 @@ class FileSystemPlugin(Plugin):
     name = "file_system"
     description = "Local file system access: read, write, list, search, copy, move."
 
+    def _resolve(self, path: str) -> str:
+        """Resolve path and ensure it's within the project root."""
+        root = os.path.realpath(os.getcwd())
+        # Expand ~ and resolve symlinks/..
+        full_path = os.path.realpath(os.path.join(root, os.path.expanduser(path)))
+        # Ensure it's within the root
+        relative = os.path.relpath(full_path, root)
+        if relative.startswith("..") or os.path.isabs(relative):
+            raise ValueError(f"Security Error: Path traversal detected: {path}")
+        return full_path
+
     def _setup(self) -> None:
         self.tools = {
             "read":   self._read,
@@ -26,51 +37,60 @@ class FileSystemPlugin(Plugin):
         }
 
     def _read(self, path: str, encoding: str = "utf-8") -> str:
-        with open(os.path.expanduser(path), encoding=encoding) as f:
+        with open(self._resolve(path), encoding=encoding) as f:
             return f.read()
 
     def _write(self, path: str, content: str, encoding: str = "utf-8") -> None:
-        path = os.path.expanduser(path)
-        os.makedirs(os.path.dirname(path), exist_ok=True) if os.path.dirname(path) else None
-        with open(path, "w", encoding=encoding) as f:
+        full_path = self._resolve(path)
+        os.makedirs(os.path.dirname(full_path), exist_ok=True) if os.path.dirname(full_path) else None
+        with open(full_path, "w", encoding=encoding) as f:
             f.write(content)
 
     def _list(self, path: str = ".", pattern: str = "*") -> List[str]:
-        path = os.path.expanduser(path)
-        return sorted(glob.glob(os.path.join(path, pattern)))
+        full_path = self._resolve(path)
+        # Security: sanitize pattern to prevent escaping the sandbox
+        if ".." in pattern or os.path.isabs(pattern):
+            raise ValueError(f"Security Error: Invalid pattern: {pattern}")
+        return sorted(glob.glob(os.path.join(full_path, pattern)))
 
     def _exists(self, path: str) -> bool:
-        return os.path.exists(os.path.expanduser(path))
+        try:
+            return os.path.exists(self._resolve(path))
+        except ValueError:
+            return False
 
     def _delete(self, path: str) -> None:
-        path = os.path.expanduser(path)
-        if os.path.isdir(path):
-            shutil.rmtree(path)
+        full_path = self._resolve(path)
+        if os.path.isdir(full_path):
+            shutil.rmtree(full_path)
         else:
-            os.remove(path)
+            os.remove(full_path)
 
     def _copy(self, src: str, dst: str) -> None:
-        shutil.copy2(os.path.expanduser(src), os.path.expanduser(dst))
+        shutil.copy2(self._resolve(src), self._resolve(dst))
 
     def _move(self, src: str, dst: str) -> None:
-        shutil.move(os.path.expanduser(src), os.path.expanduser(dst))
+        shutil.move(self._resolve(src), self._resolve(dst))
 
     def _search(self, directory: str, pattern: str, recursive: bool = True) -> List[str]:
-        directory = os.path.expanduser(directory)
+        full_dir = self._resolve(directory)
+        # Security: sanitize pattern to prevent escaping the sandbox
+        if ".." in pattern or os.path.isabs(pattern):
+            raise ValueError(f"Security Error: Invalid pattern: {pattern}")
         if recursive:
             matches = []
-            for root, _, files in os.walk(directory):
+            for root, _, files in os.walk(full_dir):
                 for name in files:
                     if glob.fnmatch.fnmatch(name, pattern):
                         matches.append(os.path.join(root, name))
             return matches
-        return glob.glob(os.path.join(directory, pattern))
+        return glob.glob(os.path.join(full_dir, pattern))
 
     def _mkdir(self, path: str) -> None:
-        os.makedirs(os.path.expanduser(path), exist_ok=True)
+        os.makedirs(self._resolve(path), exist_ok=True)
 
     def _stat(self, path: str) -> dict:
-        s = os.stat(os.path.expanduser(path))
+        s = os.stat(self._resolve(path))
         return {
             "size": s.st_size,
             "mtime": s.st_mtime,
@@ -80,7 +100,7 @@ class FileSystemPlugin(Plugin):
 
     def _tree(self, path: str = ".", max_depth: int = 3) -> str:
         lines: List[str] = []
-        path = os.path.expanduser(path)
+        full_path = self._resolve(path)
         def _walk(p: str, prefix: str, depth: int) -> None:
             if depth > max_depth:
                 return
