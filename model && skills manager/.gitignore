@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 checkpoints/
 *.pt
 *.model
@@ -9,10 +10,11 @@ venv/
 
 # Generated training corpus (derived from repo docs; regenerable)
 data/pretrain/corpus.md
-
+=======
 .DS_Store
 .vscode
 .env
+.venv
 .swp
 dist
 build
@@ -27,3 +29,4 @@ llama/build
 llama/vendor
 /ollama
 integration/testdata/models/
+>>>>>>> origin/main

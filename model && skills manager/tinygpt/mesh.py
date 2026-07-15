@@ -108,16 +108,6 @@ class MeshLM(nn.Module):
         self._live_corrections = 0
         self._last_surprise = 0.0
 
-        # §5 quantum interference: each neuron has a unique, fixed wave
-        # signature (its phase). The neuron's input/activation determines the
-        # wave's amplitude; the signature identifies the neuron during
-        # interference calculations. Signatures are spread evenly on the unit
-        # circle so no two neurons share a phase.
-        self.register_buffer("wave_signature",
-                             torch.arange(n_neurons, dtype=torch.float32)
-                             * (2.0 * torch.pi / n_neurons))
-        self._last_settled = None  # settled neuron state after the last forward
-
         # §9 continuous operation: when on, the neuron state carries across
         # forward calls instead of resetting to zeros — the mesh keeps thinking
         # from where it was. `_carried` IS the memory (the saved neuron state).
@@ -245,7 +235,6 @@ class MeshLM(nn.Module):
             state = self._settle(state, emb, active)
             logits_steps.append(self.readout(self.dropout(state.reshape(B, -1))))
         logits = torch.stack(logits_steps, dim=1)  # (B, T, vocab)
-        self._last_settled = state.detach()
         if self._continuous:
             self._carried = state.detach()
 
@@ -260,26 +249,6 @@ class MeshLM(nn.Module):
     def skill_usage(self) -> dict:
         """§3: fraction of inputs that activated each skill group, last forward."""
         return {self.skills[g]: float(self._skill_usage[g]) for g in range(self.n_groups)}
-
-    @torch.no_grad()
-    def state_phase(self) -> float:
-        """§5: the phase of the mesh's last settled state.
-
-        Each neuron contributes a complex wave a_i·e^{iφ_i}: amplitude a_i is
-        the neuron's activation strength (norm of its content dims), phase φ_i
-        is its fixed wave signature. The resultant's angle summarises *which*
-        neurons carried the thought — states carried by the same neurons get
-        similar phases, so during answer selection they interfere
-        constructively while states carried by different neurons cancel."""
-        if self._last_settled is None:
-            return 0.0
-        state = self._last_settled.mean(dim=0)               # (N, D)
-        amps = state[:, 1:].norm(dim=-1)                     # content dims only
-        z = (amps.to(torch.complex64)
-             * torch.exp(1j * self.wave_signature.to(torch.float32))).sum()
-        if z.abs() < 1e-9:
-            return 0.0
-        return float(torch.angle(z))
 
     def expert_usage(self) -> dict:
         """Expert mixture-of-experts: fraction of inputs that activated each expert."""
@@ -381,8 +350,7 @@ class MeshLM(nn.Module):
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0,
                  top_k: Optional[int] = None, top_p: Optional[float] = None,
-                 repetition_penalty: float = 1.0, eos_id: Optional[int] = None, guide=None,
-                 stop_fn=None):
+                 repetition_penalty: float = 1.0, eos_id: Optional[int] = None, guide=None):
         from .sampling import sample_next_token
         for _ in range(max_new_tokens):
             idx_cond = idx if idx.size(1) <= self.cfg.block_size else idx[:, -self.cfg.block_size:]
@@ -397,8 +365,5 @@ class MeshLM(nn.Module):
                                         repetition_penalty=repetition_penalty)
             idx = torch.cat((idx, next_id), dim=1)
             if eos_id is not None and (next_id == eos_id).all():
-                break
-            # caller-supplied early stop (e.g. "enough complete sentences")
-            if stop_fn is not None and stop_fn(idx):
                 break
         return idx

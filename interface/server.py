@@ -29,17 +29,14 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Optional
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The trained model + its inference helper live in the canonical tree,
-# "model && skills manager/" (the old root tinygpt/ tree is retired).
-_TINYGPT = os.path.join(_ROOT, "model && skills manager")
+# The trained model + its inference helper live in the tinygpt package.
+_TINYGPT = os.path.join(_ROOT, "tinygpt")
 if _TINYGPT not in sys.path:
     sys.path.insert(0, _TINYGPT)
 
-# Default to the mesh generator (arch defaults to "mesh"); the older
-# checkpoint dirs are still checked so previously-trained models keep working.
+# Default to the elastic-mesh generator; fall back to the plain transformer if
+# the mesh checkpoint hasn't been trained yet.
 _DEFAULT_CKPTS = [
-    os.path.join(_TINYGPT, "checkpoints", "gpt_sft.pt"),
-    os.path.join(_TINYGPT, "checkpoints", "gpt.pt"),
     os.path.join(_TINYGPT, "checkpoints_mesh_v2", "gpt_mesh_v2.pt"),
     os.path.join(_TINYGPT, "checkpoints_v2", "gpt_v2.pt"),
 ]
@@ -121,7 +118,7 @@ def _load_generator(ckpt_path: str):
     print(f"[server] loading model: {os.path.relpath(ckpt_path, _ROOT)} ...")
     _generator = load_generator(ckpt_path, device="cpu")
     s = _generator.stats()
-    core = "elastic-mesh" if s.get("use_elastic_mesh") else s.get("arch", "mesh")
+    core = "elastic-mesh" if s["use_elastic_mesh"] else "standard-transformer"
     print(f"[server] ready: {s['parameters']/1e6:.1f}M params, {core} core, "
           f"vocab {s['vocab_size']}")
 
@@ -202,15 +199,14 @@ class NeuroClaw(BaseHTTPRequestHandler):
             self._json({
                 "running": True,
                 "model": {
-                    "core": "elastic-mesh" if s.get("use_elastic_mesh") else s.get("arch", "mesh"),
+                    "core": "elastic-mesh" if s["use_elastic_mesh"] else "standard-transformer",
                     "parameters": s["parameters"],
-                    "mesh_neurons": s.get("mesh_neurons", 0),
-                    "mesh_dims": s.get("mesh_dims", 0),
-                    "settle_ticks": s.get("settle_ticks", 0),
-                    "skill_groups": s.get("skill_groups", 1),
+                    "n_layer": s["n_layer"],
+                    "n_embd": s["n_embd"],
                     "block_size": s["block_size"],
                     "vocab_size": s["vocab_size"],
                     "mesh_experts": s["mesh_num_experts"],
+                    "mesh_neurons": s["mesh_n_neurons"],
                     "mesh_qubits": s["mesh_n_qubits"],
                 },
             })
@@ -314,9 +310,11 @@ def run(host: str = "127.0.0.1", port: int = 7860, ckpt: Optional[str] = None) -
         looked = ckpt or " or ".join(os.path.relpath(p, _ROOT) for p in _DEFAULT_CKPTS)
         print(f"[server] no checkpoint found ({looked}).")
         print("[server] train one first, e.g.:")
-        print("    cd 'model && skills manager' && python3 build_corpus.py && "
-              "python3 train_tokenizer.py --data-dir data/pretrain --vocab-size 8000")
-        print("    python3 pretrain.py --device cpu --no-amp   # trains the mesh")
+        print("    cd tinygpt && python3 build_corpus.py && "
+              "python3 train_tokenizer.py --data-dir data/pretrain --vocab-size 8000 "
+              "--model-prefix checkpoints_v2/spm")
+        print("    python3 pretrain.py --use-elastic-mesh --tokenizer checkpoints_v2/spm.model "
+              "... --out-dir checkpoints_mesh_v2 --ckpt-name gpt_mesh_v2.pt")
         sys.exit(1)
     _load_generator(ckpt_path)
     _load_skills()
