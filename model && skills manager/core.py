@@ -59,6 +59,9 @@ def parse_args():
     ap.add_argument("--repetition-penalty", type=float, default=1.1)
     ap.add_argument("--memory", default="checkpoints/memory.json", help="zip-loop persist path")
     ap.add_argument("--memory-turns", type=int, default=8, help="turns of context to condition on")
+    ap.add_argument("--encrypt", metavar="PASSPHRASE", default=None,
+                    help="encrypt persisted memory at rest with a local passphrase "
+                         "(stdlib cipher; no external APIs). Or set MYAI_PASSPHRASE.")
     # answer selection: pure confidence ranking, or §5 quantum interference
     # (phase consensus over the mesh's settled-state wave signatures + collapse)
     ap.add_argument("--select", choices=["confidence", "interference"], default="confidence",
@@ -141,7 +144,9 @@ def main():
     tok_path = args.tokenizer or ckpt.get("tokenizer", "checkpoints/spm.model")
     tokenizer = Tokenizer(tok_path)
 
-    memory = ZipLoopMemory(capacity=512, persist_path=args.memory)
+    import os as _os
+    passphrase = args.encrypt or _os.environ.get("MYAI_PASSPHRASE")
+    memory = ZipLoopMemory(capacity=512, persist_path=args.memory, passphrase=passphrase)
     empathy = None if args.no_empathy else EmpathyEngine(persist_path=args.empathy_state)
     ledger = None if args.no_ledger else ReasoningLedger(persist_path=args.ledger)
     registry = default_registry()   # plugins (local services) + skills (MoE experts)
@@ -156,7 +161,8 @@ def main():
     print("Prometheus/TinyGPT core.")
     print(f"  model      : {args.ckpt} on {device}")
     print(f"  selection  : best-of-{args.candidates} (predict-before-commit)")
-    print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}")
+    print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}"
+          f"{' [encrypted at rest]' if passphrase else ''}")
     shell_note = " + terminal (opt-in, always confirms)" if (not args.no_actions and args.enable_shell) else ""
     print(f"  actions    : {'disabled' if args.no_actions else 'human-in-the-loop (read-only allowlist)' + shell_note}")
     print(f"  guidance   : {'off' if args.no_guide else 'live (steer drift back mid-generation, §7)'}")

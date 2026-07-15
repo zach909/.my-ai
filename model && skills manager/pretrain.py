@@ -55,6 +55,8 @@ def parse_args():
     ap.add_argument("--skill-top-k", type=int, default=1)
     ap.add_argument("--quant", action="store_true", help="§8 quantization-aware training")
     ap.add_argument("--quant-bits", type=int, default=8)
+    ap.add_argument("--quant-interference", action="store_true",
+                    help="gate the mesh readout by wave-signature quantum interference")
     ap.add_argument("--skill-experts", action="store_true",
                     help="attach the registry's skills as real mesh MoE experts")
     # training
@@ -142,7 +144,7 @@ def main():
         mesh_input=args.mesh_input, settle_ticks=args.settle_ticks,
         vale_init=args.vale_init, skill_groups=args.skill_groups,
         skill_top_k=args.skill_top_k, quant_enabled=args.quant,
-        quant_bits=args.quant_bits,
+        quant_bits=args.quant_bits, quant_interference=args.quant_interference,
     )
     if args.use_moe:
         print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")

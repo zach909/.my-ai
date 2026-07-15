@@ -835,6 +835,87 @@ name="s"
           "dictionary meanings connect related-but-not-synonym definitions")
 
 
+def test_local_encryption():
+    from tinygpt.crypto import LocalCipher, is_encrypted
+    cipher = LocalCipher.from_passphrase("correct horse battery staple")
+    blob = cipher.encrypt_json({"secret": "the mesh weights", "n": 42})
+    check(is_encrypted(blob), "encrypted blob is tagged ENC1")
+    check(b"the mesh weights" not in blob, "plaintext does not appear in the ciphertext")
+    # same passphrase (reusing the embedded salt) round-trips
+    same = LocalCipher.from_passphrase("correct horse battery staple",
+                                       LocalCipher.salt_of(blob))
+    check(same.decrypt_json(blob) == {"secret": "the mesh weights", "n": 42},
+          "correct passphrase decrypts")
+    # wrong passphrase fails authentication (does not return garbage)
+    wrong = LocalCipher.from_passphrase("wrong", LocalCipher.salt_of(blob))
+    try:
+        wrong.decrypt(blob)
+        check(False, "wrong passphrase must fail")
+    except ValueError:
+        check(True, "wrong passphrase fails authentication")
+    # tampering is detected
+    tampered = bytearray(blob); tampered[-1] ^= 0x01
+    try:
+        cipher.decrypt(bytes(tampered))
+        check(False, "tamper must be detected")
+    except ValueError:
+        check(True, "a single flipped bit is detected (HMAC)")
+
+
+def test_encrypted_memory():
+    from tinygpt.memory import ZipLoopMemory
+    from tinygpt.crypto import is_encrypted
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "mem.enc")
+    m = ZipLoopMemory(capacity=8, persist_path=p, passphrase="hunter2")
+    m.add("user", "my private note"); m.add("assistant", "ok"); m.save()
+    with open(p, "rb") as f:
+        blob = f.read()
+    check(is_encrypted(blob), "persisted memory is encrypted at rest")
+    check(b"my private note" not in blob, "the private note is not stored in plaintext")
+    m2 = ZipLoopMemory(capacity=8, persist_path=p, passphrase="hunter2")
+    check(len(m2) == 2 and m2.recent()[0]["content"] == "my private note",
+          "memory decrypts and reloads with the right passphrase")
+    m3 = ZipLoopMemory(capacity=8, persist_path=p, passphrase="wrong")
+    check(len(m3) == 0, "wrong passphrase yields no data, never garbage")
+
+
+def test_quantum_interference_in_mesh():
+    try:
+        import torch
+    except ImportError:
+        print("  skip quantum-interference test (torch not installed)")
+        return
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    # per-neuron wave signature + amplitude are exposed
+    cfg = ModelConfig(vocab_size=48, block_size=12, arch="mesh", mesh_neurons=12,
+                      mesh_dims=4, mesh_input=4, settle_ticks=3)
+    model = build_model(cfg).eval()
+    x = torch.randint(3, 48, (1, 5))
+    model(x)
+    waves = model.neuron_waves()
+    check(len(waves) == 12, "neuron_waves reports every neuron")
+    sigs = [s for _, s, _ in waves]
+    check(len(set(sigs)) == 12, "each neuron has a unique wave signature")
+    check(all(a >= 0 for _, _, a in waves), "each neuron has a (non-negative) amplitude")
+
+    # interference readout is integrated INTO the canonical mesh forward and trains
+    cfg2 = ModelConfig(vocab_size=48, block_size=12, arch="mesh", mesh_neurons=12,
+                       mesh_dims=4, mesh_input=4, settle_ticks=3, quant_interference=True)
+    qm = build_model(cfg2)
+    x = torch.randint(3, 48, (2, 6))
+    y = torch.randint(3, 48, (2, 6))
+    logits, loss = qm(x, y)
+    check(torch.isfinite(loss), "mesh with quantum-interference readout: loss finite")
+    opt = qm.configure_optimizers(0.01, 5e-3, (0.9, 0.95), "cpu")
+    _, l0 = qm(x, y); l0 = l0.item()
+    for _ in range(40):
+        opt.zero_grad(); _, l = qm(x, y); l.backward(); opt.step()
+    check(l.item() < l0, "mesh with quantum-interference readout trains (loss decreases)")
+
+
 def test_plugin_skill_registry():
     from tinygpt.plugins import default_registry, ExtensionType
     reg = default_registry()
@@ -896,7 +977,9 @@ def main():
                test_extension_install, test_neurolang_spec_aliases,
                test_simulate_neuron, test_search_neurons,
                test_continuous_input_buffer, test_neurolang_dictionary,
-               test_plugin_skill_registry, test_skills_attach_to_mesh):
+               test_plugin_skill_registry, test_skills_attach_to_mesh,
+               test_quantum_interference_in_mesh, test_local_encryption,
+               test_encrypted_memory):
         print(f"\n{fn.__name__}:")
         try:
             fn()

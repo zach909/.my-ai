@@ -52,6 +52,7 @@ class ModelConfig:
     quant_enabled: bool = False            # §8 quantization-aware training (fake-quant W in forward)
     quant_bits: int = 8                    # §8 bit-width for QAT
     expert_moe: Optional[object] = None    # optional ExpertMoE module for learned routing
+    quant_interference: bool = False       # quantum: gate the readout by wave-signature interference (in the canonical mesh)
 
     # Parameters for the OPTIONAL standalone Section 5.2 quantum component
     # (tinygpt/elastic_mesh.py, ElasticMeshFFN — a PennyLane-simulated

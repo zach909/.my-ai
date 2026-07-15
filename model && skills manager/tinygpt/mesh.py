@@ -117,6 +117,15 @@ class MeshLM(nn.Module):
                              torch.arange(n_neurons, dtype=torch.float32)
                              * (2.0 * torch.pi / n_neurons))
         self._last_settled = None  # settled neuron state after the last forward
+        # When on, the readout is gated by quantum interference between the
+        # neurons' waves: each neuron is a·e^{iφ} (amplitude a = its activation
+        # strength, phase φ = its fixed signature); neurons whose phase agrees
+        # with the network's resultant reinforce, discordant ones cancel. This
+        # runs inside the canonical mesh's forward pass (differentiable, no
+        # external deps), so the quantum layer is part of the model build_model()
+        # constructs — not only the optional PennyLane component.
+        self.quant_interference = getattr(cfg, "quant_interference", False)
+        self.interference_strength = 1.0
 
         # §9 continuous operation: when on, the neuron state carries across
         # forward calls instead of resetting to zeros — the mesh keeps thinking
@@ -243,7 +252,8 @@ class MeshLM(nn.Module):
             if active is not None:
                 skill_aux = skill_aux + self._skill_aux_term
             state = self._settle(state, emb, active)
-            logits_steps.append(self.readout(self.dropout(state.reshape(B, -1))))
+            read_state = self._interfere(state) if self.quant_interference else state
+            logits_steps.append(self.readout(self.dropout(read_state.reshape(B, -1))))
         logits = torch.stack(logits_steps, dim=1)  # (B, T, vocab)
         self._last_settled = state.detach()
         if self._continuous:
@@ -315,6 +325,47 @@ class MeshLM(nn.Module):
         k = max(1, min(top_k, self.N))
         top = content.topk(k)
         return [(int(i), float(v)) for i, v in zip(top.indices, top.values)]
+
+    def _interfere(self, state: torch.Tensor) -> torch.Tensor:
+        """Quantum-interference readout gate (differentiable, in-forward).
+
+        Each neuron becomes a complex wave a_i·e^{iφ_i}: amplitude a_i is its
+        content activation strength, phase φ_i its fixed wave signature. The
+        neurons interfere; a neuron's coherence with the network resultant
+        (its amplitude projected onto the resultant direction, ≥ 0) scales how
+        much its content contributes to the readout. Phase-aligned neurons are
+        reinforced, discordant ones cancel — real constructive/destructive
+        interference, not an analogy. Returns a state whose content dims are
+        gated; the input flag (dim 0) is untouched."""
+        B = state.size(0)
+        amp = state[:, :, 1:].norm(dim=-1)                       # (B, N) amplitudes
+        phase = self.wave_signature.view(1, self.N)              # (1, N)
+        z = amp.to(torch.complex64) * torch.exp(1j * phase.to(torch.float32))
+        resultant = z.sum(dim=1, keepdim=True)                   # (B, 1)
+        mag = resultant.abs()
+        direction = torch.where(mag > 1e-9, resultant / (mag + 1e-9),
+                                torch.ones_like(resultant))
+        coherence = (z * direction.conj()).real                  # (B, N), signed
+        # gate in [1-s, 1+s]: coherent neurons amplified, anti-coherent damped,
+        # normalised so the mean gate is ~1 (interference redistributes, not
+        # inflates — echoing the zero-sum spirit of the design).
+        norm = coherence / (amp.mean(dim=1, keepdim=True) + 1e-6)
+        gate = 1.0 + self.interference_strength * torch.tanh(norm)   # (B, N)
+        content = state[:, :, 1:] * gate.unsqueeze(-1)
+        return torch.cat([state[:, :, :1], content], dim=-1)
+
+    @torch.no_grad()
+    def neuron_waves(self):
+        """Per-neuron (wave signature, amplitude) from the last settled state —
+        the design's quantum picture ("Neuron 2 has a wave signature of 4.5 and
+        an amplitude of 10"). Amplitude is the neuron's content activation norm;
+        the signature is fixed and unique per neuron."""
+        if self._last_settled is None:
+            amps = torch.zeros(self.N)
+        else:
+            amps = self._last_settled.mean(dim=0)[:, 1:].norm(dim=-1)
+        return [(int(i), float(self.wave_signature[i]), float(amps[i]))
+                for i in range(self.N)]
 
     @torch.no_grad()
     def state_phase(self) -> float:

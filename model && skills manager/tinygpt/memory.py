@@ -21,9 +21,16 @@ _ZIP_MAGIC = b"ZIP1"  # checkpoint header for the compressed format
 
 
 class ZipLoopMemory:
-    def __init__(self, capacity: int = 512, persist_path: Optional[str] = None):
+    def __init__(self, capacity: int = 512, persist_path: Optional[str] = None,
+                 passphrase: Optional[str] = None):
         self.capacity = capacity
         self.persist_path = persist_path
+        # When a passphrase is given, the on-disk conversation is encrypted at
+        # rest with the local stdlib cipher (tinygpt/crypto.py) — the design's
+        # "all data remains private through end-to-end encryption". The cipher
+        # is built lazily so the salt from an existing file is reused.
+        self.passphrase = passphrase
+        self._cipher = None
         self.buffer: Deque[Dict[str, str]] = deque(maxlen=capacity)
         if persist_path and os.path.exists(persist_path):
             self.load()
@@ -38,14 +45,27 @@ class ZipLoopMemory:
     def clear(self) -> None:
         self.buffer.clear()
 
+    def _get_cipher(self, existing: Optional[bytes] = None):
+        if not self.passphrase:
+            return None
+        from .crypto import cipher_for
+        # reuse the salt embedded in an existing blob so the key matches on load
+        if existing is not None or self._cipher is None:
+            self._cipher = cipher_for(self.passphrase, existing)
+        return self._cipher
+
     def save(self) -> None:
         if not self.persist_path:
             return
         os.makedirs(os.path.dirname(self.persist_path) or ".", exist_ok=True)
         raw = json.dumps({"capacity": self.capacity, "turns": list(self.buffer)},
                          ensure_ascii=False).encode("utf-8")
+        payload = _ZIP_MAGIC + zlib.compress(raw, level=6)
+        cipher = self._get_cipher()
+        if cipher is not None:
+            payload = cipher.encrypt(payload)   # encrypt the compressed blob at rest
         with open(self.persist_path, "wb") as f:
-            f.write(_ZIP_MAGIC + zlib.compress(raw, level=6))
+            f.write(payload)
 
     def load(self) -> None:
         if not self.persist_path or not os.path.exists(self.persist_path):
@@ -53,12 +73,18 @@ class ZipLoopMemory:
         with open(self.persist_path, "rb") as f:
             blob = f.read()
         try:
+            from .crypto import is_encrypted
+            if is_encrypted(blob):
+                cipher = self._get_cipher(existing=blob)
+                if cipher is None:
+                    return  # encrypted on disk but no passphrase given
+                blob = cipher.decrypt(blob)     # raises on wrong key / tamper
             if blob.startswith(_ZIP_MAGIC):
                 data = json.loads(zlib.decompress(blob[len(_ZIP_MAGIC):]))
             else:
                 data = json.loads(blob.decode("utf-8"))  # pre-compression format
-        except (zlib.error, json.JSONDecodeError, UnicodeDecodeError):
-            return  # a corrupt checkpoint must never take down the core
+        except (zlib.error, json.JSONDecodeError, UnicodeDecodeError, ValueError):
+            return  # a corrupt / unreadable checkpoint must never take down the core
         self.buffer = deque(data.get("turns", []), maxlen=self.capacity)
 
     def compression_stats(self) -> Dict[str, int]:
