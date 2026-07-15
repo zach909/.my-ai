@@ -16,7 +16,7 @@ import torch
 import torch.nn as nn
 
 from .config import ModelConfig
-from .model import GPT
+from .model import build_model
 from .tokenizer import Tokenizer
 from .utils import load_checkpoint, resolve_device
 
@@ -45,7 +45,7 @@ def trim_to_last_sentence(text: str) -> str:
 class Generator:
     """A loaded model + tokenizer with a simple `generate()` entry point."""
 
-    def __init__(self, model: GPT, tokenizer: Tokenizer, config: ModelConfig,
+    def __init__(self, model: nn.Module, tokenizer: Tokenizer, config: ModelConfig,
                  device: str, ckpt_path: str):
         self.model = model
         self.tokenizer = tokenizer
@@ -110,9 +110,11 @@ class Generator:
         c = self.config
         return {
             "parameters": n_params,
-            "n_layer": c.n_layer,
-            "n_head": c.n_head,
-            "n_embd": c.n_embd,
+            "arch": c.arch,
+            "mesh_neurons": c.mesh_neurons,
+            "mesh_dims": c.mesh_dims,
+            "settle_ticks": c.settle_ticks,
+            "skill_groups": c.skill_groups,
             "block_size": c.block_size,
             "vocab_size": c.vocab_size,
             "use_elastic_mesh": c.use_elastic_mesh,
@@ -140,7 +142,7 @@ def load_generator(ckpt_path: str, device: str = "cpu",
     device = resolve_device(device)
     ckpt = load_checkpoint(ckpt_path, map_location=device)
     config = ModelConfig(**ckpt["model_config"])
-    model = GPT(config).to(device)
+    model = build_model(config).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
     if quantize and device == "cpu":
@@ -151,7 +153,7 @@ def load_generator(ckpt_path: str, device: str = "cpu",
     return Generator(model, tokenizer, config, device, ckpt_path)
 
 
-def _quantize_dynamic(model: GPT) -> GPT:
+def _quantize_dynamic(model: nn.Module) -> nn.Module:
     """int8-quantize the Linear weights for lighter/faster CPU inference.
 
     Dynamic quantization swaps nn.Linear for int8 versions that dequantize on

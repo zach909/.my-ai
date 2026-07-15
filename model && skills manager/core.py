@@ -31,11 +31,13 @@ import sys
 from tinygpt.actions import ActionLayer, enable_shell_actions
 from tinygpt.config import ModelConfig
 from tinygpt.data import build_chat_prompt
+from tinygpt.empathy import EmpathyEngine
 from tinygpt.extension_builder import Definishon, ExtensionBuilder
 from tinygpt.live_guide import LiveGuide
 from tinygpt.memory import ZipLoopMemory
 from tinygpt.model import build_model
-from tinygpt.selection import best_of_n
+from tinygpt.rl import ReasoningLedger
+from tinygpt.selection import best_of_n, select_by_interference
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
 from tinygpt.veto import AlignmentVeto
@@ -56,6 +58,16 @@ def parse_args():
     ap.add_argument("--repetition-penalty", type=float, default=1.1)
     ap.add_argument("--memory", default="checkpoints/memory.json", help="zip-loop persist path")
     ap.add_argument("--memory-turns", type=int, default=8, help="turns of context to condition on")
+    # answer selection: pure confidence ranking, or §5 quantum interference
+    # (phase consensus over the mesh's settled-state wave signatures + collapse)
+    ap.add_argument("--select", choices=["confidence", "interference"], default="confidence",
+                    help="how to commit among the N candidates")
+    # empathy: track user mood/preferences and adapt sampling to stay aligned
+    ap.add_argument("--no-empathy", action="store_true", help="disable the empathy engine")
+    ap.add_argument("--empathy-state", default="checkpoints/empathy.json")
+    # RL reasoning ledger: completed steps are recorded and repeats scored down
+    ap.add_argument("--no-ledger", action="store_true", help="disable the reasoning ledger")
+    ap.add_argument("--ledger", default="checkpoints/reasoning.json")
     ap.add_argument("--no-actions", action="store_true", help="disable the action layer entirely")
     ap.add_argument("--enable-shell", action="store_true",
                     help="register the terminal action (gnome/desktop control). Always confirms.")
@@ -129,6 +141,8 @@ def main():
     tokenizer = Tokenizer(tok_path)
 
     memory = ZipLoopMemory(capacity=512, persist_path=args.memory)
+    empathy = None if args.no_empathy else EmpathyEngine(persist_path=args.empathy_state)
+    ledger = None if args.no_ledger else ReasoningLedger(persist_path=args.ledger)
     veto = AlignmentVeto()
     action_layer = None if args.no_actions else ActionLayer(veto=veto)
     if action_layer is not None and args.enable_shell:
@@ -144,8 +158,11 @@ def main():
     shell_note = " + terminal (opt-in, always confirms)" if (not args.no_actions and args.enable_shell) else ""
     print(f"  actions    : {'disabled' if args.no_actions else 'human-in-the-loop (read-only allowlist)' + shell_note}")
     print(f"  guidance   : {'off' if args.no_guide else 'live (steer drift back mid-generation, §7)'}")
+    print(f"  select     : {'§5 interference (phase consensus + collapse)' if args.select == 'interference' else 'confidence ranking'}")
+    print(f"  empathy    : {'off' if empathy is None else 'on (mood-aware sampling, remembered preferences)'}")
+    print(f"  ledger     : {'off' if ledger is None else f'{len(ledger)} completed reasoning step(s); repeats scored down'}")
     print(f"  power-save : {'off' if args.idle_timeout <= 0 else f'release GPU after {args.idle_timeout:.0f}s idle'}")
-    print("  Type 'exit' to quit, 'reset' to clear memory.")
+    print("  Type 'exit' to quit, 'reset' to clear memory, 'mood' for the empathy read.")
     print("  Teach the model live:  teach: <prompt> => <required reply>   (extension builder, §4)\n")
     if not args.no_actions:
         print("  The model can propose 'ACTION: time' / 'list_dir <p>' / 'read_file <p>' / "
@@ -192,10 +209,23 @@ def main():
                             extra={"tokenizer": tok_path, "extended": True})
             print(f"[teach] saved -> {args.ckpt}")
             continue
+        if user.lower() == "mood" and empathy is not None:
+            print(f"({empathy.describe()})")
+            continue
         if not user:
             continue
 
         memory.add("user", user)
+
+        # empathy: read the user's state + remembered preferences, and adapt
+        # sampling so alignment doesn't need repeated instructions
+        temperature, max_new, top_p = args.temperature, args.max_new_tokens, args.top_p
+        if empathy is not None:
+            empathy.observe(user)
+            adj = empathy.adjustment()
+            temperature = max(0.1, temperature * adj.temperature_scale)
+            max_new = max(16, int(max_new * adj.max_tokens_scale))
+            top_p = min(1.0, max(0.1, top_p + adj.top_p_delta)) if top_p else top_p
 
         # build prompt from recent zip-loop memory + the assistant header
         turns = memory.recent(args.memory_turns)
@@ -205,17 +235,22 @@ def main():
         # section 11 (predict-before-commit) + section 7 (live guidance): generate
         # N candidates under live guidance — when the model drifts into sustained
         # low confidence mid-generation, sampling tightens to steer it back rather
-        # than stopping — then commit the model's most-confident candidate.
+        # than stopping — then commit either the most-confident candidate or, with
+        # --select interference, the §5 phase-consensus + Born-rule collapse pick.
+        # The reasoning ledger scores down candidates that repeat completed steps.
         if guide is not None:
             guide.corrections = 0
-        best = best_of_n(
+        select = select_by_interference if args.select == "interference" else best_of_n
+        best = select(
             model, tokenizer, prompt_ids, n=args.candidates,
-            max_new_tokens=args.max_new_tokens, temperature=args.temperature,
-            top_k=args.top_k, top_p=args.top_p,
+            max_new_tokens=max_new, temperature=temperature,
+            top_k=args.top_k, top_p=top_p,
             repetition_penalty=args.repetition_penalty, eos_id=tokenizer.eos_id,
-            device=device, guide=guide,
+            device=device, guide=guide, ledger=ledger,
         )
         reply = clean_reply(best.text)
+        if ledger is not None and reply:
+            ledger.record(reply)
         print(f"bot> {reply}")
         if args.candidates > 1:
             print(f"     (chose best of {args.candidates}, confidence {best.score:.3f})")

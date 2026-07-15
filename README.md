@@ -1,4 +1,3 @@
-<<<<<<< HEAD
 # Prometheus Elastic Core
 
 A locally-run AI built on an **all-to-all neuron mesh** instead of a transformer,
@@ -23,7 +22,7 @@ from that directory.
    the rest stay wired but dormant. Full density, sparse per-tick compute.
 4. **Extension builder / NeuroLang (§4)** — teach declarative *definishon*
    contracts (`when X then reply Y`); contradictions are detected, not looped on.
-   `tinygpt/extension_builder.py`.
+   `tinygpt/extension_builder.py`, `neurolang.py`.
 5. **Answer selection by interference (§5)** — complex-number phase-consensus
    cancels contradictory candidates, Grover amplification boosts a rare-correct
    one, collapse samples ∝ amplitude². `tinygpt/interference.py`.
@@ -37,9 +36,17 @@ from that directory.
    calls; memory is the saved neuron state; a bounded output ring buffer.
 
 Around the mesh: an **alignment veto** (blocks objectionable / drifting actions,
-fails safe; irreversible actions route to the human), **live guidance**, and a
+fails safe; irreversible actions route to the human), **live guidance**, a
 **human-in-the-loop action layer** (read-only by default; a `terminal` action is
-opt-in and always confirms).
+opt-in and always confirms), an **empathy engine** (reads the user's mood and
+remembered preferences and adapts sampling to stay aligned without repeated
+instructions — `tinygpt/empathy.py`), and a **reinforcement-learning layer**
+(`tinygpt/rl.py`): candidate replies are evaluated before committing, completed
+reasoning steps are recorded in a persistent ledger so they are not repeated
+unnecessarily, and a REINFORCE step can train the mesh from its own
+candidate-selection signal. §5 is live in the reply path too: every neuron has
+a unique **wave signature**, and `--select interference` commits the reply by
+phase consensus over the mesh's settled states plus Born-rule collapse.
 
 ## Quickstart
 
@@ -49,8 +56,33 @@ pip install -r requirements.txt
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # 48 checks, no checkpoint needed
+python test_core.py                     # 94 checks, no checkpoint needed
 ```
+
+Or use the unified entry point:
+
+```bash
+python main.py build example_experts.nl   # build + train a mesh from NeuroLang
+python main.py chat --ckpt checkpoints/gpt.pt
+python main.py test
+```
+
+## Web dashboard (Vite + React)
+
+The repository root is also a TypeScript web app (TanStack Start + Tailwind +
+shadcn/ui) with an interactive **elastic-mesh visualization**
+(`src/features/mesh/`): a live in-browser mesh engine with a control panel for
+neuron count, settle ticks, and vale budgets.
+
+```bash
+npm install
+npm run dev      # local dev server
+npm run lint     # typecheck + eslint + stylelint + CSS-variable checks
+npm run build    # static production build
+```
+
+The lint step includes a CSS-variable check that cross-references
+`tailwind.config.cjs` against `src/index.css` and fails on undefined variables.
 
 ## Honest limitations
 
@@ -60,64 +92,3 @@ training at scale. It is **not** a path to superintelligence, and it has **no
 autonomous goal-generation**: it reasons about and responds to input, it does not
 invent its own objectives. The mesh is an unproven alternative to the
 transformer, offered to be tested, not assumed better.
-=======
-# Enhanced Vite React TypeScript Template
-
-This template includes built-in detection for missing CSS variables between your Tailwind config and CSS files.
-
-## Features
-
-- **CSS Variable Detection**: Automatically detects if CSS variables referenced in `tailwind.config.cjs` are defined in `src/index.css`
-- **Enhanced Linting**: Includes ESLint, Stylelint, and custom CSS variable validation
-- **Shadcn/ui**: Pre-configured with all Shadcn components
-- **Modern Stack**: Vite + React + TypeScript + Tailwind CSS
-
-## Available Scripts
-
-```bash
-# Run all linting (includes CSS variable check)
-npm run lint
-
-# Check only CSS variables
-npm run check:css-vars
-
-# Individual linting
-npm run lint:js    # ESLint
-npm run lint:css   # Stylelint
-```
-
-## CSS Variable Detection
-
-The template includes a custom script that:
-
-1. **Parses `tailwind.config.cjs`** to find all `var(--variable)` references
-2. **Parses `src/index.css`** to find all defined CSS variables (`--variable:`)
-3. **Cross-references** them to find missing definitions
-4. **Reports undefined variables** with clear error messages
-
-### Example Output
-
-When CSS variables are missing:
-```
-❌ Undefined CSS variables found in tailwind.config.cjs:
-   --sidebar-background
-   --sidebar-foreground
-   --sidebar-primary
-
-Add these variables to src/index.css
-```
-
-When all variables are defined:
-```
-✅ All CSS variables in tailwind.config.cjs are defined
-```
-
-## How It Works
-
-The detection happens during the `npm run lint` command, which will:
-- Exit with error code 1 if undefined variables are found
-- Show exactly which variables need to be added to your CSS file
-- Integrate seamlessly with your development workflow
-
-This prevents runtime CSS issues where Tailwind classes reference undefined CSS variables.
->>>>>>> origin/main
