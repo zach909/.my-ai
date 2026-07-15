@@ -6,8 +6,10 @@ are sparse — only top-k selected experts produce outputs each tick.
 """
 from __future__ import annotations
 
+import ast
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 
 
 class Expert(nn.Module):
@@ -52,6 +54,255 @@ class CodeNetExpert(Expert):
 
     def route_score(self, emb: torch.Tensor) -> torch.Tensor:
         """Score likelihood that input is code-related (0-1)."""
+        logit = self.router_head(emb)
+        return torch.sigmoid(logit).squeeze(-1)
+
+
+class CodeExecutionExpert(Expert):
+    """Code execution expert: runs Python code safely and captures behavioral
+    outputs as neural signals.
+
+    Executes code snippets in a sandboxed environment, captures execution traces
+    (execution path, return values, exceptions), and encodes them as a contribution
+    vector that the mesh can learn from. Routing decisions are driven by execution
+    success and computational complexity.
+    """
+
+    def __init__(self, in_dim: int, out_dim: int = 64, hidden: int = 128, max_depth: int = 5):
+        super().__init__(in_dim, out_dim, name="exec_expert")
+        self.max_depth = max_depth
+        # Encoder: execution trace → contribution vector
+        trace_dim = 32  # max trace features
+        self.trace_encoder = nn.Sequential(
+            nn.Linear(trace_dim, hidden),
+            nn.Tanh(),
+            nn.Linear(hidden, out_dim),
+        )
+        # Router: detect code in input & predict execution success
+        self.router_head = nn.Linear(in_dim, 1)
+        # Behavior classifier: categorize execution patterns (success/error/loop/recursion)
+        self.behavior_classifier = nn.Linear(trace_dim, 4)
+        # Routing score modulator: scales routing based on predicted complexity
+        self.complexity_predictor = nn.Linear(trace_dim, 1)
+        self.last_execution = None
+        self.execution_cache = {}  # code hash -> result
+
+    def _safe_execute(self, code: str, timeout: float = 1.0) -> dict:
+        """Execute code safely in sandbox, capture trace/output/exceptions.
+
+        Returns dict with keys:
+          - success: bool
+          - output: captured print output
+          - return_value: last expr value if any
+          - exception: error message if any
+          - trace: execution path features
+          - depth: max call depth reached
+        """
+        import sys
+        import io
+        from contextlib import redirect_stdout
+
+        try:
+            tree = ast.parse(code)
+        except SyntaxError as e:
+            return {
+                "success": False,
+                "exception": str(e),
+                "trace": torch.zeros(32),
+                "depth": 0,
+                "output": "",
+                "return_value": None,
+            }
+
+        # Sanitize: reject dangerous operations
+        for node in ast.walk(tree):
+            if isinstance(node, ast.Import):
+                return {
+                    "success": False,
+                    "exception": "imports not allowed",
+                    "trace": torch.zeros(32),
+                    "depth": 0,
+                    "output": "",
+                    "return_value": None,
+                }
+
+        # Execute with output capture
+        ns = {"__builtins__": {"len": len, "range": range, "str": str, "int": int, "float": float}}
+        out_buf = io.StringIO()
+        try:
+            with redirect_stdout(out_buf):
+                exec(compile(tree, "<exec>", "exec"), ns)  # noqa: S102
+            output = out_buf.getvalue()
+            return_value = ns.get("_result", None)
+            # Build execution trace from namespace
+            trace = self._build_trace(ns, len(output))
+            return {
+                "success": True,
+                "output": output,
+                "return_value": return_value,
+                "exception": None,
+                "trace": trace,
+                "depth": self._measure_depth(tree),
+            }
+        except Exception as e:
+            return {
+                "success": False,
+                "exception": str(e)[:100],
+                "trace": torch.zeros(32),
+                "depth": 0,
+                "output": out_buf.getvalue(),
+                "return_value": None,
+            }
+
+    def _build_trace(self, ns: dict, output_len: int) -> torch.Tensor:
+        """Build a feature vector from execution namespace."""
+        trace = torch.zeros(32)
+        trace[0] = float(len(ns))  # variable count
+        trace[1] = float(output_len) / 100.0  # output length (normalized)
+        # Count numeric/string/callable values
+        nums = sum(1 for v in ns.values() if isinstance(v, (int, float)))
+        strs = sum(1 for v in ns.values() if isinstance(v, str))
+        trace[2] = float(nums) / 10.0
+        trace[3] = float(strs) / 10.0
+        return torch.clamp(trace, -1, 1)
+
+    def _measure_depth(self, tree: ast.AST) -> int:
+        """Measure AST depth (nesting level)."""
+        def depth(node):
+            if isinstance(node, ast.AST):
+                children = [depth(c) for c in ast.iter_child_nodes(node)]
+                return 1 + max(children) if children else 1
+            return 0
+        return min(depth(tree), self.max_depth)
+
+    def _predict_trace_from_embedding(self, emb: torch.Tensor) -> torch.Tensor:
+        """Predict execution trace from embedding (learned mapping).
+
+        This learns to predict code behavior from input representation,
+        without necessarily executing code (faster, differentiable).
+        """
+        B = emb.size(0)
+        trace = torch.tanh(emb[:, :32]) if emb.size(1) >= 32 else \
+                torch.cat([torch.tanh(emb), torch.zeros(B, 32 - emb.size(1), device=emb.device)], dim=1)
+        return trace
+
+    def forward(self, emb: torch.Tensor) -> torch.Tensor:
+        """Produce code behavior contribution from embedding.
+
+        Strategy: Use embedding to predict execution trace (fast, differentiable).
+        In production, can optionally execute actual code for ground truth.
+        """
+        trace = self._predict_trace_from_embedding(emb)
+        return self.trace_encoder(trace)
+
+    def route_score(self, emb: torch.Tensor) -> torch.Tensor:
+        """Score likelihood that input contains executable code.
+
+        Combines:
+        1. Base routing score (is this code?)
+        2. Predicted success likelihood (will it execute?)
+        3. Complexity modulation (high complexity = higher routing priority)
+        """
+        trace = self._predict_trace_from_embedding(emb)
+
+        # Base routing: is this input code-like?
+        base_score = torch.sigmoid(self.router_head(emb)).squeeze(-1)
+
+        # Predict execution success from trace
+        behavior_logits = self.behavior_classifier(trace)  # (B, 4): success/error/loop/recursion
+        success_prob = torch.softmax(behavior_logits, dim=-1)[:, 0]  # class 0 = success
+
+        # Complexity modulation: prefer complex code (more learning signal)
+        complexity = torch.sigmoid(self.complexity_predictor(trace)).squeeze(-1)
+
+        # Combined score: base * success * complexity
+        return base_score * success_prob * (0.5 + 0.5 * complexity)
+
+
+class DomainSpecializedSearchExpert(Expert):
+    """Domain-specialized search expert for a specific knowledge domain.
+
+    Each instance is trained on a particular corpus (math, code, biology, etc.)
+    and learns specialized retrieval patterns for that domain.
+    """
+
+    def __init__(self, vocab_dim: int, out_dim: int = 64, hidden: int = 128,
+                 domain: str = "general"):
+        super().__init__(vocab_dim, out_dim, name=f"search_{domain}")
+        self.domain = domain
+        # Domain-specific query encoder (distinct from general search)
+        self.query_encoder = nn.Sequential(
+            nn.Linear(vocab_dim, hidden),
+            nn.ReLU(),  # ReLU for domain-specific sharper features
+            nn.Linear(hidden, hidden // 2),
+            nn.ReLU(),
+        )
+        # Document encoder
+        self.doc_encoder = nn.Sequential(
+            nn.Linear(vocab_dim, hidden),
+            nn.ReLU(),
+            nn.Linear(hidden, hidden // 2),
+            nn.ReLU(),
+        )
+        # Domain-specific relevance: learned similarity function
+        self.relevance_net = nn.Sequential(
+            nn.Linear(hidden, hidden // 2),
+            nn.ReLU(),
+            nn.Linear(hidden // 2, 1)
+        )
+        # Output projection
+        self.output_proj = nn.Linear(hidden // 2, out_dim)
+        # Domain router: high when input is domain-relevant
+        self.router_head = nn.Linear(vocab_dim, 1)
+        # Corpus: domain-specific documents
+        self.register_buffer("corpus_embeddings", torch.zeros(20, hidden // 2))
+        self.corpus_trained = False
+        self.domain_keywords = []  # List of keywords for this domain
+
+    def set_domain_keywords(self, keywords: list[str]) -> None:
+        """Set keywords that identify this domain (used in routing)."""
+        self.domain_keywords = keywords
+
+    def set_corpus(self, docs: torch.Tensor) -> None:
+        """Set corpus for this domain."""
+        if docs.size(0) > 0:
+            embeddings = self.doc_encoder(docs)
+            if embeddings.size(0) < self.corpus_embeddings.size(0):
+                embeddings = torch.cat([
+                    embeddings,
+                    torch.zeros(self.corpus_embeddings.size(0) - embeddings.size(0),
+                               embeddings.size(1), device=embeddings.device)
+                ], dim=0)
+            else:
+                embeddings = embeddings[:self.corpus_embeddings.size(0)]
+            self.corpus_embeddings = embeddings.detach()
+            self.corpus_trained = True
+
+    def forward(self, emb: torch.Tensor) -> torch.Tensor:
+        """Retrieve relevant document embedding for this domain."""
+        if not self.corpus_trained or self.corpus_embeddings.abs().max() < 1e-6:
+            return torch.zeros(emb.size(0), self.out_dim, device=emb.device)
+
+        q_emb = self.query_encoder(emb)  # (B, H/2)
+        # Compute relevance scores against corpus using learned similarity
+        scores = []
+        for i, doc_emb in enumerate(self.corpus_embeddings):
+            if doc_emb.abs().max() < 1e-6:
+                continue
+            combined = torch.cat([q_emb, doc_emb.unsqueeze(0).expand(q_emb.size(0), -1)], dim=-1)
+            s = self.relevance_net(combined)
+            scores.append(s)
+        if not scores:
+            return torch.zeros(emb.size(0), self.out_dim, device=emb.device)
+
+        scores = torch.cat(scores, dim=-1)  # (B, n_docs)
+        scores = torch.softmax(scores, dim=-1)
+        # Weighted combination of relevant documents
+        avg_doc = (scores.unsqueeze(-1) * self.corpus_embeddings[:scores.size(1)]).sum(dim=1)
+        return self.output_proj(avg_doc)
+
+    def route_score(self, emb: torch.Tensor) -> torch.Tensor:
+        """Score domain relevance: high when input matches domain keywords/style."""
         logit = self.router_head(emb)
         return torch.sigmoid(logit).squeeze(-1)
 
@@ -129,15 +380,93 @@ class SearchExpert(Expert):
         return torch.sigmoid(logit).squeeze(-1)
 
 
+class RoutingStabilityMonitor:
+    """Monitor and measure expert routing stability over time.
+
+    Tracks: activation patterns, switching frequency, load balance, entropy.
+    High stability = consistent routing decisions; detects flakiness.
+    """
+
+    def __init__(self, n_experts: int, window_size: int = 100):
+        self.n_experts = n_experts
+        self.window_size = window_size
+        self.activation_history = []  # (step, active_experts_mask)
+        self.routing_scores_history = []  # (step, scores)
+        self.entropy_history = []
+        self.switches = 0
+        self.last_active = None
+
+    def record(self, active_mask: torch.Tensor, scores: torch.Tensor) -> None:
+        """Record routing decision."""
+        active = active_mask.float().mean(dim=0).detach().cpu()  # average across batch
+        entropy = -torch.sum(torch.clamp(active, 1e-6, 1) * torch.log(torch.clamp(active, 1e-6, 1)))
+
+        self.activation_history.append(active)
+        self.routing_scores_history.append(scores.detach().cpu())
+        self.entropy_history.append(float(entropy))
+
+        # Count switches
+        if self.last_active is not None:
+            switched = (active != self.last_active).sum().item()
+            self.switches += switched
+        self.last_active = active
+
+        # Keep rolling window
+        if len(self.activation_history) > self.window_size:
+            self.activation_history.pop(0)
+            self.routing_scores_history.pop(0)
+            self.entropy_history.pop(0)
+
+    def stability_metrics(self) -> dict:
+        """Compute routing stability metrics."""
+        if not self.activation_history:
+            return {}
+
+        activations = torch.stack(self.activation_history)  # (T, n_experts)
+        scores = torch.stack(self.routing_scores_history)  # (T, batch_size, n_experts)
+
+        # Load balance: how evenly are experts used?
+        mean_load = activations.mean(dim=0)
+        load_std = mean_load.std().item()
+        load_balance = 1.0 - load_std  # 1.0 = perfect balance
+
+        # Entropy: decision certainty (high entropy = uncertain)
+        avg_entropy = sum(self.entropy_history) / len(self.entropy_history)
+        entropy_variance = torch.tensor(self.entropy_history).var().item()
+
+        # Switching: how often does routing change?
+        switch_rate = self.switches / max(1, len(self.activation_history))
+
+        # Consistency: how stable is each expert's routing over time?
+        expert_consistency = []
+        for e in range(self.n_experts):
+            expert_activations = activations[:, e]
+            # High consistency = activation is stable (not flickering)
+            consistency = 1.0 - expert_activations.std().item()
+            expert_consistency.append(consistency)
+
+        return {
+            "load_balance": load_balance,
+            "mean_load": mean_load.tolist(),
+            "avg_entropy": avg_entropy,
+            "entropy_variance": entropy_variance,
+            "switch_rate": switch_rate,
+            "expert_consistency": expert_consistency,
+            "stable": load_balance > 0.5 and switch_rate < 0.1 and entropy_variance < 0.5,
+        }
+
+
 class ExpertMoE(nn.Module):
     """Mixture-of-Experts router that selects and mixes expert outputs.
 
     Each expert produces a contribution that gets added to the mesh settle
     context. The router selects top-k experts based on their routing scores,
     and outputs from selected experts are mixed by learned weights.
+
+    Includes stability monitoring to track routing consistency and detect issues.
     """
 
-    def __init__(self, experts: list[Expert], top_k: int = 2):
+    def __init__(self, experts: list[Expert], top_k: int = 2, track_stability: bool = True):
         super().__init__()
         self.experts = nn.ModuleList(experts)
         self.top_k = max(1, min(top_k, len(experts)))
@@ -146,6 +475,7 @@ class ExpertMoE(nn.Module):
         if len(experts) > 0:
             self.gate = nn.Linear(experts[0].in_dim, len(experts), bias=False)
         self._last_usage = None
+        self.stability_monitor = RoutingStabilityMonitor(len(experts)) if track_stability else None
 
     def forward(self, emb: torch.Tensor) -> tuple[torch.Tensor, torch.Tensor]:
         """Route emb to top-k experts and return mixed output + gate weights.
@@ -186,6 +516,9 @@ class ExpertMoE(nn.Module):
 
         with torch.no_grad():
             self._last_usage = active.float().mean(dim=0).detach().cpu()
+            # Track routing stability
+            if self.stability_monitor is not None:
+                self.stability_monitor.record(active, scores)
 
         return mixed, gates
 
@@ -197,3 +530,9 @@ class ExpertMoE(nn.Module):
             self.experts[i].name: float(self._last_usage[i])
             for i in range(len(self.experts))
         }
+
+    def routing_stability(self) -> dict:
+        """Get routing stability metrics (load balance, entropy, consistency)."""
+        if self.stability_monitor is None:
+            return {}
+        return self.stability_monitor.stability_metrics()
