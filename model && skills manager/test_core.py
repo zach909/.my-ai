@@ -749,6 +749,92 @@ name="beta"
           "semantically related definitions auto-connect (thesaurus refinement)")
 
 
+def test_simulate_neuron():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip simulate-neuron test (torch not installed)")
+        return
+    import math
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    cfg = ModelConfig(vocab_size=64, block_size=16, arch="mesh",
+                      mesh_neurons=12, mesh_dims=4, mesh_input=4, settle_ticks=3)
+    model = build_model(cfg).eval()
+    sim = model.simulate_neuron(5, amplitude=2.0)
+    check(sim["neuron"] == 5 and math.isfinite(sim["amplitude"]),
+          "simulate_neuron returns the neuron's output amplitude")
+    check(len(sim["output_state"]) == cfg.mesh_dims,
+          "simulate_neuron returns the full neuron state vector")
+    check(all(i != 5 for i, _ in sim["influenced"]),
+          "simulate_neuron reports the OTHER neurons it drove")
+    quiet = model.simulate_neuron(5, amplitude=0.0)
+    check(quiet["amplitude"] <= sim["amplitude"] + 1e-6,
+          "a silent neuron drives no more than an excited one")
+    try:
+        model.simulate_neuron(999)
+        check(False, "simulate_neuron rejects an out-of-range neuron")
+    except IndexError:
+        check(True, "simulate_neuron rejects an out-of-range neuron")
+
+
+def test_search_neurons():
+    try:
+        import torch
+    except ImportError:
+        print("  skip search-neurons test (torch not installed)")
+        return
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    cfg = ModelConfig(vocab_size=64, block_size=16, arch="mesh",
+                      mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=3)
+    model = build_model(cfg).eval()
+    hits = model.search_neurons(torch.tensor([3, 8, 12]), top_k=4)
+    check(len(hits) == 4, "search_neurons returns top_k neurons")
+    check(all(0 <= i < 16 for i, _ in hits), "search_neurons returns valid neuron ids")
+    scores = [v for _, v in hits]
+    check(scores == sorted(scores, reverse=True),
+          "search_neurons ranks by activation (descending)")
+
+
+def test_continuous_input_buffer():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip continuous-input test (torch not installed)")
+        return
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.continuous import ContinuousRunner
+
+    tok = _CharTok()
+    cfg = ModelConfig(vocab_size=64, block_size=16, arch="mesh",
+                      mesh_neurons=10, mesh_dims=3, mesh_input=4, settle_ticks=2)
+    model = build_model(cfg)
+    runner = ContinuousRunner(model, tok, output_capacity=8, input_capacity=5, device="cpu")
+    runner.inject("abcdefgh")   # more tokens than input_capacity
+    check(len(runner.input) == 5, "input is a bounded circular buffer (oldest overwritten)")
+    runner.run(12)              # emit more than output_capacity
+    check(len(runner.output) == 8, "output stays a bounded circular buffer")
+
+
+def test_neurolang_dictionary():
+    import neurolang
+    # "code" and "software" are not thesaurus synonyms, but the dictionary
+    # glosses both onto the shared concept {program, ...} -> they auto-connect.
+    src = '''
+name="c"
+name="s"
+"c"@definition="write code to solve it"
+"s"@definition="build software that runs"
+'''
+    rt = neurolang.interpret(src)
+    check("s" in rt.neurons["c"].ex_weights,
+          "dictionary meanings connect related-but-not-synonym definitions")
+
+
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
@@ -756,7 +842,9 @@ def main():
                test_shell_action_gated, test_experts, test_mesh_with_experts,
                test_memory_compression, test_empathy, test_rl_ledger,
                test_reinforce_step, test_wave_signature_selection,
-               test_extension_install, test_neurolang_spec_aliases):
+               test_extension_install, test_neurolang_spec_aliases,
+               test_simulate_neuron, test_search_neurons,
+               test_continuous_input_buffer, test_neurolang_dictionary):
         print(f"\n{fn.__name__}:")
         try:
             fn()

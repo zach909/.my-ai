@@ -163,6 +163,7 @@ def main():
     print(f"  ledger     : {'off' if ledger is None else f'{len(ledger)} completed reasoning step(s); repeats scored down'}")
     print(f"  power-save : {'off' if args.idle_timeout <= 0 else f'release GPU after {args.idle_timeout:.0f}s idle'}")
     print("  Type 'exit' to quit, 'reset' to clear memory, 'mood' for the empathy read.")
+    print("  Inspect the mesh:  simulate: <neuron_id>   |   neurons: <text>   (extension builder)")
     print("  Teach the model live:  teach: <prompt> => <required reply>   (extension builder, §4)\n")
     if not args.no_actions:
         print("  The model can propose 'ACTION: time' / 'list_dir <p>' / 'read_file <p>' / "
@@ -211,6 +212,23 @@ def main():
             continue
         if user.lower() == "mood" and empathy is not None:
             print(f"({empathy.describe()})")
+            continue
+        if user.lower().startswith("simulate:"):
+            # Extension Builder: simulate the output of an individual neuron
+            try:
+                nid = int(user.split(":", 1)[1].strip())
+                sim = model.simulate_neuron(nid)
+                infl = ", ".join(f"#{i}({v:.2f})" for i, v in sim["influenced"])
+                print(f"[neuron {nid}] amplitude {sim['amplitude']:.3f}, "
+                      f"wave signature {sim['wave_signature']:.3f}; drove {infl}")
+            except (ValueError, IndexError) as e:
+                print(f"(usage: simulate: <neuron_id 0..{model.N - 1}>; {e})")
+            continue
+        if user.lower().startswith("neurons:"):
+            # Extension Builder: search neurons within the model by input
+            query = user.split(":", 1)[1].strip()
+            hits = builder.search_neurons(query, top_k=5)
+            print("[search] " + ", ".join(f"#{i}({v:.2f})" for i, v in hits))
             continue
         if not user:
             continue

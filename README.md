@@ -56,7 +56,7 @@ pip install -r requirements.txt
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # 94 checks, no checkpoint needed
+python test_core.py                     # 105 checks, no checkpoint needed
 ```
 
 Or use the unified entry point:

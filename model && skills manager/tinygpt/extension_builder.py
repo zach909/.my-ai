@@ -163,6 +163,22 @@ class ExtensionBuilder:
         converged = len(satisfied) == len(contracts)
         return TrainResult(converged, ran, satisfied, conflicts, total_history)
 
+    # ---- neuron inspection (Extension Builder tools) -----------------------
+    def simulate_neuron(self, neuron_id: int, amplitude: float = 1.0):
+        """Extension Builder "simulate the output produced by an individual
+        neuron": drive one neuron and report what it produces / influences."""
+        return self.model.simulate_neuron(neuron_id, amplitude=amplitude)
+
+    def search_neurons(self, text: str, top_k: int = 5):
+        """Extension Builder "search neurons within large models": return the
+        neurons a given input most strongly recruits."""
+        import torch
+        ids = self.tok.encode(text) if hasattr(self.tok, "encode") else list(text)
+        if not ids:
+            return []
+        return self.model.search_neurons(
+            torch.tensor(ids, dtype=torch.long, device=self.device), top_k=top_k)
+
     # ---- projects: save (no quantization) vs install (quantized) -----------
     # Design notes: "Save projects without quantization. Install projects
     # using quantization." — saving keeps exact weights for further editing;

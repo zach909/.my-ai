@@ -262,6 +262,61 @@ class MeshLM(nn.Module):
         return {self.skills[g]: float(self._skill_usage[g]) for g in range(self.n_groups)}
 
     @torch.no_grad()
+    def simulate_neuron(self, neuron_id: int, amplitude: float = 1.0):
+        """Extension Builder: "Simulate the output produced by an individual
+        neuron" / the Neural Definition Format's "behavior if it alone receives
+        input". Seed exactly one neuron with `amplitude` on its content dims,
+        propagate through the all-to-all connections for the settle window, and
+        report what that single neuron drives.
+
+        Returns a dict: the neuron's own settled state vector, its output
+        amplitude (content-dim norm), its fixed wave signature (§ quantum), and
+        the top neurons it most influenced (by settled activation)."""
+        if not 0 <= neuron_id < self.N:
+            raise IndexError(f"neuron {neuron_id} out of range [0, {self.N})")
+        device = self.W.device
+        state = torch.zeros(1, self.N, self.D, device=device)
+        state[0, neuron_id, 1:] = amplitude          # drive only this neuron
+        W = self.W * self.self_mask
+        if self.quant_enabled:
+            W = self._fake_quant(W)
+        for _ in range(self.settle_ticks):
+            context = torch.einsum("bje,ijed->bid", state, W) + self.bias
+            settled = torch.tanh(context)
+            # re-seed the driven neuron each tick (it "alone receives input")
+            settled[0, neuron_id, 1:] = amplitude
+            settled[:, :, 0] = 0.0
+            state = settled
+        content = state[0, :, 1:].norm(dim=-1)        # per-neuron output strength
+        influenced = [i for i in content.argsort(descending=True).tolist()
+                      if i != neuron_id][:5]
+        return {
+            "neuron": neuron_id,
+            "output_state": state[0, neuron_id].tolist(),
+            "amplitude": float(content[neuron_id]),
+            "wave_signature": float(self.wave_signature[neuron_id]),
+            "influenced": [(i, float(content[i])) for i in influenced],
+        }
+
+    @torch.no_grad()
+    def search_neurons(self, idx: torch.Tensor, top_k: int = 5):
+        """Extension Builder: "Search neurons within large models". Drive the
+        mesh with an input sequence and return the neurons that end up most
+        active (largest settled content-norm) — i.e. which neurons a given input
+        recruits. Useful for locating the neurons relevant to a behaviour before
+        editing/labelling them."""
+        if idx.dim() == 1:
+            idx = idx.unsqueeze(0)
+        self.eval()
+        self(idx)                                     # populates _last_settled
+        if self._last_settled is None:
+            return []
+        content = self._last_settled.mean(dim=0)[:, 1:].norm(dim=-1)   # (N,)
+        k = max(1, min(top_k, self.N))
+        top = content.topk(k)
+        return [(int(i), float(v)) for i, v in zip(top.indices, top.values)]
+
+    @torch.no_grad()
     def state_phase(self) -> float:
         """§5: the phase of the mesh's last settled state.
 

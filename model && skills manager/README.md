@@ -11,7 +11,7 @@
 
 No Hugging Face Transformers, no Lightning, no distributed training, no
 external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
-`python test_core.py` runs 94 checks with no checkpoint needed.
+`python test_core.py` runs 105 checks with no checkpoint needed.
 
 ## Infrastructure (applies to the mesh unchanged)
 
@@ -171,6 +171,16 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   signature; `--select interference` commits the reply by phase consensus over
   each candidate's settled-state phase, then Born-rule collapse
   (`tinygpt/selection.select_by_interference`).
+- **Neuron inspection** (extension-builder tools) — `simulate: <id>` drives an
+  individual neuron and reports its output amplitude, wave signature, and the
+  neurons it influenced (`MeshLM.simulate_neuron`); `neurons: <text>` searches
+  the mesh for the neurons a given input most recruits (`MeshLM.search_neurons`).
+- **Compressed circular I/O** (§9) — `ContinuousRunner` runs input and output as
+  two bounded ring buffers (oldest overwritten at capacity), so the mesh keeps
+  operating continuously without unbounded growth (`tinygpt/continuous.py`).
+- **Neural language refinement** — NeuroLang definitions are connected by both
+  thesaurus relationships and dictionary meanings, so semantically related
+  neurons wire together automatically (`neurolang.py`).
 
 Run the core's tests (no checkpoint needed) with:
 

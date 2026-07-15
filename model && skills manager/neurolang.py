@@ -486,16 +486,54 @@ _STOPWORDS = {"a", "an", "the", "is", "are", "was", "were", "be", "been", "it",
               "its", "of", "to", "in", "on", "at", "and", "or", "for", "with",
               "that", "this", "when", "then", "must", "should", "will", "can"}
 
+# Dictionary meanings: a compact gloss that expands a word into the concept
+# words of its definition. Combined with the thesaurus, this connects terms
+# that mean related things without being listed synonyms (the design notes:
+# "refined using thesaurus relationships AND dictionary meanings"). Each gloss
+# word is itself thesaurus-folded, so "code" -> program/instruction/logic
+# meets "software" -> program/... on the shared concept.
+_DICTIONARY = {
+    "code": {"program", "instruction", "logic", "software"},
+    "program": {"code", "instruction", "software", "run"},
+    "software": {"program", "code", "application"},
+    "ai": {"intelligence", "learn", "reason", "neuron", "model"},
+    "model": {"neuron", "learn", "reason", "network"},
+    "network": {"neuron", "connect", "node", "graph"},
+    "memory": {"remember", "store", "recall", "buffer"},
+    "buffer": {"memory", "store", "queue"},
+    "quantum": {"wave", "signal", "amplitude", "phase", "interference"},
+    "interference": {"wave", "phase", "amplitude", "quantum"},
+    "expert": {"skill", "specialist", "neuron", "route"},
+    "skill": {"expert", "learn", "ability", "specialist"},
+    "plugin": {"connect", "service", "extension", "external"},
+    "empathy": {"emotion", "feel", "mood", "align"},
+    "reason": {"think", "logic", "infer", "consider"},
+    "greeting": {"hello", "welcome", "hi"},
+    "hello": {"greeting", "welcome", "hi"},
+    "encrypt": {"secure", "private", "protect", "cipher"},
+    "quantize": {"compress", "shrink", "reduce", "deploy"},
+    "compress": {"quantize", "shrink", "zip", "reduce"},
+}
+
+
+def _fold(word):
+    """Fold a word to its thesaurus-group token, or itself if not in a group."""
+    return f"syn:{_SYN_OF[word]}" if word in _SYN_OF else word
+
 
 def _expand_synonyms(text):
-    """Content words of `text`, with each word mapped to its thesaurus group
-    (so synonyms compare equal). Words outside the thesaurus stay themselves."""
+    """Content-concept tokens of `text`. Each content word is folded to its
+    thesaurus group, then expanded with its dictionary-gloss concepts (also
+    folded), so definitions that share meaning — via synonyms OR via dictionary
+    relationships — end up with overlapping token sets."""
     words = re.findall(r"[a-z']+", str(text).lower())
     out = set()
     for w in words:
         if w in _STOPWORDS or len(w) < 2:
             continue
-        out.add(f"syn:{_SYN_OF[w]}" if w in _SYN_OF else w)
+        out.add(_fold(w))
+        for gloss in _DICTIONARY.get(w, ()):       # dictionary meanings
+            out.add(_fold(gloss))
     return out
 
 
