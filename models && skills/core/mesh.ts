@@ -53,6 +53,17 @@ export class NeuronMesh {
    */
   private nodeGroups: Map<number, string> = new Map();
 
+  // Performance cache for CSR layout
+  private cacheValid: boolean = false;
+  private cachedNodes: NeuronNode[] = [];
+  private idToIndex: Map<number, number> = new Map();
+  private flatWeights: Float32Array = new Float32Array(0);
+  private flatIndices: Int32Array = new Int32Array(0);
+  private rowStarts: Int32Array = new Int32Array(0);
+  private biases: Float32Array = new Float32Array(0);
+  private currActivations: Float32Array = new Float32Array(0);
+  private nextActivations: Float32Array = new Float32Array(0);
+
   constructor(config: Partial<MeshConfig> = {}) {
     const nodeCount = config.nodeCount ?? config.initialNodeCount ?? 10;
     const actFn = config.activationFn || config.activationFunction || 'relu';
@@ -89,6 +100,42 @@ export class NeuronMesh {
         this.nodes.get(from)!.connections.set(to, weight);
       }
     }
+    this.refreshCache();
+  }
+
+  /**
+   * Synchronize the CSR cache with the current nodes Map.
+   */
+  private refreshCache(): void {
+    this.cachedNodes = Array.from(this.nodes.values());
+    const N = this.cachedNodes.length;
+    this.idToIndex = new Map(this.cachedNodes.map((n, i) => [n.id, i]));
+    this.biases = new Float32Array(this.cachedNodes.map(n => n.bias));
+    this.currActivations = new Float32Array(this.cachedNodes.map(n => n.activation));
+    this.nextActivations = new Float32Array(N);
+
+    let totalEdges = 0;
+    for (const n of this.cachedNodes) totalEdges += n.connections.size;
+
+    this.flatWeights = new Float32Array(totalEdges);
+    this.flatIndices = new Int32Array(totalEdges);
+    this.rowStarts = new Int32Array(N + 1);
+
+    let edgePtr = 0;
+    for (let i = 0; i < N; i++) {
+      const n = this.cachedNodes[i];
+      this.rowStarts[i] = edgePtr;
+      for (const [neighborId, weight] of n.connections) {
+        const j = this.idToIndex.get(neighborId);
+        if (j !== undefined) {
+          this.flatIndices[edgePtr] = j;
+          this.flatWeights[edgePtr] = weight;
+          edgePtr++;
+        }
+      }
+    }
+    this.rowStarts[N] = edgePtr;
+    this.cacheValid = true;
   }
 
   /**
@@ -111,46 +158,52 @@ export class NeuronMesh {
     vale?: Map<number, number>,
     activeGroups?: Set<string>
   ): PropagationResult {
-    const nodes = Array.from(this.nodes.values());
+    if (!this.cacheValid) this.refreshCache();
+
+    const nodes = this.cachedNodes;
+    const N = nodes.length;
     const nodeHistory = new Map(nodes.map(n => [n.id, [] as number[]]));
     const histories = nodes.map(n => nodeHistory.get(n.id)!);
 
+    // Synchronize activations from source of truth and inputs
+    for (let i = 0; i < N; i++) this.currActivations[i] = nodes[i].activation;
+
     for (const [id, val] of inputActivations) {
       const nId = typeof id === 'string' ? parseInt(id.replace('neuron_', ''), 10) : id;
-      const node = this.nodes.get(nId);
-      if (node) { node.activation = val; node.activationHistory = [val]; }
+      const idx = this.idToIndex.get(nId);
+      if (idx !== undefined) {
+        const node = nodes[idx];
+        node.activation = val;
+        node.activationHistory = [val];
+        this.currActivations[idx] = val;
+      }
     }
 
-    const N = nodes.length, idIdx = new Map(nodes.map((n, i) => [n.id, i]));
-    const curr = new Float32Array(nodes.map(n => n.activation));
-    const next = new Float32Array(N), gates = new Uint8Array(N), vs = new Float32Array(N), hasV = new Uint8Array(N);
+    const curr = this.currActivations;
+    const next = this.nextActivations;
+    const gates = new Uint8Array(N);
+    const vs = new Float32Array(N);
+    const hasV = new Uint8Array(N);
 
-    nodes.forEach((n, i) => {
+    for (let i = 0; i < N; i++) {
+      const n = nodes[i];
       const g = this.nodeGroups.get(n.id);
       gates[i] = (activeGroups && g !== undefined && !activeGroups.has(g)) ? 1 : 0;
       const v = vale?.get(n.id);
       if (v !== undefined) { vs[i] = v; hasV[i] = 1; }
-    });
+    }
 
-    let totalEdges = 0;
-    for (const n of nodes) totalEdges += n.connections.size;
-    const flatWeights = new Float32Array(totalEdges), flatIndices = new Int32Array(totalEdges), rowStarts = new Int32Array(N + 1);
-    let edgePtr = 0;
-    nodes.forEach((n, i) => {
-      rowStarts[i] = edgePtr;
-      for (const [neighborId, weight] of n.connections) {
-        const j = idIdx.get(neighborId);
-        if (j !== undefined) { flatIndices[edgePtr] = j; flatWeights[edgePtr] = weight; edgePtr++; }
-      }
-    });
-    rowStarts[N] = edgePtr;
+    const flatWeights = this.flatWeights;
+    const flatIndices = this.flatIndices;
+    const rowStarts = this.rowStarts;
+    const biases = this.biases;
 
     let iteration = 0, converged = false, residual = 0;
     for (; iteration < this.config.maxIterations; iteration++) {
       for (let i = 0; i < N; i++) {
         if (gates[i]) next[i] = curr[i];
         else {
-          let sum = nodes[i].bias;
+          let sum = biases[i];
           const start = rowStarts[i], end = rowStarts[i + 1];
           for (let k = start; k < end; k++) sum += curr[flatIndices[k]] * flatWeights[k];
           const comp = this.activate(sum);
@@ -163,8 +216,8 @@ export class NeuronMesh {
       for (let i = 0; i < N; i++) {
         residual += Math.abs(next[i] - curr[i]);
         curr[i] = next[i];
-        nodes[i].activation = next[i];
-        nodes[i].activationHistory.push(next[i]);
+        nodes[i].activation = curr[i];
+        nodes[i].activationHistory.push(curr[i]);
       }
       if (this.checkConvergence(residual)) { converged = true; break; }
     }
@@ -184,19 +237,32 @@ export class NeuronMesh {
    * change" signal.
    */
   applyValueWeightedLearning(learningRates: Map<number, number>): Map<number, number> {
+    if (!this.cacheValid) this.refreshCache();
     const deltaByNode = new Map<number, number>();
-    for (const [id, node] of this.nodes) {
-      const rate = learningRates.get(id) ?? this.config.learningRate;
+    const N = this.cachedNodes.length;
+
+    for (let i = 0; i < N; i++) {
+      const node = this.cachedNodes[i];
+      const rate = learningRates.get(node.id) ?? this.config.learningRate;
       let totalDelta = 0;
-      for (const [neighborId, weight] of node.connections) {
-        const neighbor = this.nodes.get(neighborId);
-        if (!neighbor) continue;
+
+      const rowStart = this.rowStarts[i];
+      const rowEnd = this.rowStarts[i + 1];
+
+      // Optimization: Iterate over CSR structure directly to update both Map and flatWeights
+      for (let k = rowStart; k < rowEnd; k++) {
+        const neighborIdx = this.flatIndices[k];
+        const neighbor = this.cachedNodes[neighborIdx];
+        const weight = this.flatWeights[k];
+
         const hebbian = rate * node.activation * neighbor.activation;
         const newWeight = Math.max(-2, Math.min(2, weight + hebbian));
-        node.connections.set(neighborId, newWeight);
+
+        this.flatWeights[k] = newWeight;
+        node.connections.set(neighbor.id, newWeight);
         totalDelta += Math.abs(newWeight - weight);
       }
-      deltaByNode.set(id, totalDelta);
+      deltaByNode.set(node.id, totalDelta);
     }
     return deltaByNode;
   }
@@ -227,6 +293,7 @@ export class NeuronMesh {
       }
     }
 
+    this.cacheValid = false;
     return id;
   }
 
@@ -238,6 +305,7 @@ export class NeuronMesh {
     }
     this.nodes.delete(id);
     this.nodeGroups.delete(id);
+    this.cacheValid = false;
     return true;
   }
 
@@ -266,6 +334,37 @@ export class NeuronMesh {
     if (from && to) {
       from.connections.set(toId, newWeight);
       to.connections.set(fromId, newWeight);
+
+      // If cache is valid, try to update it directly to avoid invalidation
+      if (this.cacheValid) {
+        const fromIdx = this.idToIndex.get(fromId);
+        const toIdx = this.idToIndex.get(toId);
+
+        if (fromIdx !== undefined && toIdx !== undefined) {
+          // Update from -> to weight
+          let foundFrom = false;
+          for (let k = this.rowStarts[fromIdx]; k < this.rowStarts[fromIdx + 1]; k++) {
+            if (this.flatIndices[k] === toIdx) {
+              this.flatWeights[k] = newWeight;
+              foundFrom = true;
+              break;
+            }
+          }
+          // Update to -> from weight
+          let foundTo = false;
+          for (let k = this.rowStarts[toIdx]; k < this.rowStarts[toIdx + 1]; k++) {
+            if (this.flatIndices[k] === fromIdx) {
+              this.flatWeights[k] = newWeight;
+              foundTo = true;
+              break;
+            }
+          }
+
+          if (!foundFrom || !foundTo) this.cacheValid = false;
+        } else {
+          this.cacheValid = false;
+        }
+      }
     }
   }
 
