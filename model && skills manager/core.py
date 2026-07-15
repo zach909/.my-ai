@@ -36,6 +36,7 @@ from tinygpt.extension_builder import Definishon, ExtensionBuilder
 from tinygpt.live_guide import LiveGuide
 from tinygpt.memory import ZipLoopMemory
 from tinygpt.model import build_model
+from tinygpt.plugins import default_registry, ExtensionType
 from tinygpt.rl import ReasoningLedger
 from tinygpt.selection import best_of_n, select_by_interference
 from tinygpt.tokenizer import Tokenizer
@@ -143,6 +144,7 @@ def main():
     memory = ZipLoopMemory(capacity=512, persist_path=args.memory)
     empathy = None if args.no_empathy else EmpathyEngine(persist_path=args.empathy_state)
     ledger = None if args.no_ledger else ReasoningLedger(persist_path=args.ledger)
+    registry = default_registry()   # plugins (local services) + skills (MoE experts)
     veto = AlignmentVeto()
     action_layer = None if args.no_actions else ActionLayer(veto=veto)
     if action_layer is not None and args.enable_shell:
@@ -161,9 +163,12 @@ def main():
     print(f"  select     : {'§5 interference (phase consensus + collapse)' if args.select == 'interference' else 'confidence ranking'}")
     print(f"  empathy    : {'off' if empathy is None else 'on (mood-aware sampling, remembered preferences)'}")
     print(f"  ledger     : {'off' if ledger is None else f'{len(ledger)} completed reasoning step(s); repeats scored down'}")
+    print(f"  extensions : {len(registry.plugins())} plugin(s) + {len(registry.skills())} skill(s) "
+          f"(plugins connect to local services; skills are mesh experts)")
     print(f"  power-save : {'off' if args.idle_timeout <= 0 else f'release GPU after {args.idle_timeout:.0f}s idle'}")
     print("  Type 'exit' to quit, 'reset' to clear memory, 'mood' for the empathy read.")
     print("  Inspect the mesh:  simulate: <neuron_id>   |   neurons: <text>   (extension builder)")
+    print("  Extensions:  plugins  |  skills  |  plugin: <id> [command] [arg]   (local services)")
     print("  Teach the model live:  teach: <prompt> => <required reply>   (extension builder, §4)\n")
     if not args.no_actions:
         print("  The model can propose 'ACTION: time' / 'list_dir <p>' / 'read_file <p>' / "
@@ -229,6 +234,21 @@ def main():
             query = user.split(":", 1)[1].strip()
             hits = builder.search_neurons(query, top_k=5)
             print("[search] " + ", ".join(f"#{i}({v:.2f})" for i, v in hits))
+            continue
+        if user.lower() in ("plugins", "skills"):
+            # plugins connect to local services; skills are MoE experts
+            summ = registry.summary()
+            for line in summ[user.lower()]:
+                print(f"  - {line}")
+            continue
+        if user.lower().startswith("plugin:"):
+            # dispatch a local plugin (no external APIs); read-only by default
+            rest = user.split(":", 1)[1].strip().split(maxsplit=2)
+            pid = rest[0] if rest else ""
+            cmd = rest[1] if len(rest) > 1 else ""
+            arg = rest[2] if len(rest) > 2 else ""
+            res = registry.dispatch(pid, cmd, arg)
+            print(f"[plugin] {res.output if res.ok else res.reason}")
             continue
         if not user:
             continue

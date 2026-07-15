@@ -11,7 +11,7 @@
 
 No Hugging Face Transformers, no Lightning, no distributed training, no
 external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
-`python test_core.py` runs 105 checks with no checkpoint needed.
+`python test_core.py` runs 117 checks with no checkpoint needed.
 
 ## Infrastructure (applies to the mesh unchanged)
 
@@ -48,6 +48,7 @@ model && skills manager/
 │   ├── interference.py     # §5 answer selection by quantum interference
 │   ├── empathy.py          # user mood + remembered preferences -> sampling
 │   ├── rl.py               # RL: reasoning ledger + REINFORCE over candidates
+│   ├── plugins.py          # plugin (local service) vs skill (MoE expert) registry
 │   ├── extension_builder.py# §4 definishon contracts; save vs quantized install
 │   ├── memory.py           # §9 zip-loop ring-buffer memory (zlib-compressed)
 │   ├── continuous.py       # §9 continuous operation / carried neuron state
@@ -181,6 +182,12 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
 - **Neural language refinement** — NeuroLang definitions are connected by both
   thesaurus relationships and dictionary meanings, so semantically related
   neurons wire together automatically (`neurolang.py`).
+- **Plugins vs skills** (`tinygpt/plugins.py`) — the full extension list from the
+  design notes in one place: *plugins* connect to local services (no external
+  APIs; `file-system`, `app-diagnostics`, `screenshot` run for real, the rest
+  fail cleanly), *skills* are MoE experts. `plugins` / `skills` / `plugin: <id>`
+  commands list and dispatch them; `pretrain.py --skill-experts` attaches the
+  skills onto the mesh as real routed experts.
 
 Run the core's tests (no checkpoint needed) with:
 

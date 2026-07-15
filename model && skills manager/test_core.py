@@ -835,6 +835,57 @@ name="s"
           "dictionary meanings connect related-but-not-synonym definitions")
 
 
+def test_plugin_skill_registry():
+    from tinygpt.plugins import default_registry, ExtensionType
+    reg = default_registry()
+    plugins = reg.plugins()
+    skills = reg.skills()
+    check(len(plugins) >= 18, f"registry enumerates the extensions ({len(plugins)} plugins)")
+    check(all(p.type is ExtensionType.PLUGIN for p in plugins)
+          and all(s.type is ExtensionType.SKILL for s in skills),
+          "plugins and skills are distinguished by type")
+    check(reg.get("coding").type is ExtensionType.SKILL, "coding is a skill (MoE expert)")
+    check(reg.get("camera").type is ExtensionType.PLUGIN, "camera is a plugin (service connector)")
+    # a plugin with a real local implementation actually runs — no external API
+    res = reg.dispatch("app-diagnostics")
+    check(res.ok and "system=" in res.output, "local diagnostics plugin dispatches for real")
+    fs = reg.dispatch("file-system", "list_dir", ".")
+    check(fs.ok and len(fs.output) > 0, "file-system plugin lists a directory locally")
+    # a hardware plugin with no local service fails cleanly, not by phoning out
+    cam = reg.dispatch("camera")
+    check((not cam.ok) and "not available" in cam.reason, "unavailable plugin fails cleanly")
+    # the AI can create a new skill extension (e.g. after learning to code)
+    reg.register_skill("vision", "Vision Skill")
+    check(reg.get("vision").type is ExtensionType.SKILL, "a newly created skill registers")
+
+
+def test_skills_attach_to_mesh():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip skills-attach test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig, config_to_dict
+    from tinygpt.model import build_model
+    from tinygpt.plugins import default_registry
+
+    cfg = ModelConfig(vocab_size=32, block_size=12, arch="mesh", mesh_neurons=16,
+                      mesh_dims=4, mesh_input=5, settle_ticks=3)
+    moe = default_registry().attach_to_config(cfg, out_dim=12, top_k=2)
+    check(moe is not None and len(moe.experts) == 5, "skills attach to the mesh as experts")
+    model = build_model(cfg)
+    x = torch.randint(0, 32, (2, 6))
+    y = torch.randint(0, 32, (2, 6))
+    _, loss = model(x, y)
+    check(torch.isfinite(loss), "mesh forward+loss finite with skill experts attached")
+    usage = model.expert_usage()
+    check(len(usage) == 5, "each attached skill is tracked as a mesh expert")
+    # config still serialises cleanly (the live expert_moe module is dropped)
+    d = config_to_dict(cfg)
+    check("expert_moe" not in d, "config_to_dict drops the live expert module")
+
+
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
@@ -844,7 +895,8 @@ def main():
                test_reinforce_step, test_wave_signature_selection,
                test_extension_install, test_neurolang_spec_aliases,
                test_simulate_neuron, test_search_neurons,
-               test_continuous_input_buffer, test_neurolang_dictionary):
+               test_continuous_input_buffer, test_neurolang_dictionary,
+               test_plugin_skill_registry, test_skills_attach_to_mesh):
         print(f"\n{fn.__name__}:")
         try:
             fn()

@@ -6,7 +6,7 @@ checkpoint.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from typing import Optional
 
 
@@ -122,4 +122,9 @@ class TokenizerConfig:
 
 
 def config_to_dict(cfg) -> dict:
-    return asdict(cfg)
+    # Shallow, and drop expert_moe: it's a live nn.Module (skills attached as
+    # mesh experts), not a serialisable hyperparameter; asdict() would try to
+    # deep-copy the module.
+    d = {f.name: getattr(cfg, f.name) for f in fields(cfg)}
+    d.pop("expert_moe", None)
+    return d

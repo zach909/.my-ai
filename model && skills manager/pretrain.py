@@ -65,6 +65,8 @@ def parse_args():
     ap.add_argument("--skill-top-k", type=int, default=1)
     ap.add_argument("--quant", action="store_true", help="§8 quantization-aware training")
     ap.add_argument("--quant-bits", type=int, default=8)
+    ap.add_argument("--skill-experts", action="store_true",
+                    help="attach the registry's skills as real mesh MoE experts")
     # training
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--grad-accum-steps", type=int, default=4)
@@ -157,6 +159,10 @@ def main():
     )
     if args.use_moe:
         print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")
+    if args.skill_experts:
+        from tinygpt.plugins import default_registry
+        moe = default_registry().attach_to_config(model_cfg)
+        print(f"skills attached as mesh experts: {len(moe.experts)} expert(s)")
     model = build_model(model_cfg).to(device)
     print(f"model parameters: {human_count(model.num_params())}")
 

@@ -35,6 +35,14 @@ from that directory.
 9. **Never idle (§9)** — continuous operation: the neuron state carries across
    calls; memory is the saved neuron state; a bounded output ring buffer.
 
+**Plugins and skills** are distinguished in one place (`tinygpt/plugins.py`): a
+**plugin** connects to a *local* service (file system, diagnostics, screenshot
+tool, …) with no external APIs — the ones with a real local implementation run
+for real, the rest fail cleanly instead of phoning out — and a **skill** is a
+Mixture-of-Experts expert that attaches straight into the mesh's settle loop
+(`--skill-experts` at train time; `plugins` / `skills` / `plugin:` commands in
+the core). The full extension list from the design notes lives there.
+
 Around the mesh: an **alignment veto** (blocks objectionable / drifting actions,
 fails safe; irreversible actions route to the human), **live guidance**, a
 **human-in-the-loop action layer** (read-only by default; a `terminal` action is
@@ -56,7 +64,7 @@ pip install -r requirements.txt
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # 105 checks, no checkpoint needed
+python test_core.py                     # 117 checks, no checkpoint needed
 ```
 
 Or use the unified entry point:
