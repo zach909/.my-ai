@@ -44,6 +44,7 @@ export class NeuroclawSystem {
   runner: NeuroclawRunner;
 
   private initialized = false;
+  private contextCapacityGB: number;
 
   constructor(config?: { maxContextGB?: number }) {
     this.llm = new NeuroclawLLM({});
@@ -51,7 +52,8 @@ export class NeuroclawSystem {
     this.thesaurus = new ThesaurusDictionary();
     this.pluginRegistry = new PluginRegistry();
     this.veto = new AlignmentVeto();
-    this.zipIO = new ZipIOSystem(config?.maxContextGB || 200000);
+    this.contextCapacityGB = config?.maxContextGB || 200000;
+    this.zipIO = new ZipIOSystem(this.contextCapacityGB);
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.thesaurus, this.pluginRegistry);
   }
@@ -108,7 +110,7 @@ export class NeuroclawSystem {
     this.empathy.updateUserContext(input);
 
     // 2. Store input in ZIP-IO buffer
-    await this.zipIO.write(input);
+    await this.zipIO.ingest(input);
 
     // 3. Run through neural pipeline
     // (Pipeline internally uses alignment veto and other subsystems)
@@ -136,7 +138,7 @@ export class NeuroclawSystem {
     return {
       initialized: this.initialized,
       activePlugins: this.pluginRegistry.listActivePlugins().length,
-      contextCapacity: `${this.zipIO.getStats().availableCapacityGB}GB available`,
+      contextCapacity: `${this.contextCapacityGB}GB available`,
       alignment: this.empathy.getAlignmentScore(),
     };
   }
@@ -187,6 +189,3 @@ main().catch((err) => {
   console.error("Fatal startup error in Neuroclaw launcher:", err);
   process.exit(1);
 });
-
-// Export system class
-export { NeuroclawSystem };
