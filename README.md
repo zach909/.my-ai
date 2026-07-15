@@ -36,9 +36,17 @@ from that directory.
    calls; memory is the saved neuron state; a bounded output ring buffer.
 
 Around the mesh: an **alignment veto** (blocks objectionable / drifting actions,
-fails safe; irreversible actions route to the human), **live guidance**, and a
+fails safe; irreversible actions route to the human), **live guidance**, a
 **human-in-the-loop action layer** (read-only by default; a `terminal` action is
-opt-in and always confirms).
+opt-in and always confirms), an **empathy engine** (reads the user's mood and
+remembered preferences and adapts sampling to stay aligned without repeated
+instructions — `tinygpt/empathy.py`), and a **reinforcement-learning layer**
+(`tinygpt/rl.py`): candidate replies are evaluated before committing, completed
+reasoning steps are recorded in a persistent ledger so they are not repeated
+unnecessarily, and a REINFORCE step can train the mesh from its own
+candidate-selection signal. §5 is live in the reply path too: every neuron has
+a unique **wave signature**, and `--select interference` commits the reply by
+phase consensus over the mesh's settled states plus Born-rule collapse.
 
 ## Quickstart
 
@@ -48,7 +56,7 @@ pip install -r requirements.txt
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # 66 checks, no checkpoint needed
+python test_core.py                     # 94 checks, no checkpoint needed
 ```
 
 Or use the unified entry point:

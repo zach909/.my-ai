@@ -11,7 +11,7 @@
 
 No Hugging Face Transformers, no Lightning, no distributed training, no
 external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
-`python test_core.py` runs 66 checks with no checkpoint needed.
+`python test_core.py` runs 94 checks with no checkpoint needed.
 
 ## Infrastructure (applies to the mesh unchanged)
 
@@ -46,8 +46,10 @@ model && skills manager/
 │   ├── experts.py          # code-to-net + net-search skill experts (MoE)
 │   ├── moe.py              # sparse Mixture-of-Experts layer ("skills")
 │   ├── interference.py     # §5 answer selection by quantum interference
-│   ├── extension_builder.py# §4 definishon contracts (teach new behaviour)
-│   ├── memory.py           # §9 zip-loop ring-buffer memory (persistent)
+│   ├── empathy.py          # user mood + remembered preferences -> sampling
+│   ├── rl.py               # RL: reasoning ledger + REINFORCE over candidates
+│   ├── extension_builder.py# §4 definishon contracts; save vs quantized install
+│   ├── memory.py           # §9 zip-loop ring-buffer memory (zlib-compressed)
 │   ├── continuous.py       # §9 continuous operation / carried neuron state
 │   ├── selection.py        # predict-before-commit best-of-N
 │   ├── veto.py             # alignment veto (fails safe)
@@ -154,7 +156,21 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   contracts (`tinygpt/extension_builder.py`): `when "X" then it must reply "Y"`,
   trained with a constraint loss plus a don't-forget weight penalty, with
   contradiction detection. Batch-teach with `extend.py`, or live in the core:
-  `teach: <prompt> => <required reply>`.
+  `teach: <prompt> => <required reply>`. Projects **save** at full precision
+  (`save_project`, editable) and **install** with automatic int8 quantization
+  (`install` — the design notes' quantize-before-installation).
+- **Empathy engine** — `tinygpt/empathy.py` reads each user turn's emotional
+  state (valence/arousal/dominance), remembers stated preferences ("keep it
+  short") and adapts sampling so alignment doesn't need repeated instructions.
+  Type `mood` in the core chat for the current read; `--no-empathy` disables.
+- **Reinforcement learning** — `tinygpt/rl.py`: a persistent `ReasoningLedger`
+  records completed reasoning steps so candidates that merely repeat them are
+  scored down before committing (`--no-ledger` disables), and `reinforce_step`
+  runs a genuine REINFORCE update toward above-baseline candidates.
+- **§5 interference selection** — every mesh neuron carries a unique wave
+  signature; `--select interference` commits the reply by phase consensus over
+  each candidate's settled-state phase, then Born-rule collapse
+  (`tinygpt/selection.select_by_interference`).
 
 Run the core's tests (no checkpoint needed) with:
 
