@@ -44,16 +44,6 @@ def parse_args():
     ap.add_argument("--use-moe", action="store_true", help="replace block MLPs with sparse MoE")
     ap.add_argument("--n-experts", type=int, default=4)
     ap.add_argument("--moe-top-k", type=int, default=2)
-    # Section 5.2: swap the model core (position-wise MLP -> elastic mesh),
-    # keeping this entire training loop — data, optimizer, schedule,
-    # checkpointing — identical either way.
-    ap.add_argument("--use-elastic-mesh", action="store_true",
-                     help="Replace the MLP sublayer with the elastic mesh block (Section 5.2)")
-    ap.add_argument("--mesh-num-experts", type=int, default=4)
-    ap.add_argument("--mesh-top-k", type=int, default=2)
-    ap.add_argument("--mesh-n-neurons", type=int, default=64)
-    ap.add_argument("--mesh-settle-steps", type=int, default=3)
-    ap.add_argument("--mesh-n-qubits", type=int, default=4)
     # MeshLM (§1–§3, §8): the all-to-all mesh that build_model constructs
     # (ModelConfig.arch defaults to "mesh").
     ap.add_argument("--mesh-neurons", type=int, default=24)
@@ -148,9 +138,6 @@ def main():
         vocab_size=tokenizer.vocab_size, block_size=args.block_size,
         n_layer=args.n_layer, n_head=args.n_head, n_embd=args.n_embd, dropout=args.dropout,
         use_moe=args.use_moe, n_experts=args.n_experts, moe_top_k=args.moe_top_k,
-        use_elastic_mesh=args.use_elastic_mesh, mesh_num_experts=args.mesh_num_experts,
-        mesh_top_k=args.mesh_top_k, mesh_n_neurons=args.mesh_n_neurons,
-        mesh_settle_steps=args.mesh_settle_steps, mesh_n_qubits=args.mesh_n_qubits,
         mesh_neurons=args.mesh_neurons, mesh_dims=args.mesh_dims,
         mesh_input=args.mesh_input, settle_ticks=args.settle_ticks,
         vale_init=args.vale_init, skill_groups=args.skill_groups,

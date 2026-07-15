@@ -21,10 +21,12 @@ external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
   connection is a D×D weight block, settle-to-convergence recurrence, a
   vale-gated plasticity budget (§2), skill-group routing (§3), and optional
   quantization-aware training (§8) — with a weight-tied readout head.
-- **Elastic-mesh drop-in core** (`tinygpt/elastic_mesh.py`, `--use-elastic-mesh`):
-  the Section 5.2 comparison block — vale-gated settle dynamics, dense
-  all-to-all internal connectivity, MoE expert routing, and a PennyLane-simulated
-  quantum interference layer.
+- **Optional quantum component** (`tinygpt/elastic_mesh.py`): the Section 5.2
+  `ElasticMeshFFN` — a MoE block whose per-expert interference step is a genuine
+  PennyLane statevector simulation of a small variational quantum circuit. It is
+  **not** part of the canonical mesh `build_model()` constructs; it is a
+  standalone, importable component requiring `pip install pennylane`
+  (`test_elastic_mesh.py` guards it, skipping cleanly when the dep is absent).
 - **Configurable hyperparameters** via `tinygpt/config.py` and CLI flags.
 - **Pretraining** with AdamW, linear-warmup + cosine LR decay, automatic mixed
   precision (on CUDA), gradient accumulation, gradient clipping, checkpoints.
@@ -42,7 +44,7 @@ model && skills manager/
 │   ├── data.py             # pretrain stream + chat SFT dataset (loss masking)
 │   ├── mesh.py             # MeshLM — the all-to-all neuron mesh (§1)
 │   ├── model.py            # build_model(): constructs the mesh from a config
-│   ├── elastic_mesh.py     # Section 5.2 drop-in core (quantum-simulated QIL)
+│   ├── elastic_mesh.py     # OPTIONAL Section 5.2 quantum block (needs pennylane)
 │   ├── experts.py          # code-to-net + net-search skill experts (MoE)
 │   ├── moe.py              # sparse Mixture-of-Experts layer ("skills")
 │   ├── interference.py     # §5 answer selection by quantum interference
@@ -70,7 +72,7 @@ model && skills manager/
 ├── neurolang.py            # NeuroLang DSL -> trainable mesh (extension builder)
 ├── example_experts.nl      # sample NeuroLang program (code@/netsearch@ experts)
 ├── test_core.py            # 66 checks, no checkpoint needed
-├── test_elastic_mesh.py    # smoke test for the Section 5.2 core
+├── test_elastic_mesh.py    # smoke test for the optional quantum block
 ├── data/pretrain/          # .md corpus (build your own; see below)
 ├── data/sft/chat.jsonl     # chat fine-tuning data (sample included)
 └── requirements.txt
@@ -109,12 +111,11 @@ The prose corpus matters far more than model size for fluency. A smaller/faster
 smoke config (`--vocab-size 2000 --block-size 128 --max-steps 2500`, default
 `checkpoints/`) still works for a quick end-to-end check.
 
-To train the experimental Section 5.2 elastic-mesh drop-in core instead, add
-`--use-elastic-mesh` to the `pretrain.py` command (optionally
-`--mesh-num-experts`, `--mesh-top-k`, `--mesh-n-neurons`, `--mesh-settle-steps`,
-`--mesh-n-qubits`). Everything else — tokenizer, data loading, optimizer,
-schedule, checkpointing, and inference sampling — is identical, which is the
-point: it isolates the model core as the only variable when comparing the two.
+To attach the skill experts (coding, net-search, plugin-builder, skill-builder,
+self-healing) onto the mesh as real routed MoE experts, add `--skill-experts`
+to the `pretrain.py` command. The optional PennyLane quantum block
+(`tinygpt/elastic_mesh.py`) is a separate, importable component — see
+`test_elastic_mesh.py` — not a `pretrain.py` flag.
 
 ## Unified core (`core.py`)
 
@@ -214,8 +215,8 @@ required replies) are detected and reported instead of looping forever.
 ## Checkpoints are self-describing binaries
 
 Each `.pt` checkpoint stores the full `ModelConfig`, so `chat.py` and
-`finetune.py` reconstruct the exact architecture (mesh *or* the Section 5.2
-elastic-mesh drop-in) automatically — you only pass the `.pt` path.
+`finetune.py` reconstruct the exact mesh architecture automatically — you only
+pass the `.pt` path.
 
 ## The surrounding Go tree (the model & skills manager)
 

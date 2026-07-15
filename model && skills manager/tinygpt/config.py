@@ -53,10 +53,11 @@ class ModelConfig:
     quant_bits: int = 8                    # §8 bit-width for QAT
     expert_moe: Optional[object] = None    # optional ExpertMoE module for learned routing
 
-    # Section 5.2: swap the position-wise MLP sublayer for the elastic mesh
-    # (vale-gated settle, all-to-all dense wiring, MoE routing, complex-
-    # number QIL) instead of a plain 2-layer GELU MLP. Causal self-attention
-    # is unchanged either way — see tinygpt/elastic_mesh.py for why.
+    # Parameters for the OPTIONAL standalone Section 5.2 quantum component
+    # (tinygpt/elastic_mesh.py, ElasticMeshFFN — a PennyLane-simulated
+    # quantum-interference MoE block). build_model() always constructs the
+    # canonical all-to-all mesh (MeshLM); these are only read if you use the
+    # ElasticMeshFFN component directly, and require `pip install pennylane`.
     use_elastic_mesh: bool = False
     mesh_num_experts: int = 4
     mesh_top_k: int = 2
