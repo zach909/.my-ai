@@ -33,7 +33,18 @@ from that directory.
 8. **Quantization as internal language (§8)** — quantization-aware training with
    a straight-through estimator, inside the forward pass.
 9. **Never idle (§9)** — continuous operation: the neuron state carries across
-   calls; memory is the saved neuron state; a bounded output ring buffer.
+   calls; memory is the saved neuron state; bounded input **and** output ring
+   buffers.
+
+Every neuron also carries a unique **wave signature** and amplitude: with
+`--select interference` (answer selection) or `--quant-interference` (a
+differentiable interference gate *inside* the mesh forward), phase-aligned
+neurons reinforce and discordant ones cancel — the quantum layer runs in the
+canonical mesh, no external deps. Persisted data (conversation memory) can be
+**encrypted at rest** with a local stdlib cipher (`--encrypt` / `MYAI_PASSPHRASE`;
+no external APIs). The Extension Builder can **simulate** a single neuron,
+**search** neurons, and expose **API-capable output layers** that turn neuron
+activations into veto-gated calls to local endpoints.
 
 **Plugins and skills** are distinguished in one place (`tinygpt/plugins.py`): a
 **plugin** connects to a *local* service (file system, diagnostics, screenshot
@@ -64,7 +75,7 @@ pip install -r requirements.txt
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # 117 checks, no checkpoint needed
+python test_core.py                     # 145 checks, no checkpoint needed
 ```
 
 Or use the unified entry point:
