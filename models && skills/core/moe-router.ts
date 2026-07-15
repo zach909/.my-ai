@@ -93,16 +93,8 @@ export class MoERouter {
       const expert = this.experts.get(expertIdx)!;
       const output = new Float32Array(this.config.outputDim);
 
-      // Initialize with bias
-      output.set(expert.bias);
-
-      // Optimized matrix-vector multiplication with sequential memory access
-      for (let k = 0; k < input.length; k++) {
-        const inputVal = input[k];
-        const offset = k * this.config.expertHiddenDim;
-        for (let j = 0; j < this.config.outputDim; j++) {
-          output[j] += inputVal * expert.weights[offset + j];
-      // Optimization: Using bias directly and swapping loops for row-major access
+      // Initialize with bias, then accumulate the expert's matrix-vector
+      // product using row-major (sequential) memory access.
       output.set(expert.bias);
 
       const weights = expert.weights;
@@ -288,26 +280,13 @@ export class MoERouter {
     // Initialize with router bias
     scores.set(this.routerBias);
 
-    // Optimized router scoring with sequential memory access
+    // Optimized router scoring with sequential (row-major) memory access.
+    const weights = this.routerWeights;
     for (let i = 0; i < input.length; i++) {
       const inputVal = input[i];
       const offset = i * expertCount;
       for (let e = 0; e < expertCount; e++) {
-        scores[e] += inputVal * this.routerWeights[offset + e];
-      }
-    }
-
-    const scores = new Float32Array(this.config.expertCount);
-    scores.set(this.routerBias);
-
-    const weights = this.routerWeights;
-    const expertCount = this.config.expertCount;
-
-    for (let i = 0; i < input.length; i++) {
-      const inputVal = input[i];
-      const weightOffset = i * expertCount;
-      for (let e = 0; e < expertCount; e++) {
-        scores[e] += inputVal * weights[weightOffset + e];
+        scores[e] += inputVal * weights[offset + e];
       }
     }
     return Array.from(scores);

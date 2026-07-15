@@ -95,6 +95,7 @@ export declare class NeuroclawLLM {
         lastSeen: number;
         step: number;
     }[];
+    traceNeuron(neuronId: number, dim: number, topK?: number): any;
     demoteFailingNeurons(failureId: string): void;
     getBuilder(): ExtensionBuilder;
     getTokenizer(): Tokenizer;
