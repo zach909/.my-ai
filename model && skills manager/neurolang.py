@@ -217,6 +217,10 @@ class _TFIndex:
             for t in set(tl): df[t] += 1
         self.vocab = sorted(df)
         self.idf   = {t: math.log((N+1)/(df[t]+1)) for t in self.vocab}
+        # rebuild from scratch — build() is called after every add_corpus, so
+        # appending here would accumulate stale rows (more tfidf entries than
+        # docs) and make idx.search index past the end of self.docs.
+        self.tfidf = []
         for tl in self.tokens:
             tf = Counter(tl); tot = max(len(tl), 1)
             self.tfidf.append({t: (tf[t]/tot)*self.idf[t] for t in tl if t in self.idf})
@@ -284,11 +288,13 @@ class NetSearchManager:
 
     def hard_search(self, query, k=5):
         print(f'\n[NetSearch] Hard search: "{query}"')
-        for score, doc in self.idx.search(query, k):
+        results = list(self.idx.search(query, k))
+        for score, doc in results:
             print(f'  {score:.4f}  {doc[:80]}')
+        return results
 
     def neural_search(self, query, k=5):
-        if not self.trained: print('[NetSearch] Not trained.'); return
+        if not self.trained: print('[NetSearch] Not trained.'); return []
         V = len(self.idx.vocab); qv = self.idx.tensor(self.idx.qvec(query))
         scores = []
         self.model.eval()
@@ -299,6 +305,7 @@ class NetSearchManager:
         scores.sort(reverse=True)
         print(f'\n[NetSearch] Neural search: "{query}"')
         for s, d in scores[:k]: print(f'  {s:.4f}  {d[:80]}')
+        return scores[:k]
 
     def save(self, path):
         if not self.model: return

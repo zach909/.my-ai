@@ -27,3 +27,6 @@ llama/build
 llama/vendor
 /ollama
 integration/testdata/models/
+
+# Runtime plugin data store (local file-backed plugins)
+.myai_runtime/

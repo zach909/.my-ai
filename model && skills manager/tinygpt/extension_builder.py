@@ -211,6 +211,88 @@ class ExtensionBuilder:
         return path
 
 
+@dataclass
+class Endpoint:
+    """A local, API-shaped output endpoint (no external services). `handler`
+    takes the structured payload and returns a result string."""
+    name: str
+    handler: object                       # Callable[[dict], str]
+    capabilities: List[str] = field(default_factory=list)
+    reversible: bool = True
+    external_effect: bool = False
+
+
+@dataclass
+class OutputCall:
+    endpoint: str
+    payload: dict
+    ok: bool = False
+    output: str = ""
+    reason: str = ""
+
+
+class OutputLayer:
+    """Extension Builder: "create output layers capable of API communication".
+
+    An output layer turns mesh neuron activations into structured, API-shaped
+    calls to named LOCAL endpoints, each gated by the alignment veto — so a
+    trained mesh can *act* through a clean call interface without any external
+    API. Bind a neuron to an endpoint; when that neuron's settled amplitude
+    crosses its threshold, the layer emits `{endpoint, payload}` and (if the
+    veto allows) runs the local handler.
+    """
+
+    def __init__(self, model, veto=None):
+        self.model = model
+        self.endpoints: Dict[str, Endpoint] = {}
+        self.bindings: List[tuple] = []       # (neuron_id, endpoint_name, threshold)
+        if veto is None:
+            from .veto import AlignmentVeto
+            veto = AlignmentVeto()
+        self.veto = veto
+
+    def add_endpoint(self, name: str, handler, capabilities: Optional[List[str]] = None,
+                     reversible: bool = True, external_effect: bool = False) -> "OutputLayer":
+        self.endpoints[name] = Endpoint(name, handler, capabilities or [], reversible,
+                                        external_effect)
+        return self
+
+    def bind(self, neuron_id: int, endpoint: str, threshold: float = 0.5) -> "OutputLayer":
+        if endpoint not in self.endpoints:
+            raise KeyError(f"no endpoint {endpoint!r}")
+        self.bindings.append((neuron_id, endpoint, threshold))
+        return self
+
+    def call(self, endpoint: str, payload: Optional[dict] = None) -> OutputCall:
+        """Invoke one endpoint through the veto (the API-communication path)."""
+        from .veto import ProposedAction
+        ep = self.endpoints.get(endpoint)
+        if ep is None:
+            return OutputCall(endpoint, payload or {}, ok=False, reason="unknown endpoint")
+        decision = self.veto.evaluate(ProposedAction(
+            id=endpoint, name=endpoint, capabilities=ep.capabilities,
+            reversible=ep.reversible, external_effect=ep.external_effect))
+        if not decision.allowed:
+            return OutputCall(endpoint, payload or {}, ok=False,
+                              reason="vetoed: " + "; ".join(decision.reasons))
+        try:
+            out = ep.handler(payload or {})
+            return OutputCall(endpoint, payload or {}, ok=True, output=str(out))
+        except Exception as e:
+            return OutputCall(endpoint, payload or {}, ok=False, reason=str(e))
+
+    def emit(self, threshold_scale: float = 1.0) -> List[OutputCall]:
+        """Read the mesh's last settled per-neuron amplitudes and fire every
+        binding whose neuron is above threshold, as structured calls."""
+        waves = {i: a for i, _, a in self.model.neuron_waves()}
+        calls: List[OutputCall] = []
+        for neuron_id, endpoint, threshold in self.bindings:
+            amp = waves.get(neuron_id, 0.0)
+            if amp >= threshold * threshold_scale:
+                calls.append(self.call(endpoint, {"neuron": neuron_id, "amplitude": amp}))
+        return calls
+
+
 def quantize_state_dict(sd: Dict[str, torch.Tensor], bits: int = 8) -> Dict[str, dict]:
     """Symmetric per-tensor affine quantization of every float tensor.
 

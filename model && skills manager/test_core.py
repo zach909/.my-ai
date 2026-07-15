@@ -835,6 +835,82 @@ name="s"
           "dictionary meanings connect related-but-not-synonym definitions")
 
 
+def test_code_to_net():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip code-to-net test (torch not installed)")
+        return
+    import neurolang
+    d = tempfile.mkdtemp()
+    # a numeric function is converted into an equivalent neural net that learns it
+    meta = neurolang.train_codenet("doubler", "def f(x):\n    return 2*x + 1\n",
+                                   d, epochs=400)
+    check(meta["mode"] == "function_approximation",
+          "Code-to-Net detects a numeric function and approximates it")
+    check(meta["loss"] < 0.5, f"Code-to-Net actually learns the function (loss {meta['loss']:.3f})")
+    check(os.path.exists(os.path.join(d, "doubler.codenet")),
+          "Code-to-Net saves the generated network")
+
+
+def test_net_search():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip net-search test (torch not installed)")
+        return
+    import neurolang
+    mgr = neurolang.NetSearchManager("t")
+    mgr.add_corpus("the mesh connects every neuron to every other neuron")
+    mgr.add_corpus("quantization shrinks the model for faster deployment")
+    mgr.add_corpus("empathy tracks the user emotional state")
+    mgr.train(epochs=150)
+    # deterministic TF-IDF ranking retrieves the semantically relevant document
+    hard = mgr.hard_search("how are neurons connected in the mesh")
+    check(len(hard) > 0 and "neuron" in hard[0][1],
+          "Net Search retrieves the semantically relevant document (ranked first)")
+    # the trained deep-learning retrieval net executes and returns scored results
+    neural = mgr.neural_search("how are neurons connected in the mesh")
+    check(len(neural) > 0 and all(isinstance(s, float) for s, _ in neural),
+          "Net Search's trained retrieval net produces scored results")
+
+
+def test_output_layer():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip output-layer test (torch not installed)")
+        return
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.extension_builder import OutputLayer
+    from tinygpt.veto import AlignmentVeto
+
+    cfg = ModelConfig(vocab_size=32, block_size=12, arch="mesh", mesh_neurons=10,
+                      mesh_dims=3, mesh_input=4, settle_ticks=2)
+    model = build_model(cfg).eval()
+    model(torch.randint(3, 32, (1, 4)))          # populate settled amplitudes
+
+    log = []
+    layer = OutputLayer(model, veto=AlignmentVeto())
+    layer.add_endpoint("notify", lambda p: f"notified about neuron {p['neuron']}",
+                       capabilities=["notify"], reversible=True)
+    # a direct API-shaped call runs the local handler
+    res = layer.call("notify", {"neuron": 3})
+    check(res.ok and "neuron 3" in res.output, "output layer calls a local endpoint")
+    # an objectionable endpoint is blocked by the veto, not executed
+    layer.add_endpoint("deceive", lambda p: log.append("ran") or "did it",
+                       capabilities=["deceive"])
+    blocked = layer.call("deceive")
+    check((not blocked.ok) and "veto" in blocked.reason and not log,
+          "output layer routes calls through the veto (objectionable call blocked)")
+    # neuron-bound emission fires structured calls for above-threshold neurons
+    layer.bind(3, "notify", threshold=0.0)
+    calls = layer.emit()
+    check(len(calls) >= 1 and calls[0].endpoint == "notify",
+          "a bound neuron emits a structured API call when active")
+
+
 def test_local_encryption():
     from tinygpt.crypto import LocalCipher, is_encrypted
     cipher = LocalCipher.from_passphrase("correct horse battery staple")
@@ -940,6 +1016,29 @@ def test_plugin_skill_registry():
     check(reg.get("vision").type is ExtensionType.SKILL, "a newly created skill registers")
 
 
+def test_local_plugins():
+    import tempfile as _tf
+    from tinygpt.plugins import default_registry
+    reg = default_registry(data_dir=_tf.mkdtemp())
+    # account info / connectivity dispatch for real, locally
+    check(reg.dispatch("account-info").ok, "account-info plugin runs locally")
+    check("host=" in reg.dispatch("device-connectivity").output,
+          "device-connectivity reports local host info")
+    # a file-backed store plugin (tasks) genuinely persists locally
+    add = reg.dispatch("tasks", "add", "write the mesh docs")
+    check(add.ok and "added" in add.output, "tasks plugin adds a task locally")
+    listing = reg.dispatch("tasks", "list")
+    check("write the mesh docs" in listing.output, "tasks plugin lists persisted tasks")
+    # a second registry on the same dir sees the persisted task (real storage)
+    reg2 = default_registry(data_dir=reg.data_dir)
+    check("write the mesh docs" in reg2.dispatch("tasks", "list").output,
+          "store plugin data persists across registries")
+    # Chrome apps connector reports availability without opening any connection
+    chrome = reg.dispatch("browser")
+    check(chrome.ok or "not available" in chrome.reason,
+          "chrome-apps connector probes locally (no external call)")
+
+
 def test_skills_attach_to_mesh():
     try:
         import torch  # noqa: F401
@@ -979,7 +1078,8 @@ def main():
                test_continuous_input_buffer, test_neurolang_dictionary,
                test_plugin_skill_registry, test_skills_attach_to_mesh,
                test_quantum_interference_in_mesh, test_local_encryption,
-               test_encrypted_memory):
+               test_encrypted_memory, test_output_layer, test_local_plugins,
+               test_code_to_net, test_net_search):
         print(f"\n{fn.__name__}:")
         try:
             fn()

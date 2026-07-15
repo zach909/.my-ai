@@ -20,9 +20,12 @@ Python core, instead of only in the TypeScript tree.
 """
 from __future__ import annotations
 
+import getpass
+import json
 import os
 import platform
 import shutil
+import socket
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, List, Optional
@@ -137,35 +140,152 @@ class ScreenshotPlugin(Plugin):
         return f"local capture tool available: {self._tool()}"
 
 
+class AccountInfoPlugin(Plugin):
+    """Real local account info: the logged-in user and this machine."""
+
+    def __init__(self):
+        super().__init__("account-info", "Account Info", "os.accounts", ["account-info"])
+
+    def available(self) -> bool:
+        return True
+
+    def _run(self, command: str, arg: str) -> str:
+        try:
+            user = getpass.getuser()
+        except Exception:
+            user = os.environ.get("USER", "unknown")
+        return f"user={user} host={socket.gethostname()} home={os.path.expanduser('~')}"
+
+
+class DeviceConnectivityPlugin(Plugin):
+    """Real local connectivity info: hostname and local addresses (no external
+    calls — it does not reach out to the network, only reads local host data)."""
+
+    def __init__(self):
+        super().__init__("device-connectivity", "Device Connectivity",
+                         "os.connectivity", ["device-connectivity"])
+
+    def available(self) -> bool:
+        return True
+
+    def _run(self, command: str, arg: str) -> str:
+        host = socket.gethostname()
+        try:
+            addr = socket.gethostbyname(host)
+        except Exception:
+            addr = "127.0.0.1"
+        return f"host={host} address={addr}"
+
+
+class _JsonStorePlugin(Plugin):
+    """Base for plugins backed by a local JSON list (tasks, contacts, calendar,
+    notifications). Commands: add <text> | list | clear. Entirely local; the
+    store is a JSON file under the registry's data dir."""
+
+    def __init__(self, plugin_id: str, name: str, service: str, data_dir: str,
+                 kind: str):
+        super().__init__(plugin_id, name, service, [plugin_id])
+        self._path = os.path.join(data_dir, f"{plugin_id}.json")
+        self._kind = kind
+
+    def available(self) -> bool:
+        return True
+
+    def _load(self) -> list:
+        if not os.path.exists(self._path):
+            return []
+        try:
+            with open(self._path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return []
+
+    def _save(self, items: list) -> None:
+        os.makedirs(os.path.dirname(self._path) or ".", exist_ok=True)
+        with open(self._path, "w", encoding="utf-8") as f:
+            json.dump(items, f)
+
+    def _run(self, command: str, arg: str) -> str:
+        cmd = (command or "list").strip()
+        items = self._load()
+        if cmd == "add":
+            if not arg.strip():
+                return f"nothing to add to {self._kind}"
+            items.append(arg.strip())
+            self._save(items)
+            return f"added to {self._kind}: {arg.strip()!r} ({len(items)} total)"
+        if cmd == "clear":
+            self._save([])
+            return f"{self._kind} cleared"
+        if cmd == "list":
+            return "\n".join(f"{i+1}. {t}" for i, t in enumerate(items)) or f"({self._kind} empty)"
+        return f"unknown {self._kind} command {cmd!r} (use add|list|clear)"
+
+
+class ChromeAppsPlugin(Plugin):
+    """Chrome applications connector: detects a locally-installed Chrome/Chromium
+    and reports the launch command for a local app (it does not open a network
+    connection — launching is left to the gated action layer)."""
+
+    _BINARIES = ("google-chrome", "google-chrome-stable", "chromium",
+                 "chromium-browser", "chrome")
+
+    def __init__(self):
+        super().__init__("browser", "Browser / Chrome Apps", "os.chrome",
+                         ["browser", "chrome-apps"])
+
+    def _binary(self) -> Optional[str]:
+        for b in self._BINARIES:
+            if shutil.which(b):
+                return b
+        # common macOS location
+        mac = "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
+        return mac if os.path.exists(mac) else None
+
+    def available(self) -> bool:
+        return self._binary() is not None
+
+    def _run(self, command: str, arg: str) -> str:
+        app = (arg or "").strip()
+        flag = f"--app={app}" if app else "--new-window"
+        return f"chrome available: {self._binary()} (would launch {flag})"
+
+
 # Every extension from the design notes, each tagged plugin vs skill. Plugins
 # front local services; skills are MoE experts (built lazily via SKILL_FACTORIES).
+# Zero-arg plugin classes (data-dir-backed ones are built in the registry).
 _PLUGIN_CLASSES: Dict[str, Callable[[], Plugin]] = {
     "file-system": FileSystemPlugin,
     "app-diagnostics": AppDiagnosticsPlugin,
     "screenshot": ScreenshotPlugin,
+    "account-info": AccountInfoPlugin,
+    "device-connectivity": DeviceConnectivityPlugin,
+    "browser": ChromeAppsPlugin,
+}
+
+# id -> (display name, service, kind) for the local JSON-store plugins.
+_STORE_PLUGINS = {
+    "tasks": ("Tasks", "os.tasks", "tasks"),
+    "contacts": ("Contacts", "os.contacts", "contacts"),
+    "calendar": ("Calendar", "os.calendar", "calendar"),
+    "notifications": ("Notifications", "os.notifications", "notifications"),
+    "messaging": ("Messaging", "os.messaging", "messages"),
 }
 
 # Service connectors that front hardware/OS services we don't assume in a
 # headless host: (id, display name, service). They register as plugins with the
-# honest default-unavailable behaviour above.
+# honest default-unavailable behaviour above (real connectors, no external API,
+# but the underlying hardware/service isn't present to talk to here).
 _SERVICE_PLUGINS: List = [
     ("location", "Location", "os.location"),
     ("camera", "Camera", "hw.camera"),
     ("microphone", "Microphone", "hw.microphone"),
     ("voice-activation", "Voice Activation", "hw.microphone"),
-    ("notifications", "Notifications", "os.notifications"),
-    ("account-info", "Account Info", "os.accounts"),
-    ("contacts", "Contacts", "os.contacts"),
-    ("calendar", "Calendar", "os.calendar"),
     ("phone-calls", "Phone Calls", "os.telephony"),
     ("call-history", "Call History", "os.telephony"),
     ("email", "Email", "os.mail"),
-    ("tasks", "Tasks", "os.tasks"),
-    ("messaging", "Messaging", "os.messaging"),
     ("radio", "Radio", "hw.radio"),
-    ("device-connectivity", "Device Connectivity", "os.connectivity"),
     ("passkeys", "Passkeys", "os.keystore"),
-    ("browser", "Browser", "os.browser"),
 ]
 
 # Skills = MoE experts. Each maps to an expert factory (in_dim/out_dim supplied
@@ -207,12 +327,18 @@ class PluginSkillRegistry:
     """One registry that distinguishes plugins from skills and connects skills to
     the mesh MoE."""
 
-    def __init__(self):
+    def __init__(self, data_dir: Optional[str] = None):
+        # local data store for the file-backed plugins (tasks/contacts/…). Created
+        # at runtime; not a committed path.
+        self.data_dir = data_dir or os.path.join(os.getcwd(), ".myai_runtime")
         self.extensions: Dict[str, Extension] = {}
         for pid, factory in _PLUGIN_CLASSES.items():
             p = factory()
             self.extensions[pid] = Extension(pid, p.name, ExtensionType.PLUGIN,
                                              p.service, p)
+        for pid, (name, service, kind) in _STORE_PLUGINS.items():
+            p = _JsonStorePlugin(pid, name, service, self.data_dir, kind)
+            self.extensions[pid] = Extension(pid, name, ExtensionType.PLUGIN, service, p)
         for pid, name, service in _SERVICE_PLUGINS:
             if pid in self.extensions:
                 continue
@@ -274,6 +400,6 @@ class PluginSkillRegistry:
         }
 
 
-def default_registry() -> PluginSkillRegistry:
+def default_registry(data_dir: Optional[str] = None) -> PluginSkillRegistry:
     """The full extension set from the design notes."""
-    return PluginSkillRegistry()
+    return PluginSkillRegistry(data_dir=data_dir)
