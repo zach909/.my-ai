@@ -4,3 +4,6 @@
 torch>=2.1
 numpy>=1.24
 sentencepiece>=0.1.99
+# Section 5.2: PennyLane simulates the elastic mesh's QIL as a genuine small
+# variational quantum circuit (statevector simulation, no real QPU needed).
+pennylane>=0.35

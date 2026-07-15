@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 checkpoints/
 *.pt
 *.model
@@ -6,3 +7,26 @@ __pycache__/
 *.pyc
 .venv/
 venv/
+
+# Generated training corpus (derived from repo docs; regenerable)
+data/pretrain/corpus.md
+=======
+.DS_Store
+.vscode
+.env
+.venv
+.swp
+dist
+build
+.cache
+.gocache
+*.exe
+.idea
+test_data
+*.crt
+__debug_bin*
+llama/build
+llama/vendor
+/ollama
+integration/testdata/models/
+>>>>>>> origin/main

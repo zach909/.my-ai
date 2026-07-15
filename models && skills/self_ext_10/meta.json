@@ -1,0 +1,9 @@
+{
+  "id": "self_ext_10",
+  "name": "Memory: test",
+  "description": "Self-authored extension storing learned patterns from generation 10",
+  "createdAt": 1782418096838,
+  "prompt": "test",
+  "neuronCount": 16,
+  "connectionCount": 60
+}

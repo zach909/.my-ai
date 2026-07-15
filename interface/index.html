@@ -1,0 +1,289 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Neuroclaw</title>
+<style>
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: #0a0a0a; color: #00ff41; font-family: 'Courier New', monospace; height: 100vh; display: flex; flex-direction: column; }
+  #header { background: #111; padding: 10px 20px; border-bottom: 1px solid #00ff41; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 8px; }
+  #header h1 { font-size: 14px; font-weight: normal; text-transform: uppercase; letter-spacing: 2px; }
+  #status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; background: #888; }
+  #status-dot.online { background: #00ff41; box-shadow: 0 0 6px #00ff41; }
+  #status-text { font-size: 12px; color: #888; }
+  #tabs { display: flex; background: #0d0d0d; border-bottom: 1px solid #063; flex-wrap: wrap; }
+  .tab { padding: 10px 18px; cursor: pointer; font-size: 12px; text-transform: uppercase; letter-spacing: 1px; color: #6a6; border-right: 1px solid #063; user-select: none; }
+  .tab:hover { background: #0f1a0f; }
+  .tab.active { background: #00ff41; color: #001a05; font-weight: bold; }
+  .panel { flex: 1; overflow-y: auto; padding: 18px; display: none; }
+  .panel.active { display: block; }
+  /* chat */
+  #chat-container { display: flex; flex-direction: column; gap: 10px; }
+  .msg { padding: 8px 12px; border-radius: 4px; max-width: 90%; white-space: pre-wrap; line-height: 1.5; position: relative; }
+  .copy-btn { position: absolute; top: 4px; right: 4px; opacity: 0; background: #222; color: #00ff41; border: 1px solid #063; border-radius: 3px; font-size: 10px; padding: 2px 6px; cursor: pointer; transition: opacity 0.2s; font-family: inherit; }
+  .msg:hover .copy-btn, .copy-btn:focus { opacity: 1; }
+  .msg.user { align-self: flex-end; background: #05240d; border: 1px solid #063; }
+  .msg.ai { align-self: flex-start; background: #0f0f0f; border: 1px solid #063; color: #b6ffcb; padding-right: 44px; }
+  .msg.sys { align-self: center; color: #888; font-size: 12px; }
+  #input-area { display: flex; gap: 8px; padding: 12px 18px; border-top: 1px solid #063; }
+  input, textarea, button { font-family: inherit; }
+  #input { flex: 1; background: #0a0a0a; border: 1px solid #063; color: #00ff41; padding: 9px; font-size: 14px; outline: none; }
+  #input:focus { border-color: #00ff41; }
+  button { background: #00ff41; color: #001a05; border: none; padding: 9px 16px; cursor: pointer; font-weight: bold; text-transform: uppercase; font-size: 12px; transition: transform 0.1s; }
+  button:hover { background: #4dff77; }
+  button:active { transform: translateY(1px); }
+  button.ghost { background: transparent; color: #00ff41; border: 1px solid #00ff41; }
+  *:focus-visible { outline: 1px solid #00ff41; outline-offset: 2px; }
+  /* builder */
+  textarea { width: 100%; background: #0a0a0a; border: 1px solid #063; color: #00ff41; padding: 10px; font-size: 13px; min-height: 160px; resize: vertical; outline: none; }
+  textarea:focus { border-color: #00ff41; }
+  .hint { color: #888; font-size: 12px; margin: 8px 0; line-height: 1.5; }
+  /* cards */
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 12px; margin-top: 14px; }
+  .card { border: 1px solid #063; background: #0d0d0d; padding: 12px; border-radius: 4px; }
+  .card h3 { font-size: 11px; text-transform: uppercase; letter-spacing: 1px; color: #6a6; margin-bottom: 8px; border-bottom: 1px solid #052; padding-bottom: 6px; }
+  .metric { display: flex; justify-content: space-between; font-size: 13px; padding: 2px 0; }
+  .metric .v { color: #b6ffcb; }
+  .neuron { border: 1px solid #052; padding: 8px; margin-top: 8px; font-size: 12px; border-radius: 3px; background: #0b0b0b; }
+  .neuron .name { color: #4dff77; font-weight: bold; }
+  h2.section { font-size: 13px; text-transform: uppercase; letter-spacing: 2px; color: #6a6; margin-bottom: 4px; }
+  .err { color: #ff5a5a; }
+  a { color: #4dff77; }
+</style>
+</head>
+<body>
+<div id="header">
+  <h1><span id="status-dot" role="img" aria-label="System status: Offline"></span>Neuroclaw</h1>
+  <div id="status-text">connecting…</div>
+</div>
+<div id="tabs">
+  <div class="tab active" data-tab="chat">Chat</div>
+  <div class="tab" data-tab="builder">Extension&nbsp;Builder</div>
+  <div class="tab" data-tab="systems">Systems</div>
+  <div class="tab" data-tab="plugins">Plugins</div>
+</div>
+
+<!-- CHAT -->
+<div class="panel active" id="panel-chat" style="display:flex;flex-direction:column;padding:0;">
+  <div id="chat-container" role="log" aria-live="polite" aria-atomic="false" style="flex:1;overflow-y:auto;padding:18px;"></div>
+  <div id="input-area">
+    <input type="text" id="input" placeholder="Say something…" aria-label="Message" autofocus>
+    <button id="send-btn">Send</button>
+  </div>
+</div>
+
+<!-- EXTENSION BUILDER -->
+<div class="panel" id="panel-builder">
+  <h2 class="section">Extension Builder — NeuroLang</h2>
+  <p class="hint">Define named neurons with a value, a vale (resistance to change), and a contract/definition, then <b>Build</b> to save them as a persistent extension on disk. Neurons are auto-wired all-to-all (weight 0.1) unless overridden. Syntax: <code>name="x"</code> creates a neuron; then <code>"x"@value="0.9"</code>, <code>"x"@vale="0.8"</code>, <code>"x"@definition="text"</code>.</p>
+  <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
+    <input type="text" id="ext-name" placeholder="extension name" style="flex:1;min-width:160px;background:#0a0a0a;border:1px solid #063;color:#00ff41;padding:8px;">
+    <input type="text" id="ext-desc" placeholder="description (optional)" style="flex:2;min-width:160px;background:#0a0a0a;border:1px solid #063;color:#00ff41;padding:8px;">
+    <label class="hint" style="display:flex;align-items:center;gap:6px;margin:0;"><input type="checkbox" id="ext-quantize"> quantize (8-bit)</label>
+  </div>
+  <textarea id="neuri-code">name="greeting"
+"greeting"@value="0.9"
+"greeting"@vale="0.8"
+"greeting"@definition="fires when the user says hello"
+name="reply"
+"reply"@value="0.5"</textarea>
+  <div style="margin-top:10px;"><button id="build-btn">Build &amp; Save</button>
+    <button class="ghost" id="builder-clear">Clear output</button></div>
+  <div id="builder-out"></div>
+  <h2 class="section" style="margin-top:22px;">Saved extensions <button class="ghost" id="ext-refresh" style="padding:4px 10px;">Refresh</button></h2>
+  <div id="ext-list"></div>
+</div>
+
+<!-- SYSTEMS -->
+<div class="panel" id="panel-systems">
+  <h2 class="section">Live subsystems</h2>
+  <p class="hint">The all-to-all mesh, MoE routing, hyperdimensional engine, quantum-interference selection, and the zero-sum vale/value budget — read live from the running pipeline. <button class="ghost" id="sys-refresh" style="padding:4px 10px;">Refresh</button></p>
+  <div id="systems-out"></div>
+</div>
+
+<!-- PLUGINS -->
+<div class="panel" id="panel-plugins">
+  <h2 class="section">Plugins &amp; skills</h2>
+  <p class="hint">Skills are groups of mesh neurons the router can activate. OS-level extensions (GNOME shell, terminal) are listed here with status; they run on the host, not in the browser. <button class="ghost" id="plug-refresh" style="padding:4px 10px;">Refresh</button></p>
+  <div id="plugins-out"></div>
+</div>
+
+<script>
+  // ---- tabs ----
+  const tabs = document.querySelectorAll('.tab');
+  const panels = document.querySelectorAll('.panel');
+  tabs.forEach(t => t.addEventListener('click', () => {
+    tabs.forEach(x => x.classList.remove('active'));
+    panels.forEach(p => p.classList.remove('active'));
+    t.classList.add('active');
+    document.getElementById('panel-' + t.dataset.tab).classList.add('active');
+    if (t.dataset.tab === 'systems') loadSystems();
+    if (t.dataset.tab === 'plugins') loadPlugins();
+    if (t.dataset.tab === 'builder') loadExtensions();
+  }));
+
+  // ---- status ----
+  async function checkStatus() {
+    try {
+      const r = await fetch('/api/model');
+      const d = await r.json();
+      const dot = document.getElementById('status-dot');
+      const txt = document.getElementById('status-text');
+      if (d.running && d.model) {
+        dot.classList.add('online');
+        dot.setAttribute('aria-label', 'System status: Online');
+        const m = d.model;
+        txt.textContent = `${m.core} · ${(m.parameters/1e6).toFixed(1)}M params · vocab ${m.vocab_size}`;
+      } else {
+        dot.classList.remove('online');
+        dot.setAttribute('aria-label', 'System status: Offline');
+        txt.textContent = 'no model loaded';
+      }
+    } catch {
+      const dot = document.getElementById('status-dot');
+      if (dot) {
+        dot.classList.remove('online');
+        dot.setAttribute('aria-label', 'System status: Offline');
+      }
+      document.getElementById('status-text').textContent = 'offline';
+    }
+  }
+
+  // ---- chat ----
+  const chat = document.getElementById('chat-container');
+  const input = document.getElementById('input');
+  function addMsg(type, text) {
+    const d = document.createElement('div');
+    d.className = 'msg ' + type;
+    if (type === 'ai') {
+      const btn = document.createElement('button');
+      btn.className = 'copy-btn';
+      btn.textContent = 'Copy';
+      btn.setAttribute('aria-label', 'Copy AI response');
+      btn.onclick = () => {
+        navigator.clipboard.writeText(text);
+        btn.textContent = 'Copied!';
+        setTimeout(() => btn.textContent = 'Copy', 2000);
+      };
+      d.appendChild(btn);
+    }
+    const content = document.createTextNode(text);
+    d.appendChild(content);
+    chat.appendChild(d); chat.scrollTop = chat.scrollHeight;
+    return d;
+  }
+  async function send() {
+    const msg = input.value.trim(); if (!msg) return;
+    input.value = ''; addMsg('user', msg);
+    const thinking = addMsg('sys', '…generating');
+    try {
+      const r = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: msg }) });
+      const d = await r.json();
+      thinking.remove();
+      const m = addMsg('ai', d.response || d.error || '(no output)');
+      if (d.skill) { const tag = document.createElement('div'); tag.className = 'hint'; tag.style.marginTop = '4px'; tag.textContent = '⚡ skill: ' + d.skill + ' (' + (d.extension||'') + ')'; m.appendChild(tag); }
+    } catch (e) { thinking.remove(); addMsg('sys', 'error: ' + e); }
+  }
+  document.getElementById('send-btn').addEventListener('click', send);
+  input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
+  addMsg('sys', 'Neuroclaw ready. This model writes in the style of its training text — fluent prose, not factual answers.');
+
+  // ---- extension builder ----
+  document.getElementById('build-btn').addEventListener('click', async () => {
+    const code = document.getElementById('neuri-code').value;
+    const name = document.getElementById('ext-name').value.trim();
+    const description = document.getElementById('ext-desc').value.trim();
+    const quantize = document.getElementById('ext-quantize').checked;
+    const out = document.getElementById('builder-out');
+    out.innerHTML = '<p class="hint">building & saving…</p>';
+    try {
+      const r = await fetch('/api/extension/build', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, description, code, quantize, bits: 8 }) });
+      const d = await r.json();
+      if (d.errors && d.errors.length) { out.innerHTML = '<p class="err">' + d.errors.map(esc).join('<br>') + '</p>'; return; }
+      if (d.error) { out.innerHTML = '<p class="err">'+esc(d.error)+'</p>'; return; }
+      const s = d.stats || {};
+      let html = '<div class="card"><h3>built &amp; saved</h3>' +
+        '<div class="metric"><span>saved as</span><span class="v">'+esc(d.savedAs||'')+'</span></div>' +
+        '<div class="metric"><span>neurons</span><span class="v">'+(s.neuronCount??0)+'</span></div>' +
+        '<div class="metric"><span>connections</span><span class="v">'+(s.connectionCount??0)+'</span></div>' +
+        '<div class="metric"><span>quantized</span><span class="v">'+(d.quantized?('yes ('+d.bits+'-bit)'):'no')+'</span></div></div>';
+      html += '<div class="grid">' + (d.neurons||[]).map(n =>
+        '<div class="neuron"><div class="name">'+esc(n.name)+'</div>' +
+        '<div class="metric"><span>value</span><span class="v">'+(+n.value).toFixed(3)+'</span></div>' +
+        (n.definition ? '<div class="metric"><span>def</span><span class="v">'+esc(String(n.definition))+'</span></div>' : '') +
+        '</div>').join('') + '</div>';
+      out.innerHTML = html;
+      loadExtensions();
+    } catch (e) { out.innerHTML = '<p class="err">'+esc(String(e))+'</p>'; }
+  });
+  document.getElementById('builder-clear').addEventListener('click', () => document.getElementById('builder-out').innerHTML = '');
+
+  async function loadExtensions() {
+    const el = document.getElementById('ext-list');
+    el.innerHTML = '<p class="hint">loading…</p>';
+    try {
+      const r = await fetch('/api/extension/list');
+      const d = await r.json();
+      const list = d.extensions || [];
+      if (!list.length) { el.innerHTML = '<p class="hint">no extensions saved yet</p>'; return; }
+      el.innerHTML = '<div class="grid">' + list.map(x =>
+        '<div class="card"><h3>'+esc(x.name)+'</h3>' +
+        '<div class="metric"><span>neurons</span><span class="v">'+(x.neurons??0)+'</span></div>' +
+        '<div class="metric"><span>quantized</span><span class="v">'+(x.quantized?('yes'+(x.bits?' ('+x.bits+'-bit)':'')):'no')+'</span></div>' +
+        '<div class="hint" style="margin-top:6px;word-break:break-all;">'+esc(x.file)+'</div></div>').join('') + '</div>';
+    } catch (e) { el.innerHTML = '<p class="err">'+esc(String(e))+'</p>'; }
+  }
+  document.getElementById('ext-refresh').addEventListener('click', loadExtensions);
+
+  // ---- systems ----
+  async function loadSystems() {
+    const out = document.getElementById('systems-out');
+    out.innerHTML = '<p class="hint">reading pipeline…</p>';
+    try {
+      const r = await fetch('/api/systems');
+      const d = await r.json();
+      if (!d || d.error) { out.innerHTML = '<p class="err">subsystems unavailable: '+esc(d && d.error || 'no data')+'</p>'; return; }
+      const l = d.llm || {};
+      const cards = [
+        ['All-to-all mesh', [['neurons', l.neurons], ['connections', l.connections]]],
+        ['MoE routing', [['experts', l.experts ?? l.expertsCount], ['generations', l.generations]]],
+        ['Hyperdimensional', [['patterns seen', l.hyperPatterns], ['context length', l.contextLength]]],
+        ['Vale / value budget', [['total points', l.valuePoints]]],
+        ['RLM selection', [['exploration', l.rlmExploration]]],
+        ['Extensions', [['self-built', l.extensions]]],
+      ];
+      out.innerHTML = '<div class="grid">' + cards.map(c =>
+        '<div class="card"><h3>'+c[0]+'</h3>' + c[1].map(row =>
+          '<div class="metric"><span>'+row[0]+'</span><span class="v">'+(row[1]===undefined||row[1]===null?'—':esc(String(row[1])))+'</span></div>').join('') +
+        '</div>').join('') + '</div>' +
+        (d.subsystems ? '<p class="hint" style="margin-top:14px;">active: ' + Object.keys(d.subsystems).filter(k=>d.subsystems[k]).join(', ') + '</p>' : '');
+    } catch (e) { out.innerHTML = '<p class="err">'+esc(String(e))+'</p>'; }
+  }
+  document.getElementById('sys-refresh').addEventListener('click', loadSystems);
+
+  // ---- plugins ----
+  async function loadPlugins() {
+    const out = document.getElementById('plugins-out');
+    out.innerHTML = '<p class="hint">loading…</p>';
+    try {
+      const r = await fetch('/api/plugins');
+      const d = await r.json();
+      const list = d.plugins || d.results || (Array.isArray(d) ? d : []);
+      if (!Array.isArray(list) || !list.length) { out.innerHTML = '<p class="hint">no plugins registered</p>'; return; }
+      out.innerHTML = '<div class="grid">' + list.map(p => {
+        const name = p.name || p.id || String(p);
+        const active = p.active !== undefined ? p.active : p.enabled;
+        return '<div class="card"><h3>'+esc(name)+'</h3>' +
+          (p.description ? '<div class="hint">'+esc(p.description)+'</div>' : '') +
+          '<div class="metric"><span>status</span><span class="v">'+(active===undefined?'registered':(active?'active':'idle'))+'</span></div></div>';
+      }).join('') + '</div>';
+    } catch (e) { out.innerHTML = '<p class="err">'+esc(String(e))+'</p>'; }
+  }
+  document.getElementById('plug-refresh').addEventListener('click', loadPlugins);
+
+  function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
+  checkStatus(); setInterval(checkStatus, 8000);
+</script>
+</body>
+</html>

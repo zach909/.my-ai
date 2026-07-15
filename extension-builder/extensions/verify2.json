@@ -1,0 +1,10 @@
+{
+  "name": "verify2",
+  "description": "self-extension: verify2",
+  "step": 0,
+  "expert_index": 32,
+  "network_neurons": 1,
+  "moe_experts": 33,
+  "rlm_transitions": 0,
+  "timestamp": 1781876790.9346004
+}

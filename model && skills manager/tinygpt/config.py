@@ -53,6 +53,17 @@ class ModelConfig:
     quant_bits: int = 8                    # §8 bit-width for QAT
     expert_moe: Optional[object] = None    # optional ExpertMoE module for learned routing
 
+    # Section 5.2: swap the position-wise MLP sublayer for the elastic mesh
+    # (vale-gated settle, all-to-all dense wiring, MoE routing, complex-
+    # number QIL) instead of a plain 2-layer GELU MLP. Causal self-attention
+    # is unchanged either way — see tinygpt/elastic_mesh.py for why.
+    use_elastic_mesh: bool = False
+    mesh_num_experts: int = 4
+    mesh_top_k: int = 2
+    mesh_n_neurons: int = 64
+    mesh_settle_steps: int = 3
+    mesh_n_qubits: int = 4  # simulated qubits in the QIL circuit per expert
+
 
 @dataclass
 class TrainConfig:
