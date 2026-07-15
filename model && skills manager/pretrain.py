@@ -40,10 +40,12 @@ def parse_args():
     ap.add_argument("--n-embd", type=int, default=384)
     ap.add_argument("--block-size", type=int, default=256)
     ap.add_argument("--dropout", type=float, default=0.1)
+<<<<<<< HEAD:model && skills manager/pretrain.py
     # Mixture-of-Experts (skills)
     ap.add_argument("--use-moe", action="store_true", help="replace block MLPs with sparse MoE")
     ap.add_argument("--n-experts", type=int, default=4)
     ap.add_argument("--moe-top-k", type=int, default=2)
+=======
     # Section 5.2: swap the model core (position-wise MLP -> elastic mesh),
     # keeping this entire training loop — data, optimizer, schedule,
     # checkpointing — identical either way.
@@ -54,17 +56,7 @@ def parse_args():
     ap.add_argument("--mesh-n-neurons", type=int, default=64)
     ap.add_argument("--mesh-settle-steps", type=int, default=3)
     ap.add_argument("--mesh-n-qubits", type=int, default=4)
-    # MeshLM (§1–§3, §8): the all-to-all mesh that build_model constructs
-    # (ModelConfig.arch defaults to "mesh").
-    ap.add_argument("--mesh-neurons", type=int, default=24)
-    ap.add_argument("--mesh-dims", type=int, default=4)
-    ap.add_argument("--mesh-input", type=int, default=8)
-    ap.add_argument("--settle-ticks", type=int, default=4)
-    ap.add_argument("--vale-init", type=float, default=0.1)
-    ap.add_argument("--skill-groups", type=int, default=1)
-    ap.add_argument("--skill-top-k", type=int, default=1)
-    ap.add_argument("--quant", action="store_true", help="§8 quantization-aware training")
-    ap.add_argument("--quant-bits", type=int, default=8)
+>>>>>>> origin/main:tinygpt/pretrain.py
     # training
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--grad-accum-steps", type=int, default=4)
@@ -145,15 +137,13 @@ def main():
     model_cfg = ModelConfig(
         vocab_size=tokenizer.vocab_size, block_size=args.block_size,
         n_layer=args.n_layer, n_head=args.n_head, n_embd=args.n_embd, dropout=args.dropout,
+<<<<<<< HEAD:model && skills manager/pretrain.py
         use_moe=args.use_moe, n_experts=args.n_experts, moe_top_k=args.moe_top_k,
+=======
         use_elastic_mesh=args.use_elastic_mesh, mesh_num_experts=args.mesh_num_experts,
         mesh_top_k=args.mesh_top_k, mesh_n_neurons=args.mesh_n_neurons,
         mesh_settle_steps=args.mesh_settle_steps, mesh_n_qubits=args.mesh_n_qubits,
-        mesh_neurons=args.mesh_neurons, mesh_dims=args.mesh_dims,
-        mesh_input=args.mesh_input, settle_ticks=args.settle_ticks,
-        vale_init=args.vale_init, skill_groups=args.skill_groups,
-        skill_top_k=args.skill_top_k, quant_enabled=args.quant,
-        quant_bits=args.quant_bits,
+>>>>>>> origin/main:tinygpt/pretrain.py
     )
     if args.use_moe:
         print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")

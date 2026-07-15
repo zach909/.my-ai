@@ -49,12 +49,9 @@ def _score_continuation(model, prompt_ids: torch.Tensor, cont_ids: torch.Tensor)
 def best_of_n(model, tokenizer, prompt_ids: List[int], n: int, max_new_tokens: int,
               temperature: float, top_k: Optional[int], top_p: Optional[float],
               repetition_penalty: float, eos_id: Optional[int],
-              device: str, guide=None, ledger=None, return_all: bool = False):
+              device: str, guide=None) -> Candidate:
     """Generate `n` candidates and return the highest-scoring one. When `guide`
-    is given, each candidate is generated under live guidance (section 7).
-    When `ledger` (an rl.ReasoningLedger) is given, candidates that repeat a
-    recorded reasoning step are scored down before choosing. With
-    `return_all=True` the full score-sorted candidate list is returned."""
+    is given, each candidate is generated under live guidance (section 7)."""
     base = torch.tensor([prompt_ids], dtype=torch.long, device=device)
     candidates: List[Candidate] = []
     for _ in range(max(1, n)):
@@ -69,51 +66,5 @@ def best_of_n(model, tokenizer, prompt_ids: List[int], n: int, max_new_tokens: i
         score = _score_continuation(model, base, cont)
         ids = cont[0].tolist()
         candidates.append(Candidate(ids=ids, text=tokenizer.decode(ids), score=score))
-    if ledger is not None:
-        for c in candidates:
-            c.score -= ledger.repeat_penalty(c.text, weight=0.75)
     candidates.sort(key=lambda c: c.score, reverse=True)
-    return candidates if return_all else candidates[0]
-
-
-@torch.no_grad()
-def select_by_interference(model, tokenizer, prompt_ids: List[int], n: int,
-                           max_new_tokens: int, temperature: float,
-                           top_k: Optional[int], top_p: Optional[float],
-                           repetition_penalty: float, eos_id: Optional[int],
-                           device: str, guide=None, ledger=None,
-                           generator: Optional[torch.Generator] = None) -> Candidate:
-    """§5 answer selection by quantum interference.
-
-    Each candidate becomes a complex wave: its amplitude is the model's
-    confidence in it (softmax over candidate scores), its phase is the mesh's
-    settled-state phase after generating it (`MeshLM.state_phase`, built from
-    the per-neuron wave signatures). Phase consensus cancels candidates whose
-    settled states disagree with the group; Born-rule collapse samples the
-    winner proportionally to post-interference amplitude squared."""
-    from .interference import interfere_select
-
-    base = torch.tensor([prompt_ids], dtype=torch.long, device=device)
-    candidates: List[Candidate] = []
-    phases: List[float] = []
-    for _ in range(max(1, n)):
-        if guide is not None:
-            guide.reset()
-        out = model.generate(
-            base, max_new_tokens=max_new_tokens, temperature=temperature,
-            top_k=top_k, top_p=top_p, repetition_penalty=repetition_penalty, eos_id=eos_id,
-            guide=guide,
-        )
-        cont = out[:, base.size(1):]
-        score = _score_continuation(model, base, cont)
-        ids = cont[0].tolist()
-        candidates.append(Candidate(ids=ids, text=tokenizer.decode(ids), score=score))
-        phases.append(model.state_phase() if hasattr(model, "state_phase") else 0.0)
-    if ledger is not None:
-        for c in candidates:
-            c.score -= ledger.repeat_penalty(c.text, weight=0.75)
-    scores = torch.tensor([c.score for c in candidates], dtype=torch.float32)
-    amplitudes = torch.softmax(scores, dim=0)
-    chosen, _ = interfere_select(amplitudes, torch.tensor(phases, dtype=torch.float32),
-                                 generator=generator)
-    return candidates[chosen]
+    return candidates[0]

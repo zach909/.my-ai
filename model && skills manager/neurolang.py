@@ -7,9 +7,9 @@ Usage: python neurolang.py <file.nl>
 Syntax:
   dims = N
   name="X"
-  "X"@vale="0.9"                  # or "X"@value="0.9"
+  "X"@vale="0.9"
   "X"@connections=".Y/state"*w+b
-  "X"@definishon="text"           # or "X"@definition="text"
+  "X"@definishon="text"
   input "X" = [1.0, 0.5, -0.3]
   run N ticks
   show "X"
@@ -453,52 +453,6 @@ class _MeshCharTok:
         return "".join(chr((int(i) - 3) % 120) for i in ids if int(i) >= 3)
 
 
-# ── thesaurus relationships for definition refinement ────────────────────
-# Words in one group count as the same concept when comparing definitions.
-# Compact and offline (no external APIs); extend freely.
-_THESAURUS = [
-    {"happy", "glad", "joyful", "cheerful", "pleased", "content"},
-    {"sad", "unhappy", "sorrowful", "gloomy", "miserable"},
-    {"big", "large", "huge", "great", "enormous", "vast"},
-    {"small", "little", "tiny", "minor", "slight"},
-    {"fast", "quick", "rapid", "swift", "speedy"},
-    {"slow", "sluggish", "gradual", "unhurried"},
-    {"smart", "clever", "intelligent", "bright", "wise"},
-    {"begin", "start", "commence", "initiate", "launch"},
-    {"end", "finish", "stop", "conclude", "terminate", "halt"},
-    {"make", "create", "build", "construct", "produce", "generate"},
-    {"destroy", "ruin", "demolish", "wreck", "break"},
-    {"say", "tell", "speak", "state", "reply", "answer", "respond"},
-    {"see", "look", "view", "observe", "watch", "notice"},
-    {"think", "reason", "ponder", "consider", "reflect"},
-    {"remember", "recall", "memorize", "retain", "store"},
-    {"learn", "study", "train", "acquire", "absorb"},
-    {"search", "find", "seek", "locate", "discover", "query"},
-    {"connect", "link", "join", "attach", "wire", "couple"},
-    {"signal", "wave", "pulse", "impulse", "spike"},
-    {"neuron", "cell", "node", "unit"},
-    {"greeting", "hello", "hi", "welcome", "salutation"},
-    {"error", "mistake", "fault", "bug", "flaw"},
-    {"correct", "right", "accurate", "true", "valid"},
-]
-_SYN_OF = {w: i for i, group in enumerate(_THESAURUS) for w in group}
-_STOPWORDS = {"a", "an", "the", "is", "are", "was", "were", "be", "been", "it",
-              "its", "of", "to", "in", "on", "at", "and", "or", "for", "with",
-              "that", "this", "when", "then", "must", "should", "will", "can"}
-
-
-def _expand_synonyms(text):
-    """Content words of `text`, with each word mapped to its thesaurus group
-    (so synonyms compare equal). Words outside the thesaurus stay themselves."""
-    words = re.findall(r"[a-z']+", str(text).lower())
-    out = set()
-    for w in words:
-        if w in _STOPWORDS or len(w) < 2:
-            continue
-        out.add(f"syn:{_SYN_OF[w]}" if w in _SYN_OF else w)
-    return out
-
-
 class NeuroRuntime:
     def __init__(self, dims=DEFAULT_DIM, save_dir='.'):
         self.dims = dims; self.save_dir = save_dir; self.tick = 0
@@ -522,31 +476,6 @@ class NeuroRuntime:
 
     def set_def(self, name, text):
         self._req(name); self.neurons[name].definition = text
-        self._semantic_refine(name)
-
-    def _semantic_refine(self, name, threshold=0.2):
-        """Refine definitions with thesaurus relationships (design notes):
-        neurons whose definitions share meaning get connected automatically,
-        with weight proportional to their semantic similarity, so definitions
-        become semantically connected neural structure — not isolated text."""
-        this = self.neurons[name]
-        words_a = _expand_synonyms(this.definition)
-        if not words_a:
-            return
-        for other_name, other in self.neurons.items():
-            if other_name == name or not other.definition:
-                continue
-            words_b = _expand_synonyms(other.definition)
-            if not words_b:
-                continue
-            overlap = len(words_a & words_b) / len(words_a | words_b)  # Jaccard
-            if overlap < threshold:
-                continue
-            # connect both ways unless the author already wired them by hand
-            if other_name not in this.ex_weights:
-                this.set_connection(other_name, round(overlap, 3), 0.0)
-            if name not in other.ex_weights:
-                other.set_connection(name, round(overlap, 3), 0.0)
 
     def train_as_mesh(self, epochs=300, lr=5e-3, tolerance=0.25):
         """Connect the NeuroLang extension builder to the trainable mesh.
@@ -743,11 +672,9 @@ def _print_trace(results):
 
 P_DIM    = re.compile(r'^dims\s*=\s*(\d+)$')
 P_DECL   = re.compile(r'^name\s*=\s*"([^"]+)"$')
-# the design notes spell these both ways ("vale"/"value", "definishon"/
-# "definition"); the DSL accepts either spelling.
-P_VALE   = re.compile(r'^"([^"]+)"\s*@val(?:e|ue)\s*=\s*"?([0-9.]+)"?$')
+P_VALE   = re.compile(r'^"([^"]+)"\s*@vale\s*=\s*"?([0-9.]+)"?$')
 P_CONN   = re.compile(r'^"([^"]+)"\s*@connections\s*=\s*"\.\s*([^/]+)/([^"]+)"\s*\*\s*([0-9.]+)\s*\+\s*([0-9.]+)$')
-P_DEFN   = re.compile(r'^"([^"]+)"\s*@defini(?:shon|tion)\s*=\s*"([^"]+)"$')
+P_DEFN   = re.compile(r'^"([^"]+)"\s*@definishon\s*=\s*"([^"]+)"$')
 P_INPUT  = re.compile(r'^input\s+"([^"]+)"\s*=\s*\[([^\]]+)\]$')
 P_RUN    = re.compile(r'^run\s+(\d+)\s*ticks?$')
 P_TRAIN  = re.compile(r'^train(?:\s+mesh)?$')
