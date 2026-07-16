@@ -39,6 +39,26 @@ The project is one system in three connected layers:
    a straight-through estimator, inside the forward pass. Extensions are saved
    un-quantized (editable) and quantized on install.
 9. **Never idle (§9)** — continuous operation: the neuron state carries across
+   calls; memory is the saved neuron state; bounded input **and** output ring
+   buffers.
+
+Every neuron also carries a unique **wave signature** and amplitude: with
+`--select interference` (answer selection) or `--quant-interference` (a
+differentiable interference gate *inside* the mesh forward), phase-aligned
+neurons reinforce and discordant ones cancel — the quantum layer runs in the
+canonical mesh, no external deps. Persisted data (conversation memory) can be
+**encrypted at rest** with a local stdlib cipher (`--encrypt` / `MYAI_PASSPHRASE`;
+no external APIs). The Extension Builder can **simulate** a single neuron,
+**search** neurons, and expose **API-capable output layers** that turn neuron
+activations into veto-gated calls to local endpoints.
+
+**Plugins and skills** are distinguished in one place (`tinygpt/plugins.py`): a
+**plugin** connects to a *local* service (file system, diagnostics, screenshot
+tool, …) with no external APIs — the ones with a real local implementation run
+for real, the rest fail cleanly instead of phoning out — and a **skill** is a
+Mixture-of-Experts expert that attaches straight into the mesh's settle loop
+(`--skill-experts` at train time; `plugins` / `skills` / `plugin:` commands in
+the core). The full extension list from the design notes lives there.
    calls; memory is the saved neuron state; a bounded output ring buffer
    (ZIP-IO) compresses input/output into circular buffers.
 
@@ -60,6 +80,7 @@ python build_corpus.py                  # build a local corpus (no downloads)
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
+python test_core.py                     # 145 checks, no checkpoint needed
 python test_core.py                     # full check suite, no checkpoint needed
 python test_elastic_mesh.py             # mesh + expert-core smoke checks
 ```

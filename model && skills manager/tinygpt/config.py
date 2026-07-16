@@ -6,7 +6,7 @@ checkpoint.
 """
 from __future__ import annotations
 
-from dataclasses import dataclass, field, asdict
+from dataclasses import dataclass, field, asdict, fields
 from typing import Optional
 
 
@@ -52,11 +52,13 @@ class ModelConfig:
     quant_enabled: bool = False            # §8 quantization-aware training (fake-quant W in forward)
     quant_bits: int = 8                    # §8 bit-width for QAT
     expert_moe: Optional[object] = None    # optional ExpertMoE module for learned routing
+    quant_interference: bool = False       # quantum: gate the readout by wave-signature interference (in the canonical mesh)
 
-    # Section 5.2: swap the position-wise MLP sublayer for the elastic mesh
-    # (vale-gated settle, all-to-all dense wiring, MoE routing, complex-
-    # number QIL) instead of a plain 2-layer GELU MLP. Causal self-attention
-    # is unchanged either way — see tinygpt/elastic_mesh.py for why.
+    # Parameters for the OPTIONAL standalone Section 5.2 quantum component
+    # (tinygpt/elastic_mesh.py, ElasticMeshFFN — a PennyLane-simulated
+    # quantum-interference MoE block). build_model() always constructs the
+    # canonical all-to-all mesh (MeshLM); these are only read if you use the
+    # ElasticMeshFFN component directly, and require `pip install pennylane`.
     use_elastic_mesh: bool = False
     mesh_num_experts: int = 4
     mesh_top_k: int = 2
@@ -122,4 +124,9 @@ class TokenizerConfig:
 
 
 def config_to_dict(cfg) -> dict:
-    return asdict(cfg)
+    # Shallow, and drop expert_moe: it's a live nn.Module (skills attached as
+    # mesh experts), not a serialisable hyperparameter; asdict() would try to
+    # deep-copy the module.
+    d = {f.name: getattr(cfg, f.name) for f in fields(cfg)}
+    d.pop("expert_moe", None)
+    return d
