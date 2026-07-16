@@ -959,6 +959,37 @@ async function testExtensionBuilderFlow() {
   check(saved && saved.quantized !== true, 'Save keeps the project un-quantized (editable)');
   const installed = JSON.parse(await B.installWithQuantization(pid, { bits: 8 }));
   check(installed.quantized === true && installed.bits === 8, 'Install quantizes the extension before deployment');
+
+  // Net Search: semantic search over definitions -> generate a wired network.
+  B.addNeuron(pid, 'weather', 0.4);
+  const g = B.netSearchGenerate(pid, 'weather forecast for hidden regions', 2);
+  check(g && g.matches.length > 0, 'Net Search finds semantically related definitions');
+  check(g && g.neuron.type === 'netsearch' && g.neuron.query.includes('weather'), 'Net Search generates a netsearch neuron from the query');
+  const gproj = B.getProject(pid);
+  const outEdges = [...gproj.connections.values()].filter((c) => c.fromId === g.neuron.id);
+  check(outEdges.length === g.matches.length, 'Net Search wires the generated neuron to each match with a weighted edge');
+}
+
+// The Neural Definition DSL parses every spec directive, including both
+// netsearch forms, and materializes them.
+async function testNeuralDefinitionDirectives() {
+  const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
+  const it = new NeuroLangInterpreter();
+  const src = [
+    'name="alpha"', '"alpha"@value="2.5"', '"alpha"@vale="0.8"',
+    '"alpha"@definition="the first neuron"',
+    'name="beta"', '"beta"@connections=".alpha*0.5"',
+    'code@name="calc"', '"calc"@code="return a+b"',
+    '"netsearch"@name="finder"', '"netsearch"@net="corpus/defs"',
+  ].join('\n');
+  const r = it.parse(src);
+  const neurons = it.evaluate(r);
+  check(r.errors.length === 0, 'Neural Definition DSL parses all directives without error');
+  check(neurons.get('alpha').value === 2.5 && neurons.get('alpha').vale === 0.8, 'name/@value/@vale applied');
+  check(neurons.get('beta').connections.get('alpha') === 0.5, '@connections installs a weighted edge');
+  check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
+  const finder = neurons.get('finder');
+  check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');
 }
 
 async function main() {
@@ -991,6 +1022,7 @@ async function main() {
     ['Extension catalog fully active', testExtensionCatalogFullyActive],
     ['Chrome Apps', testChromeApps],
     ['Extension Builder flow', testExtensionBuilderFlow],
+    ['Neural Definition directives', testNeuralDefinitionDirectives],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);

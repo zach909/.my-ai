@@ -440,6 +440,7 @@ export class NeuroclawLLM {
     }
     searchNeurons(query) { return this.builder.searchNeurons(this.projectId, query); }
     netSearch(query) { return this.builder.netSearch(this.projectId, query); }
+    netSearchGenerate(query, topK = 3) { return this.builder.netSearchGenerate(this.projectId, query, topK); }
     typeOutput(neuronId, inputValue) { return this.builder.typeModelOutput(this.projectId, neuronId, inputValue); }
     getStats() {
         const project = this.builder.getProject(this.projectId);

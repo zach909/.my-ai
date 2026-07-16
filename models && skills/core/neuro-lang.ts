@@ -206,17 +206,37 @@ export class NeuroLangInterpreter {
       }
     }
 
-    // ── "netsearch"@net="X" — create netsearch neuron ──────────────────────
+    // ── "netsearch"@name="X" — create a Net Search definition ──────────────
+    {
+      const m = line.match(/^"netsearch"\s*@\s*name\s*=\s*"([^"]+)"$/);
+      if (m) {
+        const name = m[1];
+        const neuron = neurons.get(name) ?? this.defaultNeuron(name);
+        neuron.isNetSearch = true;
+        neurons.set(name, neuron);
+        return;
+      }
+    }
+
+    // ── "netsearch"@net="X" — attach a search location and (later) generate ──
     {
       const m = line.match(/^"netsearch"\s*@\s*net\s*=\s*"([^"]+)"$/);
       if (m) {
         const location = m[1];
-        // Use the location as the neuron name for uniqueness
-        const name = `netsearch:${location}`;
-        const neuron = neurons.get(name) ?? this.defaultNeuron(name);
-        neuron.isNetSearch = true;
-        neuron.netLocation = location;
-        neurons.set(name, neuron);
+        // Attach the location to the most recent netsearch definition that
+        // doesn't yet have one (from a preceding `"netsearch"@name=`); if
+        // there is none, fall back to a location-named netsearch neuron.
+        let target: NeuriNeuron | undefined;
+        for (const n of neurons.values()) {
+          if (n.isNetSearch && !n.netLocation) target = n;
+        }
+        if (!target) {
+          const name = `netsearch:${location}`;
+          target = neurons.get(name) ?? this.defaultNeuron(name);
+          target.isNetSearch = true;
+          neurons.set(target.name, target);
+        }
+        target.netLocation = location;
         return;
       }
     }

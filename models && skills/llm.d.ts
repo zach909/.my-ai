@@ -67,6 +67,10 @@ export declare class NeuroclawLLM {
         results: string[];
         confidence: number;
     }[];
+    netSearchGenerate(query: string, topK?: number): {
+        neuron: any;
+        matches: { id: string; name: string; score: number }[];
+    } | null;
     typeOutput(neuronId: string, inputValue: number): string;
     getStats(): {
         built: boolean;
