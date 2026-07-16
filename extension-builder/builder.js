@@ -245,6 +245,19 @@ export class ExtensionBuilder {
         project.updatedAt = Date.now();
         return true;
     }
+    // Visual editor: reposition a neuron on the canvas (drag-and-drop).
+    moveNeuron(projectId, neuronId, x, y) {
+        const project = this.projects.get(projectId);
+        if (!project)
+            return false;
+        const neuron = project.neurons.get(neuronId);
+        if (!neuron)
+            return false;
+        neuron.x = x;
+        neuron.y = y;
+        project.updatedAt = Date.now();
+        return true;
+    }
     searchNeurons(projectId, query) {
         const project = this.projects.get(projectId);
         if (!project)
