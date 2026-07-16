@@ -41,7 +41,7 @@ export class NeuroclawLLM {
         this.config = { ...DEFAULT_LLM_CONFIG, ...config };
         this.builder = new ExtensionBuilder();
         this.tokenizer = new Tokenizer();
-        this.selfExtensionsDir = join(homedir(), ".neuroclaw", "extensions");
+        this.selfExtensionsDir = this.config.selfExtensionsDir ?? join(homedir(), ".neuroclaw", "extensions");
         if (!existsSync(this.selfExtensionsDir)) {
             mkdirSync(this.selfExtensionsDir, { recursive: true });
         }
@@ -440,6 +440,7 @@ export class NeuroclawLLM {
     }
     searchNeurons(query) { return this.builder.searchNeurons(this.projectId, query); }
     netSearch(query) { return this.builder.netSearch(this.projectId, query); }
+    netSearchGenerate(query, topK = 3) { return this.builder.netSearchGenerate(this.projectId, query, topK); }
     typeOutput(neuronId, inputValue) { return this.builder.typeModelOutput(this.projectId, neuronId, inputValue); }
     getStats() {
         const project = this.builder.getProject(this.projectId);

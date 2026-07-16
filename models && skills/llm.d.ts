@@ -14,6 +14,8 @@ export interface LLMConfig {
     thinkSteps: number;
     valuePoints: number;
     contextLength: number;
+    /** Directory where self-authored extensions are persisted. */
+    selfExtensionsDir?: string;
 }
 export interface GenerateOptions {
     maxTokens: number;
@@ -67,6 +69,10 @@ export declare class NeuroclawLLM {
         results: string[];
         confidence: number;
     }[];
+    netSearchGenerate(query: string, topK?: number): {
+        neuron: any;
+        matches: { id: string; name: string; score: number }[];
+    } | null;
     typeOutput(neuronId: string, inputValue: number): string;
     getStats(): {
         built: boolean;
