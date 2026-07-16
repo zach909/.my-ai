@@ -26,3 +26,8 @@
 **Vulnerability:** The NeuriLang interpreter in `interface/cli.ts` used `new Function()` to execute the string contents of the `@code` attribute without any validation. This allowed arbitrary JavaScript execution (RCE) if a user-controlled NeuriLang snippet was processed.
 **Learning:** Even internal-use DSLs can become vectors for RCE if they allow evaluation of arbitrary code. "Code-to-net" features are powerful but must be strictly sandboxed or restricted to safe primitives.
 **Prevention:** Use a strict character whitelist regex (e.g., `/^[0-9a-fx+\-*/().\s]*$/i`) to ensure only safe mathematical or hexadecimal literals are executed if using `new Function()` or `eval()`. For more complex needs, use a dedicated expression parser with no access to the global scope or Node.js APIs.
+
+## 2026-08-01 - Inconsistent Path Sandboxing in Python FileSystemPlugin
+**Vulnerability:** While the TypeScript version of `FileSystemPlugin` implemented path sandboxing, the parallel Python implementation (`plugin_filesystem.py`) was completely unprotected, allowing full filesystem access via absolute paths or `..` traversal.
+**Learning:** Security logic like path sandboxing is often inconsistent between parallel plugin implementations in multi-language projects. Attackers will target the least-protected entry point.
+**Prevention:** Always verify that security fixes and patterns are synchronized across all language versions in the `plugins/` directory. Implement a standardized `_resolve` helper in the Python version that uses `os.path.realpath` and `os.path.relpath` to enforce the sandbox jail.
