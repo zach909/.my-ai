@@ -20,11 +20,11 @@ export { NeuroPipeline } from './pipeline';
 export type { PipelineConfig, PipelineStep, PipelineResult } from './pipeline';
 export { QuantumNeuralNet, quantumNet } from './quantum-net';
 export type { QuantumState, QuantumNeuron } from './quantum-net';
-export { ZipIOSystem } from './zip-io';
-export type { ZipIOSystemConfig } from './zip-io';
+export { ZipIOSystem, InfiniteZipLoop } from './zip-io';
+export type { ZipChunk } from './zip-io';
 
-export { AlignmentVeto, alignmentVeto } from './alignment-veto';
-export type { SafetyPolicy, VetoResult, VetoDecision, ActionIntent, PipelineAction, EvaluateOptions } from './alignment-veto';
+export { AlignmentVeto } from './alignment-veto';
+export type { ProposedAction, AlignmentContext, VetoDecision, BenevolenceScorer, AlignmentVetoConfig } from './alignment-veto';
 
 export { ElasticCoreBlock } from './elastic-core';
 export type { ElasticCoreConfig, ElasticCoreRunOptions, ElasticCoreResult } from './elastic-core';

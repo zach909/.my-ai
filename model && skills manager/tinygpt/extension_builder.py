@@ -163,6 +163,186 @@ class ExtensionBuilder:
         converged = len(satisfied) == len(contracts)
         return TrainResult(converged, ran, satisfied, conflicts, total_history)
 
+    # ---- neuron inspection (Extension Builder tools) -----------------------
+    def simulate_neuron(self, neuron_id: int, amplitude: float = 1.0):
+        """Extension Builder "simulate the output produced by an individual
+        neuron": drive one neuron and report what it produces / influences."""
+        return self.model.simulate_neuron(neuron_id, amplitude=amplitude)
+
+    def search_neurons(self, text: str, top_k: int = 5):
+        """Extension Builder "search neurons within large models": return the
+        neurons a given input most strongly recruits."""
+        import torch
+        ids = self.tok.encode(text) if hasattr(self.tok, "encode") else list(text)
+        if not ids:
+            return []
+        return self.model.search_neurons(
+            torch.tensor(ids, dtype=torch.long, device=self.device), top_k=top_k)
+
+    # ---- projects: save (no quantization) vs install (quantized) -----------
+    # Design notes: "Save projects without quantization. Install projects
+    # using quantization." — saving keeps exact weights for further editing;
+    # installing is deployment, so the extension is automatically quantized
+    # first (faster to load, ~4x smaller, cheaper to keep resident).
+
+    def _project_payload(self, contracts: Optional[List[Definishon]] = None) -> dict:
+        from .config import config_to_dict
+        return {
+            "model_config": config_to_dict(self.model.cfg),
+            "contracts": [{"when": c.when, "then": c.then, "satisfied": c.satisfied}
+                          for c in (contracts or [])],
+        }
+
+    def save_project(self, path: str, contracts: Optional[List[Definishon]] = None) -> str:
+        """Save the extension project at full precision (editable, exact)."""
+        payload = self._project_payload(contracts)
+        payload.update(format="ext-project", quantized=False,
+                       model=self.model.state_dict())
+        _atomic_torch_save(payload, path)
+        return path
+
+    def install(self, path: str, contracts: Optional[List[Definishon]] = None,
+                bits: int = 8) -> str:
+        """Install the extension: automatically quantize, then write."""
+        payload = self._project_payload(contracts)
+        payload.update(format="ext-install", quantized=True, bits=bits,
+                       model=quantize_state_dict(self.model.state_dict(), bits=bits))
+        _atomic_torch_save(payload, path)
+        return path
+
+
+@dataclass
+class Endpoint:
+    """A local, API-shaped output endpoint (no external services). `handler`
+    takes the structured payload and returns a result string."""
+    name: str
+    handler: object                       # Callable[[dict], str]
+    capabilities: List[str] = field(default_factory=list)
+    reversible: bool = True
+    external_effect: bool = False
+
+
+@dataclass
+class OutputCall:
+    endpoint: str
+    payload: dict
+    ok: bool = False
+    output: str = ""
+    reason: str = ""
+
+
+class OutputLayer:
+    """Extension Builder: "create output layers capable of API communication".
+
+    An output layer turns mesh neuron activations into structured, API-shaped
+    calls to named LOCAL endpoints, each gated by the alignment veto — so a
+    trained mesh can *act* through a clean call interface without any external
+    API. Bind a neuron to an endpoint; when that neuron's settled amplitude
+    crosses its threshold, the layer emits `{endpoint, payload}` and (if the
+    veto allows) runs the local handler.
+    """
+
+    def __init__(self, model, veto=None):
+        self.model = model
+        self.endpoints: Dict[str, Endpoint] = {}
+        self.bindings: List[tuple] = []       # (neuron_id, endpoint_name, threshold)
+        if veto is None:
+            from .veto import AlignmentVeto
+            veto = AlignmentVeto()
+        self.veto = veto
+
+    def add_endpoint(self, name: str, handler, capabilities: Optional[List[str]] = None,
+                     reversible: bool = True, external_effect: bool = False) -> "OutputLayer":
+        self.endpoints[name] = Endpoint(name, handler, capabilities or [], reversible,
+                                        external_effect)
+        return self
+
+    def bind(self, neuron_id: int, endpoint: str, threshold: float = 0.5) -> "OutputLayer":
+        if endpoint not in self.endpoints:
+            raise KeyError(f"no endpoint {endpoint!r}")
+        self.bindings.append((neuron_id, endpoint, threshold))
+        return self
+
+    def call(self, endpoint: str, payload: Optional[dict] = None) -> OutputCall:
+        """Invoke one endpoint through the veto (the API-communication path)."""
+        from .veto import ProposedAction
+        ep = self.endpoints.get(endpoint)
+        if ep is None:
+            return OutputCall(endpoint, payload or {}, ok=False, reason="unknown endpoint")
+        decision = self.veto.evaluate(ProposedAction(
+            id=endpoint, name=endpoint, capabilities=ep.capabilities,
+            reversible=ep.reversible, external_effect=ep.external_effect))
+        if not decision.allowed:
+            return OutputCall(endpoint, payload or {}, ok=False,
+                              reason="vetoed: " + "; ".join(decision.reasons))
+        try:
+            out = ep.handler(payload or {})
+            return OutputCall(endpoint, payload or {}, ok=True, output=str(out))
+        except Exception as e:
+            return OutputCall(endpoint, payload or {}, ok=False, reason=str(e))
+
+    def emit(self, threshold_scale: float = 1.0) -> List[OutputCall]:
+        """Read the mesh's last settled per-neuron amplitudes and fire every
+        binding whose neuron is above threshold, as structured calls."""
+        waves = {i: a for i, _, a in self.model.neuron_waves()}
+        calls: List[OutputCall] = []
+        for neuron_id, endpoint, threshold in self.bindings:
+            amp = waves.get(neuron_id, 0.0)
+            if amp >= threshold * threshold_scale:
+                calls.append(self.call(endpoint, {"neuron": neuron_id, "amplitude": amp}))
+        return calls
+
+
+def quantize_state_dict(sd: Dict[str, torch.Tensor], bits: int = 8) -> Dict[str, dict]:
+    """Symmetric per-tensor affine quantization of every float tensor.
+
+    Each entry becomes {"q": int8 tensor, "scale": float} (or {"raw": tensor}
+    for non-float tensors, kept exact). Matches the mesh's §8 fake-quant
+    grid, so a QAT-trained mesh loses almost nothing on install."""
+    qmax = 2 ** (bits - 1) - 1
+    out: Dict[str, dict] = {}
+    for name, t in sd.items():
+        if not torch.is_floating_point(t):
+            out[name] = {"raw": t}
+            continue
+        scale = float(t.abs().max()) / qmax if t.numel() else 0.0
+        if scale <= 0:
+            out[name] = {"q": torch.zeros_like(t, dtype=torch.int8), "scale": 1.0}
+            continue
+        q = torch.clamp(torch.round(t / scale), -qmax - 1, qmax).to(torch.int8)
+        out[name] = {"q": q, "scale": scale}
+    return out
+
+
+def dequantize_state_dict(qsd: Dict[str, dict]) -> Dict[str, torch.Tensor]:
+    """Inverse of `quantize_state_dict` (float32 reconstruction)."""
+    out: Dict[str, torch.Tensor] = {}
+    for name, entry in qsd.items():
+        if "raw" in entry:
+            out[name] = entry["raw"]
+        else:
+            out[name] = entry["q"].to(torch.float32) * entry["scale"]
+    return out
+
+
+def load_extension(path: str, model) -> dict:
+    """Load a saved project or an installed (quantized) extension into `model`.
+    Returns the stored payload (config, contracts, format)."""
+    payload = torch.load(path, map_location="cpu", weights_only=False)
+    state = payload["model"]
+    if payload.get("quantized"):
+        state = dequantize_state_dict(state)
+    model.load_state_dict(state)
+    return payload
+
+
+def _atomic_torch_save(payload: dict, path: str) -> None:
+    import os
+    os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    tmp = path + ".tmp"
+    torch.save(payload, tmp)
+    os.replace(tmp, path)
+
 
 def _deltas(xs: List[float]) -> List[float]:
     return [xs[i + 1] - xs[i] for i in range(len(xs) - 1)]

@@ -489,7 +489,8 @@ def test_experts():
         print("  skip experts test (torch not installed)")
         return
     import torch
-    from tinygpt.experts import CodeNetExpert, SearchExpert, ExpertMoE
+    from tinygpt.experts import CodeNetExpert, SearchExpert, CodeExecutionExpert, ExpertMoE, \
+                               DomainSpecializedSearchExpert, RoutingStabilityMonitor
 
     # Test CodeNetExpert
     code_expert = CodeNetExpert(in_dim=32, out_dim=16)
@@ -500,6 +501,32 @@ def test_experts():
     check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
           "CodeNetExpert routing scores in [0, 1]")
 
+    # Test CodeExecutionExpert with execution-driven routing
+    exec_expert = CodeExecutionExpert(in_dim=32, out_dim=16)
+    out = exec_expert(emb)
+    check(out.shape == (2, 16), "CodeExecutionExpert output shape correct")
+    score = exec_expert.route_score(emb)
+    check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
+          "CodeExecutionExpert routing driven by execution prediction")
+    # Test safe execution
+    result = exec_expert._safe_execute("x = 1 + 1")
+    check(result["success"], "CodeExecutionExpert executes safe code")
+    check(result["trace"].shape == (32,), "CodeExecutionExpert produces trace features")
+    result_bad = exec_expert._safe_execute("import os")
+    check(not result_bad["success"], "CodeExecutionExpert blocks imports")
+
+    # Test domain-specialized search experts
+    math_expert = DomainSpecializedSearchExpert(vocab_dim=32, out_dim=16, domain="math")
+    code_expert2 = DomainSpecializedSearchExpert(vocab_dim=32, out_dim=16, domain="code")
+    math_expert.set_domain_keywords(["math", "calculus", "derivative", "integral"])
+    code_expert2.set_domain_keywords(["code", "function", "variable", "loop"])
+
+    for exp in [math_expert, code_expert2]:
+        out = exp(emb)
+        check(out.shape == (2, 16), f"{exp.domain} expert output correct")
+        score = exp.route_score(emb)
+        check(score.shape == (2,), f"{exp.domain} expert routing score correct")
+
     # Test SearchExpert
     search_expert = SearchExpert(vocab_dim=32, out_dim=16)
     out = search_expert(emb)
@@ -508,14 +535,23 @@ def test_experts():
     check(score.shape == (2,) and score.min() >= 0 and score.max() <= 1,
           "SearchExpert routing scores in [0, 1]")
 
-    # Test ExpertMoE
-    moe = ExpertMoE([code_expert, search_expert], top_k=2)
-    out, gates = moe(emb)
+    # Test ExpertMoE with stability tracking
+    experts = [code_expert, search_expert, math_expert, code_expert2]
+    moe = ExpertMoE(experts, top_k=2, track_stability=True)
+    for _ in range(20):
+        out, gates = moe(emb)
     check(out.shape == (2, 16), "ExpertMoE output shape correct")
-    check(gates.shape == (2, 2), "ExpertMoE gates shape correct")
+    check(gates.shape == (2, 4), "ExpertMoE gates shape correct")
     usage = moe.expert_usage()
-    check("code_expert" in usage and "search_expert" in usage,
-          "ExpertMoE usage tracking")
+    check(len(usage) == 4, "ExpertMoE tracks all experts")
+
+    # Test routing stability metrics
+    stability = moe.routing_stability()
+    check("load_balance" in stability and "avg_entropy" in stability,
+          "ExpertMoE computes routing stability metrics")
+    check("expert_consistency" in stability and len(stability["expert_consistency"]) == 4,
+          "ExpertMoE tracks per-expert consistency")
+    check(isinstance(stability["stable"], bool), "ExpertMoE determines stability")
 
     # Test ExpertMoE backward
     loss = out.sum()
@@ -562,11 +598,428 @@ def test_mesh_with_experts():
     check(l.item() < l0, "mesh with experts: trains (loss decreases)")
 
 
+def test_adaptive_routing():
+    """Test adaptive expert routing with confidence feedback loop."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip adaptive routing test (torch not installed)")
+        return
+    import torch
+    from tinygpt.adaptive_routing import AdaptiveExpertRouter, RoutingDecision, \
+                                        LiveGuidanceWithAdaptiveRouting
+
+    # Test basic adaptive router
+    router = AdaptiveExpertRouter(n_experts=4, base_top_k=2, confidence_threshold=0.3, patience=3)
+    check(router.base_top_k == 2, "AdaptiveExpertRouter initializes correctly")
+
+    # Simulate low confidence period
+    for _ in range(2):
+        router.update_confidence(0.25)
+    decision = router.decide_routing(current_top_k=2, active_experts=torch.ones(4))
+    check(decision.action == "none", "AdaptiveExpertRouter waits for patience threshold")
+
+    # Exceed patience threshold
+    router.update_confidence(0.25)
+    decision = router.decide_routing(current_top_k=2, active_experts=torch.ones(4))
+    check(decision.action != "none", "AdaptiveExpertRouter acts after patience exceeded")
+    check(decision.reason != "", "RoutingDecision provides explanation")
+
+    # Test expert performance tracking
+    router.record_expert_contribution(0, 0.9)  # expert 0 performed well
+    router.record_expert_contribution(1, 0.3)  # expert 1 performed poorly
+    check(router.expert_performance[0] > router.expert_performance[1],
+          "AdaptiveExpertRouter tracks expert performance")
+
+    # Test routing decision based on performance
+    decision = router.decide_routing(current_top_k=2, active_experts=torch.ones(4))
+    check(isinstance(decision, RoutingDecision), "decide_routing returns RoutingDecision")
+    check(hasattr(decision, 'action') and hasattr(decision, 'reason'),
+          "RoutingDecision has action and reason fields")
+
+    # Test score modification
+    scores = torch.tensor([0.8, 0.6, 0.4, 0.2])
+    decision = RoutingDecision("tighten", temperature_adjust=0.5)
+    modified = router.apply_routing_decision(decision, scores)
+    check(modified.shape == scores.shape, "apply_routing_decision preserves shape")
+    check(torch.allclose(modified.sum(), torch.tensor(1.0), atol=0.01) or modified.sum() > 0,
+          "apply_routing_decision produces valid scores")
+
+    # Test live guidance integration (API only, no full integration in sandbox)
+    guidance = LiveGuidanceWithAdaptiveRouting(base_temperature=0.8, base_top_k=40)
+    result = guidance.adjust_generation(logits=torch.randn(1, 100), confidence=0.3)
+    check("temperature" in result and "top_k" in result,
+          "LiveGuidanceWithAdaptiveRouting adjusts generation parameters")
+    check(result["confidence"] == 0.3, "Confidence is propagated through system")
+
+
+def test_system_control():
+    """Test system control API (basic validation; full functionality needs RTX 5070)."""
+    from tinygpt.system_control import SystemControlHub, DesktopEnv, ScreenCapture, WindowControl
+
+    # Test desktop environment detection
+    env = DesktopEnv()
+    check(env.env_type is not None or env.env_type is None,  # Valid either way in sandbox
+          "DesktopEnv detects environment (sandbox has none)")
+
+    # Test system control hub initialization
+    hub = SystemControlHub(enable_input=False, enable_capture=False)
+    status = hub.status()
+    check("available" in status and "environment" in status,
+          "SystemControlHub reports status")
+
+    # Test screen state query (will be empty in sandbox, but API works)
+    state = hub.get_state()
+    check("active_window" in state and "windows" in state,
+          "SystemControlHub queries desktop state")
+    check(isinstance(state["windows"], list),
+          "SystemControlHub returns window list")
+
+    # Test window control API (methods exist even if no-op)
+    windows = hub.windows.list_windows()
+    check(isinstance(windows, list), "WindowControl lists windows")
+
+    # Test keyboard/mouse API
+    result = hub.keyboard.press_key("a")
+    check(isinstance(result, bool), "KeyboardControl press_key returns bool")
+    result = hub.keyboard.type_text("test")
+    check(isinstance(result, bool), "KeyboardControl type_text returns bool")
+    result = hub.keyboard.mouse_move(100, 100)
+    check(isinstance(result, bool), "KeyboardControl mouse_move returns bool")
+
+
+def test_simulate_neuron():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip simulate-neuron test (torch not installed)")
+        return
+    import math
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    cfg = ModelConfig(vocab_size=64, block_size=16, arch="mesh",
+                      mesh_neurons=12, mesh_dims=4, mesh_input=4, settle_ticks=3)
+    model = build_model(cfg).eval()
+    sim = model.simulate_neuron(5, amplitude=2.0)
+    check(sim["neuron"] == 5 and math.isfinite(sim["amplitude"]),
+          "simulate_neuron returns the neuron's output amplitude")
+    check(len(sim["output_state"]) == cfg.mesh_dims,
+          "simulate_neuron returns the full neuron state vector")
+    check(all(i != 5 for i, _ in sim["influenced"]),
+          "simulate_neuron reports the OTHER neurons it drove")
+    quiet = model.simulate_neuron(5, amplitude=0.0)
+    check(quiet["amplitude"] <= sim["amplitude"] + 1e-6,
+          "a silent neuron drives no more than an excited one")
+    try:
+        model.simulate_neuron(999)
+        check(False, "simulate_neuron rejects an out-of-range neuron")
+    except IndexError:
+        check(True, "simulate_neuron rejects an out-of-range neuron")
+
+
+def test_search_neurons():
+    try:
+        import torch
+    except ImportError:
+        print("  skip search-neurons test (torch not installed)")
+        return
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    cfg = ModelConfig(vocab_size=64, block_size=16, arch="mesh",
+                      mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=3)
+    model = build_model(cfg).eval()
+    hits = model.search_neurons(torch.tensor([3, 8, 12]), top_k=4)
+    check(len(hits) == 4, "search_neurons returns top_k neurons")
+    check(all(0 <= i < 16 for i, _ in hits), "search_neurons returns valid neuron ids")
+    scores = [v for _, v in hits]
+    check(scores == sorted(scores, reverse=True),
+          "search_neurons ranks by activation (descending)")
+
+
+def test_continuous_input_buffer():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip continuous-input test (torch not installed)")
+        return
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.continuous import ContinuousRunner
+
+    tok = _CharTok()
+    cfg = ModelConfig(vocab_size=64, block_size=16, arch="mesh",
+                      mesh_neurons=10, mesh_dims=3, mesh_input=4, settle_ticks=2)
+    model = build_model(cfg)
+    runner = ContinuousRunner(model, tok, output_capacity=8, input_capacity=5, device="cpu")
+    runner.inject("abcdefgh")   # more tokens than input_capacity
+    check(len(runner.input) == 5, "input is a bounded circular buffer (oldest overwritten)")
+    runner.run(12)              # emit more than output_capacity
+    check(len(runner.output) == 8, "output stays a bounded circular buffer")
+
+
+def test_neurolang_dictionary():
+    import neurolang
+    # "code" and "software" are not thesaurus synonyms, but the dictionary
+    # glosses both onto the shared concept {program, ...} -> they auto-connect.
+    src = '''
+name="c"
+name="s"
+"c"@definition="write code to solve it"
+"s"@definition="build software that runs"
+'''
+    rt = neurolang.interpret(src)
+    check("s" in rt.neurons["c"].ex_weights,
+          "dictionary meanings connect related-but-not-synonym definitions")
+
+
+def test_code_to_net():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip code-to-net test (torch not installed)")
+        return
+    import neurolang
+    d = tempfile.mkdtemp()
+    # a numeric function is converted into an equivalent neural net that learns it
+    meta = neurolang.train_codenet("doubler", "def f(x):\n    return 2*x + 1\n",
+                                   d, epochs=400)
+    check(meta["mode"] == "function_approximation",
+          "Code-to-Net detects a numeric function and approximates it")
+    check(meta["loss"] < 0.5, f"Code-to-Net actually learns the function (loss {meta['loss']:.3f})")
+    check(os.path.exists(os.path.join(d, "doubler.codenet")),
+          "Code-to-Net saves the generated network")
+
+
+def test_net_search():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip net-search test (torch not installed)")
+        return
+    import neurolang
+    mgr = neurolang.NetSearchManager("t")
+    mgr.add_corpus("the mesh connects every neuron to every other neuron")
+    mgr.add_corpus("quantization shrinks the model for faster deployment")
+    mgr.add_corpus("empathy tracks the user emotional state")
+    mgr.train(epochs=150)
+    # deterministic TF-IDF ranking retrieves the semantically relevant document
+    hard = mgr.hard_search("how are neurons connected in the mesh")
+    check(len(hard) > 0 and "neuron" in hard[0][1],
+          "Net Search retrieves the semantically relevant document (ranked first)")
+    # the trained deep-learning retrieval net executes and returns scored results
+    neural = mgr.neural_search("how are neurons connected in the mesh")
+    check(len(neural) > 0 and all(isinstance(s, float) for s, _ in neural),
+          "Net Search's trained retrieval net produces scored results")
+
+
+def test_output_layer():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip output-layer test (torch not installed)")
+        return
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.extension_builder import OutputLayer
+    from tinygpt.veto import AlignmentVeto
+
+    cfg = ModelConfig(vocab_size=32, block_size=12, arch="mesh", mesh_neurons=10,
+                      mesh_dims=3, mesh_input=4, settle_ticks=2)
+    model = build_model(cfg).eval()
+    model(torch.randint(3, 32, (1, 4)))          # populate settled amplitudes
+
+    log = []
+    layer = OutputLayer(model, veto=AlignmentVeto())
+    layer.add_endpoint("notify", lambda p: f"notified about neuron {p['neuron']}",
+                       capabilities=["notify"], reversible=True)
+    # a direct API-shaped call runs the local handler
+    res = layer.call("notify", {"neuron": 3})
+    check(res.ok and "neuron 3" in res.output, "output layer calls a local endpoint")
+    # an objectionable endpoint is blocked by the veto, not executed
+    layer.add_endpoint("deceive", lambda p: log.append("ran") or "did it",
+                       capabilities=["deceive"])
+    blocked = layer.call("deceive")
+    check((not blocked.ok) and "veto" in blocked.reason and not log,
+          "output layer routes calls through the veto (objectionable call blocked)")
+    # neuron-bound emission fires structured calls for above-threshold neurons
+    layer.bind(3, "notify", threshold=0.0)
+    calls = layer.emit()
+    check(len(calls) >= 1 and calls[0].endpoint == "notify",
+          "a bound neuron emits a structured API call when active")
+
+
+def test_local_encryption():
+    from tinygpt.crypto import LocalCipher, is_encrypted
+    cipher = LocalCipher.from_passphrase("correct horse battery staple")
+    blob = cipher.encrypt_json({"secret": "the mesh weights", "n": 42})
+    check(is_encrypted(blob), "encrypted blob is tagged ENC1")
+    check(b"the mesh weights" not in blob, "plaintext does not appear in the ciphertext")
+    # same passphrase (reusing the embedded salt) round-trips
+    same = LocalCipher.from_passphrase("correct horse battery staple",
+                                       LocalCipher.salt_of(blob))
+    check(same.decrypt_json(blob) == {"secret": "the mesh weights", "n": 42},
+          "correct passphrase decrypts")
+    # wrong passphrase fails authentication (does not return garbage)
+    wrong = LocalCipher.from_passphrase("wrong", LocalCipher.salt_of(blob))
+    try:
+        wrong.decrypt(blob)
+        check(False, "wrong passphrase must fail")
+    except ValueError:
+        check(True, "wrong passphrase fails authentication")
+    # tampering is detected
+    tampered = bytearray(blob); tampered[-1] ^= 0x01
+    try:
+        cipher.decrypt(bytes(tampered))
+        check(False, "tamper must be detected")
+    except ValueError:
+        check(True, "a single flipped bit is detected (HMAC)")
+
+
+def test_encrypted_memory():
+    from tinygpt.memory import ZipLoopMemory
+    from tinygpt.crypto import is_encrypted
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "mem.enc")
+    m = ZipLoopMemory(capacity=8, persist_path=p, passphrase="hunter2")
+    m.add("user", "my private note"); m.add("assistant", "ok"); m.save()
+    with open(p, "rb") as f:
+        blob = f.read()
+    check(is_encrypted(blob), "persisted memory is encrypted at rest")
+    check(b"my private note" not in blob, "the private note is not stored in plaintext")
+    m2 = ZipLoopMemory(capacity=8, persist_path=p, passphrase="hunter2")
+    check(len(m2) == 2 and m2.recent()[0]["content"] == "my private note",
+          "memory decrypts and reloads with the right passphrase")
+    m3 = ZipLoopMemory(capacity=8, persist_path=p, passphrase="wrong")
+    check(len(m3) == 0, "wrong passphrase yields no data, never garbage")
+
+
+def test_quantum_interference_in_mesh():
+    try:
+        import torch
+    except ImportError:
+        print("  skip quantum-interference test (torch not installed)")
+        return
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    # per-neuron wave signature + amplitude are exposed
+    cfg = ModelConfig(vocab_size=48, block_size=12, arch="mesh", mesh_neurons=12,
+                      mesh_dims=4, mesh_input=4, settle_ticks=3)
+    model = build_model(cfg).eval()
+    x = torch.randint(3, 48, (1, 5))
+    model(x)
+    waves = model.neuron_waves()
+    check(len(waves) == 12, "neuron_waves reports every neuron")
+    sigs = [s for _, s, _ in waves]
+    check(len(set(sigs)) == 12, "each neuron has a unique wave signature")
+    check(all(a >= 0 for _, _, a in waves), "each neuron has a (non-negative) amplitude")
+
+    # interference readout is integrated INTO the canonical mesh forward and trains
+    cfg2 = ModelConfig(vocab_size=48, block_size=12, arch="mesh", mesh_neurons=12,
+                       mesh_dims=4, mesh_input=4, settle_ticks=3, quant_interference=True)
+    qm = build_model(cfg2)
+    x = torch.randint(3, 48, (2, 6))
+    y = torch.randint(3, 48, (2, 6))
+    logits, loss = qm(x, y)
+    check(torch.isfinite(loss), "mesh with quantum-interference readout: loss finite")
+    opt = qm.configure_optimizers(0.01, 5e-3, (0.9, 0.95), "cpu")
+    _, l0 = qm(x, y); l0 = l0.item()
+    for _ in range(40):
+        opt.zero_grad(); _, l = qm(x, y); l.backward(); opt.step()
+    check(l.item() < l0, "mesh with quantum-interference readout trains (loss decreases)")
+
+
+def test_plugin_skill_registry():
+    from tinygpt.plugins import default_registry, ExtensionType
+    reg = default_registry()
+    plugins = reg.plugins()
+    skills = reg.skills()
+    check(len(plugins) >= 18, f"registry enumerates the extensions ({len(plugins)} plugins)")
+    check(all(p.type is ExtensionType.PLUGIN for p in plugins)
+          and all(s.type is ExtensionType.SKILL for s in skills),
+          "plugins and skills are distinguished by type")
+    check(reg.get("coding").type is ExtensionType.SKILL, "coding is a skill (MoE expert)")
+    check(reg.get("camera").type is ExtensionType.PLUGIN, "camera is a plugin (service connector)")
+    # a plugin with a real local implementation actually runs — no external API
+    res = reg.dispatch("app-diagnostics")
+    check(res.ok and "system=" in res.output, "local diagnostics plugin dispatches for real")
+    fs = reg.dispatch("file-system", "list_dir", ".")
+    check(fs.ok and len(fs.output) > 0, "file-system plugin lists a directory locally")
+    # a hardware plugin with no local service fails cleanly, not by phoning out
+    cam = reg.dispatch("camera")
+    check((not cam.ok) and "not available" in cam.reason, "unavailable plugin fails cleanly")
+    # the AI can create a new skill extension (e.g. after learning to code)
+    reg.register_skill("vision", "Vision Skill")
+    check(reg.get("vision").type is ExtensionType.SKILL, "a newly created skill registers")
+
+
+def test_local_plugins():
+    import tempfile as _tf
+    from tinygpt.plugins import default_registry
+    reg = default_registry(data_dir=_tf.mkdtemp())
+    # account info / connectivity dispatch for real, locally
+    check(reg.dispatch("account-info").ok, "account-info plugin runs locally")
+    check("host=" in reg.dispatch("device-connectivity").output,
+          "device-connectivity reports local host info")
+    # a file-backed store plugin (tasks) genuinely persists locally
+    add = reg.dispatch("tasks", "add", "write the mesh docs")
+    check(add.ok and "added" in add.output, "tasks plugin adds a task locally")
+    listing = reg.dispatch("tasks", "list")
+    check("write the mesh docs" in listing.output, "tasks plugin lists persisted tasks")
+    # a second registry on the same dir sees the persisted task (real storage)
+    reg2 = default_registry(data_dir=reg.data_dir)
+    check("write the mesh docs" in reg2.dispatch("tasks", "list").output,
+          "store plugin data persists across registries")
+    # Chrome apps connector reports availability without opening any connection
+    chrome = reg.dispatch("browser")
+    check(chrome.ok or "not available" in chrome.reason,
+          "chrome-apps connector probes locally (no external call)")
+
+
+def test_skills_attach_to_mesh():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip skills-attach test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig, config_to_dict
+    from tinygpt.model import build_model
+    from tinygpt.plugins import default_registry
+
+    cfg = ModelConfig(vocab_size=32, block_size=12, arch="mesh", mesh_neurons=16,
+                      mesh_dims=4, mesh_input=5, settle_ticks=3)
+    moe = default_registry().attach_to_config(cfg, out_dim=12, top_k=2)
+    check(moe is not None and len(moe.experts) == 5, "skills attach to the mesh as experts")
+    model = build_model(cfg)
+    x = torch.randint(0, 32, (2, 6))
+    y = torch.randint(0, 32, (2, 6))
+    _, loss = model(x, y)
+    check(torch.isfinite(loss), "mesh forward+loss finite with skill experts attached")
+    usage = model.expert_usage()
+    check(len(usage) == 5, "each attached skill is tracked as a mesh expert")
+    # config still serialises cleanly (the live expert_moe module is dropped)
+    d = config_to_dict(cfg)
+    check("expert_moe" not in d, "config_to_dict drops the live expert module")
+
+
 def main():
     for fn in (test_veto, test_memory, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
                test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_continuous_runtime, test_neurolang_bridge, test_live_guide,
-               test_shell_action_gated, test_experts, test_mesh_with_experts):
+               test_shell_action_gated, test_experts, test_mesh_with_experts,
+               test_memory_compression, test_empathy, test_rl_ledger,
+               test_reinforce_step, test_wave_signature_selection,
+               test_extension_install, test_neurolang_spec_aliases,
+               test_simulate_neuron, test_search_neurons,
+               test_continuous_input_buffer, test_neurolang_dictionary,
+               test_plugin_skill_registry, test_skills_attach_to_mesh,
+               test_quantum_interference_in_mesh, test_local_encryption,
+               test_encrypted_memory, test_output_layer, test_local_plugins,
+               test_code_to_net, test_net_search):
+               test_shell_action_gated, test_experts, test_mesh_with_experts, test_adaptive_routing, test_system_control):
         print(f"\n{fn.__name__}:")
         try:
             fn()

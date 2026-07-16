@@ -910,6 +910,140 @@ async function testWebBackend() {
   }
 }
 
+// Every extension in the catalog must get a real implementation and go active
+// through the top-level system, not just a hand-picked subset.
+async function testExtensionCatalogFullyActive() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  await sys.initialize();
+  const status = sys.getStatus();
+  const total = sys.pluginRegistry.getPluginCount();
+  const activeSkills = sys.pluginRegistry.listActiveSkills().length;
+  check(total >= 24, `Extension catalog covers the full spec list (${total} registered)`);
+  check(status.activePlugins >= 24, `Every catalogued extension is active (${status.activePlugins} active)`);
+  check(activeSkills >= 4, `Skill-type extensions register as MoE experts (${activeSkills} active skills)`);
+  check(status.alignment >= 0 && status.alignment <= 1, 'Empathy exposes a bounded alignment score');
+}
+
+// Chrome Apps: local Chrome apps register as supplementary data sources and can
+// be connected/read without any external call (spec "Chrome Apps").
+async function testChromeApps() {
+  const { BrowserPlugin } = await load('plugins/browser.js');
+  const b = new BrowserPlugin({ id: 'browser', name: 'Browser', type: 'api-connection', capabilities: ['browser'] });
+  check(b.listChromeApps().length >= 3, 'Chrome Apps catalog is seeded with default local apps');
+  check(b.isChromeAppConnected('chrome-files'), 'autoConnect Chrome apps connect on registration');
+  check(await b.connectChromeApp('chrome-media'), 'Chrome app can be connected on demand');
+  const data = b.getChromeAppData('chrome-media');
+  check(data !== null && Array.isArray(data.permissions), 'Connected Chrome app exposes local data/permissions');
+  b.registerChromeApp({ id: 'chrome-x', name: 'X', url: 'chrome://apps/x', permissions: ['p'], autoConnect: true, dataSync: false });
+  check(b.isChromeAppConnected('chrome-x'), 'Newly registered autoConnect Chrome app becomes available');
+  check(await b.disconnectChromeApp('chrome-x') && !b.isChromeAppConnected('chrome-x'), 'Chrome app can be disconnected');
+}
+
+// Extension Builder: the drag-connect editor, drag labels, per-neuron
+// simulation, API-capable output layers, neuron search, and the
+// save(no-quant) -> install(quantized) lifecycle all work end-to-end.
+async function testExtensionBuilderFlow() {
+  const { ExtensionBuilder } = await load('extension-builder/builder.js');
+  const B = new ExtensionBuilder();
+  const pid = B.createProject('demo', 'Demo Skill').id;
+  const n1 = B.addNeuron(pid, 'input_a', 0.9);
+  const n2 = B.addNeuron(pid, 'hidden', 0.3);
+  check(B.connectNeurons(pid, n1.id, n2.id, 0.75, 0.1), 'Builder drag-connect installs a weighted connection');
+  check(B.dragLabel(pid, n2.id, 'reasoning-core') === true, 'Builder drag-label attaches a label to a neuron');
+  const sim = B.typeModelOutput(pid, n2.id, 1.0);
+  check(typeof sim === 'string' && /activated with value [\d.]+/.test(sim), 'Builder simulates individual neuron output');
+  check(!!B.addAPIOutputLayer(pid, { endpoints: [{ path: '/api/predict', method: 'POST' }] }), 'Builder adds an API-capable output layer');
+  check(B.searchNeurons(pid, 'hidden').length === 1, 'Builder neuron search finds by name');
+  const saved = B.saveWithoutQuantization(pid);
+  check(saved && saved.quantized !== true, 'Save keeps the project un-quantized (editable)');
+  const installed = JSON.parse(await B.installWithQuantization(pid, { bits: 8 }));
+  check(installed.quantized === true && installed.bits === 8, 'Install quantizes the extension before deployment');
+
+  // Net Search: semantic search over definitions -> generate a wired network.
+  B.addNeuron(pid, 'weather', 0.4);
+  const g = B.netSearchGenerate(pid, 'weather forecast for hidden regions', 2);
+  check(g && g.matches.length > 0, 'Net Search finds semantically related definitions');
+  check(g && g.neuron.type === 'netsearch' && g.neuron.query.includes('weather'), 'Net Search generates a netsearch neuron from the query');
+  const gproj = B.getProject(pid);
+  const outEdges = [...gproj.connections.values()].filter((c) => c.fromId === g.neuron.id);
+  check(outEdges.length === g.matches.length, 'Net Search wires the generated neuron to each match with a weighted edge');
+  // No evidence -> no fabricated "fully confident" neuron.
+  check(B.netSearchGenerate(pid, 'zzzqqq nonexistent xxyyzz', 2) === null, 'Net Search returns null when there are zero semantic matches');
+  check(B.netSearchGenerate(pid, '', 2) === null, 'Net Search returns null for an empty/untokenizable query');
+}
+
+// The Neural Definition DSL parses every spec directive, including both
+// netsearch forms, and materializes them.
+async function testNeuralDefinitionDirectives() {
+  const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
+  const it = new NeuroLangInterpreter();
+  const src = [
+    'name="alpha"', '"alpha"@value="2.5"', '"alpha"@vale="0.8"',
+    '"alpha"@definition="the first neuron"',
+    'name="beta"', '"beta"@connections=".alpha*0.5"',
+    'code@name="calc"', '"calc"@code="return a+b"',
+    '"netsearch"@name="finder"', '"netsearch"@net="corpus/defs"',
+  ].join('\n');
+  const r = it.parse(src);
+  const neurons = it.evaluate(r);
+  check(r.errors.length === 0, 'Neural Definition DSL parses all directives without error');
+  check(neurons.get('alpha').value === 2.5 && neurons.get('alpha').vale === 0.8, 'name/@value/@vale applied');
+  check(neurons.get('beta').connections.get('alpha') === 0.5, '@connections installs a weighted edge');
+  check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
+  const finder = neurons.get('finder');
+  check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');
+
+  // @net binds to the most recently declared @name in parse order, even when
+  // an earlier netsearch neuron (declared first) is still pending.
+  const it2 = new NeuroLangInterpreter();
+  const r2 = it2.parse(['"netsearch"@name="first"', '"netsearch"@name="second"', '"netsearch"@net="loc/2"'].join('\n'));
+  const n2 = it2.evaluate(r2);
+  check(n2.get('second').netLocation === 'loc/2', 'netsearch@net binds to the most recent pending definition (parse order)');
+  check(n2.get('first').netLocation === null, 'an earlier pending netsearch is not mis-bound by a later @net');
+}
+
+// End-to-end encryption: the local encryption manager round-trips data and
+// rejects tampering (AES-256-GCM auth tag).
+async function testEncryption() {
+  const { EncryptionManager } = await load('interface/encryption.js');
+  const enc = new EncryptionManager();
+  const key = enc.deriveKey ? enc.deriveKey('correct horse battery staple') : (await import('node:crypto')).randomBytes(32);
+  const secret = 'private user data that never leaves the machine';
+  const { encrypted, iv, tag } = enc.encrypt(secret, key);
+  check(Buffer.isBuffer(encrypted) && !encrypted.toString().includes(secret), 'Encryption produces ciphertext, not plaintext');
+  const back = enc.decrypt(encrypted, key, iv, tag);
+  check(back === secret, 'Encryption round-trips (decrypt(encrypt(x)) === x)');
+  let tampered = false;
+  try {
+    const bad = Buffer.from(encrypted); bad[0] ^= 0xff;
+    enc.decrypt(bad, key, iv, tag);
+  } catch { tampered = true; }
+  check(tampered, 'Encryption rejects tampered ciphertext (GCM auth)');
+}
+
+// Self-authored extensions: the AI builds a memory extension from a prompt,
+// saves it un-quantized, then installs it quantized (spec: extensions are
+// quantized before installation) and registers it as a MoE expert.
+async function testSelfExtension() {
+  const { NeuroclawLLM } = await load('models && skills/llm.js');
+  const dir = mkdtempSync(join(tmpdir(), 'selfext-'));
+  try {
+    const llm = new NeuroclawLLM({ selfExtensionsDir: dir });
+    llm.build();
+    const before = llm.getStats().selfExtensionsCount ?? 0;
+    await llm.createSelfExtension('learn to greet', 'hello, nice to meet you');
+    const { readdirSync, existsSync: exists } = await import('node:fs');
+    const entries = readdirSync(dir).filter((e) => e.startsWith('self_ext_'));
+    check(entries.length >= 1, 'Self-extension is created on disk');
+    const extDir = join(dir, entries[0]);
+    check(exists(join(extDir, 'model.json')), 'Self-extension is saved un-quantized (model.json)');
+    check(exists(join(extDir, 'model.q4.json')), 'Self-extension is quantized before install (model.q4.json)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -937,6 +1071,12 @@ async function main() {
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
+    ['Extension catalog fully active', testExtensionCatalogFullyActive],
+    ['Chrome Apps', testChromeApps],
+    ['Extension Builder flow', testExtensionBuilderFlow],
+    ['Neural Definition directives', testNeuralDefinitionDirectives],
+    ['End-to-end encryption', testEncryption],
+    ['Self-authored extensions', testSelfExtension],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);

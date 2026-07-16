@@ -1,0 +1,30 @@
+{
+  "compilerOptions": {
+    "target": "ES2020",
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "esModuleInterop": true,
+    "allowSyntheticDefaultImports": true,
+    "resolveJsonModule": true,
+    "skipLibCheck": true,
+    "strict": false,
+    "strictNullChecks": false,
+    "declaration": false,
+    "sourceMap": false,
+    "noEmit": false,
+    "outDir": "dist",
+    "rootDir": ".",
+    "allowJs": false,
+    "typeRoots": ["./@types", "./node_modules/@types"],
+    "types": ["node"]
+  },
+  "include": [
+    "index.ts",
+    "models && skills/**/*.ts",
+    "interface/**/*.ts",
+    "plugin_manager/**/*.ts",
+    "plugins/**/*.ts",
+    "extension-builder/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist", "**/*.d.ts", "src", "model && skills manager"]
+}

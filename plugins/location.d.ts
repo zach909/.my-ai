@@ -1,5 +1,5 @@
 import type { PluginDefinition } from "../plugin_manager/types";
-import { APIPlugin } from "../plugin_manager/sdk";
+import { BasePlugin } from "../plugin_manager/sdk";
 export interface Coordinates {
     latitude: number;
     longitude: number;
@@ -18,7 +18,7 @@ interface GeocodeResult {
     address: string;
     coords: Coordinates;
 }
-export declare class LocationPlugin extends APIPlugin {
+export declare class LocationPlugin extends BasePlugin {
     private watchId;
     private watchCallbacks;
     private lastPosition;

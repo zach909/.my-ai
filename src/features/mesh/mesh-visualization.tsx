@@ -148,9 +148,7 @@ function MeshConnections({ neuronPositions, meshState, dims }: MeshConnectionsPr
             <bufferGeometry>
               <bufferAttribute
                 attach="attributes-position"
-                count={2}
-                array={new Float32Array([a.x, a.y, a.z, b.x, b.y, b.z])}
-                itemSize={3}
+                args={[new Float32Array([a.x, a.y, a.z, b.x, b.y, b.z]), 3]}
               />
             </bufferGeometry>
             <lineBasicMaterial
@@ -185,9 +183,7 @@ function BackgroundParticles() {
       <bufferGeometry>
         <bufferAttribute
           attach="attributes-position"
-          count={count}
-          array={positions}
-          itemSize={3}
+          args={[positions, 3]}
         />
       </bufferGeometry>
       <pointsMaterial

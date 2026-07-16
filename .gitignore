@@ -12,18 +12,19 @@ dist
 dist-ssr
 *.local
 
+# Build & install artifacts (never committed; the repo root stays as-is)
+.vite-out
+package-lock.json
+
 # Editor directories and files
 .vscode/*
 !.vscode/extensions.json
 .idea
 .DS_Store
-<<<<<<< HEAD
 Thumbs.db
-```*.codenet
-=======
+*.codenet
 *.suo
 *.ntvs*
 *.njsproj
 *.sln
 *.sw?
->>>>>>> origin/main

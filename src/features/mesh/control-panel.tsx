@@ -26,7 +26,7 @@ import type { MeshStats, Neuron } from '@/features/mesh/types';
 
 interface StatsRowProps {
   label: string;
-  value: string | number;
+  value: React.ReactNode;
   icon?: React.ReactNode;
 }
 
