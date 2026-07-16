@@ -99,6 +99,12 @@ export declare class ExtensionBuilder {
         results: string[];
         confidence: number;
     }[];
+    netSearchGenerate(projectId: string, query: string, topK?: number): {
+        neuron: NeuronData;
+        matches: { id: string; name: string; score: number }[];
+    } | null;
+    tokenizeForSearch(text: string): string[];
+    semanticSimilarity(a: string[], b: string[]): number;
     importCodeToNet(projectId: string, name: string, binaryCode: Uint8Array): NeuronData | null;
     saveWithoutQuantization(projectId: string): string | null;
     installWithQuantization(projectId: string, options: {

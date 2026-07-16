@@ -44,6 +44,21 @@ def parse_args():
     ap.add_argument("--use-moe", action="store_true", help="replace block MLPs with sparse MoE")
     ap.add_argument("--n-experts", type=int, default=4)
     ap.add_argument("--moe-top-k", type=int, default=2)
+    # MeshLM (§1–§3, §8): the all-to-all mesh that build_model constructs
+    # (ModelConfig.arch defaults to "mesh").
+    ap.add_argument("--mesh-neurons", type=int, default=24)
+    ap.add_argument("--mesh-dims", type=int, default=4)
+    ap.add_argument("--mesh-input", type=int, default=8)
+    ap.add_argument("--settle-ticks", type=int, default=4)
+    ap.add_argument("--vale-init", type=float, default=0.1)
+    ap.add_argument("--skill-groups", type=int, default=1)
+    ap.add_argument("--skill-top-k", type=int, default=1)
+    ap.add_argument("--quant", action="store_true", help="§8 quantization-aware training")
+    ap.add_argument("--quant-bits", type=int, default=8)
+    ap.add_argument("--quant-interference", action="store_true",
+                    help="gate the mesh readout by wave-signature quantum interference")
+    ap.add_argument("--skill-experts", action="store_true",
+                    help="attach the registry's skills as real mesh MoE experts")
     # Section 5.2: swap the model core (position-wise MLP -> elastic mesh),
     # keeping this entire training loop — data, optimizer, schedule,
     # checkpointing — identical either way.
@@ -135,12 +150,21 @@ def main():
         vocab_size=tokenizer.vocab_size, block_size=args.block_size,
         n_layer=args.n_layer, n_head=args.n_head, n_embd=args.n_embd, dropout=args.dropout,
         use_moe=args.use_moe, n_experts=args.n_experts, moe_top_k=args.moe_top_k,
+        mesh_neurons=args.mesh_neurons, mesh_dims=args.mesh_dims,
+        mesh_input=args.mesh_input, settle_ticks=args.settle_ticks,
+        vale_init=args.vale_init, skill_groups=args.skill_groups,
+        skill_top_k=args.skill_top_k, quant_enabled=args.quant,
+        quant_bits=args.quant_bits, quant_interference=args.quant_interference,
         use_elastic_mesh=args.use_elastic_mesh, mesh_num_experts=args.mesh_num_experts,
         mesh_top_k=args.mesh_top_k, mesh_n_neurons=args.mesh_n_neurons,
         mesh_settle_steps=args.mesh_settle_steps, mesh_n_qubits=args.mesh_n_qubits,
     )
     if args.use_moe:
         print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")
+    if args.skill_experts:
+        from tinygpt.plugins import default_registry
+        moe = default_registry().attach_to_config(model_cfg)
+        print(f"skills attached as mesh experts: {len(moe.experts)} expert(s)")
     model = build_model(model_cfg).to(device)
     print(f"model parameters: {human_count(model.num_params())}")
 

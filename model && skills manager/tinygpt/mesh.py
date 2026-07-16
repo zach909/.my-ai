@@ -108,6 +108,25 @@ class MeshLM(nn.Module):
         self._live_corrections = 0
         self._last_surprise = 0.0
 
+        # §5 quantum interference: each neuron has a unique, fixed wave
+        # signature (its phase). The neuron's input/activation determines the
+        # wave's amplitude; the signature identifies the neuron during
+        # interference calculations. Signatures are spread evenly on the unit
+        # circle so no two neurons share a phase.
+        self.register_buffer("wave_signature",
+                             torch.arange(n_neurons, dtype=torch.float32)
+                             * (2.0 * torch.pi / n_neurons))
+        self._last_settled = None  # settled neuron state after the last forward
+        # When on, the readout is gated by quantum interference between the
+        # neurons' waves: each neuron is a·e^{iφ} (amplitude a = its activation
+        # strength, phase φ = its fixed signature); neurons whose phase agrees
+        # with the network's resultant reinforce, discordant ones cancel. This
+        # runs inside the canonical mesh's forward pass (differentiable, no
+        # external deps), so the quantum layer is part of the model build_model()
+        # constructs — not only the optional PennyLane component.
+        self.quant_interference = getattr(cfg, "quant_interference", False)
+        self.interference_strength = 1.0
+
         # §9 continuous operation: when on, the neuron state carries across
         # forward calls instead of resetting to zeros — the mesh keeps thinking
         # from where it was. `_carried` IS the memory (the saved neuron state).
@@ -233,7 +252,8 @@ class MeshLM(nn.Module):
             if active is not None:
                 skill_aux = skill_aux + self._skill_aux_term
             state = self._settle(state, emb, active)
-            logits_steps.append(self.readout(self.dropout(state.reshape(B, -1))))
+            read_state = self._interfere(state) if self.quant_interference else state
+            logits_steps.append(self.readout(self.dropout(read_state.reshape(B, -1))))
         logits = torch.stack(logits_steps, dim=1)  # (B, T, vocab)
         if self._continuous:
             self._carried = state.detach()
@@ -249,6 +269,122 @@ class MeshLM(nn.Module):
     def skill_usage(self) -> dict:
         """§3: fraction of inputs that activated each skill group, last forward."""
         return {self.skills[g]: float(self._skill_usage[g]) for g in range(self.n_groups)}
+
+    @torch.no_grad()
+    def simulate_neuron(self, neuron_id: int, amplitude: float = 1.0):
+        """Extension Builder: "Simulate the output produced by an individual
+        neuron" / the Neural Definition Format's "behavior if it alone receives
+        input". Seed exactly one neuron with `amplitude` on its content dims,
+        propagate through the all-to-all connections for the settle window, and
+        report what that single neuron drives.
+
+        Returns a dict: the neuron's own settled state vector, its output
+        amplitude (content-dim norm), its fixed wave signature (§ quantum), and
+        the top neurons it most influenced (by settled activation)."""
+        if not 0 <= neuron_id < self.N:
+            raise IndexError(f"neuron {neuron_id} out of range [0, {self.N})")
+        device = self.W.device
+        state = torch.zeros(1, self.N, self.D, device=device)
+        state[0, neuron_id, 1:] = amplitude          # drive only this neuron
+        W = self.W * self.self_mask
+        if self.quant_enabled:
+            W = self._fake_quant(W)
+        for _ in range(self.settle_ticks):
+            context = torch.einsum("bje,ijed->bid", state, W) + self.bias
+            settled = torch.tanh(context)
+            # re-seed the driven neuron each tick (it "alone receives input")
+            settled[0, neuron_id, 1:] = amplitude
+            settled[:, :, 0] = 0.0
+            state = settled
+        content = state[0, :, 1:].norm(dim=-1)        # per-neuron output strength
+        influenced = [i for i in content.argsort(descending=True).tolist()
+                      if i != neuron_id][:5]
+        return {
+            "neuron": neuron_id,
+            "output_state": state[0, neuron_id].tolist(),
+            "amplitude": float(content[neuron_id]),
+            "wave_signature": float(self.wave_signature[neuron_id]),
+            "influenced": [(i, float(content[i])) for i in influenced],
+        }
+
+    @torch.no_grad()
+    def search_neurons(self, idx: torch.Tensor, top_k: int = 5):
+        """Extension Builder: "Search neurons within large models". Drive the
+        mesh with an input sequence and return the neurons that end up most
+        active (largest settled content-norm) — i.e. which neurons a given input
+        recruits. Useful for locating the neurons relevant to a behaviour before
+        editing/labelling them."""
+        if idx.dim() == 1:
+            idx = idx.unsqueeze(0)
+        self.eval()
+        self(idx)                                     # populates _last_settled
+        if self._last_settled is None:
+            return []
+        content = self._last_settled.mean(dim=0)[:, 1:].norm(dim=-1)   # (N,)
+        k = max(1, min(top_k, self.N))
+        top = content.topk(k)
+        return [(int(i), float(v)) for i, v in zip(top.indices, top.values)]
+
+    def _interfere(self, state: torch.Tensor) -> torch.Tensor:
+        """Quantum-interference readout gate (differentiable, in-forward).
+
+        Each neuron becomes a complex wave a_i·e^{iφ_i}: amplitude a_i is its
+        content activation strength, phase φ_i its fixed wave signature. The
+        neurons interfere; a neuron's coherence with the network resultant
+        (its amplitude projected onto the resultant direction, ≥ 0) scales how
+        much its content contributes to the readout. Phase-aligned neurons are
+        reinforced, discordant ones cancel — real constructive/destructive
+        interference, not an analogy. Returns a state whose content dims are
+        gated; the input flag (dim 0) is untouched."""
+        B = state.size(0)
+        amp = state[:, :, 1:].norm(dim=-1)                       # (B, N) amplitudes
+        phase = self.wave_signature.view(1, self.N)              # (1, N)
+        z = amp.to(torch.complex64) * torch.exp(1j * phase.to(torch.float32))
+        resultant = z.sum(dim=1, keepdim=True)                   # (B, 1)
+        mag = resultant.abs()
+        direction = torch.where(mag > 1e-9, resultant / (mag + 1e-9),
+                                torch.ones_like(resultant))
+        coherence = (z * direction.conj()).real                  # (B, N), signed
+        # gate in [1-s, 1+s]: coherent neurons amplified, anti-coherent damped,
+        # normalised so the mean gate is ~1 (interference redistributes, not
+        # inflates — echoing the zero-sum spirit of the design).
+        norm = coherence / (amp.mean(dim=1, keepdim=True) + 1e-6)
+        gate = 1.0 + self.interference_strength * torch.tanh(norm)   # (B, N)
+        content = state[:, :, 1:] * gate.unsqueeze(-1)
+        return torch.cat([state[:, :, :1], content], dim=-1)
+
+    @torch.no_grad()
+    def neuron_waves(self):
+        """Per-neuron (wave signature, amplitude) from the last settled state —
+        the design's quantum picture ("Neuron 2 has a wave signature of 4.5 and
+        an amplitude of 10"). Amplitude is the neuron's content activation norm;
+        the signature is fixed and unique per neuron."""
+        if self._last_settled is None:
+            amps = torch.zeros(self.N)
+        else:
+            amps = self._last_settled.mean(dim=0)[:, 1:].norm(dim=-1)
+        return [(int(i), float(self.wave_signature[i]), float(amps[i]))
+                for i in range(self.N)]
+
+    @torch.no_grad()
+    def state_phase(self) -> float:
+        """§5: the phase of the mesh's last settled state.
+
+        Each neuron contributes a complex wave a_i·e^{iφ_i}: amplitude a_i is
+        the neuron's activation strength (norm of its content dims), phase φ_i
+        is its fixed wave signature. The resultant's angle summarises *which*
+        neurons carried the thought — states carried by the same neurons get
+        similar phases, so during answer selection they interfere
+        constructively while states carried by different neurons cancel."""
+        if self._last_settled is None:
+            return 0.0
+        state = self._last_settled.mean(dim=0)               # (N, D)
+        amps = state[:, 1:].norm(dim=-1)                     # content dims only
+        z = (amps.to(torch.complex64)
+             * torch.exp(1j * self.wave_signature.to(torch.float32))).sum()
+        if z.abs() < 1e-9:
+            return 0.0
+        return float(torch.angle(z))
 
     def expert_usage(self) -> dict:
         """Expert mixture-of-experts: fraction of inputs that activated each expert."""

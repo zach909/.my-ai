@@ -35,6 +35,9 @@ from tinygpt.extension_builder import Definishon, ExtensionBuilder
 from tinygpt.live_guide import LiveGuide
 from tinygpt.memory import ZipLoopMemory
 from tinygpt.model import build_model
+from tinygpt.plugins import default_registry, ExtensionType
+from tinygpt.rl import ReasoningLedger
+from tinygpt.selection import best_of_n, select_by_interference
 from tinygpt.selection import best_of_n
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
@@ -56,6 +59,19 @@ def parse_args():
     ap.add_argument("--repetition-penalty", type=float, default=1.1)
     ap.add_argument("--memory", default="checkpoints/memory.json", help="zip-loop persist path")
     ap.add_argument("--memory-turns", type=int, default=8, help="turns of context to condition on")
+    ap.add_argument("--encrypt", metavar="PASSPHRASE", default=None,
+                    help="encrypt persisted memory at rest with a local passphrase "
+                         "(stdlib cipher; no external APIs). Or set MYAI_PASSPHRASE.")
+    # answer selection: pure confidence ranking, or §5 quantum interference
+    # (phase consensus over the mesh's settled-state wave signatures + collapse)
+    ap.add_argument("--select", choices=["confidence", "interference"], default="confidence",
+                    help="how to commit among the N candidates")
+    # empathy: track user mood/preferences and adapt sampling to stay aligned
+    ap.add_argument("--no-empathy", action="store_true", help="disable the empathy engine")
+    ap.add_argument("--empathy-state", default="checkpoints/empathy.json")
+    # RL reasoning ledger: completed steps are recorded and repeats scored down
+    ap.add_argument("--no-ledger", action="store_true", help="disable the reasoning ledger")
+    ap.add_argument("--ledger", default="checkpoints/reasoning.json")
     ap.add_argument("--no-actions", action="store_true", help="disable the action layer entirely")
     ap.add_argument("--enable-shell", action="store_true",
                     help="register the terminal action (gnome/desktop control). Always confirms.")
@@ -128,6 +144,12 @@ def main():
     tok_path = args.tokenizer or ckpt.get("tokenizer", "checkpoints/spm.model")
     tokenizer = Tokenizer(tok_path)
 
+    import os as _os
+    passphrase = args.encrypt or _os.environ.get("MYAI_PASSPHRASE")
+    memory = ZipLoopMemory(capacity=512, persist_path=args.memory, passphrase=passphrase)
+    empathy = None if args.no_empathy else EmpathyEngine(persist_path=args.empathy_state)
+    ledger = None if args.no_ledger else ReasoningLedger(persist_path=args.ledger)
+    registry = default_registry()   # plugins (local services) + skills (MoE experts)
     memory = ZipLoopMemory(capacity=512, persist_path=args.memory)
     veto = AlignmentVeto()
     action_layer = None if args.no_actions else ActionLayer(veto=veto)
@@ -140,10 +162,20 @@ def main():
     print("Prometheus/TinyGPT core.")
     print(f"  model      : {args.ckpt} on {device}")
     print(f"  selection  : best-of-{args.candidates} (predict-before-commit)")
-    print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}")
+    print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}"
+          f"{' [encrypted at rest]' if passphrase else ''}")
     shell_note = " + terminal (opt-in, always confirms)" if (not args.no_actions and args.enable_shell) else ""
     print(f"  actions    : {'disabled' if args.no_actions else 'human-in-the-loop (read-only allowlist)' + shell_note}")
     print(f"  guidance   : {'off' if args.no_guide else 'live (steer drift back mid-generation, §7)'}")
+    print(f"  select     : {'§5 interference (phase consensus + collapse)' if args.select == 'interference' else 'confidence ranking'}")
+    print(f"  empathy    : {'off' if empathy is None else 'on (mood-aware sampling, remembered preferences)'}")
+    print(f"  ledger     : {'off' if ledger is None else f'{len(ledger)} completed reasoning step(s); repeats scored down'}")
+    print(f"  extensions : {len(registry.plugins())} plugin(s) + {len(registry.skills())} skill(s) "
+          f"(plugins connect to local services; skills are mesh experts)")
+    print(f"  power-save : {'off' if args.idle_timeout <= 0 else f'release GPU after {args.idle_timeout:.0f}s idle'}")
+    print("  Type 'exit' to quit, 'reset' to clear memory, 'mood' for the empathy read.")
+    print("  Inspect the mesh:  simulate: <neuron_id>   |   neurons: <text>   (extension builder)")
+    print("  Extensions:  plugins  |  skills  |  plugin: <id> [command] [arg]   (local services)")
     print(f"  power-save : {'off' if args.idle_timeout <= 0 else f'release GPU after {args.idle_timeout:.0f}s idle'}")
     print("  Type 'exit' to quit, 'reset' to clear memory.")
     print("  Teach the model live:  teach: <prompt> => <required reply>   (extension builder, §4)\n")
@@ -191,6 +223,41 @@ def main():
                             ckpt.get("best_val", float('inf')),
                             extra={"tokenizer": tok_path, "extended": True})
             print(f"[teach] saved -> {args.ckpt}")
+            continue
+        if user.lower() == "mood" and empathy is not None:
+            print(f"({empathy.describe()})")
+            continue
+        if user.lower().startswith("simulate:"):
+            # Extension Builder: simulate the output of an individual neuron
+            try:
+                nid = int(user.split(":", 1)[1].strip())
+                sim = model.simulate_neuron(nid)
+                infl = ", ".join(f"#{i}({v:.2f})" for i, v in sim["influenced"])
+                print(f"[neuron {nid}] amplitude {sim['amplitude']:.3f}, "
+                      f"wave signature {sim['wave_signature']:.3f}; drove {infl}")
+            except (ValueError, IndexError) as e:
+                print(f"(usage: simulate: <neuron_id 0..{model.N - 1}>; {e})")
+            continue
+        if user.lower().startswith("neurons:"):
+            # Extension Builder: search neurons within the model by input
+            query = user.split(":", 1)[1].strip()
+            hits = builder.search_neurons(query, top_k=5)
+            print("[search] " + ", ".join(f"#{i}({v:.2f})" for i, v in hits))
+            continue
+        if user.lower() in ("plugins", "skills"):
+            # plugins connect to local services; skills are MoE experts
+            summ = registry.summary()
+            for line in summ[user.lower()]:
+                print(f"  - {line}")
+            continue
+        if user.lower().startswith("plugin:"):
+            # dispatch a local plugin (no external APIs); read-only by default
+            rest = user.split(":", 1)[1].strip().split(maxsplit=2)
+            pid = rest[0] if rest else ""
+            cmd = rest[1] if len(rest) > 1 else ""
+            arg = rest[2] if len(rest) > 2 else ""
+            res = registry.dispatch(pid, cmd, arg)
+            print(f"[plugin] {res.output if res.ok else res.reason}")
             continue
         if not user:
             continue

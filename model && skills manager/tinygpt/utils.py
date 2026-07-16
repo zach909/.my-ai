@@ -54,10 +54,17 @@ def cosine_lr(step: int, cfg: TrainConfig) -> float:
 def save_checkpoint(path: str, model, optimizer, model_cfg: ModelConfig,
                     step: int, best_val: float, extra: Optional[dict] = None) -> None:
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
+    # Shallow field dict, dropping expert_moe: it's a live nn.Module attached at
+    # build time (skills as mesh experts), not a serialisable hyperparameter, and
+    # asdict() would try to deep-copy the module. Its weights are already in
+    # model.state_dict(); re-attach the module via the registry when loading.
+    import dataclasses
+    cfg_dict = {f.name: getattr(model_cfg, f.name) for f in dataclasses.fields(model_cfg)}
+    cfg_dict.pop("expert_moe", None)
     payload = {
         "model": model.state_dict(),
         "optimizer": optimizer.state_dict() if optimizer is not None else None,
-        "model_config": asdict(model_cfg),
+        "model_config": cfg_dict,
         "step": step,
         "best_val": best_val,
     }

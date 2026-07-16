@@ -1,3 +1,17 @@
+# Prometheus Elastic Core — mesh AI (model & skills manager)
+
+> **Note:** the decoder-only GPT transformer described in earlier revisions has
+> been **retired**. The model is now the **all-to-all neuron mesh**
+> (`tinygpt/mesh.py`, §1), which the same training/inference infrastructure
+> trains unchanged (`build_model()` returns the mesh; `arch` defaults to
+> `"mesh"`). See the repository root `README.md` for the nine mechanisms and
+> honest limitations. The tokenizer / data loader / AdamW loop / sampling all
+> still apply; only the core computation block changed from attention to the
+> mesh.
+
+No Hugging Face Transformers, no Lightning, no distributed training, no
+external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
+`python test_core.py` runs 145 checks with no checkpoint needed.
 # Prometheus Elastic Core — mesh AI
 
 > **Note:** the decoder-only GPT transformer described below has been **retired**.
@@ -24,6 +38,16 @@ transformer baseline can be compared apples-to-apples.
 
 - **SentencePiece tokenizer** with training, save/load, encode/decode (BPE).
 - **Markdown dataset loader** with train/validation split and packed token blocks.
+- **The mesh core** (`tinygpt/mesh.py`): true all-to-all connectivity where each
+  connection is a D×D weight block, settle-to-convergence recurrence, a
+  vale-gated plasticity budget (§2), skill-group routing (§3), and optional
+  quantization-aware training (§8) — with a weight-tied readout head.
+- **Optional quantum component** (`tinygpt/elastic_mesh.py`): the Section 5.2
+  `ElasticMeshFFN` — a MoE block whose per-expert interference step is a genuine
+  PennyLane statevector simulation of a small variational quantum circuit. It is
+  **not** part of the canonical mesh `build_model()` constructs; it is a
+  standalone, importable component requiring `pip install pennylane`
+  (`test_elastic_mesh.py` guards it, skipping cleanly when the dep is absent).
 - **The mesh** (retired transformer kept for reference/baseline): token +
   positional embeddings, pre-LayerNorm blocks, causal multi-head self-attention
   (fused FlashAttention when available, explicit masked fallback otherwise),
@@ -46,6 +70,24 @@ model && skills manager/
 │   ├── config.py           # ModelConfig / TrainConfig / TokenizerConfig
 │   ├── tokenizer.py        # SentencePiece wrapper (train / encode / decode)
 │   ├── data.py             # pretrain stream + chat SFT dataset (loss masking)
+│   ├── mesh.py             # MeshLM — the all-to-all neuron mesh (§1)
+│   ├── model.py            # build_model(): constructs the mesh from a config
+│   ├── elastic_mesh.py     # OPTIONAL Section 5.2 quantum block (needs pennylane)
+│   ├── experts.py          # code-to-net + net-search skill experts (MoE)
+│   ├── moe.py              # sparse Mixture-of-Experts layer ("skills")
+│   ├── interference.py     # §5 answer selection by quantum interference
+│   ├── empathy.py          # user mood + remembered preferences -> sampling
+│   ├── rl.py               # RL: reasoning ledger + REINFORCE over candidates
+│   ├── plugins.py          # plugin (local service) vs skill (MoE expert) registry
+│   ├── crypto.py           # stdlib authenticated cipher (encrypt data at rest)
+│   ├── extension_builder.py# §4 definishon contracts; save vs quantized install
+│   ├── memory.py           # §9 zip-loop ring-buffer memory (zlib-compressed)
+│   ├── continuous.py       # §9 continuous operation / carried neuron state
+│   ├── selection.py        # predict-before-commit best-of-N
+│   ├── veto.py             # alignment veto (fails safe)
+│   ├── actions.py          # human-in-the-loop action layer (gated terminal)
+│   ├── live_guide.py       # §7 live correction while generating
+│   ├── infer.py            # Generator + load_generator (checkpoint -> chat)
 │   ├── mesh.py             # the all-to-all neuron mesh (the model, §1)
 │   ├── model.py            # build_model() — returns the mesh
 │   ├── elastic_mesh.py     # Section 5.2 elastic-mesh core (quantum-simulated QIL)
@@ -54,6 +96,13 @@ model && skills manager/
 ├── train_tokenizer.py      # step 1: train the tokenizer
 ├── pretrain.py             # step 2: pretrain on Markdown (--use-moe / --use-elastic-mesh optional)
 ├── finetune.py             # step 3: supervised fine-tune on chat data
+├── chat.py                 # step 4: interactive / one-shot inference
+├── core.py                 # the unified core (memory, veto, actions, guidance)
+├── extend.py               # batch-teach definishon contracts
+├── neurolang.py            # NeuroLang DSL -> trainable mesh (extension builder)
+├── example_experts.nl      # sample NeuroLang program (code@/netsearch@ experts)
+├── test_core.py            # 66 checks, no checkpoint needed
+├── test_elastic_mesh.py    # smoke test for the optional quantum block
 ├── chat.py                 # step 4: interactive / one-shot inference (the interface)
 ├── core.py                 # the unified core: model + memory + veto + actions
 ├── test_core.py            # unified-core check suite (no checkpoint needed)
@@ -92,6 +141,15 @@ python pretrain.py --data-dir data/pretrain --tokenizer checkpoints_v2/spm.model
 python chat.py --ckpt checkpoints_v2/gpt_v2.pt --chat --device cpu
 ```
 
+The prose corpus matters far more than model size for fluency. A smaller/faster
+smoke config (`--vocab-size 2000 --block-size 128 --max-steps 2500`, default
+`checkpoints/`) still works for a quick end-to-end check.
+
+To attach the skill experts (coding, net-search, plugin-builder, skill-builder,
+self-healing) onto the mesh as real routed MoE experts, add `--skill-experts`
+to the `pretrain.py` command. The optional PennyLane quantum block
+(`tinygpt/elastic_mesh.py`) is a separate, importable component — see
+`test_elastic_mesh.py` — not a `pretrain.py` flag.
 The prose corpus matters far more than model size for fluency: on CPU this
 ~14M-param model reaches recognizable dramatic English — character speech tags
 and stage directions — within ~1500 steps, where an earlier 2.2M-param model on
@@ -148,6 +206,55 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   contracts (`tinygpt/extension_builder.py`): `when "X" then it must reply "Y"`,
   trained with a constraint loss plus a don't-forget weight penalty, with
   contradiction detection. Batch-teach with `extend.py`, or live in the core:
+  `teach: <prompt> => <required reply>`. Projects **save** at full precision
+  (`save_project`, editable) and **install** with automatic int8 quantization
+  (`install` — the design notes' quantize-before-installation).
+- **Empathy engine** — `tinygpt/empathy.py` reads each user turn's emotional
+  state (valence/arousal/dominance), remembers stated preferences ("keep it
+  short") and adapts sampling so alignment doesn't need repeated instructions.
+  Type `mood` in the core chat for the current read; `--no-empathy` disables.
+- **Reinforcement learning** — `tinygpt/rl.py`: a persistent `ReasoningLedger`
+  records completed reasoning steps so candidates that merely repeat them are
+  scored down before committing (`--no-ledger` disables), and `reinforce_step`
+  runs a genuine REINFORCE update toward above-baseline candidates.
+- **§5 interference selection** — every mesh neuron carries a unique wave
+  signature; `--select interference` commits the reply by phase consensus over
+  each candidate's settled-state phase, then Born-rule collapse
+  (`tinygpt/selection.select_by_interference`).
+- **Neuron inspection** (extension-builder tools) — `simulate: <id>` drives an
+  individual neuron and reports its output amplitude, wave signature, and the
+  neurons it influenced (`MeshLM.simulate_neuron`); `neurons: <text>` searches
+  the mesh for the neurons a given input most recruits (`MeshLM.search_neurons`).
+- **Compressed circular I/O** (§9) — `ContinuousRunner` runs input and output as
+  two bounded ring buffers (oldest overwritten at capacity), so the mesh keeps
+  operating continuously without unbounded growth (`tinygpt/continuous.py`).
+- **Neural language refinement** — NeuroLang definitions are connected by both
+  thesaurus relationships and dictionary meanings, so semantically related
+  neurons wire together automatically (`neurolang.py`).
+- **Plugins vs skills** (`tinygpt/plugins.py`) — the full extension list from the
+  design notes in one place: *plugins* connect to local services (no external
+  APIs). `file-system`, `app-diagnostics`, `screenshot`, `account-info`,
+  `device-connectivity`, the Chrome-apps `browser` connector, and the local
+  JSON-backed `tasks`/`contacts`/`calendar`/`notifications`/`messaging` stores
+  all dispatch for real; hardware plugins (camera, microphone, radio, telephony,
+  passkeys) fail cleanly. *Skills* are MoE experts. `plugins` / `skills` /
+  `plugin: <id> [cmd] [arg]` commands list and dispatch; `pretrain.py
+  --skill-experts` attaches the skills onto the mesh as real routed experts.
+- **Quantum interference in the mesh** — every neuron has a unique wave signature
+  + amplitude (`MeshLM.neuron_waves`); `--quant-interference` gates the readout
+  by differentiable interference between the neurons' waves, inside the forward
+  pass (trains normally, no external deps).
+- **Encryption at rest** (`tinygpt/crypto.py`) — a pure-stdlib authenticated
+  cipher (PBKDF2 + SHA-256 CTR + HMAC). `ZipLoopMemory(passphrase=...)` /
+  `core.py --encrypt` encrypt the persisted conversation; wrong key and tampering
+  are detected, never returning garbage.
+- **API-capable output layers** (`extension_builder.py OutputLayer`) — bind mesh
+  neurons to named local endpoints; when a neuron is active the layer emits a
+  structured `{endpoint, payload}` call, gated by the alignment veto.
+- **Code-to-Net / Net Search** — `main.py code2net <name> <src.py>` converts a
+  numeric Python function into a trained neural net; `main.py netsearch <query>
+  <doc>...` trains a retrieval net and ranks documents. Both also drive from the
+  NeuroLang DSL (`code@`, `netsearch@`).
   `teach: <prompt> => <required reply>`.
 
 Run the core's tests (no checkpoint needed) with:
@@ -175,6 +282,8 @@ required replies) are detected and reported instead of looping forever.
 ## Checkpoints are self-describing binaries
 
 Each `.pt` checkpoint stores the full `ModelConfig`, so `chat.py` and
+`finetune.py` reconstruct the exact mesh architecture automatically — you only
+pass the `.pt` path.
 `finetune.py` reconstruct the exact architecture (mesh, MoE, or elastic-mesh
 configuration) automatically — you only pass the `.pt` path.
 
