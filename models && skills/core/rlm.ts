@@ -75,6 +75,8 @@ export class RLMTrainer {
   private episodeCount: number;
   private recentActions: number[];
   private currentExplorationRate: number;
+  private bufferSize: number = 0;
+  private qValuesBuffer: Float32Array;
 
   // Section 6: quantization-aware training. The forward pass (both action
   // selection and TD-target computation) reads quantizedWeights/Bias, a
@@ -135,6 +137,7 @@ export class RLMTrainer {
     this.biasResidual = new Float32Array(this.policyBias.length);
     this.quantizedWeights = new Float32Array(this.policyWeights);
     this.quantizedBias = new Float32Array(this.policyBias);
+    this.qValuesBuffer = new Float32Array(this.config.actionDim);
     this.refreshQuantizedForward();
   }
 
@@ -222,6 +225,9 @@ export class RLMTrainer {
   }
 
   addExperience(experience: Experience): void {
+    if (!this.replayBuffer[this.bufferPosition]) {
+      this.bufferSize++;
+    }
     this.replayBuffer[this.bufferPosition] = experience;
     this.bufferPosition = (this.bufferPosition + 1) % this.config.replayBufferSize;
     this.totalReward += experience.reward;
@@ -252,14 +258,20 @@ export class RLMTrainer {
 
     const tdErrors: number[] = [];
     let totalLoss = 0;
+    const discount = this.config.discountFactor;
 
     for (const exp of batch) {
-      const qValues = this.computeQValues(exp.state);
-      const targetQValues = this.computeQValues(exp.nextState);
+      // Create a copy since computeQValues reuses the buffer
+      const qValues = new Float32Array(this.computeQValues(exp.state));
       const currentQ = qValues[exp.action];
 
-      const maxNextQ = Math.max(...Array.from(targetQValues));
-      const targetQ = exp.reward + (exp.done ? 0 : this.config.discountFactor * maxNextQ);
+      const targetQValues = this.computeQValues(exp.nextState);
+      let maxNextQ = -Infinity;
+      for (let i = 0; i < targetQValues.length; i++) {
+        if (targetQValues[i] > maxNextQ) maxNextQ = targetQValues[i];
+      }
+
+      const targetQ = exp.reward + (exp.done ? 0 : discount * maxNextQ);
       const tdError = targetQ - currentQ;
       tdErrors.push(tdError);
       totalLoss += tdError * tdError;
@@ -290,29 +302,49 @@ export class RLMTrainer {
     };
   }
 
-  private computeQValues(state: Float32Array): number[] {
+  private computeQValues(state: Float32Array): Float32Array {
     // QAT: forward reads the quantized snapshot when enabled, so action
     // selection and TD-targets both "think" in the same reduced-precision
     // representation the network will actually run under after export.
     const weights = this.quantizer ? this.quantizedWeights : this.policyWeights;
     const bias = this.quantizer ? this.quantizedBias : this.policyBias;
+    const actionDim = this.config.actionDim;
+    const qValues = this.qValuesBuffer;
 
-    const qValues: number[] = [];
-    for (let a = 0; a < this.config.actionDim; a++) {
-      let q = bias[a];
-      for (let s = 0; s < state.length; s++) {
-        q += state[s] * weights[s * this.config.actionDim + a];
+    qValues.set(bias);
+
+    // Optimized matrix-vector multiplication with row-major (sequential)
+    // memory access. Swapping loops ensures we read weights sequentially.
+    for (let s = 0; s < state.length; s++) {
+      const stateVal = state[s];
+      const offset = s * actionDim;
+
+      // 4x loop unrolling for the inner loop to improve throughput
+      let a = 0;
+      for (; a <= actionDim - 4; a += 4) {
+        qValues[a] += stateVal * weights[offset + a];
+        qValues[a + 1] += stateVal * weights[offset + a + 1];
+        qValues[a + 2] += stateVal * weights[offset + a + 2];
+        qValues[a + 3] += stateVal * weights[offset + a + 3];
       }
-      qValues.push(q);
+      for (; a < actionDim; a++) {
+        qValues[a] += stateVal * weights[offset + a];
+      }
     }
     return qValues;
   }
 
   private computeTDError(experience: Experience): number {
-    const qValues = this.computeQValues(experience.state);
-    const targetQValues = this.computeQValues(experience.nextState);
+    // Create a copy since computeQValues reuses the buffer
+    const qValues = new Float32Array(this.computeQValues(experience.state));
     const currentQ = qValues[experience.action];
-    const maxNextQ = Math.max(...Array.from(targetQValues));
+
+    const targetQValues = this.computeQValues(experience.nextState);
+    let maxNextQ = -Infinity;
+    for (let i = 0; i < targetQValues.length; i++) {
+      if (targetQValues[i] > maxNextQ) maxNextQ = targetQValues[i];
+    }
+
     const targetQ = experience.reward + (experience.done ? 0 : this.config.discountFactor * maxNextQ);
     return targetQ - currentQ;
   }
@@ -332,13 +364,9 @@ export class RLMTrainer {
   }
 
   private sampleBatch(): Experience[] {
-    const available: Experience[] = [];
-    for (let i = 0; i < this.config.replayBufferSize; i++) {
-      const exp = this.replayBuffer[i];
-      if (exp) available.push(exp);
-    }
-    if (available.length === 0) return [];
+    if (this.bufferSize === 0) return [];
 
+    const available = this.replayBuffer.slice(0, this.bufferSize);
     const priorities = available.map(e => e.priority || 1);
     const totalPriority = priorities.reduce((s, p) => s + p, 0);
     const batch: Experience[] = [];
@@ -417,11 +445,7 @@ export class RLMTrainer {
   }
 
   getBufferSize(): number {
-    let count = 0;
-    for (let i = 0; i < this.config.replayBufferSize; i++) {
-      if (this.replayBuffer[i]) count++;
-    }
-    return count;
+    return this.bufferSize;
   }
 
   getExplorationRate(): number {
