@@ -91,6 +91,7 @@ export declare class ExtensionBuilder {
     disconnectNeurons(projectId: string, connectionId: string): boolean;
     deleteNeuron(projectId: string, neuronId: string): boolean;
     dragLabel(projectId: string, neuronId: string, label: string): boolean;
+    moveNeuron(projectId: string, neuronId: string, x: number, y: number): boolean;
     searchNeurons(projectId: string, query: string): NeuronData[];
     typeModelOutput(projectId: string, neuronId: string, inputValue: number): string;
     trainNetSearch(projectId: string, epochs: number): boolean;

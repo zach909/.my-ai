@@ -123,7 +123,9 @@ export class PluginRegistry {
       },
       ...this.intentMap,
     };
-    const candidates = intentToPlugins[intent] ?? ['browser'];
+    // Unmapped intents (plain conversation) get no plugin candidates — the
+    // runner falls through to full neural generation instead of a web search.
+    const candidates = intentToPlugins[intent] ?? [];
     for (const pluginId of candidates) {
       const plugin = this.plugins.get(pluginId);
       if (plugin && this.activePlugins.has(pluginId)) {
