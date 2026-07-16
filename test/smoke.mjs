@@ -910,6 +910,57 @@ async function testWebBackend() {
   }
 }
 
+// Every extension in the catalog must get a real implementation and go active
+// through the top-level system, not just a hand-picked subset.
+async function testExtensionCatalogFullyActive() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  await sys.initialize();
+  const status = sys.getStatus();
+  const total = sys.pluginRegistry.getPluginCount();
+  const activeSkills = sys.pluginRegistry.listActiveSkills().length;
+  check(total >= 24, `Extension catalog covers the full spec list (${total} registered)`);
+  check(status.activePlugins >= 24, `Every catalogued extension is active (${status.activePlugins} active)`);
+  check(activeSkills >= 4, `Skill-type extensions register as MoE experts (${activeSkills} active skills)`);
+  check(status.alignment >= 0 && status.alignment <= 1, 'Empathy exposes a bounded alignment score');
+}
+
+// Chrome Apps: local Chrome apps register as supplementary data sources and can
+// be connected/read without any external call (spec "Chrome Apps").
+async function testChromeApps() {
+  const { BrowserPlugin } = await load('plugins/browser.js');
+  const b = new BrowserPlugin({ id: 'browser', name: 'Browser', type: 'api-connection', capabilities: ['browser'] });
+  check(b.listChromeApps().length >= 3, 'Chrome Apps catalog is seeded with default local apps');
+  check(b.isChromeAppConnected('chrome-files'), 'autoConnect Chrome apps connect on registration');
+  check(await b.connectChromeApp('chrome-media'), 'Chrome app can be connected on demand');
+  const data = b.getChromeAppData('chrome-media');
+  check(data !== null && Array.isArray(data.permissions), 'Connected Chrome app exposes local data/permissions');
+  b.registerChromeApp({ id: 'chrome-x', name: 'X', url: 'chrome://apps/x', permissions: ['p'], autoConnect: true, dataSync: false });
+  check(b.isChromeAppConnected('chrome-x'), 'Newly registered autoConnect Chrome app becomes available');
+  check(await b.disconnectChromeApp('chrome-x') && !b.isChromeAppConnected('chrome-x'), 'Chrome app can be disconnected');
+}
+
+// Extension Builder: the drag-connect editor, drag labels, per-neuron
+// simulation, API-capable output layers, neuron search, and the
+// save(no-quant) -> install(quantized) lifecycle all work end-to-end.
+async function testExtensionBuilderFlow() {
+  const { ExtensionBuilder } = await load('extension-builder/builder.js');
+  const B = new ExtensionBuilder();
+  const pid = B.createProject('demo', 'Demo Skill').id;
+  const n1 = B.addNeuron(pid, 'input_a', 0.9);
+  const n2 = B.addNeuron(pid, 'hidden', 0.3);
+  check(B.connectNeurons(pid, n1.id, n2.id, 0.75, 0.1), 'Builder drag-connect installs a weighted connection');
+  check(B.dragLabel(pid, n2.id, 'reasoning-core') === true, 'Builder drag-label attaches a label to a neuron');
+  const sim = B.typeModelOutput(pid, n2.id, 1.0);
+  check(typeof sim === 'string' && /activated with value [\d.]+/.test(sim), 'Builder simulates individual neuron output');
+  check(!!B.addAPIOutputLayer(pid, { endpoints: [{ path: '/api/predict', method: 'POST' }] }), 'Builder adds an API-capable output layer');
+  check(B.searchNeurons(pid, 'hidden').length === 1, 'Builder neuron search finds by name');
+  const saved = B.saveWithoutQuantization(pid);
+  check(saved && saved.quantized !== true, 'Save keeps the project un-quantized (editable)');
+  const installed = JSON.parse(await B.installWithQuantization(pid, { bits: 8 }));
+  check(installed.quantized === true && installed.bits === 8, 'Install quantizes the extension before deployment');
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -937,6 +988,9 @@ async function main() {
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
+    ['Extension catalog fully active', testExtensionCatalogFullyActive],
+    ['Chrome Apps', testChromeApps],
+    ['Extension Builder flow', testExtensionBuilderFlow],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);
