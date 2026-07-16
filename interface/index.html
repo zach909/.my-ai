@@ -57,11 +57,11 @@
   <h1><span id="status-dot" role="img" aria-label="System status: Offline"></span>Neuroclaw</h1>
   <div id="status-text">connecting…</div>
 </div>
-<div id="tabs">
-  <div class="tab active" data-tab="chat">Chat</div>
-  <div class="tab" data-tab="builder">Extension&nbsp;Builder</div>
-  <div class="tab" data-tab="systems">Systems</div>
-  <div class="tab" data-tab="plugins">Plugins</div>
+<div id="tabs" role="tablist">
+  <div class="tab active" data-tab="chat" role="tab" tabindex="0" aria-selected="true">Chat</div>
+  <div class="tab" data-tab="builder" role="tab" tabindex="0" aria-selected="false">Extension&nbsp;Builder</div>
+  <div class="tab" data-tab="systems" role="tab" tabindex="0" aria-selected="false">Systems</div>
+  <div class="tab" data-tab="plugins" role="tab" tabindex="0" aria-selected="false">Plugins</div>
 </div>
 
 <!-- CHAT -->
@@ -113,15 +113,23 @@ name="reply"
   // ---- tabs ----
   const tabs = document.querySelectorAll('.tab');
   const panels = document.querySelectorAll('.panel');
-  tabs.forEach(t => t.addEventListener('click', () => {
-    tabs.forEach(x => x.classList.remove('active'));
+  function switchTab(t) {
+    tabs.forEach(x => {
+      x.classList.remove('active');
+      x.setAttribute('aria-selected', 'false');
+    });
     panels.forEach(p => p.classList.remove('active'));
     t.classList.add('active');
+    t.setAttribute('aria-selected', 'true');
     document.getElementById('panel-' + t.dataset.tab).classList.add('active');
     if (t.dataset.tab === 'systems') loadSystems();
     if (t.dataset.tab === 'plugins') loadPlugins();
     if (t.dataset.tab === 'builder') loadExtensions();
-  }));
+  }
+  tabs.forEach(t => {
+    t.addEventListener('click', () => switchTab(t));
+    t.addEventListener('keydown', e => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); switchTab(t); } });
+  });
 
   // ---- status ----
   async function checkStatus() {
@@ -175,7 +183,11 @@ name="reply"
   }
   async function send() {
     const msg = input.value.trim(); if (!msg) return;
-    input.value = ''; addMsg('user', msg);
+    input.value = '';
+    input.disabled = true;
+    document.getElementById('send-btn').disabled = true;
+    chat.setAttribute('aria-busy', 'true');
+    addMsg('user', msg);
     const thinking = addMsg('sys', '…generating');
     try {
       const r = await fetch('/api/chat', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ message: msg }) });
@@ -183,7 +195,15 @@ name="reply"
       thinking.remove();
       const m = addMsg('ai', d.response || d.error || '(no output)');
       if (d.skill) { const tag = document.createElement('div'); tag.className = 'hint'; tag.style.marginTop = '4px'; tag.textContent = '⚡ skill: ' + d.skill + ' (' + (d.extension||'') + ')'; m.appendChild(tag); }
-    } catch (e) { thinking.remove(); addMsg('sys', 'error: ' + e); }
+    } catch (e) {
+      if (thinking) thinking.remove();
+      addMsg('sys', 'error: ' + e);
+    } finally {
+      input.disabled = false;
+      document.getElementById('send-btn').disabled = false;
+      chat.setAttribute('aria-busy', 'false');
+      input.focus();
+    }
   }
   document.getElementById('send-btn').addEventListener('click', send);
   input.addEventListener('keydown', e => { if (e.key === 'Enter') send(); });
@@ -191,11 +211,15 @@ name="reply"
 
   // ---- extension builder ----
   document.getElementById('build-btn').addEventListener('click', async () => {
-    const code = document.getElementById('neuri-code').value;
+    const btn = document.getElementById('build-btn');
+    const area = document.getElementById('neuri-code');
+    const code = area.value;
     const name = document.getElementById('ext-name').value.trim();
     const description = document.getElementById('ext-desc').value.trim();
     const quantize = document.getElementById('ext-quantize').checked;
     const out = document.getElementById('builder-out');
+    btn.disabled = true;
+    area.disabled = true;
     out.innerHTML = '<p class="hint">building & saving…</p>';
     try {
       const r = await fetch('/api/extension/build', { method: 'POST', headers: {'Content-Type':'application/json'}, body: JSON.stringify({ name, description, code, quantize, bits: 8 }) });
@@ -216,6 +240,10 @@ name="reply"
       out.innerHTML = html;
       loadExtensions();
     } catch (e) { out.innerHTML = '<p class="err">'+esc(String(e))+'</p>'; }
+    finally {
+      btn.disabled = false;
+      area.disabled = false;
+    }
   });
   document.getElementById('builder-clear').addEventListener('click', () => document.getElementById('builder-out').innerHTML = '');
 

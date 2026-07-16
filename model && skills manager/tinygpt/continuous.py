@@ -30,6 +30,7 @@ from .sampling import sample_next_token
 
 class ContinuousRunner:
     def __init__(self, model, tokenizer, output_capacity: int = 512,
+                 input_capacity: int = 512,
                  temperature: float = 0.8, top_k: int = 40, top_p: float = 0.95,
                  repetition_penalty: float = 1.1, device: str = "cpu"):
         self.model = model
@@ -37,8 +38,13 @@ class ContinuousRunner:
         self.device = device
         model.enable_continuous(True)   # §9: carry neuron state across steps
         model.eval()
-        # bounded output ring buffer — overwrites oldest, never grows unbounded
+        # Compressed I/O as circular buffers (the design notes are explicit that
+        # BOTH input and output are ring buffers: at capacity the oldest tokens
+        # are overwritten, so the runner operates continuously without unbounded
+        # growth). The input ring is the compressed record of what has been fed
+        # in; the output ring is what has been emitted.
         self.output = deque(maxlen=output_capacity)
+        self.input = deque(maxlen=input_capacity)
         self.temperature = temperature
         self.top_k = top_k
         self.top_p = top_p
@@ -64,6 +70,7 @@ class ContinuousRunner:
         with self._lock:
             for tid in ids:
                 self._forward_token(tid)
+                self.input.append(tid)   # circular: oldest overwritten at capacity
             self._last = ids[-1]
 
     @torch.no_grad()

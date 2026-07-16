@@ -217,6 +217,10 @@ class _TFIndex:
             for t in set(tl): df[t] += 1
         self.vocab = sorted(df)
         self.idf   = {t: math.log((N+1)/(df[t]+1)) for t in self.vocab}
+        # rebuild from scratch — build() is called after every add_corpus, so
+        # appending here would accumulate stale rows (more tfidf entries than
+        # docs) and make idx.search index past the end of self.docs.
+        self.tfidf = []
         for tl in self.tokens:
             tf = Counter(tl); tot = max(len(tl), 1)
             self.tfidf.append({t: (tf[t]/tot)*self.idf[t] for t in tl if t in self.idf})
@@ -284,11 +288,13 @@ class NetSearchManager:
 
     def hard_search(self, query, k=5):
         print(f'\n[NetSearch] Hard search: "{query}"')
-        for score, doc in self.idx.search(query, k):
+        results = list(self.idx.search(query, k))
+        for score, doc in results:
             print(f'  {score:.4f}  {doc[:80]}')
+        return results
 
     def neural_search(self, query, k=5):
-        if not self.trained: print('[NetSearch] Not trained.'); return
+        if not self.trained: print('[NetSearch] Not trained.'); return []
         V = len(self.idx.vocab); qv = self.idx.tensor(self.idx.qvec(query))
         scores = []
         self.model.eval()
@@ -299,6 +305,7 @@ class NetSearchManager:
         scores.sort(reverse=True)
         print(f'\n[NetSearch] Neural search: "{query}"')
         for s, d in scores[:k]: print(f'  {s:.4f}  {d[:80]}')
+        return scores[:k]
 
     def save(self, path):
         if not self.model: return
@@ -451,6 +458,90 @@ class _MeshCharTok:
     def decode(self, ids):
         # inverse of encode for ASCII (ord < 120); ids are 3 + ord(c) % 120
         return "".join(chr((int(i) - 3) % 120) for i in ids if int(i) >= 3)
+
+
+# ── thesaurus relationships for definition refinement ────────────────────
+# Words in one group count as the same concept when comparing definitions.
+# Compact and offline (no external APIs); extend freely.
+_THESAURUS = [
+    {"happy", "glad", "joyful", "cheerful", "pleased", "content"},
+    {"sad", "unhappy", "sorrowful", "gloomy", "miserable"},
+    {"big", "large", "huge", "great", "enormous", "vast"},
+    {"small", "little", "tiny", "minor", "slight"},
+    {"fast", "quick", "rapid", "swift", "speedy"},
+    {"slow", "sluggish", "gradual", "unhurried"},
+    {"smart", "clever", "intelligent", "bright", "wise"},
+    {"begin", "start", "commence", "initiate", "launch"},
+    {"end", "finish", "stop", "conclude", "terminate", "halt"},
+    {"make", "create", "build", "construct", "produce", "generate"},
+    {"destroy", "ruin", "demolish", "wreck", "break"},
+    {"say", "tell", "speak", "state", "reply", "answer", "respond"},
+    {"see", "look", "view", "observe", "watch", "notice"},
+    {"think", "reason", "ponder", "consider", "reflect"},
+    {"remember", "recall", "memorize", "retain", "store"},
+    {"learn", "study", "train", "acquire", "absorb"},
+    {"search", "find", "seek", "locate", "discover", "query"},
+    {"connect", "link", "join", "attach", "wire", "couple"},
+    {"signal", "wave", "pulse", "impulse", "spike"},
+    {"neuron", "cell", "node", "unit"},
+    {"greeting", "hello", "hi", "welcome", "salutation"},
+    {"error", "mistake", "fault", "bug", "flaw"},
+    {"correct", "right", "accurate", "true", "valid"},
+]
+_SYN_OF = {w: i for i, group in enumerate(_THESAURUS) for w in group}
+_STOPWORDS = {"a", "an", "the", "is", "are", "was", "were", "be", "been", "it",
+              "its", "of", "to", "in", "on", "at", "and", "or", "for", "with",
+              "that", "this", "when", "then", "must", "should", "will", "can"}
+
+# Dictionary meanings: a compact gloss that expands a word into the concept
+# words of its definition. Combined with the thesaurus, this connects terms
+# that mean related things without being listed synonyms (the design notes:
+# "refined using thesaurus relationships AND dictionary meanings"). Each gloss
+# word is itself thesaurus-folded, so "code" -> program/instruction/logic
+# meets "software" -> program/... on the shared concept.
+_DICTIONARY = {
+    "code": {"program", "instruction", "logic", "software"},
+    "program": {"code", "instruction", "software", "run"},
+    "software": {"program", "code", "application"},
+    "ai": {"intelligence", "learn", "reason", "neuron", "model"},
+    "model": {"neuron", "learn", "reason", "network"},
+    "network": {"neuron", "connect", "node", "graph"},
+    "memory": {"remember", "store", "recall", "buffer"},
+    "buffer": {"memory", "store", "queue"},
+    "quantum": {"wave", "signal", "amplitude", "phase", "interference"},
+    "interference": {"wave", "phase", "amplitude", "quantum"},
+    "expert": {"skill", "specialist", "neuron", "route"},
+    "skill": {"expert", "learn", "ability", "specialist"},
+    "plugin": {"connect", "service", "extension", "external"},
+    "empathy": {"emotion", "feel", "mood", "align"},
+    "reason": {"think", "logic", "infer", "consider"},
+    "greeting": {"hello", "welcome", "hi"},
+    "hello": {"greeting", "welcome", "hi"},
+    "encrypt": {"secure", "private", "protect", "cipher"},
+    "quantize": {"compress", "shrink", "reduce", "deploy"},
+    "compress": {"quantize", "shrink", "zip", "reduce"},
+}
+
+
+def _fold(word):
+    """Fold a word to its thesaurus-group token, or itself if not in a group."""
+    return f"syn:{_SYN_OF[word]}" if word in _SYN_OF else word
+
+
+def _expand_synonyms(text):
+    """Content-concept tokens of `text`. Each content word is folded to its
+    thesaurus group, then expanded with its dictionary-gloss concepts (also
+    folded), so definitions that share meaning — via synonyms OR via dictionary
+    relationships — end up with overlapping token sets."""
+    words = re.findall(r"[a-z']+", str(text).lower())
+    out = set()
+    for w in words:
+        if w in _STOPWORDS or len(w) < 2:
+            continue
+        out.add(_fold(w))
+        for gloss in _DICTIONARY.get(w, ()):       # dictionary meanings
+            out.add(_fold(gloss))
+    return out
 
 
 class NeuroRuntime:
