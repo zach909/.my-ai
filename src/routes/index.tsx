@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import {
   useElasticMesh,
   MeshVisualization,
@@ -60,15 +60,23 @@ function MeshDashboard() {
             state · all-to-all mesh · zero-sum vale {DEFAULT_CONFIG.totalVale}
           </p>
         </div>
-        <span
-          className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-            isRunning
-              ? 'bg-emerald-500/15 text-emerald-400'
-              : 'bg-muted text-muted-foreground'
-          }`}
-        >
-          {isRunning ? 'Propagating' : 'Idle'}
-        </span>
+        <nav className="flex items-center gap-3">
+          <Link
+            to="/builder"
+            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+          >
+            Extension Builder →
+          </Link>
+          <span
+            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
+              isRunning
+                ? 'bg-emerald-500/15 text-emerald-400'
+                : 'bg-muted text-muted-foreground'
+            }`}
+          >
+            {isRunning ? 'Propagating' : 'Idle'}
+          </span>
+        </nav>
       </header>
 
       <div className="flex flex-1 flex-col gap-3 p-3 lg:flex-row">

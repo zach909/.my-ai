@@ -282,8 +282,16 @@ export class BrowserPlugin extends BasePlugin {
         return `[Browser] Failed to fetch ${input}: ${e instanceof Error ? e.message : String(e)}`;
       }
     }
-    if (/\b(read|write|list|exists?|mkdir|delete)\b/.test(input.toLowerCase())) return null;
-    const results = await this.search(input);
+    const lower = input.toLowerCase();
+    if (/\b(read|write|list|exists?|mkdir|delete)\b/.test(lower)) return null;
+    // Only act on inputs that explicitly ask the browser to do something.
+    // Plain conversation ("hello, what can you do?") must fall through to
+    // the neural generation path, not become a web search.
+    const wantsSearch = /^(search|look\s?up|browse|google|web\s?search)\b/.test(lower)
+      || /\b(search (for|the web)|on the web|online)\b/.test(lower);
+    if (!wantsSearch) return null;
+    const query = input.replace(/^(search( for| the web for)?|look\s?up|browse|google|web\s?search)\s*:?\s*/i, '').trim() || input;
+    const results = await this.search(query);
     if (results.length === 0) return null;
     const top = results.slice(0, 3);
     return `[Browser] Search: ${top.map(r => `${r.title} — ${r.snippet}`).join(' | ')}`;
