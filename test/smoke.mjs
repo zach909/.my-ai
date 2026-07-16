@@ -968,6 +968,9 @@ async function testExtensionBuilderFlow() {
   const gproj = B.getProject(pid);
   const outEdges = [...gproj.connections.values()].filter((c) => c.fromId === g.neuron.id);
   check(outEdges.length === g.matches.length, 'Net Search wires the generated neuron to each match with a weighted edge');
+  // No evidence -> no fabricated "fully confident" neuron.
+  check(B.netSearchGenerate(pid, 'zzzqqq nonexistent xxyyzz', 2) === null, 'Net Search returns null when there are zero semantic matches');
+  check(B.netSearchGenerate(pid, '', 2) === null, 'Net Search returns null for an empty/untokenizable query');
 }
 
 // The Neural Definition DSL parses every spec directive, including both
@@ -990,6 +993,14 @@ async function testNeuralDefinitionDirectives() {
   check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
   const finder = neurons.get('finder');
   check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');
+
+  // @net binds to the most recently declared @name in parse order, even when
+  // an earlier netsearch neuron (declared first) is still pending.
+  const it2 = new NeuroLangInterpreter();
+  const r2 = it2.parse(['"netsearch"@name="first"', '"netsearch"@name="second"', '"netsearch"@net="loc/2"'].join('\n'));
+  const n2 = it2.evaluate(r2);
+  check(n2.get('second').netLocation === 'loc/2', 'netsearch@net binds to the most recent pending definition (parse order)');
+  check(n2.get('first').netLocation === null, 'an earlier pending netsearch is not mis-bound by a later @net');
 }
 
 // End-to-end encryption: the local encryption manager round-trips data and

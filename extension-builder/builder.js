@@ -335,10 +335,17 @@ export class ExtensionBuilder {
         }
         scored.sort((a, b) => b.score - a.score);
         const matches = scored.slice(0, topK);
-        // Generate the network: a new neuron whose value is the aggregate
-        // evidence, connected to each match with a similarity-weighted edge.
-        const total = matches.reduce((s, m) => s + m.score, 0) || 1;
-        const generated = this.addNeuron(projectId, `netsearch:${query}`.slice(0, 48), Math.min(1, total));
+        // With no evidence (empty/untokenizable query, or zero overlap against
+        // every definition) there is nothing to generate — return null rather
+        // than fabricating an "evidence-free but fully confident" neuron.
+        if (queryTokens.length === 0 || matches.length === 0)
+            return null;
+        // Generate the network: a new neuron whose value reflects the actual
+        // accumulated evidence, connected to each match with a
+        // similarity-weighted edge. `denom` guards the weight division only.
+        const totalScore = matches.reduce((s, m) => s + m.score, 0);
+        const denom = totalScore || 1;
+        const generated = this.addNeuron(projectId, `netsearch:${query}`.slice(0, 48), Math.min(1, totalScore));
         generated.type = 'netsearch';
         generated.query = query;
         generated.definition = `Generated from Net Search "${query}" over ${matches.length} definition(s)`;
@@ -347,7 +354,7 @@ export class ExtensionBuilder {
             // Higher-value (more stable) targets resist change: scale the
             // learned weight down by the target's value, echoing elastic
             // neuron values.
-            const weight = (m.score / total) * (1 - (m.neuron.value ?? 0.5) * 0.5);
+            const weight = (m.score / denom) * (1 - (m.neuron.value ?? 0.5) * 0.5);
             this.connectNeurons(projectId, generated.id, m.neuron.id, Number(weight.toFixed(4)), 0);
         }
         project.updatedAt = Date.now();

@@ -14,6 +14,8 @@ export interface LLMConfig {
     thinkSteps: number;
     valuePoints: number;
     contextLength: number;
+    /** Directory where self-authored extensions are persisted. */
+    selfExtensionsDir?: string;
 }
 export interface GenerateOptions {
     maxTokens: number;
