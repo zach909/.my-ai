@@ -16,13 +16,7 @@ import argparse
 import torch
 
 from tinygpt.data import build_chat_prompt
-<<<<<<< HEAD:model && skills manager/chat.py
-from tinygpt.model import build_model
-from tinygpt.tokenizer import Tokenizer
-from tinygpt.utils import load_checkpoint, resolve_device
-=======
 from tinygpt.infer import load_generator
->>>>>>> origin/main:tinygpt/chat.py
 
 
 def parse_args():
@@ -41,25 +35,9 @@ def parse_args():
     return ap.parse_args()
 
 
-<<<<<<< HEAD:model && skills manager/chat.py
-def load_model(ckpt_path: str, device: str):
-    ckpt = load_checkpoint(ckpt_path, map_location=device)
-    model_cfg = ModelConfig(**ckpt["model_config"])
-    model = build_model(model_cfg).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    return model, ckpt
-
-
-def generate_text(model, tokenizer, prompt_ids, args, device):
-    idx = torch.tensor([prompt_ids], dtype=torch.long, device=device)
-    out = model.generate(
-        idx, max_new_tokens=args.max_new_tokens, temperature=args.temperature,
-=======
 def _gen(generator, prompt, args, *, paragraph):
     return generator.generate(
         prompt, max_new_tokens=args.max_new_tokens, temperature=args.temperature,
->>>>>>> origin/main:tinygpt/chat.py
         top_k=args.top_k, top_p=args.top_p, repetition_penalty=args.repetition_penalty,
         paragraph=paragraph,
     )
