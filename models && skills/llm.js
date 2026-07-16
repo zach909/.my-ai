@@ -310,9 +310,14 @@ export class NeuroclawLLM {
                     else if (t && t.X.length > 0)
                         answerParts.push(`${w} (also: ${t.X.slice(0, 3).join(', ')})`);
                 }
-                const answer = answerParts.length > 0
-                    ? answerParts.join('. ')
-                    : thorns.response;
+                // When the dictionary yields no definitions we fall back to the
+                // THORNS response, which already carries its own Plan/novelty/
+                // confidence footer — returning it verbatim avoids emitting a
+                // second, duplicate "Plan:" line.
+                if (answerParts.length === 0) {
+                    return thorns.response;
+                }
+                const answer = answerParts.join('. ');
                 return `${answer}${contextLine}\n  Plan: ${plan} | ${novelTag} confidence:${confidence}%`;
             }
             default:
@@ -462,6 +467,7 @@ export class NeuroclawLLM {
         };
     }
     getHyperHistory() { return this.hyperEngine.getHistory(); }
+    traceNeuron(neuronId, dim, topK = 8) { return this.hyperEngine.traceNeuron(neuronId, dim, topK); }
     demoteFailingNeurons(failureId) {
         this.valueAllocator.demoteNeuron(failureId);
     }

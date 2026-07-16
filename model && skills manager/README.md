@@ -12,6 +12,27 @@
 No Hugging Face Transformers, no Lightning, no distributed training, no
 external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
 `python test_core.py` runs 145 checks with no checkpoint needed.
+# Prometheus Elastic Core — mesh AI
+
+> **Note:** the decoder-only GPT transformer described below has been **retired**.
+> The model is now the **all-to-all neuron mesh** (`tinygpt/mesh.py`, §1), which
+> the same training/inference infrastructure trains unchanged (`build_model()`
+> returns the mesh; `arch` defaults to `"mesh"`). See the repository root
+> `README.md` for the nine mechanisms and honest limitations. The
+> tokenizer / data loader / AdamW loop / sampling below all still apply; only the
+> core computation block changed from attention to the mesh.
+
+A complete, from-scratch model stack in Python + PyTorch — no Hugging Face
+Transformers, no Lightning, no distributed training. It trains a small (a few
+hundred K to a few M parameter) model on a local Markdown corpus and runs
+locally on CPU or a single consumer GPU (e.g. an RTX 5070);
+`python test_core.py` runs the full check suite with no checkpoint needed.
+
+The elastic-mesh core is vale-gated and all-to-all with MoE expert routing;
+its interference step is a *perfect classical simulation* of a small
+variational quantum circuit (via PennyLane's statevector simulator). Because
+the surrounding training loop never changes, the mesh and the retired
+transformer baseline can be compared apples-to-apples.
 
 ## Infrastructure (applies to the mesh unchanged)
 
@@ -27,6 +48,13 @@ external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
   **not** part of the canonical mesh `build_model()` constructs; it is a
   standalone, importable component requiring `pip install pennylane`
   (`test_elastic_mesh.py` guards it, skipping cleanly when the dep is absent).
+- **The mesh** (retired transformer kept for reference/baseline): token +
+  positional embeddings, pre-LayerNorm blocks, causal multi-head self-attention
+  (fused FlashAttention when available, explicit masked fallback otherwise),
+  GELU MLP, weight-tied LM head.
+- **Elastic-mesh core** (`--use-elastic-mesh`): vale-gated settle dynamics,
+  dense all-to-all internal connectivity, MoE expert routing, and a
+  PennyLane-simulated quantum interference layer, as a drop-in for the MLP.
 - **Configurable hyperparameters** via `tinygpt/config.py` and CLI flags.
 - **Pretraining** with AdamW, linear-warmup + cosine LR decay, automatic mixed
   precision (on CUDA), gradient accumulation, gradient clipping, checkpoints.
@@ -60,12 +88,13 @@ model && skills manager/
 │   ├── actions.py          # human-in-the-loop action layer (gated terminal)
 │   ├── live_guide.py       # §7 live correction while generating
 │   ├── infer.py            # Generator + load_generator (checkpoint -> chat)
+│   ├── mesh.py             # the all-to-all neuron mesh (the model, §1)
+│   ├── model.py            # build_model() — returns the mesh
+│   ├── elastic_mesh.py     # Section 5.2 elastic-mesh core (quantum-simulated QIL)
 │   ├── sampling.py         # temperature / top-k / top-p / repetition penalty
 │   └── utils.py            # seeding, device, LR schedule, checkpoint I/O
-├── main.py                 # unified entry point: build / chat / test
-├── build_corpus.py         # step 0: build a prose corpus from in-repo text
 ├── train_tokenizer.py      # step 1: train the tokenizer
-├── pretrain.py             # step 2: pretrain the mesh on Markdown
+├── pretrain.py             # step 2: pretrain on Markdown (--use-moe / --use-elastic-mesh optional)
 ├── finetune.py             # step 3: supervised fine-tune on chat data
 ├── chat.py                 # step 4: interactive / one-shot inference
 ├── core.py                 # the unified core (memory, veto, actions, guidance)
@@ -74,6 +103,10 @@ model && skills manager/
 ├── example_experts.nl      # sample NeuroLang program (code@/netsearch@ experts)
 ├── test_core.py            # 66 checks, no checkpoint needed
 ├── test_elastic_mesh.py    # smoke test for the optional quantum block
+├── chat.py                 # step 4: interactive / one-shot inference (the interface)
+├── core.py                 # the unified core: model + memory + veto + actions
+├── test_core.py            # unified-core check suite (no checkpoint needed)
+├── test_elastic_mesh.py    # smoke test for the elastic-mesh core
 ├── data/pretrain/          # .md corpus (build your own; see below)
 ├── data/sft/chat.jsonl     # chat fine-tuning data (sample included)
 └── requirements.txt
@@ -97,9 +130,9 @@ python build_corpus.py
 python train_tokenizer.py --data-dir data/pretrain --vocab-size 8000 \
     --model-prefix checkpoints_v2/spm
 
-# 2) Pretrain the mesh (arch defaults to "mesh")
+# 2) Pretrain the mesh
 python pretrain.py --data-dir data/pretrain --tokenizer checkpoints_v2/spm.model \
-    --mesh-neurons 24 --mesh-dims 4 --settle-ticks 4 --block-size 256 \
+    --n-layer 6 --n-head 6 --n-embd 384 --block-size 256 --dropout 0.1 \
     --batch-size 16 --grad-accum-steps 4 --max-steps 4000 \
     --early-stopping-patience 8 \
     --out-dir checkpoints_v2 --ckpt-name gpt_v2.pt --device cpu --no-amp
@@ -117,10 +150,24 @@ self-healing) onto the mesh as real routed MoE experts, add `--skill-experts`
 to the `pretrain.py` command. The optional PennyLane quantum block
 (`tinygpt/elastic_mesh.py`) is a separate, importable component — see
 `test_elastic_mesh.py` — not a `pretrain.py` flag.
+The prose corpus matters far more than model size for fluency: on CPU this
+~14M-param model reaches recognizable dramatic English — character speech tags
+and stage directions — within ~1500 steps, where an earlier 2.2M-param model on
+82K words of terse Markdown only produced disconnected keywords. A smaller/faster
+smoke config (`--vocab-size 2000`, `--n-layer 4 --n-head 4 --n-embd 192
+--block-size 128 --max-steps 2500`, default `checkpoints/`) still works for a
+quick end-to-end check.
+
+To exercise the elastic-mesh expert core explicitly, add `--use-elastic-mesh`
+to the `pretrain.py` command (optionally `--mesh-num-experts`, `--mesh-top-k`,
+`--mesh-n-neurons`, `--mesh-settle-steps`, `--mesh-n-qubits`). Everything else —
+tokenizer, data loading, optimizer, schedule, checkpointing, and inference
+sampling — is identical, which is the point: it isolates the model core as the
+only variable when comparing configurations.
 
 ## Unified core (`core.py`)
 
-`core.py` runs the whole thing as **one system**: the trained mesh as the
+`core.py` runs the whole thing as **one system**: the real trained model as the
 language engine, wrapped by the genuinely-applicable Prometheus mechanisms as
 real, working layers.
 
@@ -151,10 +198,10 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   releases GPU memory to save power and wakes instantly on the next input
   (`--idle-timeout`, default 120s; type `sleep` to trigger now). It only stops
   to save power when idle — never on drift.
-- **Mixture-of-Experts / skills** (§1.5) — enable `--use-moe` to route through
-  a sparse MoE of named experts ("skills") top-k (`tinygpt/moe.py`), with a
-  load-balancing auxiliary loss and per-skill usage tracking. Train with
-  `python pretrain.py --use-moe --n-experts 8 --moe-top-k 2`.
+- **Mixture-of-Experts / skills** (§1.5) — enable `--use-moe` to replace each
+  block's MLP with a sparse MoE of named experts ("skills") routed top-k
+  (`tinygpt/moe.py`), with a load-balancing auxiliary loss and per-skill usage
+  tracking. Train with `python pretrain.py --use-moe --n-experts 8 --moe-top-k 2`.
 - **Extension builder** (§4) — teach the model declarative *definishon*
   contracts (`tinygpt/extension_builder.py`): `when "X" then it must reply "Y"`,
   trained with a constraint loss plus a don't-forget weight penalty, with
@@ -208,6 +255,7 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   numeric Python function into a trained neural net; `main.py netsearch <query>
   <doc>...` trains a retrieval net and ranks documents. Both also drive from the
   NeuroLang DSL (`code@`, `netsearch@`).
+  `teach: <prompt> => <required reply>`.
 
 Run the core's tests (no checkpoint needed) with:
 
@@ -236,16 +284,15 @@ required replies) are detected and reported instead of looping forever.
 Each `.pt` checkpoint stores the full `ModelConfig`, so `chat.py` and
 `finetune.py` reconstruct the exact mesh architecture automatically — you only
 pass the `.pt` path.
+`finetune.py` reconstruct the exact architecture (mesh, MoE, or elastic-mesh
+configuration) automatically — you only pass the `.pt` path.
 
-## The surrounding Go tree (the model & skills manager)
+## Vendored local runtime
 
-The Go / llama.cpp code in this directory is a vendored, locally-run model
-manager derived from [Ollama](https://github.com/ollama/ollama) (MIT licensed;
-see `LICENSE`). It serves and manages local model binaries — no external APIs
-are required at inference time. Build it with `cmake -B build . && cmake
---build build` or `go build .` (see `AGENTS.md` and `docs/development.md`).
-The Python mesh AI above is independent of it: the mesh trains and chats with
-nothing but `requirements.txt`.
+Alongside the Python stack, this directory vendors the Ollama runtime (the Go
+tree: `main.go`, `llama/`, `server/`, …) as an optional local inference backend
+for pre-quantized GGUF models. It is upstream code — see its `docs/` folder for
+usage; it is not part of the mesh implementation.
 
 ## Notes
 
@@ -254,5 +301,5 @@ nothing but `requirements.txt`.
 - A small model produces fluent, on-topic text after enough training, not
   factual accuracy or reasoning at the level of large models. This is an
   educational / research implementation.
-- The mesh is experimental and unproven — it is meant to be tested against a
-  standard transformer baseline, not assumed superior to it.
+- The elastic-mesh core is experimental and unproven — it is meant to be tested
+  against the standard transformer baseline, not assumed superior to it.

@@ -110,11 +110,9 @@ class Generator:
         c = self.config
         return {
             "parameters": n_params,
-            "arch": c.arch,
-            "mesh_neurons": c.mesh_neurons,
-            "mesh_dims": c.mesh_dims,
-            "settle_ticks": c.settle_ticks,
-            "skill_groups": c.skill_groups,
+            "n_layer": c.n_layer,
+            "n_head": c.n_head,
+            "n_embd": c.n_embd,
             "block_size": c.block_size,
             "vocab_size": c.vocab_size,
             "use_elastic_mesh": c.use_elastic_mesh,

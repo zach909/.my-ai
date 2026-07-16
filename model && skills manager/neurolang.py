@@ -7,9 +7,9 @@ Usage: python neurolang.py <file.nl>
 Syntax:
   dims = N
   name="X"
-  "X"@vale="0.9"                  # or "X"@value="0.9"
+  "X"@vale="0.9"
   "X"@connections=".Y/state"*w+b
-  "X"@definishon="text"           # or "X"@definition="text"
+  "X"@definishon="text"
   input "X" = [1.0, 0.5, -0.3]
   run N ticks
   show "X"
@@ -567,31 +567,6 @@ class NeuroRuntime:
 
     def set_def(self, name, text):
         self._req(name); self.neurons[name].definition = text
-        self._semantic_refine(name)
-
-    def _semantic_refine(self, name, threshold=0.2):
-        """Refine definitions with thesaurus relationships (design notes):
-        neurons whose definitions share meaning get connected automatically,
-        with weight proportional to their semantic similarity, so definitions
-        become semantically connected neural structure — not isolated text."""
-        this = self.neurons[name]
-        words_a = _expand_synonyms(this.definition)
-        if not words_a:
-            return
-        for other_name, other in self.neurons.items():
-            if other_name == name or not other.definition:
-                continue
-            words_b = _expand_synonyms(other.definition)
-            if not words_b:
-                continue
-            overlap = len(words_a & words_b) / len(words_a | words_b)  # Jaccard
-            if overlap < threshold:
-                continue
-            # connect both ways unless the author already wired them by hand
-            if other_name not in this.ex_weights:
-                this.set_connection(other_name, round(overlap, 3), 0.0)
-            if name not in other.ex_weights:
-                other.set_connection(name, round(overlap, 3), 0.0)
 
     def train_as_mesh(self, epochs=300, lr=5e-3, tolerance=0.25):
         """Connect the NeuroLang extension builder to the trainable mesh.
@@ -788,11 +763,9 @@ def _print_trace(results):
 
 P_DIM    = re.compile(r'^dims\s*=\s*(\d+)$')
 P_DECL   = re.compile(r'^name\s*=\s*"([^"]+)"$')
-# the design notes spell these both ways ("vale"/"value", "definishon"/
-# "definition"); the DSL accepts either spelling.
-P_VALE   = re.compile(r'^"([^"]+)"\s*@val(?:e|ue)\s*=\s*"?([0-9.]+)"?$')
+P_VALE   = re.compile(r'^"([^"]+)"\s*@vale\s*=\s*"?([0-9.]+)"?$')
 P_CONN   = re.compile(r'^"([^"]+)"\s*@connections\s*=\s*"\.\s*([^/]+)/([^"]+)"\s*\*\s*([0-9.]+)\s*\+\s*([0-9.]+)$')
-P_DEFN   = re.compile(r'^"([^"]+)"\s*@defini(?:shon|tion)\s*=\s*"([^"]+)"$')
+P_DEFN   = re.compile(r'^"([^"]+)"\s*@definishon\s*=\s*"([^"]+)"$')
 P_INPUT  = re.compile(r'^input\s+"([^"]+)"\s*=\s*\[([^\]]+)\]$')
 P_RUN    = re.compile(r'^run\s+(\d+)\s*ticks?$')
 P_TRAIN  = re.compile(r'^train(?:\s+mesh)?$')

@@ -31,7 +31,6 @@ import sys
 from tinygpt.actions import ActionLayer, enable_shell_actions
 from tinygpt.config import ModelConfig
 from tinygpt.data import build_chat_prompt
-from tinygpt.empathy import EmpathyEngine
 from tinygpt.extension_builder import Definishon, ExtensionBuilder
 from tinygpt.live_guide import LiveGuide
 from tinygpt.memory import ZipLoopMemory
@@ -39,6 +38,7 @@ from tinygpt.model import build_model
 from tinygpt.plugins import default_registry, ExtensionType
 from tinygpt.rl import ReasoningLedger
 from tinygpt.selection import best_of_n, select_by_interference
+from tinygpt.selection import best_of_n
 from tinygpt.tokenizer import Tokenizer
 from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
 from tinygpt.veto import AlignmentVeto
@@ -150,6 +150,7 @@ def main():
     empathy = None if args.no_empathy else EmpathyEngine(persist_path=args.empathy_state)
     ledger = None if args.no_ledger else ReasoningLedger(persist_path=args.ledger)
     registry = default_registry()   # plugins (local services) + skills (MoE experts)
+    memory = ZipLoopMemory(capacity=512, persist_path=args.memory)
     veto = AlignmentVeto()
     action_layer = None if args.no_actions else ActionLayer(veto=veto)
     if action_layer is not None and args.enable_shell:
@@ -175,6 +176,8 @@ def main():
     print("  Type 'exit' to quit, 'reset' to clear memory, 'mood' for the empathy read.")
     print("  Inspect the mesh:  simulate: <neuron_id>   |   neurons: <text>   (extension builder)")
     print("  Extensions:  plugins  |  skills  |  plugin: <id> [command] [arg]   (local services)")
+    print(f"  power-save : {'off' if args.idle_timeout <= 0 else f'release GPU after {args.idle_timeout:.0f}s idle'}")
+    print("  Type 'exit' to quit, 'reset' to clear memory.")
     print("  Teach the model live:  teach: <prompt> => <required reply>   (extension builder, §4)\n")
     if not args.no_actions:
         print("  The model can propose 'ACTION: time' / 'list_dir <p>' / 'read_file <p>' / "
@@ -261,16 +264,6 @@ def main():
 
         memory.add("user", user)
 
-        # empathy: read the user's state + remembered preferences, and adapt
-        # sampling so alignment doesn't need repeated instructions
-        temperature, max_new, top_p = args.temperature, args.max_new_tokens, args.top_p
-        if empathy is not None:
-            empathy.observe(user)
-            adj = empathy.adjustment()
-            temperature = max(0.1, temperature * adj.temperature_scale)
-            max_new = max(16, int(max_new * adj.max_tokens_scale))
-            top_p = min(1.0, max(0.1, top_p + adj.top_p_delta)) if top_p else top_p
-
         # build prompt from recent zip-loop memory + the assistant header
         turns = memory.recent(args.memory_turns)
         prompt = build_chat_prompt(turns, tokenizer) + "<|assistant|>\n"
@@ -279,22 +272,17 @@ def main():
         # section 11 (predict-before-commit) + section 7 (live guidance): generate
         # N candidates under live guidance — when the model drifts into sustained
         # low confidence mid-generation, sampling tightens to steer it back rather
-        # than stopping — then commit either the most-confident candidate or, with
-        # --select interference, the §5 phase-consensus + Born-rule collapse pick.
-        # The reasoning ledger scores down candidates that repeat completed steps.
+        # than stopping — then commit the model's most-confident candidate.
         if guide is not None:
             guide.corrections = 0
-        select = select_by_interference if args.select == "interference" else best_of_n
-        best = select(
+        best = best_of_n(
             model, tokenizer, prompt_ids, n=args.candidates,
-            max_new_tokens=max_new, temperature=temperature,
-            top_k=args.top_k, top_p=top_p,
+            max_new_tokens=args.max_new_tokens, temperature=args.temperature,
+            top_k=args.top_k, top_p=args.top_p,
             repetition_penalty=args.repetition_penalty, eos_id=tokenizer.eos_id,
-            device=device, guide=guide, ledger=ledger,
+            device=device, guide=guide,
         )
         reply = clean_reply(best.text)
-        if ledger is not None and reply:
-            ledger.record(reply)
         print(f"bot> {reply}")
         if args.candidates > 1:
             print(f"     (chose best of {args.candidates}, confidence {best.score:.3f})")

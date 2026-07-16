@@ -255,7 +255,6 @@ class MeshLM(nn.Module):
             read_state = self._interfere(state) if self.quant_interference else state
             logits_steps.append(self.readout(self.dropout(read_state.reshape(B, -1))))
         logits = torch.stack(logits_steps, dim=1)  # (B, T, vocab)
-        self._last_settled = state.detach()
         if self._continuous:
             self._carried = state.detach()
 

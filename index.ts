@@ -1,3 +1,5 @@
+import { realpathSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import { NeuroclawLLM } from "./models && skills/llm.js";
 import { NeuroPipeline } from "./models && skills/core/pipeline.js";
 import { ThesaurusDictionary } from "./models && skills/thesaurus.js";
@@ -9,19 +11,13 @@ import { AlignmentVeto } from "./models && skills/core/alignment-veto.js";
 import { ZipIOSystem } from "./models && skills/core/zip-io.js";
 import { EmpathyEngine } from "./models && skills/core/empathy.js";
 
-// Plugins
-import { AccountInfoPlugin } from "./plugins/account-info.js";
-import { AppDiagnosticsPlugin } from "./plugins/app-diagnostics.js";
-import { BrowserPlugin } from "./plugins/browser.js";
-import { CalendarPlugin } from "./plugins/calendar.js";
+// Plugins & skills — the whole extension catalog is instantiated through the
+// shared factory so every entry in `pluginExtensions` gets a real
+// implementation, not just a hand-picked subset.
 import { CallHistoryPlugin } from "./plugins/call-history.js";
-import { CameraPlugin } from "./plugins/camera.js";
-import { ContactsPlugin } from "./plugins/contacts.js";
-import { EmailPlugin } from "./plugins/email.js";
-import { FileSystemPlugin } from "./plugins/file-system.js";
 import { PhoneCallsPlugin } from "./plugins/phone-calls.js";
-import { ImageExtension, UniversalLanguageSkill } from "./plugins/extensions/index.js";
-import { pluginExtensions } from "./plugins/index.js";
+import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
+import type { SkillDefinition } from "./plugin_manager/types.js";
 
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -44,6 +40,7 @@ export class NeuroclawSystem {
   runner: NeuroclawRunner;
 
   private initialized = false;
+  private contextCapacityGB: number;
 
   constructor(config?: { maxContextGB?: number }) {
     this.llm = new NeuroclawLLM({});
@@ -51,7 +48,8 @@ export class NeuroclawSystem {
     this.thesaurus = new ThesaurusDictionary();
     this.pluginRegistry = new PluginRegistry();
     this.veto = new AlignmentVeto();
-    this.zipIO = new ZipIOSystem(config?.maxContextGB || 200000);
+    this.contextCapacityGB = config?.maxContextGB || 200000;
+    this.zipIO = new ZipIOSystem(this.contextCapacityGB);
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.thesaurus, this.pluginRegistry);
   }
@@ -65,19 +63,29 @@ export class NeuroclawSystem {
     console.log("Initializing Neuroclaw core subsystems...");
     await this.pluginRegistry.bootstrap();
 
-    // Register real plugin implementations
-    this.pluginRegistry.register(pluginExtensions["account-info"], new AccountInfoPlugin(pluginExtensions["account-info"]));
-    this.pluginRegistry.register(pluginExtensions["app-diagnostics"], new AppDiagnosticsPlugin(pluginExtensions["app-diagnostics"]));
-    this.pluginRegistry.register(pluginExtensions["browser"], new BrowserPlugin(pluginExtensions["browser"]));
-    this.pluginRegistry.register(pluginExtensions["calendar"], new CalendarPlugin(pluginExtensions["calendar"]));
-    this.pluginRegistry.register(pluginExtensions["call-history"], new CallHistoryPlugin(pluginExtensions["call-history"]));
-    this.pluginRegistry.register(pluginExtensions["camera"], new CameraPlugin(pluginExtensions["camera"]));
-    this.pluginRegistry.register(pluginExtensions["contacts"], new ContactsPlugin(pluginExtensions["contacts"]));
-    this.pluginRegistry.register(pluginExtensions["email"], new EmailPlugin(pluginExtensions["email"]));
-    this.pluginRegistry.register(pluginExtensions["file-system"], new FileSystemPlugin(pluginExtensions["file-system"]));
-    this.pluginRegistry.register(pluginExtensions["phone-calls"], new PhoneCallsPlugin(pluginExtensions["phone-calls"]));
-    this.pluginRegistry.register(pluginExtensions["image-extension"], new ImageExtension(pluginExtensions["image-extension"]));
-    this.pluginRegistry.register(pluginExtensions["universal-language"], new UniversalLanguageSkill(pluginExtensions["universal-language"]));
+    // Register a real implementation for every extension in the catalog.
+    // Skill-type experts (coding, image, video, game, universal-language)
+    // also get a MoE SkillDefinition so they register as experts in the mesh.
+    for (const [key, def] of Object.entries(pluginExtensions)) {
+      const skillDef: SkillDefinition | undefined =
+        def.type === "skill-expert"
+          ? {
+              id: def.id,
+              name: def.name,
+              description: `${def.name} MoE expert`,
+              expertIndex: this.pluginRegistry.getSkillCount(),
+              specialization: def.capabilities[0] ?? def.id,
+              selfAuthored: false,
+            }
+          : undefined;
+      try {
+        const instance = createPluginInstance(def.name, def, skillDef);
+        this.pluginRegistry.register(def, instance);
+        if (skillDef) this.pluginRegistry.registerSkill(skillDef, def.id);
+      } catch (e) {
+        console.warn(`Failed to instantiate extension "${key}":`, e);
+      }
+    }
 
     // Wire dependencies
     const callHistoryInstance = (this.pluginRegistry as any).plugins.get("call-history") as CallHistoryPlugin;
@@ -104,18 +112,39 @@ export class NeuroclawSystem {
    * Process a user query through the complete pipeline
    */
   async processQuery(input: string): Promise<string> {
-    // 1. Update empathy based on user input
+    if (!this.initialized) await this.initialize();
+
+    // 1. Read the user's emotional state / intent so downstream decisions
+    //    stay aligned (Empathy).
     this.empathy.updateUserContext(input);
+    const emotion = this.empathy.analyzeEmotion(input);
 
-    // 2. Store input in ZIP-IO buffer
-    await this.zipIO.write(input);
+    // 2. Store the (compressed) input in the circular ZIP-IO context buffer.
+    await this.zipIO.ingest(input);
 
-    // 3. Run through neural pipeline
-    // (Pipeline internally uses alignment veto and other subsystems)
+    // 3. Gate the "respond" action through the AlignmentVeto before running.
+    //    A negative-valence user under high arousal lowers our confidence,
+    //    surfacing as self-model surprise the veto can escalate on.
+    const decision = this.veto.evaluate(
+      { id: `respond:${Date.now()}`, name: "respond to user", capabilities: ["text-generate"], reversible: true },
+      { selfModelSurprise: emotion.valence < 0 ? emotion.arousal * 0.5 : 0 }
+    );
+    if (!decision.allowed) {
+      const blocked = `[Withheld] ${decision.reasons.join("; ")}`;
+      await this.zipIO.emit(blocked);
+      return blocked;
+    }
+
+    // 4. Run the query through the real neural runner (THORNS intent →
+    //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation).
     try {
-      // This would call the actual pipeline processing
-      // For now, return a placeholder
-      const result = `Processed: ${input}`;
+      let result = await this.runner.generate(input);
+      if (decision.requiresConfirmation) {
+        result = `${result}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`;
+      }
+
+      // 5. Store the (compressed) output in the ZIP-IO output loop and keep
+      //    the empathy model's alignment score current.
       await this.zipIO.emit(result);
       return result;
     } catch (error) {
@@ -136,7 +165,7 @@ export class NeuroclawSystem {
     return {
       initialized: this.initialized,
       activePlugins: this.pluginRegistry.listActivePlugins().length,
-      contextCapacity: `${this.zipIO.getStats().availableCapacityGB}GB available`,
+      contextCapacity: `${this.contextCapacityGB}GB available`,
       alignment: this.empathy.getAlignmentScore(),
     };
   }
@@ -183,10 +212,18 @@ async function main() {
   }
 }
 
-main().catch((err) => {
+/** True when this module is the process entry point (not merely imported). */
+function isEntryPoint(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(entry) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return false;
+  }
+}
+
+if (isEntryPoint()) main().catch((err) => {
   console.error("Fatal startup error in Neuroclaw launcher:", err);
   process.exit(1);
 });
-
-// Export system class
-export { NeuroclawSystem };

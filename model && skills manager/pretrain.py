@@ -59,6 +59,16 @@ def parse_args():
                     help="gate the mesh readout by wave-signature quantum interference")
     ap.add_argument("--skill-experts", action="store_true",
                     help="attach the registry's skills as real mesh MoE experts")
+    # Section 5.2: swap the model core (position-wise MLP -> elastic mesh),
+    # keeping this entire training loop — data, optimizer, schedule,
+    # checkpointing — identical either way.
+    ap.add_argument("--use-elastic-mesh", action="store_true",
+                     help="Replace the MLP sublayer with the elastic mesh block (Section 5.2)")
+    ap.add_argument("--mesh-num-experts", type=int, default=4)
+    ap.add_argument("--mesh-top-k", type=int, default=2)
+    ap.add_argument("--mesh-n-neurons", type=int, default=64)
+    ap.add_argument("--mesh-settle-steps", type=int, default=3)
+    ap.add_argument("--mesh-n-qubits", type=int, default=4)
     # training
     ap.add_argument("--batch-size", type=int, default=32)
     ap.add_argument("--grad-accum-steps", type=int, default=4)
@@ -145,6 +155,9 @@ def main():
         vale_init=args.vale_init, skill_groups=args.skill_groups,
         skill_top_k=args.skill_top_k, quant_enabled=args.quant,
         quant_bits=args.quant_bits, quant_interference=args.quant_interference,
+        use_elastic_mesh=args.use_elastic_mesh, mesh_num_experts=args.mesh_num_experts,
+        mesh_top_k=args.mesh_top_k, mesh_n_neurons=args.mesh_n_neurons,
+        mesh_settle_steps=args.mesh_settle_steps, mesh_n_qubits=args.mesh_n_qubits,
     )
     if args.use_moe:
         print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")

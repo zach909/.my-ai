@@ -19,8 +19,8 @@ import type {
   MeshState,
   MeshConfig,
   MeshStats,
-  DEFAULT_CONFIG,
 } from './types';
+import { DEFAULT_CONFIG } from './types';
 
 // ─── Math Utilities ────────────────────────────────────────────────────────
 

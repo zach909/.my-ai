@@ -4,20 +4,13 @@ A fixed-capacity ring buffer of conversation turns that never truly empties — 
 cycles, overwriting the oldest turn when full — with periodic disk checkpoints so
 context survives past the live window and across restarts. This is the memory
 layer of the unified core.
-
-The "zip" is literal: checkpoints are zlib-compressed on disk (the design
-notes' compressed input/output — more remembered context per byte stored).
-Plain-JSON checkpoints from older versions still load.
 """
 from __future__ import annotations
 
 import json
 import os
-import zlib
 from collections import deque
 from typing import Deque, Dict, List, Optional
-
-_ZIP_MAGIC = b"ZIP1"  # checkpoint header for the compressed format
 
 
 class ZipLoopMemory:
@@ -66,6 +59,8 @@ class ZipLoopMemory:
             payload = cipher.encrypt(payload)   # encrypt the compressed blob at rest
         with open(self.persist_path, "wb") as f:
             f.write(payload)
+        with open(self.persist_path, "w", encoding="utf-8") as f:
+            json.dump({"capacity": self.capacity, "turns": list(self.buffer)}, f)
 
     def load(self) -> None:
         if not self.persist_path or not os.path.exists(self.persist_path):
@@ -85,14 +80,9 @@ class ZipLoopMemory:
                 data = json.loads(blob.decode("utf-8"))  # pre-compression format
         except (zlib.error, json.JSONDecodeError, UnicodeDecodeError, ValueError):
             return  # a corrupt / unreadable checkpoint must never take down the core
+        with open(self.persist_path, "r", encoding="utf-8") as f:
+            data = json.load(f)
         self.buffer = deque(data.get("turns", []), maxlen=self.capacity)
-
-    def compression_stats(self) -> Dict[str, int]:
-        """Uncompressed vs on-disk bytes of the current buffer (for status UIs)."""
-        raw = json.dumps({"capacity": self.capacity, "turns": list(self.buffer)},
-                         ensure_ascii=False).encode("utf-8")
-        return {"raw_bytes": len(raw),
-                "zipped_bytes": len(_ZIP_MAGIC) + len(zlib.compress(raw, level=6))}
 
     def __len__(self) -> int:
         return len(self.buffer)

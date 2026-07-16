@@ -1,3 +1,4 @@
+# Python / training artifacts
 checkpoints/
 *.pt
 *.model
@@ -10,16 +11,19 @@ venv/
 # Generated training corpus (derived from repo docs; regenerable)
 data/pretrain/corpus.md
 
+# Editor / OS
 .DS_Store
 .vscode
-.env
+.idea
 .swp
+
+# Env & build
+.env
 dist
 build
 .cache
 .gocache
 *.exe
-.idea
 test_data
 *.crt
 __debug_bin*

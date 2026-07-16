@@ -2,7 +2,7 @@ import http from 'node:http';
 import https from 'node:https';
 import dns from 'node:dns/promises';
 import { URL } from 'node:url';
-import type { PluginDefinition } from "../plugin_manager/types.js";
+import type { PluginDefinition, ChromeAppConfig } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 
 export interface HistoryEntry {
@@ -28,8 +28,67 @@ export class BrowserPlugin extends BasePlugin {
   private bookmarks: Bookmark[] = [];
   private currentUrl: string = "about:blank";
 
+  // Chrome Applications: local Chrome apps registered as supplementary data
+  // sources / services (spec "Chrome Apps"). Each is a ChromeAppConfig the
+  // system can connect to for additional local capabilities; connected apps
+  // can be queried for data without leaving the local machine.
+  private chromeApps = new Map<string, ChromeAppConfig>();
+  private connectedApps = new Set<string>();
+  private appData = new Map<string, Record<string, unknown>>();
+
   constructor(definition: PluginDefinition) {
     super(definition);
+    this.registerDefaultChromeApps();
+  }
+
+  /** Seed the commonly available local Chrome apps. */
+  private registerDefaultChromeApps(): void {
+    const defaults: ChromeAppConfig[] = [
+      { id: "chrome-files", name: "Files", url: "chrome://apps/files", permissions: ["file-system"], autoConnect: true, dataSync: false },
+      { id: "chrome-media", name: "Media", url: "chrome://apps/media", permissions: ["media"], autoConnect: false, dataSync: false },
+      { id: "chrome-web-store", name: "Web Store", url: "chrome://apps/webstore", permissions: ["install"], autoConnect: false, dataSync: true },
+    ];
+    for (const app of defaults) {
+      this.chromeApps.set(app.id, app);
+      if (app.autoConnect) void this.connectChromeApp(app.id);
+    }
+  }
+
+  /** Register (install) a Chrome app as a local service/data source. */
+  registerChromeApp(config: ChromeAppConfig): void {
+    this.chromeApps.set(config.id, config);
+    if (config.autoConnect) void this.connectChromeApp(config.id);
+  }
+
+  listChromeApps(): ChromeAppConfig[] {
+    return [...this.chromeApps.values()];
+  }
+
+  /** Connect to a Chrome app so its local data/services become available. */
+  async connectChromeApp(id: string): Promise<boolean> {
+    const app = this.chromeApps.get(id);
+    if (!app) return false;
+    this.connectedApps.add(id);
+    // Local, in-process connection — no external network call (spec: no
+    // external APIs, data stays on the machine).
+    this.appData.set(id, { connectedAt: Date.now(), permissions: app.permissions, dataSync: app.dataSync });
+    return true;
+  }
+
+  isChromeAppConnected(id: string): boolean {
+    return this.connectedApps.has(id);
+  }
+
+  /** Read data a connected Chrome app exposes to the system. */
+  getChromeAppData(id: string): Record<string, unknown> | null {
+    if (!this.connectedApps.has(id)) return null;
+    return this.appData.get(id) ?? {};
+  }
+
+  async disconnectChromeApp(id: string): Promise<boolean> {
+    if (!this.connectedApps.delete(id)) return false;
+    this.appData.delete(id);
+    return true;
   }
 
   async navigate(url: string): Promise<boolean> {
