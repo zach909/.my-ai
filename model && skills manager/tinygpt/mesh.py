@@ -350,7 +350,8 @@ class MeshLM(nn.Module):
     @torch.no_grad()
     def generate(self, idx: torch.Tensor, max_new_tokens: int, temperature: float = 1.0,
                  top_k: Optional[int] = None, top_p: Optional[float] = None,
-                 repetition_penalty: float = 1.0, eos_id: Optional[int] = None, guide=None):
+                 repetition_penalty: float = 1.0, eos_id: Optional[int] = None, guide=None,
+                 stop_fn=None):
         from .sampling import sample_next_token
         for _ in range(max_new_tokens):
             idx_cond = idx if idx.size(1) <= self.cfg.block_size else idx[:, -self.cfg.block_size:]
@@ -365,5 +366,8 @@ class MeshLM(nn.Module):
                                         repetition_penalty=repetition_penalty)
             idx = torch.cat((idx, next_id), dim=1)
             if eos_id is not None and (next_id == eos_id).all():
+                break
+            # caller-supplied early stop (e.g. "enough complete sentences")
+            if stop_fn is not None and stop_fn(idx):
                 break
         return idx
