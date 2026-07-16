@@ -60,6 +60,9 @@ interface SerializedNeuron {
 // ── Parser ────────────────────────────────────────────────────────────────────
 
 export class NeuroLangInterpreter {
+  /** Parse-scoped: the pending `"netsearch"@name=` awaiting a `@net=`. */
+  private pendingNetSearch: string | null = null;
+
   // ── Public API ──────────────────────────────────────────────────────────────
 
   /**
@@ -70,6 +73,10 @@ export class NeuroLangInterpreter {
     const neurons = new Map<string, NeuriNeuron>();
     const errors: string[] = [];
     const printOutputs: string[] = [];
+    // Name of the most recently declared `"netsearch"@name=` that has not yet
+    // been given a location, so a following `"netsearch"@net=` binds to it in
+    // parse order rather than by Map iteration order.
+    this.pendingNetSearch = null;
 
     const lines = source.split(/\r?\n/);
 
@@ -206,17 +213,38 @@ export class NeuroLangInterpreter {
       }
     }
 
-    // ── "netsearch"@net="X" — create netsearch neuron ──────────────────────
+    // ── "netsearch"@name="X" — create a Net Search definition ──────────────
+    {
+      const m = line.match(/^"netsearch"\s*@\s*name\s*=\s*"([^"]+)"$/);
+      if (m) {
+        const name = m[1];
+        const neuron = neurons.get(name) ?? this.defaultNeuron(name);
+        neuron.isNetSearch = true;
+        neurons.set(name, neuron);
+        // Remember this as the definition awaiting a location (parse order),
+        // so a following `@net=` binds here regardless of Map iteration order.
+        this.pendingNetSearch = name;
+        return;
+      }
+    }
+
+    // ── "netsearch"@net="X" — attach a search location and (later) generate ──
     {
       const m = line.match(/^"netsearch"\s*@\s*net\s*=\s*"([^"]+)"$/);
       if (m) {
         const location = m[1];
-        // Use the location as the neuron name for uniqueness
-        const name = `netsearch:${location}`;
-        const neuron = neurons.get(name) ?? this.defaultNeuron(name);
-        neuron.isNetSearch = true;
-        neuron.netLocation = location;
-        neurons.set(name, neuron);
+        // Bind to the pending named netsearch definition (tracked in parse
+        // order); if there is none, fall back to a location-named neuron.
+        const pending = this.pendingNetSearch;
+        let target = pending ? neurons.get(pending) : undefined;
+        if (!target || target.netLocation) {
+          const name = `netsearch:${location}`;
+          target = neurons.get(name) ?? this.defaultNeuron(name);
+          target.isNetSearch = true;
+          neurons.set(target.name, target);
+        }
+        target.netLocation = location;
+        this.pendingNetSearch = null;
         return;
       }
     }

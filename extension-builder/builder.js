@@ -310,6 +310,77 @@ export class ExtensionBuilder {
         }
         return results;
     }
+    /**
+     * Net Search: semantically search across the project's neural definitions,
+     * then generate a small neural network that reproduces the requested
+     * behavior by wiring a fresh output neuron to the best-matching neurons.
+     * The connection weights are the normalized semantic-similarity scores —
+     * a lightweight, deterministic stand-in for the "deep learning" training
+     * step described in the spec, using only local data (no external APIs).
+     * Returns the generated neuron plus the matches it was built from.
+     */
+    netSearchGenerate(projectId, query, topK = 3) {
+        const project = this.projects.get(projectId);
+        if (!project)
+            return null;
+        const queryTokens = this.tokenizeForSearch(query);
+        // Score every neuron by semantic overlap between the query and the
+        // neuron's name + definition + corpus (bag-of-words cosine-ish).
+        const scored = [];
+        for (const neuron of project.neurons.values()) {
+            const text = `${neuron.name} ${neuron.definition} ${neuron.corpus}`;
+            const score = this.semanticSimilarity(queryTokens, this.tokenizeForSearch(text));
+            if (score > 0)
+                scored.push({ neuron, score });
+        }
+        scored.sort((a, b) => b.score - a.score);
+        const matches = scored.slice(0, topK);
+        // With no evidence (empty/untokenizable query, or zero overlap against
+        // every definition) there is nothing to generate — return null rather
+        // than fabricating an "evidence-free but fully confident" neuron.
+        if (queryTokens.length === 0 || matches.length === 0)
+            return null;
+        // Generate the network: a new neuron whose value reflects the actual
+        // accumulated evidence, connected to each match with a
+        // similarity-weighted edge. `denom` guards the weight division only.
+        const totalScore = matches.reduce((s, m) => s + m.score, 0);
+        const denom = totalScore || 1;
+        const generated = this.addNeuron(projectId, `netsearch:${query}`.slice(0, 48), Math.min(1, totalScore));
+        generated.type = 'netsearch';
+        generated.query = query;
+        generated.definition = `Generated from Net Search "${query}" over ${matches.length} definition(s)`;
+        generated.corpus = matches.map(m => m.neuron.name).join('\n');
+        for (const m of matches) {
+            // Higher-value (more stable) targets resist change: scale the
+            // learned weight down by the target's value, echoing elastic
+            // neuron values.
+            const weight = (m.score / denom) * (1 - (m.neuron.value ?? 0.5) * 0.5);
+            this.connectNeurons(projectId, generated.id, m.neuron.id, Number(weight.toFixed(4)), 0);
+        }
+        project.updatedAt = Date.now();
+        return {
+            neuron: generated,
+            matches: matches.map(m => ({ id: m.neuron.id, name: m.neuron.name, score: Number(m.score.toFixed(4)) })),
+        };
+    }
+    tokenizeForSearch(text) {
+        return (text || '').toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+    }
+    semanticSimilarity(a, b) {
+        if (a.length === 0 || b.length === 0)
+            return 0;
+        const setB = new Set(b);
+        let overlap = 0;
+        const seen = new Set();
+        for (const t of a) {
+            if (setB.has(t) && !seen.has(t)) {
+                overlap++;
+                seen.add(t);
+            }
+        }
+        // Cosine-like normalization over unique token counts.
+        return overlap / Math.sqrt(new Set(a).size * new Set(b).size);
+    }
     importCodeToNet(projectId, name, binaryCode) {
         const project = this.projects.get(projectId);
         if (!project)
