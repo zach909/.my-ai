@@ -17,3 +17,7 @@
 ## 2025-05-15 - NeuronMesh CSR Caching Optimization
 **Learning:** Re-building the Compressed Sparse Row (CSR) structure and auxiliary TypedArrays from scratch on every tick in `NeuronMesh.propagate` caused significant overhead due to thousands of `Map` lookups and frequent allocations. Implementing a lazy `cacheValid` invalidation pattern and updating `flatWeights` directly during Hebbian learning improves propagate time by ~2.8x (~14.1ms to ~4.9ms for 200 nodes) while maintaining system correctness and history tracking.
 **Action:** Use lazy caching for graph-to-array conversions in neural components, and prioritize direct buffer updates in training loops to avoid full cache invalidation.
+
+## 2025-05-15 - RLMTrainer Performance Optimization
+**Learning:** Significant overhead in reinforcement learning loops often comes from redundant array conversions and non-sequential memory access. Reordering loops to ensure row-major access to weight matrices, implementing 4x loop unrolling, and replacing high-level abstractions like `Math.max(...Array.from())` with manual loops over TypedArrays yielded measurable improvements (~10% in Q-value computation, ~7.5% in overall training). Tracking the replay buffer size incrementally also avoided (N)$ scans of the buffer.
+**Action:** In all performance-critical neural/RL loops, prioritize raw TypedArray iteration, manual unrolling for hot inner loops, and incremental state tracking to avoid expensive collection scans.
