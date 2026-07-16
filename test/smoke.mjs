@@ -905,6 +905,14 @@ async function testWebBackend() {
     const chatJson = JSON.parse(chat.body);
     check(chat.status === 200 && typeof chatJson.response === 'string' && chatJson.response.length > 0,
       'Web backend /api/chat returns a real neural-pipeline response (server.py bridge target)');
+
+    // Plain conversation must reach neural generation — not get hijacked
+    // into a plugin (the old default routed every unmapped intent to a
+    // browser web search).
+    const convo = await post('/api/chat', { message: 'hello, what can you do?' });
+    const convoJson = JSON.parse(convo.body);
+    check(convo.status === 200 && typeof convoJson.response === 'string' && !convoJson.response.startsWith('[Plugin]'),
+      'Web backend /api/chat routes plain conversation to neural generation, not a plugin');
   } finally {
     await web.stop();
   }
@@ -938,6 +946,8 @@ async function testChromeApps() {
   b.registerChromeApp({ id: 'chrome-x', name: 'X', url: 'chrome://apps/x', permissions: ['p'], autoConnect: true, dataSync: false });
   check(b.isChromeAppConnected('chrome-x'), 'Newly registered autoConnect Chrome app becomes available');
   check(await b.disconnectChromeApp('chrome-x') && !b.isChromeAppConnected('chrome-x'), 'Chrome app can be disconnected');
+  check(await b.onMessage('hello, what can you do?') === null,
+    'Browser plugin declines plain conversation (falls through to generation)');
 }
 
 // Extension Builder: the drag-connect editor, drag labels, per-neuron
