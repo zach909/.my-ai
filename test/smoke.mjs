@@ -992,6 +992,47 @@ async function testNeuralDefinitionDirectives() {
   check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');
 }
 
+// End-to-end encryption: the local encryption manager round-trips data and
+// rejects tampering (AES-256-GCM auth tag).
+async function testEncryption() {
+  const { EncryptionManager } = await load('interface/encryption.js');
+  const enc = new EncryptionManager();
+  const key = enc.deriveKey ? enc.deriveKey('correct horse battery staple') : (await import('node:crypto')).randomBytes(32);
+  const secret = 'private user data that never leaves the machine';
+  const { encrypted, iv, tag } = enc.encrypt(secret, key);
+  check(Buffer.isBuffer(encrypted) && !encrypted.toString().includes(secret), 'Encryption produces ciphertext, not plaintext');
+  const back = enc.decrypt(encrypted, key, iv, tag);
+  check(back === secret, 'Encryption round-trips (decrypt(encrypt(x)) === x)');
+  let tampered = false;
+  try {
+    const bad = Buffer.from(encrypted); bad[0] ^= 0xff;
+    enc.decrypt(bad, key, iv, tag);
+  } catch { tampered = true; }
+  check(tampered, 'Encryption rejects tampered ciphertext (GCM auth)');
+}
+
+// Self-authored extensions: the AI builds a memory extension from a prompt,
+// saves it un-quantized, then installs it quantized (spec: extensions are
+// quantized before installation) and registers it as a MoE expert.
+async function testSelfExtension() {
+  const { NeuroclawLLM } = await load('models && skills/llm.js');
+  const dir = mkdtempSync(join(tmpdir(), 'selfext-'));
+  try {
+    const llm = new NeuroclawLLM({ selfExtensionsDir: dir });
+    llm.build();
+    const before = llm.getStats().selfExtensionsCount ?? 0;
+    await llm.createSelfExtension('learn to greet', 'hello, nice to meet you');
+    const { readdirSync, existsSync: exists } = await import('node:fs');
+    const entries = readdirSync(dir).filter((e) => e.startsWith('self_ext_'));
+    check(entries.length >= 1, 'Self-extension is created on disk');
+    const extDir = join(dir, entries[0]);
+    check(exists(join(extDir, 'model.json')), 'Self-extension is saved un-quantized (model.json)');
+    check(exists(join(extDir, 'model.q4.json')), 'Self-extension is quantized before install (model.q4.json)');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1023,6 +1064,8 @@ async function main() {
     ['Chrome Apps', testChromeApps],
     ['Extension Builder flow', testExtensionBuilderFlow],
     ['Neural Definition directives', testNeuralDefinitionDirectives],
+    ['End-to-end encryption', testEncryption],
+    ['Self-authored extensions', testSelfExtension],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);

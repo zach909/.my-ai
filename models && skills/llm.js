@@ -41,7 +41,7 @@ export class NeuroclawLLM {
         this.config = { ...DEFAULT_LLM_CONFIG, ...config };
         this.builder = new ExtensionBuilder();
         this.tokenizer = new Tokenizer();
-        this.selfExtensionsDir = join(homedir(), ".neuroclaw", "extensions");
+        this.selfExtensionsDir = this.config.selfExtensionsDir ?? join(homedir(), ".neuroclaw", "extensions");
         if (!existsSync(this.selfExtensionsDir)) {
             mkdirSync(this.selfExtensionsDir, { recursive: true });
         }
