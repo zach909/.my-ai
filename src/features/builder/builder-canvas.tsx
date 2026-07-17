@@ -151,7 +151,7 @@ export function BuilderCanvas({
             role="button"
             tabIndex={0}
             data-neuron-id={n.id}
-            className={`absolute cursor-grab select-none rounded-md border-2 bg-card px-2.5 py-1.5 text-xs shadow-sm transition-shadow active:cursor-grabbing ${TYPE_COLORS[n.type]} ${
+            className={`absolute cursor-grab select-none rounded-md border-2 bg-card px-2.5 py-1.5 text-xs shadow-sm transition-shadow active:cursor-grabbing focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${TYPE_COLORS[n.type]} ${
               isSelected ? 'ring-2 ring-primary' : ''
             } ${isSource ? 'ring-2 ring-amber-400' : ''} ${isMatch ? 'ring-2 ring-emerald-400' : ''}`}
             style={{ left: n.x, top: n.y, width: NODE_W, minHeight: NODE_H }}
@@ -159,6 +159,13 @@ export function BuilderCanvas({
             onClick={(e) => {
               e.stopPropagation();
               onNodeClick(n.id);
+            }}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault();
+                e.stopPropagation();
+                onNodeClick(n.id);
+              }
             }}
             onDragOver={(e) => e.preventDefault()}
             onDrop={(e) => {
