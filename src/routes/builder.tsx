@@ -334,8 +334,10 @@ function BuilderPage() {
                     variant="destructive"
                     className="h-7 w-full text-xs"
                     onClick={() => {
-                      b.deleteNeuron(selected.id)
-                      setSelectedId(null)
+                      if (confirm(`Are you sure you want to delete the neuron "${selected.name}"?`)) {
+                        b.deleteNeuron(selected.id)
+                        setSelectedId(null)
+                      }
                     }}
                   >
                     Delete neuron
