@@ -358,6 +358,47 @@ def build_skill(registry, model, tokenizer, skill_id: str, contracts: List[Defin
     return result
 
 
+def learn_and_extend(registry, model, tokenizer, skill_id: str,
+                     contracts: List[Definishon], install_dir: str,
+                     name: Optional[str] = None, epochs: int = 200, lr: float = 5e-3,
+                     weight_penalty: float = 1e-4, tolerance: float = 0.3,
+                     bits: int = 8):
+    """The design notes' flagship Extensions example, end to end and autonomous:
+    "the AI creates extensions to store memory, logic, and learned abilities.
+    Example: after learning to code it creates a coding extension" /
+    "after learning to write code, the AI creates a coding extension to
+    permanently preserve that knowledge."
+
+    The AI learns a capability from `contracts`, and *only if it actually
+    learned it* (the contracts converged) does it autonomously create the
+    extension that preserves that knowledge:
+      1. train the behaviour into the mesh (real gradient descent),
+      2. lock the satisfied neurons in with raised vale (§2, no forgetting),
+      3. register it as a live MoE skill on `registry`, and
+      4. install it to disk in quantized form (§8 — "extensions are quantized
+         before installation"), so the ability persists across restarts.
+
+    Nothing is registered or written if the AI did not actually acquire the
+    capability, so it never "creates a coding extension" for a skill it hasn't
+    learned. Returns (TrainResult, installed_path | None).
+    """
+    import os
+    device = str(next(model.parameters()).device)
+    eb = ExtensionBuilder(model, tokenizer, device=device)
+    result = eb.train(contracts, epochs=epochs, lr=lr,
+                      weight_penalty=weight_penalty, tolerance=tolerance)
+    if hasattr(model, "raise_vale"):
+        for k in result.satisfied:
+            model.raise_vale([k % model.N], amount=0.3)
+
+    installed_path = None
+    if result.converged:
+        registry.register_skill(skill_id, name or skill_id.replace("-", " ").title())
+        installed_path = os.path.join(install_dir, f"{skill_id}.ext")
+        eb.install(installed_path, contracts, bits=bits)
+    return result, installed_path
+
+
 def _atomic_torch_save(payload: dict, path: str) -> None:
     import os
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)
