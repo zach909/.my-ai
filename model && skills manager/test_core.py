@@ -1246,6 +1246,95 @@ def test_local_plugins():
           "chrome-apps connector probes locally (no external call)")
 
 
+def test_plugin_builder():
+    """Plugin Builder skill: "creates and configures new plugins" (design
+    notes, Extensions)."""
+    import tempfile as _tf
+    from tinygpt.plugins import default_registry, build_plugin
+
+    reg = default_registry(data_dir=_tf.mkdtemp())
+    check(reg.get("workout-log") is None, "the new plugin doesn't exist before it's built")
+    ext = build_plugin(reg, "workout-log", "os.workout", name="Workout Log")
+    check(ext.id == "workout-log" and any(e.id == "workout-log" for e in reg.plugins()),
+          "plugin builder registers a new, immediately-listed plugin")
+    add = reg.dispatch("workout-log", "add", "ran 5k")
+    check(add.ok and "added" in add.output, "a plugin-builder-created plugin dispatches for real")
+    check("ran 5k" in reg.dispatch("workout-log", "list").output,
+          "a plugin-builder-created plugin persists data locally, like the built-in stores")
+
+
+def test_skill_builder():
+    """Skill Builder skill: "trains and deploys new AI mini-models" / "after
+    learning to write code, the AI creates a coding extension to permanently
+    preserve that knowledge" (design notes, Extensions)."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip skill-builder test (torch not installed)")
+        return
+    import tempfile as _tf
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.extension_builder import Definishon, build_skill
+    from tinygpt.plugins import default_registry
+
+    tok = _CharTok()
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=64, block_size=32, arch="mesh",
+                      mesh_neurons=18, mesh_dims=4, mesh_input=6, settle_ticks=3)
+    model = build_model(cfg)
+    reg = default_registry(data_dir=_tf.mkdtemp())
+    check(reg.get("greeter") is None, "the new skill doesn't exist before it's built")
+
+    contracts = [Definishon(when="ping", then="pong")]
+    result = build_skill(reg, model, tok, "greeter", contracts,
+                         epochs=200, lr=5e-3, tolerance=0.3)
+    check(result.converged, "skill builder actually trains the contract it's given")
+    check(any(e.id == "greeter" for e in reg.skills()),
+          "skill builder permanently registers the trained behaviour as a skill")
+
+
+def test_self_healing():
+    """Self-Healing skill / Elastic Values: "identifies a poor-performing
+    neuron and demotes its value instead of deleting it." """
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip self-healing test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=64, block_size=16, arch="mesh",
+                      mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=3)
+    model = build_model(cfg).eval()
+
+    check(model.self_heal() == [], "self-heal is a no-op before the mesh has ever settled")
+
+    vale_before = model.get_vale()
+    total_before = sum(vale_before)
+    model(torch.tensor([[3, 8, 12]]))  # populate _last_settled with real amplitudes
+    healed = model.self_heal(amount=0.3, z_threshold=0.5)
+    vale_after = model.get_vale()
+    check(abs(sum(vale_after) - total_before) < 1e-4,
+          "demoting poor-performing neurons conserves the total vale budget (zero-sum)")
+    if healed:
+        check(all(vale_after[i] <= vale_before[i] + 1e-6 for i in healed),
+              "a healed (demoted) neuron's vale does not increase")
+        check(any(vale_after[i] > vale_before[i] for i in range(model.N) if i not in healed),
+              "the vale removed from demoted neurons is redistributed to the others")
+
+    # demote_vale directly: the mirror image of raise_vale
+    before2 = model.get_vale()
+    model.demote_vale([0, 1], amount=0.2)
+    after2 = model.get_vale()
+    check(after2[0] < before2[0] and after2[1] < before2[1],
+          "demote_vale lowers the targeted neurons' vale")
+    check(abs(sum(after2) - sum(before2)) < 1e-4, "demote_vale conserves the total vale budget")
+
+
 def test_skills_attach_to_mesh():
     try:
         import torch  # noqa: F401
@@ -1286,6 +1375,7 @@ def main():
                test_plugin_skill_registry, test_skills_attach_to_mesh,
                test_quantum_interference_in_mesh, test_local_encryption,
                test_encrypted_memory, test_output_layer, test_local_plugins,
+               test_plugin_builder, test_skill_builder, test_self_healing,
                test_code_to_net, test_net_search, test_adaptive_routing,
                test_system_control):
         print(f"\n{fn.__name__}:")

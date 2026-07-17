@@ -25,7 +25,7 @@ claimed to beat the transformer — it is the unproven substrate to test.
 """
 from __future__ import annotations
 
-from typing import Optional
+from typing import List, Optional
 
 import torch
 import torch.nn as nn
@@ -435,6 +435,48 @@ class MeshLM(nn.Module):
         # renormalise to the fixed total
         self.vale.mul_(self._vale_total / (self.vale.sum() + 1e-9))
         self.vale.clamp_(0.0, 1.0)
+
+    @torch.no_grad()
+    def demote_vale(self, neuron_ids, amount: float = 0.3) -> None:
+        """Lower the vale (stability) of the given neurons and raise everyone
+        else's proportionally, keeping the total fixed (zero-sum) — the design
+        notes' "identifies a poor-performing neuron and demotes its value
+        instead of deleting it." The demoted neuron isn't removed or reset; it
+        just becomes more plastic, so it's free to be repurposed by whatever
+        the mesh needs next (the self-healing skill's mechanism, §2)."""
+        ids = torch.as_tensor(list(neuron_ids), dtype=torch.long, device=self.vale.device)
+        if ids.numel() == 0:
+            return
+        lower_amt = float(amount) * ids.numel()
+        others = torch.ones(self.N, dtype=torch.bool, device=self.vale.device)
+        others[ids] = False
+        self.vale[ids] = torch.clamp(self.vale[ids] - amount, 0.0, 1.0)
+        if others.any():
+            pool = self.vale[others]
+            share = pool / (pool.sum() + 1e-9)
+            self.vale[others] = torch.clamp(pool + share * lower_amt, 0.0, 1.0)
+        # renormalise to the fixed total
+        self.vale.mul_(self._vale_total / (self.vale.sum() + 1e-9))
+        self.vale.clamp_(0.0, 1.0)
+
+    @torch.no_grad()
+    def self_heal(self, amount: float = 0.3, z_threshold: float = 1.0) -> List[int]:
+        """Self-Healing skill: find neurons that are effectively dead (settled
+        amplitude far below the mesh's mean, from the last forward pass — not
+        pulling their weight) and demote their vale so they become plastic
+        enough to be repurposed, rather than sitting inert forever. Returns
+        the ids of the neurons healed (empty if the mesh hasn't settled yet,
+        or nothing looks poor-performing)."""
+        if self._last_settled is None:
+            return []
+        amps = self._last_settled.mean(dim=0)[:, 1:].norm(dim=-1)   # (N,)
+        mean, std = float(amps.mean()), float(amps.std())
+        if std < 1e-9:
+            return []
+        poor = [i for i in range(self.N) if float(amps[i]) < mean - z_threshold * std]
+        if poor:
+            self.demote_vale(poor, amount=amount)
+        return poor
 
     @torch.no_grad()
     def set_vale(self, neuron_id: int, value: float) -> None:
