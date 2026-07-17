@@ -400,6 +400,23 @@ class PluginSkillRegistry:
         }
 
 
+def build_plugin(registry: PluginSkillRegistry, plugin_id: str, service: str,
+                 name: Optional[str] = None, kind: Optional[str] = None) -> Extension:
+    """Plugin Builder skill: "creates and configures new plugins" (design
+    notes, Extensions). Builds a new local, JSON-store-backed connector (the
+    same real mechanism tasks/contacts/calendar/notifications/messaging use —
+    add/list/clear against a local file, no external API) and registers it
+    into `registry` immediately, so it shows up in `plugins()` /
+    `dispatch()` right away. Idempotent: calling again with the same
+    `plugin_id` replaces the prior registration."""
+    display_name = name or plugin_id.replace("-", " ").title()
+    p = _JsonStorePlugin(plugin_id, display_name, service, registry.data_dir,
+                        kind or plugin_id)
+    ext = Extension(plugin_id, display_name, ExtensionType.PLUGIN, service, p)
+    registry.extensions[plugin_id] = ext
+    return ext
+
+
 def default_registry(data_dir: Optional[str] = None) -> PluginSkillRegistry:
     """The full extension set from the design notes."""
     return PluginSkillRegistry(data_dir=data_dir)

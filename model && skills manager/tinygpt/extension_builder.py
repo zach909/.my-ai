@@ -336,6 +336,28 @@ def load_extension(path: str, model) -> dict:
     return payload
 
 
+def build_skill(registry, model, tokenizer, skill_id: str, contracts: List[Definishon],
+                name: Optional[str] = None, epochs: int = 200, lr: float = 5e-3,
+                weight_penalty: float = 1e-4, tolerance: float = 0.3) -> TrainResult:
+    """Skill Builder skill: train a new definishon-based behaviour into the
+    mesh and permanently register it as a skill on `registry` (any object
+    with a `register_skill(id, name)` method, e.g.
+    `tinygpt.plugins.PluginSkillRegistry`) — "trains and deploys new AI
+    mini-models" / "after learning to write code, the AI creates a coding
+    extension to permanently preserve that knowledge" (design notes,
+    Extensions). Satisfied contracts also get their mesh neurons' vale raised
+    (§2) so the newly learned behaviour locks in rather than drifting away
+    under further training."""
+    eb = ExtensionBuilder(model, tokenizer, device=str(next(model.parameters()).device))
+    result = eb.train(contracts, epochs=epochs, lr=lr, weight_penalty=weight_penalty,
+                      tolerance=tolerance)
+    if hasattr(model, "raise_vale"):
+        for k in result.satisfied:
+            model.raise_vale([k % model.N], amount=0.3)
+    registry.register_skill(skill_id, name or skill_id.replace("-", " ").title())
+    return result
+
+
 def _atomic_torch_save(payload: dict, path: str) -> None:
     import os
     os.makedirs(os.path.dirname(path) or ".", exist_ok=True)

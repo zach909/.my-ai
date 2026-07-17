@@ -29,16 +29,21 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Optional
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The trained model + its inference helper live in the tinygpt package.
-_TINYGPT = os.path.join(_ROOT, "tinygpt")
-if _TINYGPT not in sys.path:
-    sys.path.insert(0, _TINYGPT)
+# The trained model + its inference helper live in the tinygpt package, which
+# is itself inside the Python core directory (not at the repo root) — put
+# that directory on sys.path (not tinygpt/ itself) so `import tinygpt.infer`
+# resolves the same way it does when tinygpt's own scripts import it.
+_PYCORE = os.path.join(_ROOT, "model && skills manager")
+if _PYCORE not in sys.path:
+    sys.path.insert(0, _PYCORE)
+_TINYGPT = os.path.join(_PYCORE, "tinygpt")
 
-# Default to the elastic-mesh generator; fall back to the plain transformer if
-# the mesh checkpoint hasn't been trained yet.
+# Default to the SFT (chat-tuned) checkpoint; fall back to the base pretrain
+# checkpoint if fine-tuning hasn't run yet. Matches pretrain.py/finetune.py's
+# own --out-dir/--ckpt-name defaults ("checkpoints/gpt.pt", "checkpoints/gpt_sft.pt").
 _DEFAULT_CKPTS = [
-    os.path.join(_TINYGPT, "checkpoints_mesh_v2", "gpt_mesh_v2.pt"),
-    os.path.join(_TINYGPT, "checkpoints_v2", "gpt_v2.pt"),
+    os.path.join(_PYCORE, "checkpoints", "gpt_sft.pt"),
+    os.path.join(_PYCORE, "checkpoints", "gpt.pt"),
 ]
 
 _generator = None  # lazily-loaded tinygpt.infer.Generator
@@ -310,17 +315,28 @@ def run(host: str = "127.0.0.1", port: int = 7860, ckpt: Optional[str] = None) -
         looked = ckpt or " or ".join(os.path.relpath(p, _ROOT) for p in _DEFAULT_CKPTS)
         print(f"[server] no checkpoint found ({looked}).")
         print("[server] train one first, e.g.:")
-        print("    cd tinygpt && python3 build_corpus.py && "
-              "python3 train_tokenizer.py --data-dir data/pretrain --vocab-size 8000 "
-              "--model-prefix checkpoints_v2/spm")
-        print("    python3 pretrain.py --use-elastic-mesh --tokenizer checkpoints_v2/spm.model "
-              "... --out-dir checkpoints_mesh_v2 --ckpt-name gpt_mesh_v2.pt")
+        print('    cd "model && skills manager" && python3 build_corpus.py && '
+              "python3 train_tokenizer.py --vocab-size 8000")
+        print("    python3 pretrain.py --device cuda   # writes checkpoints/gpt.pt")
+        print("    python3 finetune.py --device cuda   # writes checkpoints/gpt_sft.pt")
         sys.exit(1)
     _load_generator(ckpt_path)
     _load_skills()
     _start_ts_backend()
     server = HTTPServer((host, port), NeuroClaw)
     print(f"Neuroclaw ready on http://{host}:{port}")
+
+    # SIGTERM (the default a process manager, `kill`, or a test harness sends
+    # to stop this service) has no handler by default and would skip the
+    # `finally` below entirely, orphaning the spawned TS subsystem backend.
+    # Route it through the same clean-shutdown path as Ctrl+C (SIGINT).
+    import signal
+
+    def _on_sigterm(signum, frame):
+        raise KeyboardInterrupt
+
+    signal.signal(signal.SIGTERM, _on_sigterm)
+
     try:
         server.serve_forever()
     except KeyboardInterrupt:
@@ -328,6 +344,10 @@ def run(host: str = "127.0.0.1", port: int = 7860, ckpt: Optional[str] = None) -
     finally:
         if _ts_process is not None:
             _ts_process.terminate()
+            try:
+                _ts_process.wait(timeout=5)
+            except subprocess.TimeoutExpired:
+                _ts_process.kill()
 
 
 def parse_args():
