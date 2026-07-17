@@ -59,8 +59,6 @@ for real, the rest fail cleanly instead of phoning out — and a **skill** is a
 Mixture-of-Experts expert that attaches straight into the mesh's settle loop
 (`--skill-experts` at train time; `plugins` / `skills` / `plugin:` commands in
 the core). The full extension list from the design notes lives there.
-   calls; memory is the saved neuron state; a bounded output ring buffer
-   (ZIP-IO) compresses input/output into circular buffers.
 
 Around the mesh: an **alignment veto** (blocks objectionable / drifting actions,
 fails safe; irreversible actions route to the human), an **empathy engine**
@@ -80,16 +78,18 @@ python build_corpus.py                  # build a local corpus (no downloads)
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # 145 checks, no checkpoint needed
-python test_core.py                     # full check suite, no checkpoint needed
+python test_core.py                     # full check suite (198 checks), no checkpoint needed
 python test_elastic_mesh.py             # mesh + expert-core smoke checks
+
+# local browser chat backend (same Generator core.py/chat.py use)
+python interface/server.py --ckpt checkpoints/gpt_sft.pt --port 8000
 ```
 
 ### Run the TypeScript backend (pipeline, plugins, Extension Builder)
 
 ```bash
 npm install --legacy-peer-deps
-npm test              # builds the backend into dist/ and runs 141 smoke checks
+npm test              # builds the backend into dist/ and runs 161 smoke checks
 node dist/index.js web 3000   # Neuroclaw dashboard + /api/* at http://localhost:3000
 node dist/index.js cli        # interactive shell
 ```
