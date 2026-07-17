@@ -687,6 +687,27 @@ def test_neurolang_spec_aliases():
               - float(rt_bare.neurons["dst"].ex_weights["src"])) < 1e-9,
           "quoted and bare @connections numbers install the same weight")
 
+    # Higher-dimensional thinking: ".target/variable" reads one named state
+    # variable (dimension) of the target, not the whole state. A plain
+    # whole-state name ("state") stays the default all-to-all behaviour.
+    named = neurolang.interpret('\n'.join([
+        'name="src"', 'name="dst"',
+        '"dst"@connections=".src/mood"*"0.5"+"0.1"',
+    ]))
+    dst, src = named.neurons["dst"], named.neurons["src"]
+    check(dst.ex_vars["src"] is not None and "mood" in src.var_index,
+          "@connections to a named variable (.src/mood) selects a target state dimension")
+    check(rt_bare.neurons["dst"].ex_vars["src"] is None,
+          "@connections to the whole-state name (.src/state) reads the whole state (default)")
+    # propagation still runs cleanly with a dimension-selected connection
+    src.inject([0.9, 0.2, 0.3])
+    for n in named.neurons.values():
+        n.compute_next(named.neurons)
+    for n in named.neurons.values():
+        n.apply_next()
+    check(dst.state.shape == src.state.shape,
+          "a dimension-selected connection propagates without breaking state shape")
+
 
 def test_extension_install():
     """Design notes: "Save projects without quantization. Install projects
