@@ -80,10 +80,20 @@ python pretrain.py --device cuda        # trains the mesh (arch defaults to "mes
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
 python test_core.py                     # full check suite (198 checks), no checkpoint needed
 python test_elastic_mesh.py             # mesh + expert-core smoke checks
+python main.py demo                     # end-to-end integration demo (see below)
 
 # local browser chat backend (same Generator core.py/chat.py use)
 python interface/server.py --ckpt checkpoints/gpt_sft.pt --port 8000
 ```
+
+`python main.py demo` (`test_integration.py`) is the proof that the pieces above are
+one system, not a pile of separately-tested parts: it carries a *single* trained
+mesh through NeuroLang (dictionary-linked concepts, spec-literal directives),
+elastic-value self-healing, extension save/install (quantized), live Plugin
+Builder and Skill Builder calls against that same mesh, a real `core.py` chat
+session (empathy + the RL ledger + §5 quantum-interference selection, all
+active together, driven as a subprocess through a scripted conversation), and
+a real HTTP round-trip through the browser backend — 21 checks, no mocks.
 
 ### Run the TypeScript backend (pipeline, plugins, Extension Builder)
 

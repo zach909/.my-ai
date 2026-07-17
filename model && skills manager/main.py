@@ -8,7 +8,15 @@ mesh-connected DSL and extension builder now live there.)
 Usage:
     python main.py build <program.nl>   # build + train the mesh from a NeuroLang program
     python main.py chat  [args...]      # talk to a trained mesh through the core
-    python main.py test                 # run the test suite
+    python main.py test                 # run the unit/smoke test suite (test_core.py)
+    python main.py demo                 # end-to-end integration demo (test_integration.py):
+                                         #   one trained mesh carried through NeuroLang,
+                                         #   elastic values + self-healing, extension
+                                         #   save/install, live plugin/skill building,
+                                         #   a real core.py chat session (empathy + RL
+                                         #   ledger + quantum interference together), and
+                                         #   a real HTTP round-trip through the browser
+                                         #   backend — proof the pieces work as ONE system.
     python main.py code2net <name> <src.py>          # Code-to-Net: code -> neural net
     python main.py netsearch <query> <doc>...         # Net Search: semantic retrieval net
 
@@ -90,6 +98,8 @@ def main():
         return _run("core.py", rest)
     if cmd == "test":
         return _run("test_core.py", rest)
+    if cmd == "demo":
+        return _run("test_integration.py", rest)
     if cmd == "code2net":
         return _code2net(rest)
     if cmd == "netsearch":
