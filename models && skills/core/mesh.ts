@@ -162,8 +162,15 @@ export class NeuronMesh {
 
     const nodes = this.cachedNodes;
     const N = nodes.length;
-    const nodeHistory = new Map(nodes.map(n => [n.id, [] as number[]]));
-    const histories = nodes.map(n => nodeHistory.get(n.id)!);
+
+    // Fast construction of histories and nodeHistory Map to avoid overhead of double arrays and lookup
+    const histories: number[][] = [];
+    const nodeHistory = new Map<number, number[]>();
+    for (let i = 0; i < N; i++) {
+      const arr: number[] = [];
+      histories.push(arr);
+      nodeHistory.set(nodes[i].id, arr);
+    }
 
     // Synchronize activations from source of truth and inputs
     for (let i = 0; i < N; i++) this.currActivations[i] = nodes[i].activation;
@@ -181,45 +188,90 @@ export class NeuronMesh {
 
     const curr = this.currActivations;
     const next = this.nextActivations;
-    const gates = new Uint8Array(N);
-    const vs = new Float32Array(N);
-    const hasV = new Uint8Array(N);
-
-    for (let i = 0; i < N; i++) {
-      const n = nodes[i];
-      const g = this.nodeGroups.get(n.id);
-      gates[i] = (activeGroups && g !== undefined && !activeGroups.has(g)) ? 1 : 0;
-      const v = vale?.get(n.id);
-      if (v !== undefined) { vs[i] = v; hasV[i] = 1; }
-    }
 
     const flatWeights = this.flatWeights;
     const flatIndices = this.flatIndices;
     const rowStarts = this.rowStarts;
     const biases = this.biases;
 
+    // Resolve the activation function outside the hot loop to avoid dynamic lookup and switches
+    const actFn = this.config.activationFunction;
+    let activate: (x: number) => number;
+    if (actFn === 'relu') {
+      activate = (x) => x > 0 ? x : 0;
+    } else if (actFn === 'tanh') {
+      activate = Math.tanh;
+    } else if (actFn === 'sigmoid') {
+      activate = (x) => 1 / (1 + Math.exp(-x));
+    } else if (actFn === 'swish') {
+      activate = (x) => x / (1 + Math.exp(-x));
+    } else {
+      activate = (x) => x > 0 ? x : 0;
+    }
+
     let iteration = 0, converged = false, residual = 0;
-    for (; iteration < this.config.maxIterations; iteration++) {
-      for (let i = 0; i < N; i++) {
-        if (gates[i]) next[i] = curr[i];
-        else {
+
+    // Fast-path: When there are no gates and no vale gating (most common case)
+    if (!activeGroups && !vale) {
+      for (; iteration < this.config.maxIterations; iteration++) {
+        for (let i = 0; i < N; i++) {
           let sum = biases[i];
           const start = rowStarts[i], end = rowStarts[i + 1];
-          for (let k = start; k < end; k++) sum += curr[flatIndices[k]] * flatWeights[k];
-          const comp = this.activate(sum);
-          next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
+          for (let k = start; k < end; k++) {
+            sum += curr[flatIndices[k]] * flatWeights[k];
+          }
+          next[i] = activate(sum);
+          histories[i].push(next[i]);
         }
-        histories[i].push(next[i]);
+
+        residual = 0;
+        for (let i = 0; i < N; i++) {
+          residual += Math.abs(next[i] - curr[i]);
+          curr[i] = next[i];
+          nodes[i].activation = curr[i];
+          nodes[i].activationHistory.push(curr[i]);
+        }
+        if (this.checkConvergence(residual)) { converged = true; break; }
+      }
+    } else {
+      // General path: When either gates or vale gating is active
+      const gates = new Uint8Array(N);
+      const vs = new Float32Array(N);
+      const hasV = new Uint8Array(N);
+
+      for (let i = 0; i < N; i++) {
+        const n = nodes[i];
+        const g = this.nodeGroups.get(n.id);
+        gates[i] = (activeGroups && g !== undefined && !activeGroups.has(g)) ? 1 : 0;
+        const v = vale?.get(n.id);
+        if (v !== undefined) { vs[i] = v; hasV[i] = 1; }
       }
 
-      residual = 0;
-      for (let i = 0; i < N; i++) {
-        residual += Math.abs(next[i] - curr[i]);
-        curr[i] = next[i];
-        nodes[i].activation = curr[i];
-        nodes[i].activationHistory.push(curr[i]);
+      for (; iteration < this.config.maxIterations; iteration++) {
+        for (let i = 0; i < N; i++) {
+          if (gates[i]) {
+            next[i] = curr[i];
+          } else {
+            let sum = biases[i];
+            const start = rowStarts[i], end = rowStarts[i + 1];
+            for (let k = start; k < end; k++) {
+              sum += curr[flatIndices[k]] * flatWeights[k];
+            }
+            const comp = activate(sum);
+            next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
+          }
+          histories[i].push(next[i]);
+        }
+
+        residual = 0;
+        for (let i = 0; i < N; i++) {
+          residual += Math.abs(next[i] - curr[i]);
+          curr[i] = next[i];
+          nodes[i].activation = curr[i];
+          nodes[i].activationHistory.push(curr[i]);
+        }
+        if (this.checkConvergence(residual)) { converged = true; break; }
       }
-      if (this.checkConvergence(residual)) { converged = true; break; }
     }
 
     return {
