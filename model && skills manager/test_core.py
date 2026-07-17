@@ -1431,6 +1431,51 @@ def test_learn_and_extend():
           "no extension is created for a capability the AI failed to learn")
 
 
+def test_install_community_extension():
+    """Runs Locally: "Users can install community skills or create new ones."
+    An extension one system creates + shares can be installed into a fresh
+    system, where it becomes a live, registered skill carrying its contract."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip community-extension test (torch not installed)")
+        return
+    import os
+    import tempfile as _tf
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.extension_builder import (Definishon, learn_and_extend,
+                                           install_extension)
+    from tinygpt.plugins import default_registry
+
+    tok = _CharTok()
+    share = _tf.mkdtemp()
+    cfg = ModelConfig(vocab_size=128, block_size=64, arch="mesh",
+                      mesh_neurons=18, mesh_dims=4, mesh_input=6, settle_ticks=3)
+
+    # author: learn + install (share) an extension file
+    torch.manual_seed(2)
+    author_model = build_model(cfg)
+    author_reg = default_registry(data_dir=os.path.join(share, "a"))
+    result, shared = learn_and_extend(
+        author_reg, author_model, tok, "greeter-ext",
+        [Definishon(when="hi", then="yo")], install_dir=os.path.join(share, "pub"),
+        epochs=500, lr=5e-3, tolerance=0.3)
+    check(result.converged and shared and os.path.exists(shared),
+          "an author system creates and shares an extension file")
+
+    # community user: FRESH model + FRESH registry install the shared file
+    user_model = build_model(cfg)
+    user_reg = default_registry(data_dir=os.path.join(share, "u"))
+    check(not any(e.id == "greeter-ext" for e in user_reg.skills()),
+          "a fresh system does not have the community extension before installing")
+    payload = install_extension(user_reg, user_model, shared)
+    check(any(e.id == "greeter-ext" for e in user_reg.skills()),
+          "installing a shared extension registers it as a live skill on the fresh system")
+    check(payload.get("contracts") and payload["contracts"][0]["when"] == "hi",
+          "the installed community extension carries its capability contract")
+
+
 def test_self_healing():
     """Self-Healing skill / Elastic Values: "identifies a poor-performing
     neuron and demotes its value instead of deleting it." """
@@ -1513,7 +1558,7 @@ def main():
                test_quantum_interference_in_mesh, test_local_encryption,
                test_encrypted_memory, test_output_layer, test_local_plugins,
                test_plugin_builder, test_skill_builder, test_learn_and_extend,
-               test_self_healing,
+               test_install_community_extension, test_self_healing,
                test_browser_server,
                test_code_to_net, test_net_search, test_adaptive_routing,
                test_system_control):

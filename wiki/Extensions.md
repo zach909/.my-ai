@@ -43,6 +43,10 @@ This is what "the AI creates a coding extension to permanently preserve that kno
 
 Crucially, nothing is registered or written for a capability the AI *failed* to learn — it never fabricates a coding extension for a skill it hasn't acquired. Run it live and narrated with `python main.py learn-code`, or see it asserted end to end in `test_integration.py` §4b and `test_core.py`'s `test_learn_and_extend`.
 
+### `install_extension()` — installing community skills
+
+"Users can install community skills or create new ones" (design notes, [[Platforms]]). `learn_and_extend()` is "create new ones"; `tinygpt.extension_builder.install_extension()` is the other half. It takes an `.ext` file another system authored (or a previous session saved), loads its weights into a fresh model, and registers the capability it carries as a live skill on the registry — so an extension someone else built becomes usable here, contract and all. `test_core.py`'s `test_install_community_extension` proves the full round-trip: an author system creates and shares an extension, and a fresh model + fresh registry installs it into a working, registered skill.
+
 ## The extension catalog (23 named extensions + Coding skill)
 
 Location, Camera, Microphone, Voice Activation, Notifications, Account Info, Contacts, Calendar, Phone Calls, Call History, Email, Tasks, Messaging, Radio, Device Connectivity, App Diagnostics, File System, Screenshots & Screen Recording, Passkeys, Browser ([[Chrome-Apps]]), Self-Healing, Plugin Builder, Skill Builder, and Coding — see [[Plugins]] and [[Skills]] for the plugin/skill split across this list, and [[System-Access]] for the ones that touch the local OS directly.

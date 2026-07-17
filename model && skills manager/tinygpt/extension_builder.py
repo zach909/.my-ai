@@ -336,6 +336,22 @@ def load_extension(path: str, model) -> dict:
     return payload
 
 
+def install_extension(registry, model, path: str, skill_id: Optional[str] = None,
+                      name: Optional[str] = None) -> dict:
+    """Install a community-shared (or previously-saved) extension: load the
+    `.ext` file into `model` and register the capability it carries as a live
+    skill on `registry`, so an extension someone else built becomes usable
+    here. This is the "users can install community skills" path (design notes,
+    Runs Locally) — the counterpart to `learn_and_extend`'s "or create new
+    ones". The skill id defaults to the extension file's base name. Returns the
+    loaded payload (config, contracts, format)."""
+    import os
+    payload = load_extension(path, model)
+    sid = skill_id or os.path.splitext(os.path.basename(path))[0]
+    registry.register_skill(sid, name or sid.replace("-", " ").replace("_", " ").title())
+    return payload
+
+
 def build_skill(registry, model, tokenizer, skill_id: str, contracts: List[Definishon],
                 name: Optional[str] = None, epochs: int = 200, lr: float = 5e-3,
                 weight_penalty: float = 1e-4, tolerance: float = 0.3) -> TrainResult:
