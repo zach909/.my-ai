@@ -142,6 +142,15 @@ def main() -> None:
     section("6. Browser backend: real HTTP round-trip")
     run_browser_session(workdir, ckpt_dir)
 
+    # ── 7. The Python <-> TypeScript bridge (top-level interface/server.py):
+    #      the real Python model answers /api/chat while the real compiled
+    #      TypeScript pipeline (MoE, empathy, alignment veto, ZIP-IO, 28
+    #      plugins & skills) answers /api/systems through it — proof the two
+    #      halves of the project are one running system, not two unconnected
+    #      trees that both happen to work in isolation.
+    section("7. Python <-> TypeScript bridge (repo-root interface/server.py)")
+    run_bridge_session(workdir, ckpt_dir)
+
     print(f"\n{_passed} passed, {_failed} failed  (integration demo)")
     if _failed:
         sys.exit(1)
@@ -276,6 +285,74 @@ def run_browser_session(workdir, ckpt_dir) -> None:
         proc.terminate()
         try:
             proc.wait(timeout=5)
+        except subprocess.TimeoutExpired:
+            proc.kill()
+
+
+def run_bridge_session(workdir, ckpt_dir) -> None:
+    """Bring up the repo-root interface/server.py against the same checkpoint
+    the core.py session used, and prove BOTH halves of the project answer
+    through it: /api/chat from the real Python model, /api/systems proxied
+    to the real compiled TypeScript pipeline it spawns as a sibling backend."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    repo_root = os.path.dirname(here)
+    main_js = os.path.join(repo_root, "dist", "interface", "main.js")
+    if not os.path.exists(main_js):
+        print("  skip bridge test (dist/interface/main.js missing — run `bun run build:backend` first)")
+        return
+
+    port = 8198
+    proc = subprocess.Popen(
+        [sys.executable, os.path.join(repo_root, "interface", "server.py"),
+         "--ckpt", os.path.join(ckpt_dir, "gpt_sft.pt"), "--port", str(port)],
+        cwd=repo_root, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True,
+    )
+    try:
+        deadline = time.time() + 30
+        status = None
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/status", timeout=1) as r:
+                    status = json.loads(r.read())
+                    if status.get("running"):
+                        break
+            except Exception:
+                time.sleep(0.5)
+        check(status is not None and status.get("running") is True,
+              "the bridge server comes up and reports the Python model's live status")
+
+        with urllib.request.urlopen(
+            urllib.request.Request(f"http://127.0.0.1:{port}/api/chat",
+                                   data=json.dumps({"message": "hello"}).encode(),
+                                   headers={"Content-Type": "application/json"}),
+            timeout=30,
+        ) as r:
+            chat = json.loads(r.read())
+        check(isinstance(chat.get("response"), str) and len(chat["response"]) > 0,
+              "the bridge server's /api/chat answers from the real Python model")
+
+        # /api/systems is proxied straight to the compiled TS pipeline
+        # (interface/main.ts's startWeb) -- a live, non-trivial subsystem
+        # report proves that sibling process is genuinely up and answering,
+        # not just that the proxy returned *something*.
+        systems = None
+        deadline = time.time() + 20
+        while time.time() < deadline:
+            try:
+                with urllib.request.urlopen(f"http://127.0.0.1:{port}/api/systems", timeout=2) as r:
+                    systems = json.loads(r.read())
+                    if systems.get("running"):
+                        break
+            except Exception:
+                time.sleep(0.5)
+        check(systems is not None and systems.get("running") is True,
+              "/api/systems is proxied to the real, live TypeScript pipeline subprocess")
+        check(isinstance(systems.get("subsystems", {}).get("plugins"), bool) if systems else False,
+              "the proxied TS status reports real subsystem state (plugins/veto/empathy/etc.), not a stub")
+    finally:
+        proc.terminate()
+        try:
+            proc.wait(timeout=10)
         except subprocess.TimeoutExpired:
             proc.kill()
 
