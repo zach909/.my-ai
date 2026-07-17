@@ -33,6 +33,7 @@ from tinygpt.config import ModelConfig
 from tinygpt.data import build_chat_prompt
 from tinygpt.empathy import EmpathyEngine
 from tinygpt.extension_builder import Definishon, ExtensionBuilder
+from tinygpt.infer import resolve_tokenizer
 from tinygpt.live_guide import LiveGuide
 from tinygpt.memory import ZipLoopMemory
 from tinygpt.model import build_model
@@ -141,7 +142,11 @@ def main():
     device = resolve_device(args.device)
 
     model, ckpt = load_model(args.ckpt, device)
-    tok_path = args.tokenizer or ckpt.get("tokenizer", "checkpoints/spm.model")
+    # resolve_tokenizer (shared with chat.py/interface/server.py via tinygpt.infer)
+    # falls back to the checkpoint's own directory when the stored path is
+    # relative to a training run's cwd that no longer matches ours.
+    tok_path = resolve_tokenizer(
+        args.tokenizer or ckpt.get("tokenizer", "checkpoints/spm.model"), args.ckpt)
     tokenizer = Tokenizer(tok_path)
 
     import os as _os

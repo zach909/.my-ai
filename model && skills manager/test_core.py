@@ -1246,6 +1246,48 @@ def test_local_plugins():
           "chrome-apps connector probes locally (no external call)")
 
 
+def test_browser_server():
+    """"Runs on your machine": the browser backend (interface/server.py) reuses
+    tinygpt.infer.Generator, the exact code path chat.py uses, so the CLI and
+    the browser can never drift apart. Tests the server's chat/session logic
+    directly (no real HTTP socket needed)."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip browser-server test (torch not installed)")
+        return
+    import sys as _sys
+    interface_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "interface")
+    if interface_dir not in _sys.path:
+        _sys.path.insert(0, interface_dir)
+    from server import ChatServer
+    from tinygpt.config import ModelConfig
+    from tinygpt.infer import Generator
+    from tinygpt.model import build_model
+
+    tok = _CharTok()
+    cfg = ModelConfig(vocab_size=64, block_size=32, arch="mesh",
+                      mesh_neurons=16, mesh_dims=4, mesh_input=6, settle_ticks=3)
+    model = build_model(cfg).eval()
+    generator = Generator(model, tok, cfg, "cpu", "unused.pt")
+    server = ChatServer(generator, dict(max_new_tokens=6, temperature=0.8, top_k=20,
+                                        top_p=0.95, repetition_penalty=1.1))
+
+    status = server.status()
+    check(status["parameters"] > 0 and status["device"] == "cpu",
+          "server status reports real model stats")
+
+    reply1 = server.reply("hello there")
+    check(isinstance(reply1, str), "server.reply() returns a string reply")
+    check(len(server.session.history) == 2, "server tracks the user turn and the reply as history")
+
+    server.reply("how are you")
+    check(len(server.session.history) == 4, "multi-turn history accumulates across calls")
+
+    server.reset()
+    check(len(server.session.history) == 0, "reset() clears the conversation")
+
+
 def test_plugin_builder():
     """Plugin Builder skill: "creates and configures new plugins" (design
     notes, Extensions)."""
@@ -1376,6 +1418,7 @@ def main():
                test_quantum_interference_in_mesh, test_local_encryption,
                test_encrypted_memory, test_output_layer, test_local_plugins,
                test_plugin_builder, test_skill_builder, test_self_healing,
+               test_browser_server,
                test_code_to_net, test_net_search, test_adaptive_routing,
                test_system_control):
         print(f"\n{fn.__name__}:")
