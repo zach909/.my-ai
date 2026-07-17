@@ -795,7 +795,11 @@ P_VALE   = re.compile(r'^"([^"]+)"\s*@vale\s*=\s*"?([0-9.]+)"?$')
 # elastic-core value directive "@value=" (this codebase's own dialect calls
 # it "@vale="). Both parse to the same rt.set_vale() call.
 P_VALUE  = re.compile(r'^"([^"]+)"\s*@value\s*=\s*"?([0-9.]+)"?$')
-P_CONN   = re.compile(r'^"([^"]+)"\s*@connections\s*=\s*"\.\s*([^/]+)/([^"]+)"\s*\*\s*([0-9.]+)\s*\+\s*([0-9.]+)$')
+# The design doc's Neural Definition Format quotes every placeholder value,
+# including the connection's bias/weight ("...*"bias"+"weight""), the same way
+# it quotes @value="number". Accept the numbers with or without surrounding
+# quotes so the literal spec syntax parses (matching P_VALUE's "?...."? form).
+P_CONN   = re.compile(r'^"([^"]+)"\s*@connections\s*=\s*"\.\s*([^/]+)/([^"]+)"\s*\*\s*"?([0-9.]+)"?\s*\+\s*"?([0-9.]+)"?$')
 P_DEFN   = re.compile(r'^"([^"]+)"\s*@definishon\s*=\s*"([^"]+)"$')
 # Spec-literal alias: the design doc spells this directive "@definition="
 # (this codebase's own dialect calls it "@definishon="). Both parse to the

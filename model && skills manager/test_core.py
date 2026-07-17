@@ -665,6 +665,28 @@ def test_neurolang_spec_aliases():
           and rt_mixed.neurons["gamma"].definition == "mixed spelling still works",
           "spec and dialect directive spellings can be mixed in one program")
 
+    # The Neural Definition Format quotes every placeholder, including the
+    # connection's bias/weight ("...*"bias"+"weight""). The parser must accept
+    # the quoted numbers (as it already does for @value="number"), not only the
+    # bare-number dialect form.
+    quoted_conn = '\n'.join([
+        'name="src"',
+        'name="dst"',
+        '"dst"@connections=".src/state"*"0.5"+"0.3"',
+    ])
+    bare_conn = '\n'.join([
+        'name="src"',
+        'name="dst"',
+        '"dst"@connections=".src/state"*0.5+0.3',
+    ])
+    rt_quoted = neurolang.interpret(quoted_conn)
+    rt_bare = neurolang.interpret(bare_conn)
+    check("src" in rt_quoted.neurons["dst"].ex_weights,
+          "spec-literal quoted @connections=\"...\"*\"bias\"+\"weight\" installs the connection")
+    check(abs(float(rt_quoted.neurons["dst"].ex_weights["src"])
+              - float(rt_bare.neurons["dst"].ex_weights["src"])) < 1e-9,
+          "quoted and bare @connections numbers install the same weight")
+
 
 def test_extension_install():
     """Design notes: "Save projects without quantization. Install projects
