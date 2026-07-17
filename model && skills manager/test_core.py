@@ -51,6 +51,33 @@ def test_memory():
     check(len(m2) == 3 and m2.recent()[-1]["content"] == "t4", "memory persists and reloads")
 
 
+def test_memory_compression():
+    import json
+    from tinygpt.memory import ZipLoopMemory, _ZIP_MAGIC
+
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "mem.json")
+    m = ZipLoopMemory(capacity=200, persist_path=p)
+    for _ in range(200):
+        m.add("user", "the quick brown fox jumps over the lazy dog " * 5)
+    raw_size = len(json.dumps({"capacity": m.capacity, "turns": list(m.buffer)},
+                              ensure_ascii=False).encode("utf-8"))
+    m.save()
+    on_disk = os.path.getsize(p)
+    check(on_disk < raw_size, 'zip-loop memory is actually compressed on disk (design\'s "zipped" I/O)')
+    with open(p, "rb") as f:
+        blob = f.read()
+    check(blob.startswith(_ZIP_MAGIC), "persisted buffer carries the zip-loop compression marker")
+
+    # backward compatibility: a pre-compression plain-JSON checkpoint still loads
+    legacy_path = os.path.join(d, "legacy.json")
+    with open(legacy_path, "w", encoding="utf-8") as f:
+        json.dump({"capacity": 3, "turns": [{"role": "user", "content": "old format"}]}, f)
+    legacy = ZipLoopMemory(capacity=3, persist_path=legacy_path)
+    check(len(legacy) == 1 and legacy.recent()[0]["content"] == "old format",
+          "a pre-compression plain-JSON checkpoint still loads (backward compatible)")
+
+
 def test_actions():
     from tinygpt.actions import ActionLayer
     approve = ActionLayer(confirm_fn=lambda _: True)
@@ -61,6 +88,60 @@ def test_actions():
     check(not approve.maybe_execute("plain text").proposed, "no action on plain text")
     check(not deny.maybe_execute("ACTION: read_file /etc/hostname").executed,
           "read_file declined when not approved")
+
+
+def test_empathy():
+    from tinygpt.empathy import EmpathyEngine, read_mood
+
+    pos = read_mood("This is great, thank you so much!")
+    neg = read_mood("This is terrible and broken, fix it NOW!!!")
+    check(pos.valence > 0, "empathy reads positive valence from positive language")
+    check(neg.valence < 0, "empathy reads negative valence from a frustrated complaint")
+    check(neg.arousal > pos.arousal, "an urgent, exclamation-heavy complaint reads higher-arousal")
+
+    calm = EmpathyEngine(smoothing=0.6)
+    calm.observe("good, thanks, that works")
+    check(calm.alignment_score() > 0.5, "a positive reading raises the alignment score")
+    adj = calm.sampling_adjustment()
+    check(adj["temperature_scale"] == 1.0 and adj["top_p_scale"] == 1.0,
+          "a calm/positive mood leaves sampling at the caller's defaults")
+
+    frustrated = EmpathyEngine(smoothing=0.9)
+    frustrated.observe("this is broken and useless, fix it immediately!!!")
+    adj2 = frustrated.sampling_adjustment()
+    check(adj2["temperature_scale"] < 1.0, "a frustrated, aroused mood tightens sampling temperature")
+    check(frustrated.alignment_score() < calm.alignment_score(),
+          "a frustrated user reads a lower alignment score than a calm one")
+
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "empathy.json")
+    e3 = EmpathyEngine(persist_path=p)
+    e3.observe("thanks, appreciate it")
+    e3.save()
+    e4 = EmpathyEngine(persist_path=p)
+    check(len(e4) == 1 and abs(e4.valence - e3.valence) < 1e-9, "empathy mood persists and reloads")
+
+
+def test_rl_ledger():
+    from tinygpt.rl import ReasoningLedger
+
+    ledger = ReasoningLedger(repeat_penalty=0.3, max_penalty=0.9)
+    check(len(ledger) == 0, "a fresh ledger has recorded nothing")
+    ledger.record("try turning it off and on again")
+    n = ledger.record("try turning it off and on again")
+    check(n == 2 and len(ledger) == 2, "repeated steps increment the seen count")
+    check(ledger.penalty("a brand new suggestion") == 0.0, "a never-seen step carries no penalty")
+    check(ledger.penalty("try turning it off and on again") > 0.0, "a repeated step is penalized")
+    check(ledger.penalty("  Try Turning It Off And On Again  ") > 0.0,
+          "repeat detection is case/whitespace insensitive")
+
+    d = tempfile.mkdtemp()
+    p = os.path.join(d, "ledger.json")
+    ledger.persist_path = p
+    ledger.save()
+    ledger2 = ReasoningLedger(persist_path=p)
+    check(len(ledger2) == 2 and ledger2.times_seen("try turning it off and on again") == 2,
+          "reasoning ledger persists and reloads")
 
 
 def test_selection():
@@ -87,6 +168,98 @@ def test_selection():
     import math
     check(best is not None and math.isfinite(best.score), "best-of-N returns a finite-scored candidate")
     check(len(best.ids) > 0, "best-of-N produced a continuation")
+
+
+def test_reinforce_step():
+    """Design notes ("Reinforcement Learning"): "the AI records completed
+    reasoning steps so they are not repeated unnecessarily." Verify the
+    ledger is actually wired into best-of-N selection, not just a standalone
+    data structure: recording a candidate's text visibly discounts its score
+    the next time the identical candidate set is scored."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip reinforce-step test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.selection import best_of_n
+    from tinygpt.rl import ReasoningLedger
+
+    class ToyTok:
+        def decode(self, ids):
+            return " ".join(map(str, ids))
+
+    cfg = ModelConfig(vocab_size=64, block_size=32, arch="mesh",
+                      mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=3)
+    model = build_model(cfg).eval()
+    kwargs = dict(max_new_tokens=6, temperature=1.0, top_k=20, top_p=0.95,
+                 repetition_penalty=1.1, eos_id=None, device="cpu")
+
+    torch.manual_seed(7)
+    plain = best_of_n(model, ToyTok(), prompt_ids=[1, 2, 3], n=3, **kwargs)
+
+    ledger = ReasoningLedger(repeat_penalty=0.5, max_penalty=0.9)
+    for _ in range(5):
+        ledger.record(plain.text)  # saturate the repeat penalty for this exact step
+
+    torch.manual_seed(7)  # reproduce the identical candidate draws
+    penalized = best_of_n(model, ToyTok(), prompt_ids=[1, 2, 3], n=3, ledger=ledger, **kwargs)
+
+    # either the ledger steers selection to a genuinely different (unpenalized)
+    # candidate, or — if the repeated one still wins — its reported score must
+    # visibly reflect the saturated penalty. Both outcomes prove the ledger is
+    # wired into best-of-N, not just a standalone data structure.
+    if penalized.text == plain.text:
+        check(penalized.score < plain.score - 0.3,
+              "reinforce step: a repeated winner's score reflects the saturated penalty")
+    else:
+        check(True, "reinforce step: the saturated repeat penalty steered selection to a "
+                    "different, unpenalized candidate instead of recommitting to it")
+
+
+def test_wave_signature_selection():
+    """Design notes ("Quantum Neural Network"): "Neuron 2 has a wave signature
+    of 4.5 and an amplitude of 10." Verify neuron_waves() reports exactly that
+    (id, fixed wave signature, per-forward amplitude) triple, and that
+    interference-based selection (§5) actually runs end to end on a real mesh."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip wave-signature-selection test (torch not installed)")
+        return
+    import math
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.selection import select_by_interference
+
+    class ToyTok:
+        def decode(self, ids):
+            return " ".join(map(str, ids))
+
+    cfg = ModelConfig(vocab_size=64, block_size=32, arch="mesh",
+                      mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=3)
+    model = build_model(cfg).eval()
+
+    model(torch.tensor([[1, 2, 3]]))  # populate _last_settled with real amplitudes
+    waves = model.neuron_waves()
+    check(len(waves) == model.N, "neuron_waves reports one (id, wave signature, amplitude) triple per neuron")
+    check([w[0] for w in waves] == list(range(model.N)), "neuron_waves is indexed by neuron id")
+    check(len({round(w[1], 6) for w in waves}) == model.N,
+          "every neuron carries a distinct, fixed wave signature (no two share a phase)")
+    check(hasattr(model, "state_phase") and math.isfinite(model.state_phase()),
+          "the mesh's settled state exposes a finite overall wave phase")
+
+    torch.manual_seed(3)
+    picked = select_by_interference(model, ToyTok(), prompt_ids=[1, 2, 3], n=4, max_new_tokens=6,
+                                    temperature=1.0, top_k=20, top_p=0.95, repetition_penalty=1.1,
+                                    eos_id=None, device="cpu",
+                                    generator=torch.Generator().manual_seed(0))
+    check(picked is not None and math.isfinite(picked.score),
+          "interference-based (§5) selection returns a finite-scored candidate")
+    check(len(picked.ids) > 0, "interference-based selection produced a continuation")
 
 
 class _CharTok:
@@ -455,6 +628,101 @@ def test_neurolang_bridge():
     out = m.generate(ids, max_new_tokens=len(tok.encode("pong")), temperature=0.0)
     check(tok.decode(out[0, ids.size(1):].tolist()) == "pong",
           "NeuroLang extension builder trains the mesh to satisfy the definishon (ping -> pong)")
+
+
+def test_neurolang_spec_aliases():
+    """The design doc's Neural Definition Format spells the two core directives
+    "@value=" and "@definition="; this codebase's own dialect spells them
+    "@vale=" and "@definishon=". Both spellings must parse identically."""
+    import neurolang
+
+    dialect = '\n'.join([
+        'name="alpha"',
+        '"alpha"@vale="0.75"',
+        '"alpha"@definishon="hello"',
+    ])
+    spec = '\n'.join([
+        'name="beta"',
+        '"beta"@value="0.75"',
+        '"beta"@definition="hello"',
+    ])
+    rt_dialect = neurolang.interpret(dialect)
+    rt_spec = neurolang.interpret(spec)
+    check(abs(rt_dialect.neurons["alpha"].vale.item()
+              - rt_spec.neurons["beta"].vale.item()) < 1e-9,
+          "spec '@value=' alias sets the same elastic-core value as '@vale='")
+    check(rt_dialect.neurons["alpha"].definition == rt_spec.neurons["beta"].definition == "hello",
+          "spec '@definition=' alias sets the same contract as '@definishon='")
+
+    # a program can freely mix both spellings on the same neuron
+    mixed = '\n'.join([
+        'name="gamma"',
+        '"gamma"@value="0.4"',
+        '"gamma"@definishon="mixed spelling still works"',
+    ])
+    rt_mixed = neurolang.interpret(mixed)
+    check(abs(rt_mixed.neurons["gamma"].vale.item() - 0.4) < 1e-6
+          and rt_mixed.neurons["gamma"].definition == "mixed spelling still works",
+          "spec and dialect directive spellings can be mixed in one program")
+
+
+def test_extension_install():
+    """Design notes: "Save projects without quantization. Install projects
+    using quantization." Verify both paths round-trip correctly and that
+    install() actually shrinks the on-disk model."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip extension-install test (torch not installed)")
+        return
+    import torch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.extension_builder import (Definishon, ExtensionBuilder,
+                                           load_extension)
+
+    tok = _CharTok()
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=64, block_size=32, arch="mesh",
+                      mesh_neurons=18, mesh_dims=4, mesh_input=6, settle_ticks=3)
+    model = build_model(cfg)
+    eb = ExtensionBuilder(model, tok, device="cpu")
+    contracts = [Definishon(when="ping", then="pong")]
+    # a tight tolerance (vs. test_extension_builder's lenient 0.3) so the
+    # contract is solidly learned, not merely under the bar on teacher-forced
+    # loss: a borderline-satisfied contract can still greedy-decode
+    # incorrectly (exposure bias), which would make this a flaky test of
+    # save/install fidelity rather than a real one.
+    eb.train(contracts, epochs=400, lr=5e-3, weight_penalty=1e-4, tolerance=0.05)
+
+    d = tempfile.mkdtemp()
+    saved_path = os.path.join(d, "project.ext")
+    installed_path = os.path.join(d, "install.ext")
+    eb.save_project(saved_path, contracts)
+    eb.install(installed_path, contracts, bits=8)
+
+    saved_payload = torch.load(saved_path, map_location="cpu", weights_only=False)
+    check(saved_payload["quantized"] is False, "save_project stores full-precision (unquantized) weights")
+    check(os.path.getsize(installed_path) < os.path.getsize(saved_path),
+          "install() quantization shrinks the on-disk extension vs. save_project()")
+
+    # reload the saved (exact) project into a fresh model: byte-identical behaviour.
+    # eval() disables dropout so generation is deterministic (mirrors core.py's
+    # load_model(), which always eval()s right after loading a checkpoint).
+    fresh = build_model(cfg).eval()
+    load_extension(saved_path, fresh)
+    ids = torch.tensor([[tok.bos_id] + tok.encode("ping")])
+    out_saved = fresh.generate(ids, max_new_tokens=len(tok.encode("pong")), temperature=0.0)
+    check(tok.decode(out_saved[0, ids.size(1):].tolist()) == tok.decode(tok.encode("pong")),
+          "a saved (unquantized) project reloads and reproduces the trained behaviour")
+
+    # reload the installed (quantized) extension: behaviour survives quantization
+    fresh_q = build_model(cfg).eval()
+    payload = load_extension(installed_path, fresh_q)
+    check(payload["quantized"] is True, "load_extension reports the installed extension as quantized")
+    out_q = fresh_q.generate(ids, max_new_tokens=len(tok.encode("pong")), temperature=0.0)
+    check(tok.decode(out_q[0, ids.size(1):].tolist()) == tok.decode(tok.encode("pong")),
+          "an installed (quantized) extension still reproduces the trained behaviour")
 
 
 def test_moe():
@@ -1018,8 +1286,8 @@ def main():
                test_plugin_skill_registry, test_skills_attach_to_mesh,
                test_quantum_interference_in_mesh, test_local_encryption,
                test_encrypted_memory, test_output_layer, test_local_plugins,
-               test_code_to_net, test_net_search):
-               test_shell_action_gated, test_experts, test_mesh_with_experts, test_adaptive_routing, test_system_control):
+               test_code_to_net, test_net_search, test_adaptive_routing,
+               test_system_control):
         print(f"\n{fn.__name__}:")
         try:
             fn()
