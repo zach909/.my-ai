@@ -16,6 +16,8 @@ dist-ssr
 .vite-out
 package-lock.json
 bun.lock
+__pycache__/
+*.pyc
 
 # Editor directories and files
 .vscode/*
