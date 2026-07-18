@@ -394,6 +394,11 @@ export class ElasticCoreBlock {
             const q = Math.round(((clamped + 1) * 0.5) * levels);
             const dequantized = q * invLevels * 2 - 1;
             this.quantizationResidual[i] = clamped - dequantized;
+        for (let i = 0; i < next.length; i++) {
+            const compensated = Math.max(-1, Math.min(1, next[i] + this.quantizationResidual[i]));
+            const q = Math.round(((compensated + 1) / 2) * levels);
+            const dequantized = (q / levels) * 2 - 1;
+            this.quantizationResidual[i] = compensated - dequantized;
             next[i] = dequantized;
         }
     }

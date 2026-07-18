@@ -1317,6 +1317,11 @@ func makeRequestWithRetry(ctx context.Context, method string, requestURL *url.UR
 var testMakeRequestDialContext func(ctx context.Context, network, addr string) (net.Conn, error)
 
 func makeRequest(ctx context.Context, method string, requestURL *url.URL, headers http.Header, body io.Reader, regOpts *registryOptions) (*http.Response, error) {
+	// Validate the request URL to prevent SSRF attacks
+	if err := validateRequestURL(requestURL); err != nil {
+		return nil, err
+	}
+
 	if requestURL.Scheme != "http" && regOpts != nil && regOpts.Insecure {
 		requestURL.Scheme = "http"
 	}
@@ -1358,6 +1363,73 @@ func makeRequest(ctx context.Context, method string, requestURL *url.URL, header
 		c.Transport = tr
 	}
 	return c.Do(req)
+}
+
+// validateRequestURL validates that the request URL is safe to use
+// to prevent SSRF attacks by blocking requests to private/internal networks
+func validateRequestURL(u *url.URL) error {
+	if u == nil {
+		return errors.New("nil URL")
+	}
+
+	host := u.Hostname()
+	if host == "" {
+		return errors.New("empty host")
+	}
+
+	// Resolve the hostname to IP addresses
+	ips, err := net.LookupIP(host)
+	if err != nil {
+		return fmt.Errorf("failed to resolve host: %w", err)
+	}
+
+	for _, ip := range ips {
+		if isPrivateIP(ip) {
+			return fmt.Errorf("request to private/internal network address %s is not allowed", ip)
+		}
+	}
+
+	return nil
+}
+
+// isPrivateIP checks if an IP address is in a private or reserved range
+func isPrivateIP(ip net.IP) bool {
+	if ip.IsLoopback() || ip.IsLinkLocalUnicast() || ip.IsLinkLocalMulticast() {
+		return true
+	}
+
+	if ip.To4() != nil {
+		// IPv4 private ranges
+		privateRanges := []struct {
+			start net.IP
+			end   net.IP
+		}{
+			{net.IPv4(10, 0, 0, 0), net.IPv4(10, 255, 255, 255)},
+			{net.IPv4(172, 16, 0, 0), net.IPv4(172, 31, 255, 255)},
+			{net.IPv4(192, 168, 0, 0), net.IPv4(192, 168, 255, 255)},
+			{net.IPv4(127, 0, 0, 0), net.IPv4(127, 255, 255, 255)},
+			{net.IPv4(0, 0, 0, 0), net.IPv4(0, 255, 255, 255)},
+			{net.IPv4(169, 254, 0, 0), net.IPv4(169, 254, 255, 255)},
+			{net.IPv4(224, 0, 0, 0), net.IPv4(255, 255, 255, 255)}, // Multicast
+		}
+
+		for _, r := range privateRanges {
+			if bytes.Compare(ip, r.start) >= 0 && bytes.Compare(ip, r.end) <= 0 {
+				return true
+			}
+		}
+	} else if ip.To16() != nil {
+		// IPv6 private/reserved ranges
+		if ip.IsPrivate() {
+			return true
+		}
+		// Check for IPv6 loopback
+		if ip.Equal(net.IPv6loopback) {
+			return true
+		}
+	}
+
+	return false
 }
 
 func getValue(header, key string) string {
