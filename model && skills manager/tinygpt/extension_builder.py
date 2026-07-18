@@ -336,6 +336,22 @@ def load_extension(path: str, model) -> dict:
     return payload
 
 
+def install_extension(registry, model, path: str, skill_id: Optional[str] = None,
+                      name: Optional[str] = None) -> dict:
+    """Install a community-shared (or previously-saved) extension: load the
+    `.ext` file into `model` and register the capability it carries as a live
+    skill on `registry`, so an extension someone else built becomes usable
+    here. This is the "users can install community skills" path (design notes,
+    Runs Locally) — the counterpart to `learn_and_extend`'s "or create new
+    ones". The skill id defaults to the extension file's base name. Returns the
+    loaded payload (config, contracts, format)."""
+    import os
+    payload = load_extension(path, model)
+    sid = skill_id or os.path.splitext(os.path.basename(path))[0]
+    registry.register_skill(sid, name or sid.replace("-", " ").replace("_", " ").title())
+    return payload
+
+
 def build_skill(registry, model, tokenizer, skill_id: str, contracts: List[Definishon],
                 name: Optional[str] = None, epochs: int = 200, lr: float = 5e-3,
                 weight_penalty: float = 1e-4, tolerance: float = 0.3) -> TrainResult:
@@ -356,6 +372,47 @@ def build_skill(registry, model, tokenizer, skill_id: str, contracts: List[Defin
             model.raise_vale([k % model.N], amount=0.3)
     registry.register_skill(skill_id, name or skill_id.replace("-", " ").title())
     return result
+
+
+def learn_and_extend(registry, model, tokenizer, skill_id: str,
+                     contracts: List[Definishon], install_dir: str,
+                     name: Optional[str] = None, epochs: int = 200, lr: float = 5e-3,
+                     weight_penalty: float = 1e-4, tolerance: float = 0.3,
+                     bits: int = 8):
+    """The design notes' flagship Extensions example, end to end and autonomous:
+    "the AI creates extensions to store memory, logic, and learned abilities.
+    Example: after learning to code it creates a coding extension" /
+    "after learning to write code, the AI creates a coding extension to
+    permanently preserve that knowledge."
+
+    The AI learns a capability from `contracts`, and *only if it actually
+    learned it* (the contracts converged) does it autonomously create the
+    extension that preserves that knowledge:
+      1. train the behaviour into the mesh (real gradient descent),
+      2. lock the satisfied neurons in with raised vale (§2, no forgetting),
+      3. register it as a live MoE skill on `registry`, and
+      4. install it to disk in quantized form (§8 — "extensions are quantized
+         before installation"), so the ability persists across restarts.
+
+    Nothing is registered or written if the AI did not actually acquire the
+    capability, so it never "creates a coding extension" for a skill it hasn't
+    learned. Returns (TrainResult, installed_path | None).
+    """
+    import os
+    device = str(next(model.parameters()).device)
+    eb = ExtensionBuilder(model, tokenizer, device=device)
+    result = eb.train(contracts, epochs=epochs, lr=lr,
+                      weight_penalty=weight_penalty, tolerance=tolerance)
+    if hasattr(model, "raise_vale"):
+        for k in result.satisfied:
+            model.raise_vale([k % model.N], amount=0.3)
+
+    installed_path = None
+    if result.converged:
+        registry.register_skill(skill_id, name or skill_id.replace("-", " ").title())
+        installed_path = os.path.join(install_dir, f"{skill_id}.ext")
+        eb.install(installed_path, contracts, bits=bits)
+    return result, installed_path
 
 
 def _atomic_torch_save(payload: dict, path: str) -> None:
