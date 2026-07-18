@@ -23,3 +23,7 @@
 ## 2025-07-13 - [Resilient Dashboard Status and Screen Reader Feedback]
 **Learning:** For polling-based status indicators, ensuring the error/catch block explicitly resets both visual classes (e.g., `.online`) and ARIA labels (e.g., `aria-label="System status: Offline"`) is critical for reliability. Furthermore, applying `role="log"` and `aria-live="polite"` to chat containers in dashboard views ensures accessibility parity with specialized terminal components.
 **Action:** Always synchronize visual class removal and ARIA attribute updates in status polling error handlers to prevent "stuck" indicators.
+
+## 2026-07-18 - [Form Input and Range Slider Accessibility]
+**Learning:** For visually minimalist or card-based UI panels where traditional form labels might clutter the design, using screen-reader only labels (`sr-only`) linked via `id` and `htmlFor` provides full WCAG AA accessibility compliance without changing the visual look and feel.
+**Action:** Use visually hidden `<Label>` components paired with explicit `id` attributes on form inputs, textareas, and range sliders to enable accessible screen reader interactions in compact designs.
