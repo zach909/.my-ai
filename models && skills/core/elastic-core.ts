@@ -458,17 +458,44 @@ export class ElasticCoreBlock {
    * residual buffer so it is compensated for on the next tick. This lets
    * the network learn to "expect" its own quantized substrate.
    */
+  /**
+   * Section 8: In-place quantization with residual feedback. Compares each
+   * state's candidate value (plus its accumulated error) to the nearest
+   * dequantized level, then stores the new rounding error back into the
+   * residual buffer so it is compensated for on the next tick. This lets
+   * the network learn to "expect" its own quantized substrate.
+   * 
+   * Optimization: SIMD-friendly loop unrolling and branch-free clamping.
+   */
   private applyQuantizationInPlace(next: Float32Array): void {
     if (!this.quantizationAware) {
       this.quantizationResidual.fill(0);
       return;
     }
     const levels = (1 << this.quantizationBits) - 1;
-    for (let i = 0; i < next.length; i++) {
-      const compensated = Math.max(-1, Math.min(1, next[i] + this.quantizationResidual[i]));
-      const q = Math.round(((compensated + 1) / 2) * levels);
-      const dequantized = (q / levels) * 2 - 1;
-      this.quantizationResidual[i] = compensated - dequantized;
+    const invLevels = 1.0 / levels;
+    const len = next.length;
+    
+    // Process in chunks of 4 for better CPU pipeline utilization
+    let i = 0;
+    for (; i + 3 < len; i += 4) {
+      for (let j = 0; j < 4; j++) {
+        const idx = i + j;
+        const compensated = next[idx] + this.quantizationResidual[idx];
+        const clamped = compensated < -1 ? -1 : (compensated > 1 ? 1 : compensated);
+        const q = Math.round(((clamped + 1) * 0.5) * levels);
+        const dequantized = q * invLevels * 2 - 1;
+        this.quantizationResidual[idx] = clamped - dequantized;
+        next[idx] = dequantized;
+      }
+    }
+    // Handle remaining elements
+    for (; i < len; i++) {
+      const compensated = next[i] + this.quantizationResidual[i];
+      const clamped = compensated < -1 ? -1 : (compensated > 1 ? 1 : compensated);
+      const q = Math.round(((clamped + 1) * 0.5) * levels);
+      const dequantized = q * invLevels * 2 - 1;
+      this.quantizationResidual[i] = clamped - dequantized;
       next[i] = dequantized;
     }
   }
