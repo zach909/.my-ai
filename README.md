@@ -1,6 +1,26 @@
 # Neuroclaw — Prometheus Elastic Core
 
-WORNING THE PROJECT IS STILL IN BETA WE ARE NOT RESPONCIBAL FOR ANY PROBLUMS OR DAMAGE INSTALL AT YOUR OWN RISK.
+> ⚠️ **WARNING**: This project is in BETA. Use at your own risk.
+
+## 🚀 Quick Start
+
+**New to Neuroclaw?** Follow our [Easy Installation Guide](INSTALL.md) for a one-click setup!
+
+```bash
+# One-click install (creates desktop app)
+./install.sh
+
+# Or use npm
+npm run install:app
+```
+
+This will:
+- ✅ Install all dependencies automatically
+- ✅ Build the application  
+- ✅ Create a desktop shortcut
+- ✅ Open the app in your browser
+
+---
 
 A locally-run AI built on an **all-to-all neuron mesh** instead of a transformer.
 Every neuron connects to every other neuron with multi-dimensional state; a

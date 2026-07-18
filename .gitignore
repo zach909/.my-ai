@@ -1,50 +1,86 @@
 ```
-# Build artifacts
-dist/
-
 # Dependencies
 node_modules/
 
-# Compiled/Generated files
-*.js.map
-*.min.js
+# Environment
+.env
+.env.local
+.env.*
 
 # Logs and temp files
 *.log
 *.tmp
 
-# Environment
-.env
-.env.local
-*.env.*
-
 # Editors
 .vscode/
 .idea/
-The provided input shows a modified file path `"models` which appears to be malformed (likely missing a file extension or proper path structure). However, without clear evidence of compiled files, dependencies, temporary files, or other artifacts in the changes that would warrant git ignores, and given the current .gitignore is empty, there are no specific patterns to add.
 
-(empty)
-The provided input shows a modified file named `"model` which appears to be a malformed or incomplete filename. Since this doesn't match any typical build artifacts, dependency directories, editor files, or other ignorable patterns, and there are no other relevant file changes provided that would warrant adding ignore rules, no additional entries are needed in the .gitignore file.
+# Build artifacts
+dist/
+build/
+target/
 
-However, the filename `"model` suggests possible corruption or special characters that might indicate the need for certain general-purpose ignores, but without more context or clear matching patterns, no specific rules should be added.
-
-```
-```
-# Build & install artifacts (never committed; the repo root stays as-is)
-.vite-out
-package-lock.json
-bun.lock
-__pycache__/
-*.pyc
-
-# OS generated files
-.DS_Store
-Thumbs.db
-
-# Python related (if applicable)
+# Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-.Python
+*.so
+*.egg-info/
+.eggs/
+
+# Java
+*.class
+*.jar
+*.war
+*.ear
+*.nar
+target/
+.gradle/
+build/
+
+# C/C++
+*.o
+*.obj
+*.a
+*.lib
+*.so
+*.dll
+*.dylib
+*.exe
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
+
+# Coverage
+coverage/
+htmlcov/
+.coverage
+
+# Cache
+.mypy_cache/
+.pytest_cache/
+.nyc_output/
+coverage/
 ```

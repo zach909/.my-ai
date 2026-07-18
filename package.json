@@ -7,6 +7,8 @@
     "dev": "vite",
     "build": "vite build && node scripts/finalize-static-build.mjs",
     "preview": "vite preview",
+    "start": "npm run build && npm run preview",
+    "install:app": "chmod +x install.sh && ./install.sh",
     "build:backend": "node scripts/build-backend.mjs",
     "test": "node scripts/build-backend.mjs && node test/smoke.mjs",
     "lint:css": "stylelint \"src/**/*.css\" --fix --quiet",

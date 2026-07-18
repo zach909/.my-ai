@@ -1,0 +1,186 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Welcome to Neuroclaw</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background: white;
+            border-radius: 20px;
+            padding: 60px;
+            max-width: 600px;
+            text-align: center;
+            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+        }
+        
+        .icon {
+            font-size: 80px;
+            margin-bottom: 20px;
+        }
+        
+        h1 {
+            color: #333;
+            font-size: 2.5em;
+            margin-bottom: 10px;
+        }
+        
+        .subtitle {
+            color: #666;
+            font-size: 1.2em;
+            margin-bottom: 30px;
+        }
+        
+        .btn {
+            display: inline-block;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 15px 40px;
+            border-radius: 50px;
+            text-decoration: none;
+            font-size: 1.1em;
+            font-weight: 600;
+            transition: transform 0.2s, box-shadow 0.2s;
+            margin: 10px;
+        }
+        
+        .btn:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+        }
+        
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #333;
+        }
+        
+        .btn-secondary:hover {
+            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
+        }
+        
+        .features {
+            margin-top: 40px;
+            text-align: left;
+        }
+        
+        .feature {
+            padding: 15px 0;
+            border-bottom: 1px solid #eee;
+        }
+        
+        .feature:last-child {
+            border-bottom: none;
+        }
+        
+        .feature-icon {
+            display: inline-block;
+            width: 30px;
+            margin-right: 10px;
+        }
+        
+        .loading {
+            margin-top: 30px;
+            color: #666;
+        }
+        
+        .spinner {
+            border: 3px solid #f3f3f3;
+            border-top: 3px solid #667eea;
+            border-radius: 50%;
+            width: 30px;
+            height: 30px;
+            animation: spin 1s linear infinite;
+            margin: 20px auto;
+        }
+        
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="icon">🧠</div>
+        <h1>Neuroclaw</h1>
+        <p class="subtitle">Prometheus Elastic Core</p>
+        
+        <p style="color: #555; line-height: 1.6; margin-bottom: 30px;">
+            Your local AI powered by an all-to-all neuron mesh. 
+            No external APIs. Complete privacy. Infinite possibilities.
+        </p>
+        
+        <div>
+            <a href="#" class="btn" onclick="launchApp()">🚀 Launch Application</a>
+            <a href="http://localhost:3000" class="btn btn-secondary" id="webBtn">🌐 Open Web Interface</a>
+        </div>
+        
+        <div class="loading" id="loading">
+            <div class="spinner"></div>
+            <p>Starting the neural mesh...</p>
+        </div>
+        
+        <div class="features">
+            <div class="feature">
+                <span class="feature-icon">🔒</span>
+                <strong>100% Local</strong> — Runs entirely on your machine
+            </div>
+            <div class="feature">
+                <span class="feature-icon">🧩</span>
+                <strong>Plugin System</strong> — Extend with custom skills
+            </div>
+            <div class="feature">
+                <span class="feature-icon">⚡</span>
+                <strong>Real-time</strong> — Live neural mesh visualization
+            </div>
+            <div class="feature">
+                <span class="feature-icon">🎯</span>
+                <strong>Privacy First</strong> — Your data never leaves your device
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        // Auto-redirect to app after 3 seconds
+        setTimeout(() => {
+            window.location.href = 'http://localhost:3000';
+        }, 3000);
+        
+        function launchApp() {
+            document.getElementById('loading').style.display = 'block';
+            
+            // Try to open the app
+            setTimeout(() => {
+                window.location.href = 'http://localhost:3000';
+            }, 1000);
+        }
+        
+        // Check if app is ready
+        fetch('http://localhost:3000')
+            .then(response => {
+                if (response.ok) {
+                    document.getElementById('loading').innerHTML = '<p style="color: #4CAF50;">✓ Application ready!</p>';
+                }
+            })
+            .catch(() => {
+                document.getElementById('loading').innerHTML = '<p style="color: #ff9800;">⏳ Starting server...</p>';
+            });
+    </script>
+</body>
+</html>
