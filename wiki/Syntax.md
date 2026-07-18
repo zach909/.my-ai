@@ -25,6 +25,12 @@ Two spellings exist for the same two directives, and both are accepted everywher
 
 This isn't an accident of two competing implementations — `tinygpt/neurolang.py`'s parser explicitly accepts both spellings for the same field, added specifically so a program written against the design notes' literal wording and one written in the dialect the rest of the codebase (and `wiki/NeuroLang.md`'s examples) uses both parse identically. `test_core.py`'s `test_neurolang_spec_aliases` verifies both spellings produce the same neuron state.
 
+The `@connections=` bias/weight numbers follow the same rule: the design notes quote them (`*"bias"+"weight"`), so the parser accepts `*"0.5"+"0.3"`, `*0.5+0.3`, or a mix — all install the same weight.
+
+## `@connections=` and named state variables
+
+`"x"@connections=".y/variable"*"bias"+"weight"` connects `x` to `y`. The `/variable` part names *which* of `y`'s state variables this connection reads — the concrete surface of Higher-Dimensional Thinking's "each neuron maintains temporary state variables describing every other neuron" ([[Hyperdimensional]]). Each neuron assigns its own variable names to its own state dimensions (first-seen order), so the same name always resolves to the same dimension. A connection to a named variable reads just that one dimension of the target; the whole-state names (`state`, `all`, `*`) or a plain `.y` read the target's full state vector, which is also the default when `@connections=` is omitted entirely (all-to-all). `test_core.py`'s `test_neurolang_spec_aliases` covers both the named-dimension and whole-state paths.
+
 ## `@net=` binding order
 
 `"netsearch"@net=` binds to the most recently declared *pending* `"netsearch"@name=` in parse order — a real, tested edge case: if two `netsearch` definitions are declared before either gets its `@net=`, an earlier pending one is not mis-bound by a later `@net=` meant for the second. See [[Net-Search]].

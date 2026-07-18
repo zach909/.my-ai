@@ -665,6 +665,49 @@ def test_neurolang_spec_aliases():
           and rt_mixed.neurons["gamma"].definition == "mixed spelling still works",
           "spec and dialect directive spellings can be mixed in one program")
 
+    # The Neural Definition Format quotes every placeholder, including the
+    # connection's bias/weight ("...*"bias"+"weight""). The parser must accept
+    # the quoted numbers (as it already does for @value="number"), not only the
+    # bare-number dialect form.
+    quoted_conn = '\n'.join([
+        'name="src"',
+        'name="dst"',
+        '"dst"@connections=".src/state"*"0.5"+"0.3"',
+    ])
+    bare_conn = '\n'.join([
+        'name="src"',
+        'name="dst"',
+        '"dst"@connections=".src/state"*0.5+0.3',
+    ])
+    rt_quoted = neurolang.interpret(quoted_conn)
+    rt_bare = neurolang.interpret(bare_conn)
+    check("src" in rt_quoted.neurons["dst"].ex_weights,
+          "spec-literal quoted @connections=\"...\"*\"bias\"+\"weight\" installs the connection")
+    check(abs(float(rt_quoted.neurons["dst"].ex_weights["src"])
+              - float(rt_bare.neurons["dst"].ex_weights["src"])) < 1e-9,
+          "quoted and bare @connections numbers install the same weight")
+
+    # Higher-dimensional thinking: ".target/variable" reads one named state
+    # variable (dimension) of the target, not the whole state. A plain
+    # whole-state name ("state") stays the default all-to-all behaviour.
+    named = neurolang.interpret('\n'.join([
+        'name="src"', 'name="dst"',
+        '"dst"@connections=".src/mood"*"0.5"+"0.1"',
+    ]))
+    dst, src = named.neurons["dst"], named.neurons["src"]
+    check(dst.ex_vars["src"] is not None and "mood" in src.var_index,
+          "@connections to a named variable (.src/mood) selects a target state dimension")
+    check(rt_bare.neurons["dst"].ex_vars["src"] is None,
+          "@connections to the whole-state name (.src/state) reads the whole state (default)")
+    # propagation still runs cleanly with a dimension-selected connection
+    src.inject([0.9, 0.2, 0.3])
+    for n in named.neurons.values():
+        n.compute_next(named.neurons)
+    for n in named.neurons.values():
+        n.apply_next()
+    check(dst.state.shape == src.state.shape,
+          "a dimension-selected connection propagates without breaking state shape")
+
 
 def test_extension_install():
     """Design notes: "Save projects without quantization. Install projects
@@ -1336,6 +1379,103 @@ def test_skill_builder():
           "skill builder permanently registers the trained behaviour as a skill")
 
 
+def test_learn_and_extend():
+    """The design notes' flagship Extensions example, autonomous: "after
+    learning to code it creates a coding extension" to "permanently preserve
+    that knowledge." learn_and_extend only creates + installs the extension
+    when the AI actually learned the capability."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip learn-and-extend test (torch not installed)")
+        return
+    import os
+    import tempfile as _tf
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.extension_builder import Definishon, learn_and_extend
+    from tinygpt.plugins import default_registry
+
+    tok = _CharTok()
+    workdir = _tf.mkdtemp()
+    reg = default_registry(data_dir=os.path.join(workdir, "data"))
+    cfg = ModelConfig(vocab_size=128, block_size=64, arch="mesh",
+                      mesh_neurons=18, mesh_dims=4, mesh_input=6, settle_ticks=3)
+
+    # learned capability -> autonomous registration + quantized install
+    torch.manual_seed(2)
+    model = build_model(cfg)
+    check(not any(e.id == "coding-ext" for e in reg.skills()),
+          "no coding extension exists before the AI learns to code")
+    result, installed = learn_and_extend(
+        reg, model, tok, "coding-ext", [Definishon(when="code", then="a+b")],
+        install_dir=os.path.join(workdir, "ext"), epochs=500, lr=5e-3, tolerance=0.3)
+    check(result.converged, "learn_and_extend actually trains the capability")
+    check(any(e.id == "coding-ext" for e in reg.skills()),
+          "on success the AI autonomously registers the coding extension as a skill")
+    check(installed is not None and os.path.exists(installed),
+          "on success the AI autonomously installs the extension to disk (preserved)")
+    check(torch.load(installed, weights_only=False).get("quantized") is True,
+          "the installed extension is quantized before installation")
+
+    # failed capability -> nothing registered or written
+    torch.manual_seed(3)
+    dud = build_model(cfg)
+    n_before = len(reg.skills())
+    res2, inst2 = learn_and_extend(
+        reg, dud, tok, "unlearnable",
+        [Definishon(when="x", then="y"), Definishon(when="x", then="zzzz")],
+        install_dir=os.path.join(workdir, "ext"), epochs=30, lr=5e-3, tolerance=0.01)
+    check(inst2 is None and not any(e.id == "unlearnable" for e in reg.skills())
+          and len(reg.skills()) == n_before,
+          "no extension is created for a capability the AI failed to learn")
+
+
+def test_install_community_extension():
+    """Runs Locally: "Users can install community skills or create new ones."
+    An extension one system creates + shares can be installed into a fresh
+    system, where it becomes a live, registered skill carrying its contract."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip community-extension test (torch not installed)")
+        return
+    import os
+    import tempfile as _tf
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.extension_builder import (Definishon, learn_and_extend,
+                                           install_extension)
+    from tinygpt.plugins import default_registry
+
+    tok = _CharTok()
+    share = _tf.mkdtemp()
+    cfg = ModelConfig(vocab_size=128, block_size=64, arch="mesh",
+                      mesh_neurons=18, mesh_dims=4, mesh_input=6, settle_ticks=3)
+
+    # author: learn + install (share) an extension file
+    torch.manual_seed(2)
+    author_model = build_model(cfg)
+    author_reg = default_registry(data_dir=os.path.join(share, "a"))
+    result, shared = learn_and_extend(
+        author_reg, author_model, tok, "greeter-ext",
+        [Definishon(when="hi", then="yo")], install_dir=os.path.join(share, "pub"),
+        epochs=500, lr=5e-3, tolerance=0.3)
+    check(result.converged and shared and os.path.exists(shared),
+          "an author system creates and shares an extension file")
+
+    # community user: FRESH model + FRESH registry install the shared file
+    user_model = build_model(cfg)
+    user_reg = default_registry(data_dir=os.path.join(share, "u"))
+    check(not any(e.id == "greeter-ext" for e in user_reg.skills()),
+          "a fresh system does not have the community extension before installing")
+    payload = install_extension(user_reg, user_model, shared)
+    check(any(e.id == "greeter-ext" for e in user_reg.skills()),
+          "installing a shared extension registers it as a live skill on the fresh system")
+    check(payload.get("contracts") and payload["contracts"][0]["when"] == "hi",
+          "the installed community extension carries its capability contract")
+
+
 def test_self_healing():
     """Self-Healing skill / Elastic Values: "identifies a poor-performing
     neuron and demotes its value instead of deleting it." """
@@ -1417,7 +1557,8 @@ def main():
                test_plugin_skill_registry, test_skills_attach_to_mesh,
                test_quantum_interference_in_mesh, test_local_encryption,
                test_encrypted_memory, test_output_layer, test_local_plugins,
-               test_plugin_builder, test_skill_builder, test_self_healing,
+               test_plugin_builder, test_skill_builder, test_learn_and_extend,
+               test_install_community_extension, test_self_healing,
                test_browser_server,
                test_code_to_net, test_net_search, test_adaptive_routing,
                test_system_control):

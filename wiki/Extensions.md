@@ -32,13 +32,28 @@ build_plugin(registry, "new-plugin-id", "os.service", name="...")         # Plug
 
 This is what "the AI creates a coding extension to permanently preserve that knowledge" looks like concretely: the same `build_skill()` call the AI would make to preserve *any* newly-learned behaviour, called on a coding-flavoured set of contracts specifically.
 
+### `learn_and_extend()` — the autonomous flagship flow
+
+`build_skill()` trains and registers; `tinygpt.extension_builder.learn_and_extend()` is the fully autonomous version of the design notes' flagship example — "after learning to code it creates a coding extension." In one call the AI:
+
+1. trains the capability into the mesh (real gradient descent),
+2. locks the satisfied neurons in with raised vale ([[Elastic-Value-Budget]], §2 — no forgetting),
+3. **only if it actually learned it** (the contracts converged) registers it as a live MoE skill, and
+4. installs it to disk in quantized form ([[Quantization]], §8 — "extensions are quantized before installation"), so the ability survives restarts.
+
+Crucially, nothing is registered or written for a capability the AI *failed* to learn — it never fabricates a coding extension for a skill it hasn't acquired. Run it live and narrated with `python main.py learn-code`, or see it asserted end to end in `test_integration.py` §4b and `test_core.py`'s `test_learn_and_extend`.
+
+### `install_extension()` — installing community skills
+
+"Users can install community skills or create new ones" (design notes, [[Platforms]]). `learn_and_extend()` is "create new ones"; `tinygpt.extension_builder.install_extension()` is the other half. It takes an `.ext` file another system authored (or a previous session saved), loads its weights into a fresh model, and registers the capability it carries as a live skill on the registry — so an extension someone else built becomes usable here, contract and all. `test_core.py`'s `test_install_community_extension` proves the full round-trip: an author system creates and shares an extension, and a fresh model + fresh registry installs it into a working, registered skill.
+
 ## The extension catalog (23 named extensions + Coding skill)
 
 Location, Camera, Microphone, Voice Activation, Notifications, Account Info, Contacts, Calendar, Phone Calls, Call History, Email, Tasks, Messaging, Radio, Device Connectivity, App Diagnostics, File System, Screenshots & Screen Recording, Passkeys, Browser ([[Chrome-Apps]]), Self-Healing, Plugin Builder, Skill Builder, and Coding — see [[Plugins]] and [[Skills]] for the plugin/skill split across this list, and [[System-Access]] for the ones that touch the local OS directly.
 
 ## Verifying it
 
-`python main.py demo` (`test_integration.py`, §4) is the concrete, end-to-end proof: it builds a brand-new plugin live, dispatches it immediately, then builds a brand-new skill live and trains it into the *same* mesh already in use — not a fresh throwaway model — and confirms both are registered and functional afterward.
+`python main.py demo` (`test_integration.py`) is the concrete, end-to-end proof. §4 builds a brand-new plugin live, dispatches it immediately, then builds a brand-new skill live and trains it into the *same* mesh already in use. §4b runs the full flagship narrative: the AI starts with no coding extension, learns a coding behaviour, and — because it actually learned it — autonomously registers the coding skill and installs the quantized extension to disk, while a deliberately unlearnable contract produces *no* extension at all. `python main.py learn-code` runs that flagship flow on its own with live narration.
 
 ## See Also
 
