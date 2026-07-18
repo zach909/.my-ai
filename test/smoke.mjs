@@ -1000,6 +1000,16 @@ async function testNeuralDefinitionDirectives() {
   check(r.errors.length === 0, 'Neural Definition DSL parses all directives without error');
   check(neurons.get('alpha').value === 2.5 && neurons.get('alpha').vale === 0.8, 'name/@value/@vale applied');
   check(neurons.get('beta').connections.get('alpha') === 0.5, '@connections installs a weighted edge');
+  // The multi-target form documented in neuro-lang.ts's header
+  // (".other*0.5+.third*0.3") must parse into one edge per target — guards
+  // the doc comment against drifting back to a form the parser rejects.
+  const itc = new NeuroLangInterpreter();
+  const rc = itc.parse(['name="other"', 'name="third"', 'name="n"',
+                        '"n"@connections=".other*0.5+.third*0.3"'].join('\n'));
+  const nc = itc.evaluate(rc);
+  check(rc.errors.length === 0 && nc.get('n').connections.get('other') === 0.5
+        && nc.get('n').connections.get('third') === 0.3,
+        'documented multi-target @connections form parses into one weighted edge per target');
   check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
   const finder = neurons.get('finder');
   check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');

@@ -5,7 +5,7 @@
  *   name="example"                             — create neuron named "example"
  *   "name"@value="1.0"                         — set neuron's value
  *   "name"@vale="0.9"                          — set neuron's vale (elasticity/resistance to change)
- *   "name"@connections=".other"*0.5+".third"*0.3  — set connections (alias: @conections=)
+ *   "name"@connections=".other*0.5+.third*0.3"  — set connections (alias: @conections=)
  *   "name"@definition="text"                   — set definition (alias: @definishon=)
  *   "name"@code="code"                         — attach code
  *   code@name="calc"                           — create code-to-net neuron
