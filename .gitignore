@@ -1,6 +1,9 @@
-```
 # Dependencies
 node_modules/
+
+# Lockfiles (regenerated on install; never committed — the repo root stays as-is)
+package-lock.json
+bun.lock
 
 # Environment
 .env
@@ -14,6 +17,8 @@ node_modules/
 # Editors
 .vscode/
 .idea/
+.DS_Store
+Thumbs.db
 
 # Python
 __pycache__/
@@ -23,8 +28,14 @@ __pycache__/
 
 # Build outputs
 dist/
+dist-ssr/
 build/
 target/
+.vite-out/
+*.local
+
+# Generated CodeNet artifacts (Code-to-Net exports; regenerable)
+*.codenet
 
 # Compressed files
 *.zip
@@ -49,4 +60,3 @@ target/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-```
