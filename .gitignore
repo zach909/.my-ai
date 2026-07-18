@@ -76,3 +76,4 @@ htmlcov/
 *.tar.xz
 *.tar.zst
 ```
+(skill_agent_architecture.py is a source file, and there are no build artifacts, dependencies, or temp files in the changes)
