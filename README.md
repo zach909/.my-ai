@@ -1,5 +1,7 @@
 # Neuroclaw — Prometheus Elastic Core
 
+Warning IT IS STILL IN BETA WE ARE NOT RESPONCIBAL FOR ANY PROBLUMS OR DAMAGE
+
 A locally-run AI built on an **all-to-all neuron mesh** instead of a transformer.
 Every neuron connects to every other neuron with multi-dimensional state; a
 reasoning step is many settle ticks of propagation until the mesh's state
