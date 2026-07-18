@@ -2,6 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
 import { useBuilder, BuilderCanvas } from '@/features/builder'
 
@@ -145,7 +146,9 @@ function BuilderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
+              <Label htmlFor="neuron-name-input" className="sr-only">Neuron Name</Label>
               <Input
+                id="neuron-name-input"
                 value={neuronName}
                 onChange={(e) => setNeuronName(e.target.value)}
                 onKeyDown={(e) => e.key === 'Enter' && handleAddNeuron()}
@@ -156,7 +159,9 @@ function BuilderPage() {
                 <span className="whitespace-nowrap text-xs text-muted-foreground">
                   vale {neuronValue.toFixed(2)}
                 </span>
+                <Label htmlFor="neuron-vale-input" className="sr-only">Vale value range</Label>
                 <input
+                  id="neuron-vale-input"
                   type="range"
                   min={0}
                   max={1}
@@ -194,7 +199,9 @@ function BuilderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
+              <Label htmlFor="label-text-input" className="sr-only">New label text</Label>
               <Input
+                id="label-text-input"
                 value={labelText}
                 onChange={(e) => setLabelText(e.target.value)}
                 placeholder="label text"
@@ -219,7 +226,9 @@ function BuilderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent>
+              <Label htmlFor="search-query-input" className="sr-only">Search query</Label>
               <Input
+                id="search-query-input"
                 value={query}
                 onChange={(e) => setQuery(e.target.value)}
                 placeholder="name / definition / type"
@@ -309,7 +318,9 @@ function BuilderPage() {
                       Simulate this neuron alone receiving input
                     </span>
                     <div className="flex items-center gap-2">
+                      <Label htmlFor="simulation-input" className="sr-only">Simulation input value</Label>
                       <Input
+                        id="simulation-input"
                         type="number"
                         step={0.1}
                         value={simInput}
@@ -354,7 +365,9 @@ function BuilderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-2">
+              <Label htmlFor="neurolang-input" className="sr-only">NeuroLang DSL source code</Label>
               <textarea
+                id="neurolang-input"
                 value={neuroLang}
                 onChange={(e) => setNeuroLang(e.target.value)}
                 placeholder={'name="example"\n"example"@vale="0.8"\n"example"@definition="greets the user"'}

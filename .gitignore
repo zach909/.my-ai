@@ -4,3 +4,22 @@ However, the filename `"model` suggests possible corruption or special character
 
 ```
 ```
+# Build & install artifacts (never committed; the repo root stays as-is)
+.vite-out
+package-lock.json
+bun.lock
+__pycache__/
+*.pyc
+
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+Thumbs.db
+*.codenet
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?

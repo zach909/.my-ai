@@ -49,9 +49,12 @@ def _score_continuation(model, prompt_ids: torch.Tensor, cont_ids: torch.Tensor)
 def best_of_n(model, tokenizer, prompt_ids: List[int], n: int, max_new_tokens: int,
               temperature: float, top_k: Optional[int], top_p: Optional[float],
               repetition_penalty: float, eos_id: Optional[int],
-              device: str, guide=None) -> Candidate:
+              device: str, guide=None, ledger=None) -> Candidate:
     """Generate `n` candidates and return the highest-scoring one. When `guide`
-    is given, each candidate is generated under live guidance (section 7)."""
+    is given, each candidate is generated under live guidance (section 7).
+    When `ledger` (a `tinygpt.rl.ReasoningLedger`) is given, candidates that
+    repeat a previously-committed reply are discounted before ranking, so the
+    model doesn't keep recommitting to the same non-answer."""
     base = torch.tensor([prompt_ids], dtype=torch.long, device=device)
     candidates: List[Candidate] = []
     for _ in range(max(1, n)):
@@ -66,5 +69,69 @@ def best_of_n(model, tokenizer, prompt_ids: List[int], n: int, max_new_tokens: i
         score = _score_continuation(model, base, cont)
         ids = cont[0].tolist()
         candidates.append(Candidate(ids=ids, text=tokenizer.decode(ids), score=score))
-    candidates.sort(key=lambda c: c.score, reverse=True)
+    if ledger is not None:
+        candidates = ledger.rescore(candidates)
+    else:
+        candidates.sort(key=lambda c: c.score, reverse=True)
     return candidates[0]
+
+
+@torch.no_grad()
+def select_by_interference(model, tokenizer, prompt_ids: List[int], n: int,
+                           max_new_tokens: int, temperature: float,
+                           top_k: Optional[int], top_p: Optional[float],
+                           repetition_penalty: float, eos_id: Optional[int],
+                           device: str, guide=None, ledger=None,
+                           generator: Optional["torch.Generator"] = None) -> Candidate:
+    """§5 alternative to confidence-only `best_of_n`: generate `n` candidates
+    as usual, but commit via quantum interference over the mesh's own wave
+    signatures rather than raw log-probability ranking.
+
+    Each candidate's amplitude is its confidence score (mean log-prob,
+    rescaled positive via exp so it works as an interference amplitude) and
+    its phase is `model.state_phase()` — the mesh's settled-state phase right
+    after generating that candidate (only meaningful for `arch="mesh"`
+    models; see `tinygpt/mesh.py`). Candidates whose settled state agrees in
+    phase with the group's consensus reinforce each other; a lone outlier
+    phase gets cancelled toward zero even if its raw confidence was high.
+    Falls back to `best_of_n`'s pure confidence ranking when the model has no
+    `state_phase` (e.g. a non-mesh architecture).
+    """
+    from .interference import interfere_select
+
+    if not hasattr(model, "state_phase"):
+        return best_of_n(model, tokenizer, prompt_ids, n, max_new_tokens, temperature,
+                         top_k, top_p, repetition_penalty, eos_id, device, guide=guide,
+                         ledger=ledger)
+
+    base = torch.tensor([prompt_ids], dtype=torch.long, device=device)
+    candidates: List[Candidate] = []
+    phases: List[float] = []
+    for _ in range(max(1, n)):
+        if guide is not None:
+            guide.reset()
+        out = model.generate(
+            base, max_new_tokens=max_new_tokens, temperature=temperature,
+            top_k=top_k, top_p=top_p, repetition_penalty=repetition_penalty, eos_id=eos_id,
+            guide=guide,
+        )
+        cont = out[:, base.size(1):]
+        score = _score_continuation(model, base, cont)
+        ids = cont[0].tolist()
+        candidates.append(Candidate(ids=ids, text=tokenizer.decode(ids), score=score))
+        phases.append(model.state_phase())
+
+    if ledger is not None:
+        # discount repeats in place (order, and its alignment with `phases`,
+        # is untouched — only `.score` changes; final ranking is via
+        # interference below, not this discount alone)
+        for c in candidates:
+            c.score -= ledger.penalty(c.text)
+
+    # mean log-prob is <= 0 (further discounted by the ledger, so it can go
+    # more negative); exp() turns it into a positive amplitude so higher
+    # confidence -> larger amplitude, without changing its ranking.
+    amplitudes = torch.tensor([c.score for c in candidates]).exp()
+    phase_t = torch.tensor(phases, dtype=torch.float32)
+    idx, _ = interfere_select(amplitudes, phase_t, generator=generator)
+    return candidates[idx]

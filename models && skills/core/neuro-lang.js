@@ -4,7 +4,7 @@
  * Syntax summary:
  *   name="example"                             — create neuron named "example"
  *   "name"@value="1.0"                         — set neuron's value
- *   "name"@connections=".other"*0.5+".third"*0.3  — set connections
+ *   "name"@connections=".other*0.5+.third*0.3"  — set connections
  *   "name"@definition="text"                   — set definition
  *   "name"@code="code"                         — attach code
  *   code@name="calc"                           — create code-to-net neuron

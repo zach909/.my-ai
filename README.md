@@ -59,8 +59,6 @@ for real, the rest fail cleanly instead of phoning out — and a **skill** is a
 Mixture-of-Experts expert that attaches straight into the mesh's settle loop
 (`--skill-experts` at train time; `plugins` / `skills` / `plugin:` commands in
 the core). The full extension list from the design notes lives there.
-   calls; memory is the saved neuron state; a bounded output ring buffer
-   (ZIP-IO) compresses input/output into circular buffers.
 
 Around the mesh: an **alignment veto** (blocks objectionable / drifting actions,
 fails safe; irreversible actions route to the human), an **empathy engine**
@@ -80,16 +78,28 @@ python build_corpus.py                  # build a local corpus (no downloads)
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # 145 checks, no checkpoint needed
-python test_core.py                     # full check suite, no checkpoint needed
+python test_core.py                     # full check suite (198 checks), no checkpoint needed
 python test_elastic_mesh.py             # mesh + expert-core smoke checks
+python main.py demo                     # end-to-end integration demo (see below)
+
+# local browser chat backend (same Generator core.py/chat.py use)
+python interface/server.py --ckpt checkpoints/gpt_sft.pt --port 8000
 ```
+
+`python main.py demo` (`test_integration.py`) is the proof that the pieces above are
+one system, not a pile of separately-tested parts: it carries a *single* trained
+mesh through NeuroLang (dictionary-linked concepts, spec-literal directives),
+elastic-value self-healing, extension save/install (quantized), live Plugin
+Builder and Skill Builder calls against that same mesh, a real `core.py` chat
+session (empathy + the RL ledger + §5 quantum-interference selection, all
+active together, driven as a subprocess through a scripted conversation), and
+a real HTTP round-trip through the browser backend — 21 checks, no mocks.
 
 ### Run the TypeScript backend (pipeline, plugins, Extension Builder)
 
 ```bash
 npm install --legacy-peer-deps
-npm test              # builds the backend into dist/ and runs 141 smoke checks
+npm test              # builds the backend into dist/ and runs 161 smoke checks
 node dist/index.js web 3000   # Neuroclaw dashboard + /api/* at http://localhost:3000
 node dist/index.js cli        # interactive shell
 ```

@@ -9,8 +9,14 @@ from __future__ import annotations
 
 import json
 import os
+import zlib
 from collections import deque
 from typing import Deque, Dict, List, Optional
+
+# Marks a persisted buffer as zlib-compressed (Prometheus §2, "zipped" I/O).
+# Older, pre-compression checkpoints lack this prefix and are read as plain
+# JSON for backward compatibility (see load()).
+_ZIP_MAGIC = b"ZL01"
 
 
 class ZipLoopMemory:
@@ -59,8 +65,6 @@ class ZipLoopMemory:
             payload = cipher.encrypt(payload)   # encrypt the compressed blob at rest
         with open(self.persist_path, "wb") as f:
             f.write(payload)
-        with open(self.persist_path, "w", encoding="utf-8") as f:
-            json.dump({"capacity": self.capacity, "turns": list(self.buffer)}, f)
 
     def load(self) -> None:
         if not self.persist_path or not os.path.exists(self.persist_path):
@@ -80,8 +84,6 @@ class ZipLoopMemory:
                 data = json.loads(blob.decode("utf-8"))  # pre-compression format
         except (zlib.error, json.JSONDecodeError, UnicodeDecodeError, ValueError):
             return  # a corrupt / unreadable checkpoint must never take down the core
-        with open(self.persist_path, "r", encoding="utf-8") as f:
-            data = json.load(f)
         self.buffer = deque(data.get("turns", []), maxlen=self.capacity)
 
     def __len__(self) -> int:

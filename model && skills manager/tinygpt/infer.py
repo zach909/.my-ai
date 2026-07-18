@@ -145,7 +145,7 @@ def load_generator(ckpt_path: str, device: str = "cpu",
     model.eval()
     if quantize and device == "cpu":
         model = _quantize_dynamic(model)
-    tok_path = _resolve_tokenizer(
+    tok_path = resolve_tokenizer(
         tokenizer_path or ckpt.get("tokenizer", "checkpoints/spm.model"), ckpt_path)
     tokenizer = Tokenizer(tok_path)
     return Generator(model, tokenizer, config, device, ckpt_path)
@@ -162,7 +162,7 @@ def _quantize_dynamic(model: nn.Module) -> nn.Module:
     return tq.quantize_dynamic(model, {nn.Linear}, dtype=torch.qint8, inplace=False)
 
 
-def _resolve_tokenizer(tok_path: str, ckpt_path: str) -> str:
+def resolve_tokenizer(tok_path: str, ckpt_path: str) -> str:
     """Find the tokenizer even when the checkpoint stored a relative path.
 
     Checkpoints record the tokenizer path relative to the training working
