@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { AppLauncher } from './app-launcher.js';
 const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -178,10 +179,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 </body>
 </html>`;
 export class WebServer {
-    constructor(runner) {
+    constructor(runner, launcher) {
         this.server = null;
         this.port = 0;
         this.runner = runner;
+        this.launcher = launcher ?? new AppLauncher();
     }
     async start(port = 3000) {
         if (this.server)
@@ -477,6 +479,112 @@ export class WebServer {
                     }
                 }
                 this.sendJson(res, { extensions, total: extensions.length });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // POST /api/apps/launch — launch an application via AppLauncher
+        if (pathname === '/api/apps/launch' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                if (!body?.command) {
+                    this.sendJson(res, { error: 'Missing command field' }, 400);
+                    return;
+                }
+                const app = this.launcher.launch(body.command, {
+                    name: body.name,
+                    args: body.args,
+                    workspace: body.workspace ?? -1,
+                    waitForWindow: true,
+                });
+                this.sendJson(res, {
+                    ok: true,
+                    appId: app.id,
+                    name: app.name,
+                    pid: app.pid,
+                    workspace: app.workspace,
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // GET /api/apps/list — list launched applications
+        if (pathname === '/api/apps/list' && method === 'GET') {
+            const apps = this.launcher.listApps();
+            const active = this.launcher.listActive();
+            this.sendJson(res, {
+                apps: apps.map(a => ({ ...a, active: a.active })),
+                total: apps.length,
+                activeCount: active.length,
+            });
+            return;
+        }
+        // POST /api/apps/close — close a launched application
+        if (pathname === '/api/apps/close' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                if (!body?.appId) {
+                    this.sendJson(res, { error: 'Missing appId field' }, 400);
+                    return;
+                }
+                const closed = this.launcher.close(body.appId);
+                this.sendJson(res, { ok: closed, appId: body.appId });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // POST /api/apps/launch-package — launch .deb/.exe/.apk packages
+        if (pathname === '/api/apps/launch-package' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                if (!body?.path) {
+                    this.sendJson(res, { error: 'Missing path field' }, 400);
+                    return;
+                }
+                const packagePath = body.path;
+                let command;
+                let args = [];
+                const type = body.type || (packagePath.endsWith('.deb') ? 'deb' :
+                    packagePath.endsWith('.exe') ? 'exe' :
+                        packagePath.endsWith('.apk') ? 'apk' : undefined);
+                switch (type) {
+                    case 'deb':
+                        command = 'sudo';
+                        args = ['apt', 'install', '-y', packagePath];
+                        break;
+                    case 'exe':
+                        command = 'wine';
+                        args = [packagePath];
+                        break;
+                    case 'apk':
+                        command = 'adb';
+                        args = ['install', packagePath];
+                        break;
+                    default:
+                        // Try to run as executable
+                        command = packagePath;
+                }
+                const app = this.launcher.launch(command, {
+                    name: packagePath.split('/').pop() || 'package',
+                    args,
+                    workspace: -1,
+                });
+                this.sendJson(res, {
+                    ok: true,
+                    appId: app.id,
+                    name: app.name,
+                    pid: app.pid,
+                    packageType: type,
+                });
             }
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
