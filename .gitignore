@@ -5,7 +5,7 @@ node_modules/
 # Environment
 .env
 .env.local
-.env.*
+*.env.*
 
 # Logs and temp files
 *.log
@@ -15,39 +15,16 @@ node_modules/
 .vscode/
 .idea/
 
-# Build artifacts
-dist/
-build/
-target/
-
 # Python
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
-*.so
-*.egg-info/
-.eggs/
 
-# Java
-*.class
-*.jar
-*.war
-*.ear
-*.nar
-target/
-.gradle/
+# Build outputs
+dist/
 build/
-
-# C/C++
-*.o
-*.obj
-*.a
-*.lib
-*.so
-*.dll
-*.dylib
-*.exe
+target/
 
 # Compressed files
 *.zip
@@ -72,15 +49,4 @@ build/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Cache
-.mypy_cache/
-.pytest_cache/
-.nyc_output/
-coverage/
 ```
