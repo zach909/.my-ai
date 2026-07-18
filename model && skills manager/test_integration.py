@@ -131,6 +131,55 @@ def main() -> None:
           "Skill Builder skill trained a new behaviour into the SAME mesh and registered it live "
           f"(converged={skill_result.converged})")
 
+    # ── 4b. The design notes' flagship Extensions example, autonomous and end
+    #       to end: "the AI creates extensions to store memory, logic, and
+    #       learned abilities. Example: after learning to code it creates a
+    #       coding extension" — the AI learns a coding behaviour, and only
+    #       because it actually learned it, autonomously registers a live
+    #       coding skill AND installs the extension to disk (quantized) so the
+    #       ability is permanently preserved.
+    section("4b. AI learns to code, then autonomously creates a coding extension")
+    from tinygpt.extension_builder import learn_and_extend
+    from tinygpt.config import ModelConfig as _MC
+    from tinygpt.model import build_model as _bm
+    torch.manual_seed(2)
+    coder_cfg = _MC(vocab_size=128, block_size=64, arch="mesh",
+                    mesh_neurons=18, mesh_dims=4, mesh_input=6, settle_ticks=3)
+    coder = _bm(coder_cfg)
+    check(not any(e.id == "coding-ext" for e in registry.skills()),
+          "before learning: the AI has no coding extension")
+    ext_dir = os.path.join(workdir, "self_extensions")
+    result, installed = learn_and_extend(
+        registry, coder, tok, "coding-ext",
+        [Definishon(when="code", then="a+b")], install_dir=ext_dir,
+        name="Coding Extension", epochs=500, lr=5e-3, tolerance=0.3)
+    check(result.converged, "the AI actually learned the coding behaviour (contract converged)")
+    check(any(e.id == "coding-ext" for e in registry.skills()),
+          "having learned it, the AI autonomously registered the coding extension as a live skill")
+    check(installed is not None and os.path.exists(installed),
+          "the AI autonomously installed the coding extension to disk (permanently preserved)")
+    blob = torch.load(installed, weights_only=False)
+    check(blob.get("quantized") is True,
+          "the installed coding extension was quantized before installation (design notes, §8)")
+    # a fresh model can load the preserved extension back (structural round-trip)
+    reloaded = _bm(coder_cfg).eval()
+    load_extension(installed, reloaded)
+    check(any(e.id == "coding-ext" for e in registry.skills()),
+          "the preserved coding extension reloads into a fresh model")
+
+    # It never fabricates an extension for a skill it did not learn: an
+    # impossible/contradictory contract must not get registered or installed.
+    torch.manual_seed(3)
+    dud = _bm(coder_cfg)
+    before_n = len(registry.skills())
+    _res, _inst = learn_and_extend(
+        registry, dud, tok, "unlearnable-ext",
+        [Definishon(when="x", then="y"), Definishon(when="x", then="zzzz")],
+        install_dir=ext_dir, epochs=30, lr=5e-3, tolerance=0.01)
+    check(_inst is None and not any(e.id == "unlearnable-ext" for e in registry.skills())
+          and len(registry.skills()) == before_n,
+          "the AI does NOT create an extension for a capability it failed to learn")
+
     # ── 5. Empathy + Reinforcement Learning ledger + Quantum interference,
     #      all exercised together through the real core.py CLI — not
     #      reimplemented here, the actual entry point a user runs.
