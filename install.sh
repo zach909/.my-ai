@@ -69,6 +69,15 @@ install_dependencies() {
     echo -e "    ${GRAY}→ Installing Python dependencies...${NC}"
     cd "model && skills manager"
     if [ -f "requirements.txt" ]; then
+        # Create virtual environment if it doesn't exist
+        if [ ! -d "venv" ]; then
+            python3 -m venv venv
+        fi
+        # Activate virtual environment
+        source venv/bin/activate
+        # Install requirements
+        pip3 install -r requirements.txt --disable-pip-version-check
+        deactivate
         pip3 install -r requirements.txt --quiet --disable-pip-version-check
     fi
     cd ..
