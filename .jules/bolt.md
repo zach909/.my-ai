@@ -25,3 +25,7 @@
 ## 2025-07-17 - NeuronMesh Propagation Fast-Path Optimization
 **Learning:** In highly dynamic propagation loops, significant performance overhead arises from frequent allocations of short-lived typed arrays and redundant branch checking for features like group gating or vale limits that are inactive in standard workloads. By compiling a fast-path that bypasses these allocations when activeGroups and vale are absent, caching the active activation function as a local closure before the loop to avoid dynamic property lookup and switches, and using direct loop construction instead of intermediate paired mappings, we can achieve substantial speedups.
 **Action:** Always inspect hot-path arguments to determine if a specialized fast-path can bypass allocation-heavy operations, and resolve activation/dispatch closures outside critical iteration loops.
+
+## 2025-07-18 - HyperDimensionalEngine Settle and Learning Hot-Path Optimization
+**Learning:** In high-dimensional neural/simulation loops, heavy overhead is incurred by: Map/Set operations (`drivenIds.has(i)`, `vale?.get(i)`), arithmetic function call stack overhead (`clamp()`, `Math.abs()`), and diagonal index branch checking (`if (i === j) continue;`). By pre-allocating lookup structures, caching states, inlining clamps, and splitting the diagonal to achieve branch-free inner loops, performance is substantially boosted.
+**Action:** Pre-allocate Set/Map lookups into arrays outside of hot nested loops, inline basic math helper functions, and split inner loops to eliminate diagonal branching.
