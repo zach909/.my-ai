@@ -1,33 +1,3 @@
-# Logs
-logs
-*.log
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-lerna-debug.log*
+The provided input shows a modified file path `"models` which appears to be malformed (likely missing a file extension or proper path structure). However, without clear evidence of compiled files, dependencies, temporary files, or other artifacts in the changes that would warrant git ignores, and given the current .gitignore is empty, there are no specific patterns to add.
 
-node_modules
-dist
-dist-ssr
-*.local
-
-# Build & install artifacts (never committed; the repo root stays as-is)
-.vite-out
-package-lock.json
-bun.lock
-__pycache__/
-*.pyc
-
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
-.DS_Store
-Thumbs.db
-*.codenet
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+(empty)
