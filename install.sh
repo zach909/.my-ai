@@ -78,6 +78,7 @@ install_dependencies() {
         # Install requirements
         pip3 install -r requirements.txt --disable-pip-version-check
         deactivate
+        pip3 install -r requirements.txt --quiet --disable-pip-version-check
     fi
     cd ..
     
