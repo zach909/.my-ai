@@ -225,7 +225,17 @@ class NeuroClaw(BaseHTTPRequestHandler):
             self.send_error(404, "Not found")
 
     def do_POST(self):
-        length = int(self.headers.get("Content-Length", 0))
+        try:
+            length = int(self.headers.get("Content-Length", 0))
+        except ValueError:
+            length = 0
+
+        # Security Check: Enforce a request body size limit of 1MB to prevent
+        # memory exhaustion / DoS attacks.
+        if length > 1024 * 1024:
+            self.send_error(413, "Request entity too large")
+            return
+
         try:
             body = json.loads(self.rfile.read(length)) if length else {}
         except json.JSONDecodeError:
@@ -307,6 +317,9 @@ class NeuroClaw(BaseHTTPRequestHandler):
         # Security: restricted CORS; the AI endpoint stays localhost-only.
         self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
+        self.send_header("X-Content-Type-Options", "nosniff")
+        self.send_header("X-Frame-Options", "DENY")
+        self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';")
 
 
 def run(host: str = "127.0.0.1", port: int = 7860, ckpt: Optional[str] = None) -> None:
