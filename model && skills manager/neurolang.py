@@ -59,10 +59,27 @@ class ElasticNeuron(nn.Module):
         self.register_buffer("external",   torch.zeros(dims))
         self.ex_weights: dict[str, torch.Tensor] = {}
         self.ex_biases:  dict[str, torch.Tensor] = {}
+        # Higher-dimensional thinking: "each neuron maintains temporary state
+        # variables describing every other neuron." A connection may target a
+        # *named* state variable of another neuron (".other/variable"); each
+        # neuron assigns its own variable names to its own state dimensions
+        # here, so the same name always resolves to the same dimension.
+        self.var_index: dict[str, int] = {}
+        # target name -> which dimension of the target's state this connection
+        # reads (None = the whole state vector, the default all-to-all behaviour).
+        self.ex_vars:   dict[str, "int | None"] = {}
 
-    def set_connection(self, target, weight, bias):
+    def dim_for_var(self, varname):
+        """Resolve one of *this* neuron's named state variables to a stable
+        dimension index (assigned first-seen, wrapping at `dims`)."""
+        if varname not in self.var_index:
+            self.var_index[varname] = len(self.var_index) % self.dims
+        return self.var_index[varname]
+
+    def set_connection(self, target, weight, bias, var_dim=None):
         self.ex_weights[target] = torch.tensor(weight, dtype=torch.float32)
         self.ex_biases[target]  = torch.tensor(bias,   dtype=torch.float32)
+        self.ex_vars[target]    = var_dim
 
     def compute_next(self, all_neurons):
         raw = self.external.clone()
@@ -70,7 +87,12 @@ class ElasticNeuron(nn.Module):
             if name == self.name: continue
             w = self.ex_weights.get(name, torch.tensor(DEFAULT_W))
             b = self.ex_biases.get(name,  torch.tensor(DEFAULT_B))
-            raw = raw + other.state * w + b
+            dim = self.ex_vars.get(name)
+            # Read the target's whole state (default) or just the one named
+            # state variable (dimension) this connection selected; a selected
+            # scalar broadcasts across the accumulator's dimensions.
+            signal = other.state if dim is None else other.state[dim]
+            raw = raw + signal * w + b
         activated = torch.tanh(raw)
         self.next_state = self.vale * self.state + (1.0 - self.vale) * activated
 
@@ -566,8 +588,15 @@ class NeuroRuntime:
     def set_vale(self, name, v):
         self._req(name); self.neurons[name].vale = torch.tensor(v).clamp(0, 1)
 
-    def set_conn(self, src, tgt, weight, bias):
-        self._req(src); self._req(tgt); self.neurons[src].set_connection(tgt, weight, bias)
+    def set_conn(self, src, tgt, weight, bias, varname=None):
+        self._req(src); self._req(tgt)
+        # ".tgt/variable" reads one named state variable (dimension) of the
+        # target; a plain ".tgt" (or the sentinel whole-state names) reads the
+        # target's whole state, as before.
+        var_dim = None
+        if varname and varname.strip() and varname.strip().lower() not in ("state", "all", "*"):
+            var_dim = self.neurons[tgt].dim_for_var(varname.strip())
+        self.neurons[src].set_connection(tgt, weight, bias, var_dim=var_dim)
 
     def set_def(self, name, text):
         self._req(name); self.neurons[name].definition = text
@@ -795,7 +824,11 @@ P_VALE   = re.compile(r'^"([^"]+)"\s*@vale\s*=\s*"?([0-9.]+)"?$')
 # elastic-core value directive "@value=" (this codebase's own dialect calls
 # it "@vale="). Both parse to the same rt.set_vale() call.
 P_VALUE  = re.compile(r'^"([^"]+)"\s*@value\s*=\s*"?([0-9.]+)"?$')
-P_CONN   = re.compile(r'^"([^"]+)"\s*@connections\s*=\s*"\.\s*([^/]+)/([^"]+)"\s*\*\s*([0-9.]+)\s*\+\s*([0-9.]+)$')
+# The design doc's Neural Definition Format quotes every placeholder value,
+# including the connection's bias/weight ("...*"bias"+"weight""), the same way
+# it quotes @value="number". Accept the numbers with or without surrounding
+# quotes so the literal spec syntax parses (matching P_VALUE's "?...."? form).
+P_CONN   = re.compile(r'^"([^"]+)"\s*@connections\s*=\s*"\.\s*([^/]+)/([^"]+)"\s*\*\s*"?([0-9.]+)"?\s*\+\s*"?([0-9.]+)"?$')
 P_DEFN   = re.compile(r'^"([^"]+)"\s*@definishon\s*=\s*"([^"]+)"$')
 # Spec-literal alias: the design doc spells this directive "@definition="
 # (this codebase's own dialect calls it "@definishon="). Both parse to the
@@ -837,7 +870,7 @@ def interpret(source, save_dir='.'):
             if m: continue
             m = P_VALUE.match(line);  m and rt.set_vale(m.group(1),float(m.group(2)))
             if m: continue
-            m = P_CONN.match(line);   m and rt.set_conn(m.group(1),m.group(2).strip(),float(m.group(4)),float(m.group(5)))
+            m = P_CONN.match(line);   m and rt.set_conn(m.group(1),m.group(2).strip(),float(m.group(4)),float(m.group(5)),varname=m.group(3))
             if m: continue
             m = P_DEFN.match(line);   m and rt.set_def(m.group(1),m.group(2))
             if m: continue
