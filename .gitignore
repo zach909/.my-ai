@@ -1,3 +1,26 @@
+```
+# Build artifacts
+dist/
+
+# Dependencies
+node_modules/
+
+# Compiled/Generated files
+*.js.map
+*.min.js
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Editors
+.vscode/
+.idea/
 The provided input shows a modified file path `"models` which appears to be malformed (likely missing a file extension or proper path structure). However, without clear evidence of compiled files, dependencies, temporary files, or other artifacts in the changes that would warrant git ignores, and given the current .gitignore is empty, there are no specific patterns to add.
 
 (empty)
@@ -14,15 +37,14 @@ bun.lock
 __pycache__/
 *.pyc
 
-# Editor directories and files
-.vscode/*
-!.vscode/extensions.json
-.idea
+# OS generated files
 .DS_Store
 Thumbs.db
-*.codenet
-*.suo
-*.ntvs*
-*.njsproj
-*.sln
-*.sw?
+
+# Python related (if applicable)
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+```
