@@ -1,6 +1,6 @@
 # Neuroclaw — Prometheus Elastic Core
 
-Warning IT IS STILL IN BETA WE ARE NOT RESPONCIBAL FOR ANY PROBLUMS OR DAMAGE
+WORNING THE PROJECT IS STILL IN BETA WE ARE NOT RESPONCIBAL FOR ANY PROBLUMS OR DAMAGE INSTALL AT YOUR OWN RISK.
 
 A locally-run AI built on an **all-to-all neuron mesh** instead of a transformer.
 Every neuron connects to every other neuron with multi-dimensional state; a
