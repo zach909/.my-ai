@@ -3,3 +3,65 @@ The provided input shows a modified file named `"model` which appears to be a qu
 Since there are no clear build artifacts, dependency directories, editor files, or other ignorable patterns in the changes, and the modified file doesn't suggest any specific ignore requirements, no additions to .gitignore are necessary.
 
 Output: (nothing)
+# Dependencies
+node_modules/
+
+# Lockfiles (regenerated on install; never committed — the repo root stays as-is)
+package-lock.json
+bun.lock
+
+# Environment
+.env
+.env.local
+*.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Editors
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Build outputs
+dist/
+dist-ssr/
+build/
+target/
+.vite-out/
+*.local
+
+# Generated CodeNet artifacts (Code-to-Net exports; regenerable)
+*.codenet
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
