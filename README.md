@@ -158,7 +158,7 @@ The CSS variable check cross-references `var(--…)` usages against definitions 
 
 This is a correct, trainable implementation of all nine mechanisms, unit-verified
 at tiny scale. It is **not** proven to produce a capable model — that needs real
-training at scale (`train_at_scale.py` is the on-ramp). It is **not** a path to
-superintelligence, and it has **no autonomous goal-generation**: it reasons about
+training at scale (`train_at_scale.py` is the on-ramp). It is trying to be a path to
+superintelligence,but it has **no autonomous goal-generation**: it reasons about
 and responds to input, it does not invent its own objectives. The mesh is an
 unproven alternative to the transformer, offered to be tested, not assumed better.
