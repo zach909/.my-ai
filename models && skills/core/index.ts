@@ -28,3 +28,13 @@ export type { ProposedAction, AlignmentContext, VetoDecision, BenevolenceScorer,
 
 export { ElasticCoreBlock } from './elastic-core';
 export type { ElasticCoreConfig, ElasticCoreRunOptions, ElasticCoreResult } from './elastic-core';
+
+// Behavioral Code-to-Net (Section 21) — complements the structural CodeToNet in thorns.
+export { CodeToNetCompiler, CodeNet } from './code-to-net';
+export type { CodeNetMode, CodeNetJSON, CodeNetFunctionParams, CompileOptions, TestReport } from './code-to-net';
+
+// Hive Mind (Section 13) & Chat Groups (Section 14).
+export { HiveMind, HiveAgent, SharedBlackboard } from './hive-mind';
+export type { HiveAgentSpec, AgentThinkFn, DelegateOptions } from './hive-mind';
+export { ChatGroup } from './chat-group';
+export type { ChatMessage, Decision } from './chat-group';

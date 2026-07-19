@@ -12,3 +12,8 @@ export { QuantumNeuralNet, quantumNet } from './quantum-net';
 export { ZipIOSystem, InfiniteZipLoop } from './zip-io';
 export { AlignmentVeto } from './alignment-veto';
 export { ElasticCoreBlock } from './elastic-core';
+// Behavioral Code-to-Net (Section 21) — complements the structural CodeToNet in thorns.
+export { CodeToNetCompiler, CodeNet } from './code-to-net';
+// Hive Mind (Section 13) & Chat Groups (Section 14).
+export { HiveMind, HiveAgent, SharedBlackboard } from './hive-mind';
+export { ChatGroup } from './chat-group';

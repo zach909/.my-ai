@@ -1064,6 +1064,38 @@ async function testSelfExtension() {
   }
 }
 
+async function testCodeToNet() {
+  const { CodeToNetCompiler, CodeNet } = await load('models && skills/core/code-to-net.js');
+  const c = new CodeToNetCompiler();
+
+  // Numeric function → behavioral network (function mode), testable vs original.
+  const fnet = c.compile('poly', '(a,b) => a*2 + b', { seed: 7 });
+  check(fnet.mode === 'function' && fnet.arity === 2, 'Numeric function compiles in function mode');
+  const report = c.testAgainst(fnet, '(a,b) => a*2 + b', { seed: 99 });
+  check(report.passed, 'Function-mode net passes test-against-original code');
+  check(report.meanAbsError < 1.5, 'Function-mode net approximates the original within tolerance');
+
+  // Serialization round-trip preserves behaviour.
+  const round = CodeNet.fromJSON(fnet.toJSON());
+  check(Math.abs(round.evaluate([1, 2])[0] - fnet.evaluate([1, 2])[0]) < 1e-9, 'Code-net serialization round-trips');
+
+  // Unsupported code (loops / unsafe tokens) → deterministic embedding fallback.
+  const enet = c.compile('unsafe', '(a) => { while (true) {} return a; }');
+  check(enet.mode === 'embedding', 'Unsupported code falls back to embedding mode');
+  check(enet.evaluate([1]).length > 0, 'Embedding net yields a content signature');
+  check(c.testAgainst(enet, '(a) => { while (true) {} return a; }').passed, 'Embedding net re-embeds to the same signature');
+
+  // Integration: NeuroLang `@code` compiles a real, testable network.
+  const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
+  const interp = new NeuroLangInterpreter();
+  interp.parse('code@name="calc"\n"calc"@code="return a+b"');
+  const net = interp.getCodeNet('calc');
+  check(net && net.mode === 'function', 'NeuroLang @code compiles a behavioral code-net');
+  const out = interp.evaluateCodeNet('calc', [3, 4]);
+  check(out && Math.abs(out[0] - 7) < 1.5, 'Compiled code-net approximates a+b');
+  check(interp.testCodeNet('calc').passed, 'NeuroLang code-net passes the test-against-original check');
+}
+
 async function testHiveMindAndChatGroups() {
   const { HiveMind } = await load('models && skills/core/hive-mind.js');
   const { ChatGroup } = await load('models && skills/core/chat-group.js');
@@ -1153,6 +1185,7 @@ async function main() {
     ['Neural Definition directives', testNeuralDefinitionDirectives],
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
+    ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
   ];
   for (const [name, fn] of suites) {
