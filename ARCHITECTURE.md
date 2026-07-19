@@ -35,6 +35,14 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
   - More input + less value = more change; more value + less input = less change
 - **Why**: Learn but do not forget
 - **Example**: The model demoted the bad neuron (lowered its value to free points)
+- **NeuroLang realization**: `"<neuron>"@reward="<-1..1>"` on the elastic-mesh
+  runtime (`model && skills manager/neurolang.py`). A positive reward raises a
+  neuron's value (locking it in — it changes less); a negative reward lowers it
+  (making it more plastic). The opposite amount is redistributed across the rest
+  of the mesh, honouring the `[0, 1]` clamp, so `NeuroRuntime.total_value()` is
+  invariant — the zero-sum guarantee. `neuron.plasticity()` exposes `1 - vale`
+  and `neuron.expected_change(input)` predicts state movement (more input + lower
+  value → greater change). Guarded by `test_value_system.py`.
 
 #### 1.8 Empathy Engine
 - **Purpose**: Keep model aligned with user feelings
