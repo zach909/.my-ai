@@ -38,3 +38,7 @@ export { HiveMind, HiveAgent, SharedBlackboard } from './hive-mind';
 export type { HiveAgentSpec, AgentThinkFn, DelegateOptions } from './hive-mind';
 export { ChatGroup } from './chat-group';
 export type { ChatMessage, Decision } from './chat-group';
+
+// Net Search (Section 22) — search over neural structures.
+export { NetSearchEngine } from './net-search';
+export type { SearchMode, SearchableStructure, SearchResult, NetSearchOptions } from './net-search';

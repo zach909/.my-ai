@@ -8,8 +8,27 @@ Performs a semantic search using a provided definition and trains a neural netwo
 
 | Layer | File | What it is |
 |---|---|---|
-| TypeScript runtime backend | `extension-builder/builder.ts` — `netSearch`, `netSearchGenerate` | Semantic search plus a generated `netsearch`-type neuron wired to its matches |
+| TypeScript search engine | `models && skills/core/net-search.ts` — `NetSearchEngine` | Unified search over neural structures with **exact / semantic / neural / structural** modes, wired into NeuroLang (`interp.netSearch(...)`) |
+| TypeScript visual editor | `extension-builder/builder.ts` — `netSearch`, `netSearchGenerate` | Project-scoped semantic search plus a generated `netsearch`-type neuron wired to its matches |
 | Python training core | `tinygpt/neurolang.py` — `NetSearchManager` | Deterministic TF-IDF ranking *and* a trained deep-learning retrieval net, side by side |
+
+## Four search modes (`NetSearchEngine`)
+
+`models && skills/core/net-search.ts` searches the project's own neural structures (neuron name, definition, connections, flags) and keeps the spec's four search kinds distinct:
+
+- **exact** — substring / token-exact match on name or definition.
+- **semantic** — bag-of-words cosine over name+definition tokens.
+- **neural** — dense hashed embeddings **plus a learned** query→structure association table (`train(pairs)`), so a query with no lexical overlap can still retrieve the right structure.
+- **structural** — graph queries: `connects:NAME`, `flag:FLAG`, `degree:>N`, or a seed name whose neighbourhood is returned.
+
+```ts
+const interp = new NeuroLangInterpreter();
+interp.parse('...neurons + definitions...\n"netsearch"@name="finder"\n"netsearch"@net="self"');
+interp.netSearch("expert routing", { mode: "semantic" });  // ranked SearchResult[]
+interp.trainNetSearch([{ query: "chlorophyll", name: "photosynthesis" }]);
+```
+
+**"location"** in `"netsearch"@net="location"` names the structure collection the search operates over: the reserved values `"self"`/`"mesh"` mean the current NeuroLang neuron map; any other value names an external corpus registered via `NetSearchEngine.registerCorpus(location, structures)` (the interface for loading a network from elsewhere, no external APIs).
 
 ## `NetSearchManager` (Python)
 
@@ -40,7 +59,7 @@ Both search paths are real and run side by side deliberately: `hard_search` is a
 
 ## Verifying it
 
-`python test_core.py`'s `test_net_search` covers indexing, training, and both search modes on a real corpus. `npm test` (`test/smoke.mjs`)'s Extension Builder section covers `netSearchGenerate`'s neuron creation, its weighted wiring to each match, and both null-result edge cases explicitly.
+`python test_core.py`'s `test_net_search` covers indexing, training, and both search modes on a real corpus. `npm test` (`test/smoke.mjs`) covers two TypeScript sides: the Extension Builder section covers `netSearchGenerate`'s neuron creation, its weighted wiring to each match, and both null-result edge cases; the **Net Search engine (Section 22)** suite covers all four modes plus the NeuroLang `@net="self"` binding and search integration.
 
 ## See Also
 

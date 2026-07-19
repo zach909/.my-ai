@@ -1064,6 +1064,53 @@ async function testSelfExtension() {
   }
 }
 
+async function testNetSearchEngine() {
+  const { NetSearchEngine } = await load('models && skills/core/net-search.js');
+  const eng = new NetSearchEngine();
+  eng.addMany([
+    { name: 'photosynthesis', definition: 'process plants use light to make energy', connections: ['sunlight'], flags: [] },
+    { name: 'gravity', definition: 'force attracting masses together', connections: [], flags: [] },
+    { name: 'sunlight', definition: 'radiation from the sun', connections: [], flags: ['code-net'] },
+  ]);
+
+  // Exact: substring on name/definition.
+  const ex = eng.search('gravity', { mode: 'exact' });
+  check(ex.length === 1 && ex[0].name === 'gravity', 'Exact search matches by name');
+
+  // Semantic: token overlap on name+definition (no exact substring).
+  const sem = eng.search('energy from light', { mode: 'semantic' });
+  check(sem.length > 0 && sem[0].name === 'photosynthesis', 'Semantic search ranks by token overlap');
+
+  // Neural: a learned association retrieves a structure with no lexical overlap.
+  const before = eng.search('chlorophyll', { mode: 'neural' });
+  eng.train([{ query: 'chlorophyll', name: 'photosynthesis' }]);
+  const after = eng.search('chlorophyll', { mode: 'neural' });
+  check(after.length > 0 && after[0].name === 'photosynthesis', 'Neural search uses learned query→structure associations');
+  check((before[0]?.name !== 'photosynthesis') || (after[0].score > (before[0]?.score ?? 0)), 'Training strengthens the neural association');
+
+  // Structural: connectivity and flag queries.
+  const conn = eng.search('connects:sunlight', { mode: 'structural' });
+  check(conn.length === 1 && conn[0].name === 'photosynthesis', 'Structural search finds by connection target');
+  const flagged = eng.search('flag:code-net', { mode: 'structural' });
+  check(flagged.length === 1 && flagged[0].name === 'sunlight', 'Structural search finds by flag');
+
+  // Integration: search the NeuroLang neuron map, honouring @net="self".
+  const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
+  const interp = new NeuroLangInterpreter();
+  interp.parse([
+    'name="router"',
+    '"router"@definition="routes inputs to the correct expert"',
+    'name="memory"',
+    '"memory"@definition="stores long term knowledge for later recall"',
+    '"netsearch"@name="finder"',
+    '"netsearch"@net="self"',
+  ].join('\n'));
+  const bindings = interp.getNetSearchBindings();
+  check(bindings.some(b => b.name === 'finder' && b.location === 'self'), 'NeuroLang records a netsearch@net="self" binding');
+  const hit = interp.netSearch('expert routing', { mode: 'semantic' });
+  check(hit.length > 0 && hit[0].name === 'router', 'NeuroLang netSearch finds the relevant neuron by definition');
+}
+
 async function testCodeToNet() {
   const { CodeToNetCompiler, CodeNet } = await load('models && skills/core/code-to-net.js');
   const c = new CodeToNetCompiler();
@@ -1186,6 +1233,7 @@ async function main() {
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
+    ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
   ];
   for (const [name, fn] of suites) {

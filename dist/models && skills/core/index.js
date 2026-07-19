@@ -17,3 +17,5 @@ export { CodeToNetCompiler, CodeNet } from './code-to-net';
 // Hive Mind (Section 13) & Chat Groups (Section 14).
 export { HiveMind, HiveAgent, SharedBlackboard } from './hive-mind';
 export { ChatGroup } from './chat-group';
+// Net Search (Section 22) — search over neural structures.
+export { NetSearchEngine } from './net-search';
