@@ -1064,6 +1064,62 @@ async function testSelfExtension() {
   }
 }
 
+async function testHiveMindAndChatGroups() {
+  const { HiveMind } = await load('models && skills/core/hive-mind.js');
+  const { ChatGroup } = await load('models && skills/core/chat-group.js');
+
+  // Deterministic mind: each agent "thinks" in terms of its specialization so
+  // routing and voting are reproducible without invoking the full pipeline.
+  const hive = new HiveMind({ totalTrust: 100, defaultThink: (_p, a) => a.specialization });
+  hive.spawn({ id: 'planner', role: 'planner', specialization: 'planning', capabilities: ['planning'] });
+  hive.spawn({ id: 'coder', role: 'coder', specialization: 'coding', capabilities: ['coding'] });
+  hive.spawn({ id: 'reviewer', role: 'reviewer', specialization: 'review', capabilities: ['self-heal'] });
+
+  // Zero-sum Value System applied to agents (Section 13 x 3.1).
+  check(Math.abs(hive.totalTrustValue() - 100) < 1e-6, 'Hive trust budget is zero-sum after spawns');
+  check(hive.list().every(a => Math.abs(a.trust - 100 / 3) < 1e-6), 'Spawn splits trust evenly across agents');
+
+  // Promotion/demotion transfers trust but keeps the total invariant (3.2).
+  hive.reward('coder', 30);
+  check(Math.abs(hive.totalTrustValue() - 100) < 1e-6, 'Promotion keeps the trust budget invariant');
+  check(hive.get('coder').trust > hive.get('planner').trust, 'Promoted agent outranks its peers');
+
+  // Permissions are default-deny (Section 16/23).
+  check(hive.get('coder').can('coding') && !hive.get('planner').can('coding'), 'Capability permission is default-deny');
+
+  // Delegation routes by specialization / capability (MoE-style gating).
+  const routed = await hive.delegate('please write code to sort a list', { requireCapability: 'coding' });
+  check(routed && routed.agent.id === 'coder', 'Delegation routes a coding task to the coder');
+  const planned = await hive.delegate('planning the roadmap');
+  check(planned && planned.agent.id === 'planner', 'Delegation routes a planning task to the planner');
+
+  // Shared vs private memory with permissioned reads.
+  hive.get('planner').remember('secret', 42);
+  check(hive.get('planner').recall('secret') === 42, 'Owner can read its private memory');
+  check(hive.get('coder').recall('secret') === undefined, 'Private memory is not visible to other agents');
+
+  // Conflict resolution: two owners write the same public key differently; the
+  // hive resolves it in favour of the higher-trust owner.
+  hive.get('coder').share('answer', 'A');
+  hive.get('planner').share('answer', 'B');
+  check(hive.blackboard.hasConflict('answer'), 'Concurrent public writes raise a conflict');
+  hive.synchronize();
+  check(!hive.blackboard.hasConflict('answer'), 'synchronize() resolves open conflicts');
+  check(hive.blackboard.read('reviewer', 'answer') === 'A', 'Conflict resolves to the higher-trust value');
+
+  // Chat group: membership, discussion, trust-weighted decision, completion.
+  const group = new ChatGroup('g1', 'Team', hive);
+  for (const a of hive.list()) group.addMember(a.id);
+  check(group.getMembers().length === 3, 'Chat group has all three members');
+  const msgs = await group.discuss('design the feature');
+  check(msgs.length === 3, 'Discussion collects one contribution per member');
+  const decision = await group.decide('what next', ['planning first', 'coding now', 'review later']);
+  check(decision.decision === 'coding now', 'Trust-weighted vote elects the promoted coder\'s option');
+  check(group.getHistory().length >= 3, 'Chat group records message history');
+  group.complete('done');
+  check(group.isComplete() && group.getResult() === 'done', 'Chat group reaches task completion');
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1097,6 +1153,7 @@ async function main() {
     ['Neural Definition directives', testNeuralDefinitionDirectives],
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
+    ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);

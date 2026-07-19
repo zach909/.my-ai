@@ -5,7 +5,8 @@
  * robot state. Supports common robotics protocols and interfaces.
  */
 
-import type { Plugin } from './index';
+import type { PluginDefinition } from "../plugin_manager/types.js";
+import { BasePlugin } from "../plugin_manager/sdk.js";
 
 export interface RobotState {
   joints: Record<string, number>;
@@ -37,10 +38,14 @@ export interface Waypoint {
   yaw?: number;
 }
 
-export class RoboticsPlugin implements Plugin {
+export class RoboticsPlugin extends BasePlugin {
   name = 'robotics';
   description = 'Control robotic systems, read sensors, and execute movements.';
-  
+
+  constructor(definition: PluginDefinition) {
+    super(definition);
+  }
+
   private connected = false;
   private robotState: RobotState = {
     joints: {
