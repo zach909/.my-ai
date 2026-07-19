@@ -4,6 +4,9 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Welcome to Neuroclaw</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
     <style>
         * {
             margin: 0;
@@ -11,147 +14,292 @@
             box-sizing: border-box;
         }
         
+        :root {
+            --primary: #6366f1;
+            --primary-light: #818cf8;
+            --primary-dark: #4f46e5;
+            --accent: #06b6d4;
+            --bg-dark: #0f172a;
+            --bg-card: #1e293b;
+            --text-primary: #f8fafc;
+            --text-secondary: #94a3b8;
+            --border: #334155;
+            --glow: rgba(99, 102, 241, 0.4);
+        }
+        
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: radial-gradient(ellipse at top, #1e293b 0%, #0f172a 100%);
             min-height: 100vh;
             display: flex;
             align-items: center;
             justify-content: center;
             padding: 20px;
+            position: relative;
+            overflow-x: hidden;
+        }
+        
+        body::before {
+            content: '';
+            position: absolute;
+            top: -50%;
+            left: -50%;
+            width: 200%;
+            height: 200%;
+            background: 
+                radial-gradient(circle at 20% 80%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
+                radial-gradient(circle at 80% 20%, rgba(6, 182, 212, 0.15) 0%, transparent 50%);
+            animation: pulse 8s ease-in-out infinite;
+            pointer-events: none;
+        }
+        
+        @keyframes pulse {
+            0%, 100% { opacity: 0.5; transform: scale(1); }
+            50% { opacity: 0.8; transform: scale(1.05); }
         }
         
         .container {
-            background: white;
-            border-radius: 20px;
-            padding: 60px;
-            max-width: 600px;
+            background: rgba(30, 41, 59, 0.8);
+            backdrop-filter: blur(20px);
+            border-radius: 24px;
+            padding: 50px;
+            max-width: 650px;
             text-align: center;
-            box-shadow: 0 20px 60px rgba(0,0,0,0.3);
+            box-shadow: 
+                0 25px 80px rgba(0, 0, 0, 0.4),
+                0 0 0 1px rgba(255, 255, 255, 0.1),
+                inset 0 1px 0 rgba(255, 255, 255, 0.1);
+            position: relative;
+            z-index: 1;
+        }
+        
+        .logo-container {
+            position: relative;
+            display: inline-block;
+            margin-bottom: 25px;
         }
         
         .icon {
-            font-size: 80px;
-            margin-bottom: 20px;
+            font-size: 72px;
+            filter: drop-shadow(0 0 30px rgba(99, 102, 241, 0.5));
+            animation: float 3s ease-in-out infinite;
+        }
+        
+        @keyframes float {
+            0%, 100% { transform: translateY(0); }
+            50% { transform: translateY(-10px); }
+        }
+        
+        .logo-glow {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            width: 120px;
+            height: 120px;
+            background: radial-gradient(circle, rgba(99, 102, 241, 0.3) 0%, transparent 70%);
+            border-radius: 50%;
+            animation: glow 2s ease-in-out infinite;
+        }
+        
+        @keyframes glow {
+            0%, 100% { opacity: 0.5; transform: translate(-50%, -50%) scale(1); }
+            50% { opacity: 1; transform: translate(-50%, -50%) scale(1.2); }
         }
         
         h1 {
-            color: #333;
-            font-size: 2.5em;
-            margin-bottom: 10px;
+            color: var(--text-primary);
+            font-size: 2.8em;
+            font-weight: 700;
+            margin-bottom: 8px;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
         }
         
         .subtitle {
-            color: #666;
-            font-size: 1.2em;
+            color: var(--text-secondary);
+            font-size: 1.1em;
+            font-weight: 500;
+            margin-bottom: 25px;
+            font-family: 'JetBrains Mono', monospace;
+            letter-spacing: 0.05em;
+        }
+        
+        .description {
+            color: var(--text-secondary);
+            line-height: 1.7;
+            margin-bottom: 35px;
+            font-size: 1.05em;
+        }
+        
+        .btn-group {
+            display: flex;
+            gap: 12px;
+            justify-content: center;
+            flex-wrap: wrap;
             margin-bottom: 30px;
         }
         
         .btn {
-            display: inline-block;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
             color: white;
-            padding: 15px 40px;
-            border-radius: 50px;
+            padding: 14px 32px;
+            border-radius: 12px;
             text-decoration: none;
-            font-size: 1.1em;
+            font-size: 1em;
             font-weight: 600;
-            transition: transform 0.2s, box-shadow 0.2s;
-            margin: 10px;
+            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
+            border: none;
+            cursor: pointer;
+            position: relative;
+            overflow: hidden;
+        }
+        
+        .btn::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: -100%;
+            width: 100%;
+            height: 100%;
+            background: linear-gradient(90deg, transparent, rgba(255,255,255,0.2), transparent);
+            transition: left 0.5s;
+        }
+        
+        .btn:hover::before {
+            left: 100%;
         }
         
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 10px 30px rgba(102, 126, 234, 0.4);
+            box-shadow: 0 15px 40px rgba(99, 102, 241, 0.4);
         }
         
         .btn-secondary {
-            background: #f0f0f0;
-            color: #333;
+            background: rgba(255, 255, 255, 0.05);
+            color: var(--text-primary);
+            border: 1px solid var(--border);
         }
         
         .btn-secondary:hover {
-            box-shadow: 0 10px 30px rgba(0,0,0,0.1);
-        }
-        
-        .features {
-            margin-top: 40px;
-            text-align: left;
-        }
-        
-        .feature {
-            padding: 15px 0;
-            border-bottom: 1px solid #eee;
-        }
-        
-        .feature:last-child {
-            border-bottom: none;
-        }
-        
-        .feature-icon {
-            display: inline-block;
-            width: 30px;
-            margin-right: 10px;
+            background: rgba(255, 255, 255, 0.1);
+            border-color: var(--primary-light);
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.3);
         }
         
         .loading {
-            margin-top: 30px;
-            color: #666;
+            margin-top: 25px;
+            color: var(--text-secondary);
         }
         
         .spinner {
-            border: 3px solid #f3f3f3;
-            border-top: 3px solid #667eea;
+            width: 36px;
+            height: 36px;
+            border: 2px solid rgba(99, 102, 241, 0.2);
+            border-top-color: var(--primary);
             border-radius: 50%;
-            width: 30px;
-            height: 30px;
             animation: spin 1s linear infinite;
             margin: 20px auto;
         }
         
         @keyframes spin {
-            0% { transform: rotate(0deg); }
-            100% { transform: rotate(360deg); }
+            to { transform: rotate(360deg); }
+        }
+        
+        .features {
+            margin-top: 40px;
+            text-align: left;
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+            gap: 16px;
+        }
+        
+        .feature {
+            padding: 16px;
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            border: 1px solid rgba(255, 255, 255, 0.05);
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+        
+        .feature:hover {
+            background: rgba(255, 255, 255, 0.06);
+            border-color: rgba(99, 102, 241, 0.3);
+            transform: translateY(-2px);
+        }
+        
+        .feature-icon {
+            font-size: 24px;
+            flex-shrink: 0;
+        }
+        
+        .feature-text {
+            color: var(--text-secondary);
+            font-size: 0.95em;
+            line-height: 1.5;
+        }
+        
+        .feature-text strong {
+            color: var(--text-primary);
+            font-weight: 600;
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="icon">🧠</div>
+        <div class="logo-container">
+            <div class="logo-glow"></div>
+            <div class="icon">🧠</div>
+        </div>
         <h1>Neuroclaw</h1>
-        <p class="subtitle">Prometheus Elastic Core</p>
+        <p class="subtitle">PROMETHEUS ELASTIC CORE</p>
         
-        <p style="color: #555; line-height: 1.6; margin-bottom: 30px;">
+        <p class="description">
             Your local AI powered by an all-to-all neuron mesh. 
             No external APIs. Complete privacy. Infinite possibilities.
         </p>
         
-        <div>
-            <a href="#" class="btn" onclick="launchApp()">🚀 Launch Application</a>
-            <a href="http://localhost:3000" class="btn btn-secondary" id="webBtn">🌐 Open Web Interface</a>
+        <div class="btn-group">
+            <a href="#" class="btn" onclick="launchApp()">
+                <span>🚀</span>
+                <span>Launch Application</span>
+            </a>
+            <a href="http://localhost:3000" class="btn btn-secondary" id="webBtn">
+                <span>🌐</span>
+                <span>Open Web Interface</span>
+            </a>
         </div>
         
         <div class="loading" id="loading">
             <div class="spinner"></div>
-            <p>Starting the neural mesh...</p>
+            <p>Initializing neural mesh...</p>
         </div>
         
         <div class="features">
             <div class="feature">
                 <span class="feature-icon">🔒</span>
-                <strong>100% Local</strong> — Runs entirely on your machine
+                <span class="feature-text"><strong>100% Local</strong><br>Runs entirely on your machine</span>
             </div>
             <div class="feature">
                 <span class="feature-icon">🧩</span>
-                <strong>Plugin System</strong> — Extend with custom skills
+                <span class="feature-text"><strong>Plugin System</strong><br>Extend with custom skills</span>
             </div>
             <div class="feature">
                 <span class="feature-icon">⚡</span>
-                <strong>Real-time</strong> — Live neural mesh visualization
+                <span class="feature-text"><strong>Real-time</strong><br>Live neural mesh visualization</span>
             </div>
             <div class="feature">
                 <span class="feature-icon">🎯</span>
-                <strong>Privacy First</strong> — Your data never leaves your device
+                <span class="feature-text"><strong>Privacy First</strong><br>Your data never leaves your device</span>
             </div>
         </div>
     </div>
