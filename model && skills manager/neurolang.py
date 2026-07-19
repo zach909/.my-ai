@@ -8,6 +8,7 @@ Syntax:
   dims = N
   name="X"
   "X"@vale="0.9"
+  "X"@reward="0.8"                         # zero-sum reinforce (+ locks in, - frees up)
   "X"@connections=".Y/state"*w+b
   "X"@definishon="text"
   input "X" = [1.0, 0.5, -0.3]
@@ -104,10 +105,33 @@ class ElasticNeuron(nn.Module):
         pad = max(0, self.dims - len(v))
         self.external = torch.cat([v[:self.dims], torch.zeros(pad)])
 
+    def plasticity(self):
+        """How readily this neuron changes, in [0, 1].
+
+        Spec Value System: "A higher-value neuron changes less easily, while a
+        lower-value neuron is more capable of learning and changing." The
+        state update in compute_next() already scales the *new* activation by
+        (1 - vale), so plasticity is exactly that coefficient — a low-value
+        neuron admits more of each new activation, a high-value neuron holds
+        its state."""
+        return float((1.0 - self.vale).clamp(0, 1).item())
+
+    def expected_change(self, input_magnitude):
+        """Predicted magnitude of state change for a given input magnitude.
+
+        Spec: "More input combined with lower value results in greater change.
+        Less input combined with higher value results in less change." The
+        settled update moves the state by (1 - vale) * activation, and the
+        activation saturates through tanh, so the predicted change is the
+        plasticity gated by how much input actually drives the neuron."""
+        drive = float(torch.tanh(torch.tensor(float(input_magnitude))).abs().item())
+        return self.plasticity() * drive
+
     def summary(self):
         lines = [
             f'\n── Neuron "{self.name}" ──',
             f'  vale       : {self.vale.item():.4f}',
+            f'  plasticity : {self.plasticity():.4f}  (1 - vale; how readily it changes)',
             f'  dims       : {self.dims}',
             f'  state      : {_fv(self.state)}',
             f'  external   : {_fv(self.external)}',
@@ -588,6 +612,63 @@ class NeuroRuntime:
     def set_vale(self, name, v):
         self._req(name); self.neurons[name].vale = torch.tensor(v).clamp(0, 1)
 
+    def total_value(self):
+        """Sum of all neuron values — the conserved quantity of the zero-sum
+        Value System."""
+        return float(sum(float(n.vale.item()) for n in self.neurons.values()))
+
+    def reward(self, name, r, rate=0.2):
+        """Reinforce or punish a neuron, conserving total value (zero-sum).
+
+        Spec Value System: the total value distributed across all neurons is
+        constant, and "If a neuron repeatedly produces poor results, the system
+        can reduce its value, making it more adaptable to new information."
+
+        A positive reward ``r`` raises the target's value (locking in a neuron
+        that produced a good result, so it changes less); a negative reward
+        lowers it (making a neuron that produced poor results more plastic).
+        Whatever value the target gains is drawn — in equal shares — from every
+        other neuron, and whatever it loses is redistributed back to them, so
+        ``total_value()`` is invariant. Clamping to [0, 1] is honoured by only
+        moving as much value as the donors/recipients can actually absorb.
+        """
+        self._req(name)
+        others = [n for nm, n in self.neurons.items() if nm != name]
+        target = self.neurons[name]
+        desired = float(max(-1.0, min(1.0, r))) * rate
+        if not others:
+            # Nothing to trade with; value is trivially conserved by staying put.
+            return self.total_value()
+
+        # 1. Clamp the target move to what its own [0, 1] range allows.
+        cur = float(target.vale.item())
+        applied = max(-cur, min(1.0 - cur, desired))
+        # 2. Donors must collectively move by -applied (they give value when the
+        #    target gains, receive it when the target loses). Spread that across
+        #    the donors, iterating so a donor hitting its [0, 1] clamp hands its
+        #    unmet share to the donors that still have headroom — no value leaks.
+        donor_needed = -applied           # total remaining donor movement
+        donor_moved = 0.0                 # what donors actually moved so far
+        pool = list(others)
+        while abs(donor_needed) > 1e-9 and pool:
+            share = donor_needed / len(pool)
+            still = []
+            for n in pool:
+                v = float(n.vale.item())
+                move = max(-v, min(1.0 - v, share))
+                n.vale = torch.tensor(v + move).clamp(0, 1)
+                donor_moved += move
+                donor_needed -= move
+                if abs(share - move) > 1e-9:   # donor clamped; still has a deficit share
+                    still.append(n)
+            if len(still) == len(pool):
+                break  # no donor could absorb more — avoid an infinite loop
+            pool = still
+        # 3. Move the target by exactly the negative of what donors moved, so
+        #    total_value() is invariant even when some donors were clamped.
+        target.vale = torch.tensor(cur - donor_moved).clamp(0, 1)
+        return self.total_value()
+
     def set_conn(self, src, tgt, weight, bias, varname=None):
         self._req(src); self._req(tgt)
         # ".tgt/variable" reads one named state variable (dimension) of the
@@ -824,6 +905,12 @@ P_VALE   = re.compile(r'^"([^"]+)"\s*@vale\s*=\s*"?([0-9.]+)"?$')
 # elastic-core value directive "@value=" (this codebase's own dialect calls
 # it "@vale="). Both parse to the same rt.set_vale() call.
 P_VALUE  = re.compile(r'^"([^"]+)"\s*@value\s*=\s*"?([0-9.]+)"?$')
+# Value System reinforcement: reward (or punish) a neuron in [-1, 1]. Positive
+# raises its value (locks it in — it changes less); negative lowers it (makes it
+# more plastic). The opposite amount is redistributed across the mesh so the
+# total value stays constant (zero-sum). Sign is allowed here, so match it
+# before the unsigned @value= alias would swallow the number.
+P_REWARD = re.compile(r'^"([^"]+)"\s*@reward\s*=\s*"?(-?[0-9.]+)"?$')
 # The design doc's Neural Definition Format quotes every placeholder value,
 # including the connection's bias/weight ("...*"bias"+"weight""), the same way
 # it quotes @value="number". Accept the numbers with or without surrounding
@@ -867,6 +954,8 @@ def interpret(source, save_dir='.'):
             m = P_DECL.match(line);   m and rt.declare(m.group(1))
             if m: continue
             m = P_VALE.match(line);   m and rt.set_vale(m.group(1),float(m.group(2)))
+            if m: continue
+            m = P_REWARD.match(line); m and rt.reward(m.group(1),float(m.group(2)))
             if m: continue
             m = P_VALUE.match(line);  m and rt.set_vale(m.group(1),float(m.group(2)))
             if m: continue
