@@ -1,10 +1,44 @@
 ```
-# Log files
-*.log.json
+# Python
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
 
-# State files
-*.state.json
+# Dependencies
+venv/
+.venv/
+.env
+.env.local
+*.env.*
 
-# Clones directory
-clones/
+# Build artifacts
+dist/
+build/
+*.o
+*.obj
+*.so
+*.a
+*.dll
+*.exe
+*.out
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Editors
+.vscode/
+.idea/
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Python specific caches
+.mypy_cache/
+.pytest_cache/
 ```
