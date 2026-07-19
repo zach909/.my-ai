@@ -19,6 +19,7 @@ import { ScreenshotsPlugin } from "./screenshots.js";
 import { BrowserPlugin } from "./browser.js";
 import { FileSystemPlugin } from "./file-system.js";
 import { PasskeysPlugin } from "./passkeys.js";
+import { RoboticsPlugin } from "./robotics.js";
 import { CodingExtension } from "./extensions/coding.js";
 import { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
 export { LocationPlugin } from "./location.js";
@@ -41,6 +42,7 @@ export { ScreenshotsPlugin } from "./screenshots.js";
 export { BrowserPlugin } from "./browser.js";
 export { FileSystemPlugin } from "./file-system.js";
 export { PasskeysPlugin } from "./passkeys.js";
+export { RoboticsPlugin } from "./robotics.js";
 export { MultiInputPlugin } from "./multi-input.js";
 export { CodingExtension } from "./extensions/coding.js";
 export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
@@ -86,6 +88,8 @@ export function createPluginInstance(name, definition, skillDefinition) {
         return new FileSystemPlugin(definition);
     if (lower === "passkeys")
         return new PasskeysPlugin(definition);
+    if (lower === "robotics" || lower === "robotics-api")
+        return new RoboticsPlugin(definition);
     if (lower.includes("coding"))
         return new CodingExtension(definition, skillDefinition);
     if (lower.includes("image"))
@@ -127,6 +131,7 @@ const pluginExtensions = {
     "file-system": { id: "file-system", name: "File System", type: "api-connection", capabilities: ["file-system"] },
     passkeys: { id: "passkeys", name: "Passkeys", type: "api-connection", capabilities: ["passkeys"] },
     browser: { id: "browser", name: "Browser", type: "api-connection", capabilities: ["browser"] },
+    robotics: { id: "robotics", name: "Robotics", type: "api-connection", capabilities: ["robotics", "robot-control", "sensors"] },
     coding: { id: "coding", name: "Coding Skill", type: "skill-expert", capabilities: ["coding"] },
     image: { id: "image", name: "Image Skill", type: "skill-expert", capabilities: ["image-generation"] },
     video: { id: "video", name: "Video Skill", type: "skill-expert", capabilities: ["video-generation"] },

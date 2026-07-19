@@ -10,6 +10,8 @@ import { CLI } from "./interface/cli.js";
 import { AlignmentVeto } from "./models && skills/core/alignment-veto.js";
 import { ZipIOSystem } from "./models && skills/core/zip-io.js";
 import { EmpathyEngine } from "./models && skills/core/empathy.js";
+import { HiveMind } from "./models && skills/core/hive-mind.js";
+import { ChatGroup } from "./models && skills/core/chat-group.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -24,6 +26,7 @@ import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 export class NeuroclawSystem {
     constructor(config) {
         this.initialized = false;
+        this.chatGroup = null;
         this.llm = new NeuroclawLLM({});
         this.pipeline = new NeuroPipeline({});
         this.thesaurus = new ThesaurusDictionary();
@@ -33,6 +36,9 @@ export class NeuroclawSystem {
         this.zipIO = new ZipIOSystem(this.contextCapacityGB);
         this.empathy = new EmpathyEngine();
         this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.thesaurus, this.pluginRegistry);
+        // Hive Mind (Section 13): each agent's mind is the real neural runner, so
+        // multi-agent collaboration runs through the same pipeline as a single query.
+        this.hive = new HiveMind({ defaultThink: (prompt) => this.runner.generate(prompt) });
     }
     /**
      * Initialize all subsystems
@@ -124,6 +130,31 @@ export class NeuroclawSystem {
         }
     }
     /**
+     * Sections 13-14: spin up (once) a small specialized team and let it
+     * collaborate on a task through a chat group. Each agent's mind is the real
+     * neural runner, so this is genuine multi-agent processing, not a mock. The
+     * team discusses the task, then reaches a trust-weighted group decision, and
+     * the hive synchronizes any shared-memory conflicts before returning.
+     */
+    async collaborate(task) {
+        if (!this.initialized)
+            await this.initialize();
+        if (this.hive.list().length === 0) {
+            this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
+            this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
+            this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
+        }
+        if (!this.chatGroup) {
+            this.chatGroup = new ChatGroup("default", "Default Team", this.hive);
+            for (const a of this.hive.list())
+                this.chatGroup.addMember(a.id);
+        }
+        const msgs = await this.chatGroup.discuss(task);
+        const decision = await this.chatGroup.decide(`How should we handle: ${task}`, ["proceed", "revise", "reject"]);
+        this.hive.synchronize();
+        return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision };
+    }
+    /**
      * Get system status
      */
     getStatus() {
@@ -132,6 +163,7 @@ export class NeuroclawSystem {
             activePlugins: this.pluginRegistry.listActivePlugins().length,
             contextCapacity: `${this.contextCapacityGB}GB available`,
             alignment: this.empathy.getAlignmentScore(),
+            hiveAgents: this.hive.list().length,
         };
     }
 }

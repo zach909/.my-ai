@@ -6,7 +6,7 @@
  * independent agent that can be given specific tasks or personas.
  */
 
-import { v4 as uuidv4 } from 'uuid';
+import { randomUUID } from 'node:crypto';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -65,7 +65,7 @@ export class SelfReplicatePlugin {
     role?: string,
     specialization?: string
   ): { success: boolean; clone_id: string; prompt: string; config: CloneConfig; status: string; message: string } {
-    const cloneId = `clone_${uuidv4().slice(0, 8)}`;
+    const cloneId = `clone_${randomUUID().slice(0, 8)}`;
     const effectiveConfig: CloneConfig = { ...this.defaultConfig, ...config };
     
     if (role) {

@@ -131,7 +131,7 @@ export class PluginRegistry {
       if (plugin && this.activePlugins.has(pluginId)) {
         try {
           const result = await plugin.onMessage?.(input);
-          if (result != null) return String(result);
+          if (result != null) return typeof result === "string" ? result : JSON.stringify(result);
         } catch { /* plugin failed, try next */ }
       }
     }
