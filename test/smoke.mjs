@@ -119,6 +119,13 @@ async function testLLM() {
   const q = await llm.generate('hello world');
   check((q.match(/Plan:/g) || []).length <= 1, 'LLM.generate does not duplicate the Plan line on query intent');
 
+  // Section 7 continuous context: supplied memory grounds the response, and
+  // without it the output carries no grounding block.
+  const grounded = await llm.generate('hello world', { memoryContext: ['User: earlier we set the port to 8080'] });
+  check(grounded.includes('[Grounded in 1 related memory]') && grounded.includes('8080'), 'LLM.generate grounds the response in supplied memory context');
+  const ungrounded = await llm.generate('hello world');
+  check(!ungrounded.includes('[Grounded'), 'LLM.generate adds no grounding block without memory context');
+
   // Section 9 symbolic trace is reachable through the LLM (the `trace` CLI command).
   const tr = llm.traceNeuron(3, 2, 5);
   check(tr && typeof tr.equation === 'string' && Number.isFinite(tr.value), 'LLM.traceNeuron exposes a symbolic trace');

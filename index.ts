@@ -202,9 +202,12 @@ export class NeuroclawSystem {
     }
 
     // 5. Run the query through the real neural runner (THORNS intent →
-    //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation).
+    //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation),
+    //    grounded in any relevant prior conversation turns so the response
+    //    integrates previous context instead of treating the prompt as an
+    //    isolated event (continuous context, Section 7).
     try {
-      let result = await this.runner.generate(input);
+      let result = await this.runner.generate(input, priorHistory.map(h => h.item.content));
       if (decision.requiresConfirmation) {
         result = `${result}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`;
       }
