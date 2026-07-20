@@ -121,24 +121,38 @@ export class BrowserPlugin extends BasePlugin {
         if (this.isPrivateHost(hostname)) {
             throw new Error(`Security Error: Access to private/local host "${hostname}" is forbidden.`);
         }
+        let ipAddress = url.hostname;
         // 2. DNS resolution check to prevent DNS Rebinding
         try {
             // dns.lookup doesn't like brackets for IPv6 literals
             const dnsHostname = url.hostname.replace(/^\[|\]$/g, "");
             const lookup = await dns.lookup(dnsHostname);
-            if (this.isPrivateHost(lookup.address)) {
-                throw new Error(`Security Error: Access to private/local address "${lookup.address}" is forbidden.`);
+            ipAddress = lookup.address;
+            if (this.isPrivateHost(ipAddress)) {
+                throw new Error(`Security Error: Access to private/local address "${ipAddress}" is forbidden.`);
             }
         }
         catch (err) {
-            // If DNS lookup fails, it's likely an invalid host, but we let the client handle it.
-            // However, if we want to be strict, we could block it.
             if (err instanceof Error && err.message.includes('Security Error'))
                 throw err;
         }
         const client = url.protocol === 'https:' ? https : http;
+        // Pin connection directly to resolved ipAddress to eliminate DNS rebinding TOCTOU window
+        const requestOptions = {
+            hostname: ipAddress,
+            port: url.port ? Number(url.port) : (url.protocol === 'https:' ? 443 : 80),
+            path: url.pathname + url.search,
+            headers: {
+                'Host': url.hostname,
+                'User-Agent': 'Mozilla/5.0 (Neuroclaw)',
+            },
+            timeout: 10000,
+        };
+        if (url.protocol === 'https:') {
+            requestOptions.servername = url.hostname;
+        }
         return new Promise((resolve, reject) => {
-            const req = client.get(urlStr, { timeout: 10000, headers: { 'User-Agent': 'Mozilla/5.0 (Neuroclaw)' } }, (res) => {
+            const req = client.get(requestOptions, (res) => {
                 const chunks = [];
                 res.on('data', (c) => chunks.push(c));
                 res.on('end', () => {

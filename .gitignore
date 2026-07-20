@@ -31,12 +31,40 @@ ENV/
 # IDE and editor files
 .vscode/
 .idea/
+*.pyc
+*.pyo
+*.pyd
+
+# Dependencies
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+
+# Build artifacts
+dist/
+build/
+*.o
+*.obj
+*.so
+*.a
+*.dll
+*.exe
+*.out
+
+# Logs and temporary files
+*.log
+*.tmp
 *.swp
 *.swo
 *.tmp
 
 # Logs
 *.log
+# Editors
+.vscode/
+.idea/
 
 # Coverage
 .coverage
@@ -51,4 +79,7 @@ htmlcov/
 # System files
 .DS_Store
 Thumbs.db
+# Python specific caches
+.mypy_cache/
+.pytest_cache/
 ```

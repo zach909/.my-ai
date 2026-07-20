@@ -119,6 +119,13 @@ async function testLLM() {
   const q = await llm.generate('hello world');
   check((q.match(/Plan:/g) || []).length <= 1, 'LLM.generate does not duplicate the Plan line on query intent');
 
+  // Section 7 continuous context: supplied memory grounds the response, and
+  // without it the output carries no grounding block.
+  const grounded = await llm.generate('hello world', { memoryContext: ['User: earlier we set the port to 8080'] });
+  check(grounded.includes('[Grounded in 1 related memory]') && grounded.includes('8080'), 'LLM.generate grounds the response in supplied memory context');
+  const ungrounded = await llm.generate('hello world');
+  check(!ungrounded.includes('[Grounded'), 'LLM.generate adds no grounding block without memory context');
+
   // Section 9 symbolic trace is reachable through the LLM (the `trace` CLI command).
   const tr = llm.traceNeuron(3, 2, 5);
   check(tr && typeof tr.equation === 'string' && Number.isFinite(tr.value), 'LLM.traceNeuron exposes a symbolic trace');
@@ -948,6 +955,30 @@ async function testChromeApps() {
   check(await b.disconnectChromeApp('chrome-x') && !b.isChromeAppConnected('chrome-x'), 'Chrome app can be disconnected');
   check(await b.onMessage('hello, what can you do?') === null,
     'Browser plugin declines plain conversation (falls through to generation)');
+
+  // SSRF & DNS Rebinding Security Checks
+  let blockedLocal = false;
+  try {
+    await b.fetchUrl('http://localhost/');
+  } catch (err) {
+    if (err.message.includes('Security Error')) blockedLocal = true;
+  }
+  check(blockedLocal, 'BrowserPlugin: fetchUrl blocks localhost string check');
+
+  let blockedIp = false;
+  try {
+    await b.fetchUrl('http://127.0.0.1/');
+  } catch (err) {
+    if (err.message.includes('Security Error')) blockedIp = true;
+  }
+  check(blockedIp, 'BrowserPlugin: fetchUrl blocks 127.0.0.1 string check');
+
+  // Verify private host checks directly
+  check(b.isPrivateHost('127.0.0.1'), 'BrowserPlugin: isPrivateHost identifies 127.0.0.1 as private');
+  check(b.isPrivateHost('10.0.0.1'), 'BrowserPlugin: isPrivateHost identifies 10.0.0.1 as private');
+  check(b.isPrivateHost('192.168.1.1'), 'BrowserPlugin: isPrivateHost identifies 192.168.1.1 as private');
+  check(b.isPrivateHost('172.16.0.1'), 'BrowserPlugin: isPrivateHost identifies 172.16.0.1 as private');
+  check(!b.isPrivateHost('8.8.8.8'), 'BrowserPlugin: isPrivateHost identifies 8.8.8.8 as public');
 }
 
 // Extension Builder: the drag-connect editor, drag labels, per-neuron
@@ -1064,6 +1095,285 @@ async function testSelfExtension() {
   }
 }
 
+async function testLongTermMemory() {
+  const { LongTermMemory } = await load('models && skills/core/long-term-memory.js');
+  const mem = new LongTermMemory();
+  mem.remember('the capital of france is paris', { id: 'geo', tags: ['geo'], importance: 0.5 });
+  mem.remember('python is a programming language used for coding software', { id: 'tech', tags: ['tech'], importance: 0.5 });
+  mem.remember('photosynthesis converts sunlight into energy inside plants', { id: 'bio', tags: ['bio'], importance: 0.5 });
+  check(mem.size() === 3, 'Memories are stored');
+
+  // Relevance retrieval: the semantically-closest memory ranks first.
+  const hits = mem.retrieve('which programming language is good for coding');
+  check(hits.length > 0 && hits[0].item.id === 'tech', 'Retrieval ranks the semantically relevant memory first');
+
+  // Retrieval reinforces what it returns (light promotion).
+  check(mem.get('tech').accessCount >= 1 && mem.get('tech').importance > 0.5, 'Retrieved memory is reinforced');
+
+  // Tag-scoped retrieval.
+  const bio = mem.retrieve('anything', { tag: 'bio' });
+  check(bio.every(h => h.item.tags.includes('bio')), 'Tag-scoped retrieval only returns matching memories');
+
+  // Explicit promotion.
+  mem.reinforce('geo', 0.4);
+  check(mem.get('geo').importance > 0.5, 'reinforce() raises a memory\'s importance');
+
+  // Serialization round-trip preserves memories and retrieval.
+  const restored = LongTermMemory.deserialize(mem.serialize());
+  check(restored.size() === mem.size(), 'Memory serialization round-trips');
+  // Pure-semantic retrieval (no importance/recency boost) isolates that the
+  // restored embeddings still rank the relevant memory first.
+  const restoredHits = restored.retrieve('python coding software programming language', { importanceWeight: 0, recencyWeight: 0 });
+  check(restoredHits[0].item.id === 'tech', 'Restored memory still retrieves correctly');
+
+  // Capacity policy: important/recent memories are preserved, the least is evicted.
+  const cap = new LongTermMemory({ capacity: 2 });
+  cap.remember('high value fact', { id: 'high', importance: 0.9 });
+  cap.remember('medium value fact', { id: 'mid', importance: 0.5 });
+  cap.remember('low value fact', { id: 'low', importance: 0.1 });
+  check(cap.size() === 2, 'Capacity is enforced');
+  check(cap.get('high') && !cap.get('low'), 'Least-important memory is evicted first, important one preserved');
+
+  // Consolidation from working-context snippets.
+  const c = new LongTermMemory();
+  c.consolidateFrom(['fact one', 'fact two', '']);
+  check(c.size() === 2, 'consolidateFrom ingests non-empty working-context snippets');
+
+  // Chat-history retrieval: store conversation turns, then retrieve the
+  // relevant past turn by relevance (long-term memory from chat history).
+  const chat = new LongTermMemory();
+  chat.remember('User: how do I center a div in css', { tags: ['chat-turn', 'user'] });
+  chat.remember('AI: use flexbox with justify content and align items center', { tags: ['chat-turn', 'assistant'] });
+  chat.remember('User: what is the capital of japan', { tags: ['chat-turn', 'user'] });
+  const turns = chat.retrieve('flexbox justify content align items', { tag: 'chat-turn' });
+  check(turns.length > 0 && turns[0].item.content.includes('flexbox'), 'Retrieval pulls the relevant turn from chat history');
+  check(turns.every(t => t.item.tags.includes('chat-turn')), 'Chat-history retrieval is scoped to conversation turns');
+
+  // Stopword filtering: a query dominated by function words still matches on
+  // content, and stopword-only overlap does not surface irrelevant turns
+  // (this is what makes the NeuroclawSystem recall short-circuit precise).
+  const s = new LongTermMemory();
+  s.remember('User: my project uses a postgres database on port 5432', { tags: ['chat-turn'] });
+  s.remember('User: the weather today is sunny and warm', { tags: ['chat-turn'] });
+  const dbHits = s.retrieve('what did we discuss about the database earlier', { tag: 'chat-turn' });
+  check(dbHits.length > 0 && dbHits[0].item.content.includes('database'), 'Content tokens (not stopwords) drive retrieval');
+  check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
+}
+
+async function testSelfHealer() {
+  const { SelfHealer } = await load('models && skills/core/self-healer.js');
+  const healer = new SelfHealer();
+
+  // A component that starts broken but whose repair fixes it.
+  let brokenFixed = false;
+  healer.register({ name: 'repairable', check: () => brokenFixed, repair: () => { brokenFixed = true; } });
+  // A healthy component (no action needed).
+  healer.register({ name: 'healthy', check: () => true });
+  // A component with no repair but a restorable known-good state.
+  let corrupted = true;
+  healer.register({
+    name: 'restorable',
+    check: () => !corrupted,
+    snapshot: () => ({ good: true }),
+    restore: (snap) => { corrupted = !(snap && snap.good); },
+  });
+  // A component that cannot be recovered.
+  healer.register({ name: 'doomed', check: () => false, repair: () => { /* no-op, stays broken */ } });
+
+  // Capture known-good baseline while 'restorable' is healthy.
+  corrupted = false;
+  healer.snapshotAll();
+  corrupted = true; // now corrupt it
+
+  const report = await healer.heal();
+  check(report.checked === 4, 'Self-healer checks all registered components');
+  check(report.results.find(r => r.component === 'repairable').recovered, 'A repairable component is repaired');
+  check(report.results.find(r => r.component === 'healthy').wasHealthy, 'A healthy component needs no repair');
+  const restorableResult = report.results.find(r => r.component === 'restorable');
+  check(restorableResult.recovered && restorableResult.actions.includes('restored-known-good'), 'An unrepairable component is reverted to a known-good snapshot');
+  check(report.unrecoverable.includes('doomed'), 'An unrecoverable component is reported, not hidden');
+  check(report.log.length > 0, 'Every heal step is logged (recovery mechanism, not silent)');
+  const health = await healer.healthReport();
+  check(health.repairable === true && health.doomed === false, 'healthReport reflects post-heal component health');
+}
+
+async function testPlanTracker() {
+  const { PlanTracker } = await load('models && skills/core/plan-tracker.js');
+  const plan = new PlanTracker();
+  plan.setObjective('ship the feature');
+  plan.addConstraint('no external APIs');
+  const [a, b] = plan.addSteps(['write the parser', 'write the tests']);
+  check(plan.getObjective() === 'ship the feature' && plan.progress().total === 2, 'Plan records objective and steps');
+
+  // De-duplication prevents duplicate steps.
+  const dup = plan.addStep('Write The Parser');
+  check(dup.id === a.id && plan.progress().total === 2, 'Duplicate steps are de-duplicated');
+
+  // Ordered execution.
+  check(plan.next().id === a.id, 'next() returns the first pending step');
+  plan.start(a.id);
+  plan.complete(a.id, 'parser done');
+  check(plan.next().id === b.id, 'next() advances past completed steps');
+
+  // No-repeat rule.
+  check(!plan.shouldPerform('write the parser'), 'Completed actions are not repeated');
+  check(plan.shouldPerform('write the parser', true), 'Repeat is allowed when explicitly forced');
+  check(plan.shouldPerform('write the docs'), 'A new action is allowed');
+
+  // Failure + retry.
+  plan.fail(b.id, 'flaky test');
+  check(plan.progress().failed === 1, 'Failed steps are recorded');
+  plan.retry(b.id);
+  check(plan.next().id === b.id, 'A failed step can be retried (back to pending)');
+  plan.complete(b.id, 'tests pass');
+  check(plan.isComplete() && plan.isAchieved(), 'Plan completes when all steps are resolved');
+
+  // Revision preserves history, replaces the remaining work.
+  const plan2 = new PlanTracker();
+  const [s1] = plan2.addSteps(['research', 'draft', 'review']);
+  plan2.start(s1.id);
+  plan2.complete(s1.id);
+  plan2.reviseRemaining(['prototype', 'validate']);
+  const descs = plan2.getSteps().map(s => s.description);
+  check(descs.includes('research') && descs.includes('prototype') && !descs.includes('draft'), 'reviseRemaining keeps completed steps and replaces pending ones');
+  check(plan2.summary().includes('research'), 'summary() reflects the plan');
+}
+
+async function testNetSearchEngine() {
+  const { NetSearchEngine } = await load('models && skills/core/net-search.js');
+  const eng = new NetSearchEngine();
+  eng.addMany([
+    { name: 'photosynthesis', definition: 'process plants use light to make energy', connections: ['sunlight'], flags: [] },
+    { name: 'gravity', definition: 'force attracting masses together', connections: [], flags: [] },
+    { name: 'sunlight', definition: 'radiation from the sun', connections: [], flags: ['code-net'] },
+  ]);
+
+  // Exact: substring on name/definition.
+  const ex = eng.search('gravity', { mode: 'exact' });
+  check(ex.length === 1 && ex[0].name === 'gravity', 'Exact search matches by name');
+
+  // Semantic: token overlap on name+definition (no exact substring).
+  const sem = eng.search('energy from light', { mode: 'semantic' });
+  check(sem.length > 0 && sem[0].name === 'photosynthesis', 'Semantic search ranks by token overlap');
+
+  // Neural: a learned association retrieves a structure with no lexical overlap.
+  const before = eng.search('chlorophyll', { mode: 'neural' });
+  eng.train([{ query: 'chlorophyll', name: 'photosynthesis' }]);
+  const after = eng.search('chlorophyll', { mode: 'neural' });
+  check(after.length > 0 && after[0].name === 'photosynthesis', 'Neural search uses learned query→structure associations');
+  check((before[0]?.name !== 'photosynthesis') || (after[0].score > (before[0]?.score ?? 0)), 'Training strengthens the neural association');
+
+  // Structural: connectivity and flag queries.
+  const conn = eng.search('connects:sunlight', { mode: 'structural' });
+  check(conn.length === 1 && conn[0].name === 'photosynthesis', 'Structural search finds by connection target');
+  const flagged = eng.search('flag:code-net', { mode: 'structural' });
+  check(flagged.length === 1 && flagged[0].name === 'sunlight', 'Structural search finds by flag');
+
+  // Integration: search the NeuroLang neuron map, honouring @net="self".
+  const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
+  const interp = new NeuroLangInterpreter();
+  interp.parse([
+    'name="router"',
+    '"router"@definition="routes inputs to the correct expert"',
+    'name="memory"',
+    '"memory"@definition="stores long term knowledge for later recall"',
+    '"netsearch"@name="finder"',
+    '"netsearch"@net="self"',
+  ].join('\n'));
+  const bindings = interp.getNetSearchBindings();
+  check(bindings.some(b => b.name === 'finder' && b.location === 'self'), 'NeuroLang records a netsearch@net="self" binding');
+  const hit = interp.netSearch('expert routing', { mode: 'semantic' });
+  check(hit.length > 0 && hit[0].name === 'router', 'NeuroLang netSearch finds the relevant neuron by definition');
+}
+
+async function testCodeToNet() {
+  const { CodeToNetCompiler, CodeNet } = await load('models && skills/core/code-to-net.js');
+  const c = new CodeToNetCompiler();
+
+  // Numeric function → behavioral network (function mode), testable vs original.
+  const fnet = c.compile('poly', '(a,b) => a*2 + b', { seed: 7 });
+  check(fnet.mode === 'function' && fnet.arity === 2, 'Numeric function compiles in function mode');
+  const report = c.testAgainst(fnet, '(a,b) => a*2 + b', { seed: 99 });
+  check(report.passed, 'Function-mode net passes test-against-original code');
+  check(report.meanAbsError < 1.5, 'Function-mode net approximates the original within tolerance');
+
+  // Serialization round-trip preserves behaviour.
+  const round = CodeNet.fromJSON(fnet.toJSON());
+  check(Math.abs(round.evaluate([1, 2])[0] - fnet.evaluate([1, 2])[0]) < 1e-9, 'Code-net serialization round-trips');
+
+  // Unsupported code (loops / unsafe tokens) → deterministic embedding fallback.
+  const enet = c.compile('unsafe', '(a) => { while (true) {} return a; }');
+  check(enet.mode === 'embedding', 'Unsupported code falls back to embedding mode');
+  check(enet.evaluate([1]).length > 0, 'Embedding net yields a content signature');
+  check(c.testAgainst(enet, '(a) => { while (true) {} return a; }').passed, 'Embedding net re-embeds to the same signature');
+
+  // Integration: NeuroLang `@code` compiles a real, testable network.
+  const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
+  const interp = new NeuroLangInterpreter();
+  interp.parse('code@name="calc"\n"calc"@code="return a+b"');
+  const net = interp.getCodeNet('calc');
+  check(net && net.mode === 'function', 'NeuroLang @code compiles a behavioral code-net');
+  const out = interp.evaluateCodeNet('calc', [3, 4]);
+  check(out && Math.abs(out[0] - 7) < 1.5, 'Compiled code-net approximates a+b');
+  check(interp.testCodeNet('calc').passed, 'NeuroLang code-net passes the test-against-original check');
+}
+
+async function testHiveMindAndChatGroups() {
+  const { HiveMind } = await load('models && skills/core/hive-mind.js');
+  const { ChatGroup } = await load('models && skills/core/chat-group.js');
+
+  // Deterministic mind: each agent "thinks" in terms of its specialization so
+  // routing and voting are reproducible without invoking the full pipeline.
+  const hive = new HiveMind({ totalTrust: 100, defaultThink: (_p, a) => a.specialization });
+  hive.spawn({ id: 'planner', role: 'planner', specialization: 'planning', capabilities: ['planning'] });
+  hive.spawn({ id: 'coder', role: 'coder', specialization: 'coding', capabilities: ['coding'] });
+  hive.spawn({ id: 'reviewer', role: 'reviewer', specialization: 'review', capabilities: ['self-heal'] });
+
+  // Zero-sum Value System applied to agents (Section 13 x 3.1).
+  check(Math.abs(hive.totalTrustValue() - 100) < 1e-6, 'Hive trust budget is zero-sum after spawns');
+  check(hive.list().every(a => Math.abs(a.trust - 100 / 3) < 1e-6), 'Spawn splits trust evenly across agents');
+
+  // Promotion/demotion transfers trust but keeps the total invariant (3.2).
+  hive.reward('coder', 30);
+  check(Math.abs(hive.totalTrustValue() - 100) < 1e-6, 'Promotion keeps the trust budget invariant');
+  check(hive.get('coder').trust > hive.get('planner').trust, 'Promoted agent outranks its peers');
+
+  // Permissions are default-deny (Section 16/23).
+  check(hive.get('coder').can('coding') && !hive.get('planner').can('coding'), 'Capability permission is default-deny');
+
+  // Delegation routes by specialization / capability (MoE-style gating).
+  const routed = await hive.delegate('please write code to sort a list', { requireCapability: 'coding' });
+  check(routed && routed.agent.id === 'coder', 'Delegation routes a coding task to the coder');
+  const planned = await hive.delegate('planning the roadmap');
+  check(planned && planned.agent.id === 'planner', 'Delegation routes a planning task to the planner');
+
+  // Shared vs private memory with permissioned reads.
+  hive.get('planner').remember('secret', 42);
+  check(hive.get('planner').recall('secret') === 42, 'Owner can read its private memory');
+  check(hive.get('coder').recall('secret') === undefined, 'Private memory is not visible to other agents');
+
+  // Conflict resolution: two owners write the same public key differently; the
+  // hive resolves it in favour of the higher-trust owner.
+  hive.get('coder').share('answer', 'A');
+  hive.get('planner').share('answer', 'B');
+  check(hive.blackboard.hasConflict('answer'), 'Concurrent public writes raise a conflict');
+  hive.synchronize();
+  check(!hive.blackboard.hasConflict('answer'), 'synchronize() resolves open conflicts');
+  check(hive.blackboard.read('reviewer', 'answer') === 'A', 'Conflict resolves to the higher-trust value');
+
+  // Chat group: membership, discussion, trust-weighted decision, completion.
+  const group = new ChatGroup('g1', 'Team', hive);
+  for (const a of hive.list()) group.addMember(a.id);
+  check(group.getMembers().length === 3, 'Chat group has all three members');
+  const msgs = await group.discuss('design the feature');
+  check(msgs.length === 3, 'Discussion collects one contribution per member');
+  const decision = await group.decide('what next', ['planning first', 'coding now', 'review later']);
+  check(decision.decision === 'coding now', 'Trust-weighted vote elects the promoted coder\'s option');
+  check(group.getHistory().length >= 3, 'Chat group records message history');
+  group.complete('done');
+  check(group.isComplete() && group.getResult() === 'done', 'Chat group reaches task completion');
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1097,6 +1407,12 @@ async function main() {
     ['Neural Definition directives', testNeuralDefinitionDirectives],
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
+    ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
+    ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
+    ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
+    ['Net Search engine (Section 22)', testNetSearchEngine],
+    ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
+    ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);

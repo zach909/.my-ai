@@ -35,6 +35,14 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
   - More input + less value = more change; more value + less input = less change
 - **Why**: Learn but do not forget
 - **Example**: The model demoted the bad neuron (lowered its value to free points)
+- **NeuroLang realization**: `"<neuron>"@reward="<-1..1>"` on the elastic-mesh
+  runtime (`model && skills manager/neurolang.py`). A positive reward raises a
+  neuron's value (locking it in — it changes less); a negative reward lowers it
+  (making it more plastic). The opposite amount is redistributed across the rest
+  of the mesh, honouring the `[0, 1]` clamp, so `NeuroRuntime.total_value()` is
+  invariant — the zero-sum guarantee. `neuron.plasticity()` exposes `1 - vale`
+  and `neuron.expected_change(input)` predicts state movement (more input + lower
+  value → greater change). Guarded by `test_value_system.py`.
 
 #### 1.8 Empathy Engine
 - **Purpose**: Keep model aligned with user feelings
@@ -48,6 +56,21 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
 - **Why**: Keeps the autonomous part on track
 - **Example**: The AI wrote down the steps so it wouldn't repeat itself
 - **Features**: Loop detection, lookahead steps, experience replay
+
+#### 1.7b Plan Tracker (structured planning record)
+- **Purpose**: The "wrote down the steps so it wouldn't repeat itself" part, made concrete — the structured plan record Section 10 requires (objective, completed/pending/failed steps, alternatives, decisions, constraints, results).
+- **File**: `models && skills/core/plan-tracker.ts`
+- **Mechanism**:
+  - Steps are de-duplicated by normalized description; `shouldPerform(desc)` returns false once an identical step is completed — **repeated actions are prevented** unless a repeat is explicitly forced.
+  - `reviseRemaining(newSteps)` replaces the not-yet-started work while preserving completed/failed history — **the plan is revised when new information arrives**.
+  - `start`/`complete`/`fail`/`retry` track status; `isComplete`/`isAchieved`/`progress`/`summary` report it.
+- **Integration**: `NeuroclawSystem.executePlan(objective, steps)` (`index.ts`) runs each pending step through the real neural runner and **skips steps already completed in a prior call**. Verified by the `RLM planning / PlanTracker (Section 10)` smoke suite and a live no-repeat check.
+
+#### 1.7c Self-Healer (component recovery)
+- **Purpose**: The testable, component-level self-healing Section 24 requires (the `SelfHealExtension` plugin only does process-level GC/heap hygiene).
+- **File**: `models && skills/core/self-healer.ts`
+- **Mechanism**: components register a `check` (healthy?), an optional `repair`, and an optional `snapshot`/`restore`. `heal()` detects unhealthy components, tries bounded repairs and re-verifies, falls back to reverting a **known-good snapshot**, and **reports anything unrecoverable rather than hiding it**. Every step is logged — repairs are never silent, satisfying the "maintain a recovery mechanism" rule.
+- **Integration**: `NeuroclawSystem` registers real components (the plugin registry, which it can re-activate; the hive trust-budget invariant) and exposes `selfHeal()` / `healthReport()`. Verified by the `Self-healing / SelfHealer (Section 24)` smoke suite.
 
 ### Foreground Subsystems (Processing & Reasoning)
 
@@ -112,6 +135,16 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
   - `getTotalContextSize()`: Calculate uncompressed size of current window
   - Circular overwrite: tail moves forward when capacity reached
 - **Integration**: Step 0 in NeuroPipeline - ingests input text before MoE routing
+
+#### 1.11 Long-Term Memory & Retrieval (LongTermMemory)
+- **Purpose**: The complement to the Zip I/O buffer — a persistent store you retrieve by *relevance*, not recency (Section 7's distinction between *active working context* and *long-term memory*).
+- **File**: `models && skills/core/long-term-memory.ts`
+- **Mechanism**:
+  - Each memory carries a token-level bag-of-words embedding (cosine reflects shared vocabulary, unlike the whole-string `embedText` fingerprint), a timestamp, tags, and an `importance` value in [0,1].
+  - `retrieve(query)` ranks by semantic similarity, then modulates by importance and recency, and **reinforces** what it returns (accessed memories become slightly more important — a light promotion, echoing the Value System §3.1).
+  - Capacity policy: when full, the lowest-retention memories (importance × recency × recall-frequency) are evicted — *removed when necessary, preserved when important*.
+  - `serialize()`/`deserialize()` persist the store; `consolidateFrom(texts)` transfers working-context snippets into durable memory.
+- **Integration**: `NeuroclawSystem` (`index.ts`) commits each user message to memory with an importance set by the empathy engine's arousal reading, and exposes `recall(query)`. Verified by the `Long-term memory & retrieval (Section 7)` smoke suite.
 
 #### 1.12 Quantum Neural Net
 - **Purpose**: Enable quantum conversion and超越 classical domain
@@ -238,3 +271,17 @@ ABAP, ActionScript, Ada, Agda, Alloy, AMPL, ANTLR, ApacheConf, Apex, API Bluepri
 - **Private**: All local, encrypted end-to-end, no external APIs
 - **Extensible**: Plugins, skills, community contributions, self-writing capabilities
 - **Quantum-Ready**: Quantum neural net architecture for future conversion
+
+## Hive Mind Architecture
+
+A hive mind is a **distributed intelligence**. Instead of one central brain controlling everything, many individual units communicate, share information, and influence one another. Each unit may have limited knowledge or a specialized role. Through communication, feedback and cooperation the network reaches a collective decision no single unit could reach alone. The intelligence belongs to the **network as a whole**.
+
+### Implementation
+
+The hive mind is implemented (not just described) by two core modules and is wired into the live system:
+
+- **`models && skills/core/hive-mind.ts`** — `HiveMind` owns the agents, a shared blackboard, and a **zero-sum trust budget**. This deliberately reuses the neuron **Value System** (§3.1) at the agent level: `spawn()` takes each new agent's trust share proportionally from the existing members, and `reward()` (promotion/demotion, §3.2) transfers trust between agents while `totalTrustValue()` stays invariant. Each agent (`HiveAgent`) has a role, a specialization, a **default-deny** capability set (permissions), private working memory, and a pluggable *mind* (think-function). In the running system that mind is the real `NeuroclawRunner.generate` — so multi-agent work flows through the same neural pipeline as a single query. `delegate()` routes a task to the best-matching agent (token overlap on role/specialization/capabilities, tie-broken by trust — an MoE-style gate); `collaborate()` fans a task out to many agents.
+- **`SharedBlackboard`** (same file) — shared memory with **public/private namespaces**, permissioned reads (private entries are visible only to their owner), versioned writes, and **conflict tracking**: when two agents write the same public key with different values a conflict is raised, and `HiveMind.synchronize()` resolves it in favour of the **higher-trust** owner.
+- **`models && skills/core/chat-group.ts`** — `ChatGroup` composes a subset of hive agents into a collaborating group: membership, message routing (targeted or broadcast), shared context (via the blackboard), message history, **trust-weighted `decide()`** (each member votes; votes are tallied by the member's trust; ties broken deterministically — the group's conflict-resolution rule), and task completion.
+
+The system exposes this through **`NeuroclawSystem.collaborate(task)`** (`index.ts`), which spins up a default `planner`/`coder`/`reviewer` team, runs a discussion and a trust-weighted decision through the real pipeline, then synchronizes shared-memory conflicts. All of the above is verified end-to-end by the `Hive Mind & Chat Groups (Section 13-14)` suite in `test/smoke.mjs` (zero-sum invariant, promotion/demotion, permission default-deny, delegation routing, private-memory isolation, conflict resolution, and the group decision).

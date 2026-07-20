@@ -3,6 +3,7 @@
 ## 2025-05-14 - MoE Router Cache Locality Optimization
 **Learning:** The `MoERouter` implementation used a strided memory access pattern in its matrix-vector multiplications for both router scoring and expert computation. This caused significant performance overhead due to cache misses. Swapping the nested loops to ensure row-major (sequential) access to `Float32Array` weights improved `moe-router` performance by ~52% and overall pipeline throughput by ~22%.
 **Action:** Always verify loop ordering for matrix operations in performance-critical paths to ensure cache-friendly sequential access.
+
 ## 2025-05-14 - MoE Router Loop Reordering
 **Learning:** Matrix-vector multiplication was implemented with strided access (column-major) in TypeScript, leading to poor cache locality. Swapping loops to iterate over the weight matrix sequentially (row-major) resulted in a ~3x performance improvement (from 19.6ms to 6.1ms for a typical 1024-dim layer).
 **Action:** Always verify loop nesting order for matrix operations in neural logic to ensure sequential memory access on large TypedArrays.
@@ -10,6 +11,7 @@
 ## 2025-05-14 - HyperDimensionalEngine Data Layout Optimization
 **Learning:** Organizing neural engine data (weights and states) in a flattened layout specifically tailored for sequential access in hot loops (row-major for weights, dimension-major for states) significantly improves performance by maximizing CPU cache locality. Moving from nested objects/arrays to flattened `Float32Array` buffers with interleaved/sequential access reduced `hyper-dimensional` processing time by ~28% (from 38.35ms to 27.60ms).
 **Action:** In numerical or neural engines, prioritize flattened data layouts and loop ordering that ensures sequential memory access on large TypedArrays.
+
 ## 2025-05-14 - HyperDimensionalEngine Settle & Learning Optimization
 **Learning:** In high-dimensional neural engines, pre-fetching TypedArray views (via .subarray()) outside of hot loops significantly reduces object creation and garbage collection pressure. Additionally, integrating auxiliary tasks like input clamping and energy calculation into the main state iteration loop, and leveraging the distributive property to reduce multiplications (e.g., sum + dotDiag + dotShift * strength), can yield substantial performance gains.
 **Action:** Always seek to combine multiple passes over large buffers and pre-calculate invariant views or constants before entering deep nested loops.
@@ -29,3 +31,7 @@
 ## 2025-07-18 - HyperDimensionalEngine Settle and Learning Hot-Path Optimization
 **Learning:** In high-dimensional neural/simulation loops, heavy overhead is incurred by: Map/Set operations (`drivenIds.has(i)`, `vale?.get(i)`), arithmetic function call stack overhead (`clamp()`, `Math.abs()`), and diagonal index branch checking (`if (i === j) continue;`). By pre-allocating lookup structures, caching states, inlining clamps, and splitting the diagonal to achieve branch-free inner loops, performance is substantially boosted.
 **Action:** Pre-allocate Set/Map lookups into arrays outside of hot nested loops, inline basic math helper functions, and split inner loops to eliminate diagonal branching.
+
+## 2026-07-20 - ElasticCoreBlock forward Hot-Path Optimization
+**Learning:** In deep-nested simulation tick loops, substantial execution overhead is caused by subarray allocations (creating short-lived Float32Array views) and index branching in the inner loop (e.g. `s === t`). Additionally, filling the quantization residual with zero on every tick when quantization is inactive creates useless memory writes. By pre-allocating/reusing buffers, splitting the inner loops to bypass index checks, unrolling the innermost dimensions by 4x, and avoiding `Math.abs` overhead via branch-free ternary operators, execution speed improves significantly.
+**Action:** Avoid TypedArray subarray allocations in hot inner loops, split outer loops to eliminate nested branching, unroll inner dimensions, and skip redundant initialization sweeps when configurations are inactive.

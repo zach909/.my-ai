@@ -24,6 +24,10 @@
 import type { HyperDimensionalEngine } from './hyperdimensional.js';
 import type { ValueRangeAllocator } from './value-range.js';
 import type { ElasticCoreBlock, DefinitionCheckResult } from './elastic-core.js';
+import { CodeToNetCompiler, CodeNet } from './code-to-net.js';
+import type { CompileOptions, TestReport } from './code-to-net.js';
+import { NetSearchEngine } from './net-search.js';
+import type { NetSearchOptions, SearchResult } from './net-search.js';
 
 export interface NeuriNeuron {
   name: string;
@@ -63,6 +67,14 @@ export class NeuroLangInterpreter {
   /** Parse-scoped: the pending `"netsearch"@name=` awaiting a `@net=`. */
   private pendingNetSearch: string | null = null;
 
+  /** Behavioral Code-to-Net compiler + the nets compiled during the last parse. */
+  private codeToNet = new CodeToNetCompiler();
+  private codeNets = new Map<string, CodeNet>();
+
+  /** Net Search engine + the neuron map from the last parse it searches over. */
+  private netSearchEngine = new NetSearchEngine();
+  private lastNeurons = new Map<string, NeuriNeuron>();
+
   // ── Public API ──────────────────────────────────────────────────────────────
 
   /**
@@ -77,6 +89,7 @@ export class NeuroLangInterpreter {
     // been given a location, so a following `"netsearch"@net=` binds to it in
     // parse order rather than by Map iteration order.
     this.pendingNetSearch = null;
+    this.codeNets.clear();
 
     const lines = source.split(/\r?\n/);
 
@@ -94,6 +107,7 @@ export class NeuroLangInterpreter {
       }
     }
 
+    this.lastNeurons = neurons;
     return { neurons, errors, printOutputs };
   }
 
@@ -117,6 +131,73 @@ export class NeuroLangInterpreter {
     }
 
     return neurons;
+  }
+
+  // ── Code-to-Net (Section 21) — behavioral networks compiled from `@code` ──────
+
+  /** The network compiled from a neuron's attached code, if any. */
+  getCodeNet(name: string): CodeNet | undefined {
+    return this.codeNets.get(name);
+  }
+
+  /** Names of neurons that produced a compiled Code-to-Net network. */
+  codeNetNames(): string[] {
+    return Array.from(this.codeNets.keys());
+  }
+
+  /** Evaluate a compiled code-net on numeric inputs. */
+  evaluateCodeNet(name: string, inputs: number[]): number[] | undefined {
+    return this.codeNets.get(name)?.evaluate(inputs);
+  }
+
+  /** Test a compiled code-net against its original source code. */
+  testCodeNet(name: string, opts?: CompileOptions): TestReport | undefined {
+    const net = this.codeNets.get(name);
+    if (!net) return undefined;
+    return this.codeToNet.testAgainst(net, net.source, opts);
+  }
+
+  // ── Net Search (Section 22) — search the project's own neural structures ──────
+
+  /** Reindex the Net Search engine from the last-parsed neuron map. */
+  private refreshNetSearchIndex(): void {
+    this.netSearchEngine.clear();
+    for (const n of this.lastNeurons.values()) {
+      const flags: string[] = [];
+      if (n.isCodeNet) flags.push('code-net');
+      if (n.isNetSearch) flags.push('netsearch');
+      this.netSearchEngine.addStructure({
+        name: n.name,
+        definition: n.definition,
+        value: n.value,
+        connections: Array.from(n.connections.keys()),
+        flags,
+      });
+    }
+  }
+
+  /**
+   * Search the current neural structures. Modes: exact | semantic | neural |
+   * structural (see NetSearchEngine). This is what a `"netsearch"@net="self"`
+   * binding resolves to — "self"/"mesh" = the current NeuroLang neuron map.
+   */
+  netSearch(query: string, opts?: NetSearchOptions): SearchResult[] {
+    this.refreshNetSearchIndex();
+    return this.netSearchEngine.search(query, opts);
+  }
+
+  /** Teach the neural search mode query→structure associations (persists across searches). */
+  trainNetSearch(pairs: Array<{ query: string; name: string }>): void {
+    this.netSearchEngine.train(pairs);
+  }
+
+  /** The declared `"netsearch"@name=` bindings and their `@net=` locations. */
+  getNetSearchBindings(): Array<{ name: string; location: string | null }> {
+    const out: Array<{ name: string; location: string | null }> = [];
+    for (const n of this.lastNeurons.values()) {
+      if (n.isNetSearch) out.push({ name: n.name, location: n.netLocation });
+    }
+    return out;
   }
 
   /**
@@ -312,6 +393,11 @@ export class NeuroLangInterpreter {
         const neuron = neurons.get(name) ?? this.defaultNeuron(name);
         neuron.code = m[2];
         neurons.set(name, neuron);
+        // Behavioral Code-to-Net (Section 21): compile the attached code into a
+        // real, testable network. Guarded so it can never break DSL parsing.
+        try {
+          this.codeNets.set(name, this.codeToNet.compile(name, m[2]));
+        } catch { /* leave as a stored code string only */ }
         return;
       }
     }
