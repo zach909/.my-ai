@@ -948,6 +948,30 @@ async function testChromeApps() {
   check(await b.disconnectChromeApp('chrome-x') && !b.isChromeAppConnected('chrome-x'), 'Chrome app can be disconnected');
   check(await b.onMessage('hello, what can you do?') === null,
     'Browser plugin declines plain conversation (falls through to generation)');
+
+  // SSRF & DNS Rebinding Security Checks
+  let blockedLocal = false;
+  try {
+    await b.fetchUrl('http://localhost/');
+  } catch (err) {
+    if (err.message.includes('Security Error')) blockedLocal = true;
+  }
+  check(blockedLocal, 'BrowserPlugin: fetchUrl blocks localhost string check');
+
+  let blockedIp = false;
+  try {
+    await b.fetchUrl('http://127.0.0.1/');
+  } catch (err) {
+    if (err.message.includes('Security Error')) blockedIp = true;
+  }
+  check(blockedIp, 'BrowserPlugin: fetchUrl blocks 127.0.0.1 string check');
+
+  // Verify private host checks directly
+  check(b.isPrivateHost('127.0.0.1'), 'BrowserPlugin: isPrivateHost identifies 127.0.0.1 as private');
+  check(b.isPrivateHost('10.0.0.1'), 'BrowserPlugin: isPrivateHost identifies 10.0.0.1 as private');
+  check(b.isPrivateHost('192.168.1.1'), 'BrowserPlugin: isPrivateHost identifies 192.168.1.1 as private');
+  check(b.isPrivateHost('172.16.0.1'), 'BrowserPlugin: isPrivateHost identifies 172.16.0.1 as private');
+  check(!b.isPrivateHost('8.8.8.8'), 'BrowserPlugin: isPrivateHost identifies 8.8.8.8 as public');
 }
 
 // Extension Builder: the drag-connect editor, drag labels, per-neuron

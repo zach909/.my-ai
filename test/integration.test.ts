@@ -14,6 +14,7 @@ import { AlignmentVeto } from '../models && skills/core/alignment-veto.js';
 import { ZipIOSystem } from '../models && skills/core/zip-io.js';
 import { EmpathyEngine } from '../models && skills/core/empathy.js';
 import { PluginRegistry } from '../plugin_manager/registry.js';
+import { BrowserPlugin } from '../plugins/browser.js';
 
 describe('Neuroclaw Integration Tests', () => {
   let pipeline: NeuroPipeline;
@@ -200,6 +201,33 @@ describe('Neuroclaw Integration Tests', () => {
       // This would test actual plugin dispatch if we had real plugins running
       // For now, just verify the method exists
       expect(plugins.dispatch).toBeDefined();
+    });
+  });
+
+  describe('Browser Plugin Security', () => {
+    let browserPlugin: BrowserPlugin;
+
+    beforeEach(() => {
+      browserPlugin = new BrowserPlugin({
+        id: 'browser',
+        name: 'Browser',
+        type: 'api-connection',
+        capabilities: ['browser'],
+      });
+    });
+
+    it('should block private/local hosts string check', async () => {
+      await expect(browserPlugin.fetchUrl('http://localhost/')).rejects.toThrow('Security Error');
+      await expect(browserPlugin.fetchUrl('http://127.0.0.1/')).rejects.toThrow('Security Error');
+      await expect(browserPlugin.fetchUrl('http://[::1]/')).rejects.toThrow('Security Error');
+    });
+
+    it('should block resolved private/local addresses to prevent DNS rebinding', async () => {
+      expect((browserPlugin as any).isPrivateHost('127.0.0.1')).toBe(true);
+      expect((browserPlugin as any).isPrivateHost('10.0.0.1')).toBe(true);
+      expect((browserPlugin as any).isPrivateHost('192.168.1.1')).toBe(true);
+      expect((browserPlugin as any).isPrivateHost('172.16.0.1')).toBe(true);
+      expect((browserPlugin as any).isPrivateHost('8.8.8.8')).toBe(false);
     });
   });
 
