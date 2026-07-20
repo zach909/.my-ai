@@ -15,6 +15,8 @@ import { ChatGroup } from "./models && skills/core/chat-group.js";
 import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
 import { PlanTracker } from "./models && skills/core/plan-tracker.js";
 import { SelfHealer } from "./models && skills/core/self-healer.js";
+import { ContextCompressor } from "./models && skills/core/context-compressor.js";
+import { IntentRouter } from "./models && skills/core/intent-router.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -51,6 +53,12 @@ export class NeuroclawSystem {
         // Self-healer (Section 24): component registry with testable detect →
         // repair → revert-to-known-good → report recovery.
         this.healer = new SelfHealer();
+        // Context compressor (Section 7): semantic (not just byte-level) compaction
+        // of long conversation context into a salient summary.
+        this.compressor = new ContextCompressor();
+        // Capability router (Section 6): decides which high-level capability a
+        // query activates (recall / summarize / heal / generate).
+        this.router = new IntentRouter();
     }
     /**
      * Initialize all subsystems
@@ -157,17 +165,25 @@ export class NeuroclawSystem {
             await this.zipIO.emit(blocked);
             return blocked;
         }
-        // 4. If the user is explicitly asking to recall the conversation, answer
-        //    directly from long-term memory (retrieval over chat history) instead
-        //    of generating fresh — this is what makes the memory *usable*, not
-        //    just stored.
-        const wantsRecall = /\b(recall|remember|earlier|previously|before|recap|last time|we (talked|discussed|spoke|said)|what did we|did we (talk|discuss))\b/i.test(input);
-        if (wantsRecall && priorHistory.length > 0) {
+        // 4. Route the query to a high-level capability (Section 6): a summarize,
+        //    recall or self-heal request is served directly by the matching
+        //    subsystem instead of full neural generation. Anything else — and any
+        //    routed capability that has nothing to act on — falls through to
+        //    generation.
+        const route = this.router.route(input);
+        if (route.capability === "summarize") {
+            const summary = this.compressContext(600);
+            if (summary)
+                return this.respondDirect(`Summary of our conversation:\n${summary}`, turnImportance);
+        }
+        if (route.capability === "heal") {
+            const report = await this.selfHeal();
+            const issues = report.unrecoverable.length ? `; unresolved: ${report.unrecoverable.join(", ")}` : "";
+            return this.respondDirect(`System health: ${report.healthy}/${report.checked} components healthy, ${report.repaired} repaired, ${report.restored} restored${issues}.`, turnImportance);
+        }
+        if (route.capability === "recall" && priorHistory.length > 0) {
             const recalled = priorHistory.map(h => `• ${h.item.content}`).join("\n");
-            const response = `From our earlier conversation, here's what's relevant:\n${recalled}`;
-            await this.zipIO.emit(response);
-            this.memory.remember(`AI: ${response}`, { tags: ["chat-turn", "assistant"], importance: turnImportance });
-            return response;
+            return this.respondDirect(`From our earlier conversation, here's what's relevant:\n${recalled}`, turnImportance);
         }
         // 5. Run the query through the real neural runner (THORNS intent →
         //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation),
@@ -190,6 +206,12 @@ export class NeuroclawSystem {
             console.error("Error processing query:", error);
             throw error;
         }
+    }
+    /** Emit + record a direct (non-generated) assistant response and return it. */
+    async respondDirect(response, importance) {
+        await this.zipIO.emit(response);
+        this.memory.remember(`AI: ${response}`, { tags: ["chat-turn", "assistant"], importance });
+        return response;
     }
     /**
      * Sections 13-14: spin up (once) a small specialized team and let it
@@ -248,6 +270,50 @@ export class NeuroclawSystem {
         return { objective, results, complete: this.plan.isComplete() };
     }
     /**
+     * Integrated autonomous execution (§27.17 — the subsystems working together).
+     * Combines the PlanTracker (§10, no-repeat), the Hive Mind (§13-14, each step
+     * delegated to the best-matching agent whose mind is the real neural runner),
+     * long-term memory (§7, results recorded), and self-healing (§24, run if a
+     * step fails). One objective → a plan → multi-agent execution → memory →
+     * recovery, rather than a collection of unrelated methods.
+     */
+    async autonomousTask(objective, steps) {
+        if (!this.initialized)
+            await this.initialize();
+        if (this.hive.list().length === 0) {
+            this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
+            this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
+            this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
+        }
+        this.plan.setObjective(objective);
+        const results = [];
+        for (const desc of steps) {
+            if (!this.plan.shouldPerform(desc)) {
+                results.push({ step: desc, agent: "-", status: "skipped", result: "already completed" });
+                continue;
+            }
+            const step = this.plan.addStep(desc);
+            this.plan.start(step.id);
+            const routed = await this.hive.delegate(desc);
+            if (routed) {
+                this.plan.complete(step.id, routed.output);
+                this.memory.remember(`Task step: ${desc} -> ${routed.output}`, { tags: ["task"], importance: 0.6 });
+                results.push({ step: desc, agent: routed.agent.id, status: "completed", result: routed.output });
+            }
+            else {
+                this.plan.fail(step.id, "no agent available");
+                results.push({ step: desc, agent: "-", status: "failed", result: "no agent available" });
+            }
+        }
+        // If the plan didn't fully succeed, attempt recovery.
+        let healed = null;
+        if (!this.plan.isAchieved()) {
+            const report = await this.selfHeal();
+            healed = report.unrecoverable.length === 0;
+        }
+        return { objective, results, complete: this.plan.isComplete(), healed };
+    }
+    /**
      * Section 24: run the self-healer — detect unhealthy components and attempt
      * repair / revert-to-known-good, reporting anything unrecoverable.
      */
@@ -278,6 +344,26 @@ export class NeuroclawSystem {
      */
     recallHistory(query, topK = 5) {
         return this.memory.retrieve(query, { topK, tag: "chat-turn" }).map(h => h.item.content);
+    }
+    /**
+     * Section 7: compress the recent conversation into a compact, salient
+     * summary (semantic compression, distinct from ZipIO's byte-level gzip).
+     * Optionally store the summary back as a "compressed" memory so a long
+     * history can be represented cheaply.
+     */
+    compressContext(maxChars = 600, store = false) {
+        // Compress the user's turns — they carry the actual information; the
+        // assistant's templated replies are derived and would only add noise.
+        const turns = this.memory
+            .all()
+            .filter(m => m.tags.includes("chat-turn") && m.tags.includes("user"))
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .map(m => m.content);
+        const { summary } = this.compressor.compress(turns, { maxChars });
+        if (store && summary) {
+            this.memory.remember(summary, { tags: ["compressed"], importance: 0.6 });
+        }
+        return summary;
     }
     /** The recent conversation turns in chronological order (working transcript). */
     chatHistory(limit = 20) {

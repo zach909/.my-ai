@@ -54,3 +54,11 @@ export type { PlanStep, StepStatus, PlanProgress, PlanSnapshot } from './plan-tr
 // Self-healing (Section 24).
 export { SelfHealer } from './self-healer';
 export type { HealableComponent, HealResult, HealReport } from './self-healer';
+
+// Semantic context compression (Section 7).
+export { ContextCompressor } from './context-compressor';
+export type { CompressOptions, CompressionResult } from './context-compressor';
+
+// System-level capability routing (Section 6).
+export { IntentRouter } from './intent-router';
+export type { SystemCapability, RouteDecision } from './intent-router';

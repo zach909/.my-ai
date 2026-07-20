@@ -121,7 +121,7 @@ a real HTTP round-trip through the browser backend — 21 checks, no mocks.
 
 ```bash
 npm install --legacy-peer-deps
-npm test              # builds the backend into dist/ and runs 161 smoke checks
+npm test              # builds the backend into dist/ and runs 262 smoke checks
 node dist/index.js web 3000   # Neuroclaw dashboard + /api/* at http://localhost:3000
 node dist/index.js cli        # interactive shell
 ```
@@ -130,6 +130,20 @@ The backend serves `interface/index.html` — chat, live subsystem stats, the
 plugin/skill catalog, and the NeuroLang Extension Builder (build → save
 un-quantized → install quantized), backed by `/api/chat`, `/api/status`,
 `/api/neuri`, `/api/plugins`, `/api/extension/*`.
+
+`NeuroclawSystem` (`index.ts`) ties the TypeScript subsystems into one platform.
+Beyond the neural pipeline it provides: a **Hive Mind** of specialized agents
+(`collaborate()`) with a zero-sum trust budget and a permissioned shared
+blackboard; **Chat Groups** with trust-weighted decisions; **long-term memory**
+built from the conversation (`recall()`, `recallHistory()`, `chatHistory()`),
+which grounds generation and answers recall questions directly; **semantic
+context compression** (`compressContext()`); a **capability router** that sends
+each query to recall / summarize / self-heal or generation; **RLM planning**
+(`executePlan()`, no-repeat) and **self-healing** (`selfHeal()`,
+detect→repair→revert-known-good→report); **behavioral Code-to-Net** and a
+four-mode **Net Search** on the NeuroLang side; and `autonomousTask()`, which
+runs an objective as a plan delegated across the hive, recorded to memory, with
+self-heal on failure. Every one is covered by the smoke suite.
 
 ### Run the web UI (in-browser mesh dashboard)
 

@@ -1041,6 +1041,16 @@ async function testNeuralDefinitionDirectives() {
   check(rc.errors.length === 0 && nc.get('n').connections.get('other') === 0.5
         && nc.get('n').connections.get('third') === 0.3,
         'documented multi-target @connections form parses into one weighted edge per target');
+  // Section 20 canonical form: `.target/variable*bias+weight` — the state-var
+  // selector is accepted and the trailing additive weight folds into the edge.
+  const its = new NeuroLangInterpreter();
+  const rs = its.parse(['name="y"', 'name="x"', '"x"@connections=".y/state*0.5+0.25"'].join('\n'));
+  const ns = its.evaluate(rs);
+  check(rs.errors.length === 0, 'Section 20 connection form (.target/variable*bias+weight) parses without error');
+  check(ns.get('x').connections.get('y') === 0.75, 'Section 20 form folds bias+additive into the edge weight (0.5+0.25)');
+  // The bare state-selector form `.target/variable` defaults to weight 1.0.
+  const rs2 = its.parse(['name="y"', 'name="x"', '"x"@connections=".y/phase"'].join('\n'));
+  check(rs2.errors.length === 0 && its.evaluate(rs2).get('x').connections.get('y') === 1.0, 'Section 20 bare state-selector defaults to weight 1.0');
   check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
   const finder = neurons.get('finder');
   check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');
@@ -1158,6 +1168,76 @@ async function testLongTermMemory() {
   const dbHits = s.retrieve('what did we discuss about the database earlier', { tag: 'chat-turn' });
   check(dbHits.length > 0 && dbHits[0].item.content.includes('database'), 'Content tokens (not stopwords) drive retrieval');
   check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
+}
+
+async function testAutonomousTask() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  // Suppress the subsystem/plugin boot logging so the suite output stays clean.
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const r = await sys.autonomousTask('build a service', ['design the routes', 'implement handlers']);
+    check(r.complete, 'Autonomous task completes its plan');
+    check(r.results.length === 2 && r.results.every(x => x.status === 'completed'), 'Each step is executed');
+    check(r.results.every(x => x.agent && x.agent !== '-'), 'Each step is delegated to a hive agent');
+    // Re-run with an overlapping step: planning + hive integration must not repeat it.
+    const r2 = await sys.autonomousTask('build a service', ['design the routes', 'write tests']);
+    check(r2.results.find(x => x.step === 'design the routes').status === 'skipped', 'Already-completed steps are not repeated');
+    check(r2.results.find(x => x.step === 'write tests').status === 'completed', 'A new step still runs on re-invocation');
+    check(sys.memory.all().filter(m => m.tags.includes('task')).length >= 3, 'Task results are recorded in long-term memory');
+
+    // Compressed-context is reachable from the query path.
+    await sys.processQuery('the payment service handles stripe transactions securely');
+    await sys.processQuery('the payment service retries failed stripe charges');
+    const summary = await sys.processQuery('please summarize our conversation');
+    check(summary.startsWith('Summary of our conversation:') && /payment|stripe|service/i.test(summary), 'A summarize request returns compressed conversation context');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testIntentRouter() {
+  const { IntentRouter } = await load('models && skills/core/intent-router.js');
+  const r = new IntentRouter();
+  check(r.route('please summarize our conversation').capability === 'summarize', 'Routes a summary request to summarize');
+  check(r.route('what did we discuss about the database earlier').capability === 'recall', 'Routes a recall request to recall');
+  check(r.route('run a self-heal and system health check').capability === 'heal', 'Routes a health request to heal');
+  check(r.route('write a function that reverses a string').capability === 'generate', 'Routes an ordinary request to generation');
+  check(r.route('hello there').capability === 'generate', 'Unmatched input defaults to generation');
+  // Confidence is a real [0,1] fraction of matched signal.
+  const d = r.route('summarize this');
+  check(d.confidence > 0 && d.confidence <= 1, 'Route decision carries a bounded confidence');
+  // Custom signals extend the router.
+  r.registerSignals('heal', ['diagnose yourself']);
+  check(r.route('please diagnose yourself now').capability === 'heal', 'Registered signals extend routing');
+}
+
+async function testContextCompressor() {
+  const { ContextCompressor } = await load('models && skills/core/context-compressor.js');
+  const cc = new ContextCompressor();
+  const turns = [
+    'the database uses postgres on port 5432',
+    'postgres database connection pooling improves performance',
+    'i had a sandwich for lunch at noon today',
+    'the weather outside is mild and pleasant',
+    'database indexing speeds up postgres queries a lot',
+  ];
+  const res = cc.compress(turns, { maxChars: 130 });
+  check(res.summary.includes('postgres'), 'Compression keeps salient repeated content');
+  check(!res.summary.includes('lunch') && !res.summary.includes('weather'), 'Compression drops low-salience filler');
+  check(res.compressedChars <= 130 && res.keptCount < res.originalCount, 'Compression respects the budget and reduces size');
+  check(res.ratio < 1 && res.ratio > 0, 'Compression ratio is a real reduction');
+
+  // Order is preserved among kept items.
+  const idxA = res.summary.indexOf('port 5432');
+  const idxB = res.summary.indexOf('speeds up postgres');
+  check(idxA === -1 || idxB === -1 || idxA < idxB, 'Kept items retain their original order');
+
+  // Empty input is handled.
+  const empty = cc.compress([]);
+  check(empty.summary === '' && empty.keptCount === 0, 'Empty context compresses to empty');
 }
 
 async function testSelfHealer() {
@@ -1307,6 +1387,12 @@ async function testCodeToNet() {
   check(enet.evaluate([1]).length > 0, 'Embedding net yields a content signature');
   check(c.testAgainst(enet, '(a) => { while (true) {} return a; }').passed, 'Embedding net re-embeds to the same signature');
 
+  // Security: escape-sequence and reflection attempts never reach function mode
+  // (never executed) — they are denied and fall back to embedding.
+  check(c.compile('esc', "(a) => \\u0065val('2')").mode === 'embedding', 'Unicode-escape identifier attempt is denied');
+  check(c.compile('refl', '(a) => this.constructor').mode === 'embedding', 'Reflection via this/constructor is denied');
+  check(c.compile('idx', '(a) => globalThis["process"]').mode === 'embedding', 'Bracket/global access is denied');
+
   // Integration: NeuroLang `@code` compiles a real, testable network.
   const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
   const interp = new NeuroLangInterpreter();
@@ -1409,6 +1495,9 @@ async function main() {
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
+    ['Context compression (Section 7)', testContextCompressor],
+    ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
+    ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
