@@ -49,10 +49,12 @@ export class NeuroclawRunner extends EventEmitter {
     this.multiDesktopManager = multiDesktopManager ?? this.systemAccess.getMultiDesktop();
   }
 
-  async generate(prompt: string): Promise<string> {
+  async generate(prompt: string, memoryContext?: string[]): Promise<string> {
     if (!this.running) await this.start();
 
-    // Run THORNS analysis first to determine intent
+    // Run THORNS analysis first to determine intent. Intent detection and
+    // plugin routing always use the raw prompt, so recalled memory never
+    // distorts which capability handles the request.
     const thornsOut = await this.llm.thinkAbout(prompt);
     this.emit('thought', thornsOut);
 
@@ -63,8 +65,9 @@ export class NeuroclawRunner extends EventEmitter {
       return `[Plugin] ${pluginResult}`;
     }
 
-    // Fall through to LLM generation (all 6 neural subsystems)
-    return this.llm.generate(prompt);
+    // Fall through to LLM generation (all 6 neural subsystems), grounded in any
+    // relevant recalled conversation turns (continuous context, Section 7).
+    return this.llm.generate(prompt, memoryContext && memoryContext.length ? { memoryContext } : undefined);
   }
 
   async start(): Promise<void> {

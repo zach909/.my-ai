@@ -28,3 +28,29 @@ export type { ProposedAction, AlignmentContext, VetoDecision, BenevolenceScorer,
 
 export { ElasticCoreBlock } from './elastic-core';
 export type { ElasticCoreConfig, ElasticCoreRunOptions, ElasticCoreResult } from './elastic-core';
+
+// Behavioral Code-to-Net (Section 21) — complements the structural CodeToNet in thorns.
+export { CodeToNetCompiler, CodeNet } from './code-to-net';
+export type { CodeNetMode, CodeNetJSON, CodeNetFunctionParams, CompileOptions, TestReport } from './code-to-net';
+
+// Hive Mind (Section 13) & Chat Groups (Section 14).
+export { HiveMind, HiveAgent, SharedBlackboard } from './hive-mind';
+export type { HiveAgentSpec, AgentThinkFn, DelegateOptions } from './hive-mind';
+export { ChatGroup } from './chat-group';
+export type { ChatMessage, Decision } from './chat-group';
+
+// Net Search (Section 22) — search over neural structures.
+export { NetSearchEngine } from './net-search';
+export type { SearchMode, SearchableStructure, SearchResult, NetSearchOptions } from './net-search';
+
+// Long-term memory & retrieval (Section 7).
+export { LongTermMemory } from './long-term-memory';
+export type { MemoryItem, MemoryHit, RememberOptions, RetrieveOptions } from './long-term-memory';
+
+// RLM-style planning (Section 10).
+export { PlanTracker } from './plan-tracker';
+export type { PlanStep, StepStatus, PlanProgress, PlanSnapshot } from './plan-tracker';
+
+// Self-healing (Section 24).
+export { SelfHealer } from './self-healer';
+export type { HealableComponent, HealResult, HealReport } from './self-healer';

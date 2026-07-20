@@ -259,6 +259,14 @@ export class NeuroclawLLM {
         this.generationCount++;
         if (this.generationCount % 5 === 0)
             await this.createSelfExtension(prompt, finalOutput);
+        // Continuous context (Section 7): if relevant prior conversation turns
+        // were supplied, ground the response in them so the answer is not
+        // computed as an isolated event. Done after createSelfExtension so the
+        // stored extension keeps the clean, memory-free output.
+        if (Array.isArray(options.memoryContext) && options.memoryContext.length > 0) {
+            const grounding = options.memoryContext.map((m) => `  • ${String(m).slice(0, 120)}`).join('\n');
+            finalOutput = `${finalOutput}\n  [Grounded in ${options.memoryContext.length} related memory]\n${grounding}`;
+        }
         return finalOutput;
     }
     buildTextResponse(prompt, thorns, hyper, rlm, moe) {

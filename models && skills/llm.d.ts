@@ -20,6 +20,8 @@ export interface LLMConfig {
 export interface GenerateOptions {
     maxTokens: number;
     temperature: number;
+    /** Relevant prior conversation turns to ground the response in (Section 7). */
+    memoryContext: string[];
 }
 export declare class NeuroclawLLM {
     private config;
