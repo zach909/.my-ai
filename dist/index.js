@@ -12,6 +12,9 @@ import { ZipIOSystem } from "./models && skills/core/zip-io.js";
 import { EmpathyEngine } from "./models && skills/core/empathy.js";
 import { HiveMind } from "./models && skills/core/hive-mind.js";
 import { ChatGroup } from "./models && skills/core/chat-group.js";
+import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
+import { PlanTracker } from "./models && skills/core/plan-tracker.js";
+import { SelfHealer } from "./models && skills/core/self-healer.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -39,6 +42,15 @@ export class NeuroclawSystem {
         // Hive Mind (Section 13): each agent's mind is the real neural runner, so
         // multi-agent collaboration runs through the same pipeline as a single query.
         this.hive = new HiveMind({ defaultThink: (prompt) => this.runner.generate(prompt) });
+        // Long-term memory (Section 7): a persistent, relevance-retrievable store,
+        // complementary to the ZipIO working-context buffer.
+        this.memory = new LongTermMemory();
+        // Plan tracker (Section 10): structured objective/step record that keeps
+        // autonomous execution aligned and prevents repeating completed steps.
+        this.plan = new PlanTracker();
+        // Self-healer (Section 24): component registry with testable detect →
+        // repair → revert-to-known-good → report recovery.
+        this.healer = new SelfHealer();
     }
     /**
      * Initialize all subsystems
@@ -88,6 +100,27 @@ export class NeuroclawSystem {
                 console.warn(`Failed to activate plugin "${id}":`, e);
             }
         }
+        // Self-healing (Section 24): register recoverable components with real
+        // health checks. The plugin registry can be re-activated if it goes dark;
+        // the hive's trust budget invariant is monitored. Capture a known-good
+        // baseline for revert-to-known-good.
+        this.healer.register({
+            name: "plugin-registry",
+            check: () => this.pluginRegistry.listActivePlugins().length > 0,
+            repair: async () => {
+                for (const id of Object.keys(pluginExtensions)) {
+                    try {
+                        await this.pluginRegistry.activate(id);
+                    }
+                    catch { /* skip individual failures */ }
+                }
+            },
+        });
+        this.healer.register({
+            name: "hive-trust-invariant",
+            check: () => this.hive.list().length === 0 || Math.abs(this.hive.totalTrustValue() - 100) < 1e-3,
+        });
+        this.healer.snapshotAll();
         this.initialized = true;
         console.log("Neuroclaw subsystems initialized successfully");
     }
@@ -101,8 +134,20 @@ export class NeuroclawSystem {
         //    stay aligned (Empathy).
         this.empathy.updateUserContext(input);
         const emotion = this.empathy.analyzeEmotion(input);
-        // 2. Store the (compressed) input in the circular ZIP-IO context buffer.
+        // 2. Store the (compressed) input in the circular ZIP-IO context buffer
+        //    (working context) and commit it to long-term memory (Section 7). The
+        //    emotional arousal of the message sets its importance, so urgent/
+        //    emotionally-charged messages are retained more strongly and evicted
+        //    last under capacity pressure.
         await this.zipIO.ingest(input);
+        const turnImportance = Math.min(1, 0.4 + Math.max(0, emotion.arousal) * 0.4);
+        // Retrieve relevant prior conversation turns *before* recording the current
+        // one (so the current message can't match itself). This is the continuous-
+        // context step: previous information is carried into the current response.
+        const priorHistory = this.memory
+            .retrieve(input, { topK: 3, tag: "chat-turn" })
+            .filter(h => h.similarity >= 0.1);
+        this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
         // 3. Gate the "respond" action through the AlignmentVeto before running.
         //    A negative-valence user under high arousal lowers our confidence,
         //    surfacing as self-model surprise the veto can escalate on.
@@ -112,16 +157,30 @@ export class NeuroclawSystem {
             await this.zipIO.emit(blocked);
             return blocked;
         }
-        // 4. Run the query through the real neural runner (THORNS intent →
+        // 4. If the user is explicitly asking to recall the conversation, answer
+        //    directly from long-term memory (retrieval over chat history) instead
+        //    of generating fresh — this is what makes the memory *usable*, not
+        //    just stored.
+        const wantsRecall = /\b(recall|remember|earlier|previously|before|recap|last time|we (talked|discussed|spoke|said)|what did we|did we (talk|discuss))\b/i.test(input);
+        if (wantsRecall && priorHistory.length > 0) {
+            const recalled = priorHistory.map(h => `• ${h.item.content}`).join("\n");
+            const response = `From our earlier conversation, here's what's relevant:\n${recalled}`;
+            await this.zipIO.emit(response);
+            this.memory.remember(`AI: ${response}`, { tags: ["chat-turn", "assistant"], importance: turnImportance });
+            return response;
+        }
+        // 5. Run the query through the real neural runner (THORNS intent →
         //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation).
         try {
             let result = await this.runner.generate(input);
             if (decision.requiresConfirmation) {
                 result = `${result}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`;
             }
-            // 5. Store the (compressed) output in the ZIP-IO output loop and keep
-            //    the empathy model's alignment score current.
+            // 6. Store the (compressed) output in the ZIP-IO output loop, and commit
+            //    the assistant turn to long-term memory so the whole exchange becomes
+            //    retrievable chat history (Section 7).
             await this.zipIO.emit(result);
+            this.memory.remember(`AI: ${result}`, { tags: ["chat-turn", "assistant"], importance: turnImportance });
             return result;
         }
         catch (error) {
@@ -155,6 +214,78 @@ export class NeuroclawSystem {
         return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision };
     }
     /**
+     * Section 10: run a multi-step plan toward an objective. Each pending step is
+     * executed through the real neural runner; steps that were already completed
+     * (same description, e.g. from an earlier call) are skipped rather than
+     * repeated. Returns per-step results and whether the plan is complete.
+     */
+    async executePlan(objective, steps) {
+        if (!this.initialized)
+            await this.initialize();
+        this.plan.setObjective(objective);
+        const results = [];
+        for (const desc of steps) {
+            if (!this.plan.shouldPerform(desc)) {
+                results.push({ step: desc, status: "skipped", result: "already completed" });
+                continue;
+            }
+            const step = this.plan.addStep(desc);
+            this.plan.start(step.id);
+            try {
+                const out = await this.runner.generate(desc);
+                this.plan.complete(step.id, out);
+                results.push({ step: desc, status: "completed", result: out });
+            }
+            catch (e) {
+                const reason = e instanceof Error ? e.message : String(e);
+                this.plan.fail(step.id, reason);
+                results.push({ step: desc, status: "failed", result: reason });
+            }
+        }
+        return { objective, results, complete: this.plan.isComplete() };
+    }
+    /**
+     * Section 24: run the self-healer — detect unhealthy components and attempt
+     * repair / revert-to-known-good, reporting anything unrecoverable.
+     */
+    async selfHeal() {
+        if (!this.initialized)
+            await this.initialize();
+        return this.healer.heal();
+    }
+    /** Section 24: current health of every registered component (no repairs). */
+    async healthReport() {
+        if (!this.initialized)
+            await this.initialize();
+        return this.healer.healthReport();
+    }
+    /**
+     * Section 7: retrieve relevant long-term memories for a query, ranked by
+     * semantic similarity and modulated by importance/recency. Retrieval
+     * reinforces what it returns.
+     */
+    recall(query, topK = 5) {
+        return this.memory.retrieve(query, { topK }).map(h => h.item.content);
+    }
+    /**
+     * Section 7: retrieve the most relevant past conversation turns for a query
+     * — long-term memory retrieval scoped to chat history. Every user/assistant
+     * turn is committed as a "chat-turn" memory in processQuery, so this surfaces
+     * earlier exchanges by relevance rather than only the most recent ones.
+     */
+    recallHistory(query, topK = 5) {
+        return this.memory.retrieve(query, { topK, tag: "chat-turn" }).map(h => h.item.content);
+    }
+    /** The recent conversation turns in chronological order (working transcript). */
+    chatHistory(limit = 20) {
+        return this.memory
+            .all()
+            .filter(m => m.tags.includes("chat-turn"))
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .slice(-limit)
+            .map(m => m.content);
+    }
+    /**
      * Get system status
      */
     getStatus() {
@@ -164,6 +295,7 @@ export class NeuroclawSystem {
             contextCapacity: `${this.contextCapacityGB}GB available`,
             alignment: this.empathy.getAlignmentScore(),
             hiveAgents: this.hive.list().length,
+            memories: this.memory.size(),
         };
     }
 }
