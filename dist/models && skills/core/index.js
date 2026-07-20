@@ -27,3 +27,5 @@ export { PlanTracker } from './plan-tracker';
 export { SelfHealer } from './self-healer';
 // Semantic context compression (Section 7).
 export { ContextCompressor } from './context-compressor';
+// System-level capability routing (Section 6).
+export { IntentRouter } from './intent-router';

@@ -1188,6 +1188,22 @@ async function testAutonomousTask() {
   }
 }
 
+async function testIntentRouter() {
+  const { IntentRouter } = await load('models && skills/core/intent-router.js');
+  const r = new IntentRouter();
+  check(r.route('please summarize our conversation').capability === 'summarize', 'Routes a summary request to summarize');
+  check(r.route('what did we discuss about the database earlier').capability === 'recall', 'Routes a recall request to recall');
+  check(r.route('run a self-heal and system health check').capability === 'heal', 'Routes a health request to heal');
+  check(r.route('write a function that reverses a string').capability === 'generate', 'Routes an ordinary request to generation');
+  check(r.route('hello there').capability === 'generate', 'Unmatched input defaults to generation');
+  // Confidence is a real [0,1] fraction of matched signal.
+  const d = r.route('summarize this');
+  check(d.confidence > 0 && d.confidence <= 1, 'Route decision carries a bounded confidence');
+  // Custom signals extend the router.
+  r.registerSignals('heal', ['diagnose yourself']);
+  check(r.route('please diagnose yourself now').capability === 'heal', 'Registered signals extend routing');
+}
+
 async function testContextCompressor() {
   const { ContextCompressor } = await load('models && skills/core/context-compressor.js');
   const cc = new ContextCompressor();
@@ -1464,6 +1480,7 @@ async function main() {
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
     ['Context compression (Section 7)', testContextCompressor],
+    ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

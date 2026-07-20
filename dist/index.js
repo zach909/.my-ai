@@ -16,6 +16,7 @@ import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
 import { PlanTracker } from "./models && skills/core/plan-tracker.js";
 import { SelfHealer } from "./models && skills/core/self-healer.js";
 import { ContextCompressor } from "./models && skills/core/context-compressor.js";
+import { IntentRouter } from "./models && skills/core/intent-router.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -55,6 +56,9 @@ export class NeuroclawSystem {
         // Context compressor (Section 7): semantic (not just byte-level) compaction
         // of long conversation context into a salient summary.
         this.compressor = new ContextCompressor();
+        // Capability router (Section 6): decides which high-level capability a
+        // query activates (recall / summarize / heal / generate).
+        this.router = new IntentRouter();
     }
     /**
      * Initialize all subsystems
@@ -161,30 +165,25 @@ export class NeuroclawSystem {
             await this.zipIO.emit(blocked);
             return blocked;
         }
-        // 4a. If the user asks for a summary of the whole conversation, return the
-        //     semantically compressed context (Section 7 — compressed context made
-        //     usable from the query path).
-        const wantsSummary = /\b(summar(y|ize|ise)|tl;?dr|recap of|sum up|what have we (covered|discussed))\b/i.test(input);
-        if (wantsSummary) {
+        // 4. Route the query to a high-level capability (Section 6): a summarize,
+        //    recall or self-heal request is served directly by the matching
+        //    subsystem instead of full neural generation. Anything else — and any
+        //    routed capability that has nothing to act on — falls through to
+        //    generation.
+        const route = this.router.route(input);
+        if (route.capability === "summarize") {
             const summary = this.compressContext(600);
-            if (summary) {
-                const response = `Summary of our conversation:\n${summary}`;
-                await this.zipIO.emit(response);
-                this.memory.remember(`AI: ${response}`, { tags: ["chat-turn", "assistant"], importance: turnImportance });
-                return response;
-            }
+            if (summary)
+                return this.respondDirect(`Summary of our conversation:\n${summary}`, turnImportance);
         }
-        // 4b. If the user is explicitly asking to recall the conversation, answer
-        //    directly from long-term memory (retrieval over chat history) instead
-        //    of generating fresh — this is what makes the memory *usable*, not
-        //    just stored.
-        const wantsRecall = /\b(recall|remember|earlier|previously|before|recap|last time|we (talked|discussed|spoke|said)|what did we|did we (talk|discuss))\b/i.test(input);
-        if (wantsRecall && priorHistory.length > 0) {
+        if (route.capability === "heal") {
+            const report = await this.selfHeal();
+            const issues = report.unrecoverable.length ? `; unresolved: ${report.unrecoverable.join(", ")}` : "";
+            return this.respondDirect(`System health: ${report.healthy}/${report.checked} components healthy, ${report.repaired} repaired, ${report.restored} restored${issues}.`, turnImportance);
+        }
+        if (route.capability === "recall" && priorHistory.length > 0) {
             const recalled = priorHistory.map(h => `• ${h.item.content}`).join("\n");
-            const response = `From our earlier conversation, here's what's relevant:\n${recalled}`;
-            await this.zipIO.emit(response);
-            this.memory.remember(`AI: ${response}`, { tags: ["chat-turn", "assistant"], importance: turnImportance });
-            return response;
+            return this.respondDirect(`From our earlier conversation, here's what's relevant:\n${recalled}`, turnImportance);
         }
         // 5. Run the query through the real neural runner (THORNS intent →
         //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation),
@@ -207,6 +206,12 @@ export class NeuroclawSystem {
             console.error("Error processing query:", error);
             throw error;
         }
+    }
+    /** Emit + record a direct (non-generated) assistant response and return it. */
+    async respondDirect(response, importance) {
+        await this.zipIO.emit(response);
+        this.memory.remember(`AI: ${response}`, { tags: ["chat-turn", "assistant"], importance });
+        return response;
     }
     /**
      * Sections 13-14: spin up (once) a small specialized team and let it
