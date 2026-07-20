@@ -82,6 +82,12 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
 - **Features**: Load balancing, top-K routing, dynamic expert addition/removal
 - **Why**: All-to-all connectivity means plugins drop in easily
 
+#### 1.4b Capability Router (system-level routing)
+- **Purpose**: The MoE routing idea applied at the *whole-system* level — decide which high-level capability a query activates so the full pipeline need not run for every request.
+- **File**: `models && skills/core/intent-router.ts`
+- **Mechanism**: `IntentRouter.route(input)` scores keyword/phrase signals per capability (recall / summarize / heal), longer phrases weighted higher, ties broken by fixed priority, no signal → `generate`. Returns the capability plus a bounded confidence.
+- **Integration**: `NeuroclawSystem.processQuery` routes each query — summarize → compressed context, recall → chat-history retrieval, heal → self-heal + health report — and otherwise falls through to grounded neural generation. Verified by the `Capability routing / IntentRouter (Section 6)` smoke suite.
+
 #### 1.5 All-to-All Connectivity (NeuronMesh)
 - **Purpose**: Non-linear, autonomous computation with infinite context
 - **Mechanism**: Each neuron connects to every other neuron
@@ -145,6 +151,12 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
   - Capacity policy: when full, the lowest-retention memories (importance × recency × recall-frequency) are evicted — *removed when necessary, preserved when important*.
   - `serialize()`/`deserialize()` persist the store; `consolidateFrom(texts)` transfers working-context snippets into durable memory.
 - **Integration**: `NeuroclawSystem` (`index.ts`) commits each user message to memory with an importance set by the empathy engine's arousal reading, and exposes `recall(query)`. Verified by the `Long-term memory & retrieval (Section 7)` smoke suite.
+
+#### 1.11b Context Compressor (semantic compression)
+- **Purpose**: The Section 7 "compressed context" category — condensing a long conversation into a compact, salient summary. Distinct from ZipIO's *byte-level* gzip; this is *semantic* compaction.
+- **File**: `models && skills/core/context-compressor.ts`
+- **Mechanism**: `compress(texts)` scores items by corpus-wide term salience (length-normalized), greedily selects the most salient under a character/item budget, and re-orders the kept items back into sequence. Reports the compression ratio.
+- **Integration**: `NeuroclawSystem.compressContext()` summarizes the user's turns; a "summarize our conversation" query returns it via the capability router. Verified by the `Context compression (Section 7)` smoke suite.
 
 #### 1.12 Quantum Neural Net
 - **Purpose**: Enable quantum conversion and超越 classical domain
@@ -261,6 +273,10 @@ ABAP, ActionScript, Ada, Agda, Alloy, AMPL, ANTLR, ApacheConf, Apex, API Bluepri
 6. **RLM Decision**: Reinforcement learning selects action, avoids loops
 7. **Token Generation**: Combines outputs into final response (as zip loop)
 8. **Extension Creation**: If new capability learned, create extension via builder
+
+### Integrated Autonomous Execution (Section 27)
+
+Beyond a single request, `NeuroclawSystem.autonomousTask(objective, steps)` shows the subsystems working as one platform rather than in isolation: the **PlanTracker** (§10) records the objective and enforces no-repeat, each pending step is **delegated through the Hive Mind** (§13-14) to the best-matching agent whose mind is the real neural runner, results are committed to **long-term memory** (§7), and if the plan doesn't fully succeed the **SelfHealer** (§24) runs and reports recovery. Verified by the `Autonomous task integration (Section 27)` smoke suite.
 
 ## Key Benefits
 
