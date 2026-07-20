@@ -26,10 +26,18 @@ Higher value means the neuron changes less (more stable knowledge).
 ```
 
 #### Define Connections
-Default is all-to-all if not filled in.
+Default is all-to-all if not filled in. The runtime TypeScript parser
+(`models && skills/core/neuro-lang.ts`) accepts these deterministic forms:
 ```
-"name"@conections=".names/verable"*"bias"+"wate"
+"name"@connections=".target*weight"                 # single edge
+"name"@connections=".a*0.5+.b*0.3"                   # several edges
+"name"@connections=".target/variable*bias+weight"   # Section 20 canonical form
 ```
+In the Section 20 form, `/variable` names a per-dimension state selector (parsed;
+the scalar-per-edge weight is `bias`, and a trailing bare number folds in as an
+additive refinement — `.y/state*0.5+0.25` → weight `0.75`). `@conections`
+(single-n) is accepted as an alias. The per-dimension state-var *routing* is a
+Python-track feature; the TS runtime stores one scalar weight per edge.
 
 #### Define Output for Input-Only Case
 ```

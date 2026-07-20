@@ -1041,6 +1041,16 @@ async function testNeuralDefinitionDirectives() {
   check(rc.errors.length === 0 && nc.get('n').connections.get('other') === 0.5
         && nc.get('n').connections.get('third') === 0.3,
         'documented multi-target @connections form parses into one weighted edge per target');
+  // Section 20 canonical form: `.target/variable*bias+weight` — the state-var
+  // selector is accepted and the trailing additive weight folds into the edge.
+  const its = new NeuroLangInterpreter();
+  const rs = its.parse(['name="y"', 'name="x"', '"x"@connections=".y/state*0.5+0.25"'].join('\n'));
+  const ns = its.evaluate(rs);
+  check(rs.errors.length === 0, 'Section 20 connection form (.target/variable*bias+weight) parses without error');
+  check(ns.get('x').connections.get('y') === 0.75, 'Section 20 form folds bias+additive into the edge weight (0.5+0.25)');
+  // The bare state-selector form `.target/variable` defaults to weight 1.0.
+  const rs2 = its.parse(['name="y"', 'name="x"', '"x"@connections=".y/phase"'].join('\n'));
+  check(rs2.errors.length === 0 && its.evaluate(rs2).get('x').connections.get('y') === 1.0, 'Section 20 bare state-selector defaults to weight 1.0');
   check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
   const finder = neurons.get('finder');
   check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');

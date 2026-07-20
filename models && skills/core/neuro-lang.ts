@@ -426,26 +426,51 @@ export class NeuroLangInterpreter {
     const connections = new Map<string, number>();
     if (!spec.trim()) return connections;
 
-    // Split on '+' that is not inside a name (names cannot contain '+')
+    // Supported forms (split on '+'; names cannot contain '+'):
+    //   .target                     — weight 1.0
+    //   .target*weight              — explicit weight
+    //   .target*w + .other*w        — several targets
+    //   .target/variable*bias       — Section 20 form: a per-dimension state
+    //                                 selector (parsed; the target-level weight
+    //                                 is `bias`, since this weight model is
+    //                                 scalar-per-edge — the state-var routing is
+    //                                 a Python-track feature)
+    //   .target/variable*bias + w   — a trailing bare number is an additive
+    //                                 refinement folded into the last edge's
+    //                                 effective weight (bias + w)
     const parts = spec.split('+');
+    let lastTarget: string | null = null;
     for (const part of parts) {
       const trimmed = part.trim();
       if (!trimmed) continue;
 
-      // Each part: .name*weight  or  .name  (weight defaults to 1.0)
-      const connMatch = trimmed.match(/^\.([A-Za-z0-9_:@\-. ]+?)(?:\s*\*\s*([\d.]+))?$/);
+      // A bare number is the additive `+weight` term for the previous edge.
+      const additive = trimmed.match(/^([\d.]+)$/);
+      if (additive) {
+        if (lastTarget === null) {
+          throw new Error(`Leading additive weight "${trimmed}" has no target in connections for "${sourceName}"`);
+        }
+        const add = parseFloat(additive[1]);
+        if (isNaN(add)) throw new Error(`Invalid additive weight "${trimmed}" for "${sourceName}"`);
+        connections.set(lastTarget, (connections.get(lastTarget) ?? 0) + add);
+        continue;
+      }
+
+      // .target[/variable][*bias]
+      const connMatch = trimmed.match(/^\.([A-Za-z0-9_:@\-. ]+?)(?:\/([A-Za-z0-9_]+))?(?:\s*\*\s*([\d.]+))?$/);
       if (!connMatch) {
         throw new Error(
           `Invalid connection segment "${trimmed}" in connections for "${sourceName}". ` +
-          `Expected format: .targetName*weight`
+          `Expected format: .targetName[/variable][*weight]`
         );
       }
       const targetName = connMatch[1].trim();
-      const weight = connMatch[2] !== undefined ? parseFloat(connMatch[2]) : 1.0;
+      const weight = connMatch[3] !== undefined ? parseFloat(connMatch[3]) : 1.0;
       if (isNaN(weight)) {
-        throw new Error(`Invalid weight "${connMatch[2]}" for connection ".${targetName}"`);
+        throw new Error(`Invalid weight "${connMatch[3]}" for connection ".${targetName}"`);
       }
       connections.set(targetName, weight);
+      lastTarget = targetName;
     }
 
     return connections;
