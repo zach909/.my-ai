@@ -1160,6 +1160,28 @@ async function testLongTermMemory() {
   check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
 }
 
+async function testAutonomousTask() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  // Suppress the subsystem/plugin boot logging so the suite output stays clean.
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const r = await sys.autonomousTask('build a service', ['design the routes', 'implement handlers']);
+    check(r.complete, 'Autonomous task completes its plan');
+    check(r.results.length === 2 && r.results.every(x => x.status === 'completed'), 'Each step is executed');
+    check(r.results.every(x => x.agent && x.agent !== '-'), 'Each step is delegated to a hive agent');
+    // Re-run with an overlapping step: planning + hive integration must not repeat it.
+    const r2 = await sys.autonomousTask('build a service', ['design the routes', 'write tests']);
+    check(r2.results.find(x => x.step === 'design the routes').status === 'skipped', 'Already-completed steps are not repeated');
+    check(r2.results.find(x => x.step === 'write tests').status === 'completed', 'A new step still runs on re-invocation');
+    check(sys.memory.all().filter(m => m.tags.includes('task')).length >= 3, 'Task results are recorded in long-term memory');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testContextCompressor() {
   const { ContextCompressor } = await load('models && skills/core/context-compressor.js');
   const cc = new ContextCompressor();
@@ -1436,6 +1458,7 @@ async function main() {
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
     ['Context compression (Section 7)', testContextCompressor],
+    ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],

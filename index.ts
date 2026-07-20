@@ -288,6 +288,54 @@ export class NeuroclawSystem {
   }
 
   /**
+   * Integrated autonomous execution (§27.17 — the subsystems working together).
+   * Combines the PlanTracker (§10, no-repeat), the Hive Mind (§13-14, each step
+   * delegated to the best-matching agent whose mind is the real neural runner),
+   * long-term memory (§7, results recorded), and self-healing (§24, run if a
+   * step fails). One objective → a plan → multi-agent execution → memory →
+   * recovery, rather than a collection of unrelated methods.
+   */
+  async autonomousTask(objective: string, steps: string[]): Promise<{
+    objective: string;
+    results: Array<{ step: string; agent: string; status: "completed" | "failed" | "skipped"; result: string }>;
+    complete: boolean;
+    healed: boolean | null;
+  }> {
+    if (!this.initialized) await this.initialize();
+    if (this.hive.list().length === 0) {
+      this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
+      this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
+      this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
+    }
+    this.plan.setObjective(objective);
+    const results: Array<{ step: string; agent: string; status: "completed" | "failed" | "skipped"; result: string }> = [];
+    for (const desc of steps) {
+      if (!this.plan.shouldPerform(desc)) {
+        results.push({ step: desc, agent: "-", status: "skipped", result: "already completed" });
+        continue;
+      }
+      const step = this.plan.addStep(desc);
+      this.plan.start(step.id);
+      const routed = await this.hive.delegate(desc);
+      if (routed) {
+        this.plan.complete(step.id, routed.output);
+        this.memory.remember(`Task step: ${desc} -> ${routed.output}`, { tags: ["task"], importance: 0.6 });
+        results.push({ step: desc, agent: routed.agent.id, status: "completed", result: routed.output });
+      } else {
+        this.plan.fail(step.id, "no agent available");
+        results.push({ step: desc, agent: "-", status: "failed", result: "no agent available" });
+      }
+    }
+    // If the plan didn't fully succeed, attempt recovery.
+    let healed: boolean | null = null;
+    if (!this.plan.isAchieved()) {
+      const report = await this.selfHeal();
+      healed = report.unrecoverable.length === 0;
+    }
+    return { objective, results, complete: this.plan.isComplete(), healed };
+  }
+
+  /**
    * Section 24: run the self-healer — detect unhealthy components and attempt
    * repair / revert-to-known-good, reporting anything unrecoverable.
    */
