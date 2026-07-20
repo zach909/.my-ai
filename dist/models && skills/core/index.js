@@ -23,3 +23,5 @@ export { NetSearchEngine } from './net-search';
 export { LongTermMemory } from './long-term-memory';
 // RLM-style planning (Section 10).
 export { PlanTracker } from './plan-tracker';
+// Self-healing (Section 24).
+export { SelfHealer } from './self-healer';

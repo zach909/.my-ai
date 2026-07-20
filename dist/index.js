@@ -14,6 +14,7 @@ import { HiveMind } from "./models && skills/core/hive-mind.js";
 import { ChatGroup } from "./models && skills/core/chat-group.js";
 import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
 import { PlanTracker } from "./models && skills/core/plan-tracker.js";
+import { SelfHealer } from "./models && skills/core/self-healer.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -47,6 +48,9 @@ export class NeuroclawSystem {
         // Plan tracker (Section 10): structured objective/step record that keeps
         // autonomous execution aligned and prevents repeating completed steps.
         this.plan = new PlanTracker();
+        // Self-healer (Section 24): component registry with testable detect →
+        // repair → revert-to-known-good → report recovery.
+        this.healer = new SelfHealer();
     }
     /**
      * Initialize all subsystems
@@ -96,6 +100,27 @@ export class NeuroclawSystem {
                 console.warn(`Failed to activate plugin "${id}":`, e);
             }
         }
+        // Self-healing (Section 24): register recoverable components with real
+        // health checks. The plugin registry can be re-activated if it goes dark;
+        // the hive's trust budget invariant is monitored. Capture a known-good
+        // baseline for revert-to-known-good.
+        this.healer.register({
+            name: "plugin-registry",
+            check: () => this.pluginRegistry.listActivePlugins().length > 0,
+            repair: async () => {
+                for (const id of Object.keys(pluginExtensions)) {
+                    try {
+                        await this.pluginRegistry.activate(id);
+                    }
+                    catch { /* skip individual failures */ }
+                }
+            },
+        });
+        this.healer.register({
+            name: "hive-trust-invariant",
+            check: () => this.hive.list().length === 0 || Math.abs(this.hive.totalTrustValue() - 100) < 1e-3,
+        });
+        this.healer.snapshotAll();
         this.initialized = true;
         console.log("Neuroclaw subsystems initialized successfully");
     }
@@ -218,6 +243,21 @@ export class NeuroclawSystem {
             }
         }
         return { objective, results, complete: this.plan.isComplete() };
+    }
+    /**
+     * Section 24: run the self-healer — detect unhealthy components and attempt
+     * repair / revert-to-known-good, reporting anything unrecoverable.
+     */
+    async selfHeal() {
+        if (!this.initialized)
+            await this.initialize();
+        return this.healer.heal();
+    }
+    /** Section 24: current health of every registered component (no repairs). */
+    async healthReport() {
+        if (!this.initialized)
+            await this.initialize();
+        return this.healer.healthReport();
     }
     /**
      * Section 7: retrieve relevant long-term memories for a query, ranked by

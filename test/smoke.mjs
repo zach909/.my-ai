@@ -1129,6 +1129,43 @@ async function testLongTermMemory() {
   check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
 }
 
+async function testSelfHealer() {
+  const { SelfHealer } = await load('models && skills/core/self-healer.js');
+  const healer = new SelfHealer();
+
+  // A component that starts broken but whose repair fixes it.
+  let brokenFixed = false;
+  healer.register({ name: 'repairable', check: () => brokenFixed, repair: () => { brokenFixed = true; } });
+  // A healthy component (no action needed).
+  healer.register({ name: 'healthy', check: () => true });
+  // A component with no repair but a restorable known-good state.
+  let corrupted = true;
+  healer.register({
+    name: 'restorable',
+    check: () => !corrupted,
+    snapshot: () => ({ good: true }),
+    restore: (snap) => { corrupted = !(snap && snap.good); },
+  });
+  // A component that cannot be recovered.
+  healer.register({ name: 'doomed', check: () => false, repair: () => { /* no-op, stays broken */ } });
+
+  // Capture known-good baseline while 'restorable' is healthy.
+  corrupted = false;
+  healer.snapshotAll();
+  corrupted = true; // now corrupt it
+
+  const report = await healer.heal();
+  check(report.checked === 4, 'Self-healer checks all registered components');
+  check(report.results.find(r => r.component === 'repairable').recovered, 'A repairable component is repaired');
+  check(report.results.find(r => r.component === 'healthy').wasHealthy, 'A healthy component needs no repair');
+  const restorableResult = report.results.find(r => r.component === 'restorable');
+  check(restorableResult.recovered && restorableResult.actions.includes('restored-known-good'), 'An unrepairable component is reverted to a known-good snapshot');
+  check(report.unrecoverable.includes('doomed'), 'An unrecoverable component is reported, not hidden');
+  check(report.log.length > 0, 'Every heal step is logged (recovery mechanism, not silent)');
+  const health = await healer.healthReport();
+  check(health.repairable === true && health.doomed === false, 'healthReport reflects post-heal component health');
+}
+
 async function testPlanTracker() {
   const { PlanTracker } = await load('models && skills/core/plan-tracker.js');
   const plan = new PlanTracker();
@@ -1340,6 +1377,7 @@ async function main() {
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
+    ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],

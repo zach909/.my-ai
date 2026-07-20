@@ -50,3 +50,7 @@ export type { MemoryItem, MemoryHit, RememberOptions, RetrieveOptions } from './
 // RLM-style planning (Section 10).
 export { PlanTracker } from './plan-tracker';
 export type { PlanStep, StepStatus, PlanProgress, PlanSnapshot } from './plan-tracker';
+
+// Self-healing (Section 24).
+export { SelfHealer } from './self-healer';
+export type { HealableComponent, HealResult, HealReport } from './self-healer';

@@ -66,6 +66,12 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
   - `start`/`complete`/`fail`/`retry` track status; `isComplete`/`isAchieved`/`progress`/`summary` report it.
 - **Integration**: `NeuroclawSystem.executePlan(objective, steps)` (`index.ts`) runs each pending step through the real neural runner and **skips steps already completed in a prior call**. Verified by the `RLM planning / PlanTracker (Section 10)` smoke suite and a live no-repeat check.
 
+#### 1.7c Self-Healer (component recovery)
+- **Purpose**: The testable, component-level self-healing Section 24 requires (the `SelfHealExtension` plugin only does process-level GC/heap hygiene).
+- **File**: `models && skills/core/self-healer.ts`
+- **Mechanism**: components register a `check` (healthy?), an optional `repair`, and an optional `snapshot`/`restore`. `heal()` detects unhealthy components, tries bounded repairs and re-verifies, falls back to reverting a **known-good snapshot**, and **reports anything unrecoverable rather than hiding it**. Every step is logged — repairs are never silent, satisfying the "maintain a recovery mechanism" rule.
+- **Integration**: `NeuroclawSystem` registers real components (the plugin registry, which it can re-activate; the hive trust-budget invariant) and exposes `selfHeal()` / `healthReport()`. Verified by the `Self-healing / SelfHealer (Section 24)` smoke suite.
+
 ### Foreground Subsystems (Processing & Reasoning)
 
 #### 1.4 Mixture of Experts — MoE
