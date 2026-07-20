@@ -1117,6 +1117,16 @@ async function testLongTermMemory() {
   const turns = chat.retrieve('flexbox justify content align items', { tag: 'chat-turn' });
   check(turns.length > 0 && turns[0].item.content.includes('flexbox'), 'Retrieval pulls the relevant turn from chat history');
   check(turns.every(t => t.item.tags.includes('chat-turn')), 'Chat-history retrieval is scoped to conversation turns');
+
+  // Stopword filtering: a query dominated by function words still matches on
+  // content, and stopword-only overlap does not surface irrelevant turns
+  // (this is what makes the NeuroclawSystem recall short-circuit precise).
+  const s = new LongTermMemory();
+  s.remember('User: my project uses a postgres database on port 5432', { tags: ['chat-turn'] });
+  s.remember('User: the weather today is sunny and warm', { tags: ['chat-turn'] });
+  const dbHits = s.retrieve('what did we discuss about the database earlier', { tag: 'chat-turn' });
+  check(dbHits.length > 0 && dbHits[0].item.content.includes('database'), 'Content tokens (not stopwords) drive retrieval');
+  check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
 }
 
 async function testNetSearchEngine() {

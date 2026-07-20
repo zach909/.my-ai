@@ -205,8 +205,20 @@ function clamp01(x: number): number {
   return Math.max(0, Math.min(1, x));
 }
 
+/** Common function words that carry no retrieval signal. */
+const STOPWORDS = new Set([
+  "the", "and", "for", "are", "was", "were", "been", "being", "you", "your", "our", "their",
+  "this", "that", "these", "those", "with", "from", "into", "than", "then", "they", "them",
+  "did", "does", "done", "how", "what", "which", "who", "when", "where", "why", "can", "could",
+  "should", "would", "will", "shall", "may", "might", "about", "over", "under", "just", "also",
+  "not", "yes", "out", "off", "its", "his", "her", "him", "she", "have", "has", "had",
+]);
+
 function tokenize(text: string): string[] {
-  return (text || "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 1);
+  return (text || "")
+    .toLowerCase()
+    .split(/[^a-z0-9]+/)
+    .filter(w => w.length > 1 && !STOPWORDS.has(w));
 }
 
 function cosine(a: number[], b: number[]): number {

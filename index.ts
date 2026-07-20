@@ -138,6 +138,12 @@ export class NeuroclawSystem {
     //    last under capacity pressure.
     await this.zipIO.ingest(input);
     const turnImportance = Math.min(1, 0.4 + Math.max(0, emotion.arousal) * 0.4);
+    // Retrieve relevant prior conversation turns *before* recording the current
+    // one (so the current message can't match itself). This is the continuous-
+    // context step: previous information is carried into the current response.
+    const priorHistory = this.memory
+      .retrieve(input, { topK: 3, tag: "chat-turn" })
+      .filter(h => h.similarity >= 0.1);
     this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
 
     // 3. Gate the "respond" action through the AlignmentVeto before running.
@@ -153,7 +159,20 @@ export class NeuroclawSystem {
       return blocked;
     }
 
-    // 4. Run the query through the real neural runner (THORNS intent →
+    // 4. If the user is explicitly asking to recall the conversation, answer
+    //    directly from long-term memory (retrieval over chat history) instead
+    //    of generating fresh — this is what makes the memory *usable*, not
+    //    just stored.
+    const wantsRecall = /\b(recall|remember|earlier|previously|before|recap|last time|we (talked|discussed|spoke|said)|what did we|did we (talk|discuss))\b/i.test(input);
+    if (wantsRecall && priorHistory.length > 0) {
+      const recalled = priorHistory.map(h => `• ${h.item.content}`).join("\n");
+      const response = `From our earlier conversation, here's what's relevant:\n${recalled}`;
+      await this.zipIO.emit(response);
+      this.memory.remember(`AI: ${response}`, { tags: ["chat-turn", "assistant"], importance: turnImportance });
+      return response;
+    }
+
+    // 5. Run the query through the real neural runner (THORNS intent →
     //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation).
     try {
       let result = await this.runner.generate(input);
@@ -161,7 +180,7 @@ export class NeuroclawSystem {
         result = `${result}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`;
       }
 
-      // 5. Store the (compressed) output in the ZIP-IO output loop, and commit
+      // 6. Store the (compressed) output in the ZIP-IO output loop, and commit
       //    the assistant turn to long-term memory so the whole exchange becomes
       //    retrievable chat history (Section 7).
       await this.zipIO.emit(result);
