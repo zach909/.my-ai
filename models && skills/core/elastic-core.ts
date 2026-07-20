@@ -389,25 +389,55 @@ export class ElasticCoreBlock {
           continue;
         }
 
-        sums.set(bias.subarray(off, off + SD));
+        for (let od = 0; od < SD; od++) {
+          sums[od] = bias[off + od];
+        }
 
-        for (let s = 0; s < N; s++) {
-          if (s === t) continue;
+        // Split source loop to eliminate "s === t" branch with 4x loop unrolling
+        for (let s = 0; s < t; s++) {
           const sOff = s * SD;
           const wBase = (t * N + s) * SD * SD;
           for (let od = 0; od < SD; od++) {
             const wRowOff = wBase + od * SD;
-            let dot = 0;
-            for (let id = 0; id < SD; id++) {
-              dot += curr[sOff + id] * weights[wRowOff + id];
+            let sum = sums[od];
+            let id = 0;
+            for (; id <= SD - 4; id += 4) {
+              sum += curr[sOff + id] * weights[wRowOff + id]
+                   + curr[sOff + id + 1] * weights[wRowOff + id + 1]
+                   + curr[sOff + id + 2] * weights[wRowOff + id + 2]
+                   + curr[sOff + id + 3] * weights[wRowOff + id + 3];
             }
-            sums[od] += dot;
+            for (; id < SD; id++) {
+              sum += curr[sOff + id] * weights[wRowOff + id];
+            }
+            sums[od] = sum;
+          }
+        }
+
+        for (let s = t + 1; s < N; s++) {
+          const sOff = s * SD;
+          const wBase = (t * N + s) * SD * SD;
+          for (let od = 0; od < SD; od++) {
+            const wRowOff = wBase + od * SD;
+            let sum = sums[od];
+            let id = 0;
+            for (; id <= SD - 4; id += 4) {
+              sum += curr[sOff + id] * weights[wRowOff + id]
+                   + curr[sOff + id + 1] * weights[wRowOff + id + 1]
+                   + curr[sOff + id + 2] * weights[wRowOff + id + 2]
+                   + curr[sOff + id + 3] * weights[wRowOff + id + 3];
+            }
+            for (; id < SD; id++) {
+              sum += curr[sOff + id] * weights[wRowOff + id];
+            }
+            sums[od] = sum;
           }
         }
 
         const v = vAlloc[t];
+        const oneMinusV = 1 - v;
         for (let od = 0; od < SD; od++) {
-          next[off + od] = v * curr[off + od] + (1 - v) * Math.tanh(sums[od]);
+          next[off + od] = v * curr[off + od] + oneMinusV * Math.tanh(sums[od]);
         }
       }
 
@@ -416,7 +446,8 @@ export class ElasticCoreBlock {
 
       residual = 0;
       for (let i = 0; i < next.length; i++) {
-        residual += Math.abs(next[i] - curr[i]);
+        const diff = next[i] - curr[i];
+        residual += diff < 0 ? -diff : diff;
         curr[i] = next[i];
       }
       if (residual < this.convergenceThreshold) { converged = true; ticks++; break; }
@@ -469,7 +500,6 @@ export class ElasticCoreBlock {
    */
   private applyQuantizationInPlace(next: Float32Array): void {
     if (!this.quantizationAware) {
-      this.quantizationResidual.fill(0);
       return;
     }
     const levels = (1 << this.quantizationBits) - 1;
