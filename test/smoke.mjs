@@ -1377,6 +1377,12 @@ async function testCodeToNet() {
   check(enet.evaluate([1]).length > 0, 'Embedding net yields a content signature');
   check(c.testAgainst(enet, '(a) => { while (true) {} return a; }').passed, 'Embedding net re-embeds to the same signature');
 
+  // Security: escape-sequence and reflection attempts never reach function mode
+  // (never executed) — they are denied and fall back to embedding.
+  check(c.compile('esc', "(a) => \\u0065val('2')").mode === 'embedding', 'Unicode-escape identifier attempt is denied');
+  check(c.compile('refl', '(a) => this.constructor').mode === 'embedding', 'Reflection via this/constructor is denied');
+  check(c.compile('idx', '(a) => globalThis["process"]').mode === 'embedding', 'Bracket/global access is denied');
+
   // Integration: NeuroLang `@code` compiles a real, testable network.
   const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
   const interp = new NeuroLangInterpreter();

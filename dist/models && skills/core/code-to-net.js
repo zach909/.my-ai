@@ -64,7 +64,11 @@ export class CodeNet {
     }
 }
 /** Tokens that must never appear in a "numeric function" — forces embedding mode. */
-const DENY = /\b(require|import|process|globalThis|global|eval|Function|constructor|prototype|__proto__|while|for|do|fetch|XMLHttpRequest|window|document|setTimeout|setInterval|Promise|async|await|throw|new|class|delete|void|yield)\b|`|=>[\s\S]*=>|\[|\]/;
+// A backslash is denied outright: a numeric function never needs one, and it
+// blocks unicode/hex escape identifiers (e.g. `eval` → `eval`) that would
+// otherwise slip a denied keyword past the word-boundary checks below. Property
+// access (`.`), brackets, backticks and template arrows are also denied.
+const DENY = /\b(require|import|process|globalThis|global|eval|Function|constructor|prototype|__proto__|while|for|do|fetch|XMLHttpRequest|window|document|setTimeout|setInterval|Promise|async|await|throw|new|class|delete|void|yield|arguments|this)\b|`|=>[\s\S]*=>|\[|\]|\\/;
 /** Canonical variable names probed when a bare expression has no parameter list. */
 const CANONICAL_VARS = ["a", "b", "c", "d", "x", "y", "z", "x0", "x1", "x2", "x3"];
 export class CodeToNetCompiler {
