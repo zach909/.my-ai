@@ -46,3 +46,7 @@ export type { SearchMode, SearchableStructure, SearchResult, NetSearchOptions } 
 // Long-term memory & retrieval (Section 7).
 export { LongTermMemory } from './long-term-memory';
 export type { MemoryItem, MemoryHit, RememberOptions, RetrieveOptions } from './long-term-memory';
+
+// RLM-style planning (Section 10).
+export { PlanTracker } from './plan-tracker';
+export type { PlanStep, StepStatus, PlanProgress, PlanSnapshot } from './plan-tracker';

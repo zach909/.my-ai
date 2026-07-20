@@ -1129,6 +1129,48 @@ async function testLongTermMemory() {
   check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
 }
 
+async function testPlanTracker() {
+  const { PlanTracker } = await load('models && skills/core/plan-tracker.js');
+  const plan = new PlanTracker();
+  plan.setObjective('ship the feature');
+  plan.addConstraint('no external APIs');
+  const [a, b] = plan.addSteps(['write the parser', 'write the tests']);
+  check(plan.getObjective() === 'ship the feature' && plan.progress().total === 2, 'Plan records objective and steps');
+
+  // De-duplication prevents duplicate steps.
+  const dup = plan.addStep('Write The Parser');
+  check(dup.id === a.id && plan.progress().total === 2, 'Duplicate steps are de-duplicated');
+
+  // Ordered execution.
+  check(plan.next().id === a.id, 'next() returns the first pending step');
+  plan.start(a.id);
+  plan.complete(a.id, 'parser done');
+  check(plan.next().id === b.id, 'next() advances past completed steps');
+
+  // No-repeat rule.
+  check(!plan.shouldPerform('write the parser'), 'Completed actions are not repeated');
+  check(plan.shouldPerform('write the parser', true), 'Repeat is allowed when explicitly forced');
+  check(plan.shouldPerform('write the docs'), 'A new action is allowed');
+
+  // Failure + retry.
+  plan.fail(b.id, 'flaky test');
+  check(plan.progress().failed === 1, 'Failed steps are recorded');
+  plan.retry(b.id);
+  check(plan.next().id === b.id, 'A failed step can be retried (back to pending)');
+  plan.complete(b.id, 'tests pass');
+  check(plan.isComplete() && plan.isAchieved(), 'Plan completes when all steps are resolved');
+
+  // Revision preserves history, replaces the remaining work.
+  const plan2 = new PlanTracker();
+  const [s1] = plan2.addSteps(['research', 'draft', 'review']);
+  plan2.start(s1.id);
+  plan2.complete(s1.id);
+  plan2.reviseRemaining(['prototype', 'validate']);
+  const descs = plan2.getSteps().map(s => s.description);
+  check(descs.includes('research') && descs.includes('prototype') && !descs.includes('draft'), 'reviseRemaining keeps completed steps and replaces pending ones');
+  check(plan2.summary().includes('research'), 'summary() reflects the plan');
+}
+
 async function testNetSearchEngine() {
   const { NetSearchEngine } = await load('models && skills/core/net-search.js');
   const eng = new NetSearchEngine();
@@ -1298,6 +1340,7 @@ async function main() {
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
+    ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],

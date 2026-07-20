@@ -21,3 +21,5 @@ export { ChatGroup } from './chat-group';
 export { NetSearchEngine } from './net-search';
 // Long-term memory & retrieval (Section 7).
 export { LongTermMemory } from './long-term-memory';
+// RLM-style planning (Section 10).
+export { PlanTracker } from './plan-tracker';

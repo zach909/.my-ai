@@ -13,6 +13,7 @@ import { EmpathyEngine } from "./models && skills/core/empathy.js";
 import { HiveMind } from "./models && skills/core/hive-mind.js";
 import { ChatGroup } from "./models && skills/core/chat-group.js";
 import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
+import { PlanTracker } from "./models && skills/core/plan-tracker.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -43,6 +44,9 @@ export class NeuroclawSystem {
         // Long-term memory (Section 7): a persistent, relevance-retrievable store,
         // complementary to the ZipIO working-context buffer.
         this.memory = new LongTermMemory();
+        // Plan tracker (Section 10): structured objective/step record that keeps
+        // autonomous execution aligned and prevents repeating completed steps.
+        this.plan = new PlanTracker();
     }
     /**
      * Initialize all subsystems
@@ -183,6 +187,37 @@ export class NeuroclawSystem {
         const decision = await this.chatGroup.decide(`How should we handle: ${task}`, ["proceed", "revise", "reject"]);
         this.hive.synchronize();
         return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision };
+    }
+    /**
+     * Section 10: run a multi-step plan toward an objective. Each pending step is
+     * executed through the real neural runner; steps that were already completed
+     * (same description, e.g. from an earlier call) are skipped rather than
+     * repeated. Returns per-step results and whether the plan is complete.
+     */
+    async executePlan(objective, steps) {
+        if (!this.initialized)
+            await this.initialize();
+        this.plan.setObjective(objective);
+        const results = [];
+        for (const desc of steps) {
+            if (!this.plan.shouldPerform(desc)) {
+                results.push({ step: desc, status: "skipped", result: "already completed" });
+                continue;
+            }
+            const step = this.plan.addStep(desc);
+            this.plan.start(step.id);
+            try {
+                const out = await this.runner.generate(desc);
+                this.plan.complete(step.id, out);
+                results.push({ step: desc, status: "completed", result: out });
+            }
+            catch (e) {
+                const reason = e instanceof Error ? e.message : String(e);
+                this.plan.fail(step.id, reason);
+                results.push({ step: desc, status: "failed", result: reason });
+            }
+        }
+        return { objective, results, complete: this.plan.isComplete() };
     }
     /**
      * Section 7: retrieve relevant long-term memories for a query, ranked by

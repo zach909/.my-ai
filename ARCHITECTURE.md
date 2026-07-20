@@ -57,6 +57,15 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
 - **Example**: The AI wrote down the steps so it wouldn't repeat itself
 - **Features**: Loop detection, lookahead steps, experience replay
 
+#### 1.7b Plan Tracker (structured planning record)
+- **Purpose**: The "wrote down the steps so it wouldn't repeat itself" part, made concrete — the structured plan record Section 10 requires (objective, completed/pending/failed steps, alternatives, decisions, constraints, results).
+- **File**: `models && skills/core/plan-tracker.ts`
+- **Mechanism**:
+  - Steps are de-duplicated by normalized description; `shouldPerform(desc)` returns false once an identical step is completed — **repeated actions are prevented** unless a repeat is explicitly forced.
+  - `reviseRemaining(newSteps)` replaces the not-yet-started work while preserving completed/failed history — **the plan is revised when new information arrives**.
+  - `start`/`complete`/`fail`/`retry` track status; `isComplete`/`isAchieved`/`progress`/`summary` report it.
+- **Integration**: `NeuroclawSystem.executePlan(objective, steps)` (`index.ts`) runs each pending step through the real neural runner and **skips steps already completed in a prior call**. Verified by the `RLM planning / PlanTracker (Section 10)` smoke suite and a live no-repeat check.
+
 ### Foreground Subsystems (Processing & Reasoning)
 
 #### 1.4 Mixture of Experts — MoE
