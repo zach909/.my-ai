@@ -25,3 +25,5 @@ export { LongTermMemory } from './long-term-memory';
 export { PlanTracker } from './plan-tracker';
 // Self-healing (Section 24).
 export { SelfHealer } from './self-healer';
+// Semantic context compression (Section 7).
+export { ContextCompressor } from './context-compressor';

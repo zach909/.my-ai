@@ -54,3 +54,7 @@ export type { PlanStep, StepStatus, PlanProgress, PlanSnapshot } from './plan-tr
 // Self-healing (Section 24).
 export { SelfHealer } from './self-healer';
 export type { HealableComponent, HealResult, HealReport } from './self-healer';
+
+// Semantic context compression (Section 7).
+export { ContextCompressor } from './context-compressor';
+export type { CompressOptions, CompressionResult } from './context-compressor';

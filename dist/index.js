@@ -15,6 +15,7 @@ import { ChatGroup } from "./models && skills/core/chat-group.js";
 import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
 import { PlanTracker } from "./models && skills/core/plan-tracker.js";
 import { SelfHealer } from "./models && skills/core/self-healer.js";
+import { ContextCompressor } from "./models && skills/core/context-compressor.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -51,6 +52,9 @@ export class NeuroclawSystem {
         // Self-healer (Section 24): component registry with testable detect →
         // repair → revert-to-known-good → report recovery.
         this.healer = new SelfHealer();
+        // Context compressor (Section 7): semantic (not just byte-level) compaction
+        // of long conversation context into a salient summary.
+        this.compressor = new ContextCompressor();
     }
     /**
      * Initialize all subsystems
@@ -278,6 +282,26 @@ export class NeuroclawSystem {
      */
     recallHistory(query, topK = 5) {
         return this.memory.retrieve(query, { topK, tag: "chat-turn" }).map(h => h.item.content);
+    }
+    /**
+     * Section 7: compress the recent conversation into a compact, salient
+     * summary (semantic compression, distinct from ZipIO's byte-level gzip).
+     * Optionally store the summary back as a "compressed" memory so a long
+     * history can be represented cheaply.
+     */
+    compressContext(maxChars = 600, store = false) {
+        // Compress the user's turns — they carry the actual information; the
+        // assistant's templated replies are derived and would only add noise.
+        const turns = this.memory
+            .all()
+            .filter(m => m.tags.includes("chat-turn") && m.tags.includes("user"))
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .map(m => m.content);
+        const { summary } = this.compressor.compress(turns, { maxChars });
+        if (store && summary) {
+            this.memory.remember(summary, { tags: ["compressed"], importance: 0.6 });
+        }
+        return summary;
     }
     /** The recent conversation turns in chronological order (working transcript). */
     chatHistory(limit = 20) {

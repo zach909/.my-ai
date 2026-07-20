@@ -1160,6 +1160,32 @@ async function testLongTermMemory() {
   check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
 }
 
+async function testContextCompressor() {
+  const { ContextCompressor } = await load('models && skills/core/context-compressor.js');
+  const cc = new ContextCompressor();
+  const turns = [
+    'the database uses postgres on port 5432',
+    'postgres database connection pooling improves performance',
+    'i had a sandwich for lunch at noon today',
+    'the weather outside is mild and pleasant',
+    'database indexing speeds up postgres queries a lot',
+  ];
+  const res = cc.compress(turns, { maxChars: 130 });
+  check(res.summary.includes('postgres'), 'Compression keeps salient repeated content');
+  check(!res.summary.includes('lunch') && !res.summary.includes('weather'), 'Compression drops low-salience filler');
+  check(res.compressedChars <= 130 && res.keptCount < res.originalCount, 'Compression respects the budget and reduces size');
+  check(res.ratio < 1 && res.ratio > 0, 'Compression ratio is a real reduction');
+
+  // Order is preserved among kept items.
+  const idxA = res.summary.indexOf('port 5432');
+  const idxB = res.summary.indexOf('speeds up postgres');
+  check(idxA === -1 || idxB === -1 || idxA < idxB, 'Kept items retain their original order');
+
+  // Empty input is handled.
+  const empty = cc.compress([]);
+  check(empty.summary === '' && empty.keptCount === 0, 'Empty context compresses to empty');
+}
+
 async function testSelfHealer() {
   const { SelfHealer } = await load('models && skills/core/self-healer.js');
   const healer = new SelfHealer();
@@ -1409,6 +1435,7 @@ async function main() {
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
+    ['Context compression (Section 7)', testContextCompressor],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
