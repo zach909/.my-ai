@@ -1,0 +1,41 @@
+# STL Organs Export - MALE
+# Total Organs: 79
+# Reproductive System: Testes(2), Epididymis(2), Vas_Deferens(2), Seminal_Vesicles(2), Prostate, Bulbourethral_Glands(2), Penis, Scrotum
+# Distortion Scale: 1.000
+# ORGAN_LIST:
+#   Nervous/Brain
+#   Nervous/Spinal_Cord
+#   Nervous/Eyes
+#   Nervous/Ears
+#   Nervous/Nose
+#   Nervous/Tongue
+#   Cardio/Heart
+#   Cardio/Arteries
+#   Cardio/Veins
+#   Cardio/Lungs
+#   Cardio/Trachea
+#   Cardio/Bronchi
+#   Cardio/Larynx
+#   Cardio/Pharynx
+#   Cardio/Diaphragm
+#   Digestive/Mouth
+#   Digestive/Salivary_Glands
+#   Digestive/Esophagus
+#   Digestive/Stomach
+#   Digestive/Intestines(Small/Large)
+#   Digestive/Liver
+#   Digestive/Gallbladder
+#   Digestive/Pancreas
+#   Urinary/Kidneys(2)
+#   Urinary/Ureters(2)
+#   Urinary/Bladder
+#   Urinary/Urethra
+#   Reproductive/Testes(2)
+#   Reproductive/Epididymis(2)
+#   Reproductive/Vas_Deferens(2)
+#   Reproductive/Seminal_Vesicles(2)
+#   Reproductive/Prostate
+#   Reproductive/Bulbourethral_Glands(2)
+#   Reproductive/Penis
+#   Reproductive/Scrotum
+# VERTICES: [simulated - would contain actual organ meshes]

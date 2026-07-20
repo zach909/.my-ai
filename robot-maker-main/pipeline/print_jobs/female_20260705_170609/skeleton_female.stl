@@ -1,0 +1,50 @@
+# STL Skeleton Export - FEMALE
+# Total Bones: 206
+# Axial: 80 | Appendicular: 126
+# Distortion Scale: 1.000
+# Shoulder Width: 0.900
+# Hip Width: 0.952
+# BONE_LIST:
+#   Skull/Occipital
+#   Skull/Parietal(2)
+#   Skull/Frontal
+#   Skull/Temporal(2)
+#   Skull/Sphenoid
+#   Skull/Ethmoid
+#   Skull/Nasal(2)
+#   Skull/Maxillae(2)
+#   Skull/Lacrimal(2)
+#   Skull/Zygomatic(2)
+#   Skull/Palatine(2)
+#   Skull/Inf_Nasal_Conchae(2)
+#   Skull/Vomer
+#   Skull/Mandible
+#   Ear/Malleus(2)
+#   Ear/Incus(2)
+#   Ear/Stapes(2)
+#   Hyoid/Hyoid
+#   Spine/Cervical(7)
+#   Spine/Thoracic(12)
+#   Spine/Lumbar(5)
+#   Spine/Sacrum
+#   Spine/Coccyx
+#   Chest/Sternum
+#   Chest/Ribs(24)
+#   Shoulders/Clavicle(2)
+#   Shoulders/Scapula(2)
+#   Arms/Humerus(2)
+#   Arms/Radius(2)
+#   Arms/Ulna(2)
+#   Arms/Carpals(16)
+#   Arms/Metacarpals(10)
+#   Arms/Phalanges_Hand(28)
+#   Legs/Femur(2)
+#   Legs/Patella(2)
+#   Legs/Tibia(2)
+#   Legs/Fibula(2)
+#   Legs/Tarsals(14)
+#   Legs/Metatarsals(10)
+#   Legs/Phalanges_Foot(28)
+#   Hips/Coxal(2)_Female
+# VERTICES: [simulated - would contain actual mesh data]
+# Use Blender addon zbio_stage.py for full mesh export
