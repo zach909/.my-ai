@@ -1177,6 +1177,12 @@ async function testAutonomousTask() {
     check(r2.results.find(x => x.step === 'design the routes').status === 'skipped', 'Already-completed steps are not repeated');
     check(r2.results.find(x => x.step === 'write tests').status === 'completed', 'A new step still runs on re-invocation');
     check(sys.memory.all().filter(m => m.tags.includes('task')).length >= 3, 'Task results are recorded in long-term memory');
+
+    // Compressed-context is reachable from the query path.
+    await sys.processQuery('the payment service handles stripe transactions securely');
+    await sys.processQuery('the payment service retries failed stripe charges');
+    const summary = await sys.processQuery('please summarize our conversation');
+    check(summary.startsWith('Summary of our conversation:') && /payment|stripe|service/i.test(summary), 'A summarize request returns compressed conversation context');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

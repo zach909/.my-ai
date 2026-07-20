@@ -161,7 +161,20 @@ export class NeuroclawSystem {
             await this.zipIO.emit(blocked);
             return blocked;
         }
-        // 4. If the user is explicitly asking to recall the conversation, answer
+        // 4a. If the user asks for a summary of the whole conversation, return the
+        //     semantically compressed context (Section 7 — compressed context made
+        //     usable from the query path).
+        const wantsSummary = /\b(summar(y|ize|ise)|tl;?dr|recap of|sum up|what have we (covered|discussed))\b/i.test(input);
+        if (wantsSummary) {
+            const summary = this.compressContext(600);
+            if (summary) {
+                const response = `Summary of our conversation:\n${summary}`;
+                await this.zipIO.emit(response);
+                this.memory.remember(`AI: ${response}`, { tags: ["chat-turn", "assistant"], importance: turnImportance });
+                return response;
+            }
+        }
+        // 4b. If the user is explicitly asking to recall the conversation, answer
         //    directly from long-term memory (retrieval over chat history) instead
         //    of generating fresh — this is what makes the memory *usable*, not
         //    just stored.
