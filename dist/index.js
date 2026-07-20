@@ -12,6 +12,7 @@ import { ZipIOSystem } from "./models && skills/core/zip-io.js";
 import { EmpathyEngine } from "./models && skills/core/empathy.js";
 import { HiveMind } from "./models && skills/core/hive-mind.js";
 import { ChatGroup } from "./models && skills/core/chat-group.js";
+import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -39,6 +40,9 @@ export class NeuroclawSystem {
         // Hive Mind (Section 13): each agent's mind is the real neural runner, so
         // multi-agent collaboration runs through the same pipeline as a single query.
         this.hive = new HiveMind({ defaultThink: (prompt) => this.runner.generate(prompt) });
+        // Long-term memory (Section 7): a persistent, relevance-retrievable store,
+        // complementary to the ZipIO working-context buffer.
+        this.memory = new LongTermMemory();
     }
     /**
      * Initialize all subsystems
@@ -101,8 +105,14 @@ export class NeuroclawSystem {
         //    stay aligned (Empathy).
         this.empathy.updateUserContext(input);
         const emotion = this.empathy.analyzeEmotion(input);
-        // 2. Store the (compressed) input in the circular ZIP-IO context buffer.
+        // 2. Store the (compressed) input in the circular ZIP-IO context buffer
+        //    (working context) and commit it to long-term memory (Section 7). The
+        //    emotional arousal of the message sets its importance, so urgent/
+        //    emotionally-charged messages are retained more strongly and evicted
+        //    last under capacity pressure.
         await this.zipIO.ingest(input);
+        const turnImportance = Math.min(1, 0.4 + Math.max(0, emotion.arousal) * 0.4);
+        this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
         // 3. Gate the "respond" action through the AlignmentVeto before running.
         //    A negative-valence user under high arousal lowers our confidence,
         //    surfacing as self-model surprise the veto can escalate on.
@@ -119,9 +129,11 @@ export class NeuroclawSystem {
             if (decision.requiresConfirmation) {
                 result = `${result}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`;
             }
-            // 5. Store the (compressed) output in the ZIP-IO output loop and keep
-            //    the empathy model's alignment score current.
+            // 5. Store the (compressed) output in the ZIP-IO output loop, and commit
+            //    the assistant turn to long-term memory so the whole exchange becomes
+            //    retrievable chat history (Section 7).
             await this.zipIO.emit(result);
+            this.memory.remember(`AI: ${result}`, { tags: ["chat-turn", "assistant"], importance: turnImportance });
             return result;
         }
         catch (error) {
@@ -155,6 +167,32 @@ export class NeuroclawSystem {
         return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision };
     }
     /**
+     * Section 7: retrieve relevant long-term memories for a query, ranked by
+     * semantic similarity and modulated by importance/recency. Retrieval
+     * reinforces what it returns.
+     */
+    recall(query, topK = 5) {
+        return this.memory.retrieve(query, { topK }).map(h => h.item.content);
+    }
+    /**
+     * Section 7: retrieve the most relevant past conversation turns for a query
+     * — long-term memory retrieval scoped to chat history. Every user/assistant
+     * turn is committed as a "chat-turn" memory in processQuery, so this surfaces
+     * earlier exchanges by relevance rather than only the most recent ones.
+     */
+    recallHistory(query, topK = 5) {
+        return this.memory.retrieve(query, { topK, tag: "chat-turn" }).map(h => h.item.content);
+    }
+    /** The recent conversation turns in chronological order (working transcript). */
+    chatHistory(limit = 20) {
+        return this.memory
+            .all()
+            .filter(m => m.tags.includes("chat-turn"))
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .slice(-limit)
+            .map(m => m.content);
+    }
+    /**
      * Get system status
      */
     getStatus() {
@@ -164,6 +202,7 @@ export class NeuroclawSystem {
             contextCapacity: `${this.contextCapacityGB}GB available`,
             alignment: this.empathy.getAlignmentScore(),
             hiveAgents: this.hive.list().length,
+            memories: this.memory.size(),
         };
     }
 }

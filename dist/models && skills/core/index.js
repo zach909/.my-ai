@@ -19,3 +19,5 @@ export { HiveMind, HiveAgent, SharedBlackboard } from './hive-mind';
 export { ChatGroup } from './chat-group';
 // Net Search (Section 22) — search over neural structures.
 export { NetSearchEngine } from './net-search';
+// Long-term memory & retrieval (Section 7).
+export { LongTermMemory } from './long-term-memory';

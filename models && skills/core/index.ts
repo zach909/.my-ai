@@ -42,3 +42,7 @@ export type { ChatMessage, Decision } from './chat-group';
 // Net Search (Section 22) — search over neural structures.
 export { NetSearchEngine } from './net-search';
 export type { SearchMode, SearchableStructure, SearchResult, NetSearchOptions } from './net-search';
+
+// Long-term memory & retrieval (Section 7).
+export { LongTermMemory } from './long-term-memory';
+export type { MemoryItem, MemoryHit, RememberOptions, RetrieveOptions } from './long-term-memory';

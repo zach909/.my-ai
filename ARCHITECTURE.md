@@ -121,6 +121,16 @@ Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs enti
   - Circular overwrite: tail moves forward when capacity reached
 - **Integration**: Step 0 in NeuroPipeline - ingests input text before MoE routing
 
+#### 1.11 Long-Term Memory & Retrieval (LongTermMemory)
+- **Purpose**: The complement to the Zip I/O buffer — a persistent store you retrieve by *relevance*, not recency (Section 7's distinction between *active working context* and *long-term memory*).
+- **File**: `models && skills/core/long-term-memory.ts`
+- **Mechanism**:
+  - Each memory carries a token-level bag-of-words embedding (cosine reflects shared vocabulary, unlike the whole-string `embedText` fingerprint), a timestamp, tags, and an `importance` value in [0,1].
+  - `retrieve(query)` ranks by semantic similarity, then modulates by importance and recency, and **reinforces** what it returns (accessed memories become slightly more important — a light promotion, echoing the Value System §3.1).
+  - Capacity policy: when full, the lowest-retention memories (importance × recency × recall-frequency) are evicted — *removed when necessary, preserved when important*.
+  - `serialize()`/`deserialize()` persist the store; `consolidateFrom(texts)` transfers working-context snippets into durable memory.
+- **Integration**: `NeuroclawSystem` (`index.ts`) commits each user message to memory with an importance set by the empathy engine's arousal reading, and exposes `recall(query)`. Verified by the `Long-term memory & retrieval (Section 7)` smoke suite.
+
 #### 1.12 Quantum Neural Net
 - **Purpose**: Enable quantum conversion and超越 classical domain
 - **Mechanism**: 

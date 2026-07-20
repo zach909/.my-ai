@@ -1064,6 +1064,61 @@ async function testSelfExtension() {
   }
 }
 
+async function testLongTermMemory() {
+  const { LongTermMemory } = await load('models && skills/core/long-term-memory.js');
+  const mem = new LongTermMemory();
+  mem.remember('the capital of france is paris', { id: 'geo', tags: ['geo'], importance: 0.5 });
+  mem.remember('python is a programming language used for coding software', { id: 'tech', tags: ['tech'], importance: 0.5 });
+  mem.remember('photosynthesis converts sunlight into energy inside plants', { id: 'bio', tags: ['bio'], importance: 0.5 });
+  check(mem.size() === 3, 'Memories are stored');
+
+  // Relevance retrieval: the semantically-closest memory ranks first.
+  const hits = mem.retrieve('which programming language is good for coding');
+  check(hits.length > 0 && hits[0].item.id === 'tech', 'Retrieval ranks the semantically relevant memory first');
+
+  // Retrieval reinforces what it returns (light promotion).
+  check(mem.get('tech').accessCount >= 1 && mem.get('tech').importance > 0.5, 'Retrieved memory is reinforced');
+
+  // Tag-scoped retrieval.
+  const bio = mem.retrieve('anything', { tag: 'bio' });
+  check(bio.every(h => h.item.tags.includes('bio')), 'Tag-scoped retrieval only returns matching memories');
+
+  // Explicit promotion.
+  mem.reinforce('geo', 0.4);
+  check(mem.get('geo').importance > 0.5, 'reinforce() raises a memory\'s importance');
+
+  // Serialization round-trip preserves memories and retrieval.
+  const restored = LongTermMemory.deserialize(mem.serialize());
+  check(restored.size() === mem.size(), 'Memory serialization round-trips');
+  // Pure-semantic retrieval (no importance/recency boost) isolates that the
+  // restored embeddings still rank the relevant memory first.
+  const restoredHits = restored.retrieve('python coding software programming language', { importanceWeight: 0, recencyWeight: 0 });
+  check(restoredHits[0].item.id === 'tech', 'Restored memory still retrieves correctly');
+
+  // Capacity policy: important/recent memories are preserved, the least is evicted.
+  const cap = new LongTermMemory({ capacity: 2 });
+  cap.remember('high value fact', { id: 'high', importance: 0.9 });
+  cap.remember('medium value fact', { id: 'mid', importance: 0.5 });
+  cap.remember('low value fact', { id: 'low', importance: 0.1 });
+  check(cap.size() === 2, 'Capacity is enforced');
+  check(cap.get('high') && !cap.get('low'), 'Least-important memory is evicted first, important one preserved');
+
+  // Consolidation from working-context snippets.
+  const c = new LongTermMemory();
+  c.consolidateFrom(['fact one', 'fact two', '']);
+  check(c.size() === 2, 'consolidateFrom ingests non-empty working-context snippets');
+
+  // Chat-history retrieval: store conversation turns, then retrieve the
+  // relevant past turn by relevance (long-term memory from chat history).
+  const chat = new LongTermMemory();
+  chat.remember('User: how do I center a div in css', { tags: ['chat-turn', 'user'] });
+  chat.remember('AI: use flexbox with justify content and align items center', { tags: ['chat-turn', 'assistant'] });
+  chat.remember('User: what is the capital of japan', { tags: ['chat-turn', 'user'] });
+  const turns = chat.retrieve('flexbox justify content align items', { tag: 'chat-turn' });
+  check(turns.length > 0 && turns[0].item.content.includes('flexbox'), 'Retrieval pulls the relevant turn from chat history');
+  check(turns.every(t => t.item.tags.includes('chat-turn')), 'Chat-history retrieval is scoped to conversation turns');
+}
+
 async function testNetSearchEngine() {
   const { NetSearchEngine } = await load('models && skills/core/net-search.js');
   const eng = new NetSearchEngine();
@@ -1234,6 +1289,7 @@ async function main() {
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['Net Search engine (Section 22)', testNetSearchEngine],
+    ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
   ];
   for (const [name, fn] of suites) {
