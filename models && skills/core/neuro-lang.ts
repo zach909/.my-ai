@@ -444,8 +444,10 @@ export class NeuroLangInterpreter {
       const trimmed = part.trim();
       if (!trimmed) continue;
 
-      // A bare number is the additive `+weight` term for the previous edge.
-      const additive = trimmed.match(/^([\d.]+)$/);
+      // A bare number is the additive `+weight` term for the previous edge. It
+      // must start with a digit so a dotted target like `.5` (an edge to a
+      // neuron named "5") is still parsed as a connection, not an additive.
+      const additive = trimmed.match(/^([0-9][0-9.]*)$/);
       if (additive) {
         if (lastTarget === null) {
           throw new Error(`Leading additive weight "${trimmed}" has no target in connections for "${sourceName}"`);

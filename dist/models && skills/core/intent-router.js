@@ -13,11 +13,18 @@
  * score wins, ties break by a fixed priority, and no signal falls through to
  * `generate`. Deterministic and local.
  */
-/** Phrase/keyword signals per capability (lowercased, matched as word-ish substrings). */
+/**
+ * Phrase/keyword signals per capability. Matched as whole words/phrases bounded
+ * by non-alphanumeric characters (see `phraseMatches`), so a signal word buried
+ * inside a larger word never triggers. Signals are kept deliberately specific —
+ * bare, incidental words (a plain "summary", "diagnostics" or "before") are
+ * avoided so an ordinary question that merely mentions them is not diverted
+ * away from full neural generation.
+ */
 const DEFAULT_SIGNALS = {
-    summarize: ["summarize", "summarise", "summary", "tl;dr", "tldr", "sum up", "recap", "what have we covered", "what have we discussed"],
-    recall: ["recall", "remember", "earlier", "previously", "last time", "what did we", "did we discuss", "did we talk", "we talked", "we discussed", "we said", "bring up before"],
-    heal: ["self-heal", "self heal", "health check", "healthcheck", "diagnostics", "are you ok", "are you okay", "system health", "check your health", "fix yourself"],
+    summarize: ["summarize", "summarise", "summary of", "tl;dr", "tldr", "sum up", "recap of", "recap our", "what have we covered", "what have we discussed"],
+    recall: ["recall", "remember when", "we talked about", "what did we", "did we discuss", "did we talk", "we discussed", "we said earlier", "last time we", "earlier you said"],
+    heal: ["self-heal", "self heal", "health check", "healthcheck", "run diagnostics", "are you ok", "are you okay", "system health", "check your health", "fix yourself", "heal yourself"],
 };
 /** Tie-break priority (earlier wins on equal score). */
 const PRIORITY = ["heal", "summarize", "recall", "generate"];
@@ -39,7 +46,7 @@ export class IntentRouter {
         let totalMatches = 0;
         for (const cap of Object.keys(this.signals)) {
             for (const phrase of this.signals[cap]) {
-                if (text.includes(phrase.toLowerCase())) {
+                if (phraseMatches(text, phrase)) {
                     // Longer phrases are stronger evidence than single keywords.
                     const weight = 1 + Math.min(2, phrase.split(/\s+/).length - 1);
                     scores[cap] += weight;
@@ -62,4 +69,13 @@ export class IntentRouter {
         const confidence = totalMatches > 0 ? bestScore / totalMatches : 0;
         return { capability: best, confidence, scores };
     }
+}
+/** True when `phrase` occurs in `text` as a whole word/phrase (boundary-anchored). */
+function phraseMatches(text, phrase) {
+    const p = phrase.toLowerCase();
+    const re = new RegExp(`(^|[^a-z0-9])${escapeRegExp(p)}([^a-z0-9]|$)`, "i");
+    return re.test(text);
+}
+function escapeRegExp(s) {
+    return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

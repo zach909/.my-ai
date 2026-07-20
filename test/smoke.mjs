@@ -1051,6 +1051,9 @@ async function testNeuralDefinitionDirectives() {
   // The bare state-selector form `.target/variable` defaults to weight 1.0.
   const rs2 = its.parse(['name="y"', 'name="x"', '"x"@connections=".y/phase"'].join('\n'));
   check(rs2.errors.length === 0 && its.evaluate(rs2).get('x').connections.get('y') === 1.0, 'Section 20 bare state-selector defaults to weight 1.0');
+  // A dotted numeric target (.5) is a connection to neuron "5", not an additive.
+  const rs3 = its.parse(['name="5"', 'name="q"', '"q"@connections=".5"'].join('\n'));
+  check(rs3.errors.length === 0 && its.evaluate(rs3).get('q').connections.get('5') === 1.0, 'Dotted numeric target ".5" connects to neuron "5", not an additive weight');
   check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
   const finder = neurons.get('finder');
   check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');
@@ -1206,6 +1209,10 @@ async function testIntentRouter() {
   check(r.route('run a self-heal and system health check').capability === 'heal', 'Routes a health request to heal');
   check(r.route('write a function that reverses a string').capability === 'generate', 'Routes an ordinary request to generation');
   check(r.route('hello there').capability === 'generate', 'Unmatched input defaults to generation');
+  // Incidental keyword mentions must NOT divert an ordinary question away from generation.
+  check(r.route('how do I read diagnostics logs in my app').capability === 'generate', 'Incidental "diagnostics" does not trigger heal');
+  check(r.route('i need a summary judgment analysis').capability === 'generate', 'Bare "summary" inside another phrase does not trigger summarize');
+  check(r.route('what should I remember to pack for a trip').capability === 'generate', 'Incidental "remember" does not trigger recall');
   // Confidence is a real [0,1] fraction of matched signal.
   const d = r.route('summarize this');
   check(d.confidence > 0 && d.confidence <= 1, 'Route decision carries a bounded confidence');
@@ -1238,6 +1245,10 @@ async function testContextCompressor() {
   // Empty input is handled.
   const empty = cc.compress([]);
   check(empty.summary === '' && empty.keptCount === 0, 'Empty context compresses to empty');
+
+  // A single item longer than the budget is truncated (budget is hard-enforced).
+  const over = cc.compress(['x'.repeat(200)], { maxChars: 50 });
+  check(over.compressedChars <= 50, 'A single over-budget item is truncated to the budget');
 }
 
 async function testSelfHealer() {

@@ -60,13 +60,19 @@ export class ContextCompressor {
             keptIdx.add(byScore[0].i);
         // Re-order kept items back into original sequence.
         const kept = scored.filter(x => keptIdx.has(x.i)).sort((a, b) => a.i - b.i).map(x => x.text);
-        const summary = kept.join(separator);
+        // Hard-enforce the budget: a single most-salient item longer than maxChars
+        // is truncated so compressedChars never exceeds maxChars.
+        let summary = kept.join(separator);
+        if (summary.length > maxChars)
+            summary = summary.slice(0, maxChars);
         return {
             summary,
             originalCount: items.length,
             keptCount: kept.length,
             originalChars,
             compressedChars: summary.length,
+            // A ratio > 1 (possible only when nothing is dropped and separators are
+            // added) correctly reads as "no compression"; lower means more.
             ratio: originalChars > 0 ? summary.length / originalChars : 0,
         };
     }
