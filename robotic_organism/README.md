@@ -1,157 +1,239 @@
-# Robotic Organism
+# Robotic Organism - Staged Development Implementation
 
-A complete artificial organism implementation treating the entire body as **one integrated artificial cell** with interconnected systems for energy, movement, sensing, cognition, repair, and reproduction.
+A complete artificial organism designed as **one integrated artificial cell** with interconnected subsystems, following the staged development approach.
 
-## Architecture Overview
+## Core Philosophy
 
-The organism is designed as a unified artificial cell where all subsystems are integrated components rather than separate modules placed inside a shell. This architecture is inspired by biological organisms while using engineered technology.
+> **Do not build a humanoid robot and then add biological features. Build a self-contained artificial organism system, then give it a humanoid body.**
 
-### Core Systems
+## Development Stages (Implemented)
 
-1. **Energy System** - Obtains, converts, and distributes energy
-   - Multiple converter types for different materials (organic, inorganic, water, hydrocarbons)
-   - Energy storage reservoirs with priority-based distribution
-   - Processes consumed materials into electrical power
+### ✓ Stage 1: Artificial Cell Architecture
+The organism is treated as one unified cell where all subsystems communicate through a common internal infrastructure:
 
-2. **Neural System** - Artificial brain and nervous system
-   - Elastic neural network with multidimensional neuron states
-   - Brain regions: sensory cortex, motor cortex, cerebellum, hippocampus analog
-   - Memory formation and recall capabilities
-   - Generates coordinated motor commands
-
-3. **Muscular System** - Natural human-like movement
-   - Artificial muscle fibers (electromagnetic, hybrid, shape-memory)
-   - Muscle bundles organized anatomically
-   - Joint system with agonist/antagonist muscle pairs
-   - Coordinated movement patterns (walk, reach, grasp, turn)
-
-4. **Skeletal System** - Internal structural framework
-   - Complete human-like skeleton with 70+ bones
-   - Provides attachment points for muscles
-   - Damage detection and integrity monitoring
-
-5. **Sensory System** - Environmental perception
-   - Artificial eyes with focusing and aperture control
-   - Artificial ears with frequency analysis
-   - Distributed tactile sensors
-   - Proprioceptive joint position sensing
-
-6. **Repair System** - Damage detection and healing
-   - Specialized repair materials (sealant, adhesive, reinforcement, filler, conductive)
-   - Nanobot fleet for material transport
-   - Automated damage assessment and repair dispatch
-
-7. **Transport System** - Internal material circulation
-   - Network of channels analogous to circulatory system
-   - Pumps for material movement
-   - Delivers resources to all systems
-
-8. **Manufacturing System** - Component fabrication
-   - Additive fabricators for bones
-   - Fiber weavers for muscles
-   - Circuit printers for neural/electrical components
-
-9. **Reproductive System** - New organism production
-   - Design template generation
-   - Multi-stage construction process
-   - Compatible with various reproductive configurations
-
-10. **Skin System** - External protective covering
-    - Multi-layer structure (epidermis, dermis, subcutaneous)
-    - Temperature regulation
-    - Environmental interface
-
-## Usage
-
-```python
-from core.artificial_cell import ArtificialCell, SexConfiguration
-
-# Create organism
-organism = ArtificialCell(SexConfiguration.NEUTRAL)
-organism.initialize_systems()
-
-# Run simulation
-for i in range(100):
-    organism.update(0.1)  # 100ms time steps
-    
-# Get status
-status = organism.get_status()
-print(f"State: {status['state']}")
-print(f"Energy: {status['energy_level']:.1f}%")
-
-# Consume material for energy
-organism.consume_material("organic", 50.0)
-
-# Execute movement
-organism.move("walk", {"speed": 1.0})
-
-# Gather sensory data
-sensory_data = organism.sense_environment()
-
-# Initiate repair
-organism.repair_damage("left_arm", 0.5, "puncture")
+```
+Food/material input
+        ↓
+Energy + raw materials
+        ↓
+Internal transport network
+   ↙      ↓       ↘
+Brain   Muscles   Repair
+   ↓       ↑        ↑
+Sensors → Control ← Damage detection
 ```
 
-## Running the Demo
+### ✓ Stage 2: Small Prototype Organism
+A minimal viable organism with:
+- Energy processing
+- Internal transport
+- Self-repair capability
+- Basic movement (1 joint, 18 muscle fibers)
+- Multi-modal sensing
+- Neural control (1088 neurons)
 
-```bash
-cd /workspace/robotic_organism
-python demo.py
-```
+### ✓ Stage 3: Energy System
+Separated into acquisition and distribution:
+- **Acquisition**: Material intake and processing (organic, inorganic, chemical, electrical)
+- **Storage**: Battery system with charge/discharge rates
+- **Distribution**: Priority-based power allocation to subsystems
+- Consumers: neural (priority 1), sensors (2), repair (2), muscles (3), transport (3), manufacturing (4)
 
-## Key Concepts
+### ✓ Stage 4: Artificial Muscles
+Progressive development: `1 muscle → muscle group → joint → limb`
 
-### One Integrated Organism
-The central concept is that the organism is not merely a humanoid robot assembled from parts. It is a single integrated artificial cell where:
-- All systems communicate through the system bus
-- Energy flows from converters through stores to consumers
-- The neural system coordinates all activities
-- Repair materials are produced internally and transported as needed
-- Movement emerges from coordinated muscle activation
+Each artificial muscle has:
+- Control signal → Actuator → Movement → Position sensor → Feedback
+- Contraction/relaxation capability
+- Force production
+- Position detection
+- Resistance sensing
+- Fatigue modeling
+- Temperature monitoring
 
-### Artificial Cell Architecture
-Like a biological cell, the organism contains:
-- **Membrane** (skin system) - boundary with environment
-- **Organelles** (subsystems) - specialized functional units
-- **Cytoplasm** (transport system) - internal medium for material flow
-- **Nucleus** (neural system) - information processing and control
-- **Mitochondria** (energy system) - power generation and storage
+### ✓ Stage 5: Transport System (Multi-Fluid Circulatory Network)
+Instead of one substance doing everything, uses different fluids for different jobs:
+- **Energy fluid**: Carries chemical energy
+- **Repair sealant**: Seals punctures
+- **Repair adhesive**: Structural bonding for tears
+- **Repair reinforce**: Reinforces damaged areas
+- **Structural material**: For building new structures
+- **Waste fluid**: Removes waste products
+- **Coolant**: Thermal management
 
-### Human-Like Anatomy
-The organism preserves human anatomical organization:
-- Bilateral symmetry
-- Skeletal structure with joints
-- Muscle arrangement for natural movement
-- Sensory organs positioned appropriately
-- Proportional limb segments
+Features:
+- Network of nodes and channels
+- Active pumps for fluid movement
+- Damage-responsive routing
+- Distributed reservoirs
+
+### ✓ Stage 6: Self-Repair System
+Built before reproduction (as recommended):
+
+**Repair Methods:**
+1. **Seal** - Apply sealant to punctures
+2. **Patch** - Apply adhesive patch to tears
+3. **Reinforce** - Add structural reinforcement
+4. **Reconnect** - Reconnect electrical pathways
+5. **Replace** - Replace component entirely
+
+**Capabilities:**
+- Damage detection through sensors
+- Classification by type and severity
+- Automatic repair method selection
+- Nanobot swarm coordination (50 nanobots)
+- Progress tracking
+- Material consumption monitoring
+
+### ✓ Stage 7: Sensory System
+Multi-modal sensing providing information about entire body:
+
+- **Vision**: Artificial eyes (1920x1080), focus adjustment, light adaptation, motion detection, edge detection
+- **Hearing**: 32 frequency bands (20Hz-20kHz), direction finding, amplitude analysis
+- **Tactile**: 8 distributed sensors (hands, feet, chest, back, head), pressure, temperature, texture, slip detection
+- **Proprioception**: Joint angles, muscle activations, balance, posture
+- **Internal**: Temperature, pressure, damage reports
+
+### ✓ Stage 7: Neural Controller
+Two-layer brain architecture:
+
+**Fast Biological-Like Control:**
+- Brainstem: Basic life functions
+- Cerebellum: Motor coordination, smooth movement patterns
+- Hypothalamus: Homeostasis, drive regulation
+
+**High-Level AI:**
+- Cortex: Reasoning, planning, complex processing (435 neurons)
+- Hippocampus: Memory formation and retrieval (105 neurons)
+- Thalamus: Sensory relay (58 neurons)
+
+**Features:**
+- 1088 total neurons across 6 brain regions
+- Drives: hunger, safety, curiosity, rest
+- Goal generation based on drives
+- Decision making
+- Memory storage (capacity: 1000)
+- Internal body model
+
+### ✓ Stage 8: Integrated Organism
+All systems working together as one entity:
+
+**Update Cycle:**
+1. **Sensory Phase**: Collect data from all sensors
+2. **Neural Phase**: Process sensory data, generate commands
+3. **Motor Phase**: Execute movement commands
+4. **Metabolic Phase**: Update energy based on activity
+5. **Transport Phase**: Move materials through body
+6. **Repair Phase**: Detect and fix damage
+
+**System States:**
+- `normal`: Operating normally
+- `active`: Pursuing goals
+- `repairing`: Fixing damage
+- `critical`: Low energy (<5%)
 
 ## File Structure
 
 ```
 robotic_organism/
-├── __init__.py           # Package initialization
-├── demo.py               # Demonstration script
+├── __init__.py              # Package exports
+├── demo.py                  # Working demonstration
+├── README.md                # This file
 ├── core/
-│   └── artificial_cell.py    # Main organism class
+│   ├── __init__.py
+│   └── organism.py          # Main ArtificialOrganism class
 └── systems/
-    ├── energy_system.py      # Energy processing
-    ├── neural_system.py      # Brain and nerves
-    ├── muscular_system.py    # Muscles and movement
-    ├── skeletal_system.py    # Structural framework
-    ├── sensory_system.py     # Eyes, ears, touch
-    ├── repair_system.py      # Damage repair
-    ├── transport_system.py   # Material circulation
-    ├── manufacturing_system.py # Component fabrication
-    ├── reproductive_system.py # New organism production
-    └── skin_system.py        # External covering
+    ├── __init__.py
+    ├── energy.py            # Energy acquisition & distribution
+    ├── transport.py         # Multi-fluid circulatory network
+    ├── repair.py            # Self-repair with nanobots
+    ├── muscle.py            # Artificial muscles & joints
+    ├── sensors.py           # Vision, audio, tactile, proprioception
+    └── neural.py            # Two-layer brain architecture
 ```
 
-## Future Extensions
+## Usage
 
-Potential areas for expansion:
-- More detailed neural network with learning algorithms
-- Advanced material processing chemistry
-- Complex gait patterns and locomotion
-- Social interaction capabilities
-- Environmental adaptation mechanisms
-- Enhanced reproductive system with genetic algorithms
+```python
+from robotic_organism.core.organism import ArtificialOrganism
+
+# Create organism
+organism = ArtificialOrganism(name="Proto-1")
+
+# Consume material for energy
+organism.consume_material(
+    material_name="nutrient_pack",
+    material_type="organic",
+    mass=100.0,
+    energy_content=500.0  # J/g
+)
+
+# Report damage
+organism.detect_damage(
+    location=(0.05, 0.3, 0.0),
+    damage_type="puncture",
+    severity=0.6
+)
+
+# Run simulation
+for _ in range(100):
+    status = organism.update(dt=0.1)
+    print(f"State: {status['status']}, Battery: {status['energy']['battery_level']*100:.1f}%")
+
+# Get detailed status
+full_status = organism.get_status()
+```
+
+Or run the demo:
+```bash
+python robotic_organism/demo.py
+```
+
+## Key Achievements
+
+✓ Interconnected subsystem architecture (not independent modules)
+✓ Energy acquisition and priority-based distribution
+✓ Multi-fluid transport network with damage-responsive routing
+✓ Damage detection and automated self-repair with nanobots
+✓ Artificial muscles with feedback and fatigue modeling
+✓ Multi-modal sensory system (vision, audio, tactile, proprioception)
+✓ Two-layer neural controller (fast control + high-level AI)
+✓ Integrated organism simulation with coordinated update cycle
+
+## Next Stages (Not Implemented)
+
+→ Larger muscle system (more joints, full limbs)
+→ Advanced sensory processing (object recognition, speech)
+→ Learning and adaptation (synaptic plasticity)
+→ Internal manufacturing (component fabrication)
+→ Humanoid body structure (skeleton, full anatomy)
+→ Reproduction system (design template, construction)
+
+## Design Principles Followed
+
+1. **Start small**: Built minimal prototype first, not full humanoid
+2. **Separate concerns**: Energy acquisition separate from distribution
+3. **Build incrementally**: One muscle → bundle → joint → limb
+4. **Multiple specialized systems**: Different fluids for different jobs
+5. **Self-repair before reproduction**: Fix yourself first
+6. **Two-layer brain**: Fast reflexes + slow reasoning
+7. **Body awareness**: Sensors monitor entire body state
+8. **Integration over assembly**: Systems communicate, not just coexist
+
+## Statistics (Default Configuration)
+
+- Neurons: 1088
+- Muscle fibers: 18
+- Muscle bundles: 2
+- Joints: 1 (elbow)
+- Transport nodes: 9
+- Transport pumps: 3
+- Nanobots: 50
+- Tactile sensors: 8
+- Fluid types: 7
+- Repair methods: 5
+- Brain regions: 6
+
+## License
+
+This is a research implementation of artificial organism architecture.
