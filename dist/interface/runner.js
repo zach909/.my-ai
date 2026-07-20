@@ -26,10 +26,12 @@ export class NeuroclawRunner extends EventEmitter {
         this.systemAccess = systemAccess ?? new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
         this.multiDesktopManager = multiDesktopManager ?? this.systemAccess.getMultiDesktop();
     }
-    async generate(prompt) {
+    async generate(prompt, memoryContext) {
         if (!this.running)
             await this.start();
-        // Run THORNS analysis first to determine intent
+        // Run THORNS analysis first to determine intent. Intent detection and
+        // plugin routing always use the raw prompt, so recalled memory never
+        // distorts which capability handles the request.
         const thornsOut = await this.llm.thinkAbout(prompt);
         this.emit('thought', thornsOut);
         // Try plugin dispatch: active plugins get first chance at the intent
@@ -38,8 +40,9 @@ export class NeuroclawRunner extends EventEmitter {
             this.emit('plugin-response', { intent: thornsOut.intent.intent, result: pluginResult });
             return `[Plugin] ${pluginResult}`;
         }
-        // Fall through to LLM generation (all 6 neural subsystems)
-        return this.llm.generate(prompt);
+        // Fall through to LLM generation (all 6 neural subsystems), grounded in any
+        // relevant recalled conversation turns (continuous context, Section 7).
+        return this.llm.generate(prompt, memoryContext && memoryContext.length ? { memoryContext } : undefined);
     }
     async start() {
         if (this.running)
