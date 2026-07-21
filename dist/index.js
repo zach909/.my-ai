@@ -423,6 +423,13 @@ export class NeuroclawSystem {
             this.knowledge.integrate(r.objective, problem);
         }
         this.memory.remember(`Solved [${domain}]: ${problem} -> ${r.result.slice(0, 200)}`, { tags: ["solution", domain], importance: 0.7 });
+        // ASI §5/§11: feed this solve's (domain, approach, outcome) into the
+        // discovery engine as an observation. Across many solves this lets the
+        // system discover real regularities — e.g. "domain X tends toward
+        // verified outcomes with approach Y" — a scientific-method analysis of its
+        // own reasoning performance, not a separate hard-coded self-improvement
+        // rule. See discoverPatterns().
+        this.discovery.observe(`${domain} ${r.chosen} ${r.verified ? "verified" : "unverified"}`);
         // ASI §9/§10: track the confidence signal for self-monitoring. A
         // failure-level anomaly (real divergence from the adaptive baseline, not
         // ordinary noise) is the signal self-monitor.ts documents as the trigger
@@ -433,6 +440,18 @@ export class NeuroclawSystem {
             await this.selfHeal();
         }
         return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length };
+    }
+    /**
+     * ASI §5/§11: surface regularities the discovery engine has found across
+     * past solve() calls — e.g. that a particular domain/approach combination
+     * tends toward verified or unverified outcomes. This is real self-analysis
+     * of reasoning performance built from accumulated operational history, the
+     * mechanism §5 asks for ("analyze which reasoning processes are
+     * inefficient") applied via the scientific-method hypothesis engine (§11)
+     * rather than a bespoke rule set.
+     */
+    discoverPatterns(topK = 5) {
+        return this.discovery.generateHypotheses(topK);
     }
     /** ASI §9/§11: current self-monitor anomalies and whether recovery is warranted. */
     selfIntegrity() {

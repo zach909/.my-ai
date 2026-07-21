@@ -1634,6 +1634,16 @@ async function testSolveIntegration() {
     check(!sys.selfIntegrity().hasFailure, 'selfIntegrity() reports healthy under stable observations');
     sys.monitor.observe('solve.confidence', 50); // wild divergence from the established baseline
     check(sys.selfIntegrity().hasFailure, 'selfIntegrity() flags a genuine divergence as a failure');
+
+    // ASI §5/§11: repeated solves of a similarly-shaped math problem should
+    // consistently classify the same domain/approach, letting the discovery
+    // engine find that regularity across real operational history.
+    for (let i = 0; i < 3; i++) {
+      await sys.solve(`calculate the sum and then compute the average, attempt ${i}`);
+    }
+    const patterns = sys.discoverPatterns(5);
+    check(patterns.length > 0, 'discoverPatterns() finds regularities across repeated solve() outcomes');
+    check(patterns.some(h => h.cause === 'math' || h.effect === 'math'), 'discoverPatterns() surfaces the domain as part of a discovered pattern');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
