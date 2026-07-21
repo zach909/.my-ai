@@ -49,6 +49,18 @@ export class NeuroclawSystem {
         this.approachBiasMap = new Map();
         /** Which hive agent handled each subproblem in the current solve() call, so its outcome can reward/demote that agent (§8/§12). */
         this.lastDelegations = new Map();
+        /**
+         * ASI §2: "maintain a record of its reasoning state so that it can
+         * understand what it has already attempted" — ReasoningEngine.reason()
+         * computes a detailed step-by-step trace (understand/objective/available/
+         * missing/search/approaches/chosen/decompose/mistakes/revise/verify/
+         * predict) on every call, but solve() previously discarded it entirely
+         * once the immediate caller's return value was built — no record of *why*
+         * a given approach was chosen or what was actually tried survived past a
+         * single call. Bounded so this stays a real, inspectable recent history
+         * rather than an unbounded memory leak.
+         */
+        this.recentTraces = [];
         this.llm = new NeuroclawLLM({});
         this.pipeline = new NeuroPipeline({});
         this.thesaurus = new ThesaurusDictionary();
@@ -681,7 +693,10 @@ export class NeuroclawSystem {
         if (this.monitor.hasFailure()) {
             await this.selfHeal();
         }
-        return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions };
+        this.recentTraces.push({ problem, trace: r.trace, timestamp: Date.now() });
+        if (this.recentTraces.length > NeuroclawSystem.MAX_RECENT_TRACES)
+            this.recentTraces.shift();
+        return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, trace: r.trace };
     }
     /**
      * ASI §5/§11: surface regularities the discovery engine has found across
@@ -877,6 +892,16 @@ export class NeuroclawSystem {
         return this.monitor.history(signal);
     }
     /**
+     * ASI §2: the persistent record of recent reasoning passes — each with
+     * its own problem, full step-by-step trace, and timestamp — so the
+     * system (or a caller) can genuinely inspect "what have I already
+     * attempted and how" across calls, not just within the single call that
+     * produced it.
+     */
+    reasoningHistory(limit = 10) {
+        return this.recentTraces.slice(-limit);
+    }
+    /**
      * ASI §9: "what it knows" includes its own repair history, not just current
      * anomalies — `SelfHealer.getLog()` existed and was unit-tested but was
      * never surfaced anywhere a caller could actually inspect it without
@@ -1020,6 +1045,7 @@ export class NeuroclawSystem {
         };
     }
 }
+NeuroclawSystem.MAX_RECENT_TRACES = 20;
 /** Coarse domain label for a problem — used by the self-model and knowledge transfer. */
 function classifyDomain(text) {
     const t = (text || "").toLowerCase();

@@ -23,7 +23,7 @@ import { IntentRouter } from "./models && skills/core/intent-router.js";
 import { SelfMonitor } from "./models && skills/core/self-monitor.js";
 import { MistakeTracker } from "./models && skills/core/mistake-tracker.js";
 import { KnowledgeGraph } from "./models && skills/core/knowledge-graph.js";
-import { ReasoningEngine } from "./models && skills/core/reasoning-engine.js";
+import { ReasoningEngine, ReasoningStep } from "./models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "./models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "./models && skills/core/self-model.js";
 import { SelfImprovement } from "./models && skills/core/self-improvement.js";
@@ -83,6 +83,19 @@ export class NeuroclawSystem {
   private approachBiasMap = new Map<string, number>();
   /** Which hive agent handled each subproblem in the current solve() call, so its outcome can reward/demote that agent (§8/§12). */
   private lastDelegations = new Map<string, string>();
+  /**
+   * ASI §2: "maintain a record of its reasoning state so that it can
+   * understand what it has already attempted" — ReasoningEngine.reason()
+   * computes a detailed step-by-step trace (understand/objective/available/
+   * missing/search/approaches/chosen/decompose/mistakes/revise/verify/
+   * predict) on every call, but solve() previously discarded it entirely
+   * once the immediate caller's return value was built — no record of *why*
+   * a given approach was chosen or what was actually tried survived past a
+   * single call. Bounded so this stays a real, inspectable recent history
+   * rather than an unbounded memory leak.
+   */
+  private recentTraces: Array<{ problem: string; trace: ReasoningStep[]; timestamp: number }> = [];
+  private static readonly MAX_RECENT_TRACES = 20;
 
   constructor(config?: { maxContextGB?: number }) {
     this.llm = new NeuroclawLLM({});
@@ -569,6 +582,7 @@ export class NeuroclawSystem {
     transfers: string[];
     subresults: number;
     contradictions: string[];
+    trace: ReasoningStep[];
   }> {
     if (!this.initialized) await this.initialize();
     // Track which hive agent (if any) handles each subproblem in *this*
@@ -739,7 +753,9 @@ export class NeuroclawSystem {
     if (this.monitor.hasFailure()) {
       await this.selfHeal();
     }
-    return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions };
+    this.recentTraces.push({ problem, trace: r.trace, timestamp: Date.now() });
+    if (this.recentTraces.length > NeuroclawSystem.MAX_RECENT_TRACES) this.recentTraces.shift();
+    return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, trace: r.trace };
   }
 
   /**
@@ -940,6 +956,17 @@ export class NeuroclawSystem {
    */
   monitorHistory(signal?: string): ReturnType<SelfMonitor["history"]> {
     return this.monitor.history(signal);
+  }
+
+  /**
+   * ASI §2: the persistent record of recent reasoning passes — each with
+   * its own problem, full step-by-step trace, and timestamp — so the
+   * system (or a caller) can genuinely inspect "what have I already
+   * attempted and how" across calls, not just within the single call that
+   * produced it.
+   */
+  reasoningHistory(limit = 10): Array<{ problem: string; trace: ReasoningStep[]; timestamp: number }> {
+    return this.recentTraces.slice(-limit);
   }
 
   /**

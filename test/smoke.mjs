@@ -1864,6 +1864,34 @@ async function testAGIModules() {
   check(!(await si.evaluate('s', 'worse', () => 0.8, () => 0.6)).kept, 'SelfImprovement: rejects a non-improving candidate');
 }
 
+async function testReasoningHistory() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.reasoningHistory().length === 0, 'reasoningHistory() starts empty before any solve() call');
+    const out = await sys.solve('calculate the sum and then compute the average');
+    // ASI §2: "maintain a record of its reasoning state so it can understand
+    // what it has already attempted" -- the detailed step-by-step trace
+    // ReasoningEngine computes was previously discarded entirely once
+    // solve()'s return value was built, with no record surviving past a
+    // single call.
+    check(Array.isArray(out.trace) && out.trace.some(s => s.kind === 'chosen'), "solve()'s own return value now includes the real reasoning trace, not just the summarized result");
+    check(sys.reasoningHistory().length === 1, 'reasoningHistory() persists the trace across calls, not just within the one that produced it');
+    check(sys.reasoningHistory()[0].problem === 'calculate the sum and then compute the average', 'The persisted entry records which problem the trace belongs to');
+    check(sys.reasoningHistory()[0].trace.some(s => s.kind === 'understand'), 'The persisted trace contains the real reasoning steps, not a placeholder');
+
+    // Bounded: a real, inspectable recent history, not an unbounded leak.
+    for (let i = 0; i < 25; i++) await sys.solve(`problem number ${i}`);
+    check(sys.reasoningHistory(100).length === 20, 'reasoningHistory() is bounded to a fixed recent window, not growing without limit');
+    check(sys.reasoningHistory(100)[0].problem === 'problem number 5', 'The oldest entries are evicted first (FIFO) once the bound is reached');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testSolveIntegration() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2452,6 +2480,7 @@ async function main() {
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
     ['AGI capability modules (ASI §2-10)', testAGIModules],
     ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
+    ['Reasoning trace history (Section 2)', testReasoningHistory],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
     ['Empathy alignment veto (Section 3)', testEmpathyVeto],
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
