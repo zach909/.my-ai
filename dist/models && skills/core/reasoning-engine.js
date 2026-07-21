@@ -87,11 +87,18 @@ export class ReasoningEngine {
         // choosable candidate, not just a report — combining cross-domain
         // knowledge into an actual solution rather than only ever using one
         // specialized approach.
-        if (opts.transferHint) {
+        if (opts.transferHints && opts.transferHints.length > 0) {
+            const hints = opts.transferHints;
+            const avgSimilarity = hints.reduce((s, h) => s + h.similarity, 0) / hints.length;
             approaches.push({
                 strategy: "transfer",
-                description: `Reuse "${opts.transferHint.method}" from the ${opts.transferHint.domain} domain (structurally similar problem)`,
-                score: 0.9 + opts.transferHint.similarity * 0.4,
+                description: hints.length > 1
+                    // §7: "use knowledge from multiple domains simultaneously" — a
+                    // combined candidate naming every method and its source domain,
+                    // not just the single best match with the rest silently discarded.
+                    ? `Combine ${hints.map(h => `"${h.method}" (${h.domain})`).join(" + ")} — applying methods from ${hints.length} different domains simultaneously`
+                    : `Reuse "${hints[0].method}" from the ${hints[0].domain} domain (structurally similar problem)`,
+                score: 0.9 + avgSimilarity * 0.4 + (hints.length > 1 ? 0.1 : 0),
             });
         }
         // Known-mistake pattern: lowers every approach's score equally (it's a
@@ -163,8 +170,8 @@ export class ReasoningEngine {
         }
         // Combine into a result.
         const analogyNote = chosen === "analogy" && available.length ? `\nGrounded in: ${available.slice(0, 2).join(" | ")}` : "";
-        const transferNote = chosen === "transfer" && opts.transferHint
-            ? `\nTransferred method: "${opts.transferHint.method}" (from ${opts.transferHint.domain})`
+        const transferNote = chosen === "transfer" && opts.transferHints && opts.transferHints.length > 0
+            ? `\nTransferred method${opts.transferHints.length > 1 ? "s" : ""}: ${opts.transferHints.map(h => `"${h.method}" (from ${h.domain})`).join(" + ")}`
             : "";
         // Unlike the approach-specific notes above, a creative combination is
         // exploratory context discovered *during* reasoning, not tied to whichever
