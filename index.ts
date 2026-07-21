@@ -582,11 +582,20 @@ export class NeuroclawSystem {
     // choosable approach (not just the `transfers` metadata above), so the
     // reasoner can genuinely combine knowledge from another field into the
     // solution instead of only ever using a single specialized approach.
+    // ASI §7 explicitly asks for using knowledge from multiple domains
+    // *simultaneously*, not just the single best cross-domain match with the
+    // rest silently discarded. Take the best hit, then the next-best hit from
+    // a genuinely *different* domain (capped at two — combining more starts
+    // diluting coherence rather than adding real value).
+    const transferHints: Array<{ domain: string; method: string; similarity: number }> = [];
+    if (transferHits[0]) {
+      transferHints.push({ domain: transferHits[0].source.domain, method: transferHits[0].source.method, similarity: transferHits[0].similarity });
+      const secondDomainHit = transferHits.slice(1).find(t => t.source.domain !== transferHits[0].source.domain);
+      if (secondDomainHit) transferHints.push({ domain: secondDomainHit.source.domain, method: secondDomainHit.source.method, similarity: secondDomainHit.similarity });
+    }
     const r = await this.reasoner.reason(problem, {
       depth: opts?.depth ?? 1,
-      transferHint: transferHits[0]
-        ? { domain: transferHits[0].source.domain, method: transferHits[0].source.method, similarity: transferHits[0].similarity }
-        : undefined,
+      transferHints: transferHints.length > 0 ? transferHints : undefined,
     });
     // ASI §8/§12: "assign subproblems to specialized systems... re-evaluate
     // the complete solution" implies feeding the outcome back to whoever did
