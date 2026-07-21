@@ -1723,6 +1723,16 @@ async function testSolveIntegration() {
     check(sys.mistakes.repeated(2).some(m => m.failedStep === 'analogy'), 'Two identical failures on the same approach are flagged as repeated');
     await sys.solve('trigger a bias refresh');
     check((sys.approachBiasMap.get('analogy') ?? 1) <= 0.7, 'A repeatedly-failing approach is directly demoted, not left at its discovery-only value');
+
+    // ASI §5: "which memories are unreliable" — solve() reinforces/demotes the
+    // specific long-term memories that grounded its reasoning, based on the
+    // actual outcome. Same object reference: reinforce() mutates in place.
+    const seedMem = sys.memory.remember('the deployment pipeline runs tests before merging changes', { importance: 0.5 });
+    const beforeImportance = seedMem.importance;
+    const groundedOut = await sys.solve('explain the deployment pipeline and how tests run before merging changes');
+    check(seedMem.importance !== beforeImportance, 'solve() adjusts the importance of a memory that grounded its reasoning');
+    check(groundedOut.verified ? seedMem.importance > beforeImportance : seedMem.importance < beforeImportance,
+      'The adjustment direction matches the outcome: verified reinforces, unverified demotes');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

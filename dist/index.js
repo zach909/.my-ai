@@ -436,6 +436,17 @@ export class NeuroclawSystem {
             this.transfer.register(problem, domain, r.chosen);
             this.knowledge.integrate(r.objective, problem);
         }
+        // ASI §5: "which memories are unreliable" — reinforce or demote the
+        // specific long-term memories that grounded this reasoning pass (r.available),
+        // based on whether the outcome actually verified. A memory that repeatedly
+        // grounds failed reasoning becomes less trusted (lower importance, more
+        // likely to be evicted under capacity pressure); one behind a verified
+        // solution is reinforced — real consequences, not just a log entry.
+        for (const content of r.available) {
+            const grounding = this.memory.all().find(m => m.content === content);
+            if (grounding)
+                this.memory.reinforce(grounding.id, r.verified ? 0.05 : -0.1);
+        }
         this.memory.remember(`Solved [${domain}]: ${problem} -> ${r.result.slice(0, 200)}`, { tags: ["solution", domain], importance: 0.7 });
         // ASI §5/§11: feed this solve's (domain, approach, outcome) into the
         // discovery engine as an observation. Across many solves this lets the
