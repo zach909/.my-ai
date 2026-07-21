@@ -401,6 +401,10 @@ Each candidate bias change is now run through `evaluate()`: the hypothesis's con
 
 Verified live and by the `Approach-bias evaluate() gate (Section 5)` suite: manufacturing a hypothesis at confidence 0.4286 (not rejected, but below chance) leaves `approachBiasMap` untouched and records two discarded evaluations — the exact case that previously slipped through.
 
+### System status: `KnowledgeTransfer.size()` and `PredictionEngine.size()` surfaced
+
+Both accessors existed and were unit-tested but were never read anywhere — `getStatus()` reported memory count and hive size but nothing about how much cross-domain method transfer or outcome-prediction history had actually accumulated, despite both subsystems being live-wired elsewhere (`solve()`'s transfer hints/registration, `processQuery`'s predict/observe). `getStatus()` now includes `transferredMethods` and `trackedPredictions`. Verified live and by the `System status counts (Section 7/10)` suite: both start at zero, `transferredMethods` increments after a `solve()` call registers a reusable method, `trackedPredictions` increments after a `processQuery()` call predicts an outcome.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.

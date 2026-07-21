@@ -2042,6 +2042,28 @@ async function testApproachBiasEvaluateGate() {
   }
 }
 
+async function testStatusCounts() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const before = sys.getStatus();
+    check(before.transferredMethods === 0 && before.trackedPredictions === 0, 'getStatus() reports zero transferred methods and tracked predictions before any activity');
+
+    await sys.solve('calculate the average of a list of numbers');
+    const afterSolve = sys.getStatus();
+    check(afterSolve.transferredMethods === before.transferredMethods + 1, 'getStatus() reflects KnowledgeTransfer.size() growing after solve() registers a method');
+
+    await sys.processQuery('what is 2 plus 2');
+    const afterQuery = sys.getStatus();
+    check(afterQuery.trackedPredictions === before.trackedPredictions + 1, 'getStatus() reflects PredictionEngine.size() growing after processQuery() predicts an outcome');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2090,6 +2112,7 @@ async function main() {
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
+    ['System status counts (Section 7/10)', testStatusCounts],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

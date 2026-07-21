@@ -871,6 +871,8 @@ export class NeuroclawSystem {
     alignment: number;
     hiveAgents: number;
     memories: number;
+    transferredMethods: number;
+    trackedPredictions: number;
   } {
     return {
       initialized: this.initialized,
@@ -879,6 +881,12 @@ export class NeuroclawSystem {
       alignment: this.empathy.getAlignmentScore(),
       hiveAgents: this.hive.list().length,
       memories: this.memory.size(),
+      // ASI §7/§10: KnowledgeTransfer.size() and PredictionEngine.size() were
+      // built and unit-tested but never surfaced anywhere — real counts of
+      // how much cross-domain method transfer and outcome-prediction history
+      // has actually accumulated, not just that the subsystems exist.
+      transferredMethods: this.transfer.size(),
+      trackedPredictions: this.predictor.size(),
     };
   }
 }
