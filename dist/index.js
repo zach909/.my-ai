@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { writeFile, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { NeuroclawLLM } from "./models && skills/llm.js";
 import { NeuroPipeline } from "./models && skills/core/pipeline.js";
@@ -833,6 +834,25 @@ export class NeuroclawSystem {
             .sort((a, b) => a.timestamp - b.timestamp)
             .slice(-limit)
             .map(m => m.content);
+    }
+    /**
+     * ASI §4: "maintain continuity over extremely long periods of time" — every
+     * `NeuroclawSystem` instance starts with empty long-term memory and nothing
+     * ever persisted it, despite `LongTermMemory.serialize()`/`deserialize()`
+     * existing and being fully unit-tested (a round-trip that works, but that
+     * nothing in the live system ever reached for). This is the missing local
+     * disk I/O that makes that round-trip actually useful across restarts —
+     * consistent with the project's "no external APIs, all execution stays
+     * local" constraint and the same `fs/promises` pattern `InfiniteZipLoop`
+     * already uses for its own disk spill.
+     */
+    async saveMemory(path) {
+        await writeFile(path, this.memory.serialize(), "utf-8");
+    }
+    /** Replace the current long-term memory with a previously saved snapshot. */
+    async loadMemory(path) {
+        const json = await readFile(path, "utf-8");
+        this.memory = LongTermMemory.deserialize(json);
     }
     /**
      * Get system status

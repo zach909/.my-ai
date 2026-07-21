@@ -2155,6 +2155,32 @@ async function testHiveResultSharing() {
   }
 }
 
+async function testMemoryPersistence() {
+  const { NeuroclawSystem } = await load('index.js');
+  const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-memory-'));
+  const path = join(dir, 'memory.json');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    const sys = new NeuroclawSystem();
+    await sys.initialize();
+    sys.memory.remember('the sky is blue on a clear day', { importance: 0.8 });
+    sys.memory.remember('water boils at 100 degrees celsius', { importance: 0.9 });
+    await sys.saveMemory(path);
+
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    check(sys2.memory.all().length === 0, 'A fresh instance starts with empty long-term memory before loading anything');
+    await sys2.loadMemory(path);
+    check(sys2.memory.all().length === 2, 'loadMemory() restores every previously saved memory into a fresh instance');
+    const hits = sys2.memory.retrieve('what temperature does water boil', { topK: 1 });
+    check(hits.length > 0 && hits[0].item.content === 'water boils at 100 degrees celsius', 'A restored memory is genuinely retrievable by meaning, not just present in a list');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2205,6 +2231,7 @@ async function main() {
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
     ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
     ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
+    ['Long-term memory persistence (Section 4)', testMemoryPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],

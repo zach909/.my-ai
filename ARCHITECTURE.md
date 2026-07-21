@@ -427,6 +427,14 @@ Verified live and by a dedicated `ReasoningEngine` unit test: a transfer-hint me
 
 Verified live and by the `Hive result sharing & conflict resolution (Section 8/13)` suite: a result delegated to one agent reads back correctly through a *different* agent's identity; forcing a conflicting second delegation on the same subproblem text after giving one agent a clear trust advantage resolves cleanly to that agent's value, with no open conflict left behind.
 
+### Long-term memory persistence: `serialize()`/`deserialize()` reach real disk I/O
+
+§4 explicitly requires the memory system to "maintain continuity over extremely long periods of time." `LongTermMemory.serialize()`/`deserialize()` existed and round-tripped correctly in isolation, but nothing in the live system ever called them — every `NeuroclawSystem` instance started with empty memory and nothing was ever written to disk, so "continuity" only ever lasted as long as a single process's lifetime, regardless of how well the in-memory serialization worked.
+
+`NeuroclawSystem.saveMemory(path)`/`loadMemory(path)` add the missing local disk I/O (via `fs/promises`, the same pattern `InfiniteZipLoop` already uses for its own disk spill — consistent with the project's "no external APIs, all execution stays local" constraint), as explicit opt-in methods rather than an automatic background-save policy nobody asked for. `loadMemory()` replaces `this.memory` with the deserialized instance, so every subsystem that reads memory through `this.memory` (the reasoner's `recall`, retrieval, reinforcement) sees the restored state immediately.
+
+Verified live and by the `Long-term memory persistence (Section 4)` suite: two memories saved from one instance, a completely fresh second instance starts empty, `loadMemory()` restores both, and — critically — a restored memory is genuinely retrievable *by meaning* afterward (semantic retrieval on the reloaded embeddings), not just present as inert data in a list.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
