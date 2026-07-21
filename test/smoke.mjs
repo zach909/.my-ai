@@ -1654,6 +1654,17 @@ async function testAGIModules() {
   check(withRevision.verified, 'ReasoningEngine: a solution that would have failed is verified after successful revision');
   check(withRevision.subresults.every(s => !/\[(error|unsolved|base):/i.test(s.result)), 'ReasoningEngine: the revised subresults replace the original failures');
 
+  // ReasoningEngine (ASI §1/§7): a cross-domain transfer is a real, choosable
+  // approach, not just reported metadata alongside the result.
+  const withTransfer = await new ReasoningEngine({}).reason('build and test the system', {
+    transferHint: { domain: 'engineering', method: 'modular pipeline design', similarity: 0.9 },
+  });
+  check(withTransfer.approaches.some(a => a.strategy === 'transfer'), 'ReasoningEngine: a transfer hint becomes a real candidate approach');
+  check(withTransfer.chosen === 'transfer', 'ReasoningEngine: a strong cross-domain transfer can actually be chosen, not just reported');
+  check(withTransfer.result.includes('modular pipeline design') && withTransfer.result.includes('engineering'), 'ReasoningEngine: the result reflects which method was transferred and from where');
+  const withoutTransfer = await new ReasoningEngine({}).reason('build and test the system');
+  check(!withoutTransfer.approaches.some(a => a.strategy === 'transfer'), 'ReasoningEngine: no transfer candidate exists when no hint is given');
+
   // KnowledgeTransfer (ASI §7): structural cross-domain transfer.
   const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
   const kt = new KnowledgeTransfer();

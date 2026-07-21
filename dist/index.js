@@ -414,9 +414,19 @@ export class NeuroclawSystem {
             await this.initialize();
         const domain = classifyDomain(problem);
         // ASI §7: structurally-similar past problems from other domains + their method.
-        const transfers = this.transfer.transfer(problem, { domain }).map(t => `${t.source.domain}: ${t.source.method}`);
-        // ASI §2/§8: reason (memory + mistakes + hive + self-model via injected deps).
-        const r = await this.reasoner.reason(problem, { depth: opts?.depth ?? 1 });
+        const transferHits = this.transfer.transfer(problem, { domain });
+        const transfers = transferHits.map(t => `${t.source.domain}: ${t.source.method}`);
+        // ASI §1/§2/§8: reason (memory + mistakes + hive + self-model via injected
+        // deps). The strongest cross-domain transfer is offered as a real,
+        // choosable approach (not just the `transfers` metadata above), so the
+        // reasoner can genuinely combine knowledge from another field into the
+        // solution instead of only ever using a single specialized approach.
+        const r = await this.reasoner.reason(problem, {
+            depth: opts?.depth ?? 1,
+            transferHint: transferHits[0]
+                ? { domain: transferHits[0].source.domain, method: transferHits[0].source.method, similarity: transferHits[0].similarity }
+                : undefined,
+        });
         // ASI §9: never claim more certainty than the track record supports.
         const confidence = this.selfModel.calibrate(r.confidence, domain);
         // ASI §3/§5/§6/§9: learn from the outcome.
@@ -497,7 +507,7 @@ export class NeuroclawSystem {
      * versions the change rather than claiming to auto-validate it.
      */
     refreshApproachBias() {
-        const knownStrategies = ["decompose", "analogy", "first-principles"];
+        const knownStrategies = ["decompose", "analogy", "first-principles", "transfer"];
         for (const h of this.discovery.generateHypotheses(10)) {
             let strategy;
             let outcome;

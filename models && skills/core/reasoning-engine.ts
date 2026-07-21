@@ -72,9 +72,22 @@ export interface ReasoningResult {
   trace: ReasoningStep[];
 }
 
+export interface TransferHint {
+  domain: string;
+  method: string;
+  similarity: number;
+}
+
 export interface ReasonOptions {
   depth?: number;
   maxSubproblems?: number;
+  /**
+   * A structurally-similar method reused from another domain (ASI §7),
+   * offered as an actual candidate approach — not just reported metadata —
+   * so the reasoner can genuinely combine knowledge across domains (§1)
+   * instead of only ever solving with a single specialized approach.
+   */
+  transferHint?: TransferHint;
 }
 
 export class ReasoningEngine {
@@ -132,6 +145,17 @@ export class ReasoningEngine {
       { strategy: "analogy", description: "Reason by analogy from recalled knowledge", score: available.length > 0 ? 1.2 : 0.4 },
       { strategy: "first-principles", description: "Derive a direct solution from fundamentals", score: 0.8 + competence * 0.3 },
     ];
+    // ASI §1/§7: a structurally-similar method from another domain is a real,
+    // choosable candidate, not just a report — combining cross-domain
+    // knowledge into an actual solution rather than only ever using one
+    // specialized approach.
+    if (opts.transferHint) {
+      approaches.push({
+        strategy: "transfer",
+        description: `Reuse "${opts.transferHint.method}" from the ${opts.transferHint.domain} domain (structurally similar problem)`,
+        score: 0.9 + opts.transferHint.similarity * 0.4,
+      });
+    }
     // Predicted consequence: a known-mistake pattern lowers every approach's score.
     for (const a of approaches) a.score -= 0.15 * lessons.length;
     // Self-improvement feedback (§5/§12): bias scores by discovered
@@ -179,7 +203,10 @@ export class ReasoningEngine {
 
     // Combine into a result.
     const analogyNote = chosen === "analogy" && available.length ? `\nGrounded in: ${available.slice(0, 2).join(" | ")}` : "";
-    const result = subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n") + analogyNote;
+    const transferNote = chosen === "transfer" && opts.transferHint
+      ? `\nTransferred method: "${opts.transferHint.method}" (from ${opts.transferHint.domain})`
+      : "";
+    const result = subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n") + analogyNote + transferNote;
 
     // 11. Verify the final result.
     const verified = subresults.length > 0 && failed.length === 0;
