@@ -657,6 +657,21 @@ export class NeuroclawSystem {
         return this.knowledge.follow(concept, [], depth).map(c => c.definition || c.name);
     }
     /**
+     * ASI §1: "generalize knowledge to situations it has never directly
+     * encountered" — predict a new instance's likely properties from what
+     * other known members of the same category share, *before* anything about
+     * the instance has been directly observed. `KnowledgeGraph.predictProperties()`
+     * existed and was unit-tested, but nothing outside its own test ever called
+     * it: `AutonomousLearner.learn()` only ever reimplements the same
+     * generalize→relate pattern inline for the narrow case of learning a new
+     * "X is Y" fact. This exposes the same real capability standalone, for a
+     * caller that wants to ask "what would X likely have" without teaching a
+     * full fact through `learn()`.
+     */
+    predictProperties(instance, category) {
+        return this.knowledge.predictProperties(instance, category);
+    }
+    /**
      * ASI §5: "propose improvements" has to start from an actual weak-point
      * analysis, not a guess — `SelfModel.gaps()` (low-competence domains with
      * enough evidence to trust) and `MistakeTracker.causeBreakdown()` (which
@@ -917,6 +932,15 @@ function classifyDomain(text) {
         return "engineering";
     if (has(["write", "essay", "story", "language", "translate", "grammar", "poem"]))
         return "language";
+    // ASI §7 explicitly lists these among the domains cross-domain transfer
+    // should combine ("Visual understanding", "Creativity") — previously
+    // absent, so a visual or creative problem fell into the generic "general"
+    // bucket, losing per-domain self-model competence tracking and any chance
+    // of a genuine cross-domain transfer hit.
+    if (has(["image", "picture", "visual", "diagram", "photo", "drawing", "sketch", "chart", "illustration"]))
+        return "visual";
+    if (has(["creative", "brainstorm", "imagine", "invent", "novel idea", "artistic", "original concept"]))
+        return "creativity";
     return "general";
 }
 /** Case/whitespace-insensitive text key, matching the normalization used across the core modules. */

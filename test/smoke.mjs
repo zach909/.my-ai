@@ -1831,6 +1831,15 @@ async function testSolveIntegration() {
     check(sys.selfModel.summary().length >= 1, 'solve() updates the self-model from the outcome');
     check(sys.memory.all().some(m => m.tags.includes('solution')), 'solve() records the solution into long-term memory');
 
+    // ASI §7 explicitly lists "Visual understanding" and "Creativity" among
+    // the domains cross-domain transfer should combine -- previously absent
+    // from domain classification, so these fell into the generic "general"
+    // bucket instead of their own tracked competence/transfer domain.
+    const visual = await sys.solve('analyze this diagram and describe the visual layout');
+    check(visual.domain === 'visual', 'solve() classifies a visual/diagram problem into its own "visual" domain, not "general"');
+    const creative = await sys.solve('brainstorm a creative and original concept for a new product');
+    check(creative.domain === 'creativity', 'solve() classifies a brainstorming problem into its own "creativity" domain, not "general"');
+
     // ASI §8: recursive intelligence integrates with the Hive Mind — solve()'s
     // subproblem delegation genuinely engages the hive team, not just the
     // generic runner directly (the spec's explicit "should integrate with the
@@ -2010,6 +2019,29 @@ async function testCombineKnowledge() {
     check(combined.includes('transfers rotational force between shafts'), 'combineKnowledge() follows a relation to combine information across concepts');
     check(!combined.includes('a mechanical torque converter'), "combineKnowledge() returns what's reachable from the concept, not the concept's own definition");
 
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testPredictProperties() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.knowledge.relate('sparrow', 'is', 'bird');
+    sys.knowledge.relate('sparrow', 'can', 'fly');
+    sys.knowledge.relate('robin', 'is', 'bird');
+    sys.knowledge.relate('robin', 'can', 'fly');
+    // ASI §1: "generalize knowledge to situations it has never directly
+    // encountered" -- predicting a brand-new instance's properties from
+    // what other known category members share, reachable through the real
+    // NeuroclawSystem (not just KnowledgeGraph's own isolated unit test).
+    const predicted = sys.predictProperties('finch', 'bird');
+    check(predicted.some(p => p.type === 'can' && p.to === 'fly'), 'predictProperties() carries a shared trait to a brand-new instance through the live system');
+    check(sys.knowledge.instancesOf('bird').some(c => c.name === 'finch'), 'predictProperties() registers the new instance as a real category member, not just a returned prediction');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -2276,6 +2308,7 @@ async function main() {
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
+    ['Predict properties of a new instance (Section 1)', testPredictProperties],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
