@@ -1207,6 +1207,36 @@ async function testSkillCreationVersioning() {
   }
 }
 
+async function testSelfAuthoredSkillsInventory() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const before = await sys.selfAuthoredSkills();
+    // A skill-maker file is written to disk under a name derived from its
+    // taught text -- use a distinctive phrase unlikely to collide with any
+    // artifact from a prior test run, so this test's own creation is
+    // unambiguously identifiable regardless of what else already exists.
+    const marker = `zzzsmoketest${Date.now()}`;
+    const procedure = `first, validate the ${marker} input then, transform the ${marker} data finally, save the ${marker} output`;
+    await sys.learn(procedure);
+    const r2 = await sys.learn(procedure);
+    check(r2.decision === 'recommend-skill', 'Teaching the marked procedure twice crosses the skill threshold');
+    // ASI §9/§12: "which skills it has" / "use skills to solve problems" --
+    // the created skill was previously write-only, invisible to any live
+    // inventory. selfAuthoredSkills() should now find it.
+    const after = await sys.selfAuthoredSkills();
+    check(after.length === before.length + 1, 'selfAuthoredSkills() grows by exactly one after a new skill is created');
+    const found = after.find(s => s.description.includes(marker));
+    check(!!found, 'The newly created skill is discoverable in the live inventory, not just written to disk invisibly');
+    check(found.name.includes('validate') && found.path.endsWith('.neuri'), "The inventory entry's name and path reflect the actual generated skill file");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testAutonomousTask() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2437,6 +2467,7 @@ async function main() {
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],
     ['Skill creation versioning (Section 5)', testSkillCreationVersioning],
+    ['Self-authored skills inventory (Section 9/12)', testSelfAuthoredSkillsInventory],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
