@@ -1700,12 +1700,21 @@ async function testSolveIntegration() {
   console.log = console.info = console.warn = () => {};
   try {
     await sys.initialize();
+    check(sys.hive.list().length === 0, 'The hive has no agents before any hive-based capability is used');
     const out = await sys.solve('analyze the dataset and build a prediction model');
     check(typeof out.result === 'string' && out.result.length > 0, 'solve() produces an integrated result');
     check(out.confidence >= 0 && out.confidence <= 1, 'solve() reports a bounded, calibrated confidence');
     check(!!out.domain && out.subresults >= 2, 'solve() classifies the domain and decomposes into subproblems');
     check(sys.selfModel.summary().length >= 1, 'solve() updates the self-model from the outcome');
     check(sys.memory.all().some(m => m.tags.includes('solution')), 'solve() records the solution into long-term memory');
+
+    // ASI §8: recursive intelligence integrates with the Hive Mind — solve()'s
+    // subproblem delegation genuinely engages the hive team, not just the
+    // generic runner directly (the spec's explicit "should integrate with the
+    // existing Mixture of Experts, hive-mind, chat-group, and extension
+    // systems", made concrete rather than bypassed).
+    check(sys.hive.list().length === 3, 'solve() lazily engages the default hive team for subproblem delegation');
+    check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "The hive's zero-sum trust budget is preserved after real delegation");
 
     // Monitor -> self-heal wiring: a forced failure-level anomaly on the
     // watched signal should be picked up by solve()'s integrity check.

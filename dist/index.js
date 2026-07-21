@@ -84,7 +84,16 @@ export class NeuroclawSystem {
         this.reasoner = new ReasoningEngine({
             recall: (q) => this.memory.retrieve(q, { topK: 5 }).map(h => h.item.content),
             lessons: (task) => this.mistakes.lessons(task),
-            solveSub: (sub) => this.runner.generate(sub),
+            // ASI §8 requires recursive intelligence to integrate with the existing
+            // Hive Mind, not just the single neural runner — each subproblem is
+            // delegated to whichever agent (planner/coder/reviewer) best matches its
+            // content; the runner is a fallback only when no agent matches at all
+            // (delegate() itself still runs each agent's mind through the runner).
+            solveSub: async (sub) => {
+                this.ensureDefaultTeam();
+                const routed = await this.hive.delegate(sub);
+                return routed ? routed.output : this.runner.generate(sub);
+            },
             competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
             // ASI §1: don't just report a knowledge gap — actively search the
             // knowledge graph for it before giving up on a missing term.
@@ -309,11 +318,7 @@ export class NeuroclawSystem {
     async collaborate(task) {
         if (!this.initialized)
             await this.initialize();
-        if (this.hive.list().length === 0) {
-            this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
-            this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
-            this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
-        }
+        this.ensureDefaultTeam();
         if (!this.chatGroup) {
             this.chatGroup = new ChatGroup("default", "Default Team", this.hive);
             for (const a of this.hive.list())
@@ -366,11 +371,7 @@ export class NeuroclawSystem {
     async autonomousTask(objective, steps) {
         if (!this.initialized)
             await this.initialize();
-        if (this.hive.list().length === 0) {
-            this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
-            this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
-            this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
-        }
+        this.ensureDefaultTeam();
         this.plan.setObjective(objective);
         const results = [];
         for (const desc of steps) {
@@ -491,6 +492,19 @@ export class NeuroclawSystem {
      */
     discoverPatterns(topK = 5) {
         return this.discovery.generateHypotheses(topK);
+    }
+    /**
+     * Lazily spawn the default planner/coder/reviewer team the first time any
+     * hive-based capability is used (collaborate, autonomousTask, or solve()'s
+     * subproblem delegation), so they all share one team and trust budget
+     * instead of each maintaining its own copy of this bootstrap logic.
+     */
+    ensureDefaultTeam() {
+        if (this.hive.list().length > 0)
+            return;
+        this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
+        this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
+        this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
     }
     /**
      * ASI §5/§12: recompute the approach-selection bias from the discovery
