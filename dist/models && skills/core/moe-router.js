@@ -41,9 +41,15 @@ export class MoERouter {
     route(input) {
         const scores = this.computeRouterScores(input);
         const topKIndices = this.selectTopK(scores);
-        const routerWeights = this.softmax(topKIndices.map(i => scores[i]));
+        // OPTIMIZATION: Manually map scores to topScores to avoid callback overhead.
+        const numK = topKIndices.length;
+        const topScores = new Array(numK);
+        for (let i = 0; i < numK; i++) {
+            topScores[i] = scores[topKIndices[i]];
+        }
+        const routerWeights = this.softmax(topScores);
         const expertOutputs = [];
-        for (let i = 0; i < topKIndices.length; i++) {
+        for (let i = 0; i < numK; i++) {
             const expertIdx = topKIndices[i];
             const expert = this.experts.get(expertIdx);
             const output = new Float32Array(this.config.outputDim);
@@ -52,10 +58,25 @@ export class MoERouter {
             output.set(expert.bias);
             const weights = expert.weights;
             const hiddenDim = this.config.expertHiddenDim;
+            // OPTIMIZATION: 8x loop unrolling on inner dimension and zero-value skip-path.
+            const limit = hiddenDim - 7;
             for (let k = 0; k < input.length; k++) {
                 const inputVal = input[k];
+                if (inputVal === 0)
+                    continue; // Skip multiplications for zero-inputs (sparsity fast-path)
                 const weightOffset = k * hiddenDim;
-                for (let j = 0; j < hiddenDim; j++) {
+                let j = 0;
+                for (; j < limit; j += 8) {
+                    output[j] += inputVal * weights[weightOffset + j];
+                    output[j + 1] += inputVal * weights[weightOffset + j + 1];
+                    output[j + 2] += inputVal * weights[weightOffset + j + 2];
+                    output[j + 3] += inputVal * weights[weightOffset + j + 3];
+                    output[j + 4] += inputVal * weights[weightOffset + j + 4];
+                    output[j + 5] += inputVal * weights[weightOffset + j + 5];
+                    output[j + 6] += inputVal * weights[weightOffset + j + 6];
+                    output[j + 7] += inputVal * weights[weightOffset + j + 7];
+                }
+                for (; j < hiddenDim; j++) {
                     output[j] += inputVal * weights[weightOffset + j];
                 }
             }
@@ -63,12 +84,46 @@ export class MoERouter {
             this.trackUtilization(expertIdx, routerWeights[i]);
         }
         const combinedOutput = new Float32Array(this.config.outputDim);
-        for (let j = 0; j < this.config.outputDim; j++) {
-            let sum = 0;
-            for (let i = 0; i < topKIndices.length; i++) {
-                sum += expertOutputs[i][j] * routerWeights[i];
+        // OPTIMIZATION: Specialize combination step for typical top-K configurations
+        // to bypass nested loops, pointer indexing, and bounds checks.
+        if (numK === 1) {
+            const out0 = expertOutputs[0];
+            const w0 = routerWeights[0];
+            for (let j = 0; j < this.config.outputDim; j++) {
+                combinedOutput[j] = out0[j] * w0;
             }
-            combinedOutput[j] = sum;
+        }
+        else if (numK === 2) {
+            const out0 = expertOutputs[0];
+            const out1 = expertOutputs[1];
+            const w0 = routerWeights[0];
+            const w1 = routerWeights[1];
+            for (let j = 0; j < this.config.outputDim; j++) {
+                combinedOutput[j] = out0[j] * w0 + out1[j] * w1;
+            }
+        }
+        else if (numK === 4) {
+            const out0 = expertOutputs[0];
+            const out1 = expertOutputs[1];
+            const out2 = expertOutputs[2];
+            const out3 = expertOutputs[3];
+            const w0 = routerWeights[0];
+            const w1 = routerWeights[1];
+            const w2 = routerWeights[2];
+            const w3 = routerWeights[3];
+            for (let j = 0; j < this.config.outputDim; j++) {
+                combinedOutput[j] = out0[j] * w0 + out1[j] * w1 + out2[j] * w2 + out3[j] * w3;
+            }
+        }
+        else {
+            // General fallback loop for non-standard top-K values
+            for (let j = 0; j < this.config.outputDim; j++) {
+                let sum = 0;
+                for (let i = 0; i < numK; i++) {
+                    sum += expertOutputs[i][j] * routerWeights[i];
+                }
+                combinedOutput[j] = sum;
+            }
         }
         const entropy = this.computeEntropy(scores);
         const loadBalanceLoss = this.computeLoadBalanceLoss();
@@ -207,9 +262,12 @@ export class MoERouter {
     }
     computeRouterScores(input) {
         const expertCount = this.config.expertCount;
-        const scores = new Float64Array(expertCount);
-        // Initialize with router bias
-        scores.set(this.routerBias);
+        // OPTIMIZATION: Use direct JS array instead of Float64Array + Array.from to avoid
+        // TypedArray initialization overhead and conversion pass.
+        const scores = new Array(expertCount);
+        for (let e = 0; e < expertCount; e++) {
+            scores[e] = this.routerBias[e];
+        }
         // Optimized router scoring with sequential (row-major) memory access.
         const weights = this.routerWeights;
         for (let i = 0; i < input.length; i++) {
@@ -219,19 +277,47 @@ export class MoERouter {
                 scores[e] += inputVal * weights[offset + e];
             }
         }
-        return Array.from(scores);
+        return scores;
     }
     selectTopK(scores) {
-        const indexed = scores.map((s, i) => ({ score: s, index: i }));
-        indexed.sort((a, b) => b.score - a.score);
-        const k = Math.min(this.config.topK, indexed.length);
-        return indexed.slice(0, k).map(x => x.index);
+        // OPTIMIZATION: Direct Int32Array index-sorting. Avoids object creation per score
+        // and multiple array mapping passes. Highly memory efficient.
+        const k = Math.min(this.config.topK, scores.length);
+        const indices = new Int32Array(scores.length);
+        for (let i = 0; i < scores.length; i++) {
+            indices[i] = i;
+        }
+        indices.sort((a, b) => scores[b] - scores[a]);
+        const result = new Array(k);
+        for (let i = 0; i < k; i++) {
+            result[i] = indices[i];
+        }
+        return result;
     }
     softmax(values) {
-        const max = Math.max(...values, 0);
-        const exps = values.map(v => Math.exp(v - max));
-        const sum = exps.reduce((a, b) => a + b, 0) || 1;
-        return exps.map(e => e / sum);
+        // OPTIMIZATION: Single-pass loops over standard arrays without spread operator
+        // or nested/higher-order functions, avoiding GC and engine optimization boundaries.
+        let max = 0;
+        const len = values.length;
+        for (let i = 0; i < len; i++) {
+            if (values[i] > max) {
+                max = values[i];
+            }
+        }
+        const exps = new Float64Array(len);
+        let sum = 0;
+        for (let i = 0; i < len; i++) {
+            const e = Math.exp(values[i] - max);
+            exps[i] = e;
+            sum += e;
+        }
+        if (sum === 0)
+            sum = 1;
+        const result = new Array(len);
+        for (let i = 0; i < len; i++) {
+            result[i] = exps[i] / sum;
+        }
+        return result;
     }
     computeEntropy(scores) {
         const probs = this.softmax(scores);
