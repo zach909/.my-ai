@@ -2167,6 +2167,10 @@ async function testMistakeCauseClassification() {
     // responsible skill, not just tally an aggregate cause count.
     check(skillMistake.failedSkill === 'coder', 'The mistake names the specific responsible agent, not just the generic incorrect-skill cause');
     check(sysSkill.improvementTargets().strugglingSkills.coder === 1, 'improvementTargets() surfaces a real, named skill-failure breakdown, not just an aggregate cause count');
+    // §6: "how the failure can be prevented" must actually depend on why it
+    // failed -- previously every cause got the identical generic
+    // "gather information" text regardless of cause.
+    check(skillMistake.prevention.includes('coder') && !skillMistake.prevention.toLowerCase().includes('gather information'), 'An incorrect-skill mistake gets skill-specific prevention advice, not the generic missing-knowledge template');
 
     const sysMemory = new NeuroclawSystem();
     await sysMemory.initialize();
@@ -2177,6 +2181,8 @@ async function testMistakeCauseClassification() {
     await sysMemory.solve('explain the deployment pipeline and how tests run before merging changes');
     const memoryMistake = sysMemory.mistakes.all().find(m => m.task === 'explain the deployment pipeline and how tests run before merging changes');
     check(memoryMistake.cause === 'bad-memory', 'A failure grounded in an already-low-importance memory (no delegation involved) is classified as bad-memory');
+    check(memoryMistake.prevention.toLowerCase().includes('memory') && !memoryMistake.prevention.toLowerCase().includes('gather information'), 'A bad-memory mistake gets memory-specific prevention advice, not the generic missing-knowledge template');
+    check(skillMistake.prevention !== memoryMistake.prevention, 'Different causes genuinely produce different prevention advice, not the same text regardless of cause');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

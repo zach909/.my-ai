@@ -687,7 +687,16 @@ export class NeuroclawSystem {
         // left blank. Previously this field existed on Mistake/MistakeInput
         // but nothing ever populated it.
         assumption: r.assumptions[0],
-        prevention: `Gather information before choosing "${r.chosen}" for: ${r.objective}`,
+        // §6: "how the failure can be prevented in the future" has to
+        // actually depend on *why* it failed — every cause previously got
+        // the exact same "gather information" text, which makes no sense
+        // for a bad-memory or incorrect-skill failure (more information
+        // isn't the fix for either of those).
+        prevention:
+          cause === "incorrect-skill" ? `Avoid delegating to ${failedAgentIds.join(", ")} for tasks like this until reliability improves, or verify its output before trusting it` :
+          cause === "bad-memory" ? `Verify or discount the grounding memory before trusting it again for this kind of task — its track record suggests it may be unreliable` :
+          cause === "missing-knowledge" ? `Gather information before choosing "${r.chosen}" for: ${r.objective}` :
+          `Reconsider the "${r.chosen}" approach, or try an alternative reasoning strategy for this kind of problem`,
       });
     } else {
       // A verified solution is a reusable method (§7) and semantic knowledge (§4).
