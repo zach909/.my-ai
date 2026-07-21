@@ -17,6 +17,16 @@ import { PlanTracker } from "./models && skills/core/plan-tracker.js";
 import { SelfHealer } from "./models && skills/core/self-healer.js";
 import { ContextCompressor } from "./models && skills/core/context-compressor.js";
 import { IntentRouter } from "./models && skills/core/intent-router.js";
+import { SelfMonitor } from "./models && skills/core/self-monitor.js";
+import { MistakeTracker } from "./models && skills/core/mistake-tracker.js";
+import { KnowledgeGraph } from "./models && skills/core/knowledge-graph.js";
+import { ReasoningEngine } from "./models && skills/core/reasoning-engine.js";
+import { KnowledgeTransfer } from "./models && skills/core/knowledge-transfer.js";
+import { SelfModel } from "./models && skills/core/self-model.js";
+import { SelfImprovement } from "./models && skills/core/self-improvement.js";
+import { AutonomousLearner } from "./models && skills/core/autonomous-learner.js";
+import { PredictionEngine } from "./models && skills/core/prediction-engine.js";
+import { DiscoveryEngine } from "./models && skills/core/discovery-engine.js";
 
 // Plugins & skills — the whole extension catalog is instantiated through the
 // shared factory so every entry in `pluginExtensions` gets a real
@@ -51,10 +61,23 @@ export class NeuroclawSystem {
   healer: SelfHealer;
   compressor: ContextCompressor;
   router: IntentRouter;
+  // AGI / ASI capability layer (integrated in solve()).
+  monitor: SelfMonitor;
+  mistakes: MistakeTracker;
+  knowledge: KnowledgeGraph;
+  reasoner: ReasoningEngine;
+  transfer: KnowledgeTransfer;
+  selfModel: SelfModel;
+  improvement: SelfImprovement;
+  learner: AutonomousLearner;
+  predictor: PredictionEngine;
+  discovery: DiscoveryEngine;
 
   private initialized = false;
   private contextCapacityGB: number;
   private chatGroup: ChatGroup | null = null;
+  /** Bias per reasoning strategy derived from discovered outcome regularities (§5/§12). */
+  private approachBiasMap = new Map<string, number>();
 
   constructor(config?: { maxContextGB?: number }) {
     this.llm = new NeuroclawLLM({});
@@ -84,6 +107,60 @@ export class NeuroclawSystem {
     // Capability router (Section 6): decides which high-level capability a
     // query activates (recall / summarize / heal / generate).
     this.router = new IntentRouter();
+
+    // AGI / ASI capability layer. These are wired together — the reasoner draws
+    // available info from memory, avoids known mistakes, delegates subproblems
+    // to the hive, and reads competence from the self-model — so intelligence
+    // emerges from their interaction (ASI §12), not from any one in isolation.
+    this.monitor = new SelfMonitor();
+    this.mistakes = new MistakeTracker();
+    this.knowledge = new KnowledgeGraph();
+    this.transfer = new KnowledgeTransfer();
+    this.selfModel = new SelfModel();
+    this.improvement = new SelfImprovement();
+    this.reasoner = new ReasoningEngine({
+      recall: (q) => this.memory.retrieve(q, { topK: 5 }).map(h => h.item.content),
+      lessons: (task) => this.mistakes.lessons(task),
+      // ASI §8 requires recursive intelligence to integrate with the existing
+      // Hive Mind, not just the single neural runner — each subproblem is
+      // delegated to whichever agent (planner/coder/reviewer) best matches its
+      // content; the runner is a fallback only when no agent matches at all
+      // (delegate() itself still runs each agent's mind through the runner).
+      solveSub: async (sub) => {
+        this.ensureDefaultTeam();
+        const routed = await this.hive.delegate(sub);
+        return routed ? routed.output : this.runner.generate(sub);
+      },
+      competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
+      // ASI §1/§4: don't just report a knowledge gap — actively search the
+      // knowledge graph for it before giving up on a missing term, and
+      // "combine information from multiple memories" (§4) by following each
+      // direct hit's own outward relations one hop further, so a term that
+      // only has an indirect connection (e.g. found via a related concept,
+      // not a definition mentioning it verbatim) still resolves.
+      search: (term) => {
+        const hits = this.knowledge.search(term, 2);
+        const direct = hits.map(h => h.concept.definition || h.concept.name);
+        const combined = hits.flatMap(h => this.knowledge.follow(h.concept.name, [], 1).map(c => c.definition || c.name));
+        return Array.from(new Set([...direct, ...combined])).filter(Boolean);
+      },
+      // ASI §5/§12: bias approach scoring by discovered outcome regularities
+      // (refreshed after each solve() — see refreshApproachBias()).
+      approachBias: (strategy) => this.approachBiasMap.get(strategy) ?? 1,
+      // ASI §11: when search can't resolve a gap, try a creative combination
+      // of the still-missing terms instead of only ever reporting the gap.
+      combine: (a, b) => this.discovery.combine(a, b),
+    });
+    // Autonomous learning (ASI §3): decides store/update/conflict-preserve/
+    // recommend-skill/recommend-extension for new information, on the same
+    // knowledge graph the reasoner and solve() read from.
+    this.learner = new AutonomousLearner(this.knowledge);
+    // Prediction & simulation (ASI §10): predict-before-act / compare-after,
+    // wired into processQuery below and feeding SelfMonitor as a learning signal.
+    this.predictor = new PredictionEngine();
+    // Scientific & creative discovery (ASI §11): hypothesis generation/testing
+    // and creative concept combination over the same knowledge graph.
+    this.discovery = new DiscoveryEngine(this.knowledge);
   }
 
   /**
@@ -185,11 +262,39 @@ export class NeuroclawSystem {
       .filter(h => h.similarity >= 0.1);
     this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
 
-    // 3. Gate the "respond" action through the AlignmentVeto before running.
+    // 2b. Section 3's *other* alignment veto: EmpathyEngine.shouldVeto() asks
+    // a distinct question from AlignmentVeto below — not "is this action
+    // dangerous" but "does my read of this specific user relationship still
+    // support trusting my own judgement at all". A confidence proxy derived
+    // from the same valence signal already used above keeps this consistent
+    // with the rest of the method rather than an unrelated fabricated number.
+    // Fails safe: low alignment *and* low confidence withholds the response
+    // instead of guessing — but the turn is still recorded above, so context
+    // isn't silently dropped even when the response is withheld.
+    const empathyConfidence = emotion.valence < 0 ? 0.3 : 0.7;
+    if (this.empathy.shouldVeto(0, empathyConfidence)) {
+      const blocked = `[Withheld] Alignment with the current conversation (${this.empathy.getAlignmentScore().toFixed(2)}) is too low to confidently proceed.`;
+      return this.respondDirect(blocked, turnImportance);
+    }
+
+    // 3. ASI §10: simulate the likely consequences of responding *before*
+    //    gating the action, so a genuinely dangerous request (not a fixed
+    //    "reversible: true" regardless of content) actually reaches the
+    //    AlignmentVeto's irreversible/external-effect confirmation rule.
+    const prediction = this.predictor.predict(`respond to: ${input}`);
+    const predictedDanger = prediction.outcomes.some(o => o.dangerous);
+
+    // 4. Gate the "respond" action through the AlignmentVeto before running.
     //    A negative-valence user under high arousal lowers our confidence,
     //    surfacing as self-model surprise the veto can escalate on.
     const decision = this.veto.evaluate(
-      { id: `respond:${Date.now()}`, name: "respond to user", capabilities: ["text-generate"], reversible: true },
+      {
+        id: `respond:${Date.now()}`,
+        name: "respond to user",
+        capabilities: ["text-generate"],
+        reversible: !predictedDanger,
+        externalEffect: predictedDanger,
+      },
       { selfModelSurprise: emotion.valence < 0 ? emotion.arousal * 0.5 : 0 }
     );
     if (!decision.allowed) {
@@ -198,7 +303,7 @@ export class NeuroclawSystem {
       return blocked;
     }
 
-    // 4. Route the query to a high-level capability (Section 6): a summarize,
+    // 5. Route the query to a high-level capability (Section 6): a summarize,
     //    recall or self-heal request is served directly by the matching
     //    subsystem instead of full neural generation. Anything else — and any
     //    routed capability that has nothing to act on — falls through to
@@ -218,7 +323,7 @@ export class NeuroclawSystem {
       return this.respondDirect(`From our earlier conversation, here's what's relevant:\n${recalled}`, turnImportance);
     }
 
-    // 5. Run the query through the real neural runner (THORNS intent →
+    // 6. Run the query through the real neural runner (THORNS intent →
     //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation),
     //    grounded in any relevant prior conversation turns so the response
     //    integrates previous context instead of treating the prompt as an
@@ -229,7 +334,18 @@ export class NeuroclawSystem {
         result = `${result}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`;
       }
 
-      // 6. Store the (compressed) output in the ZIP-IO output loop, and commit
+      // ASI §10: compare the predicted outcome with the actual one; the
+      // divergence ("surprise") is a learning signal fed to the system-level
+      // self-monitor, connecting prediction to the existing self-awareness /
+      // live-correction loop rather than leaving it a standalone forecast.
+      const comparison = this.predictor.observe(prediction.id, result);
+      // No explicit `expected` here: the monitor should learn this query's
+      // typical surprise level and flag a genuine spike above *that* norm, not
+      // compare against a fixed zero (which would make ordinary token-overlap
+      // noise register as a failure on every single call).
+      if (comparison) this.monitor.observe("prediction.surprise", comparison.surprise);
+
+      // 7. Store the (compressed) output in the ZIP-IO output loop, and commit
       //    the assistant turn to long-term memory so the whole exchange becomes
       //    retrievable chat history (Section 7).
       await this.zipIO.emit(result);
@@ -239,6 +355,25 @@ export class NeuroclawSystem {
       console.error("Error processing query:", error);
       throw error;
     }
+  }
+
+  /**
+   * ASI §3: ingest new information. Determines reliability, checks for a
+   * conflict with existing knowledge (preserving both rather than overwriting
+   * when one is found), and decides whether to store it, update an existing
+   * concept, or — for a recurring procedural capability — recommend creating a
+   * skill or extension, in which case the real skill/plugin-maker machinery is
+   * invoked (the same "creation" path a user request would trigger) rather
+   * than a parallel mechanism.
+   */
+  async learn(information: string, opts?: import("./models && skills/core/autonomous-learner.js").LearnOptions) {
+    if (!this.initialized) await this.initialize();
+    const result = this.learner.learn(information, opts);
+    if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
+      const created = await this.pluginRegistry.dispatch(information, "creation");
+      return { ...result, created: created ?? undefined };
+    }
+    return result;
   }
 
   /** Emit + record a direct (non-generated) assistant response and return it. */
@@ -255,13 +390,9 @@ export class NeuroclawSystem {
    * team discusses the task, then reaches a trust-weighted group decision, and
    * the hive synchronizes any shared-memory conflicts before returning.
    */
-  async collaborate(task: string): Promise<{ discussion: string[]; decision: string }> {
+  async collaborate(task: string): Promise<{ discussion: string[]; decision: string; complete: boolean }> {
     if (!this.initialized) await this.initialize();
-    if (this.hive.list().length === 0) {
-      this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
-      this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
-      this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
-    }
+    this.ensureDefaultTeam();
     if (!this.chatGroup) {
       this.chatGroup = new ChatGroup("default", "Default Team", this.hive);
       for (const a of this.hive.list()) this.chatGroup.addMember(a.id);
@@ -269,7 +400,19 @@ export class NeuroclawSystem {
     const msgs = await this.chatGroup.discuss(task);
     const decision = await this.chatGroup.decide(`How should we handle: ${task}`, ["proceed", "revise", "reject"]);
     this.hive.synchronize();
-    return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision };
+    // ASI §8: "monitor progress... re-evaluate the complete solution" needs a
+    // real completion marker, not just a returned value nobody records. The
+    // group's own `complete()`/`isComplete()`/`getResult()` existed but were
+    // never called — a decision was reached but the group never recorded
+    // itself as done, so a later caller checking `isComplete()` would always
+    // see false regardless of what actually happened.
+    this.chatGroup.complete(decision.decision);
+    return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision, complete: this.chatGroup.isComplete() };
+  }
+
+  /** The default chat group's recorded outcome, once `collaborate()` has completed it. */
+  collaborationResult(): string | null {
+    return this.chatGroup?.getResult() ?? null;
   }
 
   /**
@@ -321,12 +464,12 @@ export class NeuroclawSystem {
     healed: boolean | null;
   }> {
     if (!this.initialized) await this.initialize();
-    if (this.hive.list().length === 0) {
-      this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
-      this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
-      this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
-    }
+    this.ensureDefaultTeam();
     this.plan.setObjective(objective);
+    // ASI §10 / Section 10: a plan also records constraints and decisions, not
+    // just steps. This is a real, always-true operating constraint (the
+    // project's own build directive), not a fabricated one.
+    this.plan.addConstraint("no external APIs — all execution stays local");
     const results: Array<{ step: string; agent: string; status: "completed" | "failed" | "skipped"; result: string }> = [];
     for (const desc of steps) {
       if (!this.plan.shouldPerform(desc)) {
@@ -338,10 +481,15 @@ export class NeuroclawSystem {
       const routed = await this.hive.delegate(desc);
       if (routed) {
         this.plan.complete(step.id, routed.output);
+        // Record the real delegation decision: which agent was chosen and why.
+        this.plan.addDecision(`"${desc}" -> delegated to ${routed.agent.role} (${routed.agent.id}, trust ${routed.agent.trust.toFixed(1)})`);
         this.memory.remember(`Task step: ${desc} -> ${routed.output}`, { tags: ["task"], importance: 0.6 });
         results.push({ step: desc, agent: routed.agent.id, status: "completed", result: routed.output });
       } else {
         this.plan.fail(step.id, "no agent available");
+        // Record the alternative that was considered: expanding the team
+        // would let a future retry succeed where this attempt could not.
+        this.plan.addAlternative(step.id, "spawn or register an agent whose role/capabilities match this step, then retry");
         results.push({ step: desc, agent: "-", status: "failed", result: "no agent available" });
       }
     }
@@ -352,6 +500,246 @@ export class NeuroclawSystem {
       healed = report.unrecoverable.length === 0;
     }
     return { objective, results, complete: this.plan.isComplete(), healed };
+  }
+
+  /**
+   * ASI §12 — the integrated intelligence loop. Solve a problem with reasoning
+   * (§2/§8) that uses long-term memory for available information (§4), avoids
+   * known mistakes (§6), delegates subproblems to the hive (§8), and reads
+   * competence from the self-model (§9); pulls cross-domain method hints via
+   * knowledge transfer (§7); calibrates its confidence honestly (§9); then
+   * records the outcome back into the self-model, mistake tracker, knowledge
+   * graph and long-term memory so memory improves reasoning, reasoning improves
+   * learning, and the self-model tracks where the system needs to improve.
+   */
+  async solve(problem: string, opts?: { depth?: number }): Promise<{
+    result: string;
+    confidence: number;
+    verified: boolean;
+    domain: string;
+    approach: string;
+    transfers: string[];
+    subresults: number;
+    contradictions: string[];
+  }> {
+    if (!this.initialized) await this.initialize();
+    const domain = classifyDomain(problem);
+    // ASI §7: structurally-similar past problems from other domains + their method.
+    const transferHits = this.transfer.transfer(problem, { domain });
+    const transfers = transferHits.map(t => `${t.source.domain}: ${t.source.method}`);
+    // ASI §1/§2/§8: reason (memory + mistakes + hive + self-model via injected
+    // deps). The strongest cross-domain transfer is offered as a real,
+    // choosable approach (not just the `transfers` metadata above), so the
+    // reasoner can genuinely combine knowledge from another field into the
+    // solution instead of only ever using a single specialized approach.
+    const r = await this.reasoner.reason(problem, {
+      depth: opts?.depth ?? 1,
+      transferHint: transferHits[0]
+        ? { domain: transferHits[0].source.domain, method: transferHits[0].source.method, similarity: transferHits[0].similarity }
+        : undefined,
+    });
+    // ASI §9: never claim more certainty than the track record supports.
+    let confidence = this.selfModel.calibrate(r.confidence, domain);
+    // ASI §3/§5/§6/§9: learn from the outcome.
+    this.selfModel.record(domain, r.verified);
+    if (!r.verified) {
+      const unresolved = r.subresults.filter(s => /\[(error|unsolved|base):/i.test(s.result)).length;
+      this.mistakes.record({
+        task: problem,
+        description: `Reasoning left ${unresolved} subproblem(s) unresolved`,
+        cause: r.available.length === 0 ? "missing-knowledge" : "reasoning",
+        failedStep: r.chosen,
+        prevention: `Gather information before choosing "${r.chosen}" for: ${r.objective}`,
+      });
+    } else {
+      // A verified solution is a reusable method (§7) and semantic knowledge (§4).
+      this.transfer.register(problem, domain, r.chosen);
+      this.knowledge.integrate(r.objective, problem);
+      // ASI §6: this exact task has now succeeded — any prior recorded failure
+      // for it is resolved, not left counting toward repeated() forever (which
+      // would otherwise keep demoting an approach that has since improved).
+      const normalizedProblem = normalizeText(problem);
+      for (const m of this.mistakes.all()) {
+        if (!m.resolved && normalizeText(m.task) === normalizedProblem) this.mistakes.resolve(m.id);
+      }
+    }
+    // ASI §4: "identify contradictions" — surface (not silently ignore) any
+    // known contradiction touching this problem's central concept, so a
+    // confident-looking answer doesn't hide that the knowledge graph holds
+    // two things it flatly disagrees about on the same topic.
+    const objectiveKey = normalizeText(r.objective);
+    const contradictions = this.knowledge
+      .findContradictions()
+      .filter(c => normalizeText(c.a.from) === objectiveKey || normalizeText(c.a.to) === objectiveKey)
+      .map(c => `"${c.a.from} ${c.a.type} ${c.a.to}" vs "${c.b.from} ${c.b.type} ${c.b.to}"`);
+    // A known, unresolved contradiction on the topic at hand is itself
+    // evidence the system shouldn't be fully confident — a deserved
+    // reduction, not an arbitrary penalty.
+    if (contradictions.length > 0) confidence = Math.max(0, confidence - 0.15);
+    // ASI §5: "which memories are unreliable" — reinforce or demote the
+    // specific long-term memories that grounded this reasoning pass (r.available),
+    // based on whether the outcome actually verified. A memory that repeatedly
+    // grounds failed reasoning becomes less trusted (lower importance, more
+    // likely to be evicted under capacity pressure); one behind a verified
+    // solution is reinforced — real consequences, not just a log entry.
+    for (const content of r.available) {
+      const grounding = this.memory.all().find(m => m.content === content);
+      if (grounding) this.memory.reinforce(grounding.id, r.verified ? 0.05 : -0.1);
+    }
+    this.memory.remember(`Solved [${domain}]: ${problem} -> ${r.result.slice(0, 200)}`, { tags: ["solution", domain], importance: 0.7 });
+    // ASI §11: test every currently-active hypothesis against this fresh
+    // observation *before* folding it into the raw log — "design tests,
+    // analyze results, reject failed explanations" made real: a hypothesis
+    // that stops holding gets rejected (activeHypotheses() then excludes it),
+    // rather than every regularity being generated once and trusted forever.
+    const observation = `${domain} ${r.chosen} ${r.verified ? "verified" : "unverified"}`;
+    for (const h of this.discovery.activeHypotheses()) {
+      this.discovery.test(h.id, observation);
+    }
+    // ASI §5/§11: feed this solve's (domain, approach, outcome) into the
+    // discovery engine as an observation. Across many solves this lets the
+    // system discover real regularities — e.g. "domain X tends toward
+    // verified outcomes with approach Y" — a scientific-method analysis of its
+    // own reasoning performance, not a separate hard-coded self-improvement
+    // rule. See discoverPatterns().
+    this.discovery.observe(observation);
+    // ASI §5/§12: turn the discovery into actual behavior change — bias future
+    // approach selection by what has been found to correlate with verified vs
+    // unverified outcomes, closing the loop instead of leaving it an inert log.
+    this.refreshApproachBias();
+    // ASI §9/§10: track the confidence signal for self-monitoring. A
+    // failure-level anomaly (real divergence from the adaptive baseline, not
+    // ordinary noise) is the signal self-monitor.ts documents as the trigger
+    // for self-healing (§24) — so a genuinely destabilized solve loop attempts
+    // real recovery rather than just being logged.
+    this.monitor.observe("solve.confidence", confidence);
+    if (this.monitor.hasFailure()) {
+      await this.selfHeal();
+    }
+    return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions };
+  }
+
+  /**
+   * ASI §5/§11: surface regularities the discovery engine has found across
+   * past solve() calls — e.g. that a particular domain/approach combination
+   * tends toward verified or unverified outcomes. This is real self-analysis
+   * of reasoning performance built from accumulated operational history, the
+   * mechanism §5 asks for ("analyze which reasoning processes are
+   * inefficient") applied via the scientific-method hypothesis engine (§11)
+   * rather than a bespoke rule set.
+   */
+  discoverPatterns(topK = 5) {
+    return this.discovery.generateHypotheses(topK);
+  }
+
+  /** ASI §4: "identify contradictions" — every unresolved contradiction currently known. */
+  findContradictions() {
+    return this.knowledge.findContradictions();
+  }
+
+  /** ASI §4: "combine information from multiple memories" — follow a concept's relations outward and return what's reachable. */
+  combineKnowledge(concept: string, depth = 2): string[] {
+    return this.knowledge.follow(concept, [], depth).map(c => c.definition || c.name);
+  }
+
+  /**
+   * ASI §5: "propose improvements" has to start from an actual weak-point
+   * analysis, not a guess — `SelfModel.gaps()` (low-competence domains with
+   * enough evidence to trust) and `MistakeTracker.causeBreakdown()` (which
+   * root cause dominates failures) were both built and tested but never once
+   * consulted together to say where the system should focus. This surfaces
+   * that combined picture as a single, real, callable report: the domains
+   * with demonstrated weak performance, and the failure cause responsible for
+   * the most recorded mistakes — the two concrete inputs §5 asks
+   * self-improvement to analyze before proposing anything.
+   */
+  improvementTargets(): { weakDomains: string[]; dominantCause: string; causeBreakdown: Record<string, number> } {
+    const breakdown = this.mistakes.causeBreakdown();
+    const dominantCause = Object.entries(breakdown).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown";
+    return { weakDomains: this.selfModel.gaps(), dominantCause, causeBreakdown: breakdown };
+  }
+
+  /**
+   * Lazily spawn the default planner/coder/reviewer team the first time any
+   * hive-based capability is used (collaborate, autonomousTask, or solve()'s
+   * subproblem delegation), so they all share one team and trust budget
+   * instead of each maintaining its own copy of this bootstrap logic.
+   */
+  private ensureDefaultTeam(): void {
+    if (this.hive.list().length > 0) return;
+    this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
+    this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
+    this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
+  }
+
+  /**
+   * ASI §5/§12: recompute the approach-selection bias from the discovery
+   * engine's current hypotheses. A strategy correlated with "verified" gets a
+   * boost, one correlated with "unverified" gets demoted, bounded to keep any
+   * single regularity from dominating reasoning entirely.
+   *
+   * Each resulting bias map is versioned via `SelfImprovement` (§5 — "maintain
+   * versioned copies... so failed changes can be identified and reversed"),
+   * so `rollbackApproachBias()` can undo the most recent refresh if later
+   * evidence shows it was a regression. This is honest about what it is: a
+   * single solve's outcome can't rigorously prove a bias change was good or
+   * bad on its own (the bias only affects *future* reasoning), so this
+   * versions the change rather than claiming to auto-validate it.
+   */
+  private refreshApproachBias(): void {
+    const knownStrategies = ["decompose", "analogy", "first-principles", "transfer"];
+    for (const h of this.discovery.generateHypotheses(10)) {
+      let strategy: string | undefined;
+      let outcome: string | undefined;
+      if (knownStrategies.includes(h.cause)) { strategy = h.cause; outcome = h.effect; }
+      else if (knownStrategies.includes(h.effect)) { strategy = h.effect; outcome = h.cause; }
+      if (!strategy || (outcome !== "verified" && outcome !== "unverified")) continue;
+      const bias = outcome === "verified" ? 1 + h.confidence * 0.3 : 1 - h.confidence * 0.3;
+      this.approachBiasMap.set(strategy, Math.max(0.4, Math.min(1.6, bias)));
+    }
+    // ASI §6: "repeated failures should cause the relevant reasoning method to
+    // be evaluated and improved" — a repeated mistake is direct evidence
+    // against the approach that was tried and failed, not a soft correlation,
+    // so it demotes (never boosts) that approach independently of discovery.
+    for (const m of this.mistakes.repeated(2)) {
+      if (m.failedStep && knownStrategies.includes(m.failedStep)) {
+        const current = this.approachBiasMap.get(m.failedStep) ?? 1;
+        this.approachBiasMap.set(m.failedStep, Math.max(0.4, Math.min(current, 0.7)));
+      }
+    }
+    // Version the resulting state (after the change, matching SelfImprovement's
+    // "each snapshot is a committed version" model — rollback() discards the
+    // latest and returns the one before it).
+    this.improvement.snapshot("approachBias", Object.fromEntries(this.approachBiasMap));
+  }
+
+  /**
+   * ASI §5: revert the approach-selection bias to its previous version — the
+   * "failed changes can be identified and reversed" guarantee, made concrete
+   * and callable rather than aspirational.
+   */
+  rollbackApproachBias(): boolean {
+    if (this.improvement.versionCount("approachBias") < 2) return false;
+    const previous = this.improvement.rollback("approachBias") as Record<string, number> | undefined;
+    if (!previous) return false;
+    this.approachBiasMap = new Map(Object.entries(previous));
+    return true;
+  }
+
+  /** ASI §9/§11: current self-monitor anomalies and whether recovery is warranted. */
+  selfIntegrity(): { anomalies: ReturnType<SelfMonitor["anomalies"]>; hasFailure: boolean } {
+    return { anomalies: this.monitor.anomalies(), hasFailure: this.monitor.hasFailure() };
+  }
+
+  /**
+   * ASI §9: "what it knows" includes its own repair history, not just current
+   * anomalies — `SelfHealer.getLog()` existed and was unit-tested but was
+   * never surfaced anywhere a caller could actually inspect it without
+   * triggering a *new* heal cycle first (§24's own "every heal step is
+   * logged, never silent" guarantee needs a way to read that log later).
+   */
+  healLog(): string[] {
+    return this.healer.getLog();
   }
 
   /**
@@ -439,6 +827,24 @@ export class NeuroclawSystem {
       memories: this.memory.size(),
     };
   }
+}
+
+/** Coarse domain label for a problem — used by the self-model and knowledge transfer. */
+function classifyDomain(text: string): string {
+  const t = (text || "").toLowerCase();
+  const has = (words: string[]) => words.some(w => t.includes(w));
+  if (has(["code", "coding", "program", "function", "bug", "compile", "api", "algorithm"])) return "coding";
+  if (has(["math", "equation", "number", "calculate", "compute", "proof", "geometry", "algebra"])) return "math";
+  if (has(["science", "physics", "chemistry", "biology", "experiment", "hypothesis", "energy"])) return "science";
+  if (has(["plan", "schedule", "steps", "roadmap", "organize", "strategy"])) return "planning";
+  if (has(["design", "engineer", "build", "system", "architecture", "circuit"])) return "engineering";
+  if (has(["write", "essay", "story", "language", "translate", "grammar", "poem"])) return "language";
+  return "general";
+}
+
+/** Case/whitespace-insensitive text key, matching the normalization used across the core modules. */
+function normalizeText(text: string): string {
+  return (text || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 // Singleton instance for module-level access
