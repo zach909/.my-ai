@@ -657,6 +657,21 @@ export class NeuroclawSystem {
         return this.knowledge.follow(concept, [], depth).map(c => c.definition || c.name);
     }
     /**
+     * ASI §1: "generalize knowledge to situations it has never directly
+     * encountered" — predict a new instance's likely properties from what
+     * other known members of the same category share, *before* anything about
+     * the instance has been directly observed. `KnowledgeGraph.predictProperties()`
+     * existed and was unit-tested, but nothing outside its own test ever called
+     * it: `AutonomousLearner.learn()` only ever reimplements the same
+     * generalize→relate pattern inline for the narrow case of learning a new
+     * "X is Y" fact. This exposes the same real capability standalone, for a
+     * caller that wants to ask "what would X likely have" without teaching a
+     * full fact through `learn()`.
+     */
+    predictProperties(instance, category) {
+        return this.knowledge.predictProperties(instance, category);
+    }
+    /**
      * ASI §5: "propose improvements" has to start from an actual weak-point
      * analysis, not a guess — `SelfModel.gaps()` (low-competence domains with
      * enough evidence to trust) and `MistakeTracker.causeBreakdown()` (which

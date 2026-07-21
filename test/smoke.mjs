@@ -2024,6 +2024,29 @@ async function testCombineKnowledge() {
   }
 }
 
+async function testPredictProperties() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.knowledge.relate('sparrow', 'is', 'bird');
+    sys.knowledge.relate('sparrow', 'can', 'fly');
+    sys.knowledge.relate('robin', 'is', 'bird');
+    sys.knowledge.relate('robin', 'can', 'fly');
+    // ASI §1: "generalize knowledge to situations it has never directly
+    // encountered" -- predicting a brand-new instance's properties from
+    // what other known category members share, reachable through the real
+    // NeuroclawSystem (not just KnowledgeGraph's own isolated unit test).
+    const predicted = sys.predictProperties('finch', 'bird');
+    check(predicted.some(p => p.type === 'can' && p.to === 'fly'), 'predictProperties() carries a shared trait to a brand-new instance through the live system');
+    check(sys.knowledge.instancesOf('bird').some(c => c.name === 'finch'), 'predictProperties() registers the new instance as a real category member, not just a returned prediction');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testHealLog() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2285,6 +2308,7 @@ async function main() {
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
+    ['Predict properties of a new instance (Section 1)', testPredictProperties],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
