@@ -62,3 +62,27 @@ export type { CompressOptions, CompressionResult } from './context-compressor';
 // System-level capability routing (Section 6).
 export { IntentRouter } from './intent-router';
 export type { SystemCapability, RouteDecision } from './intent-router';
+
+// System-level self-modeling / prediction-vs-actual (Section 11 / ASI §9-10).
+export { SelfMonitor } from './self-monitor';
+export type { Observation, Severity, SelfMonitorConfig } from './self-monitor';
+
+// AGI / ASI capability layer.
+export { MistakeTracker } from './mistake-tracker';           // ASI §6
+export type { Mistake, MistakeInput, FailureCause } from './mistake-tracker';
+export { KnowledgeGraph } from './knowledge-graph';           // ASI §4
+export type { Concept, Relation, ConceptHit } from './knowledge-graph';
+export { ReasoningEngine } from './reasoning-engine';         // ASI §2 / §8
+export type { ReasoningResult, ReasoningDeps, Approach, Subresult, ReasoningStep } from './reasoning-engine';
+export { KnowledgeTransfer } from './knowledge-transfer';     // ASI §7
+export type { SolvedProblem, TransferHit } from './knowledge-transfer';
+export { SelfModel } from './self-model';                     // ASI §9
+export type { DomainStat } from './self-model';
+export { SelfImprovement } from './self-improvement';         // ASI §5
+export type { Improvement } from './self-improvement';
+export { AutonomousLearner } from './autonomous-learner';     // ASI §3
+export type { LearnDecision, LearnResult, LearnOptions } from './autonomous-learner';
+export { PredictionEngine } from './prediction-engine';       // ASI §10
+export type { Prediction, PredictedOutcome, Comparison } from './prediction-engine';
+export { DiscoveryEngine } from './discovery-engine';         // ASI §11
+export type { Hypothesis, TestResult, Combination } from './discovery-engine';

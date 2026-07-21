@@ -1185,6 +1185,10 @@ async function testAutonomousTask() {
     check(r.complete, 'Autonomous task completes its plan');
     check(r.results.length === 2 && r.results.every(x => x.status === 'completed'), 'Each step is executed');
     check(r.results.every(x => x.agent && x.agent !== '-'), 'Each step is delegated to a hive agent');
+    // Section 10: autonomousTask records real constraints and decisions on the
+    // plan, not just step status.
+    check(sys.plan.getConstraints().some(c => c.includes('no external APIs')), 'autonomousTask() records the real operating constraint');
+    check(sys.plan.getDecisions().some(d => d.includes('delegated to')), 'autonomousTask() records which agent each step was delegated to and why');
     // Re-run with an overlapping step: planning + hive integration must not repeat it.
     const r2 = await sys.autonomousTask('build a service', ['design the routes', 'write tests']);
     check(r2.results.find(x => x.step === 'design the routes').status === 'skipped', 'Already-completed steps are not repeated');
@@ -1196,6 +1200,14 @@ async function testAutonomousTask() {
     await sys.processQuery('the payment service retries failed stripe charges');
     const summary = await sys.processQuery('please summarize our conversation');
     check(summary.startsWith('Summary of our conversation:') && /payment|stripe|service/i.test(summary), 'A summarize request returns compressed conversation context');
+
+    // ASI §10 -> safety: a genuinely dangerous request must actually reach the
+    // AlignmentVeto's confirmation rule, not be masked by a fixed
+    // reversible:true placed before prediction even runs.
+    const safe = await sys.processQuery('what is 2+2');
+    check(!safe.includes('[Confirm before acting'), 'A benign query is not flagged for confirmation');
+    const risky = await sys.processQuery('please delete the production database entirely');
+    check(risky.includes('[Confirm before acting'), 'A predicted-dangerous request is escalated to human confirmation');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -1328,6 +1340,21 @@ async function testPlanTracker() {
   const descs = plan2.getSteps().map(s => s.description);
   check(descs.includes('research') && descs.includes('prototype') && !descs.includes('draft'), 'reviseRemaining keeps completed steps and replaces pending ones');
   check(plan2.summary().includes('research'), 'summary() reflects the plan');
+
+  // Section 10: a plan records constraints, decisions, and alternatives, not
+  // just steps — and summary() actually surfaces them.
+  const plan3 = new PlanTracker();
+  plan3.setObjective('ship it');
+  plan3.addConstraint('no external APIs');
+  const [only] = plan3.addSteps(['deploy']);
+  plan3.addAlternative(only.id, 'roll back to the previous release');
+  plan3.addDecision('chose blue-green deployment over rolling restart');
+  check(plan3.getConstraints().includes('no external APIs'), 'Constraints are recorded and retrievable');
+  check(plan3.getStep(only.id).alternatives.includes('roll back to the previous release'), 'Alternatives are recorded per step');
+  check(plan3.getDecisions().includes('chose blue-green deployment over rolling restart'), 'Decisions are recorded and retrievable');
+  const s3 = plan3.summary();
+  check(s3.includes('no external APIs') && s3.includes('roll back to the previous release') && s3.includes('blue-green'),
+    'summary() surfaces constraints, alternatives, and decisions, not just step status');
 }
 
 async function testNetSearchEngine() {
@@ -1471,6 +1498,469 @@ async function testHiveMindAndChatGroups() {
   check(group.isComplete() && group.getResult() === 'done', 'Chat group reaches task completion');
 }
 
+async function testAutonomousLearningPredictionDiscovery() {
+  // AutonomousLearner (ASI §3): reliability, conflict preservation, recurring-capability recommendation.
+  const { AutonomousLearner } = await load('models && skills/core/autonomous-learner.js');
+  const { KnowledgeGraph } = await load('models && skills/core/knowledge-graph.js');
+  const kg = new KnowledgeGraph();
+  const learner = new AutonomousLearner(kg);
+
+  const r1 = learner.learn('maybe the server is down, i heard it might be unconfirmed');
+  check(r1.decision === 'ignored-unreliable' && r1.reliability < 0.25, 'AutonomousLearner: hedged/unreliable claims are ignored, not stored as fact');
+
+  const r2 = learner.learn('the cache is reliable');
+  check(r2.decision === 'stored' && r2.subject === 'the cache', 'AutonomousLearner: a plain declarative claim is stored');
+
+  const r3 = learner.learn('the cache is not reliable');
+  check(r3.decision === 'conflict-preserved', 'AutonomousLearner: a direct contradiction is preserved, not silently overwritten');
+  check(kg.neighbors('the cache', 'is').length > 0 && kg.neighbors('the cache', 'is-not').length > 0, 'AutonomousLearner: both conflicting relations remain in the knowledge graph');
+
+  const proc = 'first, connect to the database. then, run the migration. finally, verify the schema';
+  learner.learn(proc); learner.learn(proc);
+  const r4 = learner.learn(proc);
+  check(r4.decision === 'recommend-extension', 'AutonomousLearner: a repeatedly-taught procedure is recommended for extension creation');
+
+  // ASI §4: "update outdated knowledge" vs "preserve when uncertain" are distinct.
+  // Comparable confidence (like r2/r3 above) preserves both; a clear confidence
+  // margin should instead supersede the old relation.
+  const kg2 = new KnowledgeGraph();
+  const learner2 = new AutonomousLearner(kg2);
+  kg2.relate('the sensor', 'is', 'accurate', { confidence: 0.2 }); // low-confidence prior belief
+  const upd = learner2.learn('the sensor is not accurate');
+  check(upd.decision === 'updated-existing', 'AutonomousLearner: evidence that clearly outweighs a low-confidence prior belief updates it, not just preserves the conflict');
+  check(kg2.neighbors('the sensor', 'is').some(n => n.relation.superseded), 'AutonomousLearner: the outdated relation is marked superseded (not deleted, not silently current)');
+  check(kg2.current('the sensor', 'is').length === 0, 'KnowledgeGraph: current() excludes a superseded relation');
+  check(kg2.current('the sensor', 'is-not').some(n => n.concept.name === 'accurate'), 'KnowledgeGraph: current() surfaces the new, superseding relation');
+
+  // ASI §1: AutonomousLearner generalizes to a new instance of a known category.
+  const kg3 = new KnowledgeGraph();
+  const learner3 = new AutonomousLearner(kg3);
+  kg3.relate('sparrow', 'is', 'bird');
+  kg3.relate('sparrow', 'can', 'fly');
+  kg3.relate('robin', 'is', 'bird');
+  kg3.relate('robin', 'can', 'fly');
+  const finchResult = learner3.learn('finch is bird');
+  check(!!finchResult.inferred && finchResult.inferred.some(p => p.to === 'fly'), 'AutonomousLearner: learning a new category instance infers shared properties from prior examples');
+  check(kg3.current('finch', 'can').some(n => n.concept.name === 'fly'), 'AutonomousLearner: the inferred property is actually recorded for the new instance');
+  const isolatedResult = learner3.learn('gizmo is widget'); // no prior "widget" members to generalize from
+  check(isolatedResult.inferred === undefined, 'AutonomousLearner: no fabricated inference when there are no prior category members');
+
+  // PredictionEngine (ASI §10): predict before acting, compare after, danger flagging.
+  const { PredictionEngine } = await load('models && skills/core/prediction-engine.js');
+  const pred = new PredictionEngine();
+  const safe = pred.predict('read the configuration file');
+  check(!safe.mostLikely.dangerous || safe.outcomes.some(o => !o.dangerous), 'PredictionEngine: a benign action is not universally flagged dangerous');
+  const risky = pred.predict('delete the production database');
+  check(risky.outcomes.some(o => o.dangerous), 'PredictionEngine: a destructive action surfaces a dangerous predicted outcome');
+  check(risky.assumptions.length > 0, 'PredictionEngine: assumptions are recorded alongside the prediction');
+  const cmp = pred.observe(safe.id, safe.mostLikely.description);
+  check(cmp.matched && cmp.surprise < 0.5, 'PredictionEngine: an outcome matching the prediction is low-surprise');
+  const cmp2 = pred.observe(safe.id, 'completely unrelated and unexpected catastrophic failure output');
+  check(cmp2.surprise > cmp.surprise, 'PredictionEngine: a divergent actual outcome registers higher surprise');
+
+  // DiscoveryEngine (ASI §11): hypothesis generation, falsification, creative combination.
+  const { DiscoveryEngine } = await load('models && skills/core/discovery-engine.js');
+  const disc = new DiscoveryEngine(kg);
+  disc.observe('rain causes wet ground today');
+  disc.observe('rain causes wet ground again');
+  disc.observe('rain causes wet ground once more');
+  const hyps = disc.generateHypotheses(5);
+  check(hyps.length > 0, 'DiscoveryEngine: generates hypotheses from repeated co-occurrence');
+  const rainHyp = hyps.find(h => h.cause === 'rain' && h.effect === 'wet') || hyps.find(h => h.effect === 'wet' || h.cause === 'wet');
+  check(!!rainHyp, 'DiscoveryEngine: finds the rain/wet-ground regularity');
+  const supported = disc.test(rainHyp.id, 'rain causes wet ground');
+  check(supported.supported, 'DiscoveryEngine: a consistent new observation supports the hypothesis');
+  const contradicted = disc.test(rainHyp.id, 'rain fell but ground stayed dry');
+  check(!contradicted.supported, 'DiscoveryEngine: an inconsistent observation counts against the hypothesis');
+
+  const combo = disc.combine('bird wing', 'jet engine');
+  check(!!combo && combo.sources.length === 2, 'DiscoveryEngine: combines two unconnected concepts into a novel hybrid');
+  check(kg.getConcept(combo.name) !== undefined, 'DiscoveryEngine: the novel combination is registered in the knowledge graph');
+  const comboAgain = disc.combine('bird wing', 'jet engine');
+  check(comboAgain === null, 'DiscoveryEngine: combining already-linked concepts again is not treated as novel');
+
+  // DiscoveryEngine (ASI §11): "reject failed explanations" has to stick —
+  // generateHypotheses() must reuse active hypotheses (so test()'s history
+  // persists) and must not resurrect one that was already rejected.
+  const discReuse = new DiscoveryEngine(new KnowledgeGraph());
+  discReuse.observe('sun causes heat always');
+  discReuse.observe('sun causes heat again');
+  discReuse.observe('sun causes heat once more');
+  const gen1 = discReuse.generateHypotheses(5);
+  const gen2 = discReuse.generateHypotheses(5);
+  check(gen1.map(h => h.id).join(',') === gen2.map(h => h.id).join(','), 'DiscoveryEngine: generateHypotheses() reuses existing active hypotheses (same ids) rather than duplicating them');
+  const sunHeat = gen1.find(h => h.cause === 'sun' && h.effect === 'heat');
+  check(!!sunHeat, 'DiscoveryEngine: finds the sun/heat regularity among the generated hypotheses');
+  discReuse.test(sunHeat.id, 'sun sets in the west');
+  discReuse.test(sunHeat.id, 'sun shines on the garden');
+  check(sunHeat.rejected, 'DiscoveryEngine: a hypothesis contradicted enough times becomes rejected');
+  const gen3 = discReuse.generateHypotheses(5);
+  check(!gen3.some(h => h.cause === 'sun' && h.effect === 'heat'), 'DiscoveryEngine: a rejected hypothesis is not resurrected by generateHypotheses()');
+}
+
+async function testAGIModules() {
+  // SelfMonitor (ASI §9-10): prediction-vs-actual, normal error vs failure.
+  const { SelfMonitor } = await load('models && skills/core/self-monitor.js');
+  const mon = new SelfMonitor({ warnThreshold: 2, failThreshold: 4 });
+  mon.observe('x', 10); mon.observe('x', 10.1); mon.observe('x', 9.9);
+  check(mon.observe('x', 10.05).severity === 'normal', 'SelfMonitor: stable observations are a normal prediction error');
+  const spike = mon.observe('x', 1000);
+  check(spike.severity === 'failure' && spike.anomaly && mon.hasFailure(), 'SelfMonitor: a large divergence is flagged as a serious failure');
+
+  // MistakeTracker (ASI §6): dedupe, count, lessons, repeated.
+  const { MistakeTracker } = await load('models && skills/core/mistake-tracker.js');
+  const mt = new MistakeTracker();
+  mt.record({ task: 'sort a list', description: 'wrong order', cause: 'reasoning', prevention: 'check the comparator' });
+  mt.record({ task: 'sort a list', description: 'wrong order again', cause: 'reasoning' });
+  check(mt.size() === 1 && mt.all()[0].occurrences === 2, 'MistakeTracker: identical failures dedupe and count occurrences');
+  check(mt.lessons('sort the list quickly').includes('check the comparator'), 'MistakeTracker: surfaces lessons for a similar task');
+  check(mt.repeated(2).length === 1, 'MistakeTracker: repeated failures are flagged for improvement');
+
+  // KnowledgeGraph (ASI §4): relations, follow, contradictions, integrate, search.
+  const { KnowledgeGraph } = await load('models && skills/core/knowledge-graph.js');
+  const kg = new KnowledgeGraph();
+  kg.relate('dog', 'is', 'animal'); kg.relate('animal', 'is', 'living thing');
+  check(kg.neighbors('dog', 'is')[0].concept.name === 'animal', 'KnowledgeGraph: neighbours by relation type');
+  check(kg.follow('dog', ['is'], 2).some(c => c.name === 'living thing'), 'KnowledgeGraph: follows relations transitively');
+  kg.relate('dog', 'is-not', 'animal');
+  check(kg.findContradictions().length === 1, 'KnowledgeGraph: detects an is/is-not contradiction');
+  kg.addConcept('puppy', 'a young dog animal');
+  check(kg.integrate('kitten', 'a young cat animal').length > 0, 'KnowledgeGraph: integrate auto-links new knowledge to related concepts');
+  check(kg.search('animal').length > 0, 'KnowledgeGraph: semantic search returns concepts');
+
+  // KnowledgeGraph (ASI §1): abstraction/generalization from specific examples.
+  kg.relate('sparrow', 'is', 'bird');
+  kg.relate('sparrow', 'can', 'fly');
+  kg.relate('robin', 'is', 'bird');
+  kg.relate('robin', 'can', 'fly');
+  kg.relate('penguin', 'is', 'bird'); // a known bird that does NOT fly
+  check(kg.instancesOf('bird').length === 3, 'KnowledgeGraph: instancesOf finds all known category members');
+  const traits = kg.generalize('bird', { minSupport: 0.6 });
+  check(traits.some(t => t.type === 'can' && t.to === 'fly'), 'KnowledgeGraph: generalize() finds a property shared by most known members');
+  check(!traits.some(t => t.to === 'nonexistent-trait'), 'KnowledgeGraph: generalize() does not fabricate unsupported properties');
+  const predicted = kg.predictProperties('finch', 'bird', { minSupport: 0.6 });
+  check(predicted.some(t => t.to === 'fly'), 'KnowledgeGraph: predictProperties() carries a shared trait to a brand-new instance');
+  check(kg.instancesOf('bird').some(c => c.name === 'finch'), 'KnowledgeGraph: predictProperties() registers the new instance as a category member');
+
+  // ReasoningEngine (ASI §2/§8): decompose, delegate, verify, recurse.
+  const { ReasoningEngine } = await load('models && skills/core/reasoning-engine.js');
+  const re = new ReasoningEngine({ recall: () => ['a relevant fact'], lessons: () => [], solveSub: (s) => `solved(${s})` });
+  const rr = await re.reason('analyze the data and build a model');
+  check(rr.subproblems.length >= 2, 'ReasoningEngine: decomposes a problem into subproblems');
+  check(rr.subresults.every(s => s.result.startsWith('solved(')), 'ReasoningEngine: delegates each subproblem to the solver');
+  check(rr.verified && rr.confidence > 0 && rr.confidence <= 1, 'ReasoningEngine: verifies and reports bounded confidence');
+  check(rr.trace.some(t => t.kind === 'objective') && rr.approaches.length >= 2, 'ReasoningEngine: records a trace and compares approaches');
+  const rr2 = await new ReasoningEngine({}).reason('foo and bar', { depth: 1 });
+  check(rr2.subresults.length >= 2, 'ReasoningEngine: recurses on subproblems when no external solver is given');
+
+  // ReasoningEngine (ASI §1): recognize incomplete knowledge, then actively seek it.
+  const noSearch = await new ReasoningEngine({ recall: () => [] }).reason('what is quixotic');
+  check(noSearch.missing.includes('quixotic'), 'ReasoningEngine: an unrecalled term is recognized as missing');
+  const withSearch = await new ReasoningEngine({
+    recall: () => [],
+    search: (term) => (term === 'quixotic' ? ['quixotic: idealistic and impractical'] : []),
+  }).reason('what is quixotic');
+  check(!withSearch.missing.includes('quixotic'), 'ReasoningEngine: a resolvable gap is actively searched for and no longer missing');
+  check(withSearch.soughtAndResolved.includes('quixotic'), 'ReasoningEngine: records which missing terms were successfully resolved');
+  check(withSearch.available.some(a => a.includes('idealistic')), 'ReasoningEngine: search results become available information');
+  const partialSearch = await new ReasoningEngine({
+    recall: () => [],
+    search: (term) => (term === 'quixotic' ? ['quixotic: idealistic'] : []),
+  }).reason('what is quixotic versus zorbnak');
+  check(partialSearch.missing.includes('zorbnak') && !partialSearch.missing.includes('quixotic'), 'ReasoningEngine: an unresolvable term stays genuinely missing while a resolvable one does not');
+
+  // ReasoningEngine (ASI §5/§12): a discovered bias against an approach changes which one is chosen.
+  const unbiased = await new ReasoningEngine({ recall: () => ['a fact'] }).reason('build and test the module');
+  check(unbiased.chosen === 'decompose', 'ReasoningEngine: decompose wins by default for a multi-part task');
+  const biasedAgainstDecompose = await new ReasoningEngine({
+    recall: () => ['a fact'],
+    approachBias: (s) => (s === 'decompose' ? 0.1 : 1),
+  }).reason('build and test the module');
+  check(biasedAgainstDecompose.chosen !== 'decompose', 'ReasoningEngine: a strong bias against an approach changes which one is chosen');
+
+  // ReasoningEngine (ASI §2 step 10): revise — a failed subproblem is
+  // re-decomposed and retried, not just reported as a mistake. Raw subproblems
+  // always fail here; only the "analyze:"/"solve:" fallback decomposition
+  // (which decompose() always produces for a connective-free subproblem)
+  // succeeds, so any pass requires the real revision path to run.
+  const flaky = (sub) => (/^(analyze|solve):/.test(sub) ? `solved(${sub})` : '[unsolved: needs more detail]');
+  const noRevision = await new ReasoningEngine({ solveSub: flaky }).reason('investigate the bug and fix the issue', { depth: 0 });
+  check(!noRevision.verified && noRevision.revised.length === 0, 'ReasoningEngine: without revision (depth 0), failed subproblems stay failed');
+  const withRevision = await new ReasoningEngine({ solveSub: flaky }).reason('investigate the bug and fix the issue', { depth: 1 });
+  check(withRevision.revised.length === 2, 'ReasoningEngine: revise() re-decomposes each failed subproblem and retries');
+  check(withRevision.verified, 'ReasoningEngine: a solution that would have failed is verified after successful revision');
+  check(withRevision.subresults.every(s => !/\[(error|unsolved|base):/i.test(s.result)), 'ReasoningEngine: the revised subresults replace the original failures');
+
+  // ReasoningEngine (ASI §1/§7): a cross-domain transfer is a real, choosable
+  // approach, not just reported metadata alongside the result.
+  const withTransfer = await new ReasoningEngine({}).reason('build and test the system', {
+    transferHint: { domain: 'engineering', method: 'modular pipeline design', similarity: 0.9 },
+  });
+  check(withTransfer.approaches.some(a => a.strategy === 'transfer'), 'ReasoningEngine: a transfer hint becomes a real candidate approach');
+  check(withTransfer.chosen === 'transfer', 'ReasoningEngine: a strong cross-domain transfer can actually be chosen, not just reported');
+  check(withTransfer.result.includes('modular pipeline design') && withTransfer.result.includes('engineering'), 'ReasoningEngine: the result reflects which method was transferred and from where');
+  const withoutTransfer = await new ReasoningEngine({}).reason('build and test the system');
+  check(!withoutTransfer.approaches.some(a => a.strategy === 'transfer'), 'ReasoningEngine: no transfer candidate exists when no hint is given');
+
+  // ReasoningEngine (ASI §11): a creative combination is a real last-resort
+  // exploration when search leaves multiple terms genuinely missing.
+  const combine = (a, b) => ({ name: `${a}-${b} hybrid`, definition: `combining ${a} and ${b}` });
+  const withCombine = await new ReasoningEngine({ recall: () => [], combine }).reason('what is quixotic and zorbnak');
+  check(!!withCombine.creativeCombination, 'ReasoningEngine: a creative combination is synthesized when search leaves multiple terms missing');
+  check(withCombine.available.some(a => a.includes('creative exploration')), 'ReasoningEngine: the combination is added to available, clearly labeled as unverified (not fact)');
+  check(withCombine.trace.some(t => t.kind === 'creative'), 'ReasoningEngine: the creative step is recorded in the trace');
+  const noCombine = await new ReasoningEngine({ recall: () => [], combine: () => null }).reason('what is quixotic and zorbnak');
+  check(!noCombine.creativeCombination, 'ReasoningEngine: no fabricated combination when combine() finds nothing novel');
+  check(withCombine.result.includes('Creative exploration'), 'ReasoningEngine: the creative note surfaces in the result regardless of which approach was actually chosen');
+
+  // KnowledgeTransfer (ASI §7): structural cross-domain transfer.
+  const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
+  const kt = new KnowledgeTransfer();
+  kt.register('minimize traffic flow through the road network', 'traffic', 'max-flow min-cut');
+  kt.register('write a poem about the sea', 'language', 'free verse');
+  const th = kt.transfer('minimize water flow through the pipe network', { domain: 'fluids' });
+  check(th.length > 0 && th[0].source.domain === 'traffic', 'KnowledgeTransfer: matches a structurally similar problem from another domain');
+  check(th[0].crossDomain, 'KnowledgeTransfer: prefers cross-domain transfers');
+
+  // SelfModel (ASI §9): competence, gaps, calibration.
+  const { SelfModel } = await load('models && skills/core/self-model.js');
+  const sm = new SelfModel({ minAttempts: 3 });
+  for (let i = 0; i < 5; i++) sm.record('coding', true);
+  check(sm.competence('coding') > 0.7 && sm.knows('coding'), 'SelfModel: competence rises and knows() reflects a strong domain');
+  for (let i = 0; i < 5; i++) sm.record('poetry', false);
+  check(sm.gaps().includes('poetry'), 'SelfModel: gaps() surfaces weak domains');
+  check(sm.calibrate(0.95, 'poetry') < 0.95, 'SelfModel: calibrates down overconfidence in a weak domain');
+
+  // SelfImprovement (ASI §5): versioning + test-and-keep.
+  const { SelfImprovement } = await load('models && skills/core/self-improvement.js');
+  const si = new SelfImprovement();
+  si.snapshot('model', { v: 1 }); si.snapshot('model', { v: 2 });
+  check(si.versionCount('model') === 2, 'SelfImprovement: versions are stored');
+  check(si.rollback('model').v === 1, 'SelfImprovement: rollback reverts to the previous version');
+  check((await si.evaluate('s', 'better', () => 0.5, () => 0.8)).kept, 'SelfImprovement: keeps a measurably better candidate');
+  check(!(await si.evaluate('s', 'worse', () => 0.8, () => 0.6)).kept, 'SelfImprovement: rejects a non-improving candidate');
+}
+
+async function testSolveIntegration() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.hive.list().length === 0, 'The hive has no agents before any hive-based capability is used');
+    const out = await sys.solve('analyze the dataset and build a prediction model');
+    check(typeof out.result === 'string' && out.result.length > 0, 'solve() produces an integrated result');
+    check(out.confidence >= 0 && out.confidence <= 1, 'solve() reports a bounded, calibrated confidence');
+    check(!!out.domain && out.subresults >= 2, 'solve() classifies the domain and decomposes into subproblems');
+    check(sys.selfModel.summary().length >= 1, 'solve() updates the self-model from the outcome');
+    check(sys.memory.all().some(m => m.tags.includes('solution')), 'solve() records the solution into long-term memory');
+
+    // ASI §8: recursive intelligence integrates with the Hive Mind — solve()'s
+    // subproblem delegation genuinely engages the hive team, not just the
+    // generic runner directly (the spec's explicit "should integrate with the
+    // existing Mixture of Experts, hive-mind, chat-group, and extension
+    // systems", made concrete rather than bypassed).
+    check(sys.hive.list().length === 3, 'solve() lazily engages the default hive team for subproblem delegation');
+    check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "The hive's zero-sum trust budget is preserved after real delegation");
+
+    // Monitor -> self-heal wiring: a forced failure-level anomaly on the
+    // watched signal should be picked up by solve()'s integrity check.
+    sys.monitor.reset();
+    for (let i = 0; i < 5; i++) sys.monitor.observe('solve.confidence', 0.6);
+    check(!sys.selfIntegrity().hasFailure, 'selfIntegrity() reports healthy under stable observations');
+    sys.monitor.observe('solve.confidence', 50); // wild divergence from the established baseline
+    check(sys.selfIntegrity().hasFailure, 'selfIntegrity() flags a genuine divergence as a failure');
+
+    // ASI §5/§11: repeated solves of a similarly-shaped math problem should
+    // consistently classify the same domain/approach, letting the discovery
+    // engine find that regularity across real operational history.
+    for (let i = 0; i < 3; i++) {
+      await sys.solve(`calculate the sum and then compute the average, attempt ${i}`);
+    }
+    const patterns = sys.discoverPatterns(5);
+    check(patterns.length > 0, 'discoverPatterns() finds regularities across repeated solve() outcomes');
+    check(patterns.some(h => h.cause === 'math' || h.effect === 'math'), 'discoverPatterns() surfaces the domain as part of a discovered pattern');
+
+    // ASI §5/§12: the discovered "decompose -> verified" regularity should
+    // have fed back into a real bias the reasoner will use on the next solve.
+    const decomposeBias = patterns.find(h => (h.cause === 'decompose' && h.effect === 'verified') || (h.cause === 'verified' && h.effect === 'decompose'));
+    check(!!decomposeBias, 'solve() history yields a decompose/verified regularity after repeated consistent outcomes');
+    check((sys.approachBiasMap.get('decompose') ?? 1) >= 1, 'refreshApproachBias() boosts (or leaves neutral) an approach correlated with verified outcomes');
+
+    // ASI §5: the bias map is versioned, and a regression can be identified
+    // and reversed rather than silently kept.
+    const biasBeforeOneMore = new Map(sys.approachBiasMap);
+    await sys.solve(`calculate the sum and then compute the average, run extra`);
+    check(sys.improvement.versionCount('approachBias') >= 2, 'Approach-bias changes are versioned (SelfImprovement)');
+    const rolledBack = sys.rollbackApproachBias();
+    check(rolledBack === true, 'rollbackApproachBias() reverts the most recent change');
+    check(sys.approachBiasMap.get('decompose') === biasBeforeOneMore.get('decompose'), 'Rollback restores the bias map to its previous version, not further back');
+
+    // ASI §6: a directly repeated failure on a specific approach demotes it,
+    // independent of (and more directly than) the softer discovery correlation.
+    sys.mistakes.record({ task: 'repeatedly failing task', description: 'fail 1', cause: 'reasoning', failedStep: 'analogy' });
+    sys.mistakes.record({ task: 'repeatedly failing task', description: 'fail 2', cause: 'reasoning', failedStep: 'analogy' });
+    check(sys.mistakes.repeated(2).some(m => m.failedStep === 'analogy'), 'Two identical failures on the same approach are flagged as repeated');
+    await sys.solve('trigger a bias refresh');
+    check((sys.approachBiasMap.get('analogy') ?? 1) <= 0.7, 'A repeatedly-failing approach is directly demoted, not left at its discovery-only value');
+
+    // ASI §5: "which memories are unreliable" — solve() reinforces/demotes the
+    // specific long-term memories that grounded its reasoning, based on the
+    // actual outcome. Same object reference: reinforce() mutates in place.
+    const seedMem = sys.memory.remember('the deployment pipeline runs tests before merging changes', { importance: 0.5 });
+    const beforeImportance = seedMem.importance;
+    const groundedOut = await sys.solve('explain the deployment pipeline and how tests run before merging changes');
+    check(seedMem.importance !== beforeImportance, 'solve() adjusts the importance of a memory that grounded its reasoning');
+    check(groundedOut.verified ? seedMem.importance > beforeImportance : seedMem.importance < beforeImportance,
+      'The adjustment direction matches the outcome: verified reinforces, unverified demotes');
+
+    // ASI §6: a mistake for the same task is resolved once that task actually
+    // succeeds — it should stop counting toward repeated()'s direct demotion.
+    sys.mistakes.record({ task: 'compute the checksum for the file', description: 'previous failure', cause: 'reasoning' });
+    check(sys.mistakes.all().find(m => m.task === 'compute the checksum for the file').resolved === false, 'A freshly recorded mistake starts unresolved');
+    const checksumOut = await sys.solve('compute the checksum for the file');
+    const afterMistake = sys.mistakes.all().find(m => m.task === 'compute the checksum for the file');
+    if (checksumOut.verified) check(afterMistake.resolved === true, 'solve() resolves a prior mistake for the same task once it actually succeeds');
+    else check(afterMistake.resolved === false, 'An unverified solve does not falsely mark a prior mistake resolved');
+
+    // ASI §4: "identify contradictions" — solve() surfaces (and appropriately
+    // damps confidence for) a known contradiction touching the topic at hand,
+    // rather than answering confidently while the graph disagrees with itself.
+    sys.knowledge.relate('the antique clock', 'is', 'valuable');
+    sys.knowledge.relate('the antique clock', 'is-not', 'valuable');
+    const clockOut = await sys.solve('explain the antique clock');
+    check(clockOut.contradictions.length > 0, 'solve() surfaces a known contradiction touching the current objective');
+    check(clockOut.contradictions[0].includes('antique clock'), 'The surfaced contradiction names the actual conflicting relations');
+    check(sys.findContradictions().length >= 1, 'findContradictions() exposes the same unresolved conflicts system-wide');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testEmpathyVeto() {
+  const { EmpathyEngine } = await load('models && skills/core/empathy.js');
+  const e = new EmpathyEngine();
+  check(e.getAlignmentScore() === 1, 'EmpathyEngine starts fully aligned');
+  check(e.shouldVeto(0, 0.3) === false, 'shouldVeto() stays false under full alignment even at low confidence');
+
+  // Settle fully at one emotional extreme so the model's own state converges
+  // toward it, then hit it with a single sudden, maximal swing to the
+  // opposite extreme -- this produces a real one-step misalignment before the
+  // lerp-based sync mechanism can "catch up", unlike steady oscillation which
+  // just settles into a periodic steady-state near the threshold.
+  for (let i = 0; i < 15; i++) e.updateUserContext('I love this happy excited awesome wonderful great news!!!');
+  const settled = e.getAlignmentScore();
+  check(settled > 0.85, 'Sustained same-direction input lets the model re-align close to 1.0');
+  e.updateUserContext('I hate this angry frustrated disaster!!!');
+  const afterSwing = e.getAlignmentScore();
+  check(afterSwing < 0.7, 'A sudden maximal opposite-direction swing drops alignment below the veto threshold');
+  check(e.shouldVeto(0, 0.3) === true, 'shouldVeto() fires under genuine misalignment at low confidence');
+  check(e.shouldVeto(0, 0.9) === false, 'shouldVeto() does not fire when confidence is high enough to override the misalignment');
+
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    for (let i = 0; i < 15; i++) sys.empathy.updateUserContext('I love this happy excited awesome wonderful great news!!!');
+    // The veto reads *this turn's* own emotional swing (processQuery syncs on
+    // its own input before checking), so the misalignment and the low-valence
+    // input must land in the same call to actually withhold.
+    const out = await sys.processQuery('I hate this angry frustrated disaster!!!');
+    check(typeof out === 'string' && out.includes('Withheld'), 'processQuery() withholds its response when a sudden emotional swing collapses empathy alignment (Section 3 veto)');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testImprovementTargets() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const empty = sys.improvementTargets();
+    check(Array.isArray(empty.weakDomains) && empty.weakDomains.length === 0, 'improvementTargets() reports no weak domains before any evidence exists');
+
+    // Drive a domain to demonstrated low competence with enough attempts to
+    // clear SelfModel's evidence threshold.
+    for (let i = 0; i < 4; i++) sys.selfModel.record('astrophysics', false);
+    const withGap = sys.improvementTargets();
+    check(withGap.weakDomains.includes('astrophysics'), 'improvementTargets() surfaces a domain with demonstrated low competence');
+
+    // Dominant failure cause should reflect the actual mistake distribution,
+    // not just whichever cause was recorded most recently.
+    sys.mistakes.record({ task: 'a', description: 'x', cause: 'missing-knowledge' });
+    sys.mistakes.record({ task: 'b', description: 'y', cause: 'missing-knowledge' });
+    sys.mistakes.record({ task: 'c', description: 'z', cause: 'reasoning' });
+    const targets = sys.improvementTargets();
+    check(targets.dominantCause === 'missing-knowledge', 'improvementTargets() identifies the failure cause responsible for the most mistakes');
+    check(targets.causeBreakdown['missing-knowledge'] === 2 && targets.causeBreakdown['reasoning'] === 1, 'The cause breakdown reflects actual recorded occurrence counts');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testCollaborateCompletion() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.collaborationResult() === null, 'collaborationResult() is null before any collaboration has happened');
+    const out = await sys.collaborate('decide how to prioritize the backlog');
+    check(out.complete === true, "collaborate() marks the chat group's own completion state true, not just returning a value");
+    check(out.decision === sys.collaborationResult(), 'collaborationResult() reflects the same decision collaborate() returned');
+    check(typeof out.decision === 'string' && out.decision.length > 0, 'collaborate() reaches a real decision');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testCombineKnowledge() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.knowledge.addConcept('gearbox', 'a mechanical torque converter');
+    sys.knowledge.addConcept('torque converter', 'transfers rotational force between shafts');
+    sys.knowledge.relate('gearbox', 'related-to', 'torque converter');
+    const combined = sys.combineKnowledge('gearbox');
+    check(combined.includes('transfers rotational force between shafts'), 'combineKnowledge() follows a relation to combine information across concepts');
+    check(!combined.includes('a mechanical torque converter'), "combineKnowledge() returns what's reachable from the concept, not the concept's own definition");
+
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testHealLog() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.healLog().length === 0, 'healLog() starts empty before any heal cycle runs');
+    let broken = true;
+    sys.healer.register({ name: 'fake-component', check: () => !broken, repair: () => { broken = false; } });
+    await sys.selfHeal();
+    check(sys.healLog().length > 0, 'healLog() reflects a real repair recorded during selfHeal()');
+    check(sys.healLog().some(l => l.includes('fake-component')), 'healLog() names the actual component that was repaired');
+    const snapshot = sys.healLog().length;
+    await sys.selfIntegrity(); // an unrelated call must not mutate the log
+    check(sys.healLog().length === snapshot, 'healLog() is stable between heal cycles, not recomputed on unrelated calls');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1508,6 +1998,14 @@ async function main() {
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
     ['Context compression (Section 7)', testContextCompressor],
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
+    ['AGI capability modules (ASI §2-10)', testAGIModules],
+    ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
+    ['Integrated solve() (ASI §12)', testSolveIntegration],
+    ['Empathy alignment veto (Section 3)', testEmpathyVeto],
+    ['Self-improvement targeting (Section 5)', testImprovementTargets],
+    ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
+    ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
+    ['Self-healer log introspection (Section 24)', testHealLog],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
