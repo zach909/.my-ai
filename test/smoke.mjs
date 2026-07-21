@@ -2047,6 +2047,30 @@ async function testPredictProperties() {
   }
 }
 
+async function testExactMemorySearch() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.memory.remember('order number A-88231 shipped on tuesday');
+    sys.memory.remember('a package with tracking code A-88231 left the warehouse');
+    sys.memory.remember('completely unrelated memory about the weather being sunny');
+    // ASI §4: "search memory by exact information" is explicitly distinct
+    // from "search memory by meaning" -- only the semantic retrieve()
+    // existed. An opaque identifier like an order code has little semantic
+    // signal for embedding-similarity ranking to reliably surface both
+    // mentions, but exact substring matching finds them precisely.
+    const exact = sys.findExactMemory('A-88231');
+    check(exact.length === 2, 'findExactMemory() finds every memory containing the literal substring, not a fuzzy top-K subset');
+    check(exact.every(m => m.includes('A-88231')), 'Every returned memory genuinely contains the exact queried text');
+    check(sys.findExactMemory('a phrase that was never stored').length === 0, 'findExactMemory() returns nothing for text that was never actually stored');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testHealLog() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2309,6 +2333,7 @@ async function main() {
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
     ['Predict properties of a new instance (Section 1)', testPredictProperties],
+    ['Exact-match memory search (Section 4)', testExactMemorySearch],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],

@@ -672,6 +672,16 @@ export class NeuroclawSystem {
         return this.knowledge.predictProperties(instance, category);
     }
     /**
+     * ASI §4: "search memory by exact information" — distinct from `chatHistory()`/
+     * the reasoner's semantic `recall`, both of which rank by meaning.
+     * `LongTermMemory.findExact()` was built as a genuinely missing capability
+     * (only similarity-ranked retrieval existed) and is exposed here for a
+     * caller that wants precise, literal matches rather than fuzzy relevance.
+     */
+    findExactMemory(query) {
+        return this.memory.findExact(query).map(m => m.content);
+    }
+    /**
      * ASI §5: "propose improvements" has to start from an actual weak-point
      * analysis, not a guess — `SelfModel.gaps()` (low-competence domains with
      * enough evidence to trust) and `MistakeTracker.causeBreakdown()` (which
