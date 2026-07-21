@@ -1796,6 +1796,25 @@ async function testSolveIntegration() {
     check(seedMem.importance !== beforeImportance, 'solve() adjusts the importance of a memory that grounded its reasoning');
     check(groundedOut.verified ? seedMem.importance > beforeImportance : seedMem.importance < beforeImportance,
       'The adjustment direction matches the outcome: verified reinforces, unverified demotes');
+
+    // ASI §6: a mistake for the same task is resolved once that task actually
+    // succeeds — it should stop counting toward repeated()'s direct demotion.
+    sys.mistakes.record({ task: 'compute the checksum for the file', description: 'previous failure', cause: 'reasoning' });
+    check(sys.mistakes.all().find(m => m.task === 'compute the checksum for the file').resolved === false, 'A freshly recorded mistake starts unresolved');
+    const checksumOut = await sys.solve('compute the checksum for the file');
+    const afterMistake = sys.mistakes.all().find(m => m.task === 'compute the checksum for the file');
+    if (checksumOut.verified) check(afterMistake.resolved === true, 'solve() resolves a prior mistake for the same task once it actually succeeds');
+    else check(afterMistake.resolved === false, 'An unverified solve does not falsely mark a prior mistake resolved');
+
+    // ASI §4: "identify contradictions" — solve() surfaces (and appropriately
+    // damps confidence for) a known contradiction touching the topic at hand,
+    // rather than answering confidently while the graph disagrees with itself.
+    sys.knowledge.relate('the antique clock', 'is', 'valuable');
+    sys.knowledge.relate('the antique clock', 'is-not', 'valuable');
+    const clockOut = await sys.solve('explain the antique clock');
+    check(clockOut.contradictions.length > 0, 'solve() surfaces a known contradiction touching the current objective');
+    check(clockOut.contradictions[0].includes('antique clock'), 'The surfaced contradiction names the actual conflicting relations');
+    check(sys.findContradictions().length >= 1, 'findContradictions() exposes the same unresolved conflicts system-wide');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

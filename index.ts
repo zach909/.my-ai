@@ -484,6 +484,7 @@ export class NeuroclawSystem {
     approach: string;
     transfers: string[];
     subresults: number;
+    contradictions: string[];
   }> {
     if (!this.initialized) await this.initialize();
     const domain = classifyDomain(problem);
@@ -502,7 +503,7 @@ export class NeuroclawSystem {
         : undefined,
     });
     // ASI §9: never claim more certainty than the track record supports.
-    const confidence = this.selfModel.calibrate(r.confidence, domain);
+    let confidence = this.selfModel.calibrate(r.confidence, domain);
     // ASI §3/§5/§6/§9: learn from the outcome.
     this.selfModel.record(domain, r.verified);
     if (!r.verified) {
@@ -518,7 +519,27 @@ export class NeuroclawSystem {
       // A verified solution is a reusable method (§7) and semantic knowledge (§4).
       this.transfer.register(problem, domain, r.chosen);
       this.knowledge.integrate(r.objective, problem);
+      // ASI §6: this exact task has now succeeded — any prior recorded failure
+      // for it is resolved, not left counting toward repeated() forever (which
+      // would otherwise keep demoting an approach that has since improved).
+      const normalizedProblem = normalizeText(problem);
+      for (const m of this.mistakes.all()) {
+        if (!m.resolved && normalizeText(m.task) === normalizedProblem) this.mistakes.resolve(m.id);
+      }
     }
+    // ASI §4: "identify contradictions" — surface (not silently ignore) any
+    // known contradiction touching this problem's central concept, so a
+    // confident-looking answer doesn't hide that the knowledge graph holds
+    // two things it flatly disagrees about on the same topic.
+    const objectiveKey = normalizeText(r.objective);
+    const contradictions = this.knowledge
+      .findContradictions()
+      .filter(c => normalizeText(c.a.from) === objectiveKey || normalizeText(c.a.to) === objectiveKey)
+      .map(c => `"${c.a.from} ${c.a.type} ${c.a.to}" vs "${c.b.from} ${c.b.type} ${c.b.to}"`);
+    // A known, unresolved contradiction on the topic at hand is itself
+    // evidence the system shouldn't be fully confident — a deserved
+    // reduction, not an arbitrary penalty.
+    if (contradictions.length > 0) confidence = Math.max(0, confidence - 0.15);
     // ASI §5: "which memories are unreliable" — reinforce or demote the
     // specific long-term memories that grounded this reasoning pass (r.available),
     // based on whether the outcome actually verified. A memory that repeatedly
@@ -550,7 +571,7 @@ export class NeuroclawSystem {
     if (this.monitor.hasFailure()) {
       await this.selfHeal();
     }
-    return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length };
+    return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions };
   }
 
   /**
@@ -564,6 +585,11 @@ export class NeuroclawSystem {
    */
   discoverPatterns(topK = 5) {
     return this.discovery.generateHypotheses(topK);
+  }
+
+  /** ASI §4: "identify contradictions" — every unresolved contradiction currently known. */
+  findContradictions() {
+    return this.knowledge.findContradictions();
   }
 
   /**
@@ -736,6 +762,11 @@ function classifyDomain(text: string): string {
   if (has(["design", "engineer", "build", "system", "architecture", "circuit"])) return "engineering";
   if (has(["write", "essay", "story", "language", "translate", "grammar", "poem"])) return "language";
   return "general";
+}
+
+/** Case/whitespace-insensitive text key, matching the normalization used across the core modules. */
+function normalizeText(text: string): string {
+  return (text || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
 // Singleton instance for module-level access
