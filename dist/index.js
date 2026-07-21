@@ -95,9 +95,18 @@ export class NeuroclawSystem {
                 return routed ? routed.output : this.runner.generate(sub);
             },
             competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
-            // ASI §1: don't just report a knowledge gap — actively search the
-            // knowledge graph for it before giving up on a missing term.
-            search: (term) => this.knowledge.search(term, 2).map(h => h.concept.definition || h.concept.name),
+            // ASI §1/§4: don't just report a knowledge gap — actively search the
+            // knowledge graph for it before giving up on a missing term, and
+            // "combine information from multiple memories" (§4) by following each
+            // direct hit's own outward relations one hop further, so a term that
+            // only has an indirect connection (e.g. found via a related concept,
+            // not a definition mentioning it verbatim) still resolves.
+            search: (term) => {
+                const hits = this.knowledge.search(term, 2);
+                const direct = hits.map(h => h.concept.definition || h.concept.name);
+                const combined = hits.flatMap(h => this.knowledge.follow(h.concept.name, [], 1).map(c => c.definition || c.name));
+                return Array.from(new Set([...direct, ...combined])).filter(Boolean);
+            },
             // ASI §5/§12: bias approach scoring by discovered outcome regularities
             // (refreshed after each solve() — see refreshApproachBias()).
             approachBias: (strategy) => this.approachBiasMap.get(strategy) ?? 1,
@@ -564,6 +573,10 @@ export class NeuroclawSystem {
     /** ASI §4: "identify contradictions" — every unresolved contradiction currently known. */
     findContradictions() {
         return this.knowledge.findContradictions();
+    }
+    /** ASI §4: "combine information from multiple memories" — follow a concept's relations outward and return what's reachable. */
+    combineKnowledge(concept, depth = 2) {
+        return this.knowledge.follow(concept, [], depth).map(c => c.definition || c.name);
     }
     /**
      * ASI §5: "propose improvements" has to start from an actual weak-point

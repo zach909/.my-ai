@@ -1921,6 +1921,25 @@ async function testCollaborateCompletion() {
   }
 }
 
+async function testCombineKnowledge() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.knowledge.addConcept('gearbox', 'a mechanical torque converter');
+    sys.knowledge.addConcept('torque converter', 'transfers rotational force between shafts');
+    sys.knowledge.relate('gearbox', 'related-to', 'torque converter');
+    const combined = sys.combineKnowledge('gearbox');
+    check(combined.includes('transfers rotational force between shafts'), 'combineKnowledge() follows a relation to combine information across concepts');
+    check(!combined.includes('a mechanical torque converter'), "combineKnowledge() returns what's reachable from the concept, not the concept's own definition");
+
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1964,6 +1983,7 @@ async function main() {
     ['Empathy alignment veto (Section 3)', testEmpathyVeto],
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
+    ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
