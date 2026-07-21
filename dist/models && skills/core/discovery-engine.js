@@ -86,6 +86,7 @@ export class DiscoveryEngine {
                 contradictionCount: 0,
                 confidence: Math.min(1, c.support),
                 rejected: false,
+                promoted: false,
             };
             this.hypotheses.set(h.id, h);
             out.push(h);
@@ -126,6 +127,28 @@ export class DiscoveryEngine {
     }
     activeHypotheses() {
         return Array.from(this.hypotheses.values()).filter(h => !h.rejected);
+    }
+    /**
+     * §11 step 9 — "improve successful explanations": a hypothesis that has
+     * accumulated real, sustained support (never contradicted, and tested
+     * enough times to trust it) is promoted from a tentative, in-memory
+     * Hypothesis record into durable knowledge — a real "cause causes effect"
+     * relation in the KnowledgeGraph, so the rest of the system (search,
+     * follow, contradiction detection) can find and use it like any other
+     * known fact, instead of it staying invisible outside this engine and at
+     * risk of being silently forgotten. Idempotent: promoting an
+     * already-promoted or not-yet-qualifying hypothesis is a no-op.
+     */
+    improve(hypothesisId, opts = {}) {
+        const h = this.hypotheses.get(hypothesisId);
+        if (!h || h.rejected || h.promoted)
+            return false;
+        const minSupport = opts.minSupport ?? 3;
+        if (h.contradictionCount > 0 || h.supportCount < minSupport)
+            return false;
+        this.knowledge.relate(h.cause, "causes", h.effect, { confidence: h.confidence });
+        h.promoted = true;
+        return true;
     }
     /**
      * Creativity: combine two concepts that have not previously been combined

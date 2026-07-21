@@ -1596,6 +1596,23 @@ async function testAutonomousLearningPredictionDiscovery() {
   check(sunHeat.rejected, 'DiscoveryEngine: a hypothesis contradicted enough times becomes rejected');
   const gen3 = discReuse.generateHypotheses(5);
   check(!gen3.some(h => h.cause === 'sun' && h.effect === 'heat'), 'DiscoveryEngine: a rejected hypothesis is not resurrected by generateHypotheses()');
+
+  // DiscoveryEngine (ASI §11 step 9): "improve successful explanations" —
+  // sustained, uncontradicted support promotes a hypothesis into durable
+  // KnowledgeGraph knowledge instead of it staying an invisible internal record.
+  const kgImprove = new KnowledgeGraph();
+  const discImprove = new DiscoveryEngine(kgImprove);
+  discImprove.observe('rain causes flooding');
+  discImprove.observe('rain causes flooding');
+  const floodHyp = discImprove.generateHypotheses(5).find(h => h.cause === 'rain' && h.effect === 'flooding');
+  check(!!floodHyp, 'DiscoveryEngine: finds the rain/flooding regularity');
+  check(discImprove.improve(floodHyp.id) === false, 'DiscoveryEngine: improve() does not promote a hypothesis before it has enough sustained support');
+  discImprove.test(floodHyp.id, 'rain causes flooding again');
+  discImprove.test(floodHyp.id, 'rain causes flooding once more');
+  check(discImprove.improve(floodHyp.id) === true, 'DiscoveryEngine: improve() promotes a hypothesis once support is sufficient and uncontradicted');
+  check(kgImprove.neighbors('rain').some(n => n.relation.type === 'causes' && n.concept.name === 'flooding'), 'DiscoveryEngine: the promoted hypothesis becomes a real, findable relation in the KnowledgeGraph');
+  check(discImprove.getHypothesis(floodHyp.id).promoted === true, 'DiscoveryEngine: the hypothesis itself is marked promoted');
+  check(discImprove.improve(floodHyp.id) === false, 'DiscoveryEngine: improve() is idempotent -- promoting an already-promoted hypothesis is a no-op');
 }
 
 async function testAGIModules() {

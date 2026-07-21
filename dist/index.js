@@ -586,6 +586,11 @@ export class NeuroclawSystem {
         const observation = `${domain} ${r.chosen} ${r.verified ? "verified" : "unverified"}`;
         for (const h of this.discovery.activeHypotheses()) {
             this.discovery.test(h.id, observation);
+            // §11 step 9 — "improve successful explanations": a hypothesis that has
+            // survived enough tests with zero contradictions earns promotion into
+            // durable KnowledgeGraph knowledge, not just an ever-larger support
+            // count sitting invisibly inside the discovery engine.
+            this.discovery.improve(h.id);
         }
         // ASI §5/§11: feed this solve's (domain, approach, outcome) into the
         // discovery engine as an observation. Across many solves this lets the
