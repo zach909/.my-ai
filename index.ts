@@ -150,6 +150,13 @@ export class NeuroclawSystem {
       // ASI §11: when search can't resolve a gap, try a creative combination
       // of the still-missing terms instead of only ever reporting the gap.
       combine: (a, b) => this.discovery.combine(a, b),
+      // ASI §2 step 6/§10: predict the consequence of each candidate approach
+      // through the real PredictionEngine, so a genuinely dangerous approach
+      // (not just a task-wide flat penalty) is demoted specifically.
+      predictConsequence: (approachAction) => {
+        const p = this.predictor.predict(approachAction);
+        return { dangerous: p.outcomes.some(o => o.dangerous), likelihood: p.mostLikely.likelihood };
+      },
     });
     // Autonomous learning (ASI §3): decides store/update/conflict-preserve/
     // recommend-skill/recommend-extension for new information, on the same

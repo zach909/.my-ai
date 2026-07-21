@@ -94,9 +94,27 @@ export class ReasoningEngine {
                 score: 0.9 + opts.transferHint.similarity * 0.4,
             });
         }
-        // Predicted consequence: a known-mistake pattern lowers every approach's score.
+        // Known-mistake pattern: lowers every approach's score equally (it's a
+        // signal about the *task*, not about any one specific approach).
         for (const a of approaches)
             a.score -= 0.15 * lessons.length;
+        // §2 step 6, for real: predict *this specific approach's* consequence
+        // (not a task-wide flat penalty) and demote it if that prediction is
+        // dangerous — a risky candidate can now actually lose to a safer one
+        // instead of every approach being penalized identically regardless of
+        // which one the danger applies to.
+        const dangerousApproaches = [];
+        if (this.deps.predictConsequence) {
+            for (const a of approaches) {
+                const predicted = this.deps.predictConsequence(`${a.description} — applied to: ${problem}`);
+                if (predicted.dangerous) {
+                    a.score -= 0.5 * predicted.likelihood;
+                    dangerousApproaches.push(a.strategy);
+                }
+            }
+            if (dangerousApproaches.length)
+                push("predict", `dangerous consequence predicted for: ${dangerousApproaches.join(", ")}`);
+        }
         // Self-improvement feedback (§5/§12): bias scores by discovered
         // approach/outcome regularities, if the caller supplies them.
         if (this.deps.approachBias) {
