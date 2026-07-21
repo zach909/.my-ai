@@ -2093,6 +2093,34 @@ async function testStatusCounts() {
   }
 }
 
+async function testHiveDelegationReward() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    const before = coder.trust;
+
+    // Force every delegation to land on 'coder' with a result that matches
+    // ReasoningEngine's own failure pattern, so the reward direction is
+    // deterministic instead of depending on real routing/generation.
+    sys.hive.delegate = async () => ({ agent: coder, output: '[unsolved: forced failure for test]' });
+    await sys.solve('write code and then test the code');
+    check(sys.hive.get('coder').trust < before, "solve() demotes the delegated agent's trust when its subproblem outcome fails");
+
+    const afterFailure = sys.hive.get('coder').trust;
+    sys.hive.delegate = async () => ({ agent: coder, output: 'a genuinely successful result' });
+    await sys.solve('write more code and then test more code');
+    check(sys.hive.get('coder').trust > afterFailure, "solve() rewards the delegated agent's trust when its subproblem outcome succeeds");
+    check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "The hive's zero-sum trust budget is preserved after reward/demotion");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2141,6 +2169,7 @@ async function main() {
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
+    ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
     ['System status counts (Section 7/10)', testStatusCounts],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
