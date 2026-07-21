@@ -350,6 +350,24 @@ export class NeuroclawSystem {
         const result = this.learner.learn(information, opts);
         if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
             const created = await this.pluginRegistry.dispatch(information, "creation");
+            // ASI §5: "maintain versioned copies of important... skills,
+            // extensions... so failed changes can be identified and reversed" —
+            // previously only the in-memory approach-bias map was ever versioned;
+            // a genuinely created skill/extension vanished into a one-off return
+            // value with no record anywhere. Keyed per skill/extension name (not
+            // one shared bucket) so *re*-creating the same one later builds real,
+            // per-target version history a regression could actually be rolled
+            // back from — the same semantics SelfImprovement already gives
+            // approachBias, applied to the thing §5 explicitly names.
+            if (created) {
+                try {
+                    const parsed = JSON.parse(created);
+                    const name = parsed.skill ?? parsed.plugin;
+                    if (name)
+                        this.improvement.snapshot(`${result.decision === "recommend-skill" ? "skill" : "extension"}:${name}`, parsed);
+                }
+                catch { /* non-JSON creation output — nothing structured to version */ }
+            }
             return { ...result, created: created ?? undefined };
         }
         return result;

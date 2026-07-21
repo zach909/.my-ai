@@ -1173,6 +1173,30 @@ async function testLongTermMemory() {
   check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
 }
 
+async function testSkillCreationVersioning() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const procedure = 'first, open the file. then, parse each line. finally, write the results.';
+    const r1 = await sys.learn(procedure);
+    check(r1.decision === 'stored', 'learn() stores a novel procedure the first time it is taught');
+    const r2 = await sys.learn(procedure);
+    check(r2.decision === 'recommend-skill', 'Teaching the same procedure again crosses the skill threshold');
+    check(!!r2.created, 'A recurring procedure genuinely dispatches to the real skill-maker plugin');
+    const name = JSON.parse(r2.created).skill;
+    check(!!name, 'The created skill has a real name parsed from the dispatch output');
+    // ASI §5: "maintain versioned copies of important... skills, extensions"
+    // -- the created skill should now be a real, inspectable version, not
+    // just an ephemeral return value nobody keeps.
+    check(sys.improvement.versionCount(`skill:${name}`) === 1, 'learn() versions the newly created skill via SelfImprovement, keyed by its own name');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testAutonomousTask() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2250,6 +2274,7 @@ async function main() {
     ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],
+    ['Skill creation versioning (Section 5)', testSkillCreationVersioning],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

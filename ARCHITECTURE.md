@@ -443,6 +443,16 @@ Verified live and by the `Long-term memory persistence (Section 4)` suite: two m
 
 Verified live and by a dedicated unit test: a hypothesis with insufficient support fails to promote; once support reaches the threshold, `improve()` succeeds exactly once and the relation becomes real and findable in the `KnowledgeGraph`; re-promoting is correctly a no-op. Live against the real `NeuroclawSystem`: four consistent math-domain solves promoted a genuine "math causes verified" relation (and its mirror) into the knowledge graph.
 
+### Versioned skills/extensions: `learn()`'s creation path finally uses `SelfImprovement`
+
+§5 explicitly asks the system to "maintain versioned copies of important models, skills, extensions, and system changes so that failed changes can be identified and reversed." Only the in-memory `approachBias` map was ever actually versioned this way — a genuinely created skill (via `learn()`'s recurring-procedure → skill-maker dispatch) vanished into a one-off return value with no record anywhere once returned to the immediate caller.
+
+`learn()` now parses the creation output and calls `this.improvement.snapshot(...)` keyed **per skill/extension name** (`skill:<name>` / `extension:<name>`), not one shared bucket — so if the *same* skill is ever recreated later (a regenerated version), it builds real, per-target version history a regression could actually be identified against and reverted from, the same semantics `SelfImprovement` already gives `approachBias`, applied to the exact thing §5 names.
+
+Verified live and by the `Skill creation versioning (Section 5)` suite: teaching a novel procedure stores it; teaching the identical procedure again crosses the skill threshold, genuinely dispatches to the real skill-maker plugin (not a mock), and the resulting skill is versioned under its own name (`versionCount` 0 → 1).
+
+Honesty note on a *pre-existing*, unrelated limitation surfaced while verifying this: `PluginRegistry.dispatch(information, "creation")` tries `skill-maker` before `plugin-maker` for *both* `recommend-skill` and `recommend-extension` decisions, and `skill-maker` never returns null — so a "recommend-extension" decision (procedure taught a third time) currently still creates a skill-maker skill in practice, never actually reaching `plugin-maker`. This predates the change above and is out of scope for it (this PR's snapshot keying is based on the learner's own decision, so it versions correctly either way regardless of which plugin actually fired); flagged here for visibility rather than silently left undocumented.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
