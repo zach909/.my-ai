@@ -513,6 +513,12 @@ The `incorrect-skill` cause classification (added earlier this session) proved *
 
 Verified live and by an extension of the existing `Mistake cause classification (Section 6)` suite: forcing a failure through the "coder" agent records `failedSkill: "coder"` on the mistake, and `improvementTargets().strugglingSkills` correctly shows `{ coder: 1 }` — a genuine, named answer to "which skill is missing/incomplete," not an anonymous count.
 
+### Reasoning trace history — a real persistent record (Section 2)
+
+§2 explicitly asks the system to "maintain a record of its reasoning state so that it can understand what it has already attempted." `ReasoningEngine.reason()` computes a genuinely detailed step-by-step trace on every call (understand, objective, available/missing, search, approaches considered and their scores, which was chosen and why, decompose, mistakes, revise, verify) — but `solve()` discarded it completely the moment its own summarized return value was built. Nothing about *why* a given approach beat the alternatives, or what was actually tried, survived past the single call that produced it.
+
+`solve()`'s return value now includes the full `trace`, and a new bounded `recentTraces` store (capped at 20, oldest evicted first) keeps a real, persistent, cross-call record — exposed via `NeuroclawSystem.reasoningHistory(limit)`. This is the genuine "record of reasoning state" the spec asks for, not just a same-call return value a caller might discard immediately. Verified live and by the `Reasoning trace history (Section 2)` suite: starts empty, `solve()`'s own trace is real and non-trivial, the persisted history survives across calls with the correct problem/trace pairing, and the bound holds (20 entries max, FIFO eviction) after 26 solve() calls.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
