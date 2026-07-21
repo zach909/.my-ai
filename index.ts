@@ -1,4 +1,5 @@
 import { realpathSync } from "node:fs";
+import { writeFile, readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { NeuroclawLLM } from "./models && skills/llm.js";
 import { NeuroPipeline } from "./models && skills/core/pipeline.js";
@@ -131,7 +132,15 @@ export class NeuroclawSystem {
       solveSub: async (sub) => {
         this.ensureDefaultTeam();
         const routed = await this.hive.delegate(sub);
-        if (routed) this.lastDelegations.set(sub, routed.agent.id);
+        if (routed) {
+          this.lastDelegations.set(sub, routed.agent.id);
+          // ASI §8/§13: "combine information across the hive" — publish the
+          // result to the shared blackboard under the subproblem itself, so a
+          // later subproblem (in this or a future solve()) that revisits the
+          // same ground can see what another agent already produced, instead
+          // of every delegated result vanishing the moment it's returned.
+          routed.agent.share(sub, routed.output);
+        }
         return routed ? routed.output : this.runner.generate(sub);
       },
       competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
@@ -387,7 +396,27 @@ export class NeuroclawSystem {
     if (!this.initialized) await this.initialize();
     const result = this.learner.learn(information, opts);
     if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
-      const created = await this.pluginRegistry.dispatch(information, "creation");
+      // The generic "creation" intent always lands on skill-maker (it never
+      // returns null, so plugin-maker is never reached through it) — use the
+      // decision-specific intent so a recommend-extension genuinely creates
+      // an extension instead of silently creating another skill.
+      const created = await this.pluginRegistry.dispatch(information, result.decision === "recommend-extension" ? "extension-creation" : "skill-creation");
+      // ASI §5: "maintain versioned copies of important... skills,
+      // extensions... so failed changes can be identified and reversed" —
+      // previously only the in-memory approach-bias map was ever versioned;
+      // a genuinely created skill/extension vanished into a one-off return
+      // value with no record anywhere. Keyed per skill/extension name (not
+      // one shared bucket) so *re*-creating the same one later builds real,
+      // per-target version history a regression could actually be rolled
+      // back from — the same semantics SelfImprovement already gives
+      // approachBias, applied to the thing §5 explicitly names.
+      if (created) {
+        try {
+          const parsed = JSON.parse(created);
+          const name = parsed.skill ?? parsed.plugin;
+          if (name) this.improvement.snapshot(`${result.decision === "recommend-skill" ? "skill" : "extension"}:${name}`, parsed);
+        } catch { /* non-JSON creation output — nothing structured to version */ }
+      }
       return { ...result, created: created ?? undefined };
     }
     return result;
@@ -573,6 +602,11 @@ export class NeuroclawSystem {
       const failed = /\[(error|unsolved|base):/i.test(s.result);
       this.hive.reward(agentId, failed ? -3 : 3);
     }
+    // Resolve any blackboard conflicts from the sharing above (e.g. two
+    // different solve() calls delegating the same subproblem text to
+    // different agents with different results) the same way collaborate()
+    // already does — trust-weighted, not left permanently unresolved.
+    if (this.lastDelegations.size > 0) this.hive.synchronize();
     // ASI §9: never claim more certainty than the track record supports.
     let confidence = this.selfModel.calibrate(r.confidence, domain);
     // ASI §3/§5/§6/§9: learn from the outcome.
@@ -630,6 +664,11 @@ export class NeuroclawSystem {
     const observation = `${domain} ${r.chosen} ${r.verified ? "verified" : "unverified"}`;
     for (const h of this.discovery.activeHypotheses()) {
       this.discovery.test(h.id, observation);
+      // §11 step 9 — "improve successful explanations": a hypothesis that has
+      // survived enough tests with zero contradictions earns promotion into
+      // durable KnowledgeGraph knowledge, not just an ever-larger support
+      // count sitting invisibly inside the discovery engine.
+      this.discovery.improve(h.id);
     }
     // ASI §5/§11: feed this solve's (domain, approach, outcome) into the
     // discovery engine as an observation. Across many solves this lets the
@@ -887,6 +926,27 @@ export class NeuroclawSystem {
       .sort((a, b) => a.timestamp - b.timestamp)
       .slice(-limit)
       .map(m => m.content);
+  }
+
+  /**
+   * ASI §4: "maintain continuity over extremely long periods of time" — every
+   * `NeuroclawSystem` instance starts with empty long-term memory and nothing
+   * ever persisted it, despite `LongTermMemory.serialize()`/`deserialize()`
+   * existing and being fully unit-tested (a round-trip that works, but that
+   * nothing in the live system ever reached for). This is the missing local
+   * disk I/O that makes that round-trip actually useful across restarts —
+   * consistent with the project's "no external APIs, all execution stays
+   * local" constraint and the same `fs/promises` pattern `InfiniteZipLoop`
+   * already uses for its own disk spill.
+   */
+  async saveMemory(path: string): Promise<void> {
+    await writeFile(path, this.memory.serialize(), "utf-8");
+  }
+
+  /** Replace the current long-term memory with a previously saved snapshot. */
+  async loadMemory(path: string): Promise<void> {
+    const json = await readFile(path, "utf-8");
+    this.memory = LongTermMemory.deserialize(json);
   }
 
   /**

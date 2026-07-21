@@ -1173,6 +1173,40 @@ async function testLongTermMemory() {
   check(!dbHits.some(h => h.item.content.includes('weather')), 'Stopword-only overlap does not surface irrelevant turns');
 }
 
+async function testSkillCreationVersioning() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const procedure = 'first, open the file. then, parse each line. finally, write the results.';
+    const r1 = await sys.learn(procedure);
+    check(r1.decision === 'stored', 'learn() stores a novel procedure the first time it is taught');
+    const r2 = await sys.learn(procedure);
+    check(r2.decision === 'recommend-skill', 'Teaching the same procedure again crosses the skill threshold');
+    check(!!r2.created, 'A recurring procedure genuinely dispatches to the real skill-maker plugin');
+    const name = JSON.parse(r2.created).skill;
+    check(!!name, 'The created skill has a real name parsed from the dispatch output');
+    // ASI §5: "maintain versioned copies of important... skills, extensions"
+    // -- the created skill should now be a real, inspectable version, not
+    // just an ephemeral return value nobody keeps.
+    check(sys.improvement.versionCount(`skill:${name}`) === 1, 'learn() versions the newly created skill via SelfImprovement, keyed by its own name');
+
+    // A third teaching crosses the extension threshold. Previously the
+    // generic "creation" intent always landed on skill-maker (it never
+    // returns null), so an extension recommendation silently created
+    // another skill instead -- fixed by routing decision-specific intents.
+    const r3 = await sys.learn(procedure);
+    check(r3.decision === 'recommend-extension', 'Teaching the same procedure a third time crosses the extension threshold');
+    const extension = JSON.parse(r3.created);
+    check(extension.type === 'plugin-maker', 'A recommend-extension decision genuinely reaches the plugin-maker plugin, not skill-maker again');
+    check(sys.improvement.versionCount(`extension:${extension.plugin}`) === 1, 'The created extension is versioned separately from skills, keyed by its own name');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testAutonomousTask() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -1596,6 +1630,23 @@ async function testAutonomousLearningPredictionDiscovery() {
   check(sunHeat.rejected, 'DiscoveryEngine: a hypothesis contradicted enough times becomes rejected');
   const gen3 = discReuse.generateHypotheses(5);
   check(!gen3.some(h => h.cause === 'sun' && h.effect === 'heat'), 'DiscoveryEngine: a rejected hypothesis is not resurrected by generateHypotheses()');
+
+  // DiscoveryEngine (ASI §11 step 9): "improve successful explanations" —
+  // sustained, uncontradicted support promotes a hypothesis into durable
+  // KnowledgeGraph knowledge instead of it staying an invisible internal record.
+  const kgImprove = new KnowledgeGraph();
+  const discImprove = new DiscoveryEngine(kgImprove);
+  discImprove.observe('rain causes flooding');
+  discImprove.observe('rain causes flooding');
+  const floodHyp = discImprove.generateHypotheses(5).find(h => h.cause === 'rain' && h.effect === 'flooding');
+  check(!!floodHyp, 'DiscoveryEngine: finds the rain/flooding regularity');
+  check(discImprove.improve(floodHyp.id) === false, 'DiscoveryEngine: improve() does not promote a hypothesis before it has enough sustained support');
+  discImprove.test(floodHyp.id, 'rain causes flooding again');
+  discImprove.test(floodHyp.id, 'rain causes flooding once more');
+  check(discImprove.improve(floodHyp.id) === true, 'DiscoveryEngine: improve() promotes a hypothesis once support is sufficient and uncontradicted');
+  check(kgImprove.neighbors('rain').some(n => n.relation.type === 'causes' && n.concept.name === 'flooding'), 'DiscoveryEngine: the promoted hypothesis becomes a real, findable relation in the KnowledgeGraph');
+  check(discImprove.getHypothesis(floodHyp.id).promoted === true, 'DiscoveryEngine: the hypothesis itself is marked promoted');
+  check(discImprove.improve(floodHyp.id) === false, 'DiscoveryEngine: improve() is idempotent -- promoting an already-promoted hypothesis is a no-op');
 }
 
 async function testAGIModules() {
@@ -2121,6 +2172,66 @@ async function testHiveDelegationReward() {
   }
 }
 
+async function testHiveResultSharing() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    const reviewer = sys.hive.get('reviewer');
+
+    // A delegated subproblem's result should become visible on the shared
+    // blackboard under any other agent's identity too, not vanish once
+    // returned -- "combine information across the hive" (Section 8/13).
+    sys.hive.delegate = async (sub) => ({ agent: coder, output: `answer for: ${sub}` });
+    await sys.solve('draft the report and review the report');
+    check(sys.hive.blackboard.read('reviewer', 'draft the report') === 'answer for: draft the report', "A subproblem result delegated to one agent is readable by a different agent via the shared blackboard");
+
+    // Give coder a clear, fixed trust advantage, then force a genuine
+    // conflict: the same subproblem text delegated to a different (lower
+    // trust) agent with a different result on a later solve() call.
+    sys.hive.reward('coder', 20);
+    const coderTrust = sys.hive.get('coder').trust;
+    const reviewerTrust = sys.hive.get('reviewer').trust;
+    check(coderTrust > reviewerTrust, 'Test setup: coder has a clear trust advantage before the conflict');
+    sys.hive.delegate = async (sub) => ({ agent: reviewer, output: `conflicting answer for: ${sub}` });
+    await sys.solve('draft the report and review the report');
+    check(sys.hive.blackboard.hasConflict('draft the report') === false, 'solve() resolves the resulting blackboard conflict via synchronize(), not leaving it open');
+    check(sys.hive.blackboard.read('planner', 'draft the report') === 'answer for: draft the report', 'The conflict resolves to the higher-trust agent\'s value, not just the most recent write');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testMemoryPersistence() {
+  const { NeuroclawSystem } = await load('index.js');
+  const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-memory-'));
+  const path = join(dir, 'memory.json');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    const sys = new NeuroclawSystem();
+    await sys.initialize();
+    sys.memory.remember('the sky is blue on a clear day', { importance: 0.8 });
+    sys.memory.remember('water boils at 100 degrees celsius', { importance: 0.9 });
+    await sys.saveMemory(path);
+
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    check(sys2.memory.all().length === 0, 'A fresh instance starts with empty long-term memory before loading anything');
+    await sys2.loadMemory(path);
+    check(sys2.memory.all().length === 2, 'loadMemory() restores every previously saved memory into a fresh instance');
+    const hits = sys2.memory.retrieve('what temperature does water boil', { topK: 1 });
+    check(hits.length > 0 && hits[0].item.content === 'water boils at 100 degrees celsius', 'A restored memory is genuinely retrievable by meaning, not just present in a list');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2170,7 +2281,10 @@ async function main() {
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
     ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
+    ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
+    ['Long-term memory persistence (Section 4)', testMemoryPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],
+    ['Skill creation versioning (Section 5)', testSkillCreationVersioning],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

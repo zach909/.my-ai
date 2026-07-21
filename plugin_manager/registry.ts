@@ -113,6 +113,14 @@ export class PluginRegistry {
       ...{
         command: ['self-heal', 'terminal', 'file-system'],
         creation: ['skill-maker', 'plugin-maker', 'file-system', 'browser'],
+        // skill-maker always succeeds (even on empty input, it returns a
+        // usage message rather than null), so the generic "creation" bucket
+        // above can never actually reach plugin-maker regardless of caller
+        // intent -- a real request for an *extension* would silently get a
+        // skill instead. These give a caller that already knows which one it
+        // wants a way to actually reach it.
+        "skill-creation": ['skill-maker', 'file-system', 'browser'],
+        "extension-creation": ['plugin-maker', 'file-system', 'browser'],
         exploration: ['browser', 'file-system'],
         analysis: ['file-system', 'browser'],
         query: ['browser'],
