@@ -2071,6 +2071,37 @@ async function testMistakeAssumption() {
   }
 }
 
+async function testMistakeCauseClassification() {
+  const { NeuroclawSystem } = await load('index.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // §6 asks every failure to distinguish missing-knowledge / bad-memory /
+    // incorrect-skill / reasoning -- previously only the first and last were
+    // ever actually assigned. Two fresh systems isolate the two new causes.
+    const sysSkill = new NeuroclawSystem();
+    await sysSkill.initialize();
+    sysSkill.ensureDefaultTeam();
+    const coder = sysSkill.hive.get('coder');
+    sysSkill.hive.delegate = async () => ({ agent: coder, output: '[unsolved: forced failure for test]' });
+    await sysSkill.solve('write code and then test the code');
+    const skillMistake = sysSkill.mistakes.all().find(m => m.task === 'write code and then test the code');
+    check(skillMistake.cause === 'incorrect-skill', 'A failed subproblem that was delegated to a hive agent is classified as incorrect-skill, not generic reasoning');
+
+    const sysMemory = new NeuroclawSystem();
+    await sysMemory.initialize();
+    sysMemory.memory.remember('the deployment pipeline runs tests before merging changes', { importance: 0.1 });
+    sysMemory.ensureDefaultTeam();
+    sysMemory.hive.delegate = async () => null; // no agent match -> falls back to the runner
+    sysMemory.runner.generate = async () => '[unsolved: forced failure, no delegation involved]';
+    await sysMemory.solve('explain the deployment pipeline and how tests run before merging changes');
+    const memoryMistake = sysMemory.mistakes.all().find(m => m.task === 'explain the deployment pipeline and how tests run before merging changes');
+    check(memoryMistake.cause === 'bad-memory', 'A failure grounded in an already-low-importance memory (no delegation involved) is classified as bad-memory');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testExactMemorySearch() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2359,6 +2390,7 @@ async function main() {
     ['Predict properties of a new instance (Section 1)', testPredictProperties],
     ['Exact-match memory search (Section 4)', testExactMemorySearch],
     ['Mistake assumption capture (Section 6)', testMistakeAssumption],
+    ['Mistake cause classification (Section 6)', testMistakeCauseClassification],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],

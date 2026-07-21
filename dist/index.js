@@ -552,11 +552,30 @@ export class NeuroclawSystem {
         // ASI §3/§5/§6/§9: learn from the outcome.
         this.selfModel.record(domain, r.verified);
         if (!r.verified) {
-            const unresolved = r.subresults.filter(s => /\[(error|unsolved|base):/i.test(s.result)).length;
+            const failedSubresults = r.subresults.filter(s => /\[(error|unsolved|base):/i.test(s.result));
+            const unresolved = failedSubresults.length;
+            // §6 asks every failure to distinguish missing-knowledge / bad-memory /
+            // incorrect-skill / reasoning — previously only the first and last were
+            // ever actually assigned. Two more real, computable signals close the
+            // gap: a failed subproblem that was delegated to a hive agent points at
+            // that agent's own skill, not the top-level reasoning approach; a
+            // grounding memory with a demonstrated poor track record (already
+            // low-importance from *prior* calls' demotions — checked here before
+            // this attempt's own reinforce/demote pass runs, further below) points
+            // at the memory itself rather than this attempt's logic.
+            const failedViaSkill = failedSubresults.some(s => this.lastDelegations.has(s.subproblem));
+            const badMemory = r.available.some(content => {
+                const grounding = this.memory.all().find(m => m.content === content);
+                return grounding && grounding.importance < 0.3;
+            });
+            const cause = r.available.length === 0 ? "missing-knowledge" :
+                failedViaSkill ? "incorrect-skill" :
+                    badMemory ? "bad-memory" :
+                        "reasoning";
             this.mistakes.record({
                 task: problem,
                 description: `Reasoning left ${unresolved} subproblem(s) unresolved`,
-                cause: r.available.length === 0 ? "missing-knowledge" : "reasoning",
+                cause,
                 failedStep: r.chosen,
                 // §6: "which assumption was incorrect" — a real, computed assumption
                 // the chosen approach's own consequence prediction rested on, not
