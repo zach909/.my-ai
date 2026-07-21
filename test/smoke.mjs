@@ -2121,6 +2121,40 @@ async function testHiveDelegationReward() {
   }
 }
 
+async function testHiveResultSharing() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    const reviewer = sys.hive.get('reviewer');
+
+    // A delegated subproblem's result should become visible on the shared
+    // blackboard under any other agent's identity too, not vanish once
+    // returned -- "combine information across the hive" (Section 8/13).
+    sys.hive.delegate = async (sub) => ({ agent: coder, output: `answer for: ${sub}` });
+    await sys.solve('draft the report and review the report');
+    check(sys.hive.blackboard.read('reviewer', 'draft the report') === 'answer for: draft the report', "A subproblem result delegated to one agent is readable by a different agent via the shared blackboard");
+
+    // Give coder a clear, fixed trust advantage, then force a genuine
+    // conflict: the same subproblem text delegated to a different (lower
+    // trust) agent with a different result on a later solve() call.
+    sys.hive.reward('coder', 20);
+    const coderTrust = sys.hive.get('coder').trust;
+    const reviewerTrust = sys.hive.get('reviewer').trust;
+    check(coderTrust > reviewerTrust, 'Test setup: coder has a clear trust advantage before the conflict');
+    sys.hive.delegate = async (sub) => ({ agent: reviewer, output: `conflicting answer for: ${sub}` });
+    await sys.solve('draft the report and review the report');
+    check(sys.hive.blackboard.hasConflict('draft the report') === false, 'solve() resolves the resulting blackboard conflict via synchronize(), not leaving it open');
+    check(sys.hive.blackboard.read('planner', 'draft the report') === 'answer for: draft the report', 'The conflict resolves to the higher-trust agent\'s value, not just the most recent write');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2170,6 +2204,7 @@ async function main() {
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
     ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
+    ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
     ['System status counts (Section 7/10)', testStatusCounts],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],

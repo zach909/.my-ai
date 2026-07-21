@@ -94,8 +94,15 @@ export class NeuroclawSystem {
             solveSub: async (sub) => {
                 this.ensureDefaultTeam();
                 const routed = await this.hive.delegate(sub);
-                if (routed)
+                if (routed) {
                     this.lastDelegations.set(sub, routed.agent.id);
+                    // ASI §8/§13: "combine information across the hive" — publish the
+                    // result to the shared blackboard under the subproblem itself, so a
+                    // later subproblem (in this or a future solve()) that revisits the
+                    // same ground can see what another agent already produced, instead
+                    // of every delegated result vanishing the moment it's returned.
+                    routed.agent.share(sub, routed.output);
+                }
                 return routed ? routed.output : this.runner.generate(sub);
             },
             competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
@@ -511,6 +518,12 @@ export class NeuroclawSystem {
             const failed = /\[(error|unsolved|base):/i.test(s.result);
             this.hive.reward(agentId, failed ? -3 : 3);
         }
+        // Resolve any blackboard conflicts from the sharing above (e.g. two
+        // different solve() calls delegating the same subproblem text to
+        // different agents with different results) the same way collaborate()
+        // already does — trust-weighted, not left permanently unresolved.
+        if (this.lastDelegations.size > 0)
+            this.hive.synchronize();
         // ASI §9: never claim more certainty than the track record supports.
         let confidence = this.selfModel.calibrate(r.confidence, domain);
         // ASI §3/§5/§6/§9: learn from the outcome.
