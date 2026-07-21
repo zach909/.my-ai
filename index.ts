@@ -617,6 +617,23 @@ export class NeuroclawSystem {
   }
 
   /**
+   * ASI §5: "propose improvements" has to start from an actual weak-point
+   * analysis, not a guess — `SelfModel.gaps()` (low-competence domains with
+   * enough evidence to trust) and `MistakeTracker.causeBreakdown()` (which
+   * root cause dominates failures) were both built and tested but never once
+   * consulted together to say where the system should focus. This surfaces
+   * that combined picture as a single, real, callable report: the domains
+   * with demonstrated weak performance, and the failure cause responsible for
+   * the most recorded mistakes — the two concrete inputs §5 asks
+   * self-improvement to analyze before proposing anything.
+   */
+  improvementTargets(): { weakDomains: string[]; dominantCause: string; causeBreakdown: Record<string, number> } {
+    const breakdown = this.mistakes.causeBreakdown();
+    const dominantCause = Object.entries(breakdown).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown";
+    return { weakDomains: this.selfModel.gaps(), dominantCause, causeBreakdown: breakdown };
+  }
+
+  /**
    * Lazily spawn the default planner/coder/reviewer team the first time any
    * hive-based capability is used (collaborate, autonomousTask, or solve()'s
    * subproblem delegation), so they all share one team and trust budget

@@ -1875,6 +1875,35 @@ async function testEmpathyVeto() {
   }
 }
 
+async function testImprovementTargets() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const empty = sys.improvementTargets();
+    check(Array.isArray(empty.weakDomains) && empty.weakDomains.length === 0, 'improvementTargets() reports no weak domains before any evidence exists');
+
+    // Drive a domain to demonstrated low competence with enough attempts to
+    // clear SelfModel's evidence threshold.
+    for (let i = 0; i < 4; i++) sys.selfModel.record('astrophysics', false);
+    const withGap = sys.improvementTargets();
+    check(withGap.weakDomains.includes('astrophysics'), 'improvementTargets() surfaces a domain with demonstrated low competence');
+
+    // Dominant failure cause should reflect the actual mistake distribution,
+    // not just whichever cause was recorded most recently.
+    sys.mistakes.record({ task: 'a', description: 'x', cause: 'missing-knowledge' });
+    sys.mistakes.record({ task: 'b', description: 'y', cause: 'missing-knowledge' });
+    sys.mistakes.record({ task: 'c', description: 'z', cause: 'reasoning' });
+    const targets = sys.improvementTargets();
+    check(targets.dominantCause === 'missing-knowledge', 'improvementTargets() identifies the failure cause responsible for the most mistakes');
+    check(targets.causeBreakdown['missing-knowledge'] === 2 && targets.causeBreakdown['reasoning'] === 1, 'The cause breakdown reflects actual recorded occurrence counts');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1916,6 +1945,7 @@ async function main() {
     ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
     ['Empathy alignment veto (Section 3)', testEmpathyVeto],
+    ['Self-improvement targeting (Section 5)', testImprovementTargets],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
