@@ -1501,6 +1501,18 @@ async function testAutonomousLearningPredictionDiscovery() {
   const r4 = learner.learn(proc);
   check(r4.decision === 'recommend-extension', 'AutonomousLearner: a repeatedly-taught procedure is recommended for extension creation');
 
+  // ASI §4: "update outdated knowledge" vs "preserve when uncertain" are distinct.
+  // Comparable confidence (like r2/r3 above) preserves both; a clear confidence
+  // margin should instead supersede the old relation.
+  const kg2 = new KnowledgeGraph();
+  const learner2 = new AutonomousLearner(kg2);
+  kg2.relate('the sensor', 'is', 'accurate', { confidence: 0.2 }); // low-confidence prior belief
+  const upd = learner2.learn('the sensor is not accurate');
+  check(upd.decision === 'updated-existing', 'AutonomousLearner: evidence that clearly outweighs a low-confidence prior belief updates it, not just preserves the conflict');
+  check(kg2.neighbors('the sensor', 'is').some(n => n.relation.superseded), 'AutonomousLearner: the outdated relation is marked superseded (not deleted, not silently current)');
+  check(kg2.current('the sensor', 'is').length === 0, 'KnowledgeGraph: current() excludes a superseded relation');
+  check(kg2.current('the sensor', 'is-not').some(n => n.concept.name === 'accurate'), 'KnowledgeGraph: current() surfaces the new, superseding relation');
+
   // PredictionEngine (ASI §10): predict before acting, compare after, danger flagging.
   const { PredictionEngine } = await load('models && skills/core/prediction-engine.js');
   const pred = new PredictionEngine();

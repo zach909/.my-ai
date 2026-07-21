@@ -26,6 +26,9 @@ export interface Relation {
   to: string;
   weight: number;
   confidence: number;
+  timestamp: number;
+  /** True once a higher-confidence relation has superseded this one (ASI §4: "update outdated knowledge"). */
+  superseded: boolean;
 }
 
 export interface ConceptHit {
@@ -85,12 +88,34 @@ export class KnowledgeGraph {
       to: normalize(to),
       weight: opts.weight ?? 1,
       confidence: opts.confidence ?? 1,
+      timestamp: Date.now(),
+      superseded: false,
     };
     this.relations.push(rel);
     return rel;
   }
 
-  /** Immediate neighbours of a concept, optionally filtered by relation type. */
+  /**
+   * Mark existing (from,type,to) relations as superseded by newer knowledge
+   * (ASI §4: "update outdated knowledge") rather than deleting them — history
+   * is preserved, but `current()` no longer surfaces them as believed. Returns
+   * how many relations were marked.
+   */
+  supersede(from: string, type: string, to: string): number {
+    const f = normalize(from);
+    const t = normalize(type);
+    const o = normalize(to);
+    let count = 0;
+    for (const r of this.relations) {
+      if (r.from === f && r.type === t && r.to === o && !r.superseded) {
+        r.superseded = true;
+        count++;
+      }
+    }
+    return count;
+  }
+
+  /** Immediate neighbours of a concept, optionally filtered by relation type. Includes superseded relations (full history). */
   neighbors(name: string, relType?: string): Array<{ relation: Relation; concept: Concept }> {
     const id = normalize(name);
     const rt = relType ? normalize(relType) : undefined;
@@ -102,6 +127,11 @@ export class KnowledgeGraph {
       }
     }
     return out;
+  }
+
+  /** Like neighbors(), but excludes superseded relations — the "currently believed" view. */
+  current(name: string, relType?: string): Array<{ relation: Relation; concept: Concept }> {
+    return this.neighbors(name, relType).filter(n => !n.relation.superseded);
   }
 
   /**

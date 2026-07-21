@@ -105,6 +105,25 @@ export class AutonomousLearner {
 
     const conflict = this.findConflict(triple.subject, triple.relation, triple.object);
     if (conflict) {
+      const oldConfidence = this.oldConflictConfidence(triple.subject, conflict, triple.object);
+      // ASI §4 draws a real distinction between two cases that look similar:
+      //   - genuinely uncertain (confidences are comparable) → preserve both,
+      //     let the caller reconcile; this is NOT overwriting.
+      //   - new evidence clearly outweighs the old (a real confidence margin)
+      //     → the old relation is outdated, not just disputed: supersede it
+      //     rather than leaving stale knowledge presented as equally current.
+      if (oldConfidence !== undefined && reliability - oldConfidence >= 0.25) {
+        this.knowledge.supersede(triple.subject, conflict, triple.object);
+        this.knowledge.relate(triple.subject, triple.relation, triple.object, { confidence: reliability });
+        return {
+          decision: "updated-existing",
+          reliability,
+          subject: triple.subject,
+          relation: triple.relation,
+          object: triple.object,
+          reason: `New evidence (${reliability.toFixed(2)}) clearly outweighs the prior "${triple.subject} ${conflict} ${triple.object}" (${oldConfidence.toFixed(2)}) — old relation marked superseded, not left as if still current`,
+        };
+      }
       // Preserve both: add the new relation alongside the existing one instead
       // of overwriting it, and flag it for the caller to resolve/reconcile.
       this.knowledge.relate(triple.subject, triple.relation, triple.object, { confidence: reliability });
@@ -137,9 +156,17 @@ export class AutonomousLearner {
     for (const [x, y] of NEGATION_PAIRS) { negOf.set(x, y); negOf.set(y, x); }
     const opposite = negOf.get(normalize(relation));
     if (!opposite) return null;
-    const neighbors = this.knowledge.neighbors(subject, opposite);
+    const neighbors = this.knowledge.current(subject, opposite);
     if (neighbors.some(n => normalize(n.concept.name) === normalize(object))) return opposite;
     return null;
+  }
+
+  /** Confidence of the currently-believed (not-yet-superseded) conflicting relation, if any. */
+  private oldConflictConfidence(subject: string, relationType: string, object: string): number | undefined {
+    const match = this.knowledge
+      .current(subject, relationType)
+      .find(n => normalize(n.concept.name) === normalize(object));
+    return match?.relation.confidence;
   }
 }
 
