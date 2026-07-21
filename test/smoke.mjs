@@ -1192,6 +1192,16 @@ async function testSkillCreationVersioning() {
     // -- the created skill should now be a real, inspectable version, not
     // just an ephemeral return value nobody keeps.
     check(sys.improvement.versionCount(`skill:${name}`) === 1, 'learn() versions the newly created skill via SelfImprovement, keyed by its own name');
+
+    // A third teaching crosses the extension threshold. Previously the
+    // generic "creation" intent always landed on skill-maker (it never
+    // returns null), so an extension recommendation silently created
+    // another skill instead -- fixed by routing decision-specific intents.
+    const r3 = await sys.learn(procedure);
+    check(r3.decision === 'recommend-extension', 'Teaching the same procedure a third time crosses the extension threshold');
+    const extension = JSON.parse(r3.created);
+    check(extension.type === 'plugin-maker', 'A recommend-extension decision genuinely reaches the plugin-maker plugin, not skill-maker again');
+    check(sys.improvement.versionCount(`extension:${extension.plugin}`) === 1, 'The created extension is versioned separately from skills, keyed by its own name');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

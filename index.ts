@@ -396,7 +396,11 @@ export class NeuroclawSystem {
     if (!this.initialized) await this.initialize();
     const result = this.learner.learn(information, opts);
     if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
-      const created = await this.pluginRegistry.dispatch(information, "creation");
+      // The generic "creation" intent always lands on skill-maker (it never
+      // returns null, so plugin-maker is never reached through it) — use the
+      // decision-specific intent so a recommend-extension genuinely creates
+      // an extension instead of silently creating another skill.
+      const created = await this.pluginRegistry.dispatch(information, result.decision === "recommend-extension" ? "extension-creation" : "skill-creation");
       // ASI §5: "maintain versioned copies of important... skills,
       // extensions... so failed changes can be identified and reversed" —
       // previously only the in-memory approach-bias map was ever versioned;
