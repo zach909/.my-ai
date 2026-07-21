@@ -241,11 +241,24 @@ export class NeuroclawSystem {
       .filter(h => h.similarity >= 0.1);
     this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
 
-    // 3. Gate the "respond" action through the AlignmentVeto before running.
+    // 3. ASI §10: simulate the likely consequences of responding *before*
+    //    gating the action, so a genuinely dangerous request (not a fixed
+    //    "reversible: true" regardless of content) actually reaches the
+    //    AlignmentVeto's irreversible/external-effect confirmation rule.
+    const prediction = this.predictor.predict(`respond to: ${input}`);
+    const predictedDanger = prediction.outcomes.some(o => o.dangerous);
+
+    // 4. Gate the "respond" action through the AlignmentVeto before running.
     //    A negative-valence user under high arousal lowers our confidence,
     //    surfacing as self-model surprise the veto can escalate on.
     const decision = this.veto.evaluate(
-      { id: `respond:${Date.now()}`, name: "respond to user", capabilities: ["text-generate"], reversible: true },
+      {
+        id: `respond:${Date.now()}`,
+        name: "respond to user",
+        capabilities: ["text-generate"],
+        reversible: !predictedDanger,
+        externalEffect: predictedDanger,
+      },
       { selfModelSurprise: emotion.valence < 0 ? emotion.arousal * 0.5 : 0 }
     );
     if (!decision.allowed) {
@@ -254,7 +267,7 @@ export class NeuroclawSystem {
       return blocked;
     }
 
-    // 4. Route the query to a high-level capability (Section 6): a summarize,
+    // 5. Route the query to a high-level capability (Section 6): a summarize,
     //    recall or self-heal request is served directly by the matching
     //    subsystem instead of full neural generation. Anything else — and any
     //    routed capability that has nothing to act on — falls through to
@@ -274,14 +287,11 @@ export class NeuroclawSystem {
       return this.respondDirect(`From our earlier conversation, here's what's relevant:\n${recalled}`, turnImportance);
     }
 
-    // 5. Run the query through the real neural runner (THORNS intent →
+    // 6. Run the query through the real neural runner (THORNS intent →
     //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation),
     //    grounded in any relevant prior conversation turns so the response
     //    integrates previous context instead of treating the prompt as an
     //    isolated event (continuous context, Section 7).
-    // ASI §10: simulate the likely consequences of responding before actually
-    // generating, so a dangerous predicted outcome is on record before acting.
-    const prediction = this.predictor.predict(`respond to: ${input}`);
     try {
       let result = await this.runner.generate(input, priorHistory.map(h => h.item.content));
       if (decision.requiresConfirmation) {
@@ -299,7 +309,7 @@ export class NeuroclawSystem {
       // noise register as a failure on every single call).
       if (comparison) this.monitor.observe("prediction.surprise", comparison.surprise);
 
-      // 6. Store the (compressed) output in the ZIP-IO output loop, and commit
+      // 7. Store the (compressed) output in the ZIP-IO output loop, and commit
       //    the assistant turn to long-term memory so the whole exchange becomes
       //    retrievable chat history (Section 7).
       await this.zipIO.emit(result);
