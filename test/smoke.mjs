@@ -1702,6 +1702,30 @@ async function testAGIModules() {
   const withoutTransfer = await new ReasoningEngine({}).reason('build and test the system');
   check(!withoutTransfer.approaches.some(a => a.strategy === 'transfer'), 'ReasoningEngine: no transfer candidate exists when no hint is given');
 
+  // ReasoningEngine (ASI §2 step 6): predict the consequence of *each*
+  // candidate approach for real, not a flat task-wide penalty. A transfer
+  // hint whose method name itself is dangerous ("delete all records") should
+  // demote only the transfer approach's score, not decompose/analogy/
+  // first-principles equally -- proving the prediction is approach-specific.
+  const dangerPredictor = (approachAction) => ({ dangerous: /delete|destroy|wipe/i.test(approachAction), likelihood: 0.8 });
+  const safeTransfer = await new ReasoningEngine({ recall: () => ['a fact'], predictConsequence: dangerPredictor }).reason('build and test the system', {
+    transferHint: { domain: 'engineering', method: 'modular pipeline design', similarity: 0.9 },
+  });
+  check(safeTransfer.chosen === 'transfer', 'ReasoningEngine: a safe transfer method is still chosen when no approach predicts danger');
+  const dangerousTransfer = await new ReasoningEngine({ recall: () => ['a fact'], predictConsequence: dangerPredictor }).reason('build and test the system', {
+    transferHint: { domain: 'engineering', method: 'delete all records', similarity: 0.9 },
+  });
+  check(dangerousTransfer.chosen !== 'transfer', 'ReasoningEngine: a transfer method whose predicted consequence is dangerous loses even with high similarity');
+  for (const strategy of ['decompose', 'analogy', 'first-principles']) {
+    const safeScore = safeTransfer.approaches.find(a => a.strategy === strategy).score;
+    const dangerScore = dangerousTransfer.approaches.find(a => a.strategy === strategy).score;
+    check(Math.abs(safeScore - dangerScore) < 1e-9, `ReasoningEngine: the ${strategy} approach's score is untouched by another approach's dangerous prediction`);
+  }
+  const dangerousTransferScore = dangerousTransfer.approaches.find(a => a.strategy === 'transfer').score;
+  const safeTransferScore = safeTransfer.approaches.find(a => a.strategy === 'transfer').score;
+  check(dangerousTransferScore < safeTransferScore, "ReasoningEngine: the transfer approach's own score is specifically demoted when its predicted consequence is dangerous");
+  check(dangerousTransfer.trace.some(t => t.kind === 'predict' && t.detail.includes('transfer')), 'ReasoningEngine: the dangerous prediction is recorded in the trace, naming the affected approach');
+
   // ReasoningEngine (ASI §11): a creative combination is a real last-resort
   // exploration when search leaves multiple terms genuinely missing.
   const combine = (a, b) => ({ name: `${a}-${b} hybrid`, definition: `combining ${a} and ${b}` });
@@ -2055,10 +2079,43 @@ async function testStatusCounts() {
     await sys.solve('calculate the average of a list of numbers');
     const afterSolve = sys.getStatus();
     check(afterSolve.transferredMethods === before.transferredMethods + 1, 'getStatus() reflects KnowledgeTransfer.size() growing after solve() registers a method');
+    // solve() now predicts the consequence of each candidate approach
+    // (Section 2 step 6), so this alone already tracks several predictions --
+    // not just the single processQuery() call below.
+    check(afterSolve.trackedPredictions > before.trackedPredictions, 'getStatus() reflects PredictionEngine.size() growing from solve()\'s own per-approach consequence prediction');
 
+    const beforeQuery = afterSolve.trackedPredictions;
     await sys.processQuery('what is 2 plus 2');
     const afterQuery = sys.getStatus();
-    check(afterQuery.trackedPredictions === before.trackedPredictions + 1, 'getStatus() reflects PredictionEngine.size() growing after processQuery() predicts an outcome');
+    check(afterQuery.trackedPredictions === beforeQuery + 1, 'getStatus() reflects PredictionEngine.size() growing by exactly one more after processQuery() predicts its own outcome');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testHiveDelegationReward() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    const before = coder.trust;
+
+    // Force every delegation to land on 'coder' with a result that matches
+    // ReasoningEngine's own failure pattern, so the reward direction is
+    // deterministic instead of depending on real routing/generation.
+    sys.hive.delegate = async () => ({ agent: coder, output: '[unsolved: forced failure for test]' });
+    await sys.solve('write code and then test the code');
+    check(sys.hive.get('coder').trust < before, "solve() demotes the delegated agent's trust when its subproblem outcome fails");
+
+    const afterFailure = sys.hive.get('coder').trust;
+    sys.hive.delegate = async () => ({ agent: coder, output: 'a genuinely successful result' });
+    await sys.solve('write more code and then test more code');
+    check(sys.hive.get('coder').trust > afterFailure, "solve() rewards the delegated agent's trust when its subproblem outcome succeeds");
+    check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "The hive's zero-sum trust budget is preserved after reward/demotion");
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -2112,6 +2169,7 @@ async function main() {
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
+    ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
     ['System status counts (Section 7/10)', testStatusCounts],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],

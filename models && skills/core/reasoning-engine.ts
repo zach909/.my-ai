@@ -56,6 +56,17 @@ export interface ReasoningDeps {
    * what it does have.
    */
   combine?: (a: string, b: string) => { name: string; definition: string } | null;
+  /**
+   * ASI §2 step 6 — "predict the consequences of each approach", genuinely:
+   * simulate what running a given candidate approach on this problem would
+   * do, and flag whether that predicted outcome is dangerous. Distinct from
+   * the flat per-mistake `lessons` penalty below (which penalizes every
+   * approach equally regardless of which one is actually risky); this
+   * penalizes *the specific approach* whose predicted consequence is
+   * dangerous, so a genuinely risky candidate can lose even when it would
+   * otherwise have scored highest.
+   */
+  predictConsequence?: (approachAction: string) => { dangerous: boolean; likelihood: number };
 }
 
 export interface ReasoningStep { kind: string; detail: string; }
@@ -182,8 +193,25 @@ export class ReasoningEngine {
         score: 0.9 + opts.transferHint.similarity * 0.4,
       });
     }
-    // Predicted consequence: a known-mistake pattern lowers every approach's score.
+    // Known-mistake pattern: lowers every approach's score equally (it's a
+    // signal about the *task*, not about any one specific approach).
     for (const a of approaches) a.score -= 0.15 * lessons.length;
+    // §2 step 6, for real: predict *this specific approach's* consequence
+    // (not a task-wide flat penalty) and demote it if that prediction is
+    // dangerous — a risky candidate can now actually lose to a safer one
+    // instead of every approach being penalized identically regardless of
+    // which one the danger applies to.
+    const dangerousApproaches: string[] = [];
+    if (this.deps.predictConsequence) {
+      for (const a of approaches) {
+        const predicted = this.deps.predictConsequence(`${a.description} — applied to: ${problem}`);
+        if (predicted.dangerous) {
+          a.score -= 0.5 * predicted.likelihood;
+          dangerousApproaches.push(a.strategy);
+        }
+      }
+      if (dangerousApproaches.length) push("predict", `dangerous consequence predicted for: ${dangerousApproaches.join(", ")}`);
+    }
     // Self-improvement feedback (§5/§12): bias scores by discovered
     // approach/outcome regularities, if the caller supplies them.
     if (this.deps.approachBias) {

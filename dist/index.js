@@ -44,6 +44,8 @@ export class NeuroclawSystem {
         this.chatGroup = null;
         /** Bias per reasoning strategy derived from discovered outcome regularities (§5/§12). */
         this.approachBiasMap = new Map();
+        /** Which hive agent handled each subproblem in the current solve() call, so its outcome can reward/demote that agent (§8/§12). */
+        this.lastDelegations = new Map();
         this.llm = new NeuroclawLLM({});
         this.pipeline = new NeuroPipeline({});
         this.thesaurus = new ThesaurusDictionary();
@@ -92,6 +94,8 @@ export class NeuroclawSystem {
             solveSub: async (sub) => {
                 this.ensureDefaultTeam();
                 const routed = await this.hive.delegate(sub);
+                if (routed)
+                    this.lastDelegations.set(sub, routed.agent.id);
                 return routed ? routed.output : this.runner.generate(sub);
             },
             competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
@@ -113,6 +117,13 @@ export class NeuroclawSystem {
             // ASI §11: when search can't resolve a gap, try a creative combination
             // of the still-missing terms instead of only ever reporting the gap.
             combine: (a, b) => this.discovery.combine(a, b),
+            // ASI §2 step 6/§10: predict the consequence of each candidate approach
+            // through the real PredictionEngine, so a genuinely dangerous approach
+            // (not just a task-wide flat penalty) is demoted specifically.
+            predictConsequence: (approachAction) => {
+                const p = this.predictor.predict(approachAction);
+                return { dangerous: p.outcomes.some(o => o.dangerous), likelihood: p.mostLikely.likelihood };
+            },
         });
         // Autonomous learning (ASI §3): decides store/update/conflict-preserve/
         // recommend-skill/recommend-extension for new information, on the same
@@ -466,6 +477,10 @@ export class NeuroclawSystem {
     async solve(problem, opts) {
         if (!this.initialized)
             await this.initialize();
+        // Track which hive agent (if any) handles each subproblem in *this*
+        // solve() call only, so the outcome below can reward/demote the right
+        // agent rather than one from a stale prior call.
+        this.lastDelegations.clear();
         const domain = classifyDomain(problem);
         // ASI §7: structurally-similar past problems from other domains + their method.
         const transferHits = this.transfer.transfer(problem, { domain });
@@ -481,6 +496,21 @@ export class NeuroclawSystem {
                 ? { domain: transferHits[0].source.domain, method: transferHits[0].source.method, similarity: transferHits[0].similarity }
                 : undefined,
         });
+        // ASI §8/§12: "assign subproblems to specialized systems... re-evaluate
+        // the complete solution" implies feeding the outcome back to whoever did
+        // the work, not just to the reasoning approach as a whole. HiveMind.reward()
+        // existed and was unit-tested but was never called from live delegation —
+        // an agent whose subproblem resolved cleanly is rewarded (more trust, so
+        // future delegation prefers it under a tie), one whose subproblem failed
+        // is demoted, using the same zero-sum trust mechanism promotion already
+        // uses elsewhere in the hive.
+        for (const s of r.subresults) {
+            const agentId = this.lastDelegations.get(s.subproblem);
+            if (!agentId)
+                continue;
+            const failed = /\[(error|unsolved|base):/i.test(s.result);
+            this.hive.reward(agentId, failed ? -3 : 3);
+        }
         // ASI §9: never claim more certainty than the track record supports.
         let confidence = this.selfModel.calibrate(r.confidence, domain);
         // ASI §3/§5/§6/§9: learn from the outcome.
