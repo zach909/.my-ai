@@ -2002,6 +2002,46 @@ async function testKnownDomains() {
   }
 }
 
+async function testApproachBiasEvaluateGate() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.discovery.observe('decompose leads verified');
+    sys.discovery.observe('decompose leads verified');
+    sys.discovery.observe('decompose leads verified');
+    const hyps = sys.discovery.generateHypotheses(10);
+    const forward = hyps.find(h => h.cause === 'decompose' && h.effect === 'verified');
+    const reverse = hyps.find(h => h.cause === 'verified' && h.effect === 'decompose');
+    check(!!forward && !!reverse, 'Both directions of the decompose/verified co-occurrence are discovered as hypotheses');
+
+    // Drive support to 3 and contradictions to 2 on both directions: real
+    // confidence 3/(3+4) = 0.43, below chance (0.5) but NOT formally rejected
+    // (contradictionCount 2 <= supportCount 3) -- the case that previously
+    // slipped through and perturbed the bias map unconditionally.
+    for (const h of [forward, reverse]) {
+      const supportMsg = h.cause === 'decompose' ? 'decompose leads verified' : 'verified leads decompose';
+      const contradictMsg = h.cause === 'decompose' ? 'decompose without success here' : 'verified without decomposition here';
+      sys.discovery.test(h.id, supportMsg);
+      sys.discovery.test(h.id, supportMsg);
+      sys.discovery.test(h.id, contradictMsg);
+      sys.discovery.test(h.id, contradictMsg);
+    }
+    const forwardAfter = sys.discovery.getHypothesis(forward.id);
+    check(Math.abs(forwardAfter.confidence - 0.4286) < 0.001, 'The manufactured hypothesis lands just below chance-level confidence');
+    check(forwardAfter.rejected === false, 'The hypothesis is not formally rejected (contradictions do not yet outweigh support)');
+
+    await sys['refreshApproachBias']();
+    check(sys.approachBiasMap.get('decompose') === undefined, "SelfImprovement.evaluate() gates the below-chance correlation out -- it never perturbs the bias map");
+    const hist = sys.improvementHistory();
+    check(hist.discarded >= 2 && hist.recent.every(i => i.target !== 'approachBias:decompose' || i.kept === false), 'improvementHistory() records the discarded (not-kept) evaluation, not just successes');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2049,6 +2089,7 @@ async function main() {
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
+    ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

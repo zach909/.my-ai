@@ -613,7 +613,7 @@ export class NeuroclawSystem {
     // ASI §5/§12: turn the discovery into actual behavior change — bias future
     // approach selection by what has been found to correlate with verified vs
     // unverified outcomes, closing the loop instead of leaving it an inert log.
-    this.refreshApproachBias();
+    await this.refreshApproachBias();
     // ASI §9/§10: track the confidence signal for self-monitoring. A
     // failure-level anomaly (real divergence from the adaptive baseline, not
     // ordinary noise) is the signal self-monitor.ts documents as the trigger
@@ -683,6 +683,19 @@ export class NeuroclawSystem {
   }
 
   /**
+   * ASI §5: every proposed change `refreshApproachBias()` tested, kept or
+   * discarded — `SelfImprovement.kept()`/`history()` existed and were
+   * unit-tested but never surfaced, so there was no way to see which
+   * correlations actually passed the chance-level test versus which were
+   * discarded as noise.
+   */
+  improvementHistory(): { kept: number; discarded: number; recent: ReturnType<SelfImprovement["history"]> } {
+    const history = this.improvement.history();
+    const kept = this.improvement.kept().length;
+    return { kept, discarded: history.length - kept, recent: history.slice(-10) };
+  }
+
+  /**
    * Lazily spawn the default planner/coder/reviewer team the first time any
    * hive-based capability is used (collaborate, autonomousTask, or solve()'s
    * subproblem delegation), so they all share one team and trust budget
@@ -701,15 +714,26 @@ export class NeuroclawSystem {
    * boost, one correlated with "unverified" gets demoted, bounded to keep any
    * single regularity from dominating reasoning entirely.
    *
-   * Each resulting bias map is versioned via `SelfImprovement` (§5 — "maintain
-   * versioned copies... so failed changes can be identified and reversed"),
-   * so `rollbackApproachBias()` can undo the most recent refresh if later
-   * evidence shows it was a regression. This is honest about what it is: a
-   * single solve's outcome can't rigorously prove a bias change was good or
-   * bad on its own (the bias only affects *future* reasoning), so this
-   * versions the change rather than claiming to auto-validate it.
+   * §5 also asks that a proposed change be "tested... compared against the
+   * previous version, and kept only if it produces a measurable benefit" —
+   * `SelfImprovement.evaluate()` existed and was unit-tested but was never
+   * actually called anywhere, so every correlation got applied unconditionally
+   * no matter how weak or contradiction-eroded. Each candidate bias change is
+   * now gated through a real `evaluate()` call: the hypothesis's confidence
+   * (candidate) against chance-level 0.5 (baseline, "the previous, unadjusted
+   * version") — a correlation no better than a coin flip is discarded rather
+   * than perturbing reasoning on noise.
+   *
+   * The resulting bias map is also versioned via `SelfImprovement.snapshot()`
+   * (below) — "maintain versioned copies... so failed changes can be
+   * identified and reversed" — so `rollbackApproachBias()` can undo the most
+   * recent refresh if later evidence shows it was a regression. This is
+   * honest about what it is: a single solve's outcome can't rigorously prove
+   * a bias change was good or bad on its own (the bias only affects *future*
+   * reasoning), so this versions the change rather than claiming to
+   * auto-validate the map as a whole.
    */
-  private refreshApproachBias(): void {
+  private async refreshApproachBias(): Promise<void> {
     const knownStrategies = ["decompose", "analogy", "first-principles", "transfer"];
     for (const h of this.discovery.generateHypotheses(10)) {
       let strategy: string | undefined;
@@ -717,6 +741,13 @@ export class NeuroclawSystem {
       if (knownStrategies.includes(h.cause)) { strategy = h.cause; outcome = h.effect; }
       else if (knownStrategies.includes(h.effect)) { strategy = h.effect; outcome = h.cause; }
       if (!strategy || (outcome !== "verified" && outcome !== "unverified")) continue;
+      const tested = await this.improvement.evaluate(
+        `approachBias:${strategy}`,
+        `${strategy} correlates with ${outcome} at confidence ${h.confidence.toFixed(2)}`,
+        () => 0.5,
+        () => h.confidence,
+      );
+      if (!tested.kept) continue;
       const bias = outcome === "verified" ? 1 + h.confidence * 0.3 : 1 - h.confidence * 0.3;
       this.approachBiasMap.set(strategy, Math.max(0.4, Math.min(1.6, bias)));
     }
