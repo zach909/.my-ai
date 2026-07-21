@@ -330,6 +330,13 @@ export class NeuroclawSystem {
     //    isolated event (continuous context, Section 7).
     try {
       let result = await this.runner.generate(input, priorHistory.map(h => h.item.content));
+      // EmpathyEngine.adjustDecision() was built and tested but never called:
+      // when alignment supports genuine autonomous judgement, adapt tone to
+      // the user's actual emotional state (supportive/enthusiastic/direct);
+      // when it doesn't (below canMakeAutonomousDecision()'s threshold, but
+      // not low enough to trip shouldVeto() above), flag the uncertainty
+      // honestly instead of answering as confidently as always.
+      result = this.empathy.adjustDecision(result, input);
       if (decision.requiresConfirmation) {
         result = `${result}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`;
       }

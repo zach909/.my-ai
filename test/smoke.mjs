@@ -1961,6 +1961,29 @@ async function testHealLog() {
   }
 }
 
+async function testEmpathyToneAdjustment() {
+  const { NeuroclawSystem } = await load('index.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // Separate fresh systems for each case: a mild-negative *first* turn (no
+    // prior positive settling) stays above the Section 3 veto's threshold
+    // while still reading as negative valence to adjustDecision(), so the
+    // tone-adjustment path is reached rather than the withhold path above it.
+    const sysPositive = new NeuroclawSystem();
+    await sysPositive.initialize();
+    const positive = await sysPositive.processQuery('I love this awesome great news, what is 2 plus 2?');
+    check(positive.startsWith('Great!'), 'adjustDecision() adds an enthusiastic tone under positive user alignment');
+
+    const sysNegative = new NeuroclawSystem();
+    await sysNegative.initialize();
+    const supportive = await sysNegative.processQuery('I am a bit sad and worried about this, what is 2 plus 2?');
+    check(supportive.startsWith('I understand.'), 'adjustDecision() adds a supportive tone under negative user alignment');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2006,6 +2029,7 @@ async function main() {
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
     ['Self-healer log introspection (Section 24)', testHealLog],
+    ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
