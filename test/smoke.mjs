@@ -1838,6 +1838,43 @@ async function testSolveIntegration() {
   }
 }
 
+async function testEmpathyVeto() {
+  const { EmpathyEngine } = await load('models && skills/core/empathy.js');
+  const e = new EmpathyEngine();
+  check(e.getAlignmentScore() === 1, 'EmpathyEngine starts fully aligned');
+  check(e.shouldVeto(0, 0.3) === false, 'shouldVeto() stays false under full alignment even at low confidence');
+
+  // Settle fully at one emotional extreme so the model's own state converges
+  // toward it, then hit it with a single sudden, maximal swing to the
+  // opposite extreme -- this produces a real one-step misalignment before the
+  // lerp-based sync mechanism can "catch up", unlike steady oscillation which
+  // just settles into a periodic steady-state near the threshold.
+  for (let i = 0; i < 15; i++) e.updateUserContext('I love this happy excited awesome wonderful great news!!!');
+  const settled = e.getAlignmentScore();
+  check(settled > 0.85, 'Sustained same-direction input lets the model re-align close to 1.0');
+  e.updateUserContext('I hate this angry frustrated disaster!!!');
+  const afterSwing = e.getAlignmentScore();
+  check(afterSwing < 0.7, 'A sudden maximal opposite-direction swing drops alignment below the veto threshold');
+  check(e.shouldVeto(0, 0.3) === true, 'shouldVeto() fires under genuine misalignment at low confidence');
+  check(e.shouldVeto(0, 0.9) === false, 'shouldVeto() does not fire when confidence is high enough to override the misalignment');
+
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    for (let i = 0; i < 15; i++) sys.empathy.updateUserContext('I love this happy excited awesome wonderful great news!!!');
+    // The veto reads *this turn's* own emotional swing (processQuery syncs on
+    // its own input before checking), so the misalignment and the low-valence
+    // input must land in the same call to actually withhold.
+    const out = await sys.processQuery('I hate this angry frustrated disaster!!!');
+    check(typeof out === 'string' && out.includes('Withheld'), 'processQuery() withholds its response when a sudden emotional swing collapses empathy alignment (Section 3 veto)');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1878,6 +1915,7 @@ async function main() {
     ['AGI capability modules (ASI §2-10)', testAGIModules],
     ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
+    ['Empathy alignment veto (Section 3)', testEmpathyVeto],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

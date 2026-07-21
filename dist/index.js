@@ -212,6 +212,20 @@ export class NeuroclawSystem {
             .retrieve(input, { topK: 3, tag: "chat-turn" })
             .filter(h => h.similarity >= 0.1);
         this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
+        // 2b. Section 3's *other* alignment veto: EmpathyEngine.shouldVeto() asks
+        // a distinct question from AlignmentVeto below — not "is this action
+        // dangerous" but "does my read of this specific user relationship still
+        // support trusting my own judgement at all". A confidence proxy derived
+        // from the same valence signal already used above keeps this consistent
+        // with the rest of the method rather than an unrelated fabricated number.
+        // Fails safe: low alignment *and* low confidence withholds the response
+        // instead of guessing — but the turn is still recorded above, so context
+        // isn't silently dropped even when the response is withheld.
+        const empathyConfidence = emotion.valence < 0 ? 0.3 : 0.7;
+        if (this.empathy.shouldVeto(0, empathyConfidence)) {
+            const blocked = `[Withheld] Alignment with the current conversation (${this.empathy.getAlignmentScore().toFixed(2)}) is too low to confidently proceed.`;
+            return this.respondDirect(blocked, turnImportance);
+        }
         // 3. ASI §10: simulate the likely consequences of responding *before*
         //    gating the action, so a genuinely dangerous request (not a fixed
         //    "reversible: true" regardless of content) actually reaches the
