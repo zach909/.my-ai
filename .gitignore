@@ -1,1 +1,1 @@
-Nothing needs to be added to .gitignore since only a markdown file (ASI_REQUIREMENTS.md) was added, which is a source/config file and should not be ignored.
+# No changes needed - only a markdown file was modified, no build artifacts, dependencies, or temp files detected
