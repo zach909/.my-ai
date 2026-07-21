@@ -489,6 +489,10 @@ Two more real, computable signals close the gap, using data `solve()` already ha
 
 Verified live and by the `Mistake cause classification (Section 6)` suite: a failure whose subproblem was delegated to a forced-failing hive agent classifies as `incorrect-skill`; a failure grounded in a memory pre-seeded with low importance (no delegation involved) classifies as `bad-memory` — both previously would have landed in the generic `"reasoning"` bucket.
 
+### Self-monitor history introspection (Section 9/11)
+
+§9/§11's "accurate self-evaluation" needs the full observation record, not just a snapshot of current anomalies. `SelfMonitor.history()` existed and was unit-tested, but `selfIntegrity()` only ever exposed `anomalies()`/`hasFailure()` — the current state, not "how has this signal actually behaved over time." `NeuroclawSystem.monitorHistory(signal?)` exposes the same real observation log, optionally scoped to one signal. Verified live and by the `Self-monitor history introspection (Section 9/11)` suite: starts empty, reflects every observation across all signals, and scopes correctly to a single signal's own track record.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.

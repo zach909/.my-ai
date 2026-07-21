@@ -841,6 +841,17 @@ export class NeuroclawSystem {
         return { anomalies: this.monitor.anomalies(), hasFailure: this.monitor.hasFailure() };
     }
     /**
+     * ASI §9/§11: "accurate self-evaluation" needs the full observation
+     * record, not just the current anomaly snapshot — `SelfMonitor.history()`
+     * existed and was unit-tested but was never surfaced anywhere a caller
+     * could inspect a signal's actual track record (e.g. "how has
+     * prediction.surprise really behaved over time", not just "is it anomalous
+     * right now"). Optionally scoped to one signal.
+     */
+    monitorHistory(signal) {
+        return this.monitor.history(signal);
+    }
+    /**
      * ASI §9: "what it knows" includes its own repair history, not just current
      * anomalies — `SelfHealer.getLog()` existed and was unit-tested but was
      * never surfaced anywhere a caller could actually inspect it without

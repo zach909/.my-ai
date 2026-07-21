@@ -2102,6 +2102,24 @@ async function testMistakeCauseClassification() {
   }
 }
 
+async function testMonitorHistory() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.monitorHistory().length === 0, 'monitorHistory() starts empty before any observation is made');
+    sys.monitor.observe('solve.confidence', 0.6);
+    sys.monitor.observe('solve.confidence', 0.65);
+    sys.monitor.observe('other.signal', 0.5);
+    check(sys.monitorHistory().length === 3, 'monitorHistory() reflects every observation across all signals');
+    check(sys.monitorHistory('solve.confidence').length === 2, 'monitorHistory(signal) scopes to just that signal\'s track record');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testExactMemorySearch() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2391,6 +2409,7 @@ async function main() {
     ['Exact-match memory search (Section 4)', testExactMemorySearch],
     ['Mistake assumption capture (Section 6)', testMistakeAssumption],
     ['Mistake cause classification (Section 6)', testMistakeCauseClassification],
+    ['Self-monitor history introspection (Section 9/11)', testMonitorHistory],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
