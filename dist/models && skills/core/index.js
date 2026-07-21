@@ -29,3 +29,15 @@ export { SelfHealer } from './self-healer';
 export { ContextCompressor } from './context-compressor';
 // System-level capability routing (Section 6).
 export { IntentRouter } from './intent-router';
+// System-level self-modeling / prediction-vs-actual (Section 11 / ASI §9-10).
+export { SelfMonitor } from './self-monitor';
+// AGI / ASI capability layer.
+export { MistakeTracker } from './mistake-tracker'; // ASI §6
+export { KnowledgeGraph } from './knowledge-graph'; // ASI §4
+export { ReasoningEngine } from './reasoning-engine'; // ASI §2 / §8
+export { KnowledgeTransfer } from './knowledge-transfer'; // ASI §7
+export { SelfModel } from './self-model'; // ASI §9
+export { SelfImprovement } from './self-improvement'; // ASI §5
+export { AutonomousLearner } from './autonomous-learner'; // ASI §3
+export { PredictionEngine } from './prediction-engine'; // ASI §10
+export { DiscoveryEngine } from './discovery-engine'; // ASI §11

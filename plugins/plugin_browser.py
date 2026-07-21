@@ -63,7 +63,38 @@ class BrowserPlugin(Plugin):
 
     def _open(self, url: str) -> str:
         """Open a URL in a new Chrome app (no external API — uses local browser)."""
-        import subprocess, shutil
+        import subprocess, shutil, os
+        from urllib.parse import urlparse
+
+        # Security Check: Prevent argument/flag injection
+        if url.strip().startswith("-"):
+            raise ValueError("Security Error: Invalid URL (potential argument injection).")
+
+        # Security Check: Restrict protocol schemes and check path traversal for file scheme or local paths
+        parsed = urlparse(url)
+        scheme = parsed.scheme.lower() if parsed.scheme else ""
+        if scheme and scheme not in ("http", "https", "ftp", "file"):
+            raise ValueError("Security Error: Forbidden protocol scheme.")
+
+        if scheme == "file" or not scheme:
+            path_part = parsed.path
+            if parsed.netloc and parsed.netloc.lower() != "localhost":
+                path_part = parsed.netloc + path_part
+
+            is_potential_local_path = (
+                scheme == "file" or
+                path_part.startswith("/") or
+                path_part.startswith(".") or
+                path_part.startswith("~") or
+                ".." in path_part
+            )
+            if is_potential_local_path:
+                target_path = os.path.realpath(os.path.abspath(os.path.expanduser(path_part)))
+                cwd = os.path.realpath(os.getcwd())
+                rel = os.path.relpath(target_path, cwd)
+                if rel.startswith("..") or os.path.isabs(rel):
+                    raise ValueError("Security Error: Path traversal detected in file or local path.")
+
         for exe in ("google-chrome", "chromium", "chromium-browser", "xdg-open"):
             if shutil.which(exe):
                 subprocess.Popen([exe, url], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)

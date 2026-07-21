@@ -171,8 +171,18 @@ export class PlanTracker {
     summary() {
         const p = this.progress();
         const lines = [`Objective: ${this.objective || "(none)"}`, `Progress: ${p.completed}/${p.total} done, ${p.failed} failed, ${p.pending} pending`];
-        for (const s of this.steps)
+        if (this.constraints.length)
+            lines.push(`Constraints: ${this.constraints.join("; ")}`);
+        for (const s of this.steps) {
             lines.push(`  [${statusMark(s.status)}] ${s.description}`);
+            for (const alt of s.alternatives)
+                lines.push(`      alt: ${alt}`);
+        }
+        if (this.decisions.length) {
+            lines.push("Decisions:");
+            for (const d of this.decisions)
+                lines.push(`  - ${d}`);
+        }
         return lines.join("\n");
     }
     reset() {
