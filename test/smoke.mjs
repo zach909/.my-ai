@@ -2047,6 +2047,103 @@ async function testPredictProperties() {
   }
 }
 
+async function testMistakeAssumption() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    // §6 explicitly asks every recorded failure to capture "which assumption
+    // was incorrect" -- previously always left undefined. Force an
+    // unresolved solve() and check the real, computed assumption behind it,
+    // drawn from PredictionEngine via the reasoner's predictConsequence dep.
+    sys.hive.delegate = async () => ({ agent: coder, output: '[unsolved: forced failure for test]' });
+    await sys.solve('delete the temporary file and then remove the old network cache');
+    const mistake = sys.mistakes.all().find(m => m.task === 'delete the temporary file and then remove the old network cache');
+    check(!!mistake, 'An unresolved solve() records a mistake for the task');
+    check(typeof mistake.assumption === 'string' && mistake.assumption.length > 0, 'The recorded mistake has a real, non-empty assumption, not undefined');
+    check(mistake.assumption.includes('file') || mistake.assumption.includes('network'), 'The assumption reflects the actual content of the task, not a generic constant');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testMistakeCauseClassification() {
+  const { NeuroclawSystem } = await load('index.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // §6 asks every failure to distinguish missing-knowledge / bad-memory /
+    // incorrect-skill / reasoning -- previously only the first and last were
+    // ever actually assigned. Two fresh systems isolate the two new causes.
+    const sysSkill = new NeuroclawSystem();
+    await sysSkill.initialize();
+    sysSkill.ensureDefaultTeam();
+    const coder = sysSkill.hive.get('coder');
+    sysSkill.hive.delegate = async () => ({ agent: coder, output: '[unsolved: forced failure for test]' });
+    await sysSkill.solve('write code and then test the code');
+    const skillMistake = sysSkill.mistakes.all().find(m => m.task === 'write code and then test the code');
+    check(skillMistake.cause === 'incorrect-skill', 'A failed subproblem that was delegated to a hive agent is classified as incorrect-skill, not generic reasoning');
+
+    const sysMemory = new NeuroclawSystem();
+    await sysMemory.initialize();
+    sysMemory.memory.remember('the deployment pipeline runs tests before merging changes', { importance: 0.1 });
+    sysMemory.ensureDefaultTeam();
+    sysMemory.hive.delegate = async () => null; // no agent match -> falls back to the runner
+    sysMemory.runner.generate = async () => '[unsolved: forced failure, no delegation involved]';
+    await sysMemory.solve('explain the deployment pipeline and how tests run before merging changes');
+    const memoryMistake = sysMemory.mistakes.all().find(m => m.task === 'explain the deployment pipeline and how tests run before merging changes');
+    check(memoryMistake.cause === 'bad-memory', 'A failure grounded in an already-low-importance memory (no delegation involved) is classified as bad-memory');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testMonitorHistory() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.monitorHistory().length === 0, 'monitorHistory() starts empty before any observation is made');
+    sys.monitor.observe('solve.confidence', 0.6);
+    sys.monitor.observe('solve.confidence', 0.65);
+    sys.monitor.observe('other.signal', 0.5);
+    check(sys.monitorHistory().length === 3, 'monitorHistory() reflects every observation across all signals');
+    check(sys.monitorHistory('solve.confidence').length === 2, 'monitorHistory(signal) scopes to just that signal\'s track record');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testExactMemorySearch() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.memory.remember('order number A-88231 shipped on tuesday');
+    sys.memory.remember('a package with tracking code A-88231 left the warehouse');
+    sys.memory.remember('completely unrelated memory about the weather being sunny');
+    // ASI §4: "search memory by exact information" is explicitly distinct
+    // from "search memory by meaning" -- only the semantic retrieve()
+    // existed. An opaque identifier like an order code has little semantic
+    // signal for embedding-similarity ranking to reliably surface both
+    // mentions, but exact substring matching finds them precisely.
+    const exact = sys.findExactMemory('A-88231');
+    check(exact.length === 2, 'findExactMemory() finds every memory containing the literal substring, not a fuzzy top-K subset');
+    check(exact.every(m => m.includes('A-88231')), 'Every returned memory genuinely contains the exact queried text');
+    check(sys.findExactMemory('a phrase that was never stored').length === 0, 'findExactMemory() returns nothing for text that was never actually stored');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testHealLog() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2309,6 +2406,10 @@ async function main() {
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
     ['Predict properties of a new instance (Section 1)', testPredictProperties],
+    ['Exact-match memory search (Section 4)', testExactMemorySearch],
+    ['Mistake assumption capture (Section 6)', testMistakeAssumption],
+    ['Mistake cause classification (Section 6)', testMistakeCauseClassification],
+    ['Self-monitor history introspection (Section 9/11)', testMonitorHistory],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],

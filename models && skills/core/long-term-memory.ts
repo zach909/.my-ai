@@ -136,6 +136,22 @@ export class LongTermMemory {
     return top;
   }
 
+  /**
+   * Exact-match search: literal, case-insensitive substring matching against
+   * stored content — distinct from `retrieve()`'s semantic similarity ranking
+   * (Section 4/7 explicitly separates "search memory by meaning" from
+   * "search memory by exact information"; only the former existed). Returns
+   * every match (most recent first), not a top-K relevance ranking, since
+   * exact search is about precision, not fuzzy relevance.
+   */
+  findExact(query: string): MemoryItem[] {
+    const q = (query || "").toLowerCase().trim();
+    if (!q) return [];
+    return this.all()
+      .filter(item => item.content.toLowerCase().includes(q))
+      .sort((a, b) => b.timestamp - a.timestamp);
+  }
+
   /** Explicit promotion/demotion of a memory's retention value. */
   reinforce(id: string, delta: number): void {
     const item = this.items.get(id);
