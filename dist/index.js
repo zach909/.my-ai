@@ -467,6 +467,14 @@ export class NeuroclawSystem {
      * engine's current hypotheses. A strategy correlated with "verified" gets a
      * boost, one correlated with "unverified" gets demoted, bounded to keep any
      * single regularity from dominating reasoning entirely.
+     *
+     * Each resulting bias map is versioned via `SelfImprovement` (§5 — "maintain
+     * versioned copies... so failed changes can be identified and reversed"),
+     * so `rollbackApproachBias()` can undo the most recent refresh if later
+     * evidence shows it was a regression. This is honest about what it is: a
+     * single solve's outcome can't rigorously prove a bias change was good or
+     * bad on its own (the bias only affects *future* reasoning), so this
+     * versions the change rather than claiming to auto-validate it.
      */
     refreshApproachBias() {
         const knownStrategies = ["decompose", "analogy", "first-principles"];
@@ -486,6 +494,24 @@ export class NeuroclawSystem {
             const bias = outcome === "verified" ? 1 + h.confidence * 0.3 : 1 - h.confidence * 0.3;
             this.approachBiasMap.set(strategy, Math.max(0.4, Math.min(1.6, bias)));
         }
+        // Version the resulting state (after the change, matching SelfImprovement's
+        // "each snapshot is a committed version" model — rollback() discards the
+        // latest and returns the one before it).
+        this.improvement.snapshot("approachBias", Object.fromEntries(this.approachBiasMap));
+    }
+    /**
+     * ASI §5: revert the approach-selection bias to its previous version — the
+     * "failed changes can be identified and reversed" guarantee, made concrete
+     * and callable rather than aspirational.
+     */
+    rollbackApproachBias() {
+        if (this.improvement.versionCount("approachBias") < 2)
+            return false;
+        const previous = this.improvement.rollback("approachBias");
+        if (!previous)
+            return false;
+        this.approachBiasMap = new Map(Object.entries(previous));
+        return true;
     }
     /** ASI §9/§11: current self-monitor anomalies and whether recovery is warranted. */
     selfIntegrity() {

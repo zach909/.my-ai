@@ -1659,6 +1659,15 @@ async function testSolveIntegration() {
     const decomposeBias = patterns.find(h => (h.cause === 'decompose' && h.effect === 'verified') || (h.cause === 'verified' && h.effect === 'decompose'));
     check(!!decomposeBias, 'solve() history yields a decompose/verified regularity after repeated consistent outcomes');
     check((sys.approachBiasMap.get('decompose') ?? 1) >= 1, 'refreshApproachBias() boosts (or leaves neutral) an approach correlated with verified outcomes');
+
+    // ASI §5: the bias map is versioned, and a regression can be identified
+    // and reversed rather than silently kept.
+    const biasBeforeOneMore = new Map(sys.approachBiasMap);
+    await sys.solve(`calculate the sum and then compute the average, run extra`);
+    check(sys.improvement.versionCount('approachBias') >= 2, 'Approach-bias changes are versioned (SelfImprovement)');
+    const rolledBack = sys.rollbackApproachBias();
+    check(rolledBack === true, 'rollbackApproachBias() reverts the most recent change');
+    check(sys.approachBiasMap.get('decompose') === biasBeforeOneMore.get('decompose'), 'Rollback restores the bias map to its previous version, not further back');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
