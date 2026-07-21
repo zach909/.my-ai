@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs";
-import { writeFile, readFile } from "node:fs/promises";
+import { writeFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { NeuroclawLLM } from "./models && skills/llm.js";
 import { NeuroPipeline } from "./models && skills/core/pipeline.js";
 import { ThesaurusDictionary } from "./models && skills/thesaurus.js";
@@ -520,11 +522,21 @@ export class NeuroclawSystem {
         // choosable approach (not just the `transfers` metadata above), so the
         // reasoner can genuinely combine knowledge from another field into the
         // solution instead of only ever using a single specialized approach.
+        // ASI §7 explicitly asks for using knowledge from multiple domains
+        // *simultaneously*, not just the single best cross-domain match with the
+        // rest silently discarded. Take the best hit, then the next-best hit from
+        // a genuinely *different* domain (capped at two — combining more starts
+        // diluting coherence rather than adding real value).
+        const transferHints = [];
+        if (transferHits[0]) {
+            transferHints.push({ domain: transferHits[0].source.domain, method: transferHits[0].source.method, similarity: transferHits[0].similarity });
+            const secondDomainHit = transferHits.slice(1).find(t => t.source.domain !== transferHits[0].source.domain);
+            if (secondDomainHit)
+                transferHints.push({ domain: secondDomainHit.source.domain, method: secondDomainHit.source.method, similarity: secondDomainHit.similarity });
+        }
         const r = await this.reasoner.reason(problem, {
             depth: opts?.depth ?? 1,
-            transferHint: transferHits[0]
-                ? { domain: transferHits[0].source.domain, method: transferHits[0].source.method, similarity: transferHits[0].similarity }
-                : undefined,
+            transferHints: transferHints.length > 0 ? transferHints : undefined,
         });
         // ASI §8/§12: "assign subproblems to specialized systems... re-evaluate
         // the complete solution" implies feeding the outcome back to whoever did
@@ -563,7 +575,8 @@ export class NeuroclawSystem {
             // low-importance from *prior* calls' demotions — checked here before
             // this attempt's own reinforce/demote pass runs, further below) points
             // at the memory itself rather than this attempt's logic.
-            const failedViaSkill = failedSubresults.some(s => this.lastDelegations.has(s.subproblem));
+            const failedAgentIds = Array.from(new Set(failedSubresults.map(s => this.lastDelegations.get(s.subproblem)).filter((id) => !!id)));
+            const failedViaSkill = failedAgentIds.length > 0;
             const badMemory = r.available.some(content => {
                 const grounding = this.memory.all().find(m => m.content === content);
                 return grounding && grounding.importance < 0.3;
@@ -572,11 +585,21 @@ export class NeuroclawSystem {
                 failedViaSkill ? "incorrect-skill" :
                     badMemory ? "bad-memory" :
                         "reasoning";
+            // §5: "which skills are missing/incomplete" needs to name the actual
+            // responsible skill, not just tally an aggregate "incorrect-skill"
+            // count — record which specific hive agent(s) were involved so a
+            // later caller can see exactly which capability keeps failing.
             this.mistakes.record({
                 task: problem,
                 description: `Reasoning left ${unresolved} subproblem(s) unresolved`,
                 cause,
                 failedStep: r.chosen,
+                // §5: "which skills are missing/incomplete" needs to name the
+                // actual responsible skill, not just tally an aggregate
+                // "incorrect-skill" count — record which specific hive agent(s)
+                // were involved so a later caller can see exactly which capability
+                // keeps failing (see MistakeTracker.skillBreakdown()).
+                failedSkill: failedViaSkill ? failedAgentIds.join(", ") : undefined,
                 // §6: "which assumption was incorrect" — a real, computed assumption
                 // the chosen approach's own consequence prediction rested on, not
                 // left blank. Previously this field existed on Mistake/MistakeInput
@@ -719,7 +742,9 @@ export class NeuroclawSystem {
     improvementTargets() {
         const breakdown = this.mistakes.causeBreakdown();
         const dominantCause = Object.entries(breakdown).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown";
-        return { weakDomains: this.selfModel.gaps(), dominantCause, causeBreakdown: breakdown };
+        // §5: "which skills are missing/incomplete" — a genuinely named
+        // breakdown, not just the aggregate "incorrect-skill" cause count above.
+        return { weakDomains: this.selfModel.gaps(), dominantCause, causeBreakdown: breakdown, strugglingSkills: this.mistakes.skillBreakdown() };
     }
     /**
      * ASI §9: the self-model should answer both halves of "what it knows" —
@@ -940,6 +965,40 @@ export class NeuroclawSystem {
     async loadMemory(path) {
         const json = await readFile(path, "utf-8");
         this.memory = LongTermMemory.deserialize(json);
+    }
+    /**
+     * ASI §9/§12: "which skills it has" / "use learning to create skills, use
+     * skills to solve problems" — every skill `learn()` creates via the real
+     * skill-maker plugin is written to `~/.neuroclaw/skills/*.neuri` and then
+     * never read back by anything: there was no live inventory of what the
+     * system has actually taught itself. This gives the self-model that
+     * inventory (name + description parsed from each file's own header),
+     * honestly scoped: it reports what exists on disk, it does not (yet)
+     * materialize those files back into the live neural pipeline — a much
+     * larger, separate integration (`NeuroLangInterpreter.materialize()` is
+     * itself still disconnected from the live pipeline entirely) that this
+     * does not attempt to solve in one step.
+     */
+    async selfAuthoredSkills() {
+        const skillDir = join(homedir(), ".neuroclaw", "skills");
+        let entries;
+        try {
+            entries = await readdir(skillDir);
+        }
+        catch {
+            return [];
+        }
+        const skills = [];
+        for (const entry of entries.filter(e => e.endsWith(".neuri"))) {
+            const path = join(skillDir, entry);
+            try {
+                const content = await readFile(path, "utf-8");
+                const descMatch = content.match(/^-- Description:\s*(.*)$/m);
+                skills.push({ name: entry.replace(/\.neuri$/, ""), description: descMatch?.[1] ?? "", path });
+            }
+            catch { /* unreadable file — skip rather than fail the whole listing */ }
+        }
+        return skills;
     }
     /**
      * Get system status

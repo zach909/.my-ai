@@ -1207,6 +1207,36 @@ async function testSkillCreationVersioning() {
   }
 }
 
+async function testSelfAuthoredSkillsInventory() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const before = await sys.selfAuthoredSkills();
+    // A skill-maker file is written to disk under a name derived from its
+    // taught text -- use a distinctive phrase unlikely to collide with any
+    // artifact from a prior test run, so this test's own creation is
+    // unambiguously identifiable regardless of what else already exists.
+    const marker = `zzzsmoketest${Date.now()}`;
+    const procedure = `first, validate the ${marker} input then, transform the ${marker} data finally, save the ${marker} output`;
+    await sys.learn(procedure);
+    const r2 = await sys.learn(procedure);
+    check(r2.decision === 'recommend-skill', 'Teaching the marked procedure twice crosses the skill threshold');
+    // ASI §9/§12: "which skills it has" / "use skills to solve problems" --
+    // the created skill was previously write-only, invisible to any live
+    // inventory. selfAuthoredSkills() should now find it.
+    const after = await sys.selfAuthoredSkills();
+    check(after.length === before.length + 1, 'selfAuthoredSkills() grows by exactly one after a new skill is created');
+    const found = after.find(s => s.description.includes(marker));
+    check(!!found, 'The newly created skill is discoverable in the live inventory, not just written to disk invisibly');
+    check(found.name.includes('validate') && found.path.endsWith('.neuri'), "The inventory entry's name and path reflect the actual generated skill file");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testAutonomousTask() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -1745,13 +1775,31 @@ async function testAGIModules() {
   // ReasoningEngine (ASI §1/§7): a cross-domain transfer is a real, choosable
   // approach, not just reported metadata alongside the result.
   const withTransfer = await new ReasoningEngine({}).reason('build and test the system', {
-    transferHint: { domain: 'engineering', method: 'modular pipeline design', similarity: 0.9 },
+    transferHints: [{ domain: 'engineering', method: 'modular pipeline design', similarity: 0.9 }],
   });
   check(withTransfer.approaches.some(a => a.strategy === 'transfer'), 'ReasoningEngine: a transfer hint becomes a real candidate approach');
   check(withTransfer.chosen === 'transfer', 'ReasoningEngine: a strong cross-domain transfer can actually be chosen, not just reported');
   check(withTransfer.result.includes('modular pipeline design') && withTransfer.result.includes('engineering'), 'ReasoningEngine: the result reflects which method was transferred and from where');
   const withoutTransfer = await new ReasoningEngine({}).reason('build and test the system');
   check(!withoutTransfer.approaches.some(a => a.strategy === 'transfer'), 'ReasoningEngine: no transfer candidate exists when no hint is given');
+
+  // ReasoningEngine (ASI §7): "use knowledge from multiple domains
+  // simultaneously" -- two hints from genuinely different domains combine
+  // into one real approach naming both methods, not just the single best
+  // match with the second silently discarded.
+  const withMultiTransfer = await new ReasoningEngine({}).reason('build and test the system', {
+    transferHints: [
+      { domain: 'engineering', method: 'modular pipeline design', similarity: 0.9 },
+      { domain: 'physics', method: 'thermal equilibrium modeling', similarity: 0.8 },
+    ],
+  });
+  const multiApproach = withMultiTransfer.approaches.find(a => a.strategy === 'transfer');
+  check(!!multiApproach && multiApproach.description.includes('modular pipeline design') && multiApproach.description.includes('thermal equilibrium modeling'),
+    'ReasoningEngine: a combined transfer approach names methods from both domains, not just the first');
+  check(multiApproach.description.includes('engineering') && multiApproach.description.includes('physics'),
+    'ReasoningEngine: the combined approach names both source domains');
+  check(withMultiTransfer.chosen === 'transfer' && withMultiTransfer.result.includes('modular pipeline design') && withMultiTransfer.result.includes('thermal equilibrium modeling'),
+    'ReasoningEngine: the final result reflects both transferred methods when the combined approach is chosen');
 
   // ReasoningEngine (ASI §2 step 6): predict the consequence of *each*
   // candidate approach for real, not a flat task-wide penalty. A transfer
@@ -1760,11 +1808,11 @@ async function testAGIModules() {
   // first-principles equally -- proving the prediction is approach-specific.
   const dangerPredictor = (approachAction) => ({ dangerous: /delete|destroy|wipe/i.test(approachAction), likelihood: 0.8 });
   const safeTransfer = await new ReasoningEngine({ recall: () => ['a fact'], predictConsequence: dangerPredictor }).reason('build and test the system', {
-    transferHint: { domain: 'engineering', method: 'modular pipeline design', similarity: 0.9 },
+    transferHints: [{ domain: 'engineering', method: 'modular pipeline design', similarity: 0.9 }],
   });
   check(safeTransfer.chosen === 'transfer', 'ReasoningEngine: a safe transfer method is still chosen when no approach predicts danger');
   const dangerousTransfer = await new ReasoningEngine({ recall: () => ['a fact'], predictConsequence: dangerPredictor }).reason('build and test the system', {
-    transferHint: { domain: 'engineering', method: 'delete all records', similarity: 0.9 },
+    transferHints: [{ domain: 'engineering', method: 'delete all records', similarity: 0.9 }],
   });
   check(dangerousTransfer.chosen !== 'transfer', 'ReasoningEngine: a transfer method whose predicted consequence is dangerous loses even with high similarity');
   for (const strategy of ['decompose', 'analogy', 'first-principles']) {
@@ -2087,6 +2135,10 @@ async function testMistakeCauseClassification() {
     await sysSkill.solve('write code and then test the code');
     const skillMistake = sysSkill.mistakes.all().find(m => m.task === 'write code and then test the code');
     check(skillMistake.cause === 'incorrect-skill', 'A failed subproblem that was delegated to a hive agent is classified as incorrect-skill, not generic reasoning');
+    // §5: "which skills are missing/incomplete" needs to name the actual
+    // responsible skill, not just tally an aggregate cause count.
+    check(skillMistake.failedSkill === 'coder', 'The mistake names the specific responsible agent, not just the generic incorrect-skill cause');
+    check(sysSkill.improvementTargets().strugglingSkills.coder === 1, 'improvementTargets() surfaces a real, named skill-failure breakdown, not just an aggregate cause count');
 
     const sysMemory = new NeuroclawSystem();
     await sysMemory.initialize();
@@ -2419,6 +2471,7 @@ async function main() {
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],
     ['Skill creation versioning (Section 5)', testSkillCreationVersioning],
+    ['Self-authored skills inventory (Section 9/12)', testSelfAuthoredSkillsInventory],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
