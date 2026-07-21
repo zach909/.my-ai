@@ -1904,6 +1904,23 @@ async function testImprovementTargets() {
   }
 }
 
+async function testCollaborateCompletion() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.collaborationResult() === null, 'collaborationResult() is null before any collaboration has happened');
+    const out = await sys.collaborate('decide how to prioritize the backlog');
+    check(out.complete === true, "collaborate() marks the chat group's own completion state true, not just returning a value");
+    check(out.decision === sys.collaborationResult(), 'collaborationResult() reflects the same decision collaborate() returned');
+    check(typeof out.decision === 'string' && out.decision.length > 0, 'collaborate() reaches a real decision');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1946,6 +1963,7 @@ async function main() {
     ['Integrated solve() (ASI §12)', testSolveIntegration],
     ['Empathy alignment veto (Section 3)', testEmpathyVeto],
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
+    ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

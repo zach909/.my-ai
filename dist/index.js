@@ -344,7 +344,18 @@ export class NeuroclawSystem {
         const msgs = await this.chatGroup.discuss(task);
         const decision = await this.chatGroup.decide(`How should we handle: ${task}`, ["proceed", "revise", "reject"]);
         this.hive.synchronize();
-        return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision };
+        // ASI §8: "monitor progress... re-evaluate the complete solution" needs a
+        // real completion marker, not just a returned value nobody records. The
+        // group's own `complete()`/`isComplete()`/`getResult()` existed but were
+        // never called — a decision was reached but the group never recorded
+        // itself as done, so a later caller checking `isComplete()` would always
+        // see false regardless of what actually happened.
+        this.chatGroup.complete(decision.decision);
+        return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision, complete: this.chatGroup.isComplete() };
+    }
+    /** The default chat group's recorded outcome, once `collaborate()` has completed it. */
+    collaborationResult() {
+        return this.chatGroup?.getResult() ?? null;
     }
     /**
      * Section 10: run a multi-step plan toward an objective. Each pending step is
