@@ -1940,6 +1940,27 @@ async function testCombineKnowledge() {
   }
 }
 
+async function testHealLog() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.healLog().length === 0, 'healLog() starts empty before any heal cycle runs');
+    let broken = true;
+    sys.healer.register({ name: 'fake-component', check: () => !broken, repair: () => { broken = false; } });
+    await sys.selfHeal();
+    check(sys.healLog().length > 0, 'healLog() reflects a real repair recorded during selfHeal()');
+    check(sys.healLog().some(l => l.includes('fake-component')), 'healLog() names the actual component that was repaired');
+    const snapshot = sys.healLog().length;
+    await sys.selfIntegrity(); // an unrelated call must not mutate the log
+    check(sys.healLog().length === snapshot, 'healLog() is stable between heal cycles, not recomputed on unrelated calls');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1984,6 +2005,7 @@ async function main() {
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
+    ['Self-healer log introspection (Section 24)', testHealLog],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

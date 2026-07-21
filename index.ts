@@ -732,6 +732,17 @@ export class NeuroclawSystem {
   }
 
   /**
+   * ASI §9: "what it knows" includes its own repair history, not just current
+   * anomalies — `SelfHealer.getLog()` existed and was unit-tested but was
+   * never surfaced anywhere a caller could actually inspect it without
+   * triggering a *new* heal cycle first (§24's own "every heal step is
+   * logged, never silent" guarantee needs a way to read that log later).
+   */
+  healLog(): string[] {
+    return this.healer.getLog();
+  }
+
+  /**
    * Section 24: run the self-healer — detect unhealthy components and attempt
    * repair / revert-to-known-good, reporting anything unrecoverable.
    */
