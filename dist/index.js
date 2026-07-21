@@ -1,6 +1,8 @@
 import { realpathSync } from "node:fs";
-import { writeFile, readFile } from "node:fs/promises";
+import { writeFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
+import { homedir } from "node:os";
+import { join } from "node:path";
 import { NeuroclawLLM } from "./models && skills/llm.js";
 import { NeuroPipeline } from "./models && skills/core/pipeline.js";
 import { ThesaurusDictionary } from "./models && skills/thesaurus.js";
@@ -950,6 +952,40 @@ export class NeuroclawSystem {
     async loadMemory(path) {
         const json = await readFile(path, "utf-8");
         this.memory = LongTermMemory.deserialize(json);
+    }
+    /**
+     * ASI §9/§12: "which skills it has" / "use learning to create skills, use
+     * skills to solve problems" — every skill `learn()` creates via the real
+     * skill-maker plugin is written to `~/.neuroclaw/skills/*.neuri` and then
+     * never read back by anything: there was no live inventory of what the
+     * system has actually taught itself. This gives the self-model that
+     * inventory (name + description parsed from each file's own header),
+     * honestly scoped: it reports what exists on disk, it does not (yet)
+     * materialize those files back into the live neural pipeline — a much
+     * larger, separate integration (`NeuroLangInterpreter.materialize()` is
+     * itself still disconnected from the live pipeline entirely) that this
+     * does not attempt to solve in one step.
+     */
+    async selfAuthoredSkills() {
+        const skillDir = join(homedir(), ".neuroclaw", "skills");
+        let entries;
+        try {
+            entries = await readdir(skillDir);
+        }
+        catch {
+            return [];
+        }
+        const skills = [];
+        for (const entry of entries.filter(e => e.endsWith(".neuri"))) {
+            const path = join(skillDir, entry);
+            try {
+                const content = await readFile(path, "utf-8");
+                const descMatch = content.match(/^-- Description:\s*(.*)$/m);
+                skills.push({ name: entry.replace(/\.neuri$/, ""), description: descMatch?.[1] ?? "", path });
+            }
+            catch { /* unreadable file — skip rather than fail the whole listing */ }
+        }
+        return skills;
     }
     /**
      * Get system status
