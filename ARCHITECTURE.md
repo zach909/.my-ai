@@ -315,6 +315,9 @@ The ASI brief asks for general intelligence, advanced/recursive reasoning, auton
 | §4 Knowledge integration | `knowledge-graph.ts` — `KnowledgeGraph` | Memory as a graph, not a flat store: typed `relate()` edges between concepts, `follow()` to combine information across multiple hops, `findContradictions()` (e.g. `A is B` vs `A is-not B`), and `integrate()`, which auto-links new knowledge to its nearest existing concepts instead of leaving it isolated. |
 | §5 Self-improvement | `self-improvement.ts` — `SelfImprovement` | `snapshot()`/`rollback()` keep versioned state for a target; `evaluate()` runs a baseline and a candidate scorer side by side and keeps the candidate **only if it measurably beats the baseline** — never a blind change. |
 | §9/§10/§11 Self-monitoring & prediction | `self-monitor.ts` — `SelfMonitor` | System-level companion to the hyperdimensional engine's neuron-level self-model surprise: tracks an adaptive baseline per signal and classifies each new observation as normal/warning/**failure** by how far it diverges — the expected-vs-actual comparison Section 11 asks for, without claiming subjective experience. |
+| §3 Autonomous learning | `autonomous-learner.ts` — `AutonomousLearner` | Ingests new information and decides what happens to it: extracts a simple (subject, relation, object) reading, estimates **reliability** from hedging/confidence language, checks for a **direct contradiction** with existing knowledge (preserving *both* relations rather than overwriting), and tracks repeated procedural teaching so a recurring capability is recommended for a **skill** or **extension** rather than re-learned from scratch each time. |
+| §10 Prediction & simulation | `prediction-engine.ts` — `PredictionEngine` | `predict(action)` simulates candidate outcomes (success / partial-with-side-effects / failure) with likelihoods, flags **dangerous** outcomes via risk keywords, and records the **assumptions** the prediction rests on; `observe(id, actual)` compares the predicted outcome to what really happened and reports the divergence as a **surprise** signal. |
+| §11 Scientific & creative discovery | `discovery-engine.ts` — `DiscoveryEngine` | `generateHypotheses()` finds token co-occurrence regularities across observations and proposes falsifiable cause→effect explanations; `test()` genuinely supports or contradicts a hypothesis against a new observation (and rejects it once contradictions dominate); `combine()` creates a novel named hybrid from two concepts that haven't been combined before, registered into the `KnowledgeGraph` — real, if simple, creativity. |
 
 ### Integration (§12) — `NeuroclawSystem.solve(problem)`
 
@@ -327,6 +330,16 @@ This is the method where the pieces actually interact, not seven parallel APIs:
 5. `SelfMonitor.observe()` tracks the confidence signal (§9/§11); a genuine **failure**-level divergence automatically triggers `selfHeal()` (§24) — the connection from self-monitoring to self-healing the spec calls for, not just parallel subsystems.
 
 This is what makes "memory improves reasoning, reasoning improves learning, mistakes improve the system, and the self-model finds where it needs improvement" (§12) concrete rather than aspirational. Verified by the `AGI capability modules (ASI §2-10)` and `Integrated solve() (ASI §12)` suites in `test/smoke.mjs`, plus live end-to-end runs of `solve()` against the running `NeuroclawSystem`.
+
+### Autonomous learning, prediction and discovery in the live query loop
+
+Beyond `solve()`, three more integration points connect the newer modules into the system every user actually interacts with:
+
+- **`NeuroclawSystem.learn(information)`** (§3) runs `AutonomousLearner.learn()`; when it recommends a skill or extension (a procedure taught repeatedly), the system dispatches to the **real** `skill-maker`/`plugin-maker` plugins via `pluginRegistry.dispatch(information, "creation")` — the same path a user's "create a skill" request would take — rather than a parallel, private extension-writer.
+- **`processQuery`** (§10) calls `PredictionEngine.predict()` before generating a response and `observe()` after, feeding the resulting surprise into `SelfMonitor` with its **adaptive baseline** (no explicit `expected` — the monitor learns each signal's normal fluctuation and only flags a genuine spike above *that*, not a fixed reference point). A failure-level anomaly here, as in `solve()`, is available to trigger `selfHeal()`.
+- **`DiscoveryEngine`** shares the same `KnowledgeGraph` instance as `solve()`'s knowledge integration, so a hypothesis or creative combination it produces becomes real, queryable knowledge the rest of the system (Net Search, `follow()`, contradiction detection) can see.
+
+Verified by the `Autonomous learning, prediction & discovery (ASI §3/§10/§11)` suite (23 checks) plus a live run: teaching the same multi-step procedure three times produced a real generated skill file via the skill-maker plugin, and five varied ordinary queries produced zero false-positive anomalies once the adaptive-baseline fix (not comparing against a fixed zero) was in place.
 
 ### What this is, honestly
 

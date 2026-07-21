@@ -80,3 +80,9 @@ export { SelfModel } from './self-model';                     // ASI §9
 export type { DomainStat } from './self-model';
 export { SelfImprovement } from './self-improvement';         // ASI §5
 export type { Improvement } from './self-improvement';
+export { AutonomousLearner } from './autonomous-learner';     // ASI §3
+export type { LearnDecision, LearnResult, LearnOptions } from './autonomous-learner';
+export { PredictionEngine } from './prediction-engine';       // ASI §10
+export type { Prediction, PredictedOutcome, Comparison } from './prediction-engine';
+export { DiscoveryEngine } from './discovery-engine';         // ASI §11
+export type { Hypothesis, TestResult, Combination } from './discovery-engine';

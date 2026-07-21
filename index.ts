@@ -24,6 +24,9 @@ import { ReasoningEngine } from "./models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "./models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "./models && skills/core/self-model.js";
 import { SelfImprovement } from "./models && skills/core/self-improvement.js";
+import { AutonomousLearner } from "./models && skills/core/autonomous-learner.js";
+import { PredictionEngine } from "./models && skills/core/prediction-engine.js";
+import { DiscoveryEngine } from "./models && skills/core/discovery-engine.js";
 
 // Plugins & skills — the whole extension catalog is instantiated through the
 // shared factory so every entry in `pluginExtensions` gets a real
@@ -66,6 +69,9 @@ export class NeuroclawSystem {
   transfer: KnowledgeTransfer;
   selfModel: SelfModel;
   improvement: SelfImprovement;
+  learner: AutonomousLearner;
+  predictor: PredictionEngine;
+  discovery: DiscoveryEngine;
 
   private initialized = false;
   private contextCapacityGB: number;
@@ -116,6 +122,16 @@ export class NeuroclawSystem {
       solveSub: (sub) => this.runner.generate(sub),
       competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
     });
+    // Autonomous learning (ASI §3): decides store/update/conflict-preserve/
+    // recommend-skill/recommend-extension for new information, on the same
+    // knowledge graph the reasoner and solve() read from.
+    this.learner = new AutonomousLearner(this.knowledge);
+    // Prediction & simulation (ASI §10): predict-before-act / compare-after,
+    // wired into processQuery below and feeding SelfMonitor as a learning signal.
+    this.predictor = new PredictionEngine();
+    // Scientific & creative discovery (ASI §11): hypothesis generation/testing
+    // and creative concept combination over the same knowledge graph.
+    this.discovery = new DiscoveryEngine(this.knowledge);
   }
 
   /**
@@ -255,11 +271,25 @@ export class NeuroclawSystem {
     //    grounded in any relevant prior conversation turns so the response
     //    integrates previous context instead of treating the prompt as an
     //    isolated event (continuous context, Section 7).
+    // ASI §10: simulate the likely consequences of responding before actually
+    // generating, so a dangerous predicted outcome is on record before acting.
+    const prediction = this.predictor.predict(`respond to: ${input}`);
     try {
       let result = await this.runner.generate(input, priorHistory.map(h => h.item.content));
       if (decision.requiresConfirmation) {
         result = `${result}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`;
       }
+
+      // ASI §10: compare the predicted outcome with the actual one; the
+      // divergence ("surprise") is a learning signal fed to the system-level
+      // self-monitor, connecting prediction to the existing self-awareness /
+      // live-correction loop rather than leaving it a standalone forecast.
+      const comparison = this.predictor.observe(prediction.id, result);
+      // No explicit `expected` here: the monitor should learn this query's
+      // typical surprise level and flag a genuine spike above *that* norm, not
+      // compare against a fixed zero (which would make ordinary token-overlap
+      // noise register as a failure on every single call).
+      if (comparison) this.monitor.observe("prediction.surprise", comparison.surprise);
 
       // 6. Store the (compressed) output in the ZIP-IO output loop, and commit
       //    the assistant turn to long-term memory so the whole exchange becomes
@@ -271,6 +301,25 @@ export class NeuroclawSystem {
       console.error("Error processing query:", error);
       throw error;
     }
+  }
+
+  /**
+   * ASI §3: ingest new information. Determines reliability, checks for a
+   * conflict with existing knowledge (preserving both rather than overwriting
+   * when one is found), and decides whether to store it, update an existing
+   * concept, or — for a recurring procedural capability — recommend creating a
+   * skill or extension, in which case the real skill/plugin-maker machinery is
+   * invoked (the same "creation" path a user request would trigger) rather
+   * than a parallel mechanism.
+   */
+  async learn(information: string, opts?: import("./models && skills/core/autonomous-learner.js").LearnOptions) {
+    if (!this.initialized) await this.initialize();
+    const result = this.learner.learn(information, opts);
+    if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
+      const created = await this.pluginRegistry.dispatch(information, "creation");
+      return { ...result, created: created ?? undefined };
+    }
+    return result;
   }
 
   /** Emit + record a direct (non-generated) assistant response and return it. */

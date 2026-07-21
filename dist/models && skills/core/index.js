@@ -38,3 +38,6 @@ export { ReasoningEngine } from './reasoning-engine'; // ASI §2 / §8
 export { KnowledgeTransfer } from './knowledge-transfer'; // ASI §7
 export { SelfModel } from './self-model'; // ASI §9
 export { SelfImprovement } from './self-improvement'; // ASI §5
+export { AutonomousLearner } from './autonomous-learner'; // ASI §3
+export { PredictionEngine } from './prediction-engine'; // ASI §10
+export { DiscoveryEngine } from './discovery-engine'; // ASI §11

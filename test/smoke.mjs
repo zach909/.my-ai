@@ -1471,6 +1471,63 @@ async function testHiveMindAndChatGroups() {
   check(group.isComplete() && group.getResult() === 'done', 'Chat group reaches task completion');
 }
 
+async function testAutonomousLearningPredictionDiscovery() {
+  // AutonomousLearner (ASI §3): reliability, conflict preservation, recurring-capability recommendation.
+  const { AutonomousLearner } = await load('models && skills/core/autonomous-learner.js');
+  const { KnowledgeGraph } = await load('models && skills/core/knowledge-graph.js');
+  const kg = new KnowledgeGraph();
+  const learner = new AutonomousLearner(kg);
+
+  const r1 = learner.learn('maybe the server is down, i heard it might be unconfirmed');
+  check(r1.decision === 'ignored-unreliable' && r1.reliability < 0.25, 'AutonomousLearner: hedged/unreliable claims are ignored, not stored as fact');
+
+  const r2 = learner.learn('the cache is reliable');
+  check(r2.decision === 'stored' && r2.subject === 'the cache', 'AutonomousLearner: a plain declarative claim is stored');
+
+  const r3 = learner.learn('the cache is not reliable');
+  check(r3.decision === 'conflict-preserved', 'AutonomousLearner: a direct contradiction is preserved, not silently overwritten');
+  check(kg.neighbors('the cache', 'is').length > 0 && kg.neighbors('the cache', 'is-not').length > 0, 'AutonomousLearner: both conflicting relations remain in the knowledge graph');
+
+  const proc = 'first, connect to the database. then, run the migration. finally, verify the schema';
+  learner.learn(proc); learner.learn(proc);
+  const r4 = learner.learn(proc);
+  check(r4.decision === 'recommend-extension', 'AutonomousLearner: a repeatedly-taught procedure is recommended for extension creation');
+
+  // PredictionEngine (ASI §10): predict before acting, compare after, danger flagging.
+  const { PredictionEngine } = await load('models && skills/core/prediction-engine.js');
+  const pred = new PredictionEngine();
+  const safe = pred.predict('read the configuration file');
+  check(!safe.mostLikely.dangerous || safe.outcomes.some(o => !o.dangerous), 'PredictionEngine: a benign action is not universally flagged dangerous');
+  const risky = pred.predict('delete the production database');
+  check(risky.outcomes.some(o => o.dangerous), 'PredictionEngine: a destructive action surfaces a dangerous predicted outcome');
+  check(risky.assumptions.length > 0, 'PredictionEngine: assumptions are recorded alongside the prediction');
+  const cmp = pred.observe(safe.id, safe.mostLikely.description);
+  check(cmp.matched && cmp.surprise < 0.5, 'PredictionEngine: an outcome matching the prediction is low-surprise');
+  const cmp2 = pred.observe(safe.id, 'completely unrelated and unexpected catastrophic failure output');
+  check(cmp2.surprise > cmp.surprise, 'PredictionEngine: a divergent actual outcome registers higher surprise');
+
+  // DiscoveryEngine (ASI §11): hypothesis generation, falsification, creative combination.
+  const { DiscoveryEngine } = await load('models && skills/core/discovery-engine.js');
+  const disc = new DiscoveryEngine(kg);
+  disc.observe('rain causes wet ground today');
+  disc.observe('rain causes wet ground again');
+  disc.observe('rain causes wet ground once more');
+  const hyps = disc.generateHypotheses(5);
+  check(hyps.length > 0, 'DiscoveryEngine: generates hypotheses from repeated co-occurrence');
+  const rainHyp = hyps.find(h => h.cause === 'rain' && h.effect === 'wet') || hyps.find(h => h.effect === 'wet' || h.cause === 'wet');
+  check(!!rainHyp, 'DiscoveryEngine: finds the rain/wet-ground regularity');
+  const supported = disc.test(rainHyp.id, 'rain causes wet ground');
+  check(supported.supported, 'DiscoveryEngine: a consistent new observation supports the hypothesis');
+  const contradicted = disc.test(rainHyp.id, 'rain fell but ground stayed dry');
+  check(!contradicted.supported, 'DiscoveryEngine: an inconsistent observation counts against the hypothesis');
+
+  const combo = disc.combine('bird wing', 'jet engine');
+  check(!!combo && combo.sources.length === 2, 'DiscoveryEngine: combines two unconnected concepts into a novel hybrid');
+  check(kg.getConcept(combo.name) !== undefined, 'DiscoveryEngine: the novel combination is registered in the knowledge graph');
+  const comboAgain = disc.combine('bird wing', 'jet engine');
+  check(comboAgain === null, 'DiscoveryEngine: combining already-linked concepts again is not treated as novel');
+}
+
 async function testAGIModules() {
   // SelfMonitor (ASI §9-10): prediction-vs-actual, normal error vs failure.
   const { SelfMonitor } = await load('models && skills/core/self-monitor.js');
@@ -1604,6 +1661,7 @@ async function main() {
     ['Context compression (Section 7)', testContextCompressor],
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
     ['AGI capability modules (ASI §2-10)', testAGIModules],
+    ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
