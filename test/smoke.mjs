@@ -1569,6 +1569,22 @@ async function testAGIModules() {
   const rr2 = await new ReasoningEngine({}).reason('foo and bar', { depth: 1 });
   check(rr2.subresults.length >= 2, 'ReasoningEngine: recurses on subproblems when no external solver is given');
 
+  // ReasoningEngine (ASI §1): recognize incomplete knowledge, then actively seek it.
+  const noSearch = await new ReasoningEngine({ recall: () => [] }).reason('what is quixotic');
+  check(noSearch.missing.includes('quixotic'), 'ReasoningEngine: an unrecalled term is recognized as missing');
+  const withSearch = await new ReasoningEngine({
+    recall: () => [],
+    search: (term) => (term === 'quixotic' ? ['quixotic: idealistic and impractical'] : []),
+  }).reason('what is quixotic');
+  check(!withSearch.missing.includes('quixotic'), 'ReasoningEngine: a resolvable gap is actively searched for and no longer missing');
+  check(withSearch.soughtAndResolved.includes('quixotic'), 'ReasoningEngine: records which missing terms were successfully resolved');
+  check(withSearch.available.some(a => a.includes('idealistic')), 'ReasoningEngine: search results become available information');
+  const partialSearch = await new ReasoningEngine({
+    recall: () => [],
+    search: (term) => (term === 'quixotic' ? ['quixotic: idealistic'] : []),
+  }).reason('what is quixotic versus zorbnak');
+  check(partialSearch.missing.includes('zorbnak') && !partialSearch.missing.includes('quixotic'), 'ReasoningEngine: an unresolvable term stays genuinely missing while a resolvable one does not');
+
   // KnowledgeTransfer (ASI §7): structural cross-domain transfer.
   const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
   const kt = new KnowledgeTransfer();

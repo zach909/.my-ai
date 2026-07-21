@@ -35,8 +35,29 @@ export class ReasoningEngine {
         push("available", `${available.length} relevant item(s)`);
         // 4. Missing information: salient problem terms not covered by available info.
         const covered = new Set(available.flatMap(a => tokenize(a)));
-        const missing = uniq(tokenize(problem).filter(t => !covered.has(t) && !STOP.has(t))).slice(0, 8);
+        let missing = uniq(tokenize(problem).filter(t => !covered.has(t) && !STOP.has(t))).slice(0, 8);
         push("missing", missing.length ? missing.join(", ") : "none identified");
+        // 4b. Recognizing a gap is not enough on its own (§1): actively seek each
+        // missing term via the injected search (e.g. the knowledge graph). Terms
+        // that resolve move from `missing` into `available`; terms that don't stay
+        // genuinely missing rather than being silently dropped.
+        const soughtAndResolved = [];
+        if (this.deps.search && missing.length > 0) {
+            const stillMissing = [];
+            for (const term of missing) {
+                const hits = this.deps.search(term);
+                if (hits.length > 0) {
+                    available.push(...hits);
+                    soughtAndResolved.push(term);
+                }
+                else {
+                    stillMissing.push(term);
+                }
+            }
+            missing = stillMissing;
+            if (soughtAndResolved.length)
+                push("sought", `resolved: ${soughtAndResolved.join(", ")}`);
+        }
         // Known-mistake lessons for this task.
         const lessons = (this.deps.lessons?.(problem) ?? []).slice(0, 5);
         if (lessons.length)
@@ -82,7 +103,7 @@ export class ReasoningEngine {
         confidence -= 0.15 * lessons.length;
         confidence -= 0.1 * failed.length;
         confidence = clamp01(confidence);
-        return { problem, objective, available, missing, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
+        return { problem, objective, available, missing, soughtAndResolved, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
     }
     async solveSubproblem(sub, depth) {
         if (this.deps.solveSub)

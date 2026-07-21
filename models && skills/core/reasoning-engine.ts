@@ -29,6 +29,14 @@ export interface ReasoningDeps {
   solveSub?: SubSolver;
   /** Self-model competence in [0,1] for the problem's domain. */
   competence?: (problem: string) => number;
+  /**
+   * Actively resolve a piece of missing information (e.g. a semantic search
+   * over the knowledge graph or Net Search). Returns matching facts/definitions,
+   * or an empty array if nothing is found. This is what turns "recognize
+   * incomplete knowledge" (§1) into "ask itself what's missing, then go find
+   * it" instead of just reporting a gap.
+   */
+  search?: (query: string) => string[];
 }
 
 export interface ReasoningStep { kind: string; detail: string; }
@@ -40,6 +48,8 @@ export interface ReasoningResult {
   objective: string;
   available: string[];
   missing: string[];
+  /** Missing terms that were actively searched for and resolved (§1). */
+  soughtAndResolved: string[];
   approaches: Approach[];
   chosen: string;
   subproblems: string[];
@@ -76,8 +86,28 @@ export class ReasoningEngine {
 
     // 4. Missing information: salient problem terms not covered by available info.
     const covered = new Set(available.flatMap(a => tokenize(a)));
-    const missing = uniq(tokenize(problem).filter(t => !covered.has(t) && !STOP.has(t))).slice(0, 8);
+    let missing = uniq(tokenize(problem).filter(t => !covered.has(t) && !STOP.has(t))).slice(0, 8);
     push("missing", missing.length ? missing.join(", ") : "none identified");
+
+    // 4b. Recognizing a gap is not enough on its own (§1): actively seek each
+    // missing term via the injected search (e.g. the knowledge graph). Terms
+    // that resolve move from `missing` into `available`; terms that don't stay
+    // genuinely missing rather than being silently dropped.
+    const soughtAndResolved: string[] = [];
+    if (this.deps.search && missing.length > 0) {
+      const stillMissing: string[] = [];
+      for (const term of missing) {
+        const hits = this.deps.search(term);
+        if (hits.length > 0) {
+          available.push(...hits);
+          soughtAndResolved.push(term);
+        } else {
+          stillMissing.push(term);
+        }
+      }
+      missing = stillMissing;
+      if (soughtAndResolved.length) push("sought", `resolved: ${soughtAndResolved.join(", ")}`);
+    }
 
     // Known-mistake lessons for this task.
     const lessons = (this.deps.lessons?.(problem) ?? []).slice(0, 5);
@@ -125,7 +155,7 @@ export class ReasoningEngine {
     confidence -= 0.1 * failed.length;
     confidence = clamp01(confidence);
 
-    return { problem, objective, available, missing, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
+    return { problem, objective, available, missing, soughtAndResolved, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
   }
 
   private async solveSubproblem(sub: string, depth: number): Promise<string> {

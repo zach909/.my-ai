@@ -84,6 +84,9 @@ export class NeuroclawSystem {
             lessons: (task) => this.mistakes.lessons(task),
             solveSub: (sub) => this.runner.generate(sub),
             competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
+            // ASI §1: don't just report a knowledge gap — actively search the
+            // knowledge graph for it before giving up on a missing term.
+            search: (term) => this.knowledge.search(term, 2).map(h => h.concept.definition || h.concept.name),
         });
         // Autonomous learning (ASI §3): decides store/update/conflict-preserve/
         // recommend-skill/recommend-extension for new information, on the same
