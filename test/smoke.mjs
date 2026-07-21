@@ -1831,6 +1831,15 @@ async function testSolveIntegration() {
     check(sys.selfModel.summary().length >= 1, 'solve() updates the self-model from the outcome');
     check(sys.memory.all().some(m => m.tags.includes('solution')), 'solve() records the solution into long-term memory');
 
+    // ASI §7 explicitly lists "Visual understanding" and "Creativity" among
+    // the domains cross-domain transfer should combine -- previously absent
+    // from domain classification, so these fell into the generic "general"
+    // bucket instead of their own tracked competence/transfer domain.
+    const visual = await sys.solve('analyze this diagram and describe the visual layout');
+    check(visual.domain === 'visual', 'solve() classifies a visual/diagram problem into its own "visual" domain, not "general"');
+    const creative = await sys.solve('brainstorm a creative and original concept for a new product');
+    check(creative.domain === 'creativity', 'solve() classifies a brainstorming problem into its own "creativity" domain, not "general"');
+
     // ASI §8: recursive intelligence integrates with the Hive Mind — solve()'s
     // subproblem delegation genuinely engages the hive team, not just the
     // generic runner directly (the spec's explicit "should integrate with the

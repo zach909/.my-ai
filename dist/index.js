@@ -917,6 +917,15 @@ function classifyDomain(text) {
         return "engineering";
     if (has(["write", "essay", "story", "language", "translate", "grammar", "poem"]))
         return "language";
+    // ASI §7 explicitly lists these among the domains cross-domain transfer
+    // should combine ("Visual understanding", "Creativity") — previously
+    // absent, so a visual or creative problem fell into the generic "general"
+    // bucket, losing per-domain self-model competence tracking and any chance
+    // of a genuine cross-domain transfer hit.
+    if (has(["image", "picture", "visual", "diagram", "photo", "drawing", "sketch", "chart", "illustration"]))
+        return "visual";
+    if (has(["creative", "brainstorm", "imagine", "invent", "novel idea", "artistic", "original concept"]))
+        return "creativity";
     return "general";
 }
 /** Case/whitespace-insensitive text key, matching the normalization used across the core modules. */
