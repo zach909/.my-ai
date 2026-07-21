@@ -104,9 +104,11 @@ export class ReasoningEngine {
         // instead of every approach being penalized identically regardless of
         // which one the danger applies to.
         const dangerousApproaches = [];
+        const assumptionsByStrategy = new Map();
         if (this.deps.predictConsequence) {
             for (const a of approaches) {
                 const predicted = this.deps.predictConsequence(`${a.description} — applied to: ${problem}`);
+                assumptionsByStrategy.set(a.strategy, predicted.assumptions ?? []);
                 if (predicted.dangerous) {
                     a.score -= 0.5 * predicted.likelihood;
                     dangerousApproaches.push(a.strategy);
@@ -185,7 +187,11 @@ export class ReasoningEngine {
         confidence -= 0.15 * lessons.length;
         confidence -= 0.1 * failed.length;
         confidence = clamp01(confidence);
-        return { problem, objective, available, missing, soughtAndResolved, creativeCombination, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
+        // §6: "which assumption was incorrect" — the assumptions the chosen
+        // approach's own consequence prediction rested on, so a caller recording
+        // a failure has something concrete to point to, not just an empty field.
+        const assumptions = assumptionsByStrategy.get(chosen) ?? [];
+        return { problem, objective, available, missing, soughtAndResolved, creativeCombination, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, assumptions, trace };
     }
     async solveSubproblem(sub, depth) {
         if (this.deps.solveSub)

@@ -66,7 +66,7 @@ export interface ReasoningDeps {
    * dangerous, so a genuinely risky candidate can lose even when it would
    * otherwise have scored highest.
    */
-  predictConsequence?: (approachAction: string) => { dangerous: boolean; likelihood: number };
+  predictConsequence?: (approachAction: string) => { dangerous: boolean; likelihood: number; assumptions: string[] };
 }
 
 export interface ReasoningStep { kind: string; detail: string; }
@@ -92,6 +92,8 @@ export interface ReasoningResult {
   verified: boolean;
   confidence: number;
   lessons: string[];
+  /** Assumptions the chosen approach's consequence prediction rested on (§6, §10). Empty when no predictConsequence dependency was supplied. */
+  assumptions: string[];
   trace: ReasoningStep[];
 }
 
@@ -202,9 +204,11 @@ export class ReasoningEngine {
     // instead of every approach being penalized identically regardless of
     // which one the danger applies to.
     const dangerousApproaches: string[] = [];
+    const assumptionsByStrategy = new Map<string, string[]>();
     if (this.deps.predictConsequence) {
       for (const a of approaches) {
         const predicted = this.deps.predictConsequence(`${a.description} — applied to: ${problem}`);
+        assumptionsByStrategy.set(a.strategy, predicted.assumptions ?? []);
         if (predicted.dangerous) {
           a.score -= 0.5 * predicted.likelihood;
           dangerousApproaches.push(a.strategy);
@@ -282,7 +286,11 @@ export class ReasoningEngine {
     confidence -= 0.1 * failed.length;
     confidence = clamp01(confidence);
 
-    return { problem, objective, available, missing, soughtAndResolved, creativeCombination, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
+    // §6: "which assumption was incorrect" — the assumptions the chosen
+    // approach's own consequence prediction rested on, so a caller recording
+    // a failure has something concrete to point to, not just an empty field.
+    const assumptions = assumptionsByStrategy.get(chosen) ?? [];
+    return { problem, objective, available, missing, soughtAndResolved, creativeCombination, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, assumptions, trace };
   }
 
   private async solveSubproblem(sub: string, depth: number): Promise<string> {

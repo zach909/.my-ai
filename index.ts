@@ -167,7 +167,7 @@ export class NeuroclawSystem {
       // (not just a task-wide flat penalty) is demoted specifically.
       predictConsequence: (approachAction) => {
         const p = this.predictor.predict(approachAction);
-        return { dangerous: p.outcomes.some(o => o.dangerous), likelihood: p.mostLikely.likelihood };
+        return { dangerous: p.outcomes.some(o => o.dangerous), likelihood: p.mostLikely.likelihood, assumptions: p.assumptions };
       },
     });
     // Autonomous learning (ASI §3): decides store/update/conflict-preserve/
@@ -618,6 +618,11 @@ export class NeuroclawSystem {
         description: `Reasoning left ${unresolved} subproblem(s) unresolved`,
         cause: r.available.length === 0 ? "missing-knowledge" : "reasoning",
         failedStep: r.chosen,
+        // §6: "which assumption was incorrect" — a real, computed assumption
+        // the chosen approach's own consequence prediction rested on, not
+        // left blank. Previously this field existed on Mistake/MistakeInput
+        // but nothing ever populated it.
+        assumption: r.assumptions[0],
         prevention: `Gather information before choosing "${r.chosen}" for: ${r.objective}`,
       });
     } else {

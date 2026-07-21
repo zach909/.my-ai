@@ -2047,6 +2047,30 @@ async function testPredictProperties() {
   }
 }
 
+async function testMistakeAssumption() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    // §6 explicitly asks every recorded failure to capture "which assumption
+    // was incorrect" -- previously always left undefined. Force an
+    // unresolved solve() and check the real, computed assumption behind it,
+    // drawn from PredictionEngine via the reasoner's predictConsequence dep.
+    sys.hive.delegate = async () => ({ agent: coder, output: '[unsolved: forced failure for test]' });
+    await sys.solve('delete the temporary file and then remove the old network cache');
+    const mistake = sys.mistakes.all().find(m => m.task === 'delete the temporary file and then remove the old network cache');
+    check(!!mistake, 'An unresolved solve() records a mistake for the task');
+    check(typeof mistake.assumption === 'string' && mistake.assumption.length > 0, 'The recorded mistake has a real, non-empty assumption, not undefined');
+    check(mistake.assumption.includes('file') || mistake.assumption.includes('network'), 'The assumption reflects the actual content of the task, not a generic constant');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testExactMemorySearch() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2334,6 +2358,7 @@ async function main() {
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
     ['Predict properties of a new instance (Section 1)', testPredictProperties],
     ['Exact-match memory search (Section 4)', testExactMemorySearch],
+    ['Mistake assumption capture (Section 6)', testMistakeAssumption],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
