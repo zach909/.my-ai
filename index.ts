@@ -693,6 +693,17 @@ export class NeuroclawSystem {
       // A verified solution is a reusable method (§7) and semantic knowledge (§4).
       this.transfer.register(problem, domain, r.chosen);
       this.knowledge.integrate(r.objective, problem);
+      // §4: "connect new information to related existing information" was
+      // previously only ever applied at the coarsest level — the overall
+      // objective — even though a verified solve() often produces several
+      // genuinely distinct, individually reusable pieces of knowledge (one
+      // per subproblem). Each subproblem's own result is now integrated too,
+      // so it becomes a real, findable, auto-linked concept in its own
+      // right, not knowledge that only survives folded into the top-level
+      // summary.
+      for (const sub of r.subresults) {
+        this.knowledge.integrate(sub.subproblem, sub.result);
+      }
       // ASI §6: this exact task has now succeeded — any prior recorded failure
       // for it is resolved, not left counting toward repeated() forever (which
       // would otherwise keep demoting an approach that has since improved).

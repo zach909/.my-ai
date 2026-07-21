@@ -2412,6 +2412,31 @@ async function testHiveDelegationReward() {
   }
 }
 
+async function testSubproblemKnowledgeIntegration() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    sys.hive.delegate = async (sub) => ({ agent: coder, output: `a real generated answer for: ${sub}` });
+    // §4: "connect new information to related existing information" was
+    // previously only ever applied at the coarsest level (the overall
+    // objective) -- each subproblem's own result is genuinely distinct,
+    // reusable knowledge that used to vanish once folded into the summary.
+    const out = await sys.solve('write code and then test the code');
+    check(out.verified, 'Test setup: the forced delegation produces a verified solve()');
+    const writeCodeConcept = sys.knowledge.getConcept('write code');
+    const testCodeConcept = sys.knowledge.getConcept('test the code');
+    check(!!writeCodeConcept && writeCodeConcept.definition.includes('write code'), 'Each subproblem becomes its own real concept in the knowledge graph, not just the top-level objective');
+    check(!!testCodeConcept && testCodeConcept.definition.includes('test the code'), 'A second, distinct subproblem also becomes its own concept');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testHiveResultSharing() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2528,6 +2553,7 @@ async function main() {
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
     ['Capability default-deny enforcement (Section 16/23)', testCapabilityDefaultDeny],
     ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
+    ['Subproblem knowledge integration (Section 4)', testSubproblemKnowledgeIntegration],
     ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],
