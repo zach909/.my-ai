@@ -1,4 +1,30 @@
-# Examples and documentation
-artificial_organism/fmea/system_fmea.md
-artificial_organism/materials/development_plan.md
-artificial_organism/specs/interface_standards.md
+```
+# Compiled and binary files
+*.pyc
+__pycache__/
+
+# Dependencies
+venv/
+.venv/
+.env
+.env.local
+.env.*
+
+# Logs and temp files
+*.log
+*.tmp
+
+# Editors
+.vscode/
+.idea/
+
+# Coverage
+.coverage
+coverage/
+htmlcov/
+
+# Distribution / packaging
+dist/
+build/
+*.egg-info/
+```
