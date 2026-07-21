@@ -59,6 +59,8 @@ export interface ReasoningResult {
   missing: string[];
   /** Missing terms that were actively searched for and resolved (§1). */
   soughtAndResolved: string[];
+  /** Subproblems that initially failed but were resolved by re-decomposition (§2 step 10). */
+  revised: string[];
   approaches: Approach[];
   chosen: string;
   subproblems: string[];
@@ -150,9 +152,32 @@ export class ReasoningEngine {
       subresults.push({ subproblem: sub, result });
     }
 
-    // 9-10. Detect mistakes, revise, and combine into a result.
-    const failed = subresults.filter(s => !s.result || /\[(error|unsolved|base):/i.test(s.result));
+    // 9. Detect mistakes.
+    let failed = subresults.filter(s => !s.result || /\[(error|unsolved|base):/i.test(s.result));
     if (failed.length) push("mistakes", `${failed.length} subproblem(s) unresolved`);
+
+    // 10. Revise: a failed subproblem is not just reported, it's retried —
+    // re-decompose the specific piece that failed into finer steps and attempt
+    // those instead. This is a real corrective action (recursive intelligence,
+    // §8, applied to error recovery), not a fabricated "revision" label.
+    const revised: string[] = [];
+    if (failed.length > 0 && depth > 0) {
+      for (const f of failed) {
+        const finer = decompose(f.subproblem, Math.min(3, maxSub)).filter(sf => sf !== f.subproblem);
+        if (finer.length === 0) continue;
+        const finerResults = await Promise.all(finer.map(sf => this.solveSubproblem(sf, depth - 1)));
+        const stillFailing = finerResults.some(r => !r || /\[(error|unsolved|base):/i.test(r));
+        if (!stillFailing) {
+          const idx = subresults.findIndex(s => s.subproblem === f.subproblem);
+          if (idx >= 0) subresults[idx] = { subproblem: f.subproblem, result: finerResults.join(" ") };
+          revised.push(f.subproblem);
+        }
+      }
+      if (revised.length) push("revise", `resolved via re-decomposition: ${revised.join(", ")}`);
+      failed = subresults.filter(s => !s.result || /\[(error|unsolved|base):/i.test(s.result));
+    }
+
+    // Combine into a result.
     const analogyNote = chosen === "analogy" && available.length ? `\nGrounded in: ${available.slice(0, 2).join(" | ")}` : "";
     const result = subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n") + analogyNote;
 
@@ -169,7 +194,7 @@ export class ReasoningEngine {
     confidence -= 0.1 * failed.length;
     confidence = clamp01(confidence);
 
-    return { problem, objective, available, missing, soughtAndResolved, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
+    return { problem, objective, available, missing, soughtAndResolved, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
   }
 
   private async solveSubproblem(sub: string, depth: number): Promise<string> {

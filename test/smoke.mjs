@@ -1641,6 +1641,19 @@ async function testAGIModules() {
   }).reason('build and test the module');
   check(biasedAgainstDecompose.chosen !== 'decompose', 'ReasoningEngine: a strong bias against an approach changes which one is chosen');
 
+  // ReasoningEngine (ASI §2 step 10): revise — a failed subproblem is
+  // re-decomposed and retried, not just reported as a mistake. Raw subproblems
+  // always fail here; only the "analyze:"/"solve:" fallback decomposition
+  // (which decompose() always produces for a connective-free subproblem)
+  // succeeds, so any pass requires the real revision path to run.
+  const flaky = (sub) => (/^(analyze|solve):/.test(sub) ? `solved(${sub})` : '[unsolved: needs more detail]');
+  const noRevision = await new ReasoningEngine({ solveSub: flaky }).reason('investigate the bug and fix the issue', { depth: 0 });
+  check(!noRevision.verified && noRevision.revised.length === 0, 'ReasoningEngine: without revision (depth 0), failed subproblems stay failed');
+  const withRevision = await new ReasoningEngine({ solveSub: flaky }).reason('investigate the bug and fix the issue', { depth: 1 });
+  check(withRevision.revised.length === 2, 'ReasoningEngine: revise() re-decomposes each failed subproblem and retries');
+  check(withRevision.verified, 'ReasoningEngine: a solution that would have failed is verified after successful revision');
+  check(withRevision.subresults.every(s => !/\[(error|unsolved|base):/i.test(s.result)), 'ReasoningEngine: the revised subresults replace the original failures');
+
   // KnowledgeTransfer (ASI §7): structural cross-domain transfer.
   const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
   const kt = new KnowledgeTransfer();
