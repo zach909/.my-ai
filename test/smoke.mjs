@@ -1585,6 +1585,15 @@ async function testAGIModules() {
   }).reason('what is quixotic versus zorbnak');
   check(partialSearch.missing.includes('zorbnak') && !partialSearch.missing.includes('quixotic'), 'ReasoningEngine: an unresolvable term stays genuinely missing while a resolvable one does not');
 
+  // ReasoningEngine (ASI §5/§12): a discovered bias against an approach changes which one is chosen.
+  const unbiased = await new ReasoningEngine({ recall: () => ['a fact'] }).reason('build and test the module');
+  check(unbiased.chosen === 'decompose', 'ReasoningEngine: decompose wins by default for a multi-part task');
+  const biasedAgainstDecompose = await new ReasoningEngine({
+    recall: () => ['a fact'],
+    approachBias: (s) => (s === 'decompose' ? 0.1 : 1),
+  }).reason('build and test the module');
+  check(biasedAgainstDecompose.chosen !== 'decompose', 'ReasoningEngine: a strong bias against an approach changes which one is chosen');
+
   // KnowledgeTransfer (ASI §7): structural cross-domain transfer.
   const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
   const kt = new KnowledgeTransfer();
@@ -1644,6 +1653,12 @@ async function testSolveIntegration() {
     const patterns = sys.discoverPatterns(5);
     check(patterns.length > 0, 'discoverPatterns() finds regularities across repeated solve() outcomes');
     check(patterns.some(h => h.cause === 'math' || h.effect === 'math'), 'discoverPatterns() surfaces the domain as part of a discovered pattern');
+
+    // ASI §5/§12: the discovered "decompose -> verified" regularity should
+    // have fed back into a real bias the reasoner will use on the next solve.
+    const decomposeBias = patterns.find(h => (h.cause === 'decompose' && h.effect === 'verified') || (h.cause === 'verified' && h.effect === 'decompose'));
+    check(!!decomposeBias, 'solve() history yields a decompose/verified regularity after repeated consistent outcomes');
+    check((sys.approachBiasMap.get('decompose') ?? 1) >= 1, 'refreshApproachBias() boosts (or leaves neutral) an approach correlated with verified outcomes');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

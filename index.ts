@@ -76,6 +76,8 @@ export class NeuroclawSystem {
   private initialized = false;
   private contextCapacityGB: number;
   private chatGroup: ChatGroup | null = null;
+  /** Bias per reasoning strategy derived from discovered outcome regularities (§5/§12). */
+  private approachBiasMap = new Map<string, number>();
 
   constructor(config?: { maxContextGB?: number }) {
     this.llm = new NeuroclawLLM({});
@@ -124,6 +126,9 @@ export class NeuroclawSystem {
       // ASI §1: don't just report a knowledge gap — actively search the
       // knowledge graph for it before giving up on a missing term.
       search: (term) => this.knowledge.search(term, 2).map(h => h.concept.definition || h.concept.name),
+      // ASI §5/§12: bias approach scoring by discovered outcome regularities
+      // (refreshed after each solve() — see refreshApproachBias()).
+      approachBias: (strategy) => this.approachBiasMap.get(strategy) ?? 1,
     });
     // Autonomous learning (ASI §3): decides store/update/conflict-preserve/
     // recommend-skill/recommend-extension for new information, on the same
@@ -489,6 +494,10 @@ export class NeuroclawSystem {
     // own reasoning performance, not a separate hard-coded self-improvement
     // rule. See discoverPatterns().
     this.discovery.observe(`${domain} ${r.chosen} ${r.verified ? "verified" : "unverified"}`);
+    // ASI §5/§12: turn the discovery into actual behavior change — bias future
+    // approach selection by what has been found to correlate with verified vs
+    // unverified outcomes, closing the loop instead of leaving it an inert log.
+    this.refreshApproachBias();
     // ASI §9/§10: track the confidence signal for self-monitoring. A
     // failure-level anomaly (real divergence from the adaptive baseline, not
     // ordinary noise) is the signal self-monitor.ts documents as the trigger
@@ -512,6 +521,25 @@ export class NeuroclawSystem {
    */
   discoverPatterns(topK = 5) {
     return this.discovery.generateHypotheses(topK);
+  }
+
+  /**
+   * ASI §5/§12: recompute the approach-selection bias from the discovery
+   * engine's current hypotheses. A strategy correlated with "verified" gets a
+   * boost, one correlated with "unverified" gets demoted, bounded to keep any
+   * single regularity from dominating reasoning entirely.
+   */
+  private refreshApproachBias(): void {
+    const knownStrategies = ["decompose", "analogy", "first-principles"];
+    for (const h of this.discovery.generateHypotheses(10)) {
+      let strategy: string | undefined;
+      let outcome: string | undefined;
+      if (knownStrategies.includes(h.cause)) { strategy = h.cause; outcome = h.effect; }
+      else if (knownStrategies.includes(h.effect)) { strategy = h.effect; outcome = h.cause; }
+      if (!strategy || (outcome !== "verified" && outcome !== "unverified")) continue;
+      const bias = outcome === "verified" ? 1 + h.confidence * 0.3 : 1 - h.confidence * 0.3;
+      this.approachBiasMap.set(strategy, Math.max(0.4, Math.min(1.6, bias)));
+    }
   }
 
   /** ASI §9/§11: current self-monitor anomalies and whether recovery is warranted. */

@@ -73,6 +73,12 @@ export class ReasoningEngine {
         // Predicted consequence: a known-mistake pattern lowers every approach's score.
         for (const a of approaches)
             a.score -= 0.15 * lessons.length;
+        // Self-improvement feedback (§5/§12): bias scores by discovered
+        // approach/outcome regularities, if the caller supplies them.
+        if (this.deps.approachBias) {
+            for (const a of approaches)
+                a.score *= this.deps.approachBias(a.strategy);
+        }
         approaches.sort((a, b) => b.score - a.score);
         const chosen = approaches[0].strategy;
         push("approaches", approaches.map(a => `${a.strategy}:${a.score.toFixed(2)}`).join(", "));

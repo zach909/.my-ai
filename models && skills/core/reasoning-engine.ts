@@ -37,6 +37,15 @@ export interface ReasoningDeps {
    * it" instead of just reporting a gap.
    */
   search?: (query: string) => string[];
+  /**
+   * Multiplier applied to an approach's score before the best one is chosen
+   * (default 1 = no bias). This is how discovered regularities about which
+   * approach tends to succeed (§5/§11 — e.g. "analogy correlates with
+   * unverified outcomes") feed back into future reasoning, closing the loop
+   * from self-analysis to actual behavior change instead of leaving the
+   * discovery as an inert observation.
+   */
+  approachBias?: (strategy: string) => number;
 }
 
 export interface ReasoningStep { kind: string; detail: string; }
@@ -123,6 +132,11 @@ export class ReasoningEngine {
     ];
     // Predicted consequence: a known-mistake pattern lowers every approach's score.
     for (const a of approaches) a.score -= 0.15 * lessons.length;
+    // Self-improvement feedback (§5/§12): bias scores by discovered
+    // approach/outcome regularities, if the caller supplies them.
+    if (this.deps.approachBias) {
+      for (const a of approaches) a.score *= this.deps.approachBias(a.strategy);
+    }
     approaches.sort((a, b) => b.score - a.score);
     const chosen = approaches[0].strategy;
     push("approaches", approaches.map(a => `${a.strategy}:${a.score.toFixed(2)}`).join(", "));
