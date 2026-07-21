@@ -1185,6 +1185,10 @@ async function testAutonomousTask() {
     check(r.complete, 'Autonomous task completes its plan');
     check(r.results.length === 2 && r.results.every(x => x.status === 'completed'), 'Each step is executed');
     check(r.results.every(x => x.agent && x.agent !== '-'), 'Each step is delegated to a hive agent');
+    // Section 10: autonomousTask records real constraints and decisions on the
+    // plan, not just step status.
+    check(sys.plan.getConstraints().some(c => c.includes('no external APIs')), 'autonomousTask() records the real operating constraint');
+    check(sys.plan.getDecisions().some(d => d.includes('delegated to')), 'autonomousTask() records which agent each step was delegated to and why');
     // Re-run with an overlapping step: planning + hive integration must not repeat it.
     const r2 = await sys.autonomousTask('build a service', ['design the routes', 'write tests']);
     check(r2.results.find(x => x.step === 'design the routes').status === 'skipped', 'Already-completed steps are not repeated');
@@ -1336,6 +1340,21 @@ async function testPlanTracker() {
   const descs = plan2.getSteps().map(s => s.description);
   check(descs.includes('research') && descs.includes('prototype') && !descs.includes('draft'), 'reviseRemaining keeps completed steps and replaces pending ones');
   check(plan2.summary().includes('research'), 'summary() reflects the plan');
+
+  // Section 10: a plan records constraints, decisions, and alternatives, not
+  // just steps — and summary() actually surfaces them.
+  const plan3 = new PlanTracker();
+  plan3.setObjective('ship it');
+  plan3.addConstraint('no external APIs');
+  const [only] = plan3.addSteps(['deploy']);
+  plan3.addAlternative(only.id, 'roll back to the previous release');
+  plan3.addDecision('chose blue-green deployment over rolling restart');
+  check(plan3.getConstraints().includes('no external APIs'), 'Constraints are recorded and retrievable');
+  check(plan3.getStep(only.id).alternatives.includes('roll back to the previous release'), 'Alternatives are recorded per step');
+  check(plan3.getDecisions().includes('chose blue-green deployment over rolling restart'), 'Decisions are recorded and retrievable');
+  const s3 = plan3.summary();
+  check(s3.includes('no external APIs') && s3.includes('roll back to the previous release') && s3.includes('blue-green'),
+    'summary() surfaces constraints, alternatives, and decisions, not just step status');
 }
 
 async function testNetSearchEngine() {

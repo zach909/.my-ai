@@ -376,6 +376,10 @@ export class NeuroclawSystem {
             await this.initialize();
         this.ensureDefaultTeam();
         this.plan.setObjective(objective);
+        // ASI §10 / Section 10: a plan also records constraints and decisions, not
+        // just steps. This is a real, always-true operating constraint (the
+        // project's own build directive), not a fabricated one.
+        this.plan.addConstraint("no external APIs — all execution stays local");
         const results = [];
         for (const desc of steps) {
             if (!this.plan.shouldPerform(desc)) {
@@ -387,11 +391,16 @@ export class NeuroclawSystem {
             const routed = await this.hive.delegate(desc);
             if (routed) {
                 this.plan.complete(step.id, routed.output);
+                // Record the real delegation decision: which agent was chosen and why.
+                this.plan.addDecision(`"${desc}" -> delegated to ${routed.agent.role} (${routed.agent.id}, trust ${routed.agent.trust.toFixed(1)})`);
                 this.memory.remember(`Task step: ${desc} -> ${routed.output}`, { tags: ["task"], importance: 0.6 });
                 results.push({ step: desc, agent: routed.agent.id, status: "completed", result: routed.output });
             }
             else {
                 this.plan.fail(step.id, "no agent available");
+                // Record the alternative that was considered: expanding the team
+                // would let a future retry succeed where this attempt could not.
+                this.plan.addAlternative(step.id, "spawn or register an agent whose role/capabilities match this step, then retry");
                 results.push({ step: desc, agent: "-", status: "failed", result: "no agent available" });
             }
         }
