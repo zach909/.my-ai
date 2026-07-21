@@ -33,6 +33,8 @@ export interface LearnResult {
   subject?: string;
   relation?: string;
   object?: string;
+  /** Properties generalized to a new category instance from prior known members (ASI §1). */
+  inferred?: Array<{ type: string; to: string; support: number }>;
   reason: string;
 }
 
@@ -139,14 +141,42 @@ export class AutonomousLearner {
 
     const existing = this.knowledge.getConcept(triple.subject);
     const isUpdate = !!existing && existing.definition.length > 0;
+
+    // ASI §1: before adding this instance, see whether other known members of
+    // the same category already share properties worth generalizing to it —
+    // "build abstract concepts from specific examples" and "generalize to a
+    // situation never directly encountered", computed from prior members only
+    // so the new instance can't skew its own generalization.
+    let inferred: Array<{ type: string; to: string; support: number }> | undefined;
+    if (normalize(triple.relation) === "is") {
+      const priorMembers = this.knowledge.instancesOf(triple.object).filter(c => normalize(c.name) !== normalize(triple.subject));
+      if (priorMembers.length > 0) {
+        const generalized = this.knowledge.generalize(triple.object);
+        if (generalized.length > 0) inferred = generalized;
+      }
+    }
+
     this.knowledge.relate(triple.subject, triple.relation, triple.object, { confidence: reliability });
+    if (inferred) {
+      for (const p of inferred) {
+        // Inferred, not directly observed: damped confidence relative to how
+        // widely shared the property is among known category members.
+        this.knowledge.relate(triple.subject, p.type, p.to, { confidence: p.support * 0.7 });
+      }
+    }
+
     return {
       decision: isUpdate ? "updated-existing" : "stored",
       reliability,
       subject: triple.subject,
       relation: triple.relation,
       object: triple.object,
-      reason: isUpdate ? `Extended existing knowledge of "${triple.subject}"` : "New concept and relation recorded",
+      inferred,
+      reason: isUpdate
+        ? `Extended existing knowledge of "${triple.subject}"`
+        : inferred
+          ? `New concept recorded; generalized ${inferred.length} likely propert${inferred.length === 1 ? "y" : "ies"} from other known "${triple.object}" members`
+          : "New concept and relation recorded",
     };
   }
 

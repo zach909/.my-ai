@@ -135,6 +135,78 @@ export class KnowledgeGraph {
   }
 
   /**
+   * Concepts asserting `X <relType> category` (default "is") — the known
+   * members/instances of a category. This is the "abstract concept built from
+   * specific examples" ASI §1 asks for: `category` isn't a special node type,
+   * it's simply whatever most things point at with "is".
+   */
+  instancesOf(category: string, relType = "is"): Concept[] {
+    const cat = normalize(category);
+    const rt = normalize(relType);
+    const out: Concept[] = [];
+    for (const r of this.relations) {
+      if (r.to === cat && r.type === rt && !r.superseded) {
+        const c = this.concepts.get(r.from);
+        if (c) out.push(c);
+      }
+    }
+    return out;
+  }
+
+  /**
+   * Properties shared by most known members of a category — a real inductive
+   * generalization: if most known members of "bird" can fly, that becomes a
+   * property of the category itself, not just of each specific bird. Relation
+   * types that describe graph structure rather than a substantive property
+   * (is/is-not, related-to, combines) are excluded so the abstraction reflects
+   * genuine shared traits, not bookkeeping edges.
+   */
+  generalize(category: string, opts: { minSupport?: number } = {}): Array<{ type: string; to: string; support: number }> {
+    const minSupport = opts.minSupport ?? 0.5;
+    const structural = new Set(["is", "is-not", "related-to", "combines"]);
+    const members = this.instancesOf(category);
+    if (members.length === 0) return [];
+    const propCounts = new Map<string, number>();
+    for (const m of members) {
+      const seen = new Set<string>();
+      for (const r of this.current(m.name)) {
+        if (structural.has(r.relation.type)) continue;
+        const key = `${r.relation.type}|${normalize(r.concept.name)}`;
+        if (!seen.has(key)) {
+          propCounts.set(key, (propCounts.get(key) ?? 0) + 1);
+          seen.add(key);
+        }
+      }
+    }
+    const out: Array<{ type: string; to: string; support: number }> = [];
+    for (const [key, count] of propCounts) {
+      const support = count / members.length;
+      if (support >= minSupport) {
+        const [type, to] = key.split("|");
+        out.push({ type, to, support });
+      }
+    }
+    out.sort((a, b) => b.support - a.support);
+    return out;
+  }
+
+  /**
+   * Generalize to a situation never directly encountered (ASI §1): predict
+   * which properties a new instance likely has from what most *existing*
+   * category members share, then register it as a member — inferred, not
+   * asserted, so callers can weight it accordingly (support is returned per
+   * property; nothing here silently overwrites a directly-observed fact).
+   * Generalizing before registering matters: the new instance has no
+   * properties of its own yet, so counting it as a member first would dilute
+   * the very support fractions being computed on its behalf.
+   */
+  predictProperties(instance: string, category: string, opts: { minSupport?: number } = {}): Array<{ type: string; to: string; support: number }> {
+    const generalized = this.generalize(category, opts);
+    this.relate(instance, "is", category, { confidence: 0.6 });
+    return generalized;
+  }
+
+  /**
    * Follow relations outward from a concept up to `depth` hops (optionally only
    * along the given relation types) — combining information across the graph.
    */

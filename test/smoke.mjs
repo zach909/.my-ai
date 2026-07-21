@@ -1513,6 +1513,19 @@ async function testAutonomousLearningPredictionDiscovery() {
   check(kg2.current('the sensor', 'is').length === 0, 'KnowledgeGraph: current() excludes a superseded relation');
   check(kg2.current('the sensor', 'is-not').some(n => n.concept.name === 'accurate'), 'KnowledgeGraph: current() surfaces the new, superseding relation');
 
+  // ASI §1: AutonomousLearner generalizes to a new instance of a known category.
+  const kg3 = new KnowledgeGraph();
+  const learner3 = new AutonomousLearner(kg3);
+  kg3.relate('sparrow', 'is', 'bird');
+  kg3.relate('sparrow', 'can', 'fly');
+  kg3.relate('robin', 'is', 'bird');
+  kg3.relate('robin', 'can', 'fly');
+  const finchResult = learner3.learn('finch is bird');
+  check(!!finchResult.inferred && finchResult.inferred.some(p => p.to === 'fly'), 'AutonomousLearner: learning a new category instance infers shared properties from prior examples');
+  check(kg3.current('finch', 'can').some(n => n.concept.name === 'fly'), 'AutonomousLearner: the inferred property is actually recorded for the new instance');
+  const isolatedResult = learner3.learn('gizmo is widget'); // no prior "widget" members to generalize from
+  check(isolatedResult.inferred === undefined, 'AutonomousLearner: no fabricated inference when there are no prior category members');
+
   // PredictionEngine (ASI §10): predict before acting, compare after, danger flagging.
   const { PredictionEngine } = await load('models && skills/core/prediction-engine.js');
   const pred = new PredictionEngine();
@@ -1577,6 +1590,20 @@ async function testAGIModules() {
   kg.addConcept('puppy', 'a young dog animal');
   check(kg.integrate('kitten', 'a young cat animal').length > 0, 'KnowledgeGraph: integrate auto-links new knowledge to related concepts');
   check(kg.search('animal').length > 0, 'KnowledgeGraph: semantic search returns concepts');
+
+  // KnowledgeGraph (ASI §1): abstraction/generalization from specific examples.
+  kg.relate('sparrow', 'is', 'bird');
+  kg.relate('sparrow', 'can', 'fly');
+  kg.relate('robin', 'is', 'bird');
+  kg.relate('robin', 'can', 'fly');
+  kg.relate('penguin', 'is', 'bird'); // a known bird that does NOT fly
+  check(kg.instancesOf('bird').length === 3, 'KnowledgeGraph: instancesOf finds all known category members');
+  const traits = kg.generalize('bird', { minSupport: 0.6 });
+  check(traits.some(t => t.type === 'can' && t.to === 'fly'), 'KnowledgeGraph: generalize() finds a property shared by most known members');
+  check(!traits.some(t => t.to === 'nonexistent-trait'), 'KnowledgeGraph: generalize() does not fabricate unsupported properties');
+  const predicted = kg.predictProperties('finch', 'bird', { minSupport: 0.6 });
+  check(predicted.some(t => t.to === 'fly'), 'KnowledgeGraph: predictProperties() carries a shared trait to a brand-new instance');
+  check(kg.instancesOf('bird').some(c => c.name === 'finch'), 'KnowledgeGraph: predictProperties() registers the new instance as a category member');
 
   // ReasoningEngine (ASI §2/§8): decompose, delegate, verify, recurse.
   const { ReasoningEngine } = await load('models && skills/core/reasoning-engine.js');
