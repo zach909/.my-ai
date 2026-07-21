@@ -1471,6 +1471,101 @@ async function testHiveMindAndChatGroups() {
   check(group.isComplete() && group.getResult() === 'done', 'Chat group reaches task completion');
 }
 
+async function testAGIModules() {
+  // SelfMonitor (ASI §9-10): prediction-vs-actual, normal error vs failure.
+  const { SelfMonitor } = await load('models && skills/core/self-monitor.js');
+  const mon = new SelfMonitor({ warnThreshold: 2, failThreshold: 4 });
+  mon.observe('x', 10); mon.observe('x', 10.1); mon.observe('x', 9.9);
+  check(mon.observe('x', 10.05).severity === 'normal', 'SelfMonitor: stable observations are a normal prediction error');
+  const spike = mon.observe('x', 1000);
+  check(spike.severity === 'failure' && spike.anomaly && mon.hasFailure(), 'SelfMonitor: a large divergence is flagged as a serious failure');
+
+  // MistakeTracker (ASI §6): dedupe, count, lessons, repeated.
+  const { MistakeTracker } = await load('models && skills/core/mistake-tracker.js');
+  const mt = new MistakeTracker();
+  mt.record({ task: 'sort a list', description: 'wrong order', cause: 'reasoning', prevention: 'check the comparator' });
+  mt.record({ task: 'sort a list', description: 'wrong order again', cause: 'reasoning' });
+  check(mt.size() === 1 && mt.all()[0].occurrences === 2, 'MistakeTracker: identical failures dedupe and count occurrences');
+  check(mt.lessons('sort the list quickly').includes('check the comparator'), 'MistakeTracker: surfaces lessons for a similar task');
+  check(mt.repeated(2).length === 1, 'MistakeTracker: repeated failures are flagged for improvement');
+
+  // KnowledgeGraph (ASI §4): relations, follow, contradictions, integrate, search.
+  const { KnowledgeGraph } = await load('models && skills/core/knowledge-graph.js');
+  const kg = new KnowledgeGraph();
+  kg.relate('dog', 'is', 'animal'); kg.relate('animal', 'is', 'living thing');
+  check(kg.neighbors('dog', 'is')[0].concept.name === 'animal', 'KnowledgeGraph: neighbours by relation type');
+  check(kg.follow('dog', ['is'], 2).some(c => c.name === 'living thing'), 'KnowledgeGraph: follows relations transitively');
+  kg.relate('dog', 'is-not', 'animal');
+  check(kg.findContradictions().length === 1, 'KnowledgeGraph: detects an is/is-not contradiction');
+  kg.addConcept('puppy', 'a young dog animal');
+  check(kg.integrate('kitten', 'a young cat animal').length > 0, 'KnowledgeGraph: integrate auto-links new knowledge to related concepts');
+  check(kg.search('animal').length > 0, 'KnowledgeGraph: semantic search returns concepts');
+
+  // ReasoningEngine (ASI §2/§8): decompose, delegate, verify, recurse.
+  const { ReasoningEngine } = await load('models && skills/core/reasoning-engine.js');
+  const re = new ReasoningEngine({ recall: () => ['a relevant fact'], lessons: () => [], solveSub: (s) => `solved(${s})` });
+  const rr = await re.reason('analyze the data and build a model');
+  check(rr.subproblems.length >= 2, 'ReasoningEngine: decomposes a problem into subproblems');
+  check(rr.subresults.every(s => s.result.startsWith('solved(')), 'ReasoningEngine: delegates each subproblem to the solver');
+  check(rr.verified && rr.confidence > 0 && rr.confidence <= 1, 'ReasoningEngine: verifies and reports bounded confidence');
+  check(rr.trace.some(t => t.kind === 'objective') && rr.approaches.length >= 2, 'ReasoningEngine: records a trace and compares approaches');
+  const rr2 = await new ReasoningEngine({}).reason('foo and bar', { depth: 1 });
+  check(rr2.subresults.length >= 2, 'ReasoningEngine: recurses on subproblems when no external solver is given');
+
+  // KnowledgeTransfer (ASI §7): structural cross-domain transfer.
+  const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
+  const kt = new KnowledgeTransfer();
+  kt.register('minimize traffic flow through the road network', 'traffic', 'max-flow min-cut');
+  kt.register('write a poem about the sea', 'language', 'free verse');
+  const th = kt.transfer('minimize water flow through the pipe network', { domain: 'fluids' });
+  check(th.length > 0 && th[0].source.domain === 'traffic', 'KnowledgeTransfer: matches a structurally similar problem from another domain');
+  check(th[0].crossDomain, 'KnowledgeTransfer: prefers cross-domain transfers');
+
+  // SelfModel (ASI §9): competence, gaps, calibration.
+  const { SelfModel } = await load('models && skills/core/self-model.js');
+  const sm = new SelfModel({ minAttempts: 3 });
+  for (let i = 0; i < 5; i++) sm.record('coding', true);
+  check(sm.competence('coding') > 0.7 && sm.knows('coding'), 'SelfModel: competence rises and knows() reflects a strong domain');
+  for (let i = 0; i < 5; i++) sm.record('poetry', false);
+  check(sm.gaps().includes('poetry'), 'SelfModel: gaps() surfaces weak domains');
+  check(sm.calibrate(0.95, 'poetry') < 0.95, 'SelfModel: calibrates down overconfidence in a weak domain');
+
+  // SelfImprovement (ASI §5): versioning + test-and-keep.
+  const { SelfImprovement } = await load('models && skills/core/self-improvement.js');
+  const si = new SelfImprovement();
+  si.snapshot('model', { v: 1 }); si.snapshot('model', { v: 2 });
+  check(si.versionCount('model') === 2, 'SelfImprovement: versions are stored');
+  check(si.rollback('model').v === 1, 'SelfImprovement: rollback reverts to the previous version');
+  check((await si.evaluate('s', 'better', () => 0.5, () => 0.8)).kept, 'SelfImprovement: keeps a measurably better candidate');
+  check(!(await si.evaluate('s', 'worse', () => 0.8, () => 0.6)).kept, 'SelfImprovement: rejects a non-improving candidate');
+}
+
+async function testSolveIntegration() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const out = await sys.solve('analyze the dataset and build a prediction model');
+    check(typeof out.result === 'string' && out.result.length > 0, 'solve() produces an integrated result');
+    check(out.confidence >= 0 && out.confidence <= 1, 'solve() reports a bounded, calibrated confidence');
+    check(!!out.domain && out.subresults >= 2, 'solve() classifies the domain and decomposes into subproblems');
+    check(sys.selfModel.summary().length >= 1, 'solve() updates the self-model from the outcome');
+    check(sys.memory.all().some(m => m.tags.includes('solution')), 'solve() records the solution into long-term memory');
+
+    // Monitor -> self-heal wiring: a forced failure-level anomaly on the
+    // watched signal should be picked up by solve()'s integrity check.
+    sys.monitor.reset();
+    for (let i = 0; i < 5; i++) sys.monitor.observe('solve.confidence', 0.6);
+    check(!sys.selfIntegrity().hasFailure, 'selfIntegrity() reports healthy under stable observations');
+    sys.monitor.observe('solve.confidence', 50); // wild divergence from the established baseline
+    check(sys.selfIntegrity().hasFailure, 'selfIntegrity() flags a genuine divergence as a failure');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -1508,6 +1603,8 @@ async function main() {
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
     ['Context compression (Section 7)', testContextCompressor],
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
+    ['AGI capability modules (ASI §2-10)', testAGIModules],
+    ['Integrated solve() (ASI §12)', testSolveIntegration],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

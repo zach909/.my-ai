@@ -17,6 +17,13 @@ import { PlanTracker } from "./models && skills/core/plan-tracker.js";
 import { SelfHealer } from "./models && skills/core/self-healer.js";
 import { ContextCompressor } from "./models && skills/core/context-compressor.js";
 import { IntentRouter } from "./models && skills/core/intent-router.js";
+import { SelfMonitor } from "./models && skills/core/self-monitor.js";
+import { MistakeTracker } from "./models && skills/core/mistake-tracker.js";
+import { KnowledgeGraph } from "./models && skills/core/knowledge-graph.js";
+import { ReasoningEngine } from "./models && skills/core/reasoning-engine.js";
+import { KnowledgeTransfer } from "./models && skills/core/knowledge-transfer.js";
+import { SelfModel } from "./models && skills/core/self-model.js";
+import { SelfImprovement } from "./models && skills/core/self-improvement.js";
 
 // Plugins & skills — the whole extension catalog is instantiated through the
 // shared factory so every entry in `pluginExtensions` gets a real
@@ -51,6 +58,14 @@ export class NeuroclawSystem {
   healer: SelfHealer;
   compressor: ContextCompressor;
   router: IntentRouter;
+  // AGI / ASI capability layer (integrated in solve()).
+  monitor: SelfMonitor;
+  mistakes: MistakeTracker;
+  knowledge: KnowledgeGraph;
+  reasoner: ReasoningEngine;
+  transfer: KnowledgeTransfer;
+  selfModel: SelfModel;
+  improvement: SelfImprovement;
 
   private initialized = false;
   private contextCapacityGB: number;
@@ -84,6 +99,23 @@ export class NeuroclawSystem {
     // Capability router (Section 6): decides which high-level capability a
     // query activates (recall / summarize / heal / generate).
     this.router = new IntentRouter();
+
+    // AGI / ASI capability layer. These are wired together — the reasoner draws
+    // available info from memory, avoids known mistakes, delegates subproblems
+    // to the hive, and reads competence from the self-model — so intelligence
+    // emerges from their interaction (ASI §12), not from any one in isolation.
+    this.monitor = new SelfMonitor();
+    this.mistakes = new MistakeTracker();
+    this.knowledge = new KnowledgeGraph();
+    this.transfer = new KnowledgeTransfer();
+    this.selfModel = new SelfModel();
+    this.improvement = new SelfImprovement();
+    this.reasoner = new ReasoningEngine({
+      recall: (q) => this.memory.retrieve(q, { topK: 5 }).map(h => h.item.content),
+      lessons: (task) => this.mistakes.lessons(task),
+      solveSub: (sub) => this.runner.generate(sub),
+      competence: (problem) => this.selfModel.competence(classifyDomain(problem)),
+    });
   }
 
   /**
@@ -355,6 +387,67 @@ export class NeuroclawSystem {
   }
 
   /**
+   * ASI §12 — the integrated intelligence loop. Solve a problem with reasoning
+   * (§2/§8) that uses long-term memory for available information (§4), avoids
+   * known mistakes (§6), delegates subproblems to the hive (§8), and reads
+   * competence from the self-model (§9); pulls cross-domain method hints via
+   * knowledge transfer (§7); calibrates its confidence honestly (§9); then
+   * records the outcome back into the self-model, mistake tracker, knowledge
+   * graph and long-term memory so memory improves reasoning, reasoning improves
+   * learning, and the self-model tracks where the system needs to improve.
+   */
+  async solve(problem: string, opts?: { depth?: number }): Promise<{
+    result: string;
+    confidence: number;
+    verified: boolean;
+    domain: string;
+    approach: string;
+    transfers: string[];
+    subresults: number;
+  }> {
+    if (!this.initialized) await this.initialize();
+    const domain = classifyDomain(problem);
+    // ASI §7: structurally-similar past problems from other domains + their method.
+    const transfers = this.transfer.transfer(problem, { domain }).map(t => `${t.source.domain}: ${t.source.method}`);
+    // ASI §2/§8: reason (memory + mistakes + hive + self-model via injected deps).
+    const r = await this.reasoner.reason(problem, { depth: opts?.depth ?? 1 });
+    // ASI §9: never claim more certainty than the track record supports.
+    const confidence = this.selfModel.calibrate(r.confidence, domain);
+    // ASI §3/§5/§6/§9: learn from the outcome.
+    this.selfModel.record(domain, r.verified);
+    if (!r.verified) {
+      const unresolved = r.subresults.filter(s => /\[(error|unsolved|base):/i.test(s.result)).length;
+      this.mistakes.record({
+        task: problem,
+        description: `Reasoning left ${unresolved} subproblem(s) unresolved`,
+        cause: r.available.length === 0 ? "missing-knowledge" : "reasoning",
+        failedStep: r.chosen,
+        prevention: `Gather information before choosing "${r.chosen}" for: ${r.objective}`,
+      });
+    } else {
+      // A verified solution is a reusable method (§7) and semantic knowledge (§4).
+      this.transfer.register(problem, domain, r.chosen);
+      this.knowledge.integrate(r.objective, problem);
+    }
+    this.memory.remember(`Solved [${domain}]: ${problem} -> ${r.result.slice(0, 200)}`, { tags: ["solution", domain], importance: 0.7 });
+    // ASI §9/§10: track the confidence signal for self-monitoring. A
+    // failure-level anomaly (real divergence from the adaptive baseline, not
+    // ordinary noise) is the signal self-monitor.ts documents as the trigger
+    // for self-healing (§24) — so a genuinely destabilized solve loop attempts
+    // real recovery rather than just being logged.
+    this.monitor.observe("solve.confidence", confidence);
+    if (this.monitor.hasFailure()) {
+      await this.selfHeal();
+    }
+    return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length };
+  }
+
+  /** ASI §9/§11: current self-monitor anomalies and whether recovery is warranted. */
+  selfIntegrity(): { anomalies: ReturnType<SelfMonitor["anomalies"]>; hasFailure: boolean } {
+    return { anomalies: this.monitor.anomalies(), hasFailure: this.monitor.hasFailure() };
+  }
+
+  /**
    * Section 24: run the self-healer — detect unhealthy components and attempt
    * repair / revert-to-known-good, reporting anything unrecoverable.
    */
@@ -439,6 +532,19 @@ export class NeuroclawSystem {
       memories: this.memory.size(),
     };
   }
+}
+
+/** Coarse domain label for a problem — used by the self-model and knowledge transfer. */
+function classifyDomain(text: string): string {
+  const t = (text || "").toLowerCase();
+  const has = (words: string[]) => words.some(w => t.includes(w));
+  if (has(["code", "coding", "program", "function", "bug", "compile", "api", "algorithm"])) return "coding";
+  if (has(["math", "equation", "number", "calculate", "compute", "proof", "geometry", "algebra"])) return "math";
+  if (has(["science", "physics", "chemistry", "biology", "experiment", "hypothesis", "energy"])) return "science";
+  if (has(["plan", "schedule", "steps", "roadmap", "organize", "strategy"])) return "planning";
+  if (has(["design", "engineer", "build", "system", "architecture", "circuit"])) return "engineering";
+  if (has(["write", "essay", "story", "language", "translate", "grammar", "poem"])) return "language";
+  return "general";
 }
 
 // Singleton instance for module-level access
