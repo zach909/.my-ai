@@ -493,13 +493,22 @@ export class NeuroclawSystem {
                 this.memory.reinforce(grounding.id, r.verified ? 0.05 : -0.1);
         }
         this.memory.remember(`Solved [${domain}]: ${problem} -> ${r.result.slice(0, 200)}`, { tags: ["solution", domain], importance: 0.7 });
+        // ASI §11: test every currently-active hypothesis against this fresh
+        // observation *before* folding it into the raw log — "design tests,
+        // analyze results, reject failed explanations" made real: a hypothesis
+        // that stops holding gets rejected (activeHypotheses() then excludes it),
+        // rather than every regularity being generated once and trusted forever.
+        const observation = `${domain} ${r.chosen} ${r.verified ? "verified" : "unverified"}`;
+        for (const h of this.discovery.activeHypotheses()) {
+            this.discovery.test(h.id, observation);
+        }
         // ASI §5/§11: feed this solve's (domain, approach, outcome) into the
         // discovery engine as an observation. Across many solves this lets the
         // system discover real regularities — e.g. "domain X tends toward
         // verified outcomes with approach Y" — a scientific-method analysis of its
         // own reasoning performance, not a separate hard-coded self-improvement
         // rule. See discoverPatterns().
-        this.discovery.observe(`${domain} ${r.chosen} ${r.verified ? "verified" : "unverified"}`);
+        this.discovery.observe(observation);
         // ASI §5/§12: turn the discovery into actual behavior change — bias future
         // approach selection by what has been found to correlate with verified vs
         // unverified outcomes, closing the loop instead of leaving it an inert log.

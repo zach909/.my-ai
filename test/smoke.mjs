@@ -1578,6 +1578,24 @@ async function testAutonomousLearningPredictionDiscovery() {
   check(kg.getConcept(combo.name) !== undefined, 'DiscoveryEngine: the novel combination is registered in the knowledge graph');
   const comboAgain = disc.combine('bird wing', 'jet engine');
   check(comboAgain === null, 'DiscoveryEngine: combining already-linked concepts again is not treated as novel');
+
+  // DiscoveryEngine (ASI §11): "reject failed explanations" has to stick —
+  // generateHypotheses() must reuse active hypotheses (so test()'s history
+  // persists) and must not resurrect one that was already rejected.
+  const discReuse = new DiscoveryEngine(new KnowledgeGraph());
+  discReuse.observe('sun causes heat always');
+  discReuse.observe('sun causes heat again');
+  discReuse.observe('sun causes heat once more');
+  const gen1 = discReuse.generateHypotheses(5);
+  const gen2 = discReuse.generateHypotheses(5);
+  check(gen1.map(h => h.id).join(',') === gen2.map(h => h.id).join(','), 'DiscoveryEngine: generateHypotheses() reuses existing active hypotheses (same ids) rather than duplicating them');
+  const sunHeat = gen1.find(h => h.cause === 'sun' && h.effect === 'heat');
+  check(!!sunHeat, 'DiscoveryEngine: finds the sun/heat regularity among the generated hypotheses');
+  discReuse.test(sunHeat.id, 'sun sets in the west');
+  discReuse.test(sunHeat.id, 'sun shines on the garden');
+  check(sunHeat.rejected, 'DiscoveryEngine: a hypothesis contradicted enough times becomes rejected');
+  const gen3 = discReuse.generateHypotheses(5);
+  check(!gen3.some(h => h.cause === 'sun' && h.effect === 'heat'), 'DiscoveryEngine: a rejected hypothesis is not resurrected by generateHypotheses()');
 }
 
 async function testAGIModules() {

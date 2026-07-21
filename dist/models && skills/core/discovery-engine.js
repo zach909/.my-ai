@@ -64,6 +64,20 @@ export class DiscoveryEngine {
         candidates.sort((a, b) => b.support - a.support);
         const out = [];
         for (const c of candidates.slice(0, topK)) {
+            // "Reject failed explanations" (§11) has to actually stick: don't
+            // resurrect a (cause, effect) pair that was already tested and
+            // rejected as if nothing had been learned since.
+            const rejectedMatch = Array.from(this.hypotheses.values()).find(h => h.cause === c.cause && h.effect === c.effect && h.rejected);
+            if (rejectedMatch)
+                continue;
+            // Reuse an existing active hypothesis for the same pair instead of a
+            // fresh duplicate, so its accumulated support/contradiction history
+            // (from test()) persists and actually matters across calls.
+            const existing = Array.from(this.hypotheses.values()).find(h => h.cause === c.cause && h.effect === c.effect && !h.rejected);
+            if (existing) {
+                out.push(existing);
+                continue;
+            }
             const h = {
                 id: `hyp-${++this.seq}`,
                 cause: c.cause,
