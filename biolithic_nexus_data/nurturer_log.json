@@ -1,0 +1,11 @@
+{
+  "unit_id": "NUR-01",
+  "action": "FEEDING",
+  "recipe": {
+    "base": "Synthetic Colostrum",
+    "proteins": "Hydrolyzed_Type_A",
+    "lipids": "Omega3_Nano_Emulsion",
+    "volume_ml": 120
+  },
+  "timestamp": "2026-07-03T18:18:50.773013"
+}
