@@ -1984,6 +1984,24 @@ async function testEmpathyToneAdjustment() {
   }
 }
 
+async function testKnownDomains() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.knownDomains().length === 0, 'knownDomains() reports nothing before any evidence exists');
+    for (let i = 0; i < 4; i++) sys.selfModel.record('coding', true);
+    for (let i = 0; i < 4; i++) sys.selfModel.record('astrophysics', false);
+    check(sys.knownDomains().includes('coding'), 'knownDomains() surfaces a domain with a genuinely strong track record');
+    check(!sys.knownDomains().includes('astrophysics'), 'knownDomains() excludes a domain with a demonstrated weak track record');
+    check(sys.improvementTargets().weakDomains.includes('astrophysics'), 'The weak domain still shows up on the opposite side (improvementTargets)');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2030,6 +2048,7 @@ async function main() {
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
+    ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

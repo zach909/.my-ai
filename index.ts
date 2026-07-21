@@ -667,6 +667,22 @@ export class NeuroclawSystem {
   }
 
   /**
+   * ASI §9: the self-model should answer both halves of "what it knows" —
+   * `gaps()` (above, via `improvementTargets()`) covers demonstrated
+   * weaknesses, but `SelfModel.knows()` — the positive counterpart, domains
+   * with enough evidence *and* a track record above threshold — was built
+   * and unit-tested in isolation only, never called from live code. Distinct
+   * from confidence *calibration* (which only shades a single query's
+   * number): this is a real inventory, "which domains has the system
+   * actually demonstrated competence in", callable on its own.
+   */
+  knownDomains(): string[] {
+    return this.selfModel.summary()
+      .map(s => s.domain)
+      .filter(domain => this.selfModel.knows(domain));
+  }
+
+  /**
    * Lazily spawn the default planner/coder/reviewer team the first time any
    * hive-based capability is used (collaborate, autonomousTask, or solve()'s
    * subproblem delegation), so they all share one team and trust budget
