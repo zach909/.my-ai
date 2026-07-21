@@ -101,6 +101,9 @@ export class NeuroclawSystem {
             // ASI §5/§12: bias approach scoring by discovered outcome regularities
             // (refreshed after each solve() — see refreshApproachBias()).
             approachBias: (strategy) => this.approachBiasMap.get(strategy) ?? 1,
+            // ASI §11: when search can't resolve a gap, try a creative combination
+            // of the still-missing terms instead of only ever reporting the gap.
+            combine: (a, b) => this.discovery.combine(a, b),
         });
         // Autonomous learning (ASI §3): decides store/update/conflict-preserve/
         // recommend-skill/recommend-extension for new information, on the same

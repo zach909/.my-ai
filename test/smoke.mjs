@@ -1665,6 +1665,17 @@ async function testAGIModules() {
   const withoutTransfer = await new ReasoningEngine({}).reason('build and test the system');
   check(!withoutTransfer.approaches.some(a => a.strategy === 'transfer'), 'ReasoningEngine: no transfer candidate exists when no hint is given');
 
+  // ReasoningEngine (ASI §11): a creative combination is a real last-resort
+  // exploration when search leaves multiple terms genuinely missing.
+  const combine = (a, b) => ({ name: `${a}-${b} hybrid`, definition: `combining ${a} and ${b}` });
+  const withCombine = await new ReasoningEngine({ recall: () => [], combine }).reason('what is quixotic and zorbnak');
+  check(!!withCombine.creativeCombination, 'ReasoningEngine: a creative combination is synthesized when search leaves multiple terms missing');
+  check(withCombine.available.some(a => a.includes('creative exploration')), 'ReasoningEngine: the combination is added to available, clearly labeled as unverified (not fact)');
+  check(withCombine.trace.some(t => t.kind === 'creative'), 'ReasoningEngine: the creative step is recorded in the trace');
+  const noCombine = await new ReasoningEngine({ recall: () => [], combine: () => null }).reason('what is quixotic and zorbnak');
+  check(!noCombine.creativeCombination, 'ReasoningEngine: no fabricated combination when combine() finds nothing novel');
+  check(withCombine.result.includes('Creative exploration'), 'ReasoningEngine: the creative note surfaces in the result regardless of which approach was actually chosen');
+
   // KnowledgeTransfer (ASI §7): structural cross-domain transfer.
   const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
   const kt = new KnowledgeTransfer();

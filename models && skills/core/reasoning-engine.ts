@@ -46,6 +46,16 @@ export interface ReasoningDeps {
    * discovery as an inert observation.
    */
   approachBias?: (strategy: string) => number;
+  /**
+   * Creative combination of two concepts that haven't been connected before
+   * (ASI §11 — "creativity by combining concepts that have not previously
+   * been connected"), returning null when there's nothing novel to combine.
+   * Used as a last-resort exploration when the gap-seeking search (above)
+   * still leaves multiple terms genuinely missing: rather than only ever
+   * reporting the gap, the reasoner tries synthesizing a novel angle from
+   * what it does have.
+   */
+  combine?: (a: string, b: string) => { name: string; definition: string } | null;
 }
 
 export interface ReasoningStep { kind: string; detail: string; }
@@ -59,6 +69,8 @@ export interface ReasoningResult {
   missing: string[];
   /** Missing terms that were actively searched for and resolved (§1). */
   soughtAndResolved: string[];
+  /** A novel concept synthesized from two still-missing terms, if any (§11). */
+  creativeCombination?: { name: string; definition: string };
   /** Subproblems that initially failed but were resolved by re-decomposition (§2 step 10). */
   revised: string[];
   approaches: Approach[];
@@ -131,6 +143,20 @@ export class ReasoningEngine {
       }
       missing = stillMissing;
       if (soughtAndResolved.length) push("sought", `resolved: ${soughtAndResolved.join(", ")}`);
+    }
+
+    // 4c. When search still leaves multiple terms genuinely missing, try a
+    // creative combination of them (§11) as a last-resort exploration instead
+    // of only ever reporting the gap. Clearly labeled as unverified so it's
+    // never mistaken for an established fact.
+    let creativeCombination: { name: string; definition: string } | undefined;
+    if (this.deps.combine && missing.length >= 2) {
+      const combo = this.deps.combine(missing[0], missing[1]);
+      if (combo) {
+        creativeCombination = combo;
+        available.push(`(creative exploration, unverified) ${combo.name}: ${combo.definition}`);
+        push("creative", `combined "${missing[0]}" + "${missing[1]}" -> "${combo.name}"`);
+      }
     }
 
     // Known-mistake lessons for this task.
@@ -206,7 +232,14 @@ export class ReasoningEngine {
     const transferNote = chosen === "transfer" && opts.transferHint
       ? `\nTransferred method: "${opts.transferHint.method}" (from ${opts.transferHint.domain})`
       : "";
-    const result = subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n") + analogyNote + transferNote;
+    // Unlike the approach-specific notes above, a creative combination is
+    // exploratory context discovered *during* reasoning, not tied to whichever
+    // approach ends up solving the decomposed subproblems — so it's surfaced
+    // whenever one was synthesized, regardless of which approach was chosen.
+    const creativeNote = creativeCombination
+      ? `\nCreative exploration (unverified): "${creativeCombination.name}" — ${creativeCombination.definition}`
+      : "";
+    const result = subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n") + analogyNote + transferNote + creativeNote;
 
     // 11. Verify the final result.
     const verified = subresults.length > 0 && failed.length === 0;
@@ -221,7 +254,7 @@ export class ReasoningEngine {
     confidence -= 0.1 * failed.length;
     confidence = clamp01(confidence);
 
-    return { problem, objective, available, missing, soughtAndResolved, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
+    return { problem, objective, available, missing, soughtAndResolved, creativeCombination, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
   }
 
   private async solveSubproblem(sub: string, depth: number): Promise<string> {

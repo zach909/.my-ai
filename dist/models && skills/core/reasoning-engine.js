@@ -58,6 +58,19 @@ export class ReasoningEngine {
             if (soughtAndResolved.length)
                 push("sought", `resolved: ${soughtAndResolved.join(", ")}`);
         }
+        // 4c. When search still leaves multiple terms genuinely missing, try a
+        // creative combination of them (§11) as a last-resort exploration instead
+        // of only ever reporting the gap. Clearly labeled as unverified so it's
+        // never mistaken for an established fact.
+        let creativeCombination;
+        if (this.deps.combine && missing.length >= 2) {
+            const combo = this.deps.combine(missing[0], missing[1]);
+            if (combo) {
+                creativeCombination = combo;
+                available.push(`(creative exploration, unverified) ${combo.name}: ${combo.definition}`);
+                push("creative", `combined "${missing[0]}" + "${missing[1]}" -> "${combo.name}"`);
+            }
+        }
         // Known-mistake lessons for this task.
         const lessons = (this.deps.lessons?.(problem) ?? []).slice(0, 5);
         if (lessons.length)
@@ -133,7 +146,14 @@ export class ReasoningEngine {
         const transferNote = chosen === "transfer" && opts.transferHint
             ? `\nTransferred method: "${opts.transferHint.method}" (from ${opts.transferHint.domain})`
             : "";
-        const result = subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n") + analogyNote + transferNote;
+        // Unlike the approach-specific notes above, a creative combination is
+        // exploratory context discovered *during* reasoning, not tied to whichever
+        // approach ends up solving the decomposed subproblems — so it's surfaced
+        // whenever one was synthesized, regardless of which approach was chosen.
+        const creativeNote = creativeCombination
+            ? `\nCreative exploration (unverified): "${creativeCombination.name}" — ${creativeCombination.definition}`
+            : "";
+        const result = subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n") + analogyNote + transferNote + creativeNote;
         // 11. Verify the final result.
         const verified = subresults.length > 0 && failed.length === 0;
         push("verify", verified ? "all subproblems resolved" : "incomplete");
@@ -147,7 +167,7 @@ export class ReasoningEngine {
         confidence -= 0.15 * lessons.length;
         confidence -= 0.1 * failed.length;
         confidence = clamp01(confidence);
-        return { problem, objective, available, missing, soughtAndResolved, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
+        return { problem, objective, available, missing, soughtAndResolved, creativeCombination, revised, approaches, chosen, subproblems: subproblems, subresults, result, verified, confidence, lessons, trace };
     }
     async solveSubproblem(sub, depth) {
         if (this.deps.solveSub)
