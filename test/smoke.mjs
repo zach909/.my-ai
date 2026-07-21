@@ -2135,6 +2135,10 @@ async function testMistakeCauseClassification() {
     await sysSkill.solve('write code and then test the code');
     const skillMistake = sysSkill.mistakes.all().find(m => m.task === 'write code and then test the code');
     check(skillMistake.cause === 'incorrect-skill', 'A failed subproblem that was delegated to a hive agent is classified as incorrect-skill, not generic reasoning');
+    // §5: "which skills are missing/incomplete" needs to name the actual
+    // responsible skill, not just tally an aggregate cause count.
+    check(skillMistake.failedSkill === 'coder', 'The mistake names the specific responsible agent, not just the generic incorrect-skill cause');
+    check(sysSkill.improvementTargets().strugglingSkills.coder === 1, 'improvementTargets() surfaces a real, named skill-failure breakdown, not just an aggregate cause count');
 
     const sysMemory = new NeuroclawSystem();
     await sysMemory.initialize();

@@ -575,7 +575,8 @@ export class NeuroclawSystem {
             // low-importance from *prior* calls' demotions — checked here before
             // this attempt's own reinforce/demote pass runs, further below) points
             // at the memory itself rather than this attempt's logic.
-            const failedViaSkill = failedSubresults.some(s => this.lastDelegations.has(s.subproblem));
+            const failedAgentIds = Array.from(new Set(failedSubresults.map(s => this.lastDelegations.get(s.subproblem)).filter((id) => !!id)));
+            const failedViaSkill = failedAgentIds.length > 0;
             const badMemory = r.available.some(content => {
                 const grounding = this.memory.all().find(m => m.content === content);
                 return grounding && grounding.importance < 0.3;
@@ -584,11 +585,21 @@ export class NeuroclawSystem {
                 failedViaSkill ? "incorrect-skill" :
                     badMemory ? "bad-memory" :
                         "reasoning";
+            // §5: "which skills are missing/incomplete" needs to name the actual
+            // responsible skill, not just tally an aggregate "incorrect-skill"
+            // count — record which specific hive agent(s) were involved so a
+            // later caller can see exactly which capability keeps failing.
             this.mistakes.record({
                 task: problem,
                 description: `Reasoning left ${unresolved} subproblem(s) unresolved`,
                 cause,
                 failedStep: r.chosen,
+                // §5: "which skills are missing/incomplete" needs to name the
+                // actual responsible skill, not just tally an aggregate
+                // "incorrect-skill" count — record which specific hive agent(s)
+                // were involved so a later caller can see exactly which capability
+                // keeps failing (see MistakeTracker.skillBreakdown()).
+                failedSkill: failedViaSkill ? failedAgentIds.join(", ") : undefined,
                 // §6: "which assumption was incorrect" — a real, computed assumption
                 // the chosen approach's own consequence prediction rested on, not
                 // left blank. Previously this field existed on Mistake/MistakeInput
@@ -731,7 +742,9 @@ export class NeuroclawSystem {
     improvementTargets() {
         const breakdown = this.mistakes.causeBreakdown();
         const dominantCause = Object.entries(breakdown).sort((a, b) => b[1] - a[1])[0]?.[0] ?? "unknown";
-        return { weakDomains: this.selfModel.gaps(), dominantCause, causeBreakdown: breakdown };
+        // §5: "which skills are missing/incomplete" — a genuinely named
+        // breakdown, not just the aggregate "incorrect-skill" cause count above.
+        return { weakDomains: this.selfModel.gaps(), dominantCause, causeBreakdown: breakdown, strugglingSkills: this.mistakes.skillBreakdown() };
     }
     /**
      * ASI §9: the self-model should answer both halves of "what it knows" —
