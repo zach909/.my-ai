@@ -2353,6 +2353,37 @@ async function testStatusCounts() {
   }
 }
 
+async function testCapabilityDefaultDeny() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    // §16/§23 "default-deny": HiveMind.delegate()'s requireCapability filter
+    // was tested in isolation but every live delegation call site skipped it
+    // entirely, so the safety property was never actually checked -- any
+    // task was routed by token overlap alone regardless of granted
+    // capability. With the coder's capability intact, a coding subproblem
+    // should genuinely delegate.
+    await sys.solve('write code and then test the code');
+    check(sys.lastDelegations.get('write code') === 'coder', 'A coding subproblem delegates to the coder while its capability is intact');
+
+    // Revoke the capability -- solve() should now genuinely deny delegation
+    // for that domain and fall back to the runner, not silently delegate
+    // anyway via pure content matching.
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    sys2.ensureDefaultTeam();
+    sys2.hive.get('coder').capabilities.delete('coding');
+    await sys2.solve('write code and then test the code');
+    check(!sys2.lastDelegations.has('write code'), 'A coding subproblem is denied delegation once the coder\'s capability is revoked, not routed anyway');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testHiveDelegationReward() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2495,6 +2526,7 @@ async function main() {
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
+    ['Capability default-deny enforcement (Section 16/23)', testCapabilityDefaultDeny],
     ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
     ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],

@@ -108,7 +108,11 @@ export class NeuroclawSystem {
             // (delegate() itself still runs each agent's mind through the runner).
             solveSub: async (sub) => {
                 this.ensureDefaultTeam();
-                const routed = await this.hive.delegate(sub);
+                // §16/§23 default-deny: only enforce a capability requirement for
+                // domains that actually have one among the default team's granted
+                // capabilities — see domainToCapability().
+                const requireCapability = domainToCapability(classifyDomain(sub));
+                const routed = await this.hive.delegate(sub, requireCapability ? { requireCapability } : undefined);
                 if (routed) {
                     this.lastDelegations.set(sub, routed.agent.id);
                     // ASI §8/§13: "combine information across the hive" — publish the
@@ -484,7 +488,9 @@ export class NeuroclawSystem {
             }
             const step = this.plan.addStep(desc);
             this.plan.start(step.id);
-            const routed = await this.hive.delegate(desc);
+            // §16/§23 default-deny: same capability enforcement as solveSub above.
+            const requireCapability = domainToCapability(classifyDomain(desc));
+            const routed = await this.hive.delegate(desc, requireCapability ? { requireCapability } : undefined);
             if (routed) {
                 this.plan.complete(step.id, routed.output);
                 // Record the real delegation decision: which agent was chosen and why.
@@ -1072,6 +1078,27 @@ function classifyDomain(text) {
     if (has(["creative", "brainstorm", "imagine", "invent", "novel idea", "artistic", "original concept"]))
         return "creativity";
     return "general";
+}
+/**
+ * ASI §16/§23: "default-deny" — an agent may only use a capability that was
+ * explicitly granted. `HiveMind.delegate()`'s `requireCapability` filter
+ * enforces exactly this and was unit-tested, but every live delegation call
+ * site (`solveSub`, `autonomousTask()`) called `delegate()` with no
+ * capability requirement at all, so the safety property was never actually
+ * checked in practice — any task was routed to whichever agent scored
+ * highest on token overlap, regardless of whether that agent was ever
+ * granted the capability the task requires. Maps a classified domain to the
+ * capability the default team's agents actually hold (`coding`, `planning`)
+ * — deliberately only the domains with a real capability to enforce;
+ * everything else keeps matching by content as before rather than inventing
+ * new restrictions with no established capability model behind them.
+ */
+function domainToCapability(domain) {
+    if (domain === "coding")
+        return "coding";
+    if (domain === "planning")
+        return "planning";
+    return undefined;
 }
 /** Case/whitespace-insensitive text key, matching the normalization used across the core modules. */
 function normalizeText(text) {
