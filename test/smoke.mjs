@@ -1961,6 +1961,109 @@ async function testHealLog() {
   }
 }
 
+async function testEmpathyToneAdjustment() {
+  const { NeuroclawSystem } = await load('index.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // Separate fresh systems for each case: a mild-negative *first* turn (no
+    // prior positive settling) stays above the Section 3 veto's threshold
+    // while still reading as negative valence to adjustDecision(), so the
+    // tone-adjustment path is reached rather than the withhold path above it.
+    const sysPositive = new NeuroclawSystem();
+    await sysPositive.initialize();
+    const positive = await sysPositive.processQuery('I love this awesome great news, what is 2 plus 2?');
+    check(positive.startsWith('Great!'), 'adjustDecision() adds an enthusiastic tone under positive user alignment');
+
+    const sysNegative = new NeuroclawSystem();
+    await sysNegative.initialize();
+    const supportive = await sysNegative.processQuery('I am a bit sad and worried about this, what is 2 plus 2?');
+    check(supportive.startsWith('I understand.'), 'adjustDecision() adds a supportive tone under negative user alignment');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testKnownDomains() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    check(sys.knownDomains().length === 0, 'knownDomains() reports nothing before any evidence exists');
+    for (let i = 0; i < 4; i++) sys.selfModel.record('coding', true);
+    for (let i = 0; i < 4; i++) sys.selfModel.record('astrophysics', false);
+    check(sys.knownDomains().includes('coding'), 'knownDomains() surfaces a domain with a genuinely strong track record');
+    check(!sys.knownDomains().includes('astrophysics'), 'knownDomains() excludes a domain with a demonstrated weak track record');
+    check(sys.improvementTargets().weakDomains.includes('astrophysics'), 'The weak domain still shows up on the opposite side (improvementTargets)');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testApproachBiasEvaluateGate() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.discovery.observe('decompose leads verified');
+    sys.discovery.observe('decompose leads verified');
+    sys.discovery.observe('decompose leads verified');
+    const hyps = sys.discovery.generateHypotheses(10);
+    const forward = hyps.find(h => h.cause === 'decompose' && h.effect === 'verified');
+    const reverse = hyps.find(h => h.cause === 'verified' && h.effect === 'decompose');
+    check(!!forward && !!reverse, 'Both directions of the decompose/verified co-occurrence are discovered as hypotheses');
+
+    // Drive support to 3 and contradictions to 2 on both directions: real
+    // confidence 3/(3+4) = 0.43, below chance (0.5) but NOT formally rejected
+    // (contradictionCount 2 <= supportCount 3) -- the case that previously
+    // slipped through and perturbed the bias map unconditionally.
+    for (const h of [forward, reverse]) {
+      const supportMsg = h.cause === 'decompose' ? 'decompose leads verified' : 'verified leads decompose';
+      const contradictMsg = h.cause === 'decompose' ? 'decompose without success here' : 'verified without decomposition here';
+      sys.discovery.test(h.id, supportMsg);
+      sys.discovery.test(h.id, supportMsg);
+      sys.discovery.test(h.id, contradictMsg);
+      sys.discovery.test(h.id, contradictMsg);
+    }
+    const forwardAfter = sys.discovery.getHypothesis(forward.id);
+    check(Math.abs(forwardAfter.confidence - 0.4286) < 0.001, 'The manufactured hypothesis lands just below chance-level confidence');
+    check(forwardAfter.rejected === false, 'The hypothesis is not formally rejected (contradictions do not yet outweigh support)');
+
+    await sys['refreshApproachBias']();
+    check(sys.approachBiasMap.get('decompose') === undefined, "SelfImprovement.evaluate() gates the below-chance correlation out -- it never perturbs the bias map");
+    const hist = sys.improvementHistory();
+    check(hist.discarded >= 2 && hist.recent.every(i => i.target !== 'approachBias:decompose' || i.kept === false), 'improvementHistory() records the discarded (not-kept) evaluation, not just successes');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testStatusCounts() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    const before = sys.getStatus();
+    check(before.transferredMethods === 0 && before.trackedPredictions === 0, 'getStatus() reports zero transferred methods and tracked predictions before any activity');
+
+    await sys.solve('calculate the average of a list of numbers');
+    const afterSolve = sys.getStatus();
+    check(afterSolve.transferredMethods === before.transferredMethods + 1, 'getStatus() reflects KnowledgeTransfer.size() growing after solve() registers a method');
+
+    await sys.processQuery('what is 2 plus 2');
+    const afterQuery = sys.getStatus();
+    check(afterQuery.trackedPredictions === before.trackedPredictions + 1, 'getStatus() reflects PredictionEngine.size() growing after processQuery() predicts an outcome');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2006,6 +2109,10 @@ async function main() {
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
     ['Multi-hop knowledge combination (Section 4)', testCombineKnowledge],
     ['Self-healer log introspection (Section 24)', testHealLog],
+    ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
+    ['Self-model known-domains inventory (Section 9)', testKnownDomains],
+    ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
+    ['System status counts (Section 7/10)', testStatusCounts],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
