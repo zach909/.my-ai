@@ -30,6 +30,8 @@ export class MistakeTracker {
                 existing.assumption = input.assumption;
             if (input.failedStep)
                 existing.failedStep = input.failedStep;
+            if (input.failedSkill)
+                existing.failedSkill = input.failedSkill;
             return existing;
         }
         const mistake = {
@@ -39,6 +41,7 @@ export class MistakeTracker {
             cause,
             assumption: input.assumption,
             failedStep: input.failedStep,
+            failedSkill: input.failedSkill,
             prevention: input.prevention,
             occurrences: 1,
             firstSeen: now,
@@ -86,6 +89,21 @@ export class MistakeTracker {
         };
         for (const m of this.mistakes.values())
             out[m.cause] += m.occurrences;
+        return out;
+    }
+    /**
+     * Failure counts per specific skill/agent (§5: "which skills are missing/
+     * incomplete" needs to name which one, not just an aggregate
+     * "incorrect-skill" cause count). Only counts unresolved mistakes that
+     * actually named a responsible skill.
+     */
+    skillBreakdown() {
+        const out = {};
+        for (const m of this.mistakes.values()) {
+            if (!m.failedSkill || m.resolved)
+                continue;
+            out[m.failedSkill] = (out[m.failedSkill] ?? 0) + m.occurrences;
+        }
         return out;
     }
     resolve(id) {
