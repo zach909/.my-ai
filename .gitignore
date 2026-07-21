@@ -1,14 +1,4 @@
-```
-# Python
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
-
-# Build outputs
-output/
-*.zip
-
-# Logs
-*.log
-```
+# Examples and documentation
+artificial_organism/fmea/system_fmea.md
+artificial_organism/materials/development_plan.md
+artificial_organism/specs/interface_standards.md
