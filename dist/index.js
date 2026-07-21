@@ -503,6 +503,16 @@ export class NeuroclawSystem {
             const bias = outcome === "verified" ? 1 + h.confidence * 0.3 : 1 - h.confidence * 0.3;
             this.approachBiasMap.set(strategy, Math.max(0.4, Math.min(1.6, bias)));
         }
+        // ASI §6: "repeated failures should cause the relevant reasoning method to
+        // be evaluated and improved" — a repeated mistake is direct evidence
+        // against the approach that was tried and failed, not a soft correlation,
+        // so it demotes (never boosts) that approach independently of discovery.
+        for (const m of this.mistakes.repeated(2)) {
+            if (m.failedStep && knownStrategies.includes(m.failedStep)) {
+                const current = this.approachBiasMap.get(m.failedStep) ?? 1;
+                this.approachBiasMap.set(m.failedStep, Math.max(0.4, Math.min(current, 0.7)));
+            }
+        }
         // Version the resulting state (after the change, matching SelfImprovement's
         // "each snapshot is a committed version" model — rollback() discards the
         // latest and returns the one before it).

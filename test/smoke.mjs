@@ -1676,6 +1676,14 @@ async function testSolveIntegration() {
     const rolledBack = sys.rollbackApproachBias();
     check(rolledBack === true, 'rollbackApproachBias() reverts the most recent change');
     check(sys.approachBiasMap.get('decompose') === biasBeforeOneMore.get('decompose'), 'Rollback restores the bias map to its previous version, not further back');
+
+    // ASI §6: a directly repeated failure on a specific approach demotes it,
+    // independent of (and more directly than) the softer discovery correlation.
+    sys.mistakes.record({ task: 'repeatedly failing task', description: 'fail 1', cause: 'reasoning', failedStep: 'analogy' });
+    sys.mistakes.record({ task: 'repeatedly failing task', description: 'fail 2', cause: 'reasoning', failedStep: 'analogy' });
+    check(sys.mistakes.repeated(2).some(m => m.failedStep === 'analogy'), 'Two identical failures on the same approach are flagged as repeated');
+    await sys.solve('trigger a bias refresh');
+    check((sys.approachBiasMap.get('analogy') ?? 1) <= 0.7, 'A repeatedly-failing approach is directly demoted, not left at its discovery-only value');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
