@@ -92,7 +92,13 @@ function NeuronInspector({ neuron, onClose }: NeuronInspectorProps) {
           <CardTitle className="text-sm font-medium">
             {neuron.label ?? neuron.id}
           </CardTitle>
-          <Button variant="ghost" size="sm" className="h-6 w-6 p-0" onClick={onClose}>
+          <Button
+            variant="ghost"
+            size="sm"
+            className="h-6 w-6 p-0"
+            onClick={onClose}
+            aria-label="Close inspector"
+          >
             ×
           </Button>
         </div>
@@ -154,8 +160,9 @@ function InputInjection({ onInject, disabled }: InputInjectionProps) {
 
   return (
     <div className="space-y-2">
-      <Label className="text-xs text-muted-foreground">Inject Input</Label>
+      <Label htmlFor="inject-text-input" className="text-xs text-muted-foreground">Inject Input</Label>
       <Input
+        id="inject-text-input"
         value={text}
         onChange={(e) => setText(e.target.value)}
         onKeyDown={(e) => e.key === 'Enter' && handleInject()}
@@ -164,10 +171,11 @@ function InputInjection({ onInject, disabled }: InputInjectionProps) {
         disabled={disabled}
       />
       <div className="flex items-center gap-2">
-        <Label className="text-xs text-muted-foreground whitespace-nowrap">
+        <Label htmlFor="inject-strength-input" className="text-xs text-muted-foreground whitespace-nowrap">
           Strength: {strength.toFixed(1)}
         </Label>
         <input
+          id="inject-strength-input"
           type="range"
           min={0.1}
           max={1}
@@ -234,6 +242,8 @@ function MeshControls({
           onClick={onStep}
           variant="outline"
           disabled={disabled || isRunning}
+          aria-label="Single step propagation"
+          title="Single step propagation"
         >
           <Activity className="w-3 h-3" />
         </Button>
@@ -243,13 +253,16 @@ function MeshControls({
           onClick={onReset}
           variant="outline"
           disabled={disabled}
+          aria-label="Reset elastic mesh"
+          title="Reset elastic mesh"
         >
           <RotateCcw className="w-3 h-3" />
         </Button>
       </div>
       <div className="flex items-center gap-2">
-        <span className="text-xs text-muted-foreground">Speed</span>
+        <Label htmlFor="mesh-speed-input" className="text-xs text-muted-foreground">Speed</Label>
         <input
+          id="mesh-speed-input"
           type="range"
           min={1}
           max={10}
