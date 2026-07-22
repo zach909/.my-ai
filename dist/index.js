@@ -376,6 +376,29 @@ export class NeuroclawSystem {
             await this.initialize();
         const result = this.learner.learn(information, opts);
         if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
+            // ASI §3/§10/§13/§23: gate the real side effect through the same
+            // AlignmentVeto safety layer every other action-taking entry point
+            // uses. This is the sixth instance of the same gap, and the most
+            // concrete one: unlike solve()/collaborate()/etc (text generation or
+            // delegation), this branch performs genuine, permanent disk I/O — a
+            // new skill/extension/plugin file, embedding the learned text
+            // verbatim, that gets registered and can later be executed. Writing
+            // new persistent, executable content to disk is always a real
+            // external effect regardless of how benign the learned text looks, so
+            // externalEffect is unconditionally true here (unlike the "predict
+            // danger first" pattern used where the action is just text output).
+            const learnPrediction = this.predictor.predict(`learn: ${information}`);
+            const learnDanger = learnPrediction.outcomes.some(o => o.dangerous);
+            const learnDecision = this.veto.evaluate({
+                id: `learn:${Date.now()}`,
+                name: result.decision === "recommend-extension" ? "create extension from learned procedure" : "create skill from learned procedure",
+                capabilities: ["text-generate"],
+                reversible: !learnDanger,
+                externalEffect: true,
+            });
+            if (!learnDecision.allowed) {
+                return { ...result, created: undefined, withheld: learnDecision.reasons.join("; ") };
+            }
             // The generic "creation" intent always lands on skill-maker (it never
             // returns null, so plugin-maker is never reached through it) — use the
             // decision-specific intent so a recommend-extension genuinely creates
@@ -399,7 +422,18 @@ export class NeuroclawSystem {
                 }
                 catch { /* non-JSON creation output — nothing structured to version */ }
             }
-            return { ...result, created: created ?? undefined };
+            // Unlike the other five entry points, `created` here is structured JSON
+            // consumed both internally (above) and by callers — annotating it with
+            // "[Confirm before acting: ...]" the way solve()/collaborate()/etc.
+            // annotate their prose result would corrupt it into invalid JSON. The
+            // confirmation requirement is surfaced as its own field instead, so
+            // `created` stays parseable while still honestly reporting that this
+            // creation (always true, per Rule 3 above) needs human confirmation.
+            return {
+                ...result,
+                created: created ?? undefined,
+                confirmation: created && learnDecision.requiresConfirmation ? learnDecision.reasons.join("; ") : undefined,
+            };
         }
         return result;
     }

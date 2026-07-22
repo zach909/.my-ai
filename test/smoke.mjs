@@ -2146,6 +2146,30 @@ async function testExecutePlanAlignmentVeto() {
   }
 }
 
+async function testLearnAlignmentVeto() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // ASI §3/§10/§13/§23: learn()'s skill/extension creation writes a real,
+    // permanent file to disk (a new skill/extension/plugin registered for
+    // later execution) and had no safety gate at all -- the sixth instance
+    // of this gap, and the most concrete one, since it's genuine disk I/O
+    // rather than just text output or delegation.
+    const procedure = 'first, run the alignment veto smoke check. then, log the outcome. finally, report done.';
+    await sys.learn(procedure);
+    const r2 = await sys.learn(procedure);
+    check(r2.decision === 'recommend-skill', 'teaching the same procedure twice crosses the skill threshold');
+    check(!!r2.created, 'the skill is genuinely created -- the veto requires confirmation for this external effect, it does not block ordinary creation outright');
+    check(!!JSON.parse(r2.created).skill, "created stays valid, parseable JSON -- surfacing the confirmation requirement must not corrupt the structured creation payload the way annotating solve()'s prose result would");
+    check(!!r2.confirmation && r2.confirmation.includes('external-effect'), 'learn() surfaces the same confirmation requirement as solve()/processQuery()/autonomousTask()/collaborate()/executePlan(), since writing a new persistent skill file is always a real external effect');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testCreativeCombinationRefinement() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2742,6 +2766,7 @@ async function main() {
     ['autonomousTask() AlignmentVeto gating (Section 3/10/13/23)', testAutonomousTaskAlignmentVeto],
     ['collaborate() AlignmentVeto gating (Section 3/10/13/23)', testCollaborateAlignmentVeto],
     ['executePlan() AlignmentVeto gating (Section 3/10/13/23)', testExecutePlanAlignmentVeto],
+    ['learn() AlignmentVeto gating (Section 3/10/13/23)', testLearnAlignmentVeto],
     ['Creative combination evaluate/refine (Section 11)', testCreativeCombinationRefinement],
     ['Empathy alignment veto (Section 3)', testEmpathyVeto],
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
