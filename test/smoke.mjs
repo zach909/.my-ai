@@ -2786,6 +2786,43 @@ async function testPerformanceMonitorTracksRealCalls() {
   }
 }
 
+async function testMemoryForgetting() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // ASI §7: "removed when necessary" -- LongTermMemory.forget() existed
+    // and was unit-tested but had no real call site anywhere; a memory
+    // demoted all the way to the importance floor by repeated unverified
+    // outcomes just sat there inert forever, never actually removed.
+    // Force a fully deterministic unverified outcome (rather than depending
+    // on whatever the real reasoner happens to decide) by mocking reason()
+    // to return a fixed result grounded in a seed memory whose importance
+    // starts right at the demotion floor.
+    const seedMem = sys.memory.remember('a fact used only for this forgetting test', { importance: 0.05 });
+    sys.reasoner.reason = async () => ({
+      problem: 'x', objective: 'x', available: [seedMem.content], missing: [], soughtAndResolved: [],
+      revised: [], approaches: [], chosen: 'test', subproblems: [], subresults: [],
+      result: 'unverified test result', verified: false, confidence: 0.3, lessons: [], assumptions: [], trace: [],
+    });
+    check(sys.memory.get(seedMem.id) !== undefined, 'the seed memory exists before the demoting solve() call');
+    await sys.solve('trigger the mocked unverified reasoning result');
+    check(sys.memory.get(seedMem.id) === undefined, 'a grounding memory demoted all the way to the importance floor is genuinely forgotten, not left inert at zero');
+
+    // forgetMemory() also works as a direct, explicit removal for a caller
+    // that wants to forget something specific rather than waiting for
+    // demotion to reach the floor.
+    const other = sys.memory.remember('another fact to forget directly', {});
+    check(sys.forgetMemory(other.id) === true, 'forgetMemory() removes an existing memory and reports success');
+    check(sys.memory.get(other.id) === undefined, 'the directly forgotten memory is genuinely gone');
+    check(sys.forgetMemory('nonexistent-id') === false, 'forgetMemory() reports false for an id that was never present');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2862,6 +2899,7 @@ async function main() {
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
     ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
+    ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);
