@@ -2866,6 +2866,45 @@ async function testZipIOPersistence() {
   }
 }
 
+async function testPipelineZipIOPersistence() {
+  const { NeuroclawSystem } = await load('index.js');
+  const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-pipeline-zipio-'));
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // Section 1.10/§7: NeuroPipeline owns a second, independent ZipIOSystem
+    // (used by its own run() -- the Section 4.1 continuous-tick path, not
+    // processQuery()/solve()'s generate() path) with its own
+    // restorePersistedState(), documented as "call once after construction
+    // ... before the first run()" but never actually called from anywhere.
+    // Found by checking every subsystem for the same restore-on-startup
+    // asymmetry just fixed for NeuroclawSystem's own top-level zipIO.
+    const sys1 = new NeuroclawSystem({ persistDir: dir });
+    await sys1.initialize();
+    const embedding = new Float32Array(768);
+    await sys1.pipeline.run(embedding, 'a marker only this pipeline run should produce');
+    await sys1.persistContext();
+
+    const sys2 = new NeuroclawSystem({ persistDir: dir });
+    await sys2.initialize();
+    const restored = [];
+    for await (const chunk of sys2.pipeline.getZipIO().getFullContext()) restored.push(chunk);
+    check(restored.some(c => c.includes('a marker only this pipeline run should produce')), "a fresh instance configured with the same persistDir restores NeuroPipeline's own working context too, not just NeuroclawSystem's top-level one");
+
+    // getZipIO() returns null until the pipeline's subsystems are lazily
+    // initialized by a first run() -- persistContext()'s optional chaining
+    // on it must not throw for this ordinary, no-persistDir, never-run case.
+    const sysDefault = new NeuroclawSystem();
+    await sysDefault.initialize();
+    check(sysDefault.pipeline.getZipIO() === null, "an instance that never ran the pipeline has no internal zipIO yet (lazy init)");
+    await sysDefault.persistContext();
+    check(true, 'persistContext() does not throw when the pipeline zipIO is still null');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2944,6 +2983,7 @@ async function main() {
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
+    ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);

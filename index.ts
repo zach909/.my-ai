@@ -117,12 +117,19 @@ export class NeuroclawSystem {
 
   constructor(config?: { maxContextGB?: number; persistDir?: string }) {
     this.llm = new NeuroclawLLM({});
-    this.pipeline = new NeuroPipeline({});
+    this.contextCapacityGB = config?.maxContextGB || 200000;
+    this.zipPersistDir = config?.persistDir ?? null;
+    // Section 1.10/§7: NeuroPipeline owns a second, independent ZipIOSystem
+    // for its own run() ingest/emit (see restorePersistedState() below) —
+    // give it the same opt-in persistence this.zipIO gets, under a distinct
+    // subdirectory so the two instances' checkpoint files (input-loop.json/
+    // output-loop.json) never collide with each other.
+    this.pipeline = new NeuroPipeline({
+      zipPersistDir: this.zipPersistDir ? join(this.zipPersistDir, "pipeline") : undefined,
+    });
     this.thesaurus = new ThesaurusDictionary();
     this.pluginRegistry = new PluginRegistry();
     this.veto = new AlignmentVeto();
-    this.contextCapacityGB = config?.maxContextGB || 200000;
-    this.zipPersistDir = config?.persistDir ?? null;
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.thesaurus, this.pluginRegistry);
@@ -425,6 +432,12 @@ export class NeuroclawSystem {
     // guard makes the intent explicit rather than relying on that side effect.
     if (this.zipPersistDir) {
       await this.zipIO.restore();
+      // NeuroPipeline's own, separate ZipIOSystem has the identical
+      // restore-on-startup gap: `restorePersistedState()` was built and
+      // documented ("call once after construction/reset and before the
+      // first run()") but nothing ever called it — found by checking every
+      // other subsystem for the same asymmetry just fixed above.
+      await this.pipeline.restorePersistedState();
     }
 
     this.initialized = true;
@@ -437,10 +450,14 @@ export class NeuroclawSystem {
    * `zipInput()`'s periodic auto-checkpoint) but had no way for a caller to
    * force an immediate save (e.g. before a planned shutdown, where waiting
    * for the next automatic checkpoint interval could lose recent context).
+   * Also persists `NeuroPipeline`'s own, separate ZipIOSystem (exposed via
+   * `getZipIO()`, itself never called from anywhere until now) — the same
+   * asymmetry `restorePersistedState()` above was found and fixed for.
    */
   async persistContext(): Promise<void> {
     if (!this.initialized) await this.initialize();
     await this.zipIO.persist();
+    await this.pipeline.getZipIO()?.persist();
   }
 
   /**
