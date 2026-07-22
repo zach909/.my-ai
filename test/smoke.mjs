@@ -1643,6 +1643,20 @@ async function testAutonomousLearningPredictionDiscovery() {
   const comboAgain = disc.combine('bird wing', 'jet engine');
   check(comboAgain === null, 'DiscoveryEngine: combining already-linked concepts again is not treated as novel');
 
+  // DiscoveryEngine (ASI §11): the missing "evaluate" and "refine" half of
+  // "generate-evaluate-combine-refine" -- a combination previously sat at a
+  // fixed confidence forever with no way to record whether it was ever
+  // actually useful, or to have that standing refined by real evidence.
+  const initialConfidence = kg.neighbors(combo.name, 'combines').map(n => n.relation.confidence);
+  check(initialConfidence.every(c => c === 0.5), 'DiscoveryEngine: a fresh combination starts at neutral confidence');
+  disc.evaluateCombination(combo.name, true);
+  disc.evaluateCombination(combo.name, true);
+  const afterUseful = kg.neighbors(combo.name, 'combines').map(n => n.relation.confidence);
+  check(afterUseful.every(c => c === 1), 'DiscoveryEngine: sustained useful feedback refines the combination toward full confidence');
+  disc.evaluateCombination(combo.name, false);
+  const afterMixed = kg.neighbors(combo.name, 'combines').map(n => n.relation.confidence);
+  check(afterMixed.every(c => Math.abs(c - 2 / 3) < 1e-9), 'DiscoveryEngine: mixed feedback (2 useful, 1 not) refines confidence to reflect the real ratio, not just up or down arbitrarily');
+
   // DiscoveryEngine (ASI §11): "reject failed explanations" has to stick —
   // generateHypotheses() must reuse active hypotheses (so test()'s history
   // persists) and must not resurrect one that was already rejected.
@@ -1998,6 +2012,29 @@ async function testSolveIntegration() {
   }
 }
 
+async function testCreativeCombinationRefinement() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // ASI §11: a creative combination genuinely used in live reasoning gets
+    // real usefulness evidence fed back, refining its confidence in the
+    // knowledge graph -- not sitting inert at a fixed value forever
+    // regardless of whether it ever actually helped.
+    const out = await sys.solve('what is quixotic and zorbnak');
+    check(out.result.includes('Creative exploration'), 'A fresh system with unknown terms genuinely falls through to creative combination');
+    const comboMatch = out.result.match(/"([^"]+ hybrid)"/);
+    check(!!comboMatch, "solve()'s result names the creative combination it used");
+    const refinedConfidence = sys.knowledge.neighbors(comboMatch[1], 'combines').map(n => n.relation.confidence);
+    check(refinedConfidence.length === 2, 'The combination has both of its "combines" relations in the knowledge graph');
+    check(refinedConfidence.every(c => c === (out.verified ? 1 : 0)), "The combination's confidence is refined to match this solve() call's actual verified outcome, not left at a fixed starting value");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testEmpathyVeto() {
   const { EmpathyEngine } = await load('models && skills/core/empathy.js');
   const e = new EmpathyEngine();
@@ -2167,6 +2204,10 @@ async function testMistakeCauseClassification() {
     // responsible skill, not just tally an aggregate cause count.
     check(skillMistake.failedSkill === 'coder', 'The mistake names the specific responsible agent, not just the generic incorrect-skill cause');
     check(sysSkill.improvementTargets().strugglingSkills.coder === 1, 'improvementTargets() surfaces a real, named skill-failure breakdown, not just an aggregate cause count');
+    // §6: "how the failure can be prevented" must actually depend on why it
+    // failed -- previously every cause got the identical generic
+    // "gather information" text regardless of cause.
+    check(skillMistake.prevention.includes('coder') && !skillMistake.prevention.toLowerCase().includes('gather information'), 'An incorrect-skill mistake gets skill-specific prevention advice, not the generic missing-knowledge template');
 
     const sysMemory = new NeuroclawSystem();
     await sysMemory.initialize();
@@ -2177,6 +2218,8 @@ async function testMistakeCauseClassification() {
     await sysMemory.solve('explain the deployment pipeline and how tests run before merging changes');
     const memoryMistake = sysMemory.mistakes.all().find(m => m.task === 'explain the deployment pipeline and how tests run before merging changes');
     check(memoryMistake.cause === 'bad-memory', 'A failure grounded in an already-low-importance memory (no delegation involved) is classified as bad-memory');
+    check(memoryMistake.prevention.toLowerCase().includes('memory') && !memoryMistake.prevention.toLowerCase().includes('gather information'), 'A bad-memory mistake gets memory-specific prevention advice, not the generic missing-knowledge template');
+    check(skillMistake.prevention !== memoryMistake.prevention, 'Different causes genuinely produce different prevention advice, not the same text regardless of cause');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -2353,6 +2396,37 @@ async function testStatusCounts() {
   }
 }
 
+async function testCapabilityDefaultDeny() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    // §16/§23 "default-deny": HiveMind.delegate()'s requireCapability filter
+    // was tested in isolation but every live delegation call site skipped it
+    // entirely, so the safety property was never actually checked -- any
+    // task was routed by token overlap alone regardless of granted
+    // capability. With the coder's capability intact, a coding subproblem
+    // should genuinely delegate.
+    await sys.solve('write code and then test the code');
+    check(sys.lastDelegations.get('write code') === 'coder', 'A coding subproblem delegates to the coder while its capability is intact');
+
+    // Revoke the capability -- solve() should now genuinely deny delegation
+    // for that domain and fall back to the runner, not silently delegate
+    // anyway via pure content matching.
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    sys2.ensureDefaultTeam();
+    sys2.hive.get('coder').capabilities.delete('coding');
+    await sys2.solve('write code and then test the code');
+    check(!sys2.lastDelegations.has('write code'), 'A coding subproblem is denied delegation once the coder\'s capability is revoked, not routed anyway');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testHiveDelegationReward() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2376,6 +2450,31 @@ async function testHiveDelegationReward() {
     await sys.solve('write more code and then test more code');
     check(sys.hive.get('coder').trust > afterFailure, "solve() rewards the delegated agent's trust when its subproblem outcome succeeds");
     check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "The hive's zero-sum trust budget is preserved after reward/demotion");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testSubproblemKnowledgeIntegration() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    sys.hive.delegate = async (sub) => ({ agent: coder, output: `a real generated answer for: ${sub}` });
+    // §4: "connect new information to related existing information" was
+    // previously only ever applied at the coarsest level (the overall
+    // objective) -- each subproblem's own result is genuinely distinct,
+    // reusable knowledge that used to vanish once folded into the summary.
+    const out = await sys.solve('write code and then test the code');
+    check(out.verified, 'Test setup: the forced delegation produces a verified solve()');
+    const writeCodeConcept = sys.knowledge.getConcept('write code');
+    const testCodeConcept = sys.knowledge.getConcept('test the code');
+    check(!!writeCodeConcept && writeCodeConcept.definition.includes('write code'), 'Each subproblem becomes its own real concept in the knowledge graph, not just the top-level objective');
+    check(!!testCodeConcept && testCodeConcept.definition.includes('test the code'), 'A second, distinct subproblem also becomes its own concept');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -2482,6 +2581,7 @@ async function main() {
     ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
     ['Reasoning trace history (Section 2)', testReasoningHistory],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
+    ['Creative combination evaluate/refine (Section 11)', testCreativeCombinationRefinement],
     ['Empathy alignment veto (Section 3)', testEmpathyVeto],
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
@@ -2495,7 +2595,9 @@ async function main() {
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
+    ['Capability default-deny enforcement (Section 16/23)', testCapabilityDefaultDeny],
     ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
+    ['Subproblem knowledge integration (Section 4)', testSubproblemKnowledgeIntegration],
     ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],

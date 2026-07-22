@@ -20,6 +20,7 @@ export class DiscoveryEngine {
         this.observations = [];
         this.hypotheses = new Map();
         this.seq = 0;
+        this.combinationFeedback = new Map();
     }
     /** Record a raw observation for later pattern-finding. */
     observe(fact) {
@@ -167,9 +168,35 @@ export class DiscoveryEngine {
             return null; // not novel — already combined before
         const definition = `A combination of "${a.name}" (${a.definition || "no definition"}) and "${b.name}" (${b.definition || "no definition"}), explored for properties neither has alone.`;
         this.knowledge.addConcept(name, definition);
-        this.knowledge.relate(name, "combines", a.name);
-        this.knowledge.relate(name, "combines", b.name);
+        this.knowledge.relate(name, "combines", a.name, { confidence: 0.5 });
+        this.knowledge.relate(name, "combines", b.name, { confidence: 0.5 });
         return { name, definition, sources: [a.name, b.name] };
+    }
+    /**
+     * The missing "evaluate" and "refine" half of "generate-evaluate-combine-
+     * refine" (§11): `combine()` only ever generated a hybrid concept and left
+     * it there forever, at a fixed, never-updated confidence — nothing ever
+     * evaluated whether an exploratory combination actually turned out to be
+     * useful once real evidence arrived (e.g. it grounded a solve() that
+     * verified), and nothing refined the combination's standing based on that
+     * evidence. Real usefulness feedback strengthens or weakens the hybrid's
+     * "combines" relations, exactly the way a hypothesis's confidence is
+     * refined by `test()`/`improve()` — evidence-driven, not fabricated.
+     */
+    evaluateCombination(name, useful) {
+        const counts = this.combinationFeedback.get(name) ?? { useful: 0, notUseful: 0 };
+        if (useful)
+            counts.useful++;
+        else
+            counts.notUseful++;
+        this.combinationFeedback.set(name, counts);
+        const confidence = counts.useful / (counts.useful + counts.notUseful);
+        const relations = this.knowledge.neighbors(name, "combines");
+        if (relations.length === 0)
+            return false;
+        for (const n of relations)
+            n.relation.confidence = confidence;
+        return true;
     }
 }
 function tokenize(text) {
