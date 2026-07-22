@@ -2498,6 +2498,18 @@ async function testKnownDomains() {
     check(sys.knownDomains().includes('coding'), 'knownDomains() surfaces a domain with a genuinely strong track record');
     check(!sys.knownDomains().includes('astrophysics'), 'knownDomains() excludes a domain with a demonstrated weak track record');
     check(sys.improvementTargets().weakDomains.includes('astrophysics'), 'The weak domain still shows up on the opposite side (improvementTargets)');
+
+    // ASI §9: the self-model's competence tracking previously only ever
+    // learned from solve() calls -- a system used exclusively through
+    // autonomousTask() would leave it permanently uninformed. Found via the
+    // same asymmetry-check method that caught the missing share()/reward()
+    // calls in prior fixes.
+    const sysTask = new NeuroclawSystem();
+    await sysTask.initialize();
+    sysTask.ensureDefaultTeam();
+    check(!sysTask.knownDomains().includes('coding'), 'a fresh instance has no coding competence evidence yet');
+    for (let i = 0; i < 4; i++) await sysTask.autonomousTask(`ship it ${i}`, [`implement the login flow ${i}`]);
+    check(sysTask.knownDomains().includes('coding'), "autonomousTask()'s repeated successful delegation builds real self-model competence evidence, matching solve()'s behavior");
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -2645,6 +2657,17 @@ async function testHiveDelegationReward() {
     await sys.solve('write more code and then test more code');
     check(sys.hive.get('coder').trust > afterFailure, "solve() rewards the delegated agent's trust when its subproblem outcome succeeds");
     check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "The hive's zero-sum trust budget is preserved after reward/demotion");
+
+    // ASI §8/§12: the identical reward behavior above, missing from
+    // autonomousTask()'s per-step delegation -- found via the same
+    // asymmetry-check method that caught the missing share() call.
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    sys2.ensureDefaultTeam();
+    const coder2Before = sys2.hive.get('coder').trust;
+    await sys2.autonomousTask('ship it', ['write the code']);
+    check(sys2.hive.get('coder').trust > coder2Before, "autonomousTask() rewards the delegated agent's trust for a completed step, matching solve()'s behavior");
+    check(Math.abs(sys2.hive.totalTrustValue() - 100) < 1e-6, "autonomousTask()'s reward also preserves the zero-sum trust budget");
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

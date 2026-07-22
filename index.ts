@@ -882,7 +882,8 @@ export class NeuroclawSystem {
         continue;
       }
       // §16/§23 default-deny: same capability enforcement as solveSub above.
-      const requireCapability = domainToCapability(classifyDomain(desc));
+      const stepDomain = classifyDomain(desc);
+      const requireCapability = domainToCapability(stepDomain);
       const routed = await this.hive.delegate(desc, requireCapability ? { requireCapability } : undefined);
       if (routed) {
         this.plan.complete(step.id, routed.output);
@@ -901,6 +902,26 @@ export class NeuroclawSystem {
         // see what this step actually produced — unlike solve()'s identical
         // delegation pattern, which always has.
         routed.agent.share(desc, routed.output);
+        // ASI §8/§12: reward the delegated agent's trust for a genuinely
+        // completed step, mirroring solve()'s own per-subresult
+        // hive.reward() loop — the same class of gap as the missing
+        // share() above, found the same way. autonomousTask() has no
+        // equivalent to solve()'s "[error:/unsolved:/base:]" output-content
+        // failure check (that convention belongs to ReasoningEngine's own
+        // subresult formatting, not a plain delegated generation call), so
+        // the available real signal here is simply whether delegation found
+        // a matching agent at all — the "no agent available" branch below
+        // has no specific agent to reward or demote, which is honest: no
+        // one was actually responsible for that failure.
+        this.hive.reward(routed.agent.id, 3);
+        // ASI §9: the self-model's competence tracking (competence(),
+        // knownDomains(), improvementTargets()) previously only ever learned
+        // from solve() calls — a system used exclusively through
+        // autonomousTask()/executePlan() would leave it permanently
+        // uninformed. Record this step's domain outcome the same way
+        // solve() records its own, using the domain already classified
+        // above for the capability check.
+        this.selfModel.record(stepDomain, true);
         const stepResult = stepDecision.requiresConfirmation
           ? `${routed.output}\n  [Confirm before acting: ${stepDecision.reasons.join("; ")}]`
           : routed.output;
@@ -910,6 +931,7 @@ export class NeuroclawSystem {
         // Record the alternative that was considered: expanding the team
         // would let a future retry succeed where this attempt could not.
         this.plan.addAlternative(step.id, "spawn or register an agent whose role/capabilities match this step, then retry");
+        this.selfModel.record(stepDomain, false);
         results.push({ step: desc, agent: "-", status: "failed", result: "no agent available" });
       }
     }
