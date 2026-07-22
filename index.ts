@@ -952,6 +952,23 @@ export class NeuroclawSystem {
         // would let a future retry succeed where this attempt could not.
         this.plan.addAlternative(step.id, "spawn or register an agent whose role/capabilities match this step, then retry");
         this.selfModel.record(stepDomain, false);
+        // ASI §6: every important failure should be diagnosed, not just
+        // marked failed in the plan — MistakeTracker.record() was, like
+        // every other signal fixed in prior PRs this sweep, exclusively fed
+        // by solve(). "No agent available" is a real, repeatable,
+        // diagnosable failure: the hive lacks a suitable specialized
+        // capability for this step — the closest honest fit among the four
+        // causes is "incorrect-skill" (no specific agent was ever selected,
+        // so failedSkill is left unset, unlike solve()'s per-agent case).
+        // The prevention text reuses the exact same real message the plan
+        // alternative above already computed, not a fabricated duplicate.
+        this.mistakes.record({
+          task: desc,
+          description: "No hive agent could be delegated this step",
+          cause: "incorrect-skill",
+          failedStep: desc,
+          prevention: "Register or spawn a hive agent whose role/capabilities match this step, then retry",
+        });
         results.push({ step: desc, agent: "-", status: "failed", result: "no agent available" });
       }
     }

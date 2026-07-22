@@ -698,7 +698,15 @@ The last check in this sweep: does `collaborate()` have the same gaps? `SelfMode
 
 `collaborate()` now calls `this.memory.remember(...)` with the task and the real decision, tagged `"collaboration"` (a new, distinct tag — a group decision isn't a plan step, so reusing `"task"` would blur two different kinds of record together). Verified live (`"Collaboration on \"...\": proceed"` appears in memory after a real call) and by an extension to the existing `Chat group completion tracking` suite.
 
-With this, the "check every `solve()`-only real-world-effect call against its structurally-parallel sibling" sweep across all four action-taking entry points is complete: `processQuery()`/`solve()`/`autonomousTask()`/`executePlan()`/`collaborate()` now consistently record their real outcomes wherever the underlying signal genuinely supports it (memory, self-model competence, hive trust, hive blackboard sharing), rather than only ever learning from `solve()` calls.
+At the time this was written, this looked like the end of the "check every `solve()`-only real-world-effect call against its structurally-parallel sibling" sweep — it wasn't quite; one more `solve()`-only mechanism (`MistakeTracker.record()`) turned up immediately afterward, closed in the next section below.
+
+### `autonomousTask()`'s "no agent available" failure was never diagnosed as a mistake either — the last one (Section 6)
+
+One more `solve()`-only mechanism, found the same way as the rest of this sweep: `MistakeTracker.record()` — the input `lessons()`/`repeated()`/`causeBreakdown()`/`improvementTargets()` all read from — is called from `solve()`'s failure path but never from `autonomousTask()`'s "no agent available" branch, even though that's a real, repeatable, diagnosable failure exactly matching §6's "every important failure should be diagnosed."
+
+`autonomousTask()` now records a mistake there: `cause: "incorrect-skill"` (the closest honest fit among the four causes — the hive genuinely lacks a suitable specialized capability for this step; `failedSkill` is left unset, unlike `solve()`'s per-agent case, since no specific agent was ever selected to blame), `failedStep`/`task` set to the step's own description, and a `prevention` string that reuses the exact same real message the plan alternative right above it already computes (`"Register or spawn a hive agent whose role/capabilities match this step, then retry"`) rather than a fabricated duplicate.
+
+Verified live (a forced "no agent available" step produces a real `Mistake` with `cause: "incorrect-skill"` and that exact prevention text) and by an extension to the existing `Mistake cause classification` suite. With this, the sweep is genuinely complete: `processQuery()`/`solve()`/`autonomousTask()`/`executePlan()`/`collaborate()` now consistently record their real outcomes — memory, self-model competence, hive trust, hive blackboard sharing, and mistake diagnosis — wherever the underlying signal honestly supports it, rather than only ever learning from `solve()` calls.
 
 ### What this is, honestly
 
