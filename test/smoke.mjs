@@ -2274,10 +2274,17 @@ async function testCollaborateCompletion() {
     await sys.initialize();
     check(sys.collaborationResult() === null, 'collaborationResult() is null before any collaboration has happened');
     check(sys.collaborationHistory().length === 0, 'collaborationHistory() is empty before any collaboration has happened');
+    check(sys.memory.all().filter(m => m.tags.includes('collaboration')).length === 0, 'no collaboration memories exist yet before any collaborate() call');
     const out = await sys.collaborate('decide how to prioritize the backlog');
     check(out.complete === true, "collaborate() marks the chat group's own completion state true, not just returning a value");
     check(out.decision === sys.collaborationResult(), 'collaborationResult() reflects the same decision collaborate() returned');
     check(typeof out.decision === 'string' && out.decision.length > 0, 'collaborate() reaches a real decision');
+    // solve()/autonomousTask()/executePlan() all commit their outcome to
+    // long-term memory -- collaborate() never did, despite reaching a real
+    // group decision. Found the same way as the other action-taking
+    // entry-point asymmetries this session.
+    const collabMemories = sys.memory.all().filter(m => m.tags.includes('collaboration'));
+    check(collabMemories.length === 1 && collabMemories[0].content.includes(sys.collaborationResult()), "collaborate() now commits its real decision to long-term memory, matching solve()/autonomousTask()/executePlan()'s behavior");
     // ChatGroup.getHistory() existed and was unit-tested but was never
     // surfaced -- collaborate()'s own `discussion` return only reflects a
     // single call, so a caller had no way to see the group's cumulative
