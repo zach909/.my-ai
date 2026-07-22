@@ -17,7 +17,7 @@
 **Action:** Always seek to combine multiple passes over large buffers and pre-calculate invariant views or constants before entering deep nested loops.
 
 ## 2025-05-15 - NeuronMesh CSR Caching Optimization
-**Learning:** Re-building the Compressed Sparse Row (CSR) structure and auxiliary TypedArrays from scratch on every tick in `NeuronMesh.propagate` caused significant overhead due to thousands of `Map` lookups and frequent allocations. Implementing a lazy `cacheValid` invalidation pattern and updating `flatWeights` directly during Hebbian learning improves propagate time by ~2.8x (~14.1ms to ~4.9ms for 200 nodes) while maintaining system correctness and history tracking.
+**Learning:** Re-building the Compressed Sparse Row (CSR) structure and auxiliary TypedArrays from scratch on every tick in `NeuronMesh.propagate` caused significant performance overhead due to thousands of `Map` lookups and frequent allocations. Implementing a lazy `cacheValid` invalidation pattern and updating `flatWeights` directly during Hebbian learning improves propagate time by ~2.8x (~14.1ms to ~4.9ms for 200 nodes) while maintaining system correctness and history tracking.
 **Action:** Use lazy caching for graph-to-array conversions in neural components, and prioritize direct buffer updates in training loops to avoid full cache invalidation.
 
 ## 2025-05-15 - RLMTrainer Performance Optimization
@@ -39,3 +39,7 @@
 ## 2026-07-21 - MoERouter Hot-Path Optimization
 **Learning:** Significant performance bottleneck in `MoERouter` was caused by garbage collection overhead and helper callbacks in `selectTopK` and `softmax` (such as using the spread operator `Math.max(...values)`), along with un-unrolled matrix multiplications and generic fallback loops for Top-K outputs. Utilizing direct index-sorting with `Int32Array`, a single-pass optimized `softmax`, 8x GEMV loop unrolling with zero-value sparsity check, and specialized branch specialization for standard Top-K values (1, 2, 4) achieved a ~6% overall speedup.
 **Action:** Eliminate array-helper callbacks, spread operators, and dynamic mapping inside hot neural iteration loops, and prefer specialized code branches for common numeric parameter configurations.
+
+## 2026-07-22 - HyperDimensionalEngine Weight Learning Hot-Path Optimization
+**Learning:** In highly dimensional iterative neural state engines, the heaviest computational bottleneck can reside entirely within the backward/weight learning stages rather than state settling. Measuring and profiling hot-path execution stages reveals that dynamic memory allocations (e.g. creating Map/Set lookups and Float32Array copies) and index calculations in loop conditions are incredibly slow. Applying manual 4x loop unrolling with raw sequential index offsets and pre-allocated buffers directly reduces overhead and allows CPU pipeline optimizations, bringing massive speedups.
+**Action:** Always profile distinct execution stages (e.g. state-settling vs. weight-learning) before optimizing, and implement manual unrolled loops with raw index pointer increments in hot numerical calculations.
