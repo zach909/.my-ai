@@ -600,6 +600,30 @@ export class NeuroclawSystem {
     trace: ReasoningStep[];
   }> {
     if (!this.initialized) await this.initialize();
+    // ASI §3/§10/§13/§23: gate solve()'s *real* execution (hive delegation,
+    // actual generated actions) through the same AlignmentVeto safety layer
+    // processQuery() already uses. Previously solve() had no safety check at
+    // all — a genuinely dangerous request (e.g. "delete the production
+    // database") would be decomposed and actually delegated/executed with
+    // zero gating, even though the identical request through processQuery()
+    // was correctly escalated to human confirmation. This is the other
+    // major public action-taking entry point; it needs the same gate.
+    const solvePrediction = this.predictor.predict(`solve: ${problem}`);
+    const solvePredictedDanger = solvePrediction.outcomes.some(o => o.dangerous);
+    const solveDecision = this.veto.evaluate({
+      id: `solve:${Date.now()}`,
+      name: "solve problem",
+      capabilities: ["text-generate"],
+      reversible: !solvePredictedDanger,
+      externalEffect: solvePredictedDanger,
+    });
+    if (!solveDecision.allowed) {
+      return {
+        result: `[Withheld] ${solveDecision.reasons.join("; ")}`,
+        confidence: 0, verified: false, domain: classifyDomain(problem), approach: "none",
+        transfers: [], subresults: 0, contradictions: [], trace: [],
+      };
+    }
     // Track which hive agent (if any) handles each subproblem in *this*
     // solve() call only, so the outcome below can reward/demote the right
     // agent rather than one from a stale prior call.
@@ -808,7 +832,10 @@ export class NeuroclawSystem {
     }
     this.recentTraces.push({ problem, trace: r.trace, timestamp: Date.now() });
     if (this.recentTraces.length > NeuroclawSystem.MAX_RECENT_TRACES) this.recentTraces.shift();
-    return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, trace: r.trace };
+    const finalResult = solveDecision.requiresConfirmation
+      ? `${r.result}\n  [Confirm before acting: ${solveDecision.reasons.join("; ")}]`
+      : r.result;
+    return { result: finalResult, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, trace: r.trace };
   }
 
   /**
