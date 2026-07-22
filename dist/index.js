@@ -679,6 +679,17 @@ export class NeuroclawSystem {
         return this.chatGroup?.getResult() ?? null;
     }
     /**
+     * The default chat group's full cumulative message history across every
+     * `collaborate()` call so far — not just the most recent one.
+     * `ChatGroup.getHistory()` existed and was unit-tested but was never
+     * surfaced: `collaborate()`'s own `discussion` return value only ever
+     * reflects that single call's `discuss()` output, so a caller had no way
+     * to see the group's discussion across multiple collaborate() calls.
+     */
+    collaborationHistory() {
+        return this.chatGroup?.getHistory().map(m => `${m.from}: ${m.content}`) ?? [];
+    }
+    /**
      * Section 10: run a multi-step plan toward an objective. Each pending step is
      * executed through the real neural runner; steps that were already completed
      * (same description, e.g. from an earlier call) are skipped rather than

@@ -2267,10 +2267,20 @@ async function testCollaborateCompletion() {
   try {
     await sys.initialize();
     check(sys.collaborationResult() === null, 'collaborationResult() is null before any collaboration has happened');
+    check(sys.collaborationHistory().length === 0, 'collaborationHistory() is empty before any collaboration has happened');
     const out = await sys.collaborate('decide how to prioritize the backlog');
     check(out.complete === true, "collaborate() marks the chat group's own completion state true, not just returning a value");
     check(out.decision === sys.collaborationResult(), 'collaborationResult() reflects the same decision collaborate() returned');
     check(typeof out.decision === 'string' && out.decision.length > 0, 'collaborate() reaches a real decision');
+    // ChatGroup.getHistory() existed and was unit-tested but was never
+    // surfaced -- collaborate()'s own `discussion` return only reflects a
+    // single call, so a caller had no way to see the group's cumulative
+    // discussion across multiple collaborate() calls.
+    const historyAfterOne = sys.collaborationHistory();
+    check(historyAfterOne.length === out.discussion.length, 'collaborationHistory() reflects the same messages as the first collaborate() call\'s own discussion');
+    await sys.collaborate('decide on the next sprint goal');
+    const historyAfterTwo = sys.collaborationHistory();
+    check(historyAfterTwo.length > historyAfterOne.length, 'collaborationHistory() accumulates across multiple collaborate() calls, not just the most recent one');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

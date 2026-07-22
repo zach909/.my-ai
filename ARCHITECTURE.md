@@ -648,6 +648,12 @@ The bigger, related finding this surfaced: `NeuroPipeline.run()` — and therefo
 
 Verified live and by a dedicated `Pipeline ZipIO persistence across restart` suite: calling `pipeline.run()` directly, then `persistContext()`, then constructing a second instance with the same `persistDir` recovers the first run's context via `getZipIO().getFullContext()`; an instance that never calls `run()` correctly has a `null` `getZipIO()` (lazy init), and `persistContext()` does not throw against that `null`.
 
+### `ChatGroup.getHistory()` never surfaced — `collaborate()`'s cumulative discussion was invisible past a single call (Section 8/13)
+
+`ChatGroup.getHistory()` — the group's full message log — existed and was unit-tested, but `NeuroclawSystem` never read it. `collaborate()`'s own return value already includes a `discussion` array, but it's built directly from that single call's `discuss()` output — since the default chat group is a persistent instance reused across every `collaborate()` call (`if (!this.chatGroup) { this.chatGroup = new ChatGroup(...); ... }`), a caller had no way to see the group's discussion *across* multiple calls, only the most recent one, even though the group itself was accumulating the full history the whole time.
+
+`NeuroclawSystem.collaborationHistory()` exposes it, mirroring the existing `collaborationResult()` convention exactly. Verified live and by an extended `Chat group completion tracking` suite: empty before any collaboration; after one `collaborate()` call it matches that call's own `discussion` length; after a second call it has grown further, confirming it accumulates rather than reflecting only the latest call.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
