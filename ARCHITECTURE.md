@@ -670,6 +670,14 @@ While adding `hiveBlackboardHistory()` (below) as a new introspection surface, e
 
 `SharedBlackboard.history()` — the full append-only write log across every agent (owner, key, value, visibility, version, timestamp) — existed and was unit-tested, but `NeuroclawSystem` never exposed it, despite `hive.blackboard` being a public field all along. Distinct from `hasConflict()`/`listConflicts()` (already exercised internally by `synchronize()`): this is the complete history, not just currently-open conflicts. `NeuroclawSystem.hiveBlackboardHistory()` exposes it — and, as noted above, exercising it live is exactly what surfaced the `autonomousTask()` sharing gap in the first place.
 
+### `autonomousTask()`'s delegation also never rewarded the hive — a fifth asymmetry with `solve()` (Section 8/12)
+
+Checking `solve()`'s other per-subresult hive interactions for the same "does `autonomousTask()`'s structurally-parallel delegation do this too" question — the exact method that just found the missing `share()` call — turned up one more: `HiveMind.reward()`, the zero-sum trust promotion/demotion mechanism, is called from `solve()`'s subresult loop (`this.hive.reward(agentId, failed ? -3 : 3)`) but never once from `autonomousTask()`'s per-step delegation, even though both delegate real work to real hive agents and already track completed-vs-failed status.
+
+`autonomousTask()` has no equivalent to `solve()`'s `/\[(error|unsolved|base):/i.test(s.result)` output-content failure check — that convention belongs to `ReasoningEngine`'s own subresult formatting, not a plain delegated generation call — so the real signal available here is simply whether delegation found a matching agent at all. `autonomousTask()` now calls `this.hive.reward(routed.agent.id, 3)` right after a step completes; the "no agent available" branch is deliberately left untouched — honestly, no specific agent was responsible for that failure, so none is demoted for it.
+
+Verified live (a delegated agent's trust measurably increases after a completed step, e.g. 33.3 → 36.3, with the hive's total trust budget still exactly 100) and by an extension to the existing `Hive delegation reward/demotion` suite.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.

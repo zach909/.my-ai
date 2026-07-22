@@ -817,6 +817,18 @@ export class NeuroclawSystem {
                 // see what this step actually produced — unlike solve()'s identical
                 // delegation pattern, which always has.
                 routed.agent.share(desc, routed.output);
+                // ASI §8/§12: reward the delegated agent's trust for a genuinely
+                // completed step, mirroring solve()'s own per-subresult
+                // hive.reward() loop — the same class of gap as the missing
+                // share() above, found the same way. autonomousTask() has no
+                // equivalent to solve()'s "[error:/unsolved:/base:]" output-content
+                // failure check (that convention belongs to ReasoningEngine's own
+                // subresult formatting, not a plain delegated generation call), so
+                // the available real signal here is simply whether delegation found
+                // a matching agent at all — the "no agent available" branch below
+                // has no specific agent to reward or demote, which is honest: no
+                // one was actually responsible for that failure.
+                this.hive.reward(routed.agent.id, 3);
                 const stepResult = stepDecision.requiresConfirmation
                     ? `${routed.output}\n  [Confirm before acting: ${stepDecision.reasons.join("; ")}]`
                     : routed.output;

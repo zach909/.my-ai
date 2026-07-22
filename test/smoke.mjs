@@ -2645,6 +2645,17 @@ async function testHiveDelegationReward() {
     await sys.solve('write more code and then test more code');
     check(sys.hive.get('coder').trust > afterFailure, "solve() rewards the delegated agent's trust when its subproblem outcome succeeds");
     check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "The hive's zero-sum trust budget is preserved after reward/demotion");
+
+    // ASI §8/§12: the identical reward behavior above, missing from
+    // autonomousTask()'s per-step delegation -- found via the same
+    // asymmetry-check method that caught the missing share() call.
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    sys2.ensureDefaultTeam();
+    const coder2Before = sys2.hive.get('coder').trust;
+    await sys2.autonomousTask('ship it', ['write the code']);
+    check(sys2.hive.get('coder').trust > coder2Before, "autonomousTask() rewards the delegated agent's trust for a completed step, matching solve()'s behavior");
+    check(Math.abs(sys2.hive.totalTrustValue() - 100) < 1e-6, "autonomousTask()'s reward also preserves the zero-sum trust budget");
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
