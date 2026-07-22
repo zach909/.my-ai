@@ -721,6 +721,15 @@ export class NeuroclawSystem {
         if (!m.resolved && normalizeText(m.task) === normalizedProblem) this.mistakes.resolve(m.id);
       }
     }
+    // §11: the missing "evaluate" and "refine" half of "generate-evaluate-
+    // combine-refine" — a creative combination genuinely used in this
+    // reasoning pass is fed real outcome evidence (whether *this* solve()
+    // verified), so its standing in the knowledge graph is refined by actual
+    // usefulness instead of sitting at a fixed confidence forever, untouched
+    // by whether it ever helped.
+    if (r.creativeCombination) {
+      this.discovery.evaluateCombination(r.creativeCombination.name, r.verified);
+    }
     // ASI §4: "identify contradictions" — surface (not silently ignore) any
     // known contradiction touching this problem's central concept, so a
     // confident-looking answer doesn't hide that the knowledge graph holds

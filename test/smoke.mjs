@@ -1643,6 +1643,20 @@ async function testAutonomousLearningPredictionDiscovery() {
   const comboAgain = disc.combine('bird wing', 'jet engine');
   check(comboAgain === null, 'DiscoveryEngine: combining already-linked concepts again is not treated as novel');
 
+  // DiscoveryEngine (ASI §11): the missing "evaluate" and "refine" half of
+  // "generate-evaluate-combine-refine" -- a combination previously sat at a
+  // fixed confidence forever with no way to record whether it was ever
+  // actually useful, or to have that standing refined by real evidence.
+  const initialConfidence = kg.neighbors(combo.name, 'combines').map(n => n.relation.confidence);
+  check(initialConfidence.every(c => c === 0.5), 'DiscoveryEngine: a fresh combination starts at neutral confidence');
+  disc.evaluateCombination(combo.name, true);
+  disc.evaluateCombination(combo.name, true);
+  const afterUseful = kg.neighbors(combo.name, 'combines').map(n => n.relation.confidence);
+  check(afterUseful.every(c => c === 1), 'DiscoveryEngine: sustained useful feedback refines the combination toward full confidence');
+  disc.evaluateCombination(combo.name, false);
+  const afterMixed = kg.neighbors(combo.name, 'combines').map(n => n.relation.confidence);
+  check(afterMixed.every(c => Math.abs(c - 2 / 3) < 1e-9), 'DiscoveryEngine: mixed feedback (2 useful, 1 not) refines confidence to reflect the real ratio, not just up or down arbitrarily');
+
   // DiscoveryEngine (ASI §11): "reject failed explanations" has to stick —
   // generateHypotheses() must reuse active hypotheses (so test()'s history
   // persists) and must not resurrect one that was already rejected.
@@ -1993,6 +2007,29 @@ async function testSolveIntegration() {
     check(clockOut.contradictions.length > 0, 'solve() surfaces a known contradiction touching the current objective');
     check(clockOut.contradictions[0].includes('antique clock'), 'The surfaced contradiction names the actual conflicting relations');
     check(sys.findContradictions().length >= 1, 'findContradictions() exposes the same unresolved conflicts system-wide');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testCreativeCombinationRefinement() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // ASI §11: a creative combination genuinely used in live reasoning gets
+    // real usefulness evidence fed back, refining its confidence in the
+    // knowledge graph -- not sitting inert at a fixed value forever
+    // regardless of whether it ever actually helped.
+    const out = await sys.solve('what is quixotic and zorbnak');
+    check(out.result.includes('Creative exploration'), 'A fresh system with unknown terms genuinely falls through to creative combination');
+    const comboMatch = out.result.match(/"([^"]+ hybrid)"/);
+    check(!!comboMatch, "solve()'s result names the creative combination it used");
+    const refinedConfidence = sys.knowledge.neighbors(comboMatch[1], 'combines').map(n => n.relation.confidence);
+    check(refinedConfidence.length === 2, 'The combination has both of its "combines" relations in the knowledge graph');
+    check(refinedConfidence.every(c => c === (out.verified ? 1 : 0)), "The combination's confidence is refined to match this solve() call's actual verified outcome, not left at a fixed starting value");
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -2544,6 +2581,7 @@ async function main() {
     ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
     ['Reasoning trace history (Section 2)', testReasoningHistory],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
+    ['Creative combination evaluate/refine (Section 11)', testCreativeCombinationRefinement],
     ['Empathy alignment veto (Section 3)', testEmpathyVeto],
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
     ['Chat group completion tracking (Section 8)', testCollaborateCompletion],
