@@ -209,6 +209,12 @@ export class KnowledgeGraph {
   /**
    * Follow relations outward from a concept up to `depth` hops (optionally only
    * along the given relation types) — combining information across the graph.
+   * Skips superseded relations, the same "currently believed" filter `current()`
+   * already applies to `neighbors()`: a fact that has been explicitly marked
+   * outdated (§4 "update outdated knowledge") must not still be traversable as
+   * if it were live, or stale information could leak into whatever combines
+   * this traversal's results (the reasoner's gap-search, `combineKnowledge()`)
+   * as if it were current.
    */
   follow(name: string, relTypes: string[] = [], depth = 2): Concept[] {
     const rts = new Set(relTypes.map(normalize));
@@ -221,6 +227,7 @@ export class KnowledgeGraph {
       for (const node of frontier) {
         for (const r of this.relations) {
           if (r.from !== node) continue;
+          if (r.superseded) continue;
           if (rts.size > 0 && !rts.has(r.type)) continue;
           if (!visited.has(r.to)) {
             visited.add(r.to);

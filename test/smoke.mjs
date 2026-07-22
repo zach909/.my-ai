@@ -1595,6 +1595,13 @@ async function testAutonomousLearningPredictionDiscovery() {
   check(kg2.neighbors('the sensor', 'is').some(n => n.relation.superseded), 'AutonomousLearner: the outdated relation is marked superseded (not deleted, not silently current)');
   check(kg2.current('the sensor', 'is').length === 0, 'KnowledgeGraph: current() excludes a superseded relation');
   check(kg2.current('the sensor', 'is-not').some(n => n.concept.name === 'accurate'), 'KnowledgeGraph: current() surfaces the new, superseding relation');
+  // follow() must respect the same "currently believed" filter current()
+  // already does -- a bug where it iterated raw relations with no
+  // superseded check meant a fact explicitly marked outdated could still
+  // leak into anything built on follow() (the reasoner's gap-search,
+  // combineKnowledge()) as if it were still live.
+  check(!kg2.follow('the sensor', ['is']).some(c => c.name === 'accurate'), 'KnowledgeGraph: follow() no longer traverses a superseded relation as if it were current');
+  check(kg2.follow('the sensor', ['is-not']).some(c => c.name === 'accurate'), 'KnowledgeGraph: follow() still traverses the new, superseding relation normally');
 
   // ASI §1: AutonomousLearner generalizes to a new instance of a known category.
   const kg3 = new KnowledgeGraph();
