@@ -140,8 +140,8 @@ Most phases need significant implementation:
 1. ✅ ~~Architecture Mapper~~ DONE
 2. ✅ ~~Performance Monitor~~ DONE  
 3. ✅ ~~Test Suite~~ DONE
-4. ⏳ Integrate new components into main pipeline
-5. ⏳ Add real metric collection from running system
+4. ✅ ~~Integrate new components into main pipeline~~ DONE — `NeuroclawSystem` now instantiates both, registers the real subsystem/entry-point architecture (`registerArchitecture()`), and wraps every public entry point in `trackCall()`. See ARCHITECTURE.md's "ArchitectureMapper and PerformanceMonitor were built and unit-tested, but never wired in" section for the full writeup.
+5. ✅ ~~Add real metric collection from running system~~ DONE — `trackCall()` measures genuine wall-clock latency, a real `process.cpuUsage()` delta, and live heap usage per call; nothing here is a fabricated placeholder number.
 
 ### Short-term (Week 3-4)
 1. Enhance MistakeTracker with priority scoring

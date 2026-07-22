@@ -2721,6 +2721,71 @@ async function testMemoryPersistence() {
   }
 }
 
+async function testArchitectureMapperIntegration() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // Self-improvement framework Phase 1 (Steps 1-7): ArchitectureMapper and
+    // PerformanceMonitor were fully built and unit-tested in isolation
+    // (test/core/system-tests.test.ts) but never instantiated from
+    // NeuroclawSystem at all -- SELF_IMPROVEMENT_PROGRESS.md itself lists
+    // "integrate new components into main pipeline" as a never-done next
+    // priority. registerArchitecture() now maps the real subsystems this
+    // constructor wires together.
+    const summary = sys.architectureSummary();
+    check(summary.totalComponents >= 20, 'the constructor registers the real subsystems (memory, hive, reasoner, veto, ...) and all six public entry points as real architecture components, not a placeholder');
+    check(summary.totalDataFlows > 0, 'dependency edges are recorded from each entry point to its real constituent subsystems, not left as isolated nodes');
+    check(sys.performanceHealth().activeComponents === 0, 'no component has been measured yet before any real call has been made');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testPerformanceMonitorTracksRealCalls() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // Phase 3 (Steps 35-49): trackCall() wraps every public entry point with
+    // genuine wall-clock latency + CPU-delta + heap measurement, not
+    // fabricated numbers -- verify two real solve() calls actually
+    // accumulate real history rather than overwriting a single snapshot.
+    await sys.solve('calculate the sum and then compute the average');
+    const metricsAfterOne = sys.performance.getComponentMetrics('solve');
+    check(!!metricsAfterOne, 'a real solve() call records live component metrics under its own component id');
+    check(metricsAfterOne.latencyMs >= 0 && metricsAfterOne.lastUpdated > 0, 'the recorded metrics carry a genuine measured latency and a real timestamp');
+    const archComp = sys.architecture.getComponent('solve');
+    check(!!archComp.resourceUsage && !!archComp.performanceMetrics, "the matching ArchitectureMapper component is kept in sync with what's actually been measured");
+
+    await sys.solve('what is the capital of a fictional country');
+    const stats = sys.performance.getMetricStats('solve.latency');
+    check(stats.count === 2, 'a second real call accumulates onto the same latency history rather than overwriting it');
+    check(sys.performanceHealth().activeComponents === 1, "performanceHealth() reflects exactly the one component that's actually been called (solve), not a fabricated count");
+
+    // Verify the error path: trackCall() must still propagate a genuine
+    // failure (never silently swallow it) while also recording it as a real
+    // error against that component's error rate.
+    const originalGenerate = sys.runner.generate.bind(sys.runner);
+    sys.runner.generate = async () => { throw new Error('forced failure for error-rate test'); };
+    let threw = false;
+    try {
+      await sys.processQuery('a totally ordinary question with no special routing');
+    } catch {
+      threw = true;
+    }
+    sys.runner.generate = originalGenerate;
+    check(threw, 'trackCall() still propagates a genuine error to the caller -- it never silently swallows a real failure just to keep measuring');
+    const pqMetrics = sys.performance.getComponentMetrics('process-query');
+    check(!!pqMetrics && pqMetrics.errorRate === 1, "the forced failure is recorded as a genuine error against process-query's own real error rate, not ignored");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2795,6 +2860,8 @@ async function main() {
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
+    ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
+    ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);
