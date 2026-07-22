@@ -13,7 +13,7 @@ import { CLI } from "./interface/cli.js";
 import { AlignmentVeto } from "./models && skills/core/alignment-veto.js";
 import { ZipIOSystem } from "./models && skills/core/zip-io.js";
 import { EmpathyEngine } from "./models && skills/core/empathy.js";
-import { HiveMind } from "./models && skills/core/hive-mind.js";
+import { HiveMind, SharedBlackboard } from "./models && skills/core/hive-mind.js";
 import { ChatGroup } from "./models && skills/core/chat-group.js";
 import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
 import { PlanTracker } from "./models && skills/core/plan-tracker.js";
@@ -889,6 +889,18 @@ export class NeuroclawSystem {
         // Record the real delegation decision: which agent was chosen and why.
         this.plan.addDecision(`"${desc}" -> delegated to ${routed.agent.role} (${routed.agent.id}, trust ${routed.agent.trust.toFixed(1)})`);
         this.memory.remember(`Task step: ${desc} -> ${routed.output}`, { tags: ["task"], importance: 0.6 });
+        // ASI §8/§13: "combine information across the hive" — publish the
+        // result to the shared blackboard under the step itself, exactly
+        // mirroring solve()'s own solveSub delegation callback. Found via the
+        // same "check for asymmetries between parallel entry points" method
+        // that closed the AlignmentVeto gaps earlier this session:
+        // autonomousTask()'s per-step delegation recorded the result in the
+        // plan and in long-term memory, but never on the blackboard, so a
+        // later solve()/autonomousTask() call revisiting the same ground
+        // (or another agent checking hiveBlackboardHistory()) could never
+        // see what this step actually produced — unlike solve()'s identical
+        // delegation pattern, which always has.
+        routed.agent.share(desc, routed.output);
         const stepResult = stepDecision.requiresConfirmation
           ? `${routed.output}\n  [Confirm before acting: ${stepDecision.reasons.join("; ")}]`
           : routed.output;
@@ -1419,6 +1431,19 @@ export class NeuroclawSystem {
    */
   monitorHistory(signal?: string): ReturnType<SelfMonitor["history"]> {
     return this.monitor.history(signal);
+  }
+
+  /**
+   * Section 13: the hive's shared blackboard full write log — every value
+   * any agent has ever published (owner, key, value, visibility, version,
+   * timestamp), not just its current resolved state. `SharedBlackboard.history()`
+   * existed and was unit-tested but was never surfaced anywhere a caller
+   * could audit what the hive actually shared over time, distinct from
+   * `hasConflict()`/`listConflicts()` (which are exercised internally by
+   * `synchronize()` already, just never this full log).
+   */
+  hiveBlackboardHistory(): ReturnType<SharedBlackboard["history"]> {
+    return this.hive.blackboard.history();
   }
 
   /**
