@@ -2510,6 +2510,17 @@ async function testKnownDomains() {
     check(!sysTask.knownDomains().includes('coding'), 'a fresh instance has no coding competence evidence yet');
     for (let i = 0; i < 4; i++) await sysTask.autonomousTask(`ship it ${i}`, [`implement the login flow ${i}`]);
     check(sysTask.knownDomains().includes('coding'), "autonomousTask()'s repeated successful delegation builds real self-model competence evidence, matching solve()'s behavior");
+
+    // Same gap, third instance: executePlan() also never informed the
+    // self-model, and separately never recorded its step results into
+    // long-term memory at all (unlike autonomousTask(), which already did).
+    const sysPlan = new NeuroclawSystem();
+    await sysPlan.initialize();
+    check(!sysPlan.knownDomains().includes('coding'), 'a fresh instance has no coding competence evidence yet (executePlan case)');
+    check(sysPlan.memory.all().filter(m => m.tags.includes('task')).length === 0, 'no task memories exist yet before any executePlan() call');
+    for (let i = 0; i < 4; i++) await sysPlan.executePlan(`ship it ${i}`, [`implement the login flow ${i}`]);
+    check(sysPlan.knownDomains().includes('coding'), "executePlan()'s repeated successful generation builds real self-model competence evidence too");
+    check(sysPlan.memory.all().filter(m => m.tags.includes('task')).length === 4, "executePlan() now commits each step's result to long-term memory, matching autonomousTask()'s behavior");
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

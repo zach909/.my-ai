@@ -730,9 +730,20 @@ export class NeuroclawSystem {
                 results.push({ step: desc, status: "failed", result: `[Withheld] ${stepDecision.reasons.join("; ")}` });
                 continue;
             }
+            // ASI §9: the same self-model competence gap just fixed for
+            // autonomousTask() — SelfModel.record() previously ran only from
+            // solve(), so a caller using executePlan() exclusively would also
+            // leave competence tracking permanently uninformed.
+            const stepDomain = classifyDomain(desc);
             try {
                 const out = await this.runner.generate(desc);
                 this.plan.complete(step.id, out);
+                // ASI §7: autonomousTask() already commits each step's result to
+                // long-term memory; executePlan() never did, despite performing the
+                // same kind of real, completed work — found by the same
+                // asymmetry-check method.
+                this.memory.remember(`Plan step: ${desc} -> ${out}`, { tags: ["task"], importance: 0.6 });
+                this.selfModel.record(stepDomain, true);
                 const stepResult = stepDecision.requiresConfirmation
                     ? `${out}\n  [Confirm before acting: ${stepDecision.reasons.join("; ")}]`
                     : out;
@@ -741,6 +752,7 @@ export class NeuroclawSystem {
             catch (e) {
                 const reason = e instanceof Error ? e.message : String(e);
                 this.plan.fail(step.id, reason);
+                this.selfModel.record(stepDomain, false);
                 results.push({ step: desc, status: "failed", result: reason });
             }
         }

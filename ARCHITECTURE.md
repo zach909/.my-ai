@@ -684,6 +684,14 @@ Continuing the same "check every `solve()`-only hive/self interaction against `a
 
 `autonomousTask()` now calls `this.selfModel.record(stepDomain, true)` on a completed step and `this.selfModel.record(stepDomain, false)` when no agent was available, reusing the domain already classified for the capability check just above (`classifyDomain(desc)`, computed once as `stepDomain` rather than twice). Verified live (`knownDomains()` grows to include `"coding"` after several successful `autonomousTask()` calls implementing login-flow-shaped steps, matching how `solve()` already builds this evidence) and by an extension to the existing `Self-model known-domains inventory` suite.
 
+### `executePlan()` had the identical self-model gap, plus never recorded to long-term memory at all (Section 7/9)
+
+Checking the fourth and last action-taking entry point for the same gap: `executePlan()` — which doesn't use hive delegation, so `reward()`/`share()` don't apply, but genuinely completes or fails each step via a plain try/catch around `this.runner.generate()` — also never called `SelfModel.record()`. Same consequence as the `autonomousTask()` case: a caller using `executePlan()` exclusively would leave competence tracking permanently blank.
+
+While fixing it, a second, independent gap turned up in the same method: `autonomousTask()` already commits every step's result to long-term memory (`this.memory.remember(...)`, tagged `"task"`) so it's retrievable later — `executePlan()` never did this at all, despite performing the same kind of real, completed work. Both are now fixed together: a completed step records `selfModel.record(stepDomain, true)` and `memory.remember(...)` (same `"task"` tag `autonomousTask()` uses); a failed step (the `catch` branch) records `selfModel.record(stepDomain, false)`.
+
+Verified live (`knownDomains()` grows to include `"coding"` after repeated `executePlan()` calls; task-tagged memory count grows by exactly one per completed step) and by a further extension to the `Self-model known-domains inventory` suite.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
