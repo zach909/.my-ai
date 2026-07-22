@@ -2991,6 +2991,27 @@ async function testPipelineZipIOPersistence() {
   }
 }
 
+async function testCompressionSummary() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // ContextCompressor.compress() already computes originalCount/keptCount/
+    // ratio on every call, but compressContext() has always discarded all of
+    // it down to the bare summary string.
+    sys.memory.remember('User: the payment service handles stripe transactions securely', { tags: ['chat-turn', 'user'] });
+    sys.memory.remember('User: the payment service retries failed stripe charges', { tags: ['chat-turn', 'user'] });
+    const stats = sys.compressionSummary(600);
+    check(stats.summary === sys.compressContext(600), "compressionSummary()'s summary matches compressContext()'s return exactly -- same underlying computation, not a divergent one");
+    check(stats.originalCount === 2 && stats.keptCount === 2, 'compressionSummary() surfaces the real original/kept item counts, not just the summary text');
+    check(stats.ratio > 0, 'compressionSummary() surfaces a genuine, non-fabricated compression ratio');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -3060,6 +3081,7 @@ async function main() {
     ['Skill creation versioning (Section 5)', testSkillCreationVersioning],
     ['Self-authored skills inventory (Section 9/12)', testSelfAuthoredSkillsInventory],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
+    ['Compression summary surfaces full result (Section 7)', testCompressionSummary],
     ['processQuery self-heal on genuine anomaly (Section 9/10/24)', testProcessQuerySelfHeal],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],

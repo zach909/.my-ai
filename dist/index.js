@@ -1447,6 +1447,16 @@ export class NeuroclawSystem {
     recallHistory(query, topK = 5) {
         return this.memory.retrieve(query, { topK, tag: "chat-turn" }).map(h => h.item.content);
     }
+    /** The user's own conversation turns, in chronological order — shared by compressContext()/compressionSummary() so both compress the identical input. */
+    userTurns() {
+        // Compress the user's turns — they carry the actual information; the
+        // assistant's templated replies are derived and would only add noise.
+        return this.memory
+            .all()
+            .filter(m => m.tags.includes("chat-turn") && m.tags.includes("user"))
+            .sort((a, b) => a.timestamp - b.timestamp)
+            .map(m => m.content);
+    }
     /**
      * Section 7: compress the recent conversation into a compact, salient
      * summary (semantic compression, distinct from ZipIO's byte-level gzip).
@@ -1454,18 +1464,23 @@ export class NeuroclawSystem {
      * history can be represented cheaply.
      */
     compressContext(maxChars = 600, store = false) {
-        // Compress the user's turns — they carry the actual information; the
-        // assistant's templated replies are derived and would only add noise.
-        const turns = this.memory
-            .all()
-            .filter(m => m.tags.includes("chat-turn") && m.tags.includes("user"))
-            .sort((a, b) => a.timestamp - b.timestamp)
-            .map(m => m.content);
-        const { summary } = this.compressor.compress(turns, { maxChars });
+        const { summary } = this.compressor.compress(this.userTurns(), { maxChars });
         if (store && summary) {
             this.memory.remember(summary, { tags: ["compressed"], importance: 0.6 });
         }
         return summary;
+    }
+    /**
+     * Section 7: the full compression result — original/kept item counts,
+     * character counts, and the actual compression ratio — that
+     * `ContextCompressor.compress()` already computes every time
+     * `compressContext()` runs, but which `compressContext()` has always
+     * discarded down to the bare summary string. Exposed as its own method
+     * rather than changing `compressContext()`'s existing return type, so its
+     * one existing caller's behavior stays exactly as it was.
+     */
+    compressionSummary(maxChars = 600) {
+        return this.compressor.compress(this.userTurns(), { maxChars });
     }
     /** The recent conversation turns in chronological order (working transcript). */
     chatHistory(limit = 20) {
