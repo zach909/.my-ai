@@ -582,6 +582,14 @@ Having just closed the identical gap in `solve()`, the same "check for asymmetri
 
 `collaborate()` remains the one public action-taking entry point that still never calls `this.veto.evaluate()` — a genuine gap, not yet closed.
 
+### `collaborate()` and `executePlan()` close out the remaining action-taking entry points (Section 3/10/13/23)
+
+Continuing the same audit: `collaborate()` — where a real chat group of hive agents discusses the task text and reaches a group decision (`"proceed"`/`"revise"`/`"reject"`) — never called `this.veto.evaluate()` either, so a genuinely dangerous task would be discussed and decided on with zero gating. While closing that gap, a fifth instance of the identical pattern turned up in `executePlan()`, which calls the real neural runner (`this.runner.generate()`) directly per step with no capability check and no veto check at all — the same class of bug as `autonomousTask()`, just against the runner instead of hive delegation.
+
+Both now follow the established convention. `collaborate()` predicts the task's danger and evaluates the veto *before* the chat group ever convenes: a disallowed task returns `{ discussion: [], decision: "[Withheld] ...", complete: false }` without any agent ever discussing it; a task only requiring confirmation still runs the real discussion and reaches a real decision, annotated `[Confirm before acting: ...]`. `executePlan()` gates per-step, mirroring `autonomousTask()` exactly: a disallowed step is marked `failed` with `[Withheld] ...` and the runner is never invoked for it; a step only requiring confirmation still generates and completes, annotated the same way. Verified live and by dedicated `collaborate() AlignmentVeto gating` and `executePlan() AlignmentVeto gating` suites (Section 3/10/13/23): each dangerous request now carries the confirmation notice while still doing the real work; ordinary, benign requests do not.
+
+With this, every public action-taking entry point (`processQuery()`, `solve()`, `autonomousTask()`, `collaborate()`, `executePlan()`) now routes through the same `AlignmentVeto` gate.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.

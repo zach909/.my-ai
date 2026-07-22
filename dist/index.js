@@ -420,6 +420,26 @@ export class NeuroclawSystem {
         if (!this.initialized)
             await this.initialize();
         this.ensureDefaultTeam();
+        // ASI §3/§10/§13/§23: gate collaborate()'s real multi-agent processing
+        // through the same AlignmentVeto safety layer solve()/processQuery()/
+        // autonomousTask() already use. Previously collaborate() had no safety
+        // check at all — a genuinely dangerous task would be discussed by real
+        // agents and decided on (e.g. "proceed") with zero gating, even though
+        // the identical request through solve()/processQuery() was correctly
+        // blocked or escalated to human confirmation. This is the fourth public
+        // action-taking entry point found to have this gap.
+        const collabPrediction = this.predictor.predict(`collaborate: ${task}`);
+        const collabDanger = collabPrediction.outcomes.some(o => o.dangerous);
+        const collabDecision = this.veto.evaluate({
+            id: `collaborate:${Date.now()}`,
+            name: "collaborate on task",
+            capabilities: ["text-generate"],
+            reversible: !collabDanger,
+            externalEffect: collabDanger,
+        });
+        if (!collabDecision.allowed) {
+            return { discussion: [], decision: `[Withheld] ${collabDecision.reasons.join("; ")}`, complete: false };
+        }
         if (!this.chatGroup) {
             this.chatGroup = new ChatGroup("default", "Default Team", this.hive);
             for (const a of this.hive.list())
@@ -435,7 +455,10 @@ export class NeuroclawSystem {
         // itself as done, so a later caller checking `isComplete()` would always
         // see false regardless of what actually happened.
         this.chatGroup.complete(decision.decision);
-        return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision, complete: this.chatGroup.isComplete() };
+        const finalDecision = collabDecision.requiresConfirmation
+            ? `${decision.decision}\n  [Confirm before acting: ${collabDecision.reasons.join("; ")}]`
+            : decision.decision;
+        return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: finalDecision, complete: this.chatGroup.isComplete() };
     }
     /** The default chat group's recorded outcome, once `collaborate()` has completed it. */
     collaborationResult() {
@@ -459,10 +482,33 @@ export class NeuroclawSystem {
             }
             const step = this.plan.addStep(desc);
             this.plan.start(step.id);
+            // ASI §3/§10/§13/§23: gate this step's real generation through the same
+            // AlignmentVeto safety layer solve()/processQuery()/autonomousTask()/
+            // collaborate() already use. Previously executePlan() called the real
+            // neural runner directly with no safety check at all — a genuinely
+            // dangerous step would be generated and reported "completed" with zero
+            // gating.
+            const stepPrediction = this.predictor.predict(desc);
+            const stepDanger = stepPrediction.outcomes.some(o => o.dangerous);
+            const stepDecision = this.veto.evaluate({
+                id: `plan-step:${step.id}`,
+                name: "execute plan step",
+                capabilities: ["text-generate"],
+                reversible: !stepDanger,
+                externalEffect: stepDanger,
+            });
+            if (!stepDecision.allowed) {
+                this.plan.fail(step.id, stepDecision.reasons.join("; "));
+                results.push({ step: desc, status: "failed", result: `[Withheld] ${stepDecision.reasons.join("; ")}` });
+                continue;
+            }
             try {
                 const out = await this.runner.generate(desc);
                 this.plan.complete(step.id, out);
-                results.push({ step: desc, status: "completed", result: out });
+                const stepResult = stepDecision.requiresConfirmation
+                    ? `${out}\n  [Confirm before acting: ${stepDecision.reasons.join("; ")}]`
+                    : out;
+                results.push({ step: desc, status: "completed", result: stepResult });
             }
             catch (e) {
                 const reason = e instanceof Error ? e.message : String(e);
