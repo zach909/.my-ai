@@ -1422,6 +1422,13 @@ export class NeuroclawSystem {
             // has actually accumulated, not just that the subsystems exist.
             transferredMethods: this.transfer.size(),
             trackedPredictions: this.predictor.size(),
+            // Self-Improvement Phase 1/3: architectureSummary()/performanceHealth()
+            // were wired into NeuroclawSystem in a previous pass but never surfaced
+            // in this one-stop status snapshot — the same "built but not surfaced
+            // in the summary view" gap the two fields above already closed once,
+            // recurring for the two subsystems added afterward.
+            architectureComponents: this.architecture.generateSummary().totalComponents,
+            systemHealth: this.performance.getSystemHealth().status,
         };
     }
 }

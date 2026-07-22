@@ -2536,6 +2536,12 @@ async function testStatusCounts() {
     await sys.initialize();
     const before = sys.getStatus();
     check(before.transferredMethods === 0 && before.trackedPredictions === 0, 'getStatus() reports zero transferred methods and tracked predictions before any activity');
+    // Self-Improvement Phase 1/3: architectureSummary()/performanceHealth()
+    // were wired into NeuroclawSystem in a previous pass but never surfaced
+    // in this one-stop status snapshot -- the same gap the two checks above
+    // already exist to catch, recurring for the two subsystems added after.
+    check(before.architectureComponents >= 20, 'getStatus() surfaces a real ArchitectureMapper component count from construction, not zero');
+    check(before.systemHealth === 'healthy', 'getStatus() reports healthy PerformanceMonitor status before any call has been measured');
 
     await sys.solve('calculate the average of a list of numbers');
     const afterSolve = sys.getStatus();
@@ -2544,6 +2550,8 @@ async function testStatusCounts() {
     // (Section 2 step 6), so this alone already tracks several predictions --
     // not just the single processQuery() call below.
     check(afterSolve.trackedPredictions > before.trackedPredictions, 'getStatus() reflects PredictionEngine.size() growing from solve()\'s own per-approach consequence prediction');
+    check(afterSolve.architectureComponents === before.architectureComponents, "architectureComponents reflects the static registered component count from construction, not a call counter -- it shouldn't change just because a call happened");
+    check(['healthy', 'degraded', 'critical'].includes(afterSolve.systemHealth), 'getStatus() reports a real PerformanceMonitor-derived health status after a real call, not a fixed placeholder');
 
     const beforeQuery = afterSolve.trackedPredictions;
     await sys.processQuery('what is 2 plus 2');
