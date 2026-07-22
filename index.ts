@@ -1293,6 +1293,20 @@ export class NeuroclawSystem {
   }
 
   /**
+   * Section 10: a human-readable snapshot of the current plan — objective,
+   * progress counts, constraints, per-step status with any recorded
+   * alternatives, and decisions. `PlanTracker.summary()` existed and was
+   * exercised directly against `sys.plan` in ad hoc verification, but
+   * `NeuroclawSystem` itself never exposed it as a real, named, testable
+   * method — a genuine doc/code mismatch (this document already described
+   * it as "surfaced" based on that ad hoc check, more established-sounding
+   * than it actually was in the public API).
+   */
+  planSummary(): string {
+    return this.plan.summary();
+  }
+
+  /**
    * ASI §5: every proposed change `refreshApproachBias()` tested, kept or
    * discarded — `SelfImprovement.kept()`/`history()` existed and were
    * unit-tested but never surfaced, so there was no way to see which

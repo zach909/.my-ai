@@ -1253,6 +1253,12 @@ async function testAutonomousTask() {
     // plan, not just step status.
     check(sys.plan.getConstraints().some(c => c.includes('no external APIs')), 'autonomousTask() records the real operating constraint');
     check(sys.plan.getDecisions().some(d => d.includes('delegated to')), 'autonomousTask() records which agent each step was delegated to and why');
+    // PlanTracker.summary() existed and was unit-tested at the PlanTracker
+    // level, but NeuroclawSystem itself never exposed it as a named,
+    // testable method -- a real doc/code mismatch (ARCHITECTURE.md already
+    // described it as "surfaced" based only on an ad hoc script check).
+    const planSummary = sys.planSummary();
+    check(planSummary.includes('build a service') && planSummary.includes('no external APIs') && planSummary.includes('delegated to'), 'planSummary() genuinely surfaces the objective, constraint, and per-step delegation decisions together');
     // Re-run with an overlapping step: planning + hive integration must not repeat it.
     const r2 = await sys.autonomousTask('build a service', ['design the routes', 'write tests']);
     check(r2.results.find(x => x.step === 'design the routes').status === 'skipped', 'Already-completed steps are not repeated');
