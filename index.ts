@@ -104,15 +104,26 @@ export class NeuroclawSystem {
    */
   private recentTraces: Array<{ problem: string; trace: ReasoningStep[]; timestamp: number }> = [];
   private static readonly MAX_RECENT_TRACES = 20;
+  /**
+   * Section 1.10 / §7: whether this instance was given a stable place to
+   * checkpoint its ZipIO working-context loops. Only set when the caller
+   * explicitly opts in (`config.persistDir`) — restoring by default for
+   * every instance would make a fresh `NeuroclawSystem()` silently inherit
+   * leftover context from a previous process (or, worse, from another
+   * concurrent instance sharing the same default path), the same
+   * shared-state pollution this project has otherwise been careful to avoid.
+   */
+  private readonly zipPersistDir: string | null;
 
-  constructor(config?: { maxContextGB?: number }) {
+  constructor(config?: { maxContextGB?: number; persistDir?: string }) {
     this.llm = new NeuroclawLLM({});
     this.pipeline = new NeuroPipeline({});
     this.thesaurus = new ThesaurusDictionary();
     this.pluginRegistry = new PluginRegistry();
     this.veto = new AlignmentVeto();
     this.contextCapacityGB = config?.maxContextGB || 200000;
-    this.zipIO = new ZipIOSystem(this.contextCapacityGB);
+    this.zipPersistDir = config?.persistDir ?? null;
+    this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.thesaurus, this.pluginRegistry);
     // Hive Mind (Section 13): each agent's mind is the real neural runner, so
@@ -402,8 +413,34 @@ export class NeuroclawSystem {
     });
     this.healer.snapshotAll();
 
+    // Section 1.10 / §7: reload previously-checkpointed working context, so a
+    // caller that opted into durable ZipIO persistence (`config.persistDir`)
+    // actually gets it back across restarts, rather than `ZipIOSystem.restore()`
+    // existing and being periodically checkpointed *into* by `zipInput()` but
+    // never once read back by anything. No-ops safely if no checkpoint exists
+    // yet (first run) — `restore()` already catches a missing/unreadable file
+    // per loop. Gated on `zipPersistDir` rather than always running: with no
+    // explicit path, `ZipIOSystem`'s default is a fresh random temp file per
+    // instance, and restoring from that would just be a no-op anyway — this
+    // guard makes the intent explicit rather than relying on that side effect.
+    if (this.zipPersistDir) {
+      await this.zipIO.restore();
+    }
+
     this.initialized = true;
     console.log("Neuroclaw subsystems initialized successfully");
+  }
+
+  /**
+   * Explicit, on-demand checkpoint of both ZipIO working-context loops —
+   * `ZipIOSystem.persist()` already existed (used internally by
+   * `zipInput()`'s periodic auto-checkpoint) but had no way for a caller to
+   * force an immediate save (e.g. before a planned shutdown, where waiting
+   * for the next automatic checkpoint interval could lose recent context).
+   */
+  async persistContext(): Promise<void> {
+    if (!this.initialized) await this.initialize();
+    await this.zipIO.persist();
   }
 
   /**

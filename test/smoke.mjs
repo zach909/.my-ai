@@ -2823,6 +2823,41 @@ async function testMemoryForgetting() {
   }
 }
 
+async function testZipIOPersistence() {
+  const { NeuroclawSystem } = await load('index.js');
+  const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-zipio-'));
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // Section 1.10/§7: ZipIOSystem.persist()/restore() were fully built (with
+    // automatic periodic checkpointing already wired into zipInput()) but
+    // restore() had no real call site anywhere -- working context could
+    // never actually survive a restart even though the mechanism to make it
+    // do so already existed. A caller now opts in via `persistDir`; the
+    // default (no persistDir, used by every other test in this suite) is
+    // unaffected, so a fresh instance never silently inherits leftover state.
+    const sys1 = new NeuroclawSystem({ persistDir: dir });
+    await sys1.initialize();
+    await sys1.processQuery('remember this specific context marker for the persistence test');
+    await sys1.persistContext();
+
+    const sys2 = new NeuroclawSystem({ persistDir: dir });
+    await sys2.initialize();
+    const restored = [];
+    for await (const chunk of sys2.zipIO.getFullContext()) restored.push(chunk);
+    check(restored.some(c => c.includes('context marker for the persistence test')), "a fresh instance configured with the same persistDir restores the previous instance's working context via initialize()");
+
+    const sysDefault = new NeuroclawSystem();
+    await sysDefault.initialize();
+    const freshChunks = [];
+    for await (const chunk of sysDefault.zipIO.getFullContext()) freshChunks.push(chunk);
+    check(freshChunks.length === 0, 'an instance with no persistDir (the default, used by every other test) starts fully empty -- opting in is required, restoring is never silent or automatic');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -2900,6 +2935,7 @@ async function main() {
     ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
+    ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);
