@@ -1073,7 +1073,18 @@ export class NeuroclawSystem {
     // solution is reinforced — real consequences, not just a log entry.
     for (const content of r.available) {
       const grounding = this.memory.all().find(m => m.content === content);
-      if (grounding) this.memory.reinforce(grounding.id, r.verified ? 0.05 : -0.1);
+      if (grounding) {
+        this.memory.reinforce(grounding.id, r.verified ? 0.05 : -0.1);
+        // ASI §7: "removed when necessary" — a grounding memory repeatedly
+        // discredited all the way down to the importance floor (only
+        // possible here after an unverified outcome; a verified one always
+        // pushes importance up off zero) is no longer worth retaining at
+        // all, not left permanently inert at zero. LongTermMemory.forget()
+        // existed and was unit-tested but had no real call site anywhere —
+        // capacity-pressure eviction was the only way a memory ever left
+        // the store, never an intentional, evidence-based removal.
+        if (grounding.importance === 0) this.memory.forget(grounding.id);
+      }
     }
     this.memory.remember(`Solved [${domain}]: ${problem} -> ${r.result.slice(0, 200)}`, { tags: ["solution", domain], importance: 0.7 });
     // ASI §11: test every currently-active hypothesis against this fresh
@@ -1166,6 +1177,18 @@ export class NeuroclawSystem {
    */
   findExactMemory(query: string): string[] {
     return this.memory.findExact(query).map(m => m.content);
+  }
+
+  /**
+   * ASI §7: "removed when necessary" — an explicit, intentional forget,
+   * distinct from `evictIfNeeded()`'s capacity-pressure eviction. Exposed so
+   * a caller (e.g. a user asking the system to forget something specific)
+   * has a real way to invoke `LongTermMemory.forget()` directly, the same
+   * way `solveImpl()`'s own reinforcement loop now does for memories
+   * discredited down to the importance floor.
+   */
+  forgetMemory(id: string): boolean {
+    return this.memory.forget(id);
   }
 
   /**
