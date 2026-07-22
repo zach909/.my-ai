@@ -497,6 +497,29 @@ export class NeuroclawSystem {
             }
             const step = this.plan.addStep(desc);
             this.plan.start(step.id);
+            // ASI §3/§10/§13/§23: gate each step's *real* execution through the same
+            // AlignmentVeto safety layer solve()/processQuery() already use.
+            // Previously autonomousTask() had no safety check at all — a genuinely
+            // dangerous step (e.g. "delete the production database") would be
+            // delegated and actually executed with zero gating, even though the
+            // identical request through solve()/processQuery() was correctly
+            // blocked or escalated to human confirmation. This is a third public
+            // action-taking entry point; it needs the same gate, applied per-step
+            // since each step is delegated independently.
+            const stepPrediction = this.predictor.predict(desc);
+            const stepDanger = stepPrediction.outcomes.some(o => o.dangerous);
+            const stepDecision = this.veto.evaluate({
+                id: `task-step:${step.id}`,
+                name: "execute task step",
+                capabilities: ["text-generate"],
+                reversible: !stepDanger,
+                externalEffect: stepDanger,
+            });
+            if (!stepDecision.allowed) {
+                this.plan.fail(step.id, stepDecision.reasons.join("; "));
+                results.push({ step: desc, agent: "-", status: "failed", result: `[Withheld] ${stepDecision.reasons.join("; ")}` });
+                continue;
+            }
             // §16/§23 default-deny: same capability enforcement as solveSub above.
             const requireCapability = domainToCapability(classifyDomain(desc));
             const routed = await this.hive.delegate(desc, requireCapability ? { requireCapability } : undefined);
@@ -505,7 +528,10 @@ export class NeuroclawSystem {
                 // Record the real delegation decision: which agent was chosen and why.
                 this.plan.addDecision(`"${desc}" -> delegated to ${routed.agent.role} (${routed.agent.id}, trust ${routed.agent.trust.toFixed(1)})`);
                 this.memory.remember(`Task step: ${desc} -> ${routed.output}`, { tags: ["task"], importance: 0.6 });
-                results.push({ step: desc, agent: routed.agent.id, status: "completed", result: routed.output });
+                const stepResult = stepDecision.requiresConfirmation
+                    ? `${routed.output}\n  [Confirm before acting: ${stepDecision.reasons.join("; ")}]`
+                    : routed.output;
+                results.push({ step: desc, agent: routed.agent.id, status: "completed", result: stepResult });
             }
             else {
                 this.plan.fail(step.id, "no agent available");

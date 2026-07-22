@@ -2076,6 +2076,32 @@ async function testSolveAlignmentVeto() {
   }
 }
 
+async function testAutonomousTaskAlignmentVeto() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+    const coder = sys.hive.get('coder');
+    sys.hive.delegate = async (sub) => ({ agent: coder, output: `done: ${sub}` });
+    // ASI §3/§10/§13/§23: solve()/processQuery() already gate through
+    // AlignmentVeto, but autonomousTask() -- the third public action-taking
+    // entry point, which delegates each step to a real hive agent -- had no
+    // safety gate at all. A step to delete the production database would
+    // previously execute (and report "completed") with zero confirmation.
+    const risky = await sys.autonomousTask('cleanup', ['delete the production database entirely and then remove all backups permanently']);
+    const riskyStep = risky.results[0];
+    check(riskyStep.status === 'completed', 'a dangerous step that only triggers the confirmation rule (not an outright block) still delegates and completes');
+    check(riskyStep.result.includes('[Confirm before acting'), 'autonomousTask() escalates a genuinely dangerous step to human confirmation, matching solve()/processQuery()');
+    const safe = await sys.autonomousTask('write feature', ['calculate the sum and then compute the average']);
+    check(!safe.results[0].result.includes('[Confirm before acting'), 'autonomousTask() does not flag an ordinary, benign step for confirmation');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testCreativeCombinationRefinement() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2669,6 +2695,7 @@ async function main() {
     ['Reasoning trace history (Section 2)', testReasoningHistory],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
     ['solve() AlignmentVeto gating (Section 3/10/13/23)', testSolveAlignmentVeto],
+    ['autonomousTask() AlignmentVeto gating (Section 3/10/13/23)', testAutonomousTaskAlignmentVeto],
     ['Creative combination evaluate/refine (Section 11)', testCreativeCombinationRefinement],
     ['Empathy alignment veto (Section 3)', testEmpathyVeto],
     ['Self-improvement targeting (Section 5)', testImprovementTargets],
