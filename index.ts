@@ -389,6 +389,15 @@ export class NeuroclawSystem {
       // compare against a fixed zero (which would make ordinary token-overlap
       // noise register as a failure on every single call).
       if (comparison) this.monitor.observe("prediction.surprise", comparison.surprise);
+      // A failure-level anomaly here should trigger real recovery exactly
+      // the way solve()'s own confidence tracking already does — the
+      // documentation already claimed this connection existed ("available
+      // to trigger selfHeal()"), but processQuery() only ever observed the
+      // signal and never actually checked or acted on it, an inconsistency
+      // between the two query paths this closes.
+      if (this.monitor.hasFailure()) {
+        await this.selfHeal();
+      }
 
       // 7. Store the (compressed) output in the ZIP-IO output loop, and commit
       //    the assistant turn to long-term memory so the whole exchange becomes
@@ -415,6 +424,29 @@ export class NeuroclawSystem {
     if (!this.initialized) await this.initialize();
     const result = this.learner.learn(information, opts);
     if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
+      // ASI §3/§10/§13/§23: gate the real side effect through the same
+      // AlignmentVeto safety layer every other action-taking entry point
+      // uses. This is the sixth instance of the same gap, and the most
+      // concrete one: unlike solve()/collaborate()/etc (text generation or
+      // delegation), this branch performs genuine, permanent disk I/O — a
+      // new skill/extension/plugin file, embedding the learned text
+      // verbatim, that gets registered and can later be executed. Writing
+      // new persistent, executable content to disk is always a real
+      // external effect regardless of how benign the learned text looks, so
+      // externalEffect is unconditionally true here (unlike the "predict
+      // danger first" pattern used where the action is just text output).
+      const learnPrediction = this.predictor.predict(`learn: ${information}`);
+      const learnDanger = learnPrediction.outcomes.some(o => o.dangerous);
+      const learnDecision = this.veto.evaluate({
+        id: `learn:${Date.now()}`,
+        name: result.decision === "recommend-extension" ? "create extension from learned procedure" : "create skill from learned procedure",
+        capabilities: ["text-generate"],
+        reversible: !learnDanger,
+        externalEffect: true,
+      });
+      if (!learnDecision.allowed) {
+        return { ...result, created: undefined, withheld: learnDecision.reasons.join("; ") };
+      }
       // The generic "creation" intent always lands on skill-maker (it never
       // returns null, so plugin-maker is never reached through it) — use the
       // decision-specific intent so a recommend-extension genuinely creates
@@ -436,7 +468,18 @@ export class NeuroclawSystem {
           if (name) this.improvement.snapshot(`${result.decision === "recommend-skill" ? "skill" : "extension"}:${name}`, parsed);
         } catch { /* non-JSON creation output — nothing structured to version */ }
       }
-      return { ...result, created: created ?? undefined };
+      // Unlike the other five entry points, `created` here is structured JSON
+      // consumed both internally (above) and by callers — annotating it with
+      // "[Confirm before acting: ...]" the way solve()/collaborate()/etc.
+      // annotate their prose result would corrupt it into invalid JSON. The
+      // confirmation requirement is surfaced as its own field instead, so
+      // `created` stays parseable while still honestly reporting that this
+      // creation (always true, per Rule 3 above) needs human confirmation.
+      return {
+        ...result,
+        created: created ?? undefined,
+        confirmation: created && learnDecision.requiresConfirmation ? learnDecision.reasons.join("; ") : undefined,
+      };
     }
     return result;
   }
@@ -458,6 +501,26 @@ export class NeuroclawSystem {
   async collaborate(task: string): Promise<{ discussion: string[]; decision: string; complete: boolean }> {
     if (!this.initialized) await this.initialize();
     this.ensureDefaultTeam();
+    // ASI §3/§10/§13/§23: gate collaborate()'s real multi-agent processing
+    // through the same AlignmentVeto safety layer solve()/processQuery()/
+    // autonomousTask() already use. Previously collaborate() had no safety
+    // check at all — a genuinely dangerous task would be discussed by real
+    // agents and decided on (e.g. "proceed") with zero gating, even though
+    // the identical request through solve()/processQuery() was correctly
+    // blocked or escalated to human confirmation. This is the fourth public
+    // action-taking entry point found to have this gap.
+    const collabPrediction = this.predictor.predict(`collaborate: ${task}`);
+    const collabDanger = collabPrediction.outcomes.some(o => o.dangerous);
+    const collabDecision = this.veto.evaluate({
+      id: `collaborate:${Date.now()}`,
+      name: "collaborate on task",
+      capabilities: ["text-generate"],
+      reversible: !collabDanger,
+      externalEffect: collabDanger,
+    });
+    if (!collabDecision.allowed) {
+      return { discussion: [], decision: `[Withheld] ${collabDecision.reasons.join("; ")}`, complete: false };
+    }
     if (!this.chatGroup) {
       this.chatGroup = new ChatGroup("default", "Default Team", this.hive);
       for (const a of this.hive.list()) this.chatGroup.addMember(a.id);
@@ -472,7 +535,10 @@ export class NeuroclawSystem {
     // itself as done, so a later caller checking `isComplete()` would always
     // see false regardless of what actually happened.
     this.chatGroup.complete(decision.decision);
-    return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: decision.decision, complete: this.chatGroup.isComplete() };
+    const finalDecision = collabDecision.requiresConfirmation
+      ? `${decision.decision}\n  [Confirm before acting: ${collabDecision.reasons.join("; ")}]`
+      : decision.decision;
+    return { discussion: msgs.map(m => `${m.from}: ${m.content}`), decision: finalDecision, complete: this.chatGroup.isComplete() };
   }
 
   /** The default chat group's recorded outcome, once `collaborate()` has completed it. */
@@ -501,10 +567,33 @@ export class NeuroclawSystem {
       }
       const step = this.plan.addStep(desc);
       this.plan.start(step.id);
+      // ASI §3/§10/§13/§23: gate this step's real generation through the same
+      // AlignmentVeto safety layer solve()/processQuery()/autonomousTask()/
+      // collaborate() already use. Previously executePlan() called the real
+      // neural runner directly with no safety check at all — a genuinely
+      // dangerous step would be generated and reported "completed" with zero
+      // gating.
+      const stepPrediction = this.predictor.predict(desc);
+      const stepDanger = stepPrediction.outcomes.some(o => o.dangerous);
+      const stepDecision = this.veto.evaluate({
+        id: `plan-step:${step.id}`,
+        name: "execute plan step",
+        capabilities: ["text-generate"],
+        reversible: !stepDanger,
+        externalEffect: stepDanger,
+      });
+      if (!stepDecision.allowed) {
+        this.plan.fail(step.id, stepDecision.reasons.join("; "));
+        results.push({ step: desc, status: "failed", result: `[Withheld] ${stepDecision.reasons.join("; ")}` });
+        continue;
+      }
       try {
         const out = await this.runner.generate(desc);
         this.plan.complete(step.id, out);
-        results.push({ step: desc, status: "completed", result: out });
+        const stepResult = stepDecision.requiresConfirmation
+          ? `${out}\n  [Confirm before acting: ${stepDecision.reasons.join("; ")}]`
+          : out;
+        results.push({ step: desc, status: "completed", result: stepResult });
       } catch (e) {
         const reason = e instanceof Error ? e.message : String(e);
         this.plan.fail(step.id, reason);
@@ -543,6 +632,29 @@ export class NeuroclawSystem {
       }
       const step = this.plan.addStep(desc);
       this.plan.start(step.id);
+      // ASI §3/§10/§13/§23: gate each step's *real* execution through the same
+      // AlignmentVeto safety layer solve()/processQuery() already use.
+      // Previously autonomousTask() had no safety check at all — a genuinely
+      // dangerous step (e.g. "delete the production database") would be
+      // delegated and actually executed with zero gating, even though the
+      // identical request through solve()/processQuery() was correctly
+      // blocked or escalated to human confirmation. This is a third public
+      // action-taking entry point; it needs the same gate, applied per-step
+      // since each step is delegated independently.
+      const stepPrediction = this.predictor.predict(desc);
+      const stepDanger = stepPrediction.outcomes.some(o => o.dangerous);
+      const stepDecision = this.veto.evaluate({
+        id: `task-step:${step.id}`,
+        name: "execute task step",
+        capabilities: ["text-generate"],
+        reversible: !stepDanger,
+        externalEffect: stepDanger,
+      });
+      if (!stepDecision.allowed) {
+        this.plan.fail(step.id, stepDecision.reasons.join("; "));
+        results.push({ step: desc, agent: "-", status: "failed", result: `[Withheld] ${stepDecision.reasons.join("; ")}` });
+        continue;
+      }
       // §16/§23 default-deny: same capability enforcement as solveSub above.
       const requireCapability = domainToCapability(classifyDomain(desc));
       const routed = await this.hive.delegate(desc, requireCapability ? { requireCapability } : undefined);
@@ -551,7 +663,10 @@ export class NeuroclawSystem {
         // Record the real delegation decision: which agent was chosen and why.
         this.plan.addDecision(`"${desc}" -> delegated to ${routed.agent.role} (${routed.agent.id}, trust ${routed.agent.trust.toFixed(1)})`);
         this.memory.remember(`Task step: ${desc} -> ${routed.output}`, { tags: ["task"], importance: 0.6 });
-        results.push({ step: desc, agent: routed.agent.id, status: "completed", result: routed.output });
+        const stepResult = stepDecision.requiresConfirmation
+          ? `${routed.output}\n  [Confirm before acting: ${stepDecision.reasons.join("; ")}]`
+          : routed.output;
+        results.push({ step: desc, agent: routed.agent.id, status: "completed", result: stepResult });
       } else {
         this.plan.fail(step.id, "no agent available");
         // Record the alternative that was considered: expanding the team
@@ -591,6 +706,30 @@ export class NeuroclawSystem {
     trace: ReasoningStep[];
   }> {
     if (!this.initialized) await this.initialize();
+    // ASI §3/§10/§13/§23: gate solve()'s *real* execution (hive delegation,
+    // actual generated actions) through the same AlignmentVeto safety layer
+    // processQuery() already uses. Previously solve() had no safety check at
+    // all — a genuinely dangerous request (e.g. "delete the production
+    // database") would be decomposed and actually delegated/executed with
+    // zero gating, even though the identical request through processQuery()
+    // was correctly escalated to human confirmation. This is the other
+    // major public action-taking entry point; it needs the same gate.
+    const solvePrediction = this.predictor.predict(`solve: ${problem}`);
+    const solvePredictedDanger = solvePrediction.outcomes.some(o => o.dangerous);
+    const solveDecision = this.veto.evaluate({
+      id: `solve:${Date.now()}`,
+      name: "solve problem",
+      capabilities: ["text-generate"],
+      reversible: !solvePredictedDanger,
+      externalEffect: solvePredictedDanger,
+    });
+    if (!solveDecision.allowed) {
+      return {
+        result: `[Withheld] ${solveDecision.reasons.join("; ")}`,
+        confidence: 0, verified: false, domain: classifyDomain(problem), approach: "none",
+        transfers: [], subresults: 0, contradictions: [], trace: [],
+      };
+    }
     // Track which hive agent (if any) handles each subproblem in *this*
     // solve() call only, so the outcome below can reward/demote the right
     // agent rather than one from a stale prior call.
@@ -710,7 +849,16 @@ export class NeuroclawSystem {
       // so it becomes a real, findable, auto-linked concept in its own
       // right, not knowledge that only survives folded into the top-level
       // summary.
+      // Skip ReasoningEngine's own synthetic fallback subproblems
+      // ("analyze: <full problem>" / "solve: <full problem>", used when the
+      // problem couldn't be split into 2+ genuine parts — see decompose()):
+      // each embeds the *entire* problem text verbatim, so integrating them
+      // as concepts would register a unique, near-duplicate, low-value
+      // concept per single-part query instead of real, reusable knowledge —
+      // graph bloat with no genuine "distinct reusable piece of knowledge"
+      // behind it (caught in review on the PR that introduced this loop).
       for (const sub of r.subresults) {
+        if (/^(analyze|solve):/i.test(sub.subproblem)) continue;
         this.knowledge.integrate(sub.subproblem, sub.result);
       }
       // ASI §6: this exact task has now succeeded — any prior recorded failure
@@ -790,7 +938,10 @@ export class NeuroclawSystem {
     }
     this.recentTraces.push({ problem, trace: r.trace, timestamp: Date.now() });
     if (this.recentTraces.length > NeuroclawSystem.MAX_RECENT_TRACES) this.recentTraces.shift();
-    return { result: r.result, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, trace: r.trace };
+    const finalResult = solveDecision.requiresConfirmation
+      ? `${r.result}\n  [Confirm before acting: ${solveDecision.reasons.join("; ")}]`
+      : r.result;
+    return { result: finalResult, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, trace: r.trace };
   }
 
   /**
@@ -1168,10 +1319,10 @@ export class NeuroclawSystem {
 function classifyDomain(text: string): string {
   const t = (text || "").toLowerCase();
   const has = (words: string[]) => words.some(w => t.includes(w));
-  if (has(["code", "coding", "program", "function", "bug", "compile", "api", "algorithm"])) return "coding";
+  if (has(["code", "coding", "program", "function", "bug", "compile", "api", "algorithm", "implement", "refactor", "typescript", "javascript", "repository", "debug", "syntax"])) return "coding";
   if (has(["math", "equation", "number", "calculate", "compute", "proof", "geometry", "algebra"])) return "math";
   if (has(["science", "physics", "chemistry", "biology", "experiment", "hypothesis", "energy"])) return "science";
-  if (has(["plan", "schedule", "steps", "roadmap", "organize", "strategy"])) return "planning";
+  if (has(["plan", "schedule", "steps", "roadmap", "organize", "strategy", "prioritize", "milestone", "timeline", "backlog"])) return "planning";
   if (has(["design", "engineer", "build", "system", "architecture", "circuit"])) return "engineering";
   if (has(["write", "essay", "story", "language", "translate", "grammar", "poem"])) return "language";
   // ASI §7 explicitly lists these among the domains cross-domain transfer
@@ -1197,6 +1348,14 @@ function classifyDomain(text: string): string {
  * — deliberately only the domains with a real capability to enforce;
  * everything else keeps matching by content as before rather than inventing
  * new restrictions with no established capability model behind them.
+ *
+ * Honest limitation (flagged in review): enforcement is only as strong as
+ * `classifyDomain()`'s keyword coverage. A genuinely coding/planning task
+ * phrased without any of its known keywords still classifies as "general"
+ * and skips the capability check — this reduces, but structurally cannot
+ * eliminate, that gap without a fundamentally different (non-heuristic)
+ * classifier. Expanding the keyword lists narrows the false-negative rate;
+ * it does not close it to zero.
  */
 function domainToCapability(domain: string): string | undefined {
   if (domain === "coding") return "coding";
