@@ -732,6 +732,14 @@ export class NeuroclawSystem {
     // itself as done, so a later caller checking `isComplete()` would always
     // see false regardless of what actually happened.
     this.chatGroup.complete(decision.decision);
+    // ASI §7: solve()/autonomousTask()/executePlan() all commit their real
+    // outcome to long-term memory so it's retrievable later; collaborate()
+    // never did, despite reaching a genuine group decision — found by the
+    // same asymmetry-check method. (No equivalent selfModel.record() fix
+    // here: unlike a step's completed/failed status, a group decision of
+    // "proceed"/"revise"/"reject" has no clean success/failure reading, so
+    // forcing one would be an arbitrary classification, not a real signal.)
+    this.memory.remember(`Collaboration on "${task}": ${decision.decision}`, { tags: ["collaboration"], importance: 0.6 });
     const finalDecision = collabDecision.requiresConfirmation
       ? `${decision.decision}\n  [Confirm before acting: ${collabDecision.reasons.join("; ")}]`
       : decision.decision;

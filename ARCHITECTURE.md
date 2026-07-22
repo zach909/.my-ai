@@ -692,6 +692,14 @@ While fixing it, a second, independent gap turned up in the same method: `autono
 
 Verified live (`knownDomains()` grows to include `"coding"` after repeated `executePlan()` calls; task-tagged memory count grows by exactly one per completed step) and by a further extension to the `Self-model known-domains inventory` suite.
 
+### `collaborate()` never recorded to long-term memory either — the last of this asymmetry sweep (Section 7)
+
+The last check in this sweep: does `collaborate()` have the same gaps? `SelfModel.record()` genuinely doesn't apply here — a group decision of `"proceed"`/`"revise"`/`"reject"` has no clean success/failure reading the way a step's completed/failed status does, and forcing one would be an arbitrary classification, not a real signal, so that part is correctly left alone. But `memory.remember()` does apply, cleanly: `solve()`/`autonomousTask()`/`executePlan()` all commit their real outcome to long-term memory so it's retrievable later; `collaborate()` never did, despite reaching a genuine group decision every time.
+
+`collaborate()` now calls `this.memory.remember(...)` with the task and the real decision, tagged `"collaboration"` (a new, distinct tag — a group decision isn't a plan step, so reusing `"task"` would blur two different kinds of record together). Verified live (`"Collaboration on \"...\": proceed"` appears in memory after a real call) and by an extension to the existing `Chat group completion tracking` suite.
+
+With this, the "check every `solve()`-only real-world-effect call against its structurally-parallel sibling" sweep across all four action-taking entry points is complete: `processQuery()`/`solve()`/`autonomousTask()`/`executePlan()`/`collaborate()` now consistently record their real outcomes wherever the underlying signal genuinely supports it (memory, self-model competence, hive trust, hive blackboard sharing), rather than only ever learning from `solve()` calls.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
