@@ -2483,6 +2483,32 @@ async function testHealLog() {
   }
 }
 
+async function testPluginRegistryHealthCheck() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // ASI §24: PluginRegistry.healthCheck() -- which calls each active
+    // plugin's own real onHealthCheck() -- existed and was unit-tested but
+    // had no real call site anywhere. The registered "plugin-registry"
+    // SelfHealer check used only a coarse proxy (active plugin count > 0),
+    // so a plugin that stayed "active" while genuinely unhealthy would
+    // never be detected.
+    const before = await sys.healthReport();
+    check(before['plugin-registry'] === true, 'plugin-registry reports healthy when every active plugin genuinely is');
+
+    const firstId = sys.pluginRegistry.listActivePlugins()[0].id;
+    const instance = sys.pluginRegistry.plugins.get(firstId);
+    instance.onHealthCheck = async () => false;
+    const after = await sys.healthReport();
+    check(after['plugin-registry'] === false, "plugin-registry now genuinely reflects a single plugin's own failing health check, not just whether any plugins are active");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testEmpathyToneAdjustment() {
   const { NeuroclawSystem } = await load('index.js');
   const orig = { log: console.log, info: console.info, warn: console.warn };
@@ -3069,6 +3095,7 @@ async function main() {
     ['Mistake cause classification (Section 6)', testMistakeCauseClassification],
     ['Self-monitor history introspection (Section 9/11)', testMonitorHistory],
     ['Self-healer log introspection (Section 24)', testHealLog],
+    ['Plugin registry health check reaches self-healer (Section 24)', testPluginRegistryHealthCheck],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],

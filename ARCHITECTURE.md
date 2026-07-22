@@ -716,6 +716,12 @@ Verified live (a forced "no agent available" step produces a real `Mistake` with
 
 Verified live (`compressionSummary()`'s `summary` field is byte-identical to `compressContext()`'s return; `originalCount`/`keptCount` reflect the real number of turns compressed; `ratio` is a genuine, non-fabricated number) and by a new, isolated `Compression summary surfaces full result` suite.
 
+### The plugin-registry self-heal check used a coarse proxy instead of the real per-plugin health check (Section 24)
+
+`PluginRegistry.healthCheck()` — which calls every active plugin's own `onHealthCheck()` (every plugin has a real one: `BasePlugin`'s default reports whether it's still active, and several plugins, like `multi-input`, override it with a genuinely richer check) — existed and was unit-tested, but had no real call site anywhere. Instead, the "plugin-registry" component `SelfHealer` was registered with used only a coarse proxy: `this.pluginRegistry.listActivePlugins().length > 0`. A plugin that stayed "active" while actually unhealthy — its own `onHealthCheck()` genuinely failing — would never be detected or repaired, since the count-based check would still pass.
+
+The registered check now calls `this.pluginRegistry.healthCheck()` and requires every result to be healthy (still short-circuiting to `false` first if there are zero active plugins, preserving the original check's baseline case). Verified live: forcing one specific active plugin's `onHealthCheck()` to fail flips `healthReport()`'s `"plugin-registry"` entry from `true` to `false` — something the previous count-based check could never detect since the plugin count is unaffected. Covered by a new dedicated `Plugin registry health check reaches self-healer` suite.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.

@@ -407,7 +407,19 @@ export class NeuroclawSystem {
     // baseline for revert-to-known-good.
     this.healer.register({
       name: "plugin-registry",
-      check: () => this.pluginRegistry.listActivePlugins().length > 0,
+      // ASI §24: PluginRegistry.healthCheck() -- which calls each active
+      // plugin's own onHealthCheck() (every plugin has a real one; the
+      // BasePlugin default reports whether it's still active, and several
+      // plugins override it with a genuinely richer check) -- existed and
+      // was unit-tested but had no real call site anywhere. The check
+      // registered here used only a coarse proxy (activePlugins.length > 0),
+      // so a plugin that stayed "active" while actually unhealthy (its own
+      // onHealthCheck() failing) would never be detected or repaired.
+      check: async () => {
+        if (this.pluginRegistry.listActivePlugins().length === 0) return false;
+        const results = await this.pluginRegistry.healthCheck();
+        return Array.from(results.values()).every(ok => ok);
+      },
       repair: async () => {
         for (const id of Object.keys(pluginExtensions)) {
           try { await this.pluginRegistry.activate(id); } catch { /* skip individual failures */ }
