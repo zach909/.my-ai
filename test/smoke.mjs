@@ -2498,6 +2498,18 @@ async function testKnownDomains() {
     check(sys.knownDomains().includes('coding'), 'knownDomains() surfaces a domain with a genuinely strong track record');
     check(!sys.knownDomains().includes('astrophysics'), 'knownDomains() excludes a domain with a demonstrated weak track record');
     check(sys.improvementTargets().weakDomains.includes('astrophysics'), 'The weak domain still shows up on the opposite side (improvementTargets)');
+
+    // ASI §9: the self-model's competence tracking previously only ever
+    // learned from solve() calls -- a system used exclusively through
+    // autonomousTask() would leave it permanently uninformed. Found via the
+    // same asymmetry-check method that caught the missing share()/reward()
+    // calls in prior fixes.
+    const sysTask = new NeuroclawSystem();
+    await sysTask.initialize();
+    sysTask.ensureDefaultTeam();
+    check(!sysTask.knownDomains().includes('coding'), 'a fresh instance has no coding competence evidence yet');
+    for (let i = 0; i < 4; i++) await sysTask.autonomousTask(`ship it ${i}`, [`implement the login flow ${i}`]);
+    check(sysTask.knownDomains().includes('coding'), "autonomousTask()'s repeated successful delegation builds real self-model competence evidence, matching solve()'s behavior");
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
