@@ -2714,6 +2714,21 @@ async function testHiveResultSharing() {
     await sys.solve('draft the report and review the report');
     check(sys.hive.blackboard.hasConflict('draft the report') === false, 'solve() resolves the resulting blackboard conflict via synchronize(), not leaving it open');
     check(sys.hive.blackboard.read('planner', 'draft the report') === 'answer for: draft the report', 'The conflict resolves to the higher-trust agent\'s value, not just the most recent write');
+
+    // ASI §8/§13: the identical "share to the blackboard" behavior solve()
+    // has above -- found missing from autonomousTask()'s per-step delegation
+    // via the same asymmetry-check method that closed the AlignmentVeto
+    // gaps earlier this session. A step's result should be just as visible
+    // to another agent as a solve() subproblem's result already is.
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    sys2.ensureDefaultTeam();
+    const coder2 = sys2.hive.get('coder');
+    sys2.hive.delegate = async (desc) => ({ agent: coder2, output: `done: ${desc}` });
+    check(sys2.hiveBlackboardHistory().length === 0, 'the blackboard history is empty before any hive activity');
+    await sys2.autonomousTask('ship it', ['write the code']);
+    check(sys2.hive.blackboard.read('reviewer', 'write the code') === 'done: write the code', "autonomousTask()'s delegated step result is readable by a different agent via the shared blackboard, matching solve()'s behavior");
+    check(sys2.hiveBlackboardHistory().some(e => e.key === 'write the code' && e.owner === 'coder'), 'hiveBlackboardHistory() surfaces the real write, not an empty log');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
