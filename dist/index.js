@@ -71,7 +71,8 @@ export class NeuroclawSystem {
         this.pluginRegistry = new PluginRegistry();
         this.veto = new AlignmentVeto();
         this.contextCapacityGB = config?.maxContextGB || 200000;
-        this.zipIO = new ZipIOSystem(this.contextCapacityGB);
+        this.zipPersistDir = config?.persistDir ?? null;
+        this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
         this.empathy = new EmpathyEngine();
         this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.thesaurus, this.pluginRegistry);
         // Hive Mind (Section 13): each agent's mind is the real neural runner, so
@@ -359,8 +360,33 @@ export class NeuroclawSystem {
             check: () => this.hive.list().length === 0 || Math.abs(this.hive.totalTrustValue() - 100) < 1e-3,
         });
         this.healer.snapshotAll();
+        // Section 1.10 / §7: reload previously-checkpointed working context, so a
+        // caller that opted into durable ZipIO persistence (`config.persistDir`)
+        // actually gets it back across restarts, rather than `ZipIOSystem.restore()`
+        // existing and being periodically checkpointed *into* by `zipInput()` but
+        // never once read back by anything. No-ops safely if no checkpoint exists
+        // yet (first run) — `restore()` already catches a missing/unreadable file
+        // per loop. Gated on `zipPersistDir` rather than always running: with no
+        // explicit path, `ZipIOSystem`'s default is a fresh random temp file per
+        // instance, and restoring from that would just be a no-op anyway — this
+        // guard makes the intent explicit rather than relying on that side effect.
+        if (this.zipPersistDir) {
+            await this.zipIO.restore();
+        }
         this.initialized = true;
         console.log("Neuroclaw subsystems initialized successfully");
+    }
+    /**
+     * Explicit, on-demand checkpoint of both ZipIO working-context loops —
+     * `ZipIOSystem.persist()` already existed (used internally by
+     * `zipInput()`'s periodic auto-checkpoint) but had no way for a caller to
+     * force an immediate save (e.g. before a planned shutdown, where waiting
+     * for the next automatic checkpoint interval could lose recent context).
+     */
+    async persistContext() {
+        if (!this.initialized)
+            await this.initialize();
+        await this.zipIO.persist();
     }
     /**
      * Process a user query through the complete pipeline
