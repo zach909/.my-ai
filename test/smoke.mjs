@@ -2401,6 +2401,20 @@ async function testMistakeCauseClassification() {
     check(memoryMistake.cause === 'bad-memory', 'A failure grounded in an already-low-importance memory (no delegation involved) is classified as bad-memory');
     check(memoryMistake.prevention.toLowerCase().includes('memory') && !memoryMistake.prevention.toLowerCase().includes('gather information'), 'A bad-memory mistake gets memory-specific prevention advice, not the generic missing-knowledge template');
     check(skillMistake.prevention !== memoryMistake.prevention, 'Different causes genuinely produce different prevention advice, not the same text regardless of cause');
+
+    // ASI §6: MistakeTracker.record() was, like every other signal fixed in
+    // this session's asymmetry sweep, exclusively fed by solve() -- a real,
+    // repeatable "no agent available" failure in autonomousTask() was never
+    // diagnosed at all.
+    const sysTask = new NeuroclawSystem();
+    await sysTask.initialize();
+    sysTask.ensureDefaultTeam();
+    sysTask.hive.delegate = async () => null;
+    check(sysTask.mistakes.all().length === 0, 'no mistakes exist yet before any failed autonomousTask() step');
+    await sysTask.autonomousTask('ship it', ['do a step no agent can handle']);
+    const taskMistake = sysTask.mistakes.all().find(m => m.task === 'do a step no agent can handle');
+    check(!!taskMistake && taskMistake.cause === 'incorrect-skill', "autonomousTask()'s 'no agent available' failure is now recorded as a real mistake, classified incorrect-skill");
+    check(taskMistake.prevention.toLowerCase().includes('spawn') || taskMistake.prevention.toLowerCase().includes('register'), 'The mistake gets real, actionable prevention advice, not a placeholder');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
