@@ -646,7 +646,17 @@ export class NeuroclawSystem {
             // so it becomes a real, findable, auto-linked concept in its own
             // right, not knowledge that only survives folded into the top-level
             // summary.
+            // Skip ReasoningEngine's own synthetic fallback subproblems
+            // ("analyze: <full problem>" / "solve: <full problem>", used when the
+            // problem couldn't be split into 2+ genuine parts — see decompose()):
+            // each embeds the *entire* problem text verbatim, so integrating them
+            // as concepts would register a unique, near-duplicate, low-value
+            // concept per single-part query instead of real, reusable knowledge —
+            // graph bloat with no genuine "distinct reusable piece of knowledge"
+            // behind it (caught in review on the PR that introduced this loop).
             for (const sub of r.subresults) {
+                if (/^(analyze|solve):/i.test(sub.subproblem))
+                    continue;
                 this.knowledge.integrate(sub.subproblem, sub.result);
             }
             // ASI §6: this exact task has now succeeded — any prior recorded failure
@@ -1084,13 +1094,13 @@ NeuroclawSystem.MAX_RECENT_TRACES = 20;
 function classifyDomain(text) {
     const t = (text || "").toLowerCase();
     const has = (words) => words.some(w => t.includes(w));
-    if (has(["code", "coding", "program", "function", "bug", "compile", "api", "algorithm"]))
+    if (has(["code", "coding", "program", "function", "bug", "compile", "api", "algorithm", "implement", "refactor", "typescript", "javascript", "repository", "debug", "syntax"]))
         return "coding";
     if (has(["math", "equation", "number", "calculate", "compute", "proof", "geometry", "algebra"]))
         return "math";
     if (has(["science", "physics", "chemistry", "biology", "experiment", "hypothesis", "energy"]))
         return "science";
-    if (has(["plan", "schedule", "steps", "roadmap", "organize", "strategy"]))
+    if (has(["plan", "schedule", "steps", "roadmap", "organize", "strategy", "prioritize", "milestone", "timeline", "backlog"]))
         return "planning";
     if (has(["design", "engineer", "build", "system", "architecture", "circuit"]))
         return "engineering";
@@ -1120,6 +1130,14 @@ function classifyDomain(text) {
  * — deliberately only the domains with a real capability to enforce;
  * everything else keeps matching by content as before rather than inventing
  * new restrictions with no established capability model behind them.
+ *
+ * Honest limitation (flagged in review): enforcement is only as strong as
+ * `classifyDomain()`'s keyword coverage. A genuinely coding/planning task
+ * phrased without any of its known keywords still classifies as "general"
+ * and skips the capability check — this reduces, but structurally cannot
+ * eliminate, that gap without a fundamentally different (non-heuristic)
+ * classifier. Expanding the keyword lists narrows the false-negative rate;
+ * it does not close it to zero.
  */
 function domainToCapability(domain) {
     if (domain === "coding")

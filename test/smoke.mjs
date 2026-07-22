@@ -2429,6 +2429,19 @@ async function testCapabilityDefaultDeny() {
     sys2.hive.get('coder').capabilities.delete('coding');
     await sys2.solve('write code and then test the code');
     check(!sys2.lastDelegations.has('write code'), 'A coding subproblem is denied delegation once the coder\'s capability is revoked, not routed anyway');
+
+    // Caught in review on the PR that introduced this: classifyDomain() is a
+    // narrow keyword heuristic, so a coding/planning task phrased without
+    // "code"/"program"/etc. used to classify as "general" and silently skip
+    // the capability check entirely even with the capability revoked. The
+    // keyword lists were expanded to close this specific, real gap (though
+    // a keyword heuristic can never be exhaustive -- documented honestly).
+    const sys3 = new NeuroclawSystem();
+    await sys3.initialize();
+    sys3.ensureDefaultTeam();
+    sys3.hive.get('coder').capabilities.delete('coding');
+    await sys3.solve('implement the login flow and then implement the logout flow');
+    check(!sys3.lastDelegations.has('implement the login flow'), 'A coding task phrased without the original narrow keywords ("implement", not "code") is still classified as coding and denied once the capability is revoked');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -2482,6 +2495,16 @@ async function testSubproblemKnowledgeIntegration() {
     const testCodeConcept = sys.knowledge.getConcept('test the code');
     check(!!writeCodeConcept && writeCodeConcept.definition.includes('write code'), 'Each subproblem becomes its own real concept in the knowledge graph, not just the top-level objective');
     check(!!testCodeConcept && testCodeConcept.definition.includes('test the code'), 'A second, distinct subproblem also becomes its own concept');
+
+    // Caught in review: decompose() falls back to synthetic "analyze: <full
+    // problem>" / "solve: <full problem>" subproblems for single-part
+    // queries -- these embed the entire problem text verbatim, so
+    // integrating them would register a unique, near-duplicate concept per
+    // query instead of real reusable knowledge (graph bloat).
+    const singlePart = await sys.solve('explain the antique clock thoroughly');
+    check(singlePart.verified, 'Test setup: the forced delegation produces a verified single-part solve()');
+    check(!sys.knowledge.getConcept('analyze: explain the antique clock thoroughly'), 'The synthetic "analyze:" fallback subproblem is not registered as its own knowledge-graph concept');
+    check(!sys.knowledge.getConcept('solve: explain the antique clock thoroughly'), 'The synthetic "solve:" fallback subproblem is not registered as its own knowledge-graph concept');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
