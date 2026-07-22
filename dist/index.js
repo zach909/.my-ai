@@ -30,6 +30,8 @@ import { SelfImprovement } from "./models && skills/core/self-improvement.js";
 import { AutonomousLearner } from "./models && skills/core/autonomous-learner.js";
 import { PredictionEngine } from "./models && skills/core/prediction-engine.js";
 import { DiscoveryEngine } from "./models && skills/core/discovery-engine.js";
+import { ArchitectureMapper } from "./models && skills/core/architecture-mapper.js";
+import { PerformanceMonitor } from "./models && skills/core/performance-monitor.js";
 import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -47,6 +49,8 @@ export class NeuroclawSystem {
         this.chatGroup = null;
         /** Bias per reasoning strategy derived from discovered outcome regularities (§5/§12). */
         this.approachBiasMap = new Map();
+        /** Real per-component call/error counts feeding `trackCall()`'s live throughput and error-rate measurements. */
+        this.componentCallStats = new Map();
         /** Which hive agent handled each subproblem in the current solve() call, so its outcome can reward/demote that agent (§8/§12). */
         this.lastDelegations = new Map();
         /**
@@ -161,6 +165,130 @@ export class NeuroclawSystem {
         // Scientific & creative discovery (ASI §11): hypothesis generation/testing
         // and creative concept combination over the same knowledge graph.
         this.discovery = new DiscoveryEngine(this.knowledge);
+        // Self-improvement framework Phase 1/3 (306-step plan): both classes were
+        // fully built and unit-tested (`test/core/system-tests.test.ts`) but never
+        // instantiated from `NeuroclawSystem` at all — SELF_IMPROVEMENT_PROGRESS.md
+        // itself lists "integrate new components into main pipeline" as the
+        // immediate next priority, never done. `registerArchitecture()` below maps
+        // the real subsystems this constructor just wired together; `trackCall()`
+        // (used by the public entry points) feeds genuine measured latency/CPU/
+        // memory/error data back into both, so bottleneck/waste/health reporting
+        // reflects real observed behavior instead of static registration alone.
+        this.architecture = new ArchitectureMapper();
+        this.performance = new PerformanceMonitor();
+        this.registerArchitecture();
+    }
+    /**
+     * Register the real subsystems this constructor just wired together as
+     * components (Steps 1-2), with dependency edges matching their actual
+     * constructor wiring above (Steps 3-4) — not a fabricated or aspirational
+     * map, the literal dependencies just constructed.
+     */
+    registerArchitecture() {
+        const register = (id, name, type, dependencies, inputs, outputs) => {
+            this.architecture.registerComponent({ id, name, type, description: name, dependencies, dependents: [], inputs, outputs });
+        };
+        // Core subsystems, in the same dependency order the constructor builds them.
+        register("runner", "Neural Runner", "tool", [], ["prompt"], ["generation"]);
+        register("hive", "Hive Mind", "communication", ["runner"], ["task"], ["delegation result"]);
+        register("memory", "Long-Term Memory", "memory", [], ["turn", "task result"], ["recall hits"]);
+        register("knowledge", "Knowledge Graph", "memory", [], ["concept", "relation"], ["search/follow hits"]);
+        register("plan", "Plan Tracker", "planning", [], ["objective", "step"], ["plan state"]);
+        register("veto", "Alignment Veto", "safety", [], ["proposed action"], ["allow/confirm/block decision"]);
+        register("monitor", "Self Monitor", "monitoring", [], ["signal observation"], ["anomaly/baseline"]);
+        register("predictor", "Prediction Engine", "monitoring", [], ["action text"], ["predicted outcomes"]);
+        register("mistakes", "Mistake Tracker", "learning", [], ["failure"], ["lessons"]);
+        register("selfModel", "Self Model", "core", [], ["domain outcome"], ["competence/calibration"]);
+        register("transfer", "Knowledge Transfer", "learning", ["knowledge"], ["problem"], ["cross-domain hint"]);
+        register("discovery", "Discovery Engine", "learning", ["knowledge"], ["observation"], ["hypothesis/combination"]);
+        register("learner", "Autonomous Learner", "learning", ["knowledge"], ["information"], ["learn decision"]);
+        register("reasoner", "Reasoning Engine", "reasoning", ["memory", "mistakes", "hive", "knowledge", "selfModel", "discovery", "predictor"], ["problem"], ["reasoning result"]);
+        // The six public action-taking entry points (`trackCall()`'s component ids)
+        // sit on top of the subsystems above — real dependency edges, not a
+        // fabricated grouping.
+        register("process-query", "processQuery()", "core", ["memory", "predictor", "veto"], ["user input"], ["response"]);
+        register("solve", "solve()", "reasoning", ["predictor", "veto", "transfer", "reasoner", "selfModel", "mistakes", "hive"], ["problem"], ["solution"]);
+        register("autonomous-task", "autonomousTask()", "planning", ["plan", "hive", "predictor", "veto", "memory"], ["objective", "steps"], ["per-step results"]);
+        register("collaborate", "collaborate()", "communication", ["hive", "predictor", "veto"], ["task"], ["group decision"]);
+        register("execute-plan", "executePlan()", "planning", ["plan", "runner", "predictor", "veto"], ["objective", "steps"], ["per-step results"]);
+        register("learn", "learn()", "learning", ["learner", "pluginRegistry", "predictor", "veto", "improvement"], ["information"], ["learn decision"]);
+        for (const from of ["process-query", "solve", "autonomous-task", "collaborate", "execute-plan", "learn"]) {
+            const comp = this.architecture.getComponent(from);
+            if (!comp)
+                continue;
+            for (const to of comp.dependencies) {
+                this.architecture.recordDataFlow({ from, to, dataType: "call", frequency: "medium", size: "small" });
+            }
+        }
+    }
+    /**
+     * Wrap a public entry point's real work with genuine measurement (Phase 3,
+     * Steps 35-42): wall-clock latency, CPU actually consumed during the call
+     * (`process.cpuUsage()` delta, not a fabricated percentage), live heap
+     * usage, and a real running error rate from actual thrown exceptions.
+     * Feeds `PerformanceMonitor` (the measurement history) and mirrors the
+     * latest snapshot into the matching `ArchitectureMapper` component, so
+     * `identifyBottlenecks()`/`identifyWaste()` reflect real observed behavior
+     * rather than only the static registration from `registerArchitecture()`.
+     */
+    async trackCall(componentId, fn) {
+        const cpuStart = process.cpuUsage();
+        const wallStart = Date.now();
+        let errored = false;
+        try {
+            return await fn();
+        }
+        catch (e) {
+            errored = true;
+            throw e;
+        }
+        finally {
+            const wallMs = Date.now() - wallStart;
+            const cpuDelta = process.cpuUsage(cpuStart);
+            const cpuPercent = wallMs > 0 ? Math.min(100, ((cpuDelta.user + cpuDelta.system) / 1000) / wallMs * 100) : 0;
+            const stats = this.componentCallStats.get(componentId) ?? { calls: 0, errors: 0, firstCallAt: Date.now() };
+            stats.calls++;
+            if (errored)
+                stats.errors++;
+            this.componentCallStats.set(componentId, stats);
+            this.performance.record(`${componentId}.latency`, wallMs, "ms");
+            const elapsedSec = Math.max(1, (Date.now() - stats.firstCallAt) / 1000);
+            const metrics = {
+                componentId,
+                cpuPercent,
+                memoryMB: process.memoryUsage().heapUsed / (1024 * 1024),
+                latencyMs: wallMs,
+                throughput: stats.calls / elapsedSec,
+                errorRate: stats.errors / stats.calls,
+                lastUpdated: Date.now(),
+            };
+            this.performance.updateComponentMetrics(metrics);
+            const comp = this.architecture.getComponent(componentId);
+            if (comp) {
+                comp.resourceUsage = { memoryMB: metrics.memoryMB, cpuPercent: metrics.cpuPercent, latencyMs: metrics.latencyMs, callsPerSecond: metrics.throughput };
+                const stat = this.performance.getMetricStats(`${componentId}.latency`);
+                comp.performanceMetrics = {
+                    avgLatency: stat?.avg ?? wallMs,
+                    p95Latency: stat?.p95 ?? wallMs,
+                    p99Latency: stat?.p99 ?? wallMs,
+                    errorRate: metrics.errorRate,
+                    throughput: metrics.throughput,
+                };
+            }
+        }
+    }
+    /** Real component/dependency map, live-measured performance, and derived bottleneck/waste analysis (Self-improvement Phase 1/3/4). */
+    architectureSummary() {
+        return this.architecture.generateSummary();
+    }
+    identifyBottlenecks() {
+        return this.architecture.identifyBottlenecks();
+    }
+    identifyWaste() {
+        return this.architecture.identifyWaste();
+    }
+    performanceHealth() {
+        return this.performance.getSystemHealth();
     }
     /**
      * Initialize all subsystems
@@ -240,6 +368,9 @@ export class NeuroclawSystem {
     async processQuery(input) {
         if (!this.initialized)
             await this.initialize();
+        return this.trackCall("process-query", async () => this.processQueryImpl(input));
+    }
+    async processQueryImpl(input) {
         // 1. Read the user's emotional state / intent so downstream decisions
         //    stay aligned (Empathy).
         this.empathy.updateUserContext(input);
@@ -374,6 +505,9 @@ export class NeuroclawSystem {
     async learn(information, opts) {
         if (!this.initialized)
             await this.initialize();
+        return this.trackCall("learn", async () => this.learnImpl(information, opts));
+    }
+    async learnImpl(information, opts) {
         const result = this.learner.learn(information, opts);
         if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
             // ASI §3/§10/§13/§23: gate the real side effect through the same
@@ -453,6 +587,9 @@ export class NeuroclawSystem {
     async collaborate(task) {
         if (!this.initialized)
             await this.initialize();
+        return this.trackCall("collaborate", async () => this.collaborateImpl(task));
+    }
+    async collaborateImpl(task) {
         this.ensureDefaultTeam();
         // ASI §3/§10/§13/§23: gate collaborate()'s real multi-agent processing
         // through the same AlignmentVeto safety layer solve()/processQuery()/
@@ -507,6 +644,9 @@ export class NeuroclawSystem {
     async executePlan(objective, steps) {
         if (!this.initialized)
             await this.initialize();
+        return this.trackCall("execute-plan", async () => this.executePlanImpl(objective, steps));
+    }
+    async executePlanImpl(objective, steps) {
         this.plan.setObjective(objective);
         const results = [];
         for (const desc of steps) {
@@ -563,6 +703,9 @@ export class NeuroclawSystem {
     async autonomousTask(objective, steps) {
         if (!this.initialized)
             await this.initialize();
+        return this.trackCall("autonomous-task", async () => this.autonomousTaskImpl(objective, steps));
+    }
+    async autonomousTaskImpl(objective, steps) {
         this.ensureDefaultTeam();
         this.plan.setObjective(objective);
         // ASI §10 / Section 10: a plan also records constraints and decisions, not
@@ -642,6 +785,9 @@ export class NeuroclawSystem {
     async solve(problem, opts) {
         if (!this.initialized)
             await this.initialize();
+        return this.trackCall("solve", async () => this.solveImpl(problem, opts));
+    }
+    async solveImpl(problem, opts) {
         // ASI §3/§10/§13/§23: gate solve()'s *real* execution (hive delegation,
         // actual generated actions) through the same AlignmentVeto safety layer
         // processQuery() already uses. Previously solve() had no safety check at
