@@ -389,6 +389,15 @@ export class NeuroclawSystem {
       // compare against a fixed zero (which would make ordinary token-overlap
       // noise register as a failure on every single call).
       if (comparison) this.monitor.observe("prediction.surprise", comparison.surprise);
+      // A failure-level anomaly here should trigger real recovery exactly
+      // the way solve()'s own confidence tracking already does — the
+      // documentation already claimed this connection existed ("available
+      // to trigger selfHeal()"), but processQuery() only ever observed the
+      // signal and never actually checked or acted on it, an inconsistency
+      // between the two query paths this closes.
+      if (this.monitor.hasFailure()) {
+        await this.selfHeal();
+      }
 
       // 7. Store the (compressed) output in the ZIP-IO output loop, and commit
       //    the assistant turn to long-term memory so the whole exchange becomes

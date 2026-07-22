@@ -1277,6 +1277,37 @@ async function testAutonomousTask() {
   }
 }
 
+async function testProcessQuerySelfHeal() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    let healCalls = 0;
+    const originalHeal = sys.selfHeal.bind(sys);
+    sys.selfHeal = async (...args) => { healCalls++; return originalHeal(...args); };
+
+    // ASI §9/§10/§24: solve() already auto-triggers selfHeal() on a
+    // failure-level monitor anomaly; processQuery() only ever observed its
+    // own "prediction.surprise" signal and never checked or acted on it --
+    // an inconsistency between the two query paths, despite the docs
+    // already describing the connection as if it existed for both.
+    for (let i = 0; i < 5; i++) await sys.processQuery(`what is ${i} plus ${i}`);
+    check(healCalls === 0, 'processQuery() does not spuriously trigger self-heal under ordinary queries');
+
+    const originalObserve = sys.predictor.observe.bind(sys.predictor);
+    sys.predictor.observe = (id, actual) => {
+      const real = originalObserve(id, actual);
+      return real ? { ...real, surprise: 500 } : real;
+    };
+    await sys.processQuery('what is 99 plus 1');
+    check(healCalls === 1, 'processQuery() triggers selfHeal() when its own prediction-surprise signal genuinely spikes');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testIntentRouter() {
   const { IntentRouter } = await load('models && skills/core/intent-router.js');
   const r = new IntentRouter();
@@ -2634,6 +2665,7 @@ async function main() {
     ['Skill creation versioning (Section 5)', testSkillCreationVersioning],
     ['Self-authored skills inventory (Section 9/12)', testSelfAuthoredSkillsInventory],
     ['Autonomous task integration (Section 27)', testAutonomousTask],
+    ['processQuery self-heal on genuine anomaly (Section 9/10/24)', testProcessQuerySelfHeal],
     ['RLM planning / PlanTracker (Section 10)', testPlanTracker],
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],

@@ -562,6 +562,12 @@ Automated code review on the PR that introduced default-deny capability enforcem
 
 Verified live and by extended assertions in the existing `Capability default-deny enforcement` and `Subproblem knowledge integration` suites: "implement the login flow" (no longer containing the original keyword set) now correctly classifies as coding and is denied delegation once the capability is revoked; a single-part query's synthetic `analyze:`/`solve:` subproblems no longer appear as their own knowledge-graph concepts.
 
+### `processQuery()` now actually triggers self-heal on its own anomalies (Section 9/10/24)
+
+An asymmetry between the two live query paths: `solve()` observes its confidence signal and, on a genuine failure-level anomaly, automatically calls `selfHeal()` — a real, wired connection. `processQuery()` observed its own `"prediction.surprise"` signal into the same `SelfMonitor` but never once checked `hasFailure()` or called `selfHeal()` afterward, despite this document already describing the connection in hedged language ("available to trigger `selfHeal()`") that read as more established than it actually was in code.
+
+`processQuery()` now mirrors `solve()`'s exact pattern: after observing the surprise signal, a genuine failure-level anomaly triggers real recovery. Verified live: five ordinary queries build a normal adaptive baseline without ever spuriously triggering healing; forcing that specific call's own internal `predictor.observe()` result to report a wild surprise (not an externally pre-seeded value that would just get overwritten by the query's own subsequent observation) causes `selfHeal()` to fire exactly once. Covered by a dedicated `processQuery self-heal on genuine anomaly (Section 9/10/24)` suite.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
