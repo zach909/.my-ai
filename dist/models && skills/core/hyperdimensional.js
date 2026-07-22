@@ -61,8 +61,12 @@ export class HyperDimensionalEngine {
         this.nextStatesBuffer = new Float32Array(N * D);
         this.tempCtx = new Float32Array(D);
         this.stateDeltasBuffer = new Float32Array(N);
+        this.entropyHist = new Uint32Array(10);
         this.initializeNeurons();
         this.initializeConnections();
+        this.preSettleStatesBuffer = new Float32Array(D * N);
+        this.preSettleEnergiesBuffer = new Float32Array(N);
+        this.defaultDrivenIds = new Set(this.neurons.map(n => n.id));
         const rank = this.config.selfModelRank;
         const dims = this.config.dimensions;
         this.selfModelA = new Float32Array(dims * rank);
@@ -91,20 +95,30 @@ export class HyperDimensionalEngine {
         else {
             resolvedInput = inputVector;
         }
-        const drivenIds = directInputNeuronIds ?? new Set(this.neurons.map(n => n.id));
-        const preSettleStates = this.neurons.map(n => new Float32Array(n.state));
-        const preSettleEnergies = new Map(this.neurons.map(n => [n.id, n.energy]));
+        const drivenIds = directInputNeuronIds ?? this.defaultDrivenIds;
+        const N = this.neurons.length;
+        const D = this.totalDims;
+        // Fast pre-allocated copy
+        this.preSettleStatesBuffer.set(this.allStates);
+        for (let idx = 0; idx < N; idx++) {
+            this.preSettleEnergiesBuffer[idx] = this.neurons[idx].energy;
+        }
         const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds, vale);
         this.applyWeightLearning(learningRates, stateDeltas);
         const transitions = [];
-        for (let idx = 0; idx < this.neurons.length; idx++) {
+        for (let idx = 0; idx < N; idx++) {
             const neuron = this.neurons[idx];
             const newEnergy = this.computeStateEnergy(neuron.state);
-            if (newEnergy !== preSettleEnergies.get(neuron.id)) {
+            const oldEnergy = this.preSettleEnergiesBuffer[idx];
+            if (newEnergy !== oldEnergy) {
+                const fromState = new Float32Array(D);
+                for (let d = 0; d < D; d++) {
+                    fromState[d] = this.preSettleStatesBuffer[d * N + idx];
+                }
                 transitions.push({
-                    fromState: preSettleStates[idx],
+                    fromState,
                     toState: new Float32Array(neuron.state),
-                    energy: newEnergy - (preSettleEnergies.get(neuron.id) ?? 0),
+                    energy: newEnergy - oldEnergy,
                     timestamp: Date.now(),
                     cause: 'input_update',
                 });
@@ -112,9 +126,20 @@ export class HyperDimensionalEngine {
             neuron.energy = newEnergy;
         }
         const resolvedTransitions = this.resolveStateTransitions();
-        const activeStates = this.getActiveStates();
-        const outputVector = this.computeOutputVector(activeStates);
-        const totalEnergy = this.neurons.reduce((s, n) => s + n.energy, 0);
+        const activeStates = [];
+        const threshold = this.config.energyThreshold;
+        for (let i = 0; i < N; i++) {
+            const n = this.neurons[i];
+            if (n.energy > threshold) {
+                activeStates.push(n);
+            }
+        }
+        const resolvedActive = activeStates.length > 0 ? activeStates : this.neurons;
+        const outputVector = this.computeOutputVector(resolvedActive);
+        let totalEnergy = 0;
+        for (let idx = 0; idx < N; idx++) {
+            totalEnergy += this.neurons[idx].energy;
+        }
         const dimensionalEntropy = this.computeDimensionalEntropy();
         const patternHash = this.hashVector(outputVector);
         const patternNovelty = this.computeNoveltyScore(patternHash);
@@ -130,11 +155,12 @@ export class HyperDimensionalEngine {
         this.history.push(...transitions, ...resolvedTransitions);
         this.iteration++;
         const inputTopography = new Map();
-        for (const n of this.neurons)
-            inputTopography.set(n.id, n.state[0]);
+        for (let idx = 0; idx < N; idx++) {
+            inputTopography.set(this.neurons[idx].id, this.neurons[idx].state[0]);
+        }
         return {
             outputVector,
-            activeStates,
+            activeStates: resolvedActive,
             totalEnergy,
             dimensionalEntropy,
             noveltyScore,
@@ -496,7 +522,20 @@ export class HyperDimensionalEngine {
                     let dotDiag = 0;
                     let dotShift = 0;
                     // Direct indexing with cached arrays completely avoids subarray allocation overhead
-                    for (let j = 0; j < N; j++) {
+                    // Unrolled by 4x for cache-friendly fast computation
+                    let j = 0;
+                    const limit = N - 3;
+                    for (; j < limit; j += 4) {
+                        dotDiag += sjRow[j] * connDiag[rowOffset + j]
+                            + sjRow[j + 1] * connDiag[rowOffset + j + 1]
+                            + sjRow[j + 2] * connDiag[rowOffset + j + 2]
+                            + sjRow[j + 3] * connDiag[rowOffset + j + 3];
+                        dotShift += sjShiftRow[j] * connShift[rowOffset + j]
+                            + sjShiftRow[j + 1] * connShift[rowOffset + j + 1]
+                            + sjShiftRow[j + 2] * connShift[rowOffset + j + 2]
+                            + sjShiftRow[j + 3] * connShift[rowOffset + j + 3];
+                    }
+                    for (; j < N; j++) {
                         dotDiag += sjRow[j] * connDiag[rowOffset + j];
                         dotShift += sjShiftRow[j] * connShift[rowOffset + j];
                     }
@@ -584,24 +623,62 @@ export class HyperDimensionalEngine {
                 const sid = si[d];
                 const rateSid = rate * sid;
                 const rowOffset = (i * D + d) * N;
-                // branch-free loops by splitting diagonal index i
-                for (let j = 0; j < i; j++) {
-                    const wdIdx = rowOffset + j;
-                    const oldWd = connDiag[wdIdx];
-                    const valWd = oldWd + rateSid * sjRow[j];
-                    const newWd = valWd < -2 ? -2 : (valWd > 2 ? 2 : valWd);
-                    connDiag[wdIdx] = newWd;
-                    const diffWd = newWd - oldWd;
-                    deltaSum += diffWd < 0 ? -diffWd : diffWd;
-                    const oldWs = connShift[wdIdx];
-                    const valWs = oldWs + rateSid * sjShiftRow[j];
-                    const newWs = valWs < -2 ? -2 : (valWs > 2 ? 2 : valWs);
-                    connShift[wdIdx] = newWs;
-                    const diffWs = newWs - oldWs;
-                    deltaSum += diffWs < 0 ? -diffWs : diffWs;
+                // Unroll j loop from 0 to i by 4x manually with sequential index offsets
+                let j = 0;
+                const limit1 = i - 3;
+                let wdIdx = rowOffset;
+                for (; j < limit1; j += 4) {
+                    const oldWd0 = connDiag[wdIdx];
+                    const valWd0 = oldWd0 + rateSid * sjRow[j];
+                    const newWd0 = valWd0 < -2 ? -2 : (valWd0 > 2 ? 2 : valWd0);
+                    connDiag[wdIdx] = newWd0;
+                    const diffWd0 = newWd0 - oldWd0;
+                    deltaSum += diffWd0 < 0 ? -diffWd0 : diffWd0;
+                    const oldWs0 = connShift[wdIdx];
+                    const valWs0 = oldWs0 + rateSid * sjShiftRow[j];
+                    const newWs0 = valWs0 < -2 ? -2 : (valWs0 > 2 ? 2 : valWs0);
+                    connShift[wdIdx] = newWs0;
+                    const diffWs0 = newWs0 - oldWs0;
+                    deltaSum += diffWs0 < 0 ? -diffWs0 : diffWs0;
+                    const oldWd1 = connDiag[wdIdx + 1];
+                    const valWd1 = oldWd1 + rateSid * sjRow[j + 1];
+                    const newWd1 = valWd1 < -2 ? -2 : (valWd1 > 2 ? 2 : valWd1);
+                    connDiag[wdIdx + 1] = newWd1;
+                    const diffWd1 = newWd1 - oldWd1;
+                    deltaSum += diffWd1 < 0 ? -diffWd1 : diffWd1;
+                    const oldWs1 = connShift[wdIdx + 1];
+                    const valWs1 = oldWs1 + rateSid * sjShiftRow[j + 1];
+                    const newWs1 = valWs1 < -2 ? -2 : (valWs1 > 2 ? 2 : valWs1);
+                    connShift[wdIdx + 1] = newWs1;
+                    const diffWs1 = newWs1 - oldWs1;
+                    deltaSum += diffWs1 < 0 ? -diffWs1 : diffWs1;
+                    const oldWd2 = connDiag[wdIdx + 2];
+                    const valWd2 = oldWd2 + rateSid * sjRow[j + 2];
+                    const newWd2 = valWd2 < -2 ? -2 : (valWd2 > 2 ? 2 : valWd2);
+                    connDiag[wdIdx + 2] = newWd2;
+                    const diffWd2 = newWd2 - oldWd2;
+                    deltaSum += diffWd2 < 0 ? -diffWd2 : diffWd2;
+                    const oldWs2 = connShift[wdIdx + 2];
+                    const valWs2 = oldWs2 + rateSid * sjShiftRow[j + 2];
+                    const newWs2 = valWs2 < -2 ? -2 : (valWs2 > 2 ? 2 : valWs2);
+                    connShift[wdIdx + 2] = newWs2;
+                    const diffWs2 = newWs2 - oldWs2;
+                    deltaSum += diffWs2 < 0 ? -diffWs2 : diffWs2;
+                    const oldWd3 = connDiag[wdIdx + 3];
+                    const valWd3 = oldWd3 + rateSid * sjRow[j + 3];
+                    const newWd3 = valWd3 < -2 ? -2 : (valWd3 > 2 ? 2 : valWd3);
+                    connDiag[wdIdx + 3] = newWd3;
+                    const diffWd3 = newWd3 - oldWd3;
+                    deltaSum += diffWd3 < 0 ? -diffWd3 : diffWd3;
+                    const oldWs3 = connShift[wdIdx + 3];
+                    const valWs3 = oldWs3 + rateSid * sjShiftRow[j + 3];
+                    const newWs3 = valWs3 < -2 ? -2 : (valWs3 > 2 ? 2 : valWs3);
+                    connShift[wdIdx + 3] = newWs3;
+                    const diffWs3 = newWs3 - oldWs3;
+                    deltaSum += diffWs3 < 0 ? -diffWs3 : diffWs3;
+                    wdIdx += 4;
                 }
-                for (let j = i + 1; j < N; j++) {
-                    const wdIdx = rowOffset + j;
+                for (; j < i; j++) {
                     const oldWd = connDiag[wdIdx];
                     const valWd = oldWd + rateSid * sjRow[j];
                     const newWd = valWd < -2 ? -2 : (valWd > 2 ? 2 : valWd);
@@ -614,6 +691,77 @@ export class HyperDimensionalEngine {
                     connShift[wdIdx] = newWs;
                     const diffWs = newWs - oldWs;
                     deltaSum += diffWs < 0 ? -diffWs : diffWs;
+                    wdIdx++;
+                }
+                // Unroll j loop from i + 1 to N by 4x manually with sequential index offsets
+                let j2 = i + 1;
+                const limit2 = N - 3;
+                let wdIdx2 = rowOffset + j2;
+                for (; j2 < limit2; j2 += 4) {
+                    const oldWd0 = connDiag[wdIdx2];
+                    const valWd0 = oldWd0 + rateSid * sjRow[j2];
+                    const newWd0 = valWd0 < -2 ? -2 : (valWd0 > 2 ? 2 : valWd0);
+                    connDiag[wdIdx2] = newWd0;
+                    const diffWd0 = newWd0 - oldWd0;
+                    deltaSum += diffWd0 < 0 ? -diffWd0 : diffWd0;
+                    const oldWs0 = connShift[wdIdx2];
+                    const valWs0 = oldWs0 + rateSid * sjShiftRow[j2];
+                    const newWs0 = valWs0 < -2 ? -2 : (valWs0 > 2 ? 2 : valWs0);
+                    connShift[wdIdx2] = newWs0;
+                    const diffWs0 = newWs0 - oldWs0;
+                    deltaSum += diffWs0 < 0 ? -diffWs0 : diffWs0;
+                    const oldWd1 = connDiag[wdIdx2 + 1];
+                    const valWd1 = oldWd1 + rateSid * sjRow[j2 + 1];
+                    const newWd1 = valWd1 < -2 ? -2 : (valWd1 > 2 ? 2 : valWd1);
+                    connDiag[wdIdx2 + 1] = newWd1;
+                    const diffWd1 = newWd1 - oldWd1;
+                    deltaSum += diffWd1 < 0 ? -diffWd1 : diffWd1;
+                    const oldWs1 = connShift[wdIdx2 + 1];
+                    const valWs1 = oldWs1 + rateSid * sjShiftRow[j2 + 1];
+                    const newWs1 = valWs1 < -2 ? -2 : (valWs1 > 2 ? 2 : valWs1);
+                    connShift[wdIdx2 + 1] = newWs1;
+                    const diffWs1 = newWs1 - oldWs1;
+                    deltaSum += diffWs1 < 0 ? -diffWs1 : diffWs1;
+                    const oldWd2 = connDiag[wdIdx2 + 2];
+                    const valWd2 = oldWd2 + rateSid * sjRow[j2 + 2];
+                    const newWd2 = valWd2 < -2 ? -2 : (valWd2 > 2 ? 2 : valWd2);
+                    connDiag[wdIdx2 + 2] = newWd2;
+                    const diffWd2 = newWd2 - oldWd2;
+                    deltaSum += diffWd2 < 0 ? -diffWd2 : diffWd2;
+                    const oldWs2 = connShift[wdIdx2 + 2];
+                    const valWs2 = oldWs2 + rateSid * sjShiftRow[j2 + 2];
+                    const newWs2 = valWs2 < -2 ? -2 : (valWs2 > 2 ? 2 : valWs2);
+                    connShift[wdIdx2 + 2] = newWs2;
+                    const diffWs2 = newWs2 - oldWs2;
+                    deltaSum += diffWs2 < 0 ? -diffWs2 : diffWs2;
+                    const oldWd3 = connDiag[wdIdx2 + 3];
+                    const valWd3 = oldWd3 + rateSid * sjRow[j2 + 3];
+                    const newWd3 = valWd3 < -2 ? -2 : (valWd3 > 2 ? 2 : valWd3);
+                    connDiag[wdIdx2 + 3] = newWd3;
+                    const diffWd3 = newWd3 - oldWd3;
+                    deltaSum += diffWd3 < 0 ? -diffWd3 : diffWd3;
+                    const oldWs3 = connShift[wdIdx2 + 3];
+                    const valWs3 = oldWs3 + rateSid * sjShiftRow[j2 + 3];
+                    const newWs3 = valWs3 < -2 ? -2 : (valWs3 > 2 ? 2 : valWs3);
+                    connShift[wdIdx2 + 3] = newWs3;
+                    const diffWs3 = newWs3 - oldWs3;
+                    deltaSum += diffWs3 < 0 ? -diffWs3 : diffWs3;
+                    wdIdx2 += 4;
+                }
+                for (; j2 < N; j2++) {
+                    const oldWd = connDiag[wdIdx2];
+                    const valWd = oldWd + rateSid * sjRow[j2];
+                    const newWd = valWd < -2 ? -2 : (valWd > 2 ? 2 : valWd);
+                    connDiag[wdIdx2] = newWd;
+                    const diffWd = newWd - oldWd;
+                    deltaSum += diffWd < 0 ? -diffWd : diffWd;
+                    const oldWs = connShift[wdIdx2];
+                    const valWs = oldWs + rateSid * sjShiftRow[j2];
+                    const newWs = valWs < -2 ? -2 : (valWs > 2 ? 2 : valWs);
+                    connShift[wdIdx2] = newWs;
+                    const diffWs = newWs - oldWs;
+                    deltaSum += diffWs < 0 ? -diffWs : diffWs;
+                    wdIdx2++;
                 }
             }
             deltaSums[i] = deltaSum;
@@ -764,18 +912,26 @@ export class HyperDimensionalEngine {
     computeOutputVector(activeStates) {
         const dims = this.config.dimensions;
         const output = new Array(dims).fill(0);
-        if (activeStates.length === 0)
+        const len = activeStates.length;
+        if (len === 0)
             return output;
-        for (const neuron of activeStates) {
+        for (let i = 0; i < len; i++) {
+            const neuron = activeStates[i];
             const state = neuron.state;
             const energy = neuron.energy;
             for (let d = 0; d < dims; d++) {
                 output[d] += state[d + 1] * energy;
             }
         }
-        const norm = Math.sqrt(output.reduce((s, v) => s + v * v, 0)) || 1;
+        let sumSq = 0;
         for (let d = 0; d < dims; d++) {
-            output[d] /= norm;
+            const val = output[d];
+            sumSq += val * val;
+        }
+        const norm = Math.sqrt(sumSq) || 1;
+        const invNorm = 1.0 / norm;
+        for (let d = 0; d < dims; d++) {
+            output[d] *= invNorm;
         }
         return output;
     }
@@ -799,12 +955,13 @@ export class HyperDimensionalEngine {
         const dims = this.config.dimensions;
         let entropy = 0;
         const buckets = 10;
-        const hist = new Array(buckets);
+        const hist = this.entropyHist;
         for (let d = 0; d < dims; d++) {
             hist.fill(0);
+            const rowOffset = (d + 1) * N;
             for (let i = 0; i < N; i++) {
-                const v = this.neurons[i].state[d + 1];
-                const idx = Math.min(buckets - 1, Math.floor(((v + 1) / 2) * buckets));
+                const v = this.allStates[rowOffset + i];
+                const idx = Math.min(9, Math.floor(((v + 1) * 0.5) * 10));
                 hist[idx]++;
             }
             for (let b = 0; b < buckets; b++) {
