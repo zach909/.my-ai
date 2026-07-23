@@ -233,6 +233,26 @@ async function testZipPersistence() {
   }
 }
 
+async function testZipLoopTotalContextSizeWhenFull() {
+  // getTotalContextSize() used to compare tail/head directly (isValidChunk());
+  // tail === head is ambiguous between "empty" and "exactly full", and the
+  // old check resolved it as empty -- so a fully-populated (or overwriting)
+  // loop silently reported a context size of 0, even though iterateContext()
+  // (which walks `size` items instead of comparing head/tail) still yielded
+  // every chunk correctly. Verify the fix across empty -> partial -> exactly
+  // full -> overwriting.
+  const { InfiniteZipLoop } = await load('models && skills/core/zip-io.js');
+  const loop = new InfiniteZipLoop(5, false);
+  check(loop.getTotalContextSize() === 0, 'empty loop reports zero context size');
+  for (let i = 0; i < 2; i++) await loop.zipInput(`chunk${i}`);
+  check(loop.getTotalContextSize() > 0, 'partially-filled loop reports a nonzero context size');
+  for (let i = 2; i < 5; i++) await loop.zipInput(`chunk${i}`);
+  const fullSize = loop.getTotalContextSize();
+  check(fullSize > 0, 'an exactly-full loop still reports its real context size instead of silently reporting zero');
+  await loop.zipInput('chunk5'); // triggers overwrite; tail and head both advance, staying equal
+  check(loop.getTotalContextSize() === fullSize, 'context size is still correctly reported after an overwrite past capacity');
+}
+
 async function testProductionConfigAndEdges() {
   const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
   const p = new NeuroPipeline(); // default 768/512/32/64 production config
@@ -3492,6 +3512,7 @@ async function main() {
     ['Alignment veto', testAlignmentVeto],
     ['Number systems (complex/dual)', testNumberSystems],
     ['ZipIO persistence', testZipPersistence],
+    ['ZipIO loop total context size when full (Section 1.10)', testZipLoopTotalContextSizeWhenFull],
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
     ['Elastic core transformer replacement', testElasticCoreBlock],
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
