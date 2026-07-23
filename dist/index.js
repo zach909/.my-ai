@@ -1435,6 +1435,33 @@ export class NeuroclawSystem {
         this.approachBiasMap = new Map(Object.entries(previous));
         return true;
     }
+    /**
+     * ASI §5: how many versions of a created skill/extension `learn()` has
+     * snapshotted so far — the read half of "maintain versioned copies... so
+     * failed changes can be identified" that `learn()`'s own snapshot() call
+     * (Rule 3 above) had no corresponding public accessor for. The only place
+     * this was ever read back was a test reaching directly into the internal
+     * `improvement` field, the same ad hoc-verification anti-pattern already
+     * fixed once before for `planSummary()`.
+     */
+    skillVersionCount(kind, name) {
+        return this.improvement.versionCount(`${kind}:${name}`);
+    }
+    /**
+     * ASI §5: the previous snapshotted version of a created skill/extension,
+     * if one exists — the "identified" half of "failed changes can be
+     * identified and reversed". Unlike `rollbackApproachBias()`, there is no
+     * single live in-memory structure this can re-apply itself into (the
+     * actual skill/extension file already written to disk by
+     * `pluginRegistry.dispatch()` isn't touched here) — this honestly returns
+     * the prior version's recorded metadata for the caller to act on, rather
+     * than claiming to silently undo a real file on disk.
+     */
+    rollbackSkill(kind, name) {
+        if (this.improvement.versionCount(`${kind}:${name}`) < 2)
+            return undefined;
+        return this.improvement.rollback(`${kind}:${name}`);
+    }
     /** ASI §9/§11: current self-monitor anomalies and whether recovery is warranted. */
     selfIntegrity() {
         return { anomalies: this.monitor.anomalies(), hasFailure: this.monitor.hasFailure() };

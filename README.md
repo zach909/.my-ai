@@ -121,15 +121,22 @@ a real HTTP round-trip through the browser backend — 21 checks, no mocks.
 
 ```bash
 npm install --legacy-peer-deps
-npm test              # builds the backend into dist/ and runs 262 smoke checks
+npm test              # builds the backend into dist/ and runs 623 smoke checks
 node dist/index.js web 3000   # Neuroclaw dashboard + /api/* at http://localhost:3000
 node dist/index.js cli        # interactive shell
 ```
 
-The backend serves `interface/index.html` — chat, live subsystem stats, the
-plugin/skill catalog, and the NeuroLang Extension Builder (build → save
+`node dist/index.js web` serves an embedded terminal-style dashboard
+(`HTML_TEMPLATE` in `interface/web-server.ts`) — chat, live subsystem stats,
+the plugin/skill catalog, and the NeuroLang Extension Builder (build → save
 un-quantized → install quantized), backed by `/api/chat`, `/api/status`,
-`/api/neuri`, `/api/plugins`, `/api/extension/*`.
+`/api/neuri`, `/api/plugins`, `/api/extension/*`. This is a different
+dashboard from `interface/index.html`, which is served by the *Python*
+backend (`python interface/server.py`, above) instead — that server handles
+`/api/chat`/`/api/model` itself and proxies `/api/systems` (→ this backend's
+own `/api/status`), `/api/plugins`, `/api/extension/*`, etc. to this same TS
+pipeline. The two dashboards and their backing servers are independent; run
+whichever one matches how you started the model.
 
 `NeuroclawSystem` (`index.ts`) ties the TypeScript subsystems into one platform.
 Beyond the neural pipeline it provides: a **Hive Mind** of specialized agents
