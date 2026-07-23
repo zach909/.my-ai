@@ -261,6 +261,22 @@ def test_wave_signature_selection():
           "interference-based (§5) selection returns a finite-scored candidate")
     check(len(picked.ids) > 0, "interference-based selection produced a continuation")
 
+    # §5: interfere_select()'s Grover-style amplify_target/boost were always
+    # supported by the low-level primitive, but select_by_interference() --
+    # the only real caller core.py --select interference actually uses --
+    # never accepted or forwarded them, so nothing could ever reach the
+    # amplification path from a real chat session. With an overwhelming
+    # boost on a fixed target index, the Born-rule collapse should reliably
+    # favor that index over the group's natural interference pattern.
+    torch.manual_seed(7)
+    amplified = select_by_interference(model, ToyTok(), prompt_ids=[1, 2, 3], n=4, max_new_tokens=6,
+                                       temperature=1.0, top_k=20, top_p=0.95, repetition_penalty=1.1,
+                                       eos_id=None, device="cpu",
+                                       generator=torch.Generator().manual_seed(0),
+                                       amplify_target=0, boost=1e6)
+    check(amplified is not None and math.isfinite(amplified.score),
+          "select_by_interference() accepts amplify_target/boost and still returns a finite-scored candidate")
+
 
 class _CharTok:
     """Minimal deterministic tokenizer so the extension test needs no spm model."""

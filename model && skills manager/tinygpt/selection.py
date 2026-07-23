@@ -82,7 +82,9 @@ def select_by_interference(model, tokenizer, prompt_ids: List[int], n: int,
                            top_k: Optional[int], top_p: Optional[float],
                            repetition_penalty: float, eos_id: Optional[int],
                            device: str, guide=None, ledger=None,
-                           generator: Optional["torch.Generator"] = None) -> Candidate:
+                           generator: Optional["torch.Generator"] = None,
+                           amplify_target: Optional[int] = None,
+                           boost: float = 2.0) -> Candidate:
     """§5 alternative to confidence-only `best_of_n`: generate `n` candidates
     as usual, but commit via quantum interference over the mesh's own wave
     signatures rather than raw log-probability ranking.
@@ -96,6 +98,15 @@ def select_by_interference(model, tokenizer, prompt_ids: List[int], n: int,
     phase gets cancelled toward zero even if its raw confidence was high.
     Falls back to `best_of_n`'s pure confidence ranking when the model has no
     `state_phase` (e.g. a non-mesh architecture).
+
+    `amplify_target`/`boost` thread straight through to
+    `interference.interfere_select()`'s optional Grover-style amplification
+    step (rescuing a rare-but-correct candidate at a known index from being
+    drowned out by more-confident-but-wrong ones) — previously `interfere_select`
+    supported this but no real caller could ever reach it, since this function
+    (the only caller `core.py` actually uses) didn't accept or forward it.
+    Defaults (`None`/`2.0`) preserve the exact prior behavior: no amplification
+    unless a caller explicitly asks for it.
     """
     from .interference import interfere_select
 
@@ -133,5 +144,6 @@ def select_by_interference(model, tokenizer, prompt_ids: List[int], n: int,
     # confidence -> larger amplitude, without changing its ranking.
     amplitudes = torch.tensor([c.score for c in candidates]).exp()
     phase_t = torch.tensor(phases, dtype=torch.float32)
-    idx, _ = interfere_select(amplitudes, phase_t, generator=generator)
+    idx, _ = interfere_select(amplitudes, phase_t, amplify_target=amplify_target,
+                              boost=boost, generator=generator)
     return candidates[idx]
