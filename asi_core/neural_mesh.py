@@ -408,6 +408,9 @@ class NeuralMesh:
                 self._apply_divergence_correction(prev_state, new_states)
                 self._live_corrections += 1
                 consecutive_high_divergence = 0
+                # Reset neuron-level divergence counters after correction
+                for neuron in self.neurons.values():
+                    neuron.consecutive_divergence = 0
             
             if max_divergence > self.divergence_tolerance:
                 consecutive_high_divergence += 1
