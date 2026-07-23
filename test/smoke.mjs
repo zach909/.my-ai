@@ -1733,6 +1733,29 @@ async function testCodeToNet() {
   const out = interp.evaluateCodeNet('calc', [3, 4]);
   check(out && Math.abs(out[0] - 7) < 1.5, 'Compiled code-net approximates a+b');
   check(interp.testCodeNet('calc').passed, 'NeuroLang code-net passes the test-against-original check');
+
+  // fit()/testAgainst() each sample the user's function with their own RNG
+  // seed; buildFunction()'s safety probe only evaluates at one fixed input,
+  // so a conditional that only dereferences a bad property in a narrow input
+  // band can compile cleanly (the compile-time seed never lands in the band)
+  // yet still throw when testAgainst()'s *different* seed does land there.
+  // Previously that throw propagated uncaught out of testAgainst() -- and
+  // since cli.ts's handleNeuri() calls testCodeNet() synchronously with no
+  // try/catch of its own, a crafted `@code=` snippet crashed the whole
+  // interactive CLI process. Verify the sampling loops now skip a throwing
+  // sample instead of propagating it.
+  const throwing = '(x > 1.705 && x < 1.72) ? x.zzz() : x';
+  const throwingNet = c.compile('throwy', throwing, { seed: 1234 });
+  check(throwingNet.mode === 'function', 'A conditional that only throws in a narrow input band still compiles in function mode');
+  let threw = false;
+  let throwingReport;
+  try {
+    throwingReport = c.testAgainst(throwingNet, throwing, { seed: 1234 ^ 0x9e3779b9 });
+  } catch {
+    threw = true;
+  }
+  check(!threw, 'testAgainst() no longer crashes when a different sampling seed trips a real throw in the code');
+  check(throwingReport && throwingReport.samples > 0, 'testAgainst() still returns a real report by skipping the throwing sample(s), not silently reporting zero');
 }
 
 async function testNeuriLangCliWiring() {
