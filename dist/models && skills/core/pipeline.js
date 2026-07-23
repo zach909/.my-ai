@@ -44,6 +44,17 @@ export class NeuroPipeline {
         this.expertNeuronRegistry = new Map();
         // Timing history for stats
         this.runHistory = [];
+        /**
+         * run() -- reachable today only via NeuroclawRunner.startContinuous()'s
+         * tick loop -- pushed to runHistory with no cap at all, the same
+         * unbounded-array pattern already fixed this session for several other
+         * classes' hot-path logs. A plain FIFO trim alone would silently make
+         * getStats().runsCount plateau instead of reflecting the true lifetime
+         * count (cli.ts displays it as "Pipeline: N runs"), so the true count is
+         * tracked separately from the capped averaging window.
+         */
+        this.runHistoryCapacity = 5000;
+        this.totalRunsCount = 0;
         this.config = { ...DEFAULT_CONFIG, ...config };
     }
     // ─── Lazy initialisation ──────────────────────────────────────────────────
@@ -477,6 +488,10 @@ export class NeuroPipeline {
             stepDurations.set(s.name, s.durationMs);
         }
         this.runHistory.push({ totalDurationMs, stepDurations });
+        this.totalRunsCount++;
+        if (this.runHistory.length > this.runHistoryCapacity) {
+            this.runHistory.splice(0, this.runHistory.length - this.runHistoryCapacity);
+        }
         return {
             output: finalOutput,
             steps,
@@ -490,13 +505,15 @@ export class NeuroPipeline {
     }
     // ─── Stats ──────────────────────────────────────────────────────────
     getStats() {
-        const runsCount = this.runHistory.length;
-        if (runsCount === 0) {
-            return { avgDurationMs: 0, stepBreakdown: new Map(), runsCount: 0 };
+        // runsCount is the true lifetime total (totalRunsCount), independent of
+        // runHistory's capped averaging window -- capping the window must not
+        // make this displayed counter silently plateau.
+        if (this.runHistory.length === 0) {
+            return { avgDurationMs: 0, stepBreakdown: new Map(), runsCount: this.totalRunsCount };
         }
         const totalDuration = this.runHistory.reduce((s, r) => s + r.totalDurationMs, 0);
-        const avgDurationMs = totalDuration / runsCount;
-        // Average duration per step across all runs
+        const avgDurationMs = totalDuration / this.runHistory.length;
+        // Average duration per step across all runs currently in the window
         const stepTotals = new Map();
         for (const record of this.runHistory) {
             for (const [stepName, dur] of record.stepDurations) {
@@ -508,11 +525,12 @@ export class NeuroPipeline {
         for (const [name, { sum, count }] of stepTotals) {
             stepBreakdown.set(name, sum / count);
         }
-        return { avgDurationMs, stepBreakdown, runsCount };
+        return { avgDurationMs, stepBreakdown, runsCount: this.totalRunsCount };
     }
     // ─── Reset ──────────────────────────────────────────────────────────
     reset() {
         this.runHistory = [];
+        this.totalRunsCount = 0;
         // Tear down subsystems so they are re-created fresh on next run
         this.moeRouter = null;
         this.mesh = null;

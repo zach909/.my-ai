@@ -83,6 +83,35 @@ async function testPipeline() {
     'Pipeline result carries an alignment verdict');
 }
 
+async function testPipelineRunHistoryCapacity() {
+  // run() -- reachable today only via NeuroclawRunner.startContinuous()'s
+  // tick loop, not currently wired into any live main() flow, but a real,
+  // fully-built public API -- pushed to runHistory with no cap at all, the
+  // same unbounded-array pattern already fixed this session for several
+  // other classes' hot-path logs. A plain FIFO trim alone would make
+  // getStats().runsCount (displayed by cli.ts as "Pipeline: N runs")
+  // silently plateau instead of reflecting the true lifetime count, so the
+  // true count is tracked separately from the capped averaging window.
+  const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
+  const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 16, hyperDimensions: 16 });
+  // Seed most of the way to capacity directly (bypassing the expensive real
+  // run() computation) so the test stays fast, then exercise real run()
+  // calls to confirm the actual live code path applies the cap correctly.
+  for (let i = 0; i < 4998; i++) {
+    p.runHistory.push({ totalDurationMs: 1, stepDurations: new Map([['step', 1]]) });
+  }
+  p.totalRunsCount = 4998;
+  for (let i = 0; i < 10; i++) await p.run(embedding(32, i + 1), `tick ${i}`);
+
+  check(p.runHistory.length === 5000, "NeuroPipeline's runHistory caps at a bounded size instead of growing forever");
+  const stats = p.getStats();
+  check(stats.runsCount === 5008, 'getStats().runsCount reflects the true lifetime total, not the capped averaging window size');
+  check(Number.isFinite(stats.avgDurationMs) && stats.stepBreakdown.size > 0, 'getStats() still produces sane, finite averages after capping');
+
+  p.reset();
+  check(p.getStats().runsCount === 0 && p.runHistory.length === 0, 'reset() zeroes both the lifetime count and the run-history window');
+}
+
 async function testPipelineElasticGrowth() {
   const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
   const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 65, hyperDimensions: 8 });
@@ -3368,6 +3397,7 @@ async function main() {
   const suites = [
     ['MoE router', testMoE],
     ['Pipeline', testPipeline],
+    ['Pipeline runHistory capacity (Section 7)', testPipelineRunHistoryCapacity],
     ['Pipeline elastic growth', testPipelineElasticGrowth],
     ['LLM generate', testLLM],
     ['RLM select', testRLM],
