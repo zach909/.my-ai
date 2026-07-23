@@ -401,6 +401,18 @@ export class WebServer {
       return;
     }
 
+    // GET /api/netsearch-generate?q=query — Section 22 Net Search: unlike
+    // /api/neurons' plain substring search, this semantically scores every
+    // neuron against the query and generates a new neuron wired to the best
+    // matches with similarity-weighted edges. LLM.netSearchGenerate() was
+    // fully built (extension-builder/builder.js) but had no live caller.
+    if (pathname === '/api/netsearch-generate' && method === 'GET') {
+      const q = new URL(req.url ?? '/', 'http://localhost').searchParams.get('q') ?? '';
+      const result = this.runner.getLLM().netSearchGenerate(q);
+      this.sendJson(res, { result });
+      return;
+    }
+
     // POST /api/train — train LLM on text
     if (pathname === '/api/train' && method === 'POST') {
       try {

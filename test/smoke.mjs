@@ -1580,6 +1580,45 @@ async function testNeuriLangCliWiring() {
   check(lines.some(l => l.includes('netsearch(widget): widget(')), 'the live `neuri` command\'s netsearch now genuinely searches the current NeuroLang neuron mesh (finds the "widget" neuron itself) instead of an unrelated legacy project search');
 }
 
+async function testNetSearchGenerateCliWiring() {
+  // Section 22: ExtensionBuilder.netSearchGenerate() (semantically scores
+  // every neuron against a query and generates a new neuron wired to the
+  // best matches with similarity-weighted edges) was fully built and
+  // exposed on LLM too, but had zero live callers -- unlike its weaker
+  // sibling searchNeurons() (plain substring match), which the `search`
+  // CLI command already used. This exercises the new `nsearch` command
+  // through the real CLI/LLM/builder stack, not just the underlying method.
+  const { NeuroclawSystem } = await load('index.js');
+  const { CLI } = await load('interface/cli.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  const sys = new NeuroclawSystem();
+  await sys.initialize();
+  await sys.llm.generate('hello'); // triggers the LLM's lazy build() so a real project exists
+  console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+
+  const builder = sys.llm.getBuilder();
+  const projectId = sys.llm.projectId;
+  const seeded = builder.addNeuron(projectId, 'paymentProcessor', 0.6);
+  seeded.definition = 'processes credit card payments and billing';
+
+  const cli = new CLI(sys.llm, sys.pipeline, sys.thesaurus, sys.pluginRegistry);
+  const lines = [];
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    cli.handleNetSearchGenerate('');
+    cli.handleNetSearchGenerate('credit card billing');
+    cli.handleNetSearchGenerate('a query with no semantic overlap at all xyzzy987');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+
+  check(lines.some(l => l.includes('Usage: nsearch')), 'the `nsearch` command reports usage for an empty query');
+  check(lines.some(l => l.includes('Generated') && l.includes('match(es)')), 'the `nsearch` command surfaces a real generated neuron for a genuinely matching query');
+  check(lines.some(l => l.includes('paymentProcessor') && /score \d\.\d{3}/.test(l)), 'the `nsearch` command reports the real seeded neuron with a genuine, bounded similarity score');
+  check(lines.some(l => l.includes('No semantic matches') && l.includes('nothing generated')), 'the `nsearch` command never fabricates a result for a query with zero real evidence');
+}
+
 async function testHiveMindAndChatGroups() {
   const { HiveMind } = await load('models && skills/core/hive-mind.js');
   const { ChatGroup } = await load('models && skills/core/chat-group.js');
@@ -3212,6 +3251,7 @@ async function main() {
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],
+    ['nsearch CLI command reaches netSearchGenerate (Section 22)', testNetSearchGenerateCliWiring],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
     ['Context compression (Section 7)', testContextCompressor],
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],

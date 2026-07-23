@@ -132,6 +132,7 @@ export class CLI {
       }
       if (lower.startsWith('train ')) { this.handleTrain(trimmed.slice(6)); this.rl?.prompt(); return; }
       if (lower.startsWith('search ')) { this.handleSearch(trimmed.slice(7)); this.rl?.prompt(); return; }
+      if (lower.startsWith('nsearch ')) { this.handleNetSearchGenerate(trimmed.slice(8)); this.rl?.prompt(); return; }
       if (lower.startsWith('neuri ')) { this.handleNeuri(trimmed.slice(6)); this.rl?.prompt(); return; }
       if (lower.startsWith('build ')) { this.handleBuild(trimmed.slice(6)); this.rl?.prompt(); return; }
       if (lower.startsWith('dict ') || lower.startsWith('lookup ')) {
@@ -176,6 +177,7 @@ export class CLI {
     console.log(`    ${this.colorize(GREEN, 'trace')} ${this.colorize(YELLOW, '<id> <dim>')} ${this.colorize(GRAY, 'Symbolic trace of a hyperdimensional neuron')}`);
     console.log(`    ${this.colorize(GREEN, 'train')} ${this.colorize(YELLOW, '<text>')}    ${this.colorize(GRAY, 'Train LLM on custom text')}`);
     console.log(`    ${this.colorize(GREEN, 'search')} ${this.colorize(YELLOW, '<query>')}  ${this.colorize(GRAY, 'Search neurons by name/label')}`);
+    console.log(`    ${this.colorize(GREEN, 'nsearch')} ${this.colorize(YELLOW, '<query>')} ${this.colorize(GRAY, 'Net Search: semantic match + generate a network')}`);
     console.log(`    ${this.colorize(GREEN, 'neuri')} ${this.colorize(YELLOW, '<code>')}    ${this.colorize(GRAY, 'Run NeuriLang neuron definition')}`);
     console.log(`    ${this.colorize(GREEN, 'dict')} ${this.colorize(YELLOW, '<word>')}     ${this.colorize(GRAY, 'Look up word in dictionary (Y/X/Z)')}`);
     console.log(`    ${this.colorize(GREEN, 'build')} ${this.colorize(YELLOW, '<name>')}    ${this.colorize(GRAY, 'Create a new extension project')}`);
@@ -340,6 +342,24 @@ export class CLI {
     console.log(this.colorize(BOLD, `  Found ${results.length} neuron(s) for "${query}":`));
     for (const n of results.slice(0, 10)) {
       console.log(`    ${this.colorize(CYAN, n.id)} ${this.colorize(GRAY, n.name)} value:${n.value.toFixed(4)}`);
+    }
+    console.log('');
+  }
+
+  // Section 22: unlike `search` (plain substring match), this semantically
+  // scores every neuron against the query and generates a new neuron wired
+  // to the best matches with similarity-weighted edges. LLM.netSearchGenerate()
+  // was fully built (extension-builder/builder.js) but had no live caller.
+  private handleNetSearchGenerate(query: string): void {
+    if (!query) { console.log(this.colorize(GRAY, '  Usage: nsearch <query>')); return; }
+    const result = this.llm.netSearchGenerate(query);
+    if (!result) {
+      console.log(this.colorize(GRAY, `  No semantic matches for "${query}" -- nothing generated`));
+      return;
+    }
+    console.log(this.colorize(BOLD, `  Generated "${result.neuron.name}" from ${result.matches.length} match(es):`));
+    for (const m of result.matches) {
+      console.log(`    ${this.colorize(CYAN, m.name)} ${this.colorize(GRAY, `(score ${m.score.toFixed(3)})`)}`);
     }
     console.log('');
   }
