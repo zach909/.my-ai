@@ -121,7 +121,7 @@ a real HTTP round-trip through the browser backend — 21 checks, no mocks.
 
 ```bash
 npm install --legacy-peer-deps
-npm test              # builds the backend into dist/ and runs 262 smoke checks
+npm test              # builds the backend into dist/ and runs 623 smoke checks
 node dist/index.js web 3000   # Neuroclaw dashboard + /api/* at http://localhost:3000
 node dist/index.js cli        # interactive shell
 ```

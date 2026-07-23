@@ -1269,6 +1269,23 @@ async function testSkillCreationVersioning() {
     // -- the created skill should now be a real, inspectable version, not
     // just an ephemeral return value nobody keeps.
     check(sys.improvement.versionCount(`skill:${name}`) === 1, 'learn() versions the newly created skill via SelfImprovement, keyed by its own name');
+    // ASI §5: "failed changes can be identified and reversed" -- the "reversed"
+    // half never had a real NeuroclawSystem method, only this same ad hoc
+    // sys.improvement.versionCount() field access (the anti-pattern already
+    // fixed once before for planSummary()). skillVersionCount()/rollbackSkill()
+    // give solve()'s sibling rollbackApproachBias() its skill/extension
+    // counterpart.
+    check(sys.skillVersionCount('skill', name) === 1, 'skillVersionCount() reports the same real count through a real NeuroclawSystem method, not just internal field access');
+    check(sys.rollbackSkill('skill', name) === undefined, 'rollbackSkill() honestly declines with fewer than 2 versions, rather than returning something misleading');
+    check(sys.skillVersionCount('skill', 'a-skill-that-was-never-created') === 0, 'skillVersionCount() reports zero for a skill that was never created');
+    // Simulate a second real creation of the same skill (learn()'s own
+    // snapshot() call, exercised again with different metadata) to verify
+    // the actual rollback path, not just the <2-version guard.
+    sys.improvement.snapshot(`skill:${name}`, { skill: name, version: 'a-later-regression' });
+    check(sys.skillVersionCount('skill', name) === 2, 'skillVersionCount() reflects a second snapshotted version');
+    const previous = sys.rollbackSkill('skill', name);
+    check(JSON.stringify(previous).includes(name) && !JSON.stringify(previous).includes('a-later-regression'), 'rollbackSkill() returns the real prior version, not the one just discarded');
+    check(sys.skillVersionCount('skill', name) === 1, 'rollbackSkill() actually pops the discarded version back down');
 
     // A third teaching crosses the extension threshold. Previously the
     // generic "creation" intent always landed on skill-maker (it never
