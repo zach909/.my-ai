@@ -114,6 +114,12 @@ export class ElasticCoreBlock {
   private definitionTargets: Map<number, Float32Array> = new Map();
   private rngState: number;
 
+  // Bolt's Optimization: Reusable scratch buffers to eliminate GC pressure in forward pass hot-paths
+  private startState: Float32Array;
+  private vAlloc: Float32Array;
+  private frozen: Uint8Array;
+  private sums: Float32Array;
+
   constructor(config: ElasticCoreConfig = {}) {
     this.neuronCount = config.neuronCount ?? 16;
     this.stateDim = config.stateDim ?? 8;
@@ -134,6 +140,12 @@ export class ElasticCoreBlock {
     this.outputProjection = new Float32Array(this.stateDim * this.outputDim);
     this.nextState = new Float32Array(this.neuronCount * this.stateDim);
     this.directInputFlags = new Float32Array(this.neuronCount);
+
+    // Bolt's Optimization: Initialize scratch buffers to avoid allocation inside forward loop
+    this.startState = new Float32Array(this.neuronCount * this.stateDim);
+    this.vAlloc = new Float32Array(this.neuronCount);
+    this.frozen = new Uint8Array(this.neuronCount);
+    this.sums = new Float32Array(this.stateDim);
 
     const scale = config.weightScale ?? Math.sqrt(1 / Math.max(1, this.neuronCount * this.stateDim));
     for (let i = 0; i < this.bias.length; i++) this.bias[i] = (this.rand() * 2 - 1) * 0.05;
@@ -271,6 +283,12 @@ export class ElasticCoreBlock {
     this.weights = newWeights;
     this.nextState = new Float32Array(newCount * this.stateDim);
     this.directInputFlags = newDirectFlags;
+
+    // Bolt's Optimization: Resize scratch buffers when neuron count changes
+    this.startState = new Float32Array(newCount * this.stateDim);
+    this.vAlloc = new Float32Array(newCount);
+    this.frozen = new Uint8Array(newCount);
+
     if (group !== undefined) this.groups.set(oldCount, group);
     return oldCount;
   }
@@ -363,9 +381,15 @@ export class ElasticCoreBlock {
       }
     }
 
-    const startState = new Float32Array(this.state);
-    const vAlloc = new Float32Array(N);
-    const frozen = new Uint8Array(N);
+    // Bolt's Optimization: Copy state to pre-allocated startState and reuse pre-allocated scratch arrays
+    this.startState.set(this.state);
+    const startState = this.startState;
+    const vAlloc = this.vAlloc;
+    const frozen = this.frozen;
+
+    // Clear frozen flags before reuse
+    frozen.fill(0);
+
     for (let t = 0; t < N; t++) {
       vAlloc[t] = Math.min(1, Math.max(0, options.vale?.get(t) ?? 0));
       const group = this.groups.get(t);
@@ -379,7 +403,7 @@ export class ElasticCoreBlock {
     const weights = this.weights;
     const bias = this.bias;
 
-    const sums = new Float32Array(SD);
+    const sums = this.sums;
     for (; ticks < this.maxTicks; ticks++) {
       const curr = this.state;
       for (let t = 0; t < N; t++) {

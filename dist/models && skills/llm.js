@@ -375,6 +375,16 @@ export class NeuroclawLLM {
                 id: extId, name: `Memory: ${prompt.slice(0, 20)}`, specialization: "memory-recall"
             });
         }
+        // The extension is now fully persisted (this.selfExtensions + disk) and
+        // registered as a MoE expert -- the builder's own in-memory copy of the
+        // project (neurons/connections/layers Maps) has no further purpose.
+        // reloadSelfExtensions() reads only from disk/this.selfExtensions, never
+        // from builder.projects, so this is inert to every other consumer.
+        // Without this, every 5th generate() call on this long-lived instance
+        // (the web server and CLI reuse one NeuroclawLLM/ExtensionBuilder for
+        // their whole process lifetime) permanently grew builder.projects with
+        // an entry nothing ever read again -- an unbounded leak on a live path.
+        this.builder.deleteProject(extProject.id);
     }
     thinkAbout(prompt) {
         return this.thornsEngine.think(prompt);

@@ -68,6 +68,16 @@ export class SharedBlackboard {
   private entries = new Map<string, BlackboardEntry>();
   private conflicts = new Map<string, Conflict>();
   private log: BlackboardEntry[] = [];
+  /**
+   * write() is reached on every solve()/autonomousTask() step (agent.share()),
+   * with no existing bound — on a long-running process this grew forever.
+   * Unlike LongTermMemory's importance-scored eviction, this is a plain,
+   * unranked audit trail, so a simple FIFO cap (oldest entries drop first) is
+   * the honest fit — there's no real "importance" signal to rank entries by.
+   * This only trims `log`; `entries`/`conflicts` (what read()/hasConflict()/
+   * listConflicts()/resolve() actually use) are untouched.
+   */
+  private readonly logCapacity = 5000;
 
   /**
    * Write a value. Public writes to a key already owned by a *different* agent
@@ -101,6 +111,7 @@ export class SharedBlackboard {
 
     this.entries.set(physicalKey, entry);
     this.log.push(entry);
+    if (this.log.length > this.logCapacity) this.log.splice(0, this.log.length - this.logCapacity);
     return entry;
   }
 
@@ -312,6 +323,17 @@ export class HiveMind {
   async collaborate(task: string, agentIds?: string[]): Promise<Array<{ agent: HiveAgent; output: string }>> {
     const members = agentIds ? agentIds.map(id => this.agents.get(id)).filter(Boolean) as HiveAgent[] : this.list();
     return Promise.all(members.map(async agent => ({ agent, output: await agent.process(task) })));
+  }
+
+  /**
+   * Repair a drifted trust budget by rescaling every agent's trust back onto
+   * the fixed total (Section 24: self-healing "revert to a known-good state" /
+   * "replace invalid connections" for the trust invariant). Public wrapper
+   * around the existing rebalancing logic `remove()` already relies on
+   * internally — exposed so a healer can call it as a repair step too.
+   */
+  repairTrustInvariant(): void {
+    this.renormalizeTrust();
   }
 
   /** Resolve every open conflict using trust as the weight. */

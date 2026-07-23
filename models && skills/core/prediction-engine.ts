@@ -43,6 +43,17 @@ const DANGER_WORDS = ["delete", "remove", "overwrite", "wipe", "drop", "shutdown
 export class PredictionEngine {
   private predictions = new Map<string, Prediction>();
   private seq = 0;
+  /**
+   * predict() is reached on nearly every live NeuroclawSystem entry point
+   * (processQuery/learn/collaborate/executePlan/autonomousTask/solve, plus
+   * once per candidate approach inside ReasoningEngine.reason()) with no
+   * existing bound at all — most predictions are write-once-read-never
+   * (only respond()'s own prediction is ever observe()'d back), so this grew
+   * forever on a long-running process. Same FIFO-cap pattern already applied
+   * to SharedBlackboard's log: a Map preserves insertion order, so the
+   * oldest key is always the first one iteration yields.
+   */
+  private readonly predictionCapacity = 5000;
 
   /** Simulate an action's likely consequences before it runs. */
   predict(action: string, opts: { assumptions?: string[] } = {}): Prediction {
@@ -67,6 +78,11 @@ export class PredictionEngine {
       timestamp: Date.now(),
     };
     this.predictions.set(prediction.id, prediction);
+    while (this.predictions.size > this.predictionCapacity) {
+      const oldest = this.predictions.keys().next().value;
+      if (oldest === undefined) break;
+      this.predictions.delete(oldest);
+    }
     return prediction;
   }
 

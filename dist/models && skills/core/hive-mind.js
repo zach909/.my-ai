@@ -30,6 +30,16 @@ export class SharedBlackboard {
         this.entries = new Map();
         this.conflicts = new Map();
         this.log = [];
+        /**
+         * write() is reached on every solve()/autonomousTask() step (agent.share()),
+         * with no existing bound — on a long-running process this grew forever.
+         * Unlike LongTermMemory's importance-scored eviction, this is a plain,
+         * unranked audit trail, so a simple FIFO cap (oldest entries drop first) is
+         * the honest fit — there's no real "importance" signal to rank entries by.
+         * This only trims `log`; `entries`/`conflicts` (what read()/hasConflict()/
+         * listConflicts()/resolve() actually use) are untouched.
+         */
+        this.logCapacity = 5000;
     }
     /**
      * Write a value. Public writes to a key already owned by a *different* agent
@@ -59,6 +69,8 @@ export class SharedBlackboard {
         }
         this.entries.set(physicalKey, entry);
         this.log.push(entry);
+        if (this.log.length > this.logCapacity)
+            this.log.splice(0, this.log.length - this.logCapacity);
         return entry;
     }
     /** Read a value with permission checks. Returns `undefined` if not visible. */
@@ -246,6 +258,16 @@ export class HiveMind {
     async collaborate(task, agentIds) {
         const members = agentIds ? agentIds.map(id => this.agents.get(id)).filter(Boolean) : this.list();
         return Promise.all(members.map(async (agent) => ({ agent, output: await agent.process(task) })));
+    }
+    /**
+     * Repair a drifted trust budget by rescaling every agent's trust back onto
+     * the fixed total (Section 24: self-healing "revert to a known-good state" /
+     * "replace invalid connections" for the trust invariant). Public wrapper
+     * around the existing rebalancing logic `remove()` already relies on
+     * internally — exposed so a healer can call it as a repair step too.
+     */
+    repairTrustInvariant() {
+        this.renormalizeTrust();
     }
     /** Resolve every open conflict using trust as the weight. */
     synchronize() {

@@ -41,7 +41,7 @@ Without a second virtual pointer/keyboard and workspace, an AI acting on "the" d
 
 ## Verifying it
 
-`npm test` (`test/smoke.mjs`)'s system-control section covers `DesktopEnv` detection (correctly reporting no desktop environment in a headless sandbox), `SystemControlHub` status/window queries, and `KeyboardControl`'s `press_key`/`type_text`/`mouse_move` returning honest booleans rather than pretending to succeed with no real device present.
+`npm test` (`test/smoke.mjs`)'s `App bootstrap` suite exercises `SystemAccess` through the real `bootstrap()` composition root: confirms the CLI actually carries a live `SystemAccess` instance (not `undefined`), and that `getSystemInfo()`/`validateCapabilities()` are genuinely reachable and surfaced through the CLI's `status` command — not just constructed and left unused. `MultiDesktopManager` itself does not yet have direct unit coverage in `test/smoke.mjs`; its own honest-degrade probes (`isGnomeAvailable()`/`hasXinput()`/`hasUinput()`) are currently only exercised indirectly, through the CLI's `status`/`desktop` commands during manual use.
 
 ## See Also
 

@@ -247,6 +247,17 @@ export class PerformanceMonitor {
         description: `High error rate: ${(metrics.errorRate * 100).toFixed(1)}%`,
       });
     }
+
+    // checkAnomalies() runs on every trackCall() across all six live entry
+    // points (processQuery/solve/learn/collaborate/executePlan/
+    // autonomousTask) -- real measured latency/CPU/memory/error-rate values
+    // legitimately cross these thresholds under normal load, so this array
+    // grows routinely. `points`/`predictions` above already cap themselves
+    // with this same "slice to last N" idiom; `clearOldAnomalies()` existed
+    // to do the equivalent for this array but had no call site anywhere.
+    if (this.anomalies.length > 1000) {
+      this.anomalies = this.anomalies.slice(-1000);
+    }
   }
 
   /** Get recent anomalies */
