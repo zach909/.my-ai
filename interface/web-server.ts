@@ -484,6 +484,10 @@ export class WebServer {
           this.sendJson(res, { errors: parsed.errors }, 400);
           return;
         }
+        if (body?.bits !== undefined && (typeof body.bits !== 'number' || !Number.isFinite(body.bits))) {
+          this.sendJson(res, { error: 'bits must be a finite number' }, 400);
+          return;
+        }
         const quantize = body?.quantize === true;
         const bits = body?.bits ?? 8;
         const json = quantize
