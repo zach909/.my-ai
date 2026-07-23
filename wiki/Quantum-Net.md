@@ -14,10 +14,12 @@ Every neuron carries a unique wave signature; a neuron's input determines its wa
 ## `QuantumNeuralNet` (TypeScript)
 
 ```typescript
-const signature = qnn.calculateSignature(neuronId, inputValue);   // Neuron 2 -> 4.5, per the design example
-const state = qnn.encode(neuronId, inputValue);                    // { signature, amplitude, phase }
-const combined = qnn.interfere(stateA, stateB);                    // genuine complex addition: |zA + zB|
-const collapsed = qnn.collapse(states);                            // Born rule: P ∝ amplitude², not uniform
+qnn.addNeuron(neuronId, inputValue);                 // computes the wave signature internally (Neuron 2 -> 4.5, per the design example)
+qnn.createSuperposition(neuronId, possibleInputs);    // one candidate state per possible input
+const combined = qnn.interfere(neuronIdA, neuronIdB); // genuine complex addition: |zA + zB|
+const consensus = qnn.phaseConsensus(neuronIds);       // group-level agreement, can genuinely cancel
+qnn.groverAmplify(neuronIds, targetId);               // amplify one candidate's amplitude
+const collapsed = qnn.collapse(neuronId);             // Born rule: P ∝ amplitude², not uniform
 ```
 
 Interference is implemented as real complex arithmetic (`zA + zB`, magnitude of the sum), not a cosine-similarity approximation — a corrected bug in this project's history was `phaseDiff` always being `0`, which made every interference computation destructive by default regardless of actual phase alignment. `collapse()` samples proportional to amplitude², matching the Born rule rather than a flat average across candidates.

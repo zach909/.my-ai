@@ -141,6 +141,11 @@ export class CLI {
                 this.rl?.prompt();
                 return;
             }
+            if (lower.startsWith('nsearch ')) {
+                this.handleNetSearchGenerate(trimmed.slice(8));
+                this.rl?.prompt();
+                return;
+            }
             if (lower.startsWith('neuri ')) {
                 this.handleNeuri(trimmed.slice(6));
                 this.rl?.prompt();
@@ -210,6 +215,7 @@ export class CLI {
         console.log(`    ${this.colorize(GREEN, 'trace')} ${this.colorize(YELLOW, '<id> <dim>')} ${this.colorize(GRAY, 'Symbolic trace of a hyperdimensional neuron')}`);
         console.log(`    ${this.colorize(GREEN, 'train')} ${this.colorize(YELLOW, '<text>')}    ${this.colorize(GRAY, 'Train LLM on custom text')}`);
         console.log(`    ${this.colorize(GREEN, 'search')} ${this.colorize(YELLOW, '<query>')}  ${this.colorize(GRAY, 'Search neurons by name/label')}`);
+        console.log(`    ${this.colorize(GREEN, 'nsearch')} ${this.colorize(YELLOW, '<query>')} ${this.colorize(GRAY, 'Net Search: semantic match + generate a network')}`);
         console.log(`    ${this.colorize(GREEN, 'neuri')} ${this.colorize(YELLOW, '<code>')}    ${this.colorize(GRAY, 'Run NeuriLang neuron definition')}`);
         console.log(`    ${this.colorize(GREEN, 'dict')} ${this.colorize(YELLOW, '<word>')}     ${this.colorize(GRAY, 'Look up word in dictionary (Y/X/Z)')}`);
         console.log(`    ${this.colorize(GREEN, 'build')} ${this.colorize(YELLOW, '<name>')}    ${this.colorize(GRAY, 'Create a new extension project')}`);
@@ -243,6 +249,20 @@ export class CLI {
             console.log(`    ${xinput ? this.colorize(GREEN, '✓') : this.colorize(GRAY, '○')} Xinput: ${xinput ? 'available' : 'not available'}`);
             if (gnome)
                 console.log(`    ${this.colorize(GRAY, '  Current desktop:')} ${current}${current === 'ai' ? this.colorize(CYAN, ' ← AI') : ''}`);
+        }
+        // Section 26: SystemAccess is threaded through from main.ts on the live
+        // path, but only getMultiDesktop() was ever called on it -- its own
+        // introspection (getSystemInfo()) and honest degrade-with-warnings check
+        // (validateCapabilities()) never actually ran anywhere. Both are
+        // read-only/self-check only (no shell surface exposed here).
+        if (this.systemAccess) {
+            const info = this.systemAccess.getSystemInfo();
+            console.log(`    ${this.colorize(GREEN, '✓')} System access: ${info.os}, terminal:${info.terminalAccess} file:${info.fileAccess}`);
+            const validation = this.systemAccess.validateCapabilities();
+            for (const w of validation.warnings)
+                console.log(`    ${this.colorize(YELLOW, '○')} ${w}`);
+            for (const e of validation.errors)
+                console.log(`    ${this.colorize(RED, '✗')} ${e}`);
         }
         console.log('');
     }
@@ -380,6 +400,26 @@ export class CLI {
         }
         console.log('');
     }
+    // Section 22: unlike `search` (plain substring match), this semantically
+    // scores every neuron against the query and generates a new neuron wired
+    // to the best matches with similarity-weighted edges. LLM.netSearchGenerate()
+    // was fully built (extension-builder/builder.js) but had no live caller.
+    handleNetSearchGenerate(query) {
+        if (!query) {
+            console.log(this.colorize(GRAY, '  Usage: nsearch <query>'));
+            return;
+        }
+        const result = this.llm.netSearchGenerate(query);
+        if (!result) {
+            console.log(this.colorize(GRAY, `  No semantic matches for "${query}" -- nothing generated`));
+            return;
+        }
+        console.log(this.colorize(BOLD, `  Generated "${result.neuron.name}" from ${result.matches.length} match(es):`));
+        for (const m of result.matches) {
+            console.log(`    ${this.colorize(CYAN, m.name)} ${this.colorize(GRAY, `(score ${m.score.toFixed(3)})`)}`);
+        }
+        console.log('');
+    }
     handleNeuri(code) {
         if (!code) {
             console.log(this.colorize(GRAY, '  Usage: neuri <NeuriLang code>'));
@@ -429,11 +469,25 @@ export class CLI {
             if (codeResult !== null) {
                 console.log(`      ${this.colorize(YELLOW, '↳')} code result: ${codeResult}`);
             }
-            // Execute netsearch: query the LLM's neural net index
+            // Section 21: `@code=` also compiles a real behavioral Code-to-Net
+            // (interp.getCodeNet()/testCodeNet()) alongside the plain value eval
+            // above -- previously computed silently and never surfaced anywhere.
+            const codeNet = interp.getCodeNet(name);
+            if (codeNet) {
+                const test = interp.testCodeNet(name);
+                const modeInfo = codeNet.mode === 'function' ? `function(arity ${codeNet.arity})` : 'embedding';
+                const testInfo = test ? `, self-test ${test.passed ? 'passed' : 'FAILED'} (meanAbsErr ${test.meanAbsError.toFixed(4)})` : '';
+                console.log(`      ${this.colorize(YELLOW, '↳')} code-to-net: ${modeInfo}${testInfo}`);
+            }
+            // Section 22: search the current NeuroLang neuron mesh via the
+            // interpreter's own NetSearchEngine -- previously this called
+            // `this.llm.netSearch()`, an unrelated legacy project-file search
+            // (extension-builder), contradicting NeuroLangInterpreter.netSearch()'s
+            // own documented "self"/"mesh" = "the current neuron map" semantics.
             if (n.isNetSearch && n.netLocation) {
-                const hits = this.llm.netSearch(n.netLocation);
+                const hits = interp.netSearch(n.netLocation);
                 if (hits.length > 0) {
-                    console.log(`      ${this.colorize(YELLOW, '↳')} netsearch(${n.netLocation}): ${hits.slice(0, 3).map(h => `${h.results[0] || 'result'}(${h.confidence.toFixed(2)})`).join(', ')}`);
+                    console.log(`      ${this.colorize(YELLOW, '↳')} netsearch(${n.netLocation}): ${hits.slice(0, 3).map(h => `${h.name}(${h.score.toFixed(2)})`).join(', ')}`);
                 }
                 else {
                     console.log(`      ${this.colorize(GRAY, '↳')} netsearch(${n.netLocation}): no results`);
