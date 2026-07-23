@@ -716,6 +716,13 @@ async function testAlignmentVeto() {
   const irreversible = veto.evaluate({ id: 'c', name: 'delete data', capabilities: ['file-delete'], reversible: false });
   check(irreversible.requiresConfirmation, 'Veto escalates an irreversible action to confirmation');
 
+  // Unknown (omitted) reversibility must fail safe -- treated the same as
+  // reversible: false, per ProposedAction.reversible's own doc comment --
+  // not silently defaulted to reversible: true.
+  const unknownReversibility = veto.evaluate({ id: 'c2', name: 'delete data, unknown reversibility', capabilities: ['file-delete'] });
+  check(unknownReversibility.requiresConfirmation, 'Veto escalates an action with unknown (omitted) reversibility to confirmation, same as explicit false');
+  check(unknownReversibility.score === irreversible.score, 'Unknown reversibility scores identically to explicit reversible:false (fail safe), not to reversible:true');
+
   // Severe self-model drift fails safe → blocked.
   const drifting = veto.evaluate({ id: 'd', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.9 });
   check(!drifting.allowed, 'Veto blocks under severe self-model drift (fails safe)');

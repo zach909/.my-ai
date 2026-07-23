@@ -87,7 +87,9 @@ function defaultScorer(action: ProposedAction, ctx: AlignmentContext): number {
   for (const cap of caps) {
     if (DEFAULT_OBJECTIONABLE.includes(cap)) score -= 0.5;
   }
-  if (action.reversible === false) score -= 0.15;
+  // Unknown (omitted) reversibility must fail safe, i.e. be treated the same
+  // as reversible: false, per this field's own doc comment above.
+  if ((action.reversible ?? false) === false) score -= 0.15;
   if (action.externalEffect) score -= 0.1;
   const surprise = ctx.selfModelSurprise ?? 0;
   score -= Math.min(0.3, Math.max(0, surprise)); // drift erodes confidence
@@ -134,7 +136,8 @@ export class AlignmentVeto {
     }
 
     // Rule 3: human in the loop for irreversible / external-effect actions.
-    if (this.config.confirmIrreversible && (action.reversible === false || action.externalEffect)) {
+    // Unknown (omitted) reversibility fails safe: treated the same as false.
+    if (this.config.confirmIrreversible && ((action.reversible ?? false) === false || action.externalEffect)) {
       requiresConfirmation = true;
       reasons.push('irreversible or external-effect action — requires human confirmation');
     }
