@@ -634,6 +634,11 @@ def test_neurolang_spec_aliases():
     """The design doc's Neural Definition Format spells the two core directives
     "@value=" and "@definition="; this codebase's own dialect spells them
     "@vale=" and "@definishon=". Both spellings must parse identically."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip neurolang-spec-aliases test (torch not installed)")
+        return
     import neurolang
 
     dialect = '\n'.join([
@@ -1071,6 +1076,11 @@ def test_continuous_input_buffer():
 
 
 def test_neurolang_dictionary():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip neurolang-dictionary test (torch not installed)")
+        return
     import neurolang
     # "code" and "software" are not thesaurus synonyms, but the dictionary
     # glosses both onto the shared concept {program, ...} -> they auto-connect.

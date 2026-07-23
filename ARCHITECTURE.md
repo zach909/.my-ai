@@ -892,6 +892,14 @@ The immediately preceding fix corrected README.md to describe `interface/server.
 
 Corrected README.md a second time to name and describe all three real dashboards explicitly and unambiguously by their distinguishing paths/ports/behavior, rather than an ambiguous bare relative filename. Doc-only change; no code, build, or test-suite impact. Recorded plainly as a second correction to the same area, for the same reason the first one was recorded honestly rather than silently overwritten.
 
+### `test_core.py`'s missing-torch guard had the same sibling asymmetry pattern as the TS-side fixes, but in the Python suite (Section 9/21/22)
+
+`model && skills manager/test_core.py` has five test functions that need `neurolang` (which unconditionally does `import torch` at module scope). Three of them — `test_neurolang_bridge`, `test_code_to_net`, `test_net_search` — correctly guard the import with `try: import torch / except ImportError: print("  skip ..."); return` before ever touching `neurolang`, so a torch-less environment cleanly skips them. Two structurally identical siblings testing the exact same module — `test_neurolang_spec_aliases` and `test_neurolang_dictionary` — had no such guard, calling `import neurolang` bare.
+
+`main()`'s harness catches any exception from a test function and records it as a genuine `FAIL`, not a skip — so in any environment without torch installed (confirmed live in this sandbox), the two unguarded tests threw `ModuleNotFoundError: No module named 'torch'` and were reported as real failures (`68 passed, 2 failed`, exit code 1), even though the actual, well-understood condition is identical to the one the other three tests already handle cleanly.
+
+Added the identical three-line guard to both functions, matching the other three verbatim (just the skip message differs per test name). Test-file-only change — no production code touched, no persistent state, no live chat/generation path involved, no new capability or surface. Verified live: the suite now reports `68 passed, 0 failed` and exits `0`, stable across repeated runs, in the same torch-less environment that previously showed 2 false failures.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
