@@ -328,10 +328,11 @@ class NeuralMesh:
         
         # Reset non-input neurons if not in continuous mode
         if not self.continuous:
+            # Use fixed initialization for deterministic behavior
             for neuron_id, neuron in self.neurons.items():
                 if neuron.role != NeuronRole.INPUT:
-                    # Reset state vector except dimension 0 (will be set by input flag)
-                    neuron.state_vector = [0.0] + [random.gauss(0, 0.01) for _ in range(self.n_dimensions - 1)]
+                    # Reset state vector to zero (deterministic)
+                    neuron.state_vector = [0.0] * self.n_dimensions
                     neuron.input_flag = 0.0
                     neuron.activation = 0.0
                     neuron.consecutive_divergence = 0
@@ -407,6 +408,9 @@ class NeuralMesh:
                 self._apply_divergence_correction(prev_state, new_states)
                 self._live_corrections += 1
                 consecutive_high_divergence = 0
+                # Reset neuron-level divergence counters after correction
+                for neuron in self.neurons.values():
+                    neuron.consecutive_divergence = 0
             
             if max_divergence > self.divergence_tolerance:
                 consecutive_high_divergence += 1
