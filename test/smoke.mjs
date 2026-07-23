@@ -233,6 +233,26 @@ async function testHyperdimensional() {
   check(ctx.data.length === 12 * 9 && allFinite(ctx.data), 'Hyper getContextMatrix sized (neurons x totalDims) and finite');
 }
 
+async function testHyperdimensionalCapacity() {
+  // process() runs on every live NeuroclawLLM.generate() call, and none of
+  // `history`, each neuron's own `transitions`, or `seenPatterns` had any
+  // bound at all -- the constructor's `historyLength` option (which llm.js
+  // passes expecting a real cap) is actually aliased into `noveltyWindow`,
+  // a recency-decay time constant, not an entry limit. `history` has zero
+  // readers anywhere in the file; only a neuron's *last* transition is ever
+  // read, so trimming from the front is always safe.
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const hd = new HyperDimensionalEngine({ neuronCount: 20, dimensions: 8, historyLength: 1000, energyThreshold: 0.001 });
+  for (let i = 0; i < 6000; i++) {
+    hd.process(new Array(20).fill(0).map(() => Math.random() * 2 - 1));
+  }
+  check(hd.history.length === 5000, "HyperDimensionalEngine's history caps at a bounded size instead of growing forever");
+  check(hd.seenPatterns.size === 5000, "HyperDimensionalEngine's seenPatterns caps at a bounded size instead of growing forever");
+  check(Math.max(...hd.neurons.map(n => n.transitions.length)) === 100, "each neuron's own transitions history caps at a bounded size instead of growing forever");
+  const out = hd.process(new Array(20).fill(0).map(() => Math.random() * 2 - 1));
+  check(allFinite(out.outputVector) && out.noveltyScore >= 0 && out.noveltyScore <= 1, 'process() still produces sane, finite output after heavy capping across all three bounded structures');
+}
+
 async function testInputFlagSelfModelLiveCorrection() {
   const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
 
@@ -3354,6 +3374,7 @@ async function main() {
     ['Quantization-aware training (Section 8)', testQuantizationAwareTraining],
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
+    ['Hyperdimensional history/transitions/seenPatterns capacity', testHyperdimensionalCapacity],
     ['Input-flag / self-model / live-correction (Section 3.1-3.3)', testInputFlagSelfModelLiveCorrection],
     ['Vale gating', testValeGating],
     ['Symbolic trace', testSymbolicTrace],
