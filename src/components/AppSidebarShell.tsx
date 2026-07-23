@@ -9,7 +9,7 @@
  * A native flex-col implementation (shadcn Button/Avatar/Tooltip primitives) for
  * full layout control — every line is yours to edit.
  */
-import { useState, useCallback } from 'react'
+import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
@@ -21,8 +21,6 @@ import {
 } from '@/components/ui/tooltip'
 import {
   LayoutDashboard,
-  FileText,
-  Settings,
   LogOut,
   PanelLeft,
 } from 'lucide-react'
@@ -37,10 +35,12 @@ interface NavItemDef {
   active?: boolean
 }
 
+// Every href here MUST have a real route file, and every page you add under
+// `src/routes/app/` should get an entry here — a nav link with no route ships a
+// 404. Only the shipped dashboard route is listed; add yours as you create them,
+// e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
-  { href: '/', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard', active: true },
-  { href: '/items', icon: <FileText className="h-4 w-4" />, label: 'Items' },
-  { href: '/settings', icon: <Settings className="h-4 w-4" />, label: 'Settings' },
+  { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard', active: true },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {
@@ -69,10 +69,14 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
 }
 
 export function AppSidebarShell() {
-  const [collapsed, setCollapsed] = useState(() => {
-    if (typeof window === 'undefined') return false
-    return localStorage.getItem(SIDEBAR_KEY) === 'true'
-  })
+  // SSR always renders expanded; the saved preference is restored after mount.
+  // Reading localStorage in the initializer makes the client's first render
+  // differ from the server markup → hydration mismatch on hard refresh.
+  const [collapsed, setCollapsed] = useState(false)
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time restore of a persisted preference; reading localStorage in the useState initializer causes an SSR hydration mismatch
+    if (localStorage.getItem(SIDEBAR_KEY) === 'true') setCollapsed(true)
+  }, [])
 
   const toggle = useCallback(() => {
     setCollapsed(v => {

@@ -1,110 +1,53 @@
-import { createFileRoute, Link } from '@tanstack/react-router'
-import {
-  useElasticMesh,
-  MeshVisualization,
-  ControlPanel,
-  DEFAULT_CONFIG,
-} from '@/features/mesh'
+import { createFileRoute } from '@tanstack/react-router'
 
 /**
- * Home route (/) — the Prometheus Elastic Core live dashboard.
+ * Home route (/). A neutral, FULL-BLEED starting point — no app chrome, no
+ * sidebar. Replace this body with your real landing page or app home.
  *
- * Runs the real all-to-all elastic mesh engine (src/features/mesh) directly in
- * the browser: a 3D visualization of every neuron (vale → brightness,
- * activation → hue/size) with the control surface for injecting input,
- * stepping/settling propagation, and triggering Hebbian learning.
+ * Add more pages as files under `src/routes/` (e.g. `src/routes/about.tsx`
+ * → /about). The HTML document + providers live once in `__root.tsx`.
  *
- * `ssr: false` — the page drives three.js and requestAnimationFrame, which
- * only exist client-side.
+ * Building a SaaS / dashboard app? The sidebar shell already exists at
+ * `src/routes/app.tsx` with its home at `src/routes/app/index.tsx` (→ /app) — add
+ * your pages as files in `src/routes/app/`. Do NOT create a `src/routes/_app.tsx`:
+ * a `_`-prefixed layout is PATHLESS, so `_app/index.tsx` resolves to `/` and
+ * collides with THIS file (build fails: "Conflicting configuration paths").
+ * Dashboard-only product? Keep this file and redirect it to `/app`.
+ * Landing pages, marketing sites, content, and games stay full-bleed (default) —
+ * delete `src/routes/app.tsx` + `src/routes/app/` if you don't need a dashboard.
+ *
+ * SEO: set per-page title/description/Open Graph here in `head()`.
+ *
+ * SSR / routing (this template is server-rendered — TanStack Start):
+ * - Routes are files under `src/routes/` that `export const Route =
+ *   createFileRoute('/path')({ component })`. NEVER `export default` a route.
+ *   Navigate with `Link` from `@tanstack/react-router` (there is no `NavLink`).
+ * - Reading Blink auth/SDK state (`blink.auth`), `localStorage`, or `window` at
+ *   render CRASHES SSR / hydration-mismatches and ships a blank first page. Wrap
+ *   that subtree in `<BlinkClientBoundary fallback={…}>` (from
+ *   `@/components/BlinkClientBoundary`), or set `ssr: false` on the route for a
+ *   fully client-only page. Keep static content outside the boundary.
  */
 export const Route = createFileRoute('/')({
-  ssr: false,
   head: () => ({
     meta: [
-      { title: 'Neuroclaw · Prometheus Elastic Core' },
-      {
-        name: 'description',
-        content:
-          'Live all-to-all elastic neuron mesh — zero-sum vale plasticity, multi-dimensional state, settle-to-convergence reasoning.',
-      },
+      { title: 'Home · Blink App' },
+      { name: 'description', content: 'Welcome — an app built with Blink.' },
     ],
   }),
-  component: MeshDashboard,
+  component: Home,
 })
 
-function MeshDashboard() {
-  const {
-    meshState,
-    stats,
-    isRunning,
-    speed,
-    selectedNeuron,
-    selectNeuron,
-    toggleRunning,
-    reset,
-    step,
-    setSpeed,
-    injectInput,
-    learnHebbian,
-  } = useElasticMesh()
-
+function Home() {
   return (
-    <main className="flex min-h-dvh flex-col bg-background text-foreground">
-      <header className="flex items-center justify-between border-b border-border px-4 py-3">
-        <div>
-          <h1 className="text-lg font-semibold tracking-tight">
-            Prometheus Elastic Core
-          </h1>
-          <p className="text-xs text-muted-foreground">
-            {DEFAULT_CONFIG.neuronCount} neurons · {DEFAULT_CONFIG.dimensions}D
-            state · all-to-all mesh · zero-sum vale {DEFAULT_CONFIG.totalVale}
-          </p>
-        </div>
-        <nav className="flex items-center gap-3">
-          <Link
-            to="/builder"
-            className="text-xs text-muted-foreground underline-offset-2 hover:underline"
-          >
-            Extension Builder →
-          </Link>
-          <span
-            className={`rounded-full px-2.5 py-1 text-xs font-medium ${
-              isRunning
-                ? 'bg-emerald-500/15 text-emerald-400'
-                : 'bg-muted text-muted-foreground'
-            }`}
-          >
-            {isRunning ? 'Propagating' : 'Idle'}
-          </span>
-        </nav>
-      </header>
-
-      <div className="flex flex-1 flex-col gap-3 p-3 lg:flex-row">
-        <section className="min-h-[400px] flex-1" aria-label="Mesh visualization">
-          <MeshVisualization
-            meshState={meshState}
-            selectedNeuron={selectedNeuron}
-            onSelectNeuron={selectNeuron}
-            dims={DEFAULT_CONFIG.dimensions}
-          />
-        </section>
-
-        <aside className="w-full shrink-0 lg:w-72" aria-label="Mesh controls">
-          <ControlPanel
-            stats={stats}
-            selectedNeuron={selectedNeuron}
-            isRunning={isRunning}
-            speed={speed}
-            onToggle={toggleRunning}
-            onReset={reset}
-            onStep={step}
-            onSpeedChange={setSpeed}
-            onInjectInput={injectInput}
-            onLearn={learnHebbian}
-            onDeselectNeuron={() => selectNeuron(null)}
-          />
-        </aside>
-      </div>
+    <main className="flex min-h-dvh flex-col items-center justify-center gap-3 px-6 text-center">
+      <h1 className="text-2xl font-semibold tracking-tight">Your Blink app is ready</h1>
+      <p className="max-w-md text-sm text-muted-foreground">
+        This is the full-bleed starter home with no sidebar. Edit{' '}
+        <code className="rounded bg-muted px-1">src/routes/index.tsx</code> to build your
+        page, or add routes under{' '}
+        <code className="rounded bg-muted px-1">src/routes/</code>.
+      </p>
     </main>
   )
 }

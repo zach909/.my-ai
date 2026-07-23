@@ -1,11 +1,12 @@
 /**
  * SaaS app chrome (sidebar + main) — OPT-IN, not the default.
- * The template root (__root.tsx) is full-bleed by default. To use this, ADD a
- * `src/routes/_app.tsx` pathless layout route that renders <SharedAppLayout>
- * and wrap pages under `src/routes/_app/` in it — give it children, since a
- * childless `_app.tsx` collides with the root index route. Do not wrap
- * individual pages in Shell or duplicate sidebars/top bars. Landing/marketing/
- * content apps don't need this at all.
+ * The template root (__root.tsx) is full-bleed by default. This is already wired
+ * up for you by `src/routes/app.tsx` (the `/app` segment); add dashboard pages as
+ * files under `src/routes/app/`. Never mount it from a pathless `src/routes/_app.tsx`
+ * — a `_`-prefixed layout adds no URL segment, so it (or its `index.tsx`) claims "/"
+ * and collides with the root index route, failing the build. Do not wrap individual
+ * pages in Shell or duplicate sidebars/top bars. Landing/marketing/content apps
+ * don't need this at all — delete `src/routes/app.tsx` + `src/routes/app/`.
  */
 import React, { createContext, useContext } from 'react'
 import { Shell } from '../Shell'
