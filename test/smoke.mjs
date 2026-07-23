@@ -83,6 +83,35 @@ async function testPipeline() {
     'Pipeline result carries an alignment verdict');
 }
 
+async function testPipelineRunHistoryCapacity() {
+  // run() -- reachable today only via NeuroclawRunner.startContinuous()'s
+  // tick loop, not currently wired into any live main() flow, but a real,
+  // fully-built public API -- pushed to runHistory with no cap at all, the
+  // same unbounded-array pattern already fixed this session for several
+  // other classes' hot-path logs. A plain FIFO trim alone would make
+  // getStats().runsCount (displayed by cli.ts as "Pipeline: N runs")
+  // silently plateau instead of reflecting the true lifetime count, so the
+  // true count is tracked separately from the capped averaging window.
+  const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
+  const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 16, hyperDimensions: 16 });
+  // Seed most of the way to capacity directly (bypassing the expensive real
+  // run() computation) so the test stays fast, then exercise real run()
+  // calls to confirm the actual live code path applies the cap correctly.
+  for (let i = 0; i < 4998; i++) {
+    p.runHistory.push({ totalDurationMs: 1, stepDurations: new Map([['step', 1]]) });
+  }
+  p.totalRunsCount = 4998;
+  for (let i = 0; i < 10; i++) await p.run(embedding(32, i + 1), `tick ${i}`);
+
+  check(p.runHistory.length === 5000, "NeuroPipeline's runHistory caps at a bounded size instead of growing forever");
+  const stats = p.getStats();
+  check(stats.runsCount === 5008, 'getStats().runsCount reflects the true lifetime total, not the capped averaging window size');
+  check(Number.isFinite(stats.avgDurationMs) && stats.stepBreakdown.size > 0, 'getStats() still produces sane, finite averages after capping');
+
+  p.reset();
+  check(p.getStats().runsCount === 0 && p.runHistory.length === 0, 'reset() zeroes both the lifetime count and the run-history window');
+}
+
 async function testPipelineElasticGrowth() {
   const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
   const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 65, hyperDimensions: 8 });
@@ -231,6 +260,26 @@ async function testHyperdimensional() {
   check(typeof hd.isExclusiveInput(0.9).exclusive === 'boolean', 'Hyper isExclusiveInput returns a verdict');
   const ctx = hd.getContextMatrix();
   check(ctx.data.length === 12 * 9 && allFinite(ctx.data), 'Hyper getContextMatrix sized (neurons x totalDims) and finite');
+}
+
+async function testHyperdimensionalCapacity() {
+  // process() runs on every live NeuroclawLLM.generate() call, and none of
+  // `history`, each neuron's own `transitions`, or `seenPatterns` had any
+  // bound at all -- the constructor's `historyLength` option (which llm.js
+  // passes expecting a real cap) is actually aliased into `noveltyWindow`,
+  // a recency-decay time constant, not an entry limit. `history` has zero
+  // readers anywhere in the file; only a neuron's *last* transition is ever
+  // read, so trimming from the front is always safe.
+  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const hd = new HyperDimensionalEngine({ neuronCount: 20, dimensions: 8, historyLength: 1000, energyThreshold: 0.001 });
+  for (let i = 0; i < 6000; i++) {
+    hd.process(new Array(20).fill(0).map(() => Math.random() * 2 - 1));
+  }
+  check(hd.history.length === 5000, "HyperDimensionalEngine's history caps at a bounded size instead of growing forever");
+  check(hd.seenPatterns.size === 5000, "HyperDimensionalEngine's seenPatterns caps at a bounded size instead of growing forever");
+  check(Math.max(...hd.neurons.map(n => n.transitions.length)) === 100, "each neuron's own transitions history caps at a bounded size instead of growing forever");
+  const out = hd.process(new Array(20).fill(0).map(() => Math.random() * 2 - 1));
+  check(allFinite(out.outputVector) && out.noveltyScore >= 0 && out.noveltyScore <= 1, 'process() still produces sane, finite output after heavy capping across all three bounded structures');
 }
 
 async function testInputFlagSelfModelLiveCorrection() {
@@ -883,6 +932,21 @@ async function testBootstrap() {
   const reg = new PluginRegistry();
   await reg.bootstrap();
   check(reg.getPluginCount() > 0, `App bootstrap registers a plugin catalog (${reg.getPluginCount()} plugins)`);
+
+  // Section 26: SystemAccess is threaded through from main.ts's bootstrap()
+  // on the real live path, but only getMultiDesktop() was ever called on it
+  // -- getSystemInfo()/validateCapabilities() never actually ran anywhere.
+  // Exercise it through the real bootstrapped CLI, not a hand-built one.
+  check(!!cli.systemAccess, 'the real bootstrapped CLI carries a real SystemAccess instance, not undefined');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  const lines = [];
+  console.log = console.info = console.warn = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    cli.printStatus();
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+  check(lines.some(l => l.includes('System access:') && l.includes('terminal:') && l.includes('file:')), 'printStatus() now surfaces real SystemAccess.getSystemInfo() (OS/terminal/file config), not just multi-desktop state');
 }
 
 async function testWebBackend() {
@@ -1096,6 +1160,8 @@ async function testSelfExtension() {
     const llm = new NeuroclawLLM({ selfExtensionsDir: dir });
     llm.build();
     const before = llm.getStats().selfExtensionsCount ?? 0;
+    const builder = llm.getBuilder();
+    const projectsBefore = builder.projects.size;
     await llm.createSelfExtension('learn to greet', 'hello, nice to meet you');
     const { readdirSync, existsSync: exists } = await import('node:fs');
     const entries = readdirSync(dir).filter((e) => e.startsWith('self_ext_'));
@@ -1103,6 +1169,17 @@ async function testSelfExtension() {
     const extDir = join(dir, entries[0]);
     check(exists(join(extDir, 'model.json')), 'Self-extension is saved un-quantized (model.json)');
     check(exists(join(extDir, 'model.q4.json')), 'Self-extension is quantized before install (model.q4.json)');
+    // ExtensionBuilder.deleteProject() existed but had no caller: every
+    // self-extension's builder-internal project (its own neurons/connections/
+    // layers Maps) was persisted to disk/selfExtensions and then never
+    // referenced again, but stayed in builder.projects forever -- an
+    // unbounded leak on the long-lived NeuroclawLLM/ExtensionBuilder instance
+    // the web server and CLI reuse for their whole process lifetime.
+    check(builder.projects.size === projectsBefore, "createSelfExtension() cleans up its own builder-internal project after persisting it -- builder.projects does not grow, even though a real self-extension was created");
+    for (let i = 0; i < 5; i++) {
+      await llm.createSelfExtension(`learn thing ${i}`, `response ${i}`);
+    }
+    check(builder.projects.size === projectsBefore, "repeated createSelfExtension() calls never accumulate leaked projects in builder.projects");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -1264,6 +1341,21 @@ async function testAutonomousTask() {
     check(r2.results.find(x => x.step === 'design the routes').status === 'skipped', 'Already-completed steps are not repeated');
     check(r2.results.find(x => x.step === 'write tests').status === 'completed', 'A new step still runs on re-invocation');
     check(sys.memory.all().filter(m => m.tags.includes('task')).length >= 3, 'Task results are recorded in long-term memory');
+
+    // PlanTracker.reset() existed and was unit-tested but had no live call
+    // site: the shared PlanTracker's de-duplication/completion checks are
+    // global across its whole step history, not scoped to the current
+    // objective, so a genuinely new, unrelated task whose step happened to
+    // reuse earlier phrasing was silently reported already-completed from a
+    // *different* objective, and steps/decisions/constraints grew forever
+    // across unrelated tasks. autonomousTask()/executePlan() now reset the
+    // plan whenever the objective actually changes (same-objective
+    // continuation above is unaffected).
+    const r3 = await sys.autonomousTask('write documentation', ['design the routes']);
+    check(r3.results.find(x => x.step === 'design the routes').status === 'completed', 'A step reusing earlier phrasing genuinely runs for a new, unrelated objective, instead of being wrongly skipped as already-completed from a different task');
+    check(sys.plan.getObjective() === 'write documentation', "the plan's objective reflects the new task, not the stale prior one");
+    check(sys.plan.getSteps().length === 1, 'the plan resets its step history on a genuine objective change, instead of accumulating steps from unrelated past tasks forever');
+    check(sys.plan.getConstraints().length === 1 && sys.plan.getConstraints()[0].includes('no external APIs'), "the plan's constraints are also reset and re-added fresh for the new objective, not accumulated");
 
     // Compressed-context is reachable from the query path.
     await sys.processQuery('the payment service handles stripe transactions securely');
@@ -1543,6 +1635,128 @@ async function testCodeToNet() {
   check(interp.testCodeNet('calc').passed, 'NeuroLang code-net passes the test-against-original check');
 }
 
+async function testNeuriLangCliWiring() {
+  // Sections 21/22: NeuroLangInterpreter.getCodeNet()/testCodeNet()/netSearch()
+  // are real and fully unit-tested (see testCodeToNet/testNetSearchEngine
+  // above), but the live `neuri` CLI command never called them: it evaluated
+  // `@code=` via a raw `new Function` on the value string only, and resolved
+  // `"netsearch"@net=` through `this.llm.netSearch()` -- an unrelated legacy
+  // project-file search (extension-builder), not the interpreter's own
+  // NetSearchEngine over the current neuron mesh. This exercises the actual
+  // live CLI entry point, not just the underlying primitives.
+  const { NeuroclawSystem } = await load('index.js');
+  const { CLI } = await load('interface/cli.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  const sys = new NeuroclawSystem();
+  await sys.initialize();
+  const cli = new CLI(sys.llm, sys.pipeline, sys.thesaurus, sys.pluginRegistry);
+
+  const lines = [];
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    cli.handleNeuri([
+      'name="squareIt"',
+      '"squareIt"@code="x => x * x"',
+      'name="widget"',
+      '"widget"@definition="a gadget used for testing net search retrieval"',
+      '"netsearch"@name="finder"',
+      '"netsearch"@net="widget"',
+    ].join('\n'));
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+
+  check(lines.some(l => l.includes('code-to-net') && l.includes('function(arity 1)')), 'the live `neuri` command surfaces the real compiled Code-to-Net (mode/arity), not just a bare JS value eval');
+  check(lines.some(l => /self-test (passed|FAILED)/.test(l)), 'the live `neuri` command surfaces the code-net self-test result');
+  check(lines.some(l => l.includes('netsearch(widget): widget(')), 'the live `neuri` command\'s netsearch now genuinely searches the current NeuroLang neuron mesh (finds the "widget" neuron itself) instead of an unrelated legacy project search');
+}
+
+async function testNetSearchGenerateCliWiring() {
+  // Section 22: ExtensionBuilder.netSearchGenerate() (semantically scores
+  // every neuron against a query and generates a new neuron wired to the
+  // best matches with similarity-weighted edges) was fully built and
+  // exposed on LLM too, but had zero live callers -- unlike its weaker
+  // sibling searchNeurons() (plain substring match), which the `search`
+  // CLI command already used. This exercises the new `nsearch` command
+  // through the real CLI/LLM/builder stack, not just the underlying method.
+  const { NeuroclawSystem } = await load('index.js');
+  const { CLI } = await load('interface/cli.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  const sys = new NeuroclawSystem();
+  await sys.initialize();
+  await sys.llm.generate('hello'); // triggers the LLM's lazy build() so a real project exists
+  console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+
+  const builder = sys.llm.getBuilder();
+  const projectId = sys.llm.projectId;
+  const seeded = builder.addNeuron(projectId, 'paymentProcessor', 0.6);
+  seeded.definition = 'processes credit card payments and billing';
+
+  const cli = new CLI(sys.llm, sys.pipeline, sys.thesaurus, sys.pluginRegistry);
+  const lines = [];
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    cli.handleNetSearchGenerate('');
+    cli.handleNetSearchGenerate('credit card billing');
+    cli.handleNetSearchGenerate('a query with no semantic overlap at all xyzzy987');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+
+  check(lines.some(l => l.includes('Usage: nsearch')), 'the `nsearch` command reports usage for an empty query');
+  check(lines.some(l => l.includes('Generated') && l.includes('match(es)')), 'the `nsearch` command surfaces a real generated neuron for a genuinely matching query');
+  check(lines.some(l => l.includes('paymentProcessor') && /score \d\.\d{3}/.test(l)), 'the `nsearch` command reports the real seeded neuron with a genuine, bounded similarity score');
+  check(lines.some(l => l.includes('No semantic matches') && l.includes('nothing generated')), 'the `nsearch` command never fabricates a result for a query with zero real evidence');
+}
+
+async function testSharedBlackboardLogCapacity() {
+  // Section 13: SharedBlackboard.write() is reached on every solve()/
+  // autonomousTask() step (agent.share()) with no existing bound on its
+  // internal audit log -- on a long-running process this grew forever.
+  // Unlike LongTermMemory, there's no importance signal to rank entries by,
+  // so a plain FIFO cap is the honest fit. Verify the cap works and that
+  // conflict tracking / reads (which use a separate Map, not the log) are
+  // unaffected by heavy log churn.
+  const { SharedBlackboard } = await load('models && skills/core/hive-mind.js');
+  const board = new SharedBlackboard();
+  for (let i = 0; i < 5010; i++) board.write('agent1', `key${i}`, `value${i}`);
+  check(board.history().length === 5000, "SharedBlackboard's log caps at a bounded size instead of growing forever");
+  check(board.history()[0].key === 'key10', 'the oldest entries are evicted first (FIFO), not the newest');
+  check(board.history()[board.history().length - 1].key === 'key5009', 'the most recent entry is always retained');
+
+  board.write('agentA', 'shared', 'valueA');
+  board.write('agentB', 'shared', 'valueB');
+  check(board.hasConflict('shared'), 'conflict detection is unaffected by heavy log churn (it reads a separate Map, not the log)');
+  check(board.read('agent1', 'key5009') === 'value5009', 'reads are unaffected by log trimming');
+}
+
+async function testChatGroupMessageCapacity() {
+  // Section 14: NeuroclawSystem.collaborate() reuses one persistent
+  // ChatGroup for the process's whole lifetime, and post() had no bound at
+  // all on `messages` -- the same unbounded-growth pattern already fixed
+  // this session for SharedBlackboard's log, PredictionEngine's prediction
+  // store, and PerformanceMonitor's anomalies. Verify the FIFO cap works
+  // and that decide() (which never reads message history back in) is
+  // unaffected by heavy churn.
+  const { HiveMind } = await load('models && skills/core/hive-mind.js');
+  const { ChatGroup } = await load('models && skills/core/chat-group.js');
+  const hive = new HiveMind({ totalTrust: 100, defaultThink: (_p, a) => a.specialization });
+  hive.spawn({ id: 'a1', role: 'coder', specialization: 'coding', capabilities: [] });
+  const group = new ChatGroup('g1', 'Test Group', hive);
+  group.addMember('a1');
+
+  for (let i = 0; i < 5010; i++) group.post('a1', `message number ${i}`);
+  const hist = group.getHistory();
+  check(hist.length === 5000, "ChatGroup's message history caps at a bounded size instead of growing forever");
+  check(hist[0].content === 'message number 10', 'the oldest messages are evicted first (FIFO)');
+  check(hist[hist.length - 1].content === 'message number 5009', 'the most recent message is always retained');
+
+  const decision = await group.decide('what should we do', ['proceed', 'reject']);
+  check(decision.decision === 'proceed' && decision.tally.proceed === 100, 'decide() is unaffected by heavy message-history churn (it never reads message history back in)');
+}
+
 async function testHiveMindAndChatGroups() {
   const { HiveMind } = await load('models && skills/core/hive-mind.js');
   const { ChatGroup } = await load('models && skills/core/chat-group.js');
@@ -1665,6 +1879,20 @@ async function testAutonomousLearningPredictionDiscovery() {
   check(cmp.matched && cmp.surprise < 0.5, 'PredictionEngine: an outcome matching the prediction is low-surprise');
   const cmp2 = pred.observe(safe.id, 'completely unrelated and unexpected catastrophic failure output');
   check(cmp2.surprise > cmp.surprise, 'PredictionEngine: a divergent actual outcome registers higher surprise');
+
+  // predict() is reached on nearly every live NeuroclawSystem entry point
+  // with no existing bound at all -- most predictions are write-once-
+  // read-never, so this grew forever on a long-running process. Same FIFO
+  // cap pattern already applied to SharedBlackboard's log.
+  const predCap = new PredictionEngine();
+  let firstPredId;
+  for (let i = 0; i < 5010; i++) {
+    const p = predCap.predict(`do thing number ${i}`);
+    if (i === 0) firstPredId = p.id;
+  }
+  check(predCap.size() === 5000, "PredictionEngine's predictions cap at a bounded size instead of growing forever");
+  check(predCap.get(firstPredId) === undefined, 'the oldest prediction is evicted first (FIFO)');
+  check(predCap.observe(firstPredId, 'anything') === undefined, 'observe() on an evicted prediction id fails gracefully (undefined), not a crash');
 
   // DiscoveryEngine (ASI §11): hypothesis generation, falsification, creative combination.
   const { DiscoveryEngine } = await load('models && skills/core/discovery-engine.js');
@@ -1999,6 +2227,16 @@ async function testSolveIntegration() {
     const patterns = sys.discoverPatterns(5);
     check(patterns.length > 0, 'discoverPatterns() finds regularities across repeated solve() outcomes');
     check(patterns.some(h => h.cause === 'math' || h.effect === 'math'), 'discoverPatterns() surfaces the domain as part of a discovered pattern');
+
+    // ASI §5/§11: DiscoveryEngine.getHypothesis() existed but had no real
+    // caller-facing method of NeuroclawSystem's own -- only tests reaching
+    // past this class into the public `discovery` field directly. A caller
+    // who saved a hypothesis id from an earlier discoverPatterns() call
+    // should be able to look it back up later (e.g. to check whether it's
+    // since been confirmed, contradicted, or rejected).
+    check(sys.hypothesis('a-hypothesis-id-that-was-never-generated') === undefined, "hypothesis() returns undefined for an id that was never generated, rather than fabricating a result");
+    const sameHypothesis = sys.hypothesis(patterns[0].id);
+    check(JSON.stringify(sameHypothesis) === JSON.stringify(patterns[0]), "hypothesis(id) looks up the exact same hypothesis discoverPatterns() already returned, by its real id");
 
     // ASI §5/§12: the discovered "decompose -> verified" regularity should
     // have fed back into a real bias the reasoner will use on the next solve.
@@ -2469,11 +2707,19 @@ async function testHealLog() {
   console.log = console.info = console.warn = () => {};
   try {
     await sys.initialize();
-    check(sys.healLog().length === 0, 'healLog() starts empty before any heal cycle runs');
+    // initialize() genuinely captures a known-good snapshot for
+    // "hive-trust-invariant" now that it has a real `snapshot` fn (Section 24:
+    // every self-healer step, including snapshot capture, must be logged --
+    // never silent), so the log is no longer empty at this point; it must
+    // not yet contain any repair/restore/unrecoverable entry, since no heal
+    // cycle has run.
+    const initialLog = sys.healLog();
+    check(initialLog.length > 0 && initialLog.every(l => l.includes('snapshot captured')), 'healLog() contains only real snapshot-capture entries before any heal cycle runs, never a repair/restore/unrecoverable entry');
+    const beforeHeal = initialLog.length;
     let broken = true;
     sys.healer.register({ name: 'fake-component', check: () => !broken, repair: () => { broken = false; } });
     await sys.selfHeal();
-    check(sys.healLog().length > 0, 'healLog() reflects a real repair recorded during selfHeal()');
+    check(sys.healLog().length > beforeHeal, 'healLog() grows to reflect a real repair recorded during selfHeal()');
     check(sys.healLog().some(l => l.includes('fake-component')), 'healLog() names the actual component that was repaired');
     const snapshot = sys.healLog().length;
     await sys.selfIntegrity(); // an unrelated call must not mutate the log
@@ -2504,6 +2750,55 @@ async function testPluginRegistryHealthCheck() {
     instance.onHealthCheck = async () => false;
     const after = await sys.healthReport();
     check(after['plugin-registry'] === false, "plugin-registry now genuinely reflects a single plugin's own failing health check, not just whether any plugins are active");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testHiveTrustInvariantHealing() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // ASI §24: the "hive-trust-invariant" SelfHealer registration had only a
+    // `check` -- no `repair`/`snapshot`/`restore` -- so a drifted trust budget
+    // was guaranteed to be reported unrecoverable on first detection, with
+    // zero attempt at recovery, even though the fix already existed:
+    // HiveMind.repairTrustInvariant() rescales agents back onto the fixed
+    // budget, and HiveAgent.snapshot() was fully built with no call sites.
+    sys.hive.spawn({ id: 'agent-a', role: 'coder', specialization: 'js', capabilities: ['code'] });
+    sys.hive.spawn({ id: 'agent-b', role: 'writer', specialization: 'docs', capabilities: ['write'] });
+
+    const before = await sys.healer.healthReport();
+    check(before['hive-trust-invariant'] === true, 'hive-trust-invariant reports healthy when the trust budget is intact');
+
+    // Force a drift the repair step alone can fully fix (a real bug mutating
+    // one agent's trust outside reward()'s zero-sum bookkeeping).
+    sys.hive.get('agent-a').trust += 500;
+    check(Math.abs(sys.hive.totalTrustValue() - 100) > 1e-3, 'the forced drift genuinely breaks the invariant');
+
+    const report = await sys.healer.heal();
+    const result = report.results.find(r => r.component === 'hive-trust-invariant');
+    check(result.recovered && result.actions.includes('repaired'), 'repair() rescales the drifted trust budget back onto the fixed total');
+    check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-3, 'totalTrustValue() is exactly restored to the fixed budget after repair');
+
+    // Independently exercise the restore-from-snapshot fallback: capture a
+    // known-good per-agent distribution, corrupt individual agents' trust in
+    // a way rescaling-by-total wouldn't reproduce, then disable repair so
+    // heal() must fall through to the snapshot/restore tier.
+    sys.healer.snapshotAll();
+    const known = { a: sys.hive.get('agent-a').trust, b: sys.hive.get('agent-b').trust };
+    sys.hive.get('agent-a').trust = 1;
+    sys.hive.get('agent-b').trust = 1;
+    const realRepair = sys.hive.repairTrustInvariant.bind(sys.hive);
+    sys.hive.repairTrustInvariant = () => {};
+    const report2 = await sys.healer.heal();
+    const result2 = report2.results.find(r => r.component === 'hive-trust-invariant');
+    check(result2.actions.includes('restored-known-good') && result2.recovered, 'when repair cannot fix it, the known-good per-agent snapshot (HiveAgent.snapshot()) is restored instead');
+    check(Math.abs(sys.hive.get('agent-a').trust - known.a) < 1e-9 && Math.abs(sys.hive.get('agent-b').trust - known.b) < 1e-9, 'restore reproduces the exact prior per-agent trust distribution, not just the aggregate total');
+    sys.hive.repairTrustInvariant = realRepair;
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -2628,10 +2923,16 @@ async function testStatusCounts() {
     // already exist to catch, recurring for the two subsystems added after.
     check(before.architectureComponents >= 20, 'getStatus() surfaces a real ArchitectureMapper component count from construction, not zero');
     check(before.systemHealth === 'healthy', 'getStatus() reports healthy PerformanceMonitor status before any call has been measured');
+    // ASI §7: KnowledgeGraph.conceptCount() was built and unit-tested but
+    // never surfaced in this one-stop status snapshot -- the same gap the
+    // checks above already exist to catch, recurring a third time.
+    check(before.concepts === 0, 'getStatus() reports zero concepts before any activity');
 
     await sys.solve('calculate the average of a list of numbers');
     const afterSolve = sys.getStatus();
     check(afterSolve.transferredMethods === before.transferredMethods + 1, 'getStatus() reflects KnowledgeTransfer.size() growing after solve() registers a method');
+    check(afterSolve.concepts === sys.knowledge.conceptCount(), 'getStatus().concepts always matches the real KnowledgeGraph.conceptCount(), not a stale or fabricated number');
+    check(afterSolve.concepts > before.concepts, 'getStatus() reflects KnowledgeGraph.conceptCount() growing after solve() integrates its verified result as knowledge');
     // solve() now predicts the consequence of each candidate approach
     // (Section 2 step 6), so this alone already tracks several predictions --
     // not just the single processQuery() call below.
@@ -2841,6 +3142,51 @@ async function testMemoryPersistence() {
   }
 }
 
+async function testMemoryEncryptedPersistence() {
+  const { NeuroclawSystem } = await load('index.js');
+  const { readFile } = await import('node:fs/promises');
+  const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-memory-enc-'));
+  const path = join(dir, 'memory.enc.json');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // Section 25: "user data should remain protected by encryption where
+    // sensitive data is stored or transmitted." EncryptionManager (real
+    // AES-256-GCM + PBKDF2 key derivation) was fully built and instantiated
+    // but had zero call sites anywhere -- saveMemory()/loadMemory() wrote
+    // and read plaintext JSON. These encrypted siblings are additive: they
+    // don't change saveMemory()/loadMemory()'s existing plaintext format.
+    const sys = new NeuroclawSystem();
+    await sys.initialize();
+    sys.memory.remember('a secret fact that should never appear in plaintext on disk', { importance: 0.8 });
+    const key = sys.generateEncryptionKey();
+    check(Buffer.isBuffer(key) && key.length === 32, 'generateEncryptionKey() produces a real 256-bit key, not a placeholder');
+    await sys.saveMemoryEncrypted(path, key);
+
+    const onDisk = await readFile(path, 'utf-8');
+    check(!onDisk.includes('secret fact'), 'saveMemoryEncrypted() genuinely encrypts -- the plaintext content never appears in the on-disk file');
+
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    await sys2.loadMemoryEncrypted(path, key);
+    check(sys2.memory.all().some(m => m.content.includes('secret fact')), 'loadMemoryEncrypted() with the correct key restores the real memory content');
+
+    const sys3 = new NeuroclawSystem();
+    await sys3.initialize();
+    const wrongKey = sys3.generateEncryptionKey();
+    let rejected = false;
+    try {
+      await sys3.loadMemoryEncrypted(path, wrongKey);
+    } catch {
+      rejected = true;
+    }
+    check(rejected, 'loadMemoryEncrypted() with the wrong key fails loudly (GCM auth tag verification), never silently returning garbage');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testArchitectureMapperIntegration() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -2861,6 +3207,30 @@ async function testArchitectureMapperIntegration() {
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
+}
+
+async function testPerformanceMonitorAnomalyCapacity() {
+  // checkAnomalies() runs on every trackCall() across all six live
+  // NeuroclawSystem entry points -- real measured latency/CPU/memory/
+  // error-rate values legitimately cross the warning/critical thresholds
+  // under normal load, so this grows routinely on a long-running process.
+  // `points`/`predictions` (this same class) already cap themselves with
+  // the "slice to last N" idiom; `anomalies` had no cap at all, and its own
+  // clearOldAnomalies() existed to do the equivalent but had no call site.
+  const { PerformanceMonitor } = await load('models && skills/core/performance-monitor.js');
+  const mon = new PerformanceMonitor();
+  for (let i = 0; i < 1010; i++) {
+    mon.updateComponentMetrics({
+      componentId: 'test-component',
+      cpuPercent: 5,
+      memoryMB: 10,
+      latencyMs: 99999, // exceeds latencyCritical on every call
+      throughput: 1,
+      errorRate: 0,
+      lastUpdated: Date.now(),
+    });
+  }
+  check(mon.getAnomalies(100000).length === 1000, "PerformanceMonitor's anomalies cap at a bounded size instead of growing forever");
 }
 
 async function testPerformanceMonitorTracksRealCalls() {
@@ -3042,12 +3412,14 @@ async function main() {
   const suites = [
     ['MoE router', testMoE],
     ['Pipeline', testPipeline],
+    ['Pipeline runHistory capacity (Section 7)', testPipelineRunHistoryCapacity],
     ['Pipeline elastic growth', testPipelineElasticGrowth],
     ['LLM generate', testLLM],
     ['RLM select', testRLM],
     ['Quantization-aware training (Section 8)', testQuantizationAwareTraining],
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
+    ['Hyperdimensional history/transitions/seenPatterns capacity', testHyperdimensionalCapacity],
     ['Input-flag / self-model / live-correction (Section 3.1-3.3)', testInputFlagSelfModelLiveCorrection],
     ['Vale gating', testValeGating],
     ['Symbolic trace', testSymbolicTrace],
@@ -3072,6 +3444,8 @@ async function main() {
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
+    ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],
+    ['nsearch CLI command reaches netSearchGenerate (Section 22)', testNetSearchGenerateCliWiring],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
     ['Context compression (Section 7)', testContextCompressor],
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
@@ -3096,6 +3470,7 @@ async function main() {
     ['Self-monitor history introspection (Section 9/11)', testMonitorHistory],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Plugin registry health check reaches self-healer (Section 24)', testPluginRegistryHealthCheck],
+    ['Hive trust invariant repair/restore reaches self-healer (Section 24)', testHiveTrustInvariantHealing],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
@@ -3104,6 +3479,7 @@ async function main() {
     ['Subproblem knowledge integration (Section 4)', testSubproblemKnowledgeIntegration],
     ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],
+    ['Encrypted memory persistence (Section 25)', testMemoryEncryptedPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],
     ['Skill creation versioning (Section 5)', testSkillCreationVersioning],
     ['Self-authored skills inventory (Section 9/12)', testSelfAuthoredSkillsInventory],
@@ -3114,8 +3490,11 @@ async function main() {
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
+    ['ChatGroup message history capacity (Section 14)', testChatGroupMessageCapacity],
+    ['SharedBlackboard log capacity (Section 13)', testSharedBlackboardLogCapacity],
     ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
+    ['PerformanceMonitor anomaly capacity (Self-Improvement Phase 3)', testPerformanceMonitorAnomalyCapacity],
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],

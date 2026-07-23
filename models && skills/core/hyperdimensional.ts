@@ -105,6 +105,25 @@ export class HyperDimensionalEngine {
   private totalDims: number;
 
   /**
+   * process() runs on every live NeuroclawLLM.generate() call, and none of
+   * `history`, each neuron's own `transitions`, or `seenPatterns` had any
+   * bound at all -- the constructor's `historyLength` config option (passed
+   * by llm.js expecting a real cap) is actually aliased into `noveltyWindow`,
+   * a recency-decay time constant, not an entry limit; nothing in this file
+   * ever trims any of the three. `history` in particular has zero readers
+   * anywhere in this file -- pure accumulated dead weight from the start.
+   * Only the *last* entry of a neuron's `transitions` is ever read
+   * (resolveStateTransitions()'s `fromState` lookup), so trimming from the
+   * front is always safe there. `seenPatterns` eviction here is by
+   * insertion order (first-seen), not true least-recently-used -- an honest
+   * simplification, not a claim of LRU precision, matching the same
+   * plain-cap approach already used for SharedBlackboard's log.
+   */
+  private readonly historyCapacity = 5000;
+  private readonly perNeuronTransitionsCapacity = 100;
+  private readonly seenPatternsCapacity = 5000;
+
+  /**
    * Section 8: persistent per-connection weight tensor, all-to-all.
    * Flattened for cache locality: [targetNeuron][dimension][sourceNeuron]
    * This ensures that for a fixed target neuron i and dimension d,
@@ -280,6 +299,9 @@ export class HyperDimensionalEngine {
 
     this.recordPattern(patternHash, noveltyScore);
     this.history.push(...transitions, ...resolvedTransitions);
+    if (this.history.length > this.historyCapacity) {
+      this.history.splice(0, this.history.length - this.historyCapacity);
+    }
     this.iteration++;
 
     const inputTopography = new Map<number, number>();
@@ -1128,6 +1150,9 @@ export class HyperDimensionalEngine {
           cause: 'energy_resolved',
         };
         neuron.transitions.push(transition);
+        if (neuron.transitions.length > this.perNeuronTransitionsCapacity) {
+          neuron.transitions.splice(0, neuron.transitions.length - this.perNeuronTransitionsCapacity);
+        }
         resolved.push(transition);
       }
     }
@@ -1235,6 +1260,11 @@ export class HyperDimensionalEngine {
         lastSeen: Date.now(),
         novelty,
       });
+      while (this.seenPatterns.size > this.seenPatternsCapacity) {
+        const oldest = this.seenPatterns.keys().next().value;
+        if (oldest === undefined) break;
+        this.seenPatterns.delete(oldest);
+      }
     }
   }
 

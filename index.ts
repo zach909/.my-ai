@@ -426,9 +426,28 @@ export class NeuroclawSystem {
         }
       },
     });
+    // ASI §24: this component had only a `check` -- no `repair`/`snapshot`/
+    // `restore` -- so `heal()`'s fallback tiers could never run for it:
+    // `snapshotAll()` below is a guaranteed no-op without a `snapshot` fn, and
+    // `heal()`'s restore branch only fires `if (c.restore && snapshots.has(name))`.
+    // A drifted trust budget was therefore guaranteed to be reported
+    // "unrecoverable" on first detection, with zero attempt at recovery, even
+    // though the fix already existed: `HiveMind.repairTrustInvariant()`
+    // rescales every agent back onto the fixed budget, and `HiveAgent.snapshot()`
+    // ({id, role, specialization, trust}) was fully implemented with no call
+    // sites anywhere. Wiring both closes the gap additively -- no existing
+    // behavior changes, `check` is untouched.
     this.healer.register({
       name: "hive-trust-invariant",
       check: () => this.hive.list().length === 0 || Math.abs(this.hive.totalTrustValue() - 100) < 1e-3,
+      repair: () => this.hive.repairTrustInvariant(),
+      snapshot: () => this.hive.list().map(a => a.snapshot()),
+      restore: (snap: unknown) => {
+        for (const s of snap as Array<{ id: string; trust: number }>) {
+          const a = this.hive.get(s.id);
+          if (a) a.trust = s.trust;
+        }
+      },
     });
     this.healer.snapshotAll();
 
@@ -795,6 +814,21 @@ export class NeuroclawSystem {
     results: Array<{ step: string; status: "completed" | "failed" | "skipped"; result: string }>;
     complete: boolean;
   }> {
+    // ASI §10: PlanTracker.reset() existed and was unit-tested but had no
+    // live call site -- executePlanImpl()/autonomousTaskImpl() shared one
+    // PlanTracker instance for NeuroclawSystem's whole lifetime and only
+    // ever called setObjective()/addStep() on it, never reset(). addStep()'s
+    // de-duplication and shouldPerform()'s "already completed" check are both
+    // global across the tracker's entire step history, not scoped to the
+    // current objective, so a genuinely new, unrelated task whose step
+    // happened to reuse earlier phrasing (e.g. "write tests") would be
+    // silently reported already-completed from a previous, different
+    // objective — and steps/decisions/constraints grew forever across
+    // unrelated tasks on a long-running process. Reset only when the
+    // objective actually changes, preserving the tested same-objective
+    // continuation behavior (repeating the *same* objective must still skip
+    // its already-completed steps).
+    if (this.plan.getObjective() !== objective) this.plan.reset();
     this.plan.setObjective(objective);
     const results: Array<{ step: string; status: "completed" | "failed" | "skipped"; result: string }> = [];
     for (const desc of steps) {
@@ -877,6 +911,12 @@ export class NeuroclawSystem {
     healed: boolean | null;
   }> {
     this.ensureDefaultTeam();
+    // See executePlanImpl() for why this resets only on a genuine objective
+    // change: PlanTracker's de-duplication/completion checks are global
+    // across its whole step history, not scoped per-objective, so without
+    // this a new, unrelated task could be silently skipped as "already
+    // completed" from a previous objective's steps.
+    if (this.plan.getObjective() !== objective) this.plan.reset();
     this.plan.setObjective(objective);
     // ASI §10 / Section 10: a plan also records constraints and decisions, not
     // just steps. This is a real, always-true operating constraint (the
@@ -1291,6 +1331,18 @@ export class NeuroclawSystem {
     return this.discovery.generateHypotheses(topK);
   }
 
+  /**
+   * ASI §5/§11: a specific hypothesis by the id an earlier discoverPatterns()
+   * call returned — DiscoveryEngine.getHypothesis() existed and was exercised
+   * only by tests reaching past this class into the public `discovery` field
+   * directly, with no real caller-facing method of its own. Lets a caller
+   * check whether a previously-seen hypothesis has since been confirmed,
+   * rejected, or improved, rather than only ever seeing a fresh top-K list.
+   */
+  hypothesis(id: string) {
+    return this.discovery.getHypothesis(id);
+  }
+
   /** ASI §4: "identify contradictions" — every unresolved contradiction currently known. */
   findContradictions() {
     return this.knowledge.findContradictions();
@@ -1643,6 +1695,45 @@ export class NeuroclawSystem {
   }
 
   /**
+   * Section 25: "user data should remain protected by encryption where
+   * sensitive data is stored or transmitted." `EncryptionManager` — real
+   * AES-256-GCM encryption with PBKDF2 password-based key derivation — was
+   * fully built, correct, and already instantiated (by `NeuroclawRunner`),
+   * but had zero call sites anywhere in the whole codebase: `saveMemory()`/
+   * `loadMemory()` write and read long-term memory as plaintext JSON.
+   *
+   * These are additive, encrypted siblings, not a change to the existing
+   * methods — silently changing `saveMemory()`'s file format would break
+   * loading any file already saved by it. They also deliberately take the
+   * key as a parameter rather than choosing a key-storage policy
+   * themselves: "how keys are managed" (§25) is a real design decision for
+   * the caller/deployment (a passphrase via `hashPassword()`, an OS
+   * keychain, a generated key file) that this method should not impose.
+   */
+  async saveMemoryEncrypted(path: string, key: Buffer): Promise<void> {
+    const enc = this.runner.getEncryptionManager();
+    const { encrypted, iv, tag } = enc.encrypt(this.memory.serialize(), key);
+    await writeFile(
+      path,
+      JSON.stringify({ encrypted: encrypted.toString("base64"), iv: iv.toString("base64"), tag: tag.toString("base64") }),
+      "utf-8",
+    );
+  }
+
+  /** Replace the current long-term memory with a snapshot previously saved by `saveMemoryEncrypted()`, using the same key. */
+  async loadMemoryEncrypted(path: string, key: Buffer): Promise<void> {
+    const enc = this.runner.getEncryptionManager();
+    const raw = JSON.parse(await readFile(path, "utf-8")) as { encrypted: string; iv: string; tag: string };
+    const json = enc.decrypt(Buffer.from(raw.encrypted, "base64"), key, Buffer.from(raw.iv, "base64"), Buffer.from(raw.tag, "base64"));
+    this.memory = LongTermMemory.deserialize(json);
+  }
+
+  /** A fresh random 256-bit key suitable for `saveMemoryEncrypted()`/`loadMemoryEncrypted()`. */
+  generateEncryptionKey(): Buffer {
+    return this.runner.getEncryptionManager().generateKey();
+  }
+
+  /**
    * ASI §9/§12: "which skills it has" / "use learning to create skills, use
    * skills to solve problems" — every skill `learn()` creates via the real
    * skill-maker plugin is written to `~/.neuroclaw/skills/*.neuri` and then
@@ -1685,6 +1776,7 @@ export class NeuroclawSystem {
     alignment: number;
     hiveAgents: number;
     memories: number;
+    concepts: number;
     transferredMethods: number;
     trackedPredictions: number;
     architectureComponents: number;
@@ -1697,6 +1789,13 @@ export class NeuroclawSystem {
       alignment: this.empathy.getAlignmentScore(),
       hiveAgents: this.hive.list().length,
       memories: this.memory.size(),
+      // ASI §7: KnowledgeGraph.conceptCount() was built and unit-tested (via
+      // the class's own tests) but never surfaced here — the same "built but
+      // not surfaced in the one-stop status snapshot" gap the two fields
+      // below already closed once, then closed again for the two
+      // Self-Improvement fields after that, recurring a third time for the
+      // knowledge graph `solve()`/`learn()` build up throughout a session.
+      concepts: this.knowledge.conceptCount(),
       // ASI §7/§10: KnowledgeTransfer.size() and PredictionEngine.size() were
       // built and unit-tested but never surfaced anywhere — real counts of
       // how much cross-domain method transfer and outcome-prediction history

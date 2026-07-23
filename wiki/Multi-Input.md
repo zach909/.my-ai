@@ -43,7 +43,7 @@ Creating a second virtual mouse and keyboard solves half the problem; without de
 
 ## Verifying it
 
-`npm test` (`test/smoke.mjs`)'s system-control section exercises `WindowControl`'s window listing and `KeyboardControl`'s `press_key`/`type_text`/`mouse_move`, all returning honest success/failure rather than a stub `true` when no real virtual device is present (as in a headless CI sandbox).
+`npm test` (`test/smoke.mjs`)'s `App bootstrap` suite exercises `SystemAccess`/`MultiDesktopManager` only indirectly today, through `getMultiDesktop()` and the CLI's `printStatus()` command. `MultiDesktopManager` itself — `VirtualDevice`/`DeviceBinding` creation, `getVirtualDevices()`/`getAllBindings()`, desktop exclusivity — does not yet have direct unit coverage in `test/smoke.mjs`.
 
 ## See Also
 
