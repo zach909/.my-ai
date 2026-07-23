@@ -463,7 +463,7 @@ export class WebServer {
         const { ExtensionBuilder } = await import('../extension-builder/builder.js');
         const builder = new ExtensionBuilder();
         const project = builder.createProject(name, body?.description ?? '');
-        const parsed = builder.parseNeuroLang(project.id, code);
+        const parsed = await builder.parseNeuroLang(project.id, code);
         if (!parsed.success) {
           this.sendJson(res, { errors: parsed.errors }, 400);
           return;

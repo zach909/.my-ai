@@ -1,5 +1,7 @@
 ```
 # Python
+```gitignore
+# Python cache
 __pycache__/
 *.pyc
 *.pyo
@@ -49,6 +51,33 @@ wheels/
 *.egg
 
 # IDE
+
+# Compiled Python files
+*.pyc
+*.pyo
+*.pyd
+*.so
+*.egg-info/
+
+# Dependencies
+venv/
+.venv/
+.env
+.env.local
+*.env.*
+
+# Logs and temporary files
+*.log
+*.tmp
+*.swp
+*.swo
+
+# Coverage reports
+.coverage
+htmlcov/
+coverage/
+
+# IDE specific
 .vscode/
 .idea/
 *.swp
@@ -67,4 +96,8 @@ Thumbs.db
 # Coverage
 coverage/
 htmlcov/
+
+# OS specific
+.DS_Store
+Thumbs.db
 ```

@@ -1073,6 +1073,23 @@ async function testWebBackend() {
     const stillAlive = await get('/api/status');
     check(stillAlive.status === 200 && JSON.parse(stillAlive.body).running === true,
       'Web backend is still running and responsive after a malformed /api/dict/:word request');
+
+    // POST /api/extension/build is the only real HTTP-level coverage of
+    // ExtensionBuilder.parseNeuroLang() in this suite -- testExtensionBuilderFlow
+    // (elsewhere) calls ExtensionBuilder directly, never through this handler.
+    // parseNeuroLang() became async when parse() was made to yield across many
+    // @code= lines (Section 21/26); the handler itself was missed and called it
+    // without awaiting, so `parsed` was a pending Promise and `parsed.success`
+    // was always undefined -- every single request to this endpoint, valid
+    // NeuroLang or not, unconditionally 400'd before an extension was ever
+    // built. Exercise the real route end-to-end so a regression here fails
+    // loudly instead of only in production.
+    const build = await post('/api/extension/build', {
+      name: 'smoke_test_ext', code: 'name="alpha"\n"alpha"@definition="a test neuron"', quantize: false,
+    });
+    const buildJson = JSON.parse(build.body);
+    check(build.status === 200 && buildJson.ok === true && buildJson.neurons?.some(n => n.name === 'alpha'),
+      'Web backend POST /api/extension/build actually builds and saves an extension (not an unconditional 400)');
   } finally {
     await web.stop();
   }
