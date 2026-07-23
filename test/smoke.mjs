@@ -1278,6 +1278,21 @@ async function testAutonomousTask() {
     check(r2.results.find(x => x.step === 'write tests').status === 'completed', 'A new step still runs on re-invocation');
     check(sys.memory.all().filter(m => m.tags.includes('task')).length >= 3, 'Task results are recorded in long-term memory');
 
+    // PlanTracker.reset() existed and was unit-tested but had no live call
+    // site: the shared PlanTracker's de-duplication/completion checks are
+    // global across its whole step history, not scoped to the current
+    // objective, so a genuinely new, unrelated task whose step happened to
+    // reuse earlier phrasing was silently reported already-completed from a
+    // *different* objective, and steps/decisions/constraints grew forever
+    // across unrelated tasks. autonomousTask()/executePlan() now reset the
+    // plan whenever the objective actually changes (same-objective
+    // continuation above is unaffected).
+    const r3 = await sys.autonomousTask('write documentation', ['design the routes']);
+    check(r3.results.find(x => x.step === 'design the routes').status === 'completed', 'A step reusing earlier phrasing genuinely runs for a new, unrelated objective, instead of being wrongly skipped as already-completed from a different task');
+    check(sys.plan.getObjective() === 'write documentation', "the plan's objective reflects the new task, not the stale prior one");
+    check(sys.plan.getSteps().length === 1, 'the plan resets its step history on a genuine objective change, instead of accumulating steps from unrelated past tasks forever');
+    check(sys.plan.getConstraints().length === 1 && sys.plan.getConstraints()[0].includes('no external APIs'), "the plan's constraints are also reset and re-added fresh for the new objective, not accumulated");
+
     // Compressed-context is reachable from the query path.
     await sys.processQuery('the payment service handles stripe transactions securely');
     await sys.processQuery('the payment service retries failed stripe charges');

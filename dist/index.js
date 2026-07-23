@@ -742,6 +742,22 @@ export class NeuroclawSystem {
         return this.trackCall("execute-plan", async () => this.executePlanImpl(objective, steps));
     }
     async executePlanImpl(objective, steps) {
+        // ASI §10: PlanTracker.reset() existed and was unit-tested but had no
+        // live call site -- executePlanImpl()/autonomousTaskImpl() shared one
+        // PlanTracker instance for NeuroclawSystem's whole lifetime and only
+        // ever called setObjective()/addStep() on it, never reset(). addStep()'s
+        // de-duplication and shouldPerform()'s "already completed" check are both
+        // global across the tracker's entire step history, not scoped to the
+        // current objective, so a genuinely new, unrelated task whose step
+        // happened to reuse earlier phrasing (e.g. "write tests") would be
+        // silently reported already-completed from a previous, different
+        // objective — and steps/decisions/constraints grew forever across
+        // unrelated tasks on a long-running process. Reset only when the
+        // objective actually changes, preserving the tested same-objective
+        // continuation behavior (repeating the *same* objective must still skip
+        // its already-completed steps).
+        if (this.plan.getObjective() !== objective)
+            this.plan.reset();
         this.plan.setObjective(objective);
         const results = [];
         for (const desc of steps) {
@@ -814,6 +830,13 @@ export class NeuroclawSystem {
     }
     async autonomousTaskImpl(objective, steps) {
         this.ensureDefaultTeam();
+        // See executePlanImpl() for why this resets only on a genuine objective
+        // change: PlanTracker's de-duplication/completion checks are global
+        // across its whole step history, not scoped per-objective, so without
+        // this a new, unrelated task could be silently skipped as "already
+        // completed" from a previous objective's steps.
+        if (this.plan.getObjective() !== objective)
+            this.plan.reset();
         this.plan.setObjective(objective);
         // ASI §10 / Section 10: a plan also records constraints and decisions, not
         // just steps. This is a real, always-true operating constraint (the
