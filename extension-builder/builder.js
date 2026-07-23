@@ -510,21 +510,38 @@ export class ExtensionBuilder {
         if (result.errors.length > 0) {
             return { success: false, errors: result.errors };
         }
-        // Add parsed neurons to project
-        const evaluated = this.neuroLang.evaluate(result);
+        const evaluated = await this.neuroLang.evaluate(result);
+        // Add parsed neurons to project. evaluate() connects every neuron to
+        // every other by default, so a project can have up to O(n^2)
+        // connections -- looking up each connection's target with
+        // Array.from(project.neurons.values()).find(...) (a full O(n) linear
+        // scan) turned this into an O(n^3) synchronous loop, unauthenticated
+        // via POST /api/extension/build. A local name->neuron map makes each
+        // lookup O(1); periodic yields (mirroring evaluate()'s own fix) keep
+        // it from monopolizing the event loop for very large n.
+        const nameToNeuron = new Map();
         for (const [name, neuronData] of evaluated) {
             const neuron = this.addNeuron(projectId, name, neuronData.value);
             if (neuron) {
                 neuron.definition = neuronData.definition;
                 neuron.code = neuronData.code || '';
-                // Add connections
-                for (const [target, weight] of neuronData.connections) {
-                    // Find target neuron by name
-                    const targetNeuron = Array.from(project.neurons.values()).find(n => n.name === target);
-                    if (targetNeuron) {
-                        this.connectNeurons(projectId, neuron.id, targetNeuron.id, weight, 0);
-                    }
+                nameToNeuron.set(name, neuron);
+            }
+        }
+        let pairsSinceYield = 0;
+        for (const [name, neuronData] of evaluated) {
+            const neuron = nameToNeuron.get(name);
+            if (!neuron) continue;
+            for (const [target, weight] of neuronData.connections) {
+                const targetNeuron = nameToNeuron.get(target);
+                if (targetNeuron) {
+                    this.connectNeurons(projectId, neuron.id, targetNeuron.id, weight, 0);
                 }
+            }
+            pairsSinceYield += neuronData.connections.size;
+            if (pairsSinceYield >= 200000) {
+                pairsSinceYield = 0;
+                await new Promise(resolve => setImmediate(resolve));
             }
         }
         project.updatedAt = Date.now();

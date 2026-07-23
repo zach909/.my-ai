@@ -368,16 +368,27 @@ export class WebServer {
                     this.sendJson(res, { errors: parsed.errors }, 400);
                     return;
                 }
-                const neurons = interp.evaluate(parsed);
+                const neurons = await interp.evaluate(parsed);
                 // Sections 21/22: surface the interpreter's own Code-to-Net self-test
                 // and NetSearchEngine results -- previously this endpoint echoed back
                 // only the raw parsed flags/code, never actually running either
                 // built, unit-tested mechanism.
-                const result = Array.from(neurons.entries()).map(([name, n]) => {
+                //
+                // evaluate() connects every neuron to every other by default, so
+                // this response body is itself O(n^2) in the number of declared
+                // neurons -- materializing each neuron's full connection list is a
+                // second synchronous cost on top of evaluate()'s own loop (measured:
+                // for 3000 plain neuron declarations, building this array alone took
+                // longer than evaluate() itself). Chunked with the same periodic
+                // yield so it doesn't reintroduce the freeze evaluate()'s own fix
+                // just closed.
+                const result = [];
+                let entriesSinceYield = 0;
+                for (const [name, n] of neurons) {
                     const codeNet = interp.getCodeNet(name);
                     const codeNetTest = codeNet ? interp.testCodeNet(name) : undefined;
                     const netSearchHits = n.isNetSearch && n.netLocation ? interp.netSearch(n.netLocation) : undefined;
-                    return {
+                    result.push({
                         name,
                         value: n.value,
                         definition: n.definition,
@@ -388,8 +399,13 @@ export class WebServer {
                         connections: Array.from(n.connections.entries()),
                         codeNet: codeNet ? { mode: codeNet.mode, arity: codeNet.arity, test: codeNetTest } : undefined,
                         netSearchHits,
-                    };
-                });
+                    });
+                    entriesSinceYield += n.connections.size;
+                    if (entriesSinceYield >= 200000) {
+                        entriesSinceYield = 0;
+                        await new Promise(resolve => setImmediate(resolve));
+                    }
+                }
                 this.sendJson(res, { neurons: result, printOutputs: parsed.printOutputs });
             }
             catch (err) {

@@ -388,7 +388,7 @@ export class CLI {
       for (const err of parsed.errors) console.log(`    ${err}`);
       return;
     }
-    const neurons = interp.evaluate(parsed);
+    const neurons = await interp.evaluate(parsed);
     console.log(this.colorize(GREEN, `  NeuriLang: ${neurons.size} neurons defined`));
     for (const [name, n] of neurons) {
       // Execute attached code first so value reflects computed result

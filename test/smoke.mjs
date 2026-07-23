@@ -1213,7 +1213,7 @@ async function testNeuralDefinitionDirectives() {
     '"netsearch"@name="finder"', '"netsearch"@net="corpus/defs"',
   ].join('\n');
   const r = await it.parse(src);
-  const neurons = it.evaluate(r);
+  const neurons = await it.evaluate(r);
   check(r.errors.length === 0, 'Neural Definition DSL parses all directives without error');
   check(neurons.get('alpha').value === 2.5 && neurons.get('alpha').vale === 0.8, 'name/@value/@vale applied');
   check(neurons.get('beta').connections.get('alpha') === 0.5, '@connections installs a weighted edge');
@@ -1223,7 +1223,7 @@ async function testNeuralDefinitionDirectives() {
   const itc = new NeuroLangInterpreter();
   const rc = await itc.parse(['name="other"', 'name="third"', 'name="n"',
                         '"n"@connections=".other*0.5+.third*0.3"'].join('\n'));
-  const nc = itc.evaluate(rc);
+  const nc = await itc.evaluate(rc);
   check(rc.errors.length === 0 && nc.get('n').connections.get('other') === 0.5
         && nc.get('n').connections.get('third') === 0.3,
         'documented multi-target @connections form parses into one weighted edge per target');
@@ -1231,15 +1231,17 @@ async function testNeuralDefinitionDirectives() {
   // selector is accepted and the trailing additive weight folds into the edge.
   const its = new NeuroLangInterpreter();
   const rs = await its.parse(['name="y"', 'name="x"', '"x"@connections=".y/state*0.5+0.25"'].join('\n'));
-  const ns = its.evaluate(rs);
+  const ns = await its.evaluate(rs);
   check(rs.errors.length === 0, 'Section 20 connection form (.target/variable*bias+weight) parses without error');
   check(ns.get('x').connections.get('y') === 0.75, 'Section 20 form folds bias+additive into the edge weight (0.5+0.25)');
   // The bare state-selector form `.target/variable` defaults to weight 1.0.
   const rs2 = await its.parse(['name="y"', 'name="x"', '"x"@connections=".y/phase"'].join('\n'));
-  check(rs2.errors.length === 0 && its.evaluate(rs2).get('x').connections.get('y') === 1.0, 'Section 20 bare state-selector defaults to weight 1.0');
+  const ns2 = await its.evaluate(rs2);
+  check(rs2.errors.length === 0 && ns2.get('x').connections.get('y') === 1.0, 'Section 20 bare state-selector defaults to weight 1.0');
   // A dotted numeric target (.5) is a connection to neuron "5", not an additive.
   const rs3 = await its.parse(['name="5"', 'name="q"', '"q"@connections=".5"'].join('\n'));
-  check(rs3.errors.length === 0 && its.evaluate(rs3).get('q').connections.get('5') === 1.0, 'Dotted numeric target ".5" connects to neuron "5", not an additive weight');
+  const ns3 = await its.evaluate(rs3);
+  check(rs3.errors.length === 0 && ns3.get('q').connections.get('5') === 1.0, 'Dotted numeric target ".5" connects to neuron "5", not an additive weight');
   check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
   const finder = neurons.get('finder');
   check(finder.isNetSearch && finder.netLocation === 'corpus/defs', 'netsearch@name defines a search, netsearch@net attaches its location');
@@ -1248,7 +1250,7 @@ async function testNeuralDefinitionDirectives() {
   // an earlier netsearch neuron (declared first) is still pending.
   const it2 = new NeuroLangInterpreter();
   const r2 = await it2.parse(['"netsearch"@name="first"', '"netsearch"@name="second"', '"netsearch"@net="loc/2"'].join('\n'));
-  const n2 = it2.evaluate(r2);
+  const n2 = await it2.evaluate(r2);
   check(n2.get('second').netLocation === 'loc/2', 'netsearch@net binds to the most recent pending definition (parse order)');
   check(n2.get('first').netLocation === null, 'an earlier pending netsearch is not mis-bound by a later @net');
 }
