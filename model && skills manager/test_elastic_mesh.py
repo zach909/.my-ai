@@ -23,7 +23,13 @@ write-up); this just guards the architectures themselves.
 
 Run with: python3 test_elastic_mesh.py
 """
-import torch
+import sys
+
+try:
+    import torch
+except ImportError:
+    print("torch not installed — test_elastic_mesh.py needs it (pip install torch)")
+    sys.exit(0)
 
 from tinygpt.config import ModelConfig
 from tinygpt.model import build_model
