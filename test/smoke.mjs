@@ -1096,6 +1096,8 @@ async function testSelfExtension() {
     const llm = new NeuroclawLLM({ selfExtensionsDir: dir });
     llm.build();
     const before = llm.getStats().selfExtensionsCount ?? 0;
+    const builder = llm.getBuilder();
+    const projectsBefore = builder.projects.size;
     await llm.createSelfExtension('learn to greet', 'hello, nice to meet you');
     const { readdirSync, existsSync: exists } = await import('node:fs');
     const entries = readdirSync(dir).filter((e) => e.startsWith('self_ext_'));
@@ -1103,6 +1105,17 @@ async function testSelfExtension() {
     const extDir = join(dir, entries[0]);
     check(exists(join(extDir, 'model.json')), 'Self-extension is saved un-quantized (model.json)');
     check(exists(join(extDir, 'model.q4.json')), 'Self-extension is quantized before install (model.q4.json)');
+    // ExtensionBuilder.deleteProject() existed but had no caller: every
+    // self-extension's builder-internal project (its own neurons/connections/
+    // layers Maps) was persisted to disk/selfExtensions and then never
+    // referenced again, but stayed in builder.projects forever -- an
+    // unbounded leak on the long-lived NeuroclawLLM/ExtensionBuilder instance
+    // the web server and CLI reuse for their whole process lifetime.
+    check(builder.projects.size === projectsBefore, "createSelfExtension() cleans up its own builder-internal project after persisting it -- builder.projects does not grow, even though a real self-extension was created");
+    for (let i = 0; i < 5; i++) {
+      await llm.createSelfExtension(`learn thing ${i}`, `response ${i}`);
+    }
+    check(builder.projects.size === projectsBefore, "repeated createSelfExtension() calls never accumulate leaked projects in builder.projects");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
