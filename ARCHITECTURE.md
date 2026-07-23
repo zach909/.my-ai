@@ -862,6 +862,10 @@ The immediately preceding fix corrected `wiki/System-Access.md`'s claim that `np
 
 Doc-only change; no code, build, or test suite affected.
 
+### `wiki/Quantum-Net.md`'s flagship code sample was entirely fictional (Section 18)
+
+Every line of the `QuantumNeuralNet` TypeScript example was wrong: `calculateSignature()` is `private` (uncallable from outside the class); `encode()` doesn't exist anywhere in the class; `interfere()` takes two neuron-id strings, not two state objects; `collapse()` takes one neuron id and returns one number, not an array. The real public API — confirmed against `NeuroPipeline`'s actual live usage — is `addNeuron()`, `createSuperposition()`, `interfere(idA, idB)`, `phaseConsensus(ids)`, `groverAmplify(ids, targetId)`, `collapse(id)`, all id-based. Corrected the sample to match. Doc-only change; no code, build, or test suite affected.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
