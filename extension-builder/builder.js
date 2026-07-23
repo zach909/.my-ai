@@ -1,6 +1,27 @@
 import { BackgroundQuantizer } from '../models && skills/core/quantizer.js';
 import { NeuroLangInterpreter } from '../models && skills/core/neuro-lang.js';
 import { CodeToNet } from '../models && skills/core/thorns.js';
+
+/**
+ * Cooperative yield: hands control back to the event loop. Defined locally
+ * (mirroring, not importing, neuro-lang.ts's own helper) because this file
+ * is imported directly by src/features/builder/use-builder.ts and run in
+ * the browser with no build step -- the source-tree sibling
+ * models && skills/core/neuro-lang.js it would otherwise import from is a
+ * stale, out-of-date hand-copy (the real neuro-lang.js only exists freshly
+ * compiled in dist/) that predates yieldToEventLoop entirely and doesn't
+ * export it, so importing it here would break at import time in exactly
+ * the browser context this needs to support. setImmediate is Node-only
+ * (undefined in every major browser), so a bare `setImmediate(resolve)`
+ * threw ReferenceError the first time a large enough parse crossed a
+ * yield threshold client-side.
+ */
+function yieldToEventLoop() {
+    return new Promise(resolve => {
+        if (typeof setImmediate === 'function') setImmediate(resolve);
+        else setTimeout(resolve, 0);
+    });
+}
 export class ExtensionBuilder {
     projects;
     currentProjectId;
@@ -528,6 +549,13 @@ export class ExtensionBuilder {
                 nameToNeuron.set(name, neuron);
             }
         }
+        // Checked inside the inner loop, not once per outer (name) iteration
+        // -- checking only at the end of an outer iteration would let a
+        // single neuron's own connections.size (which can itself approach
+        // the parsed neuron count, since evaluate() connects every neuron to
+        // every other by default) run entirely unyielded whenever it alone
+        // exceeds the threshold, defeating the "bounded interval regardless
+        // of n" intent for exactly the large-n case this exists to protect.
         let pairsSinceYield = 0;
         for (const [name, neuronData] of evaluated) {
             const neuron = nameToNeuron.get(name);
@@ -537,11 +565,11 @@ export class ExtensionBuilder {
                 if (targetNeuron) {
                     this.connectNeurons(projectId, neuron.id, targetNeuron.id, weight, 0);
                 }
-            }
-            pairsSinceYield += neuronData.connections.size;
-            if (pairsSinceYield >= 200000) {
-                pairsSinceYield = 0;
-                await new Promise(resolve => setImmediate(resolve));
+                pairsSinceYield++;
+                if (pairsSinceYield >= 200000) {
+                    pairsSinceYield = 0;
+                    await yieldToEventLoop();
+                }
             }
         }
         project.updatedAt = Date.now();
