@@ -3250,6 +3250,22 @@ async function testPerformanceMonitorAnomalyCapacity() {
   check(mon.getAnomalies(100000).length === 1000, "PerformanceMonitor's anomalies cap at a bounded size instead of growing forever");
 }
 
+async function testSelfMonitorLogCapacity() {
+  // observe() runs on every processQuery() and solve() call -- the system's
+  // two busiest entry points -- via monitor.observe('prediction.surprise', ...)
+  // and monitor.observe('solve.confidence', ...) in index.ts. `log` had no
+  // cap, so it grew forever on a long-running process, and anomalies()
+  // (called by hasFailure() on every one of those calls) does a full linear
+  // scan of `log`, so both memory and per-call CPU cost grew unboundedly with
+  // lifetime query count.
+  const { SelfMonitor } = await load('models && skills/core/self-monitor.js');
+  const mon = new SelfMonitor();
+  for (let i = 0; i < 6000; i++) mon.observe('prediction.surprise', Math.random());
+  check(mon.history().length === 5000, "SelfMonitor's log caps at a bounded size instead of growing forever");
+  const spike = mon.observe('prediction.surprise', 999999);
+  check(spike.severity === 'failure' && mon.hasFailure(), 'SelfMonitor still correctly detects a genuine failure once capped');
+}
+
 async function testPerformanceMonitorTracksRealCalls() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -3512,6 +3528,7 @@ async function main() {
     ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
     ['PerformanceMonitor anomaly capacity (Self-Improvement Phase 3)', testPerformanceMonitorAnomalyCapacity],
+    ['SelfMonitor log capacity (Section 11)', testSelfMonitorLogCapacity],
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
