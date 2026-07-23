@@ -111,10 +111,10 @@ export declare class ExtensionBuilder {
         bits: number;
     }): Promise<string | null>;
     addAPIOutputLayer(projectId: string, config: APIOutputConfig): boolean;
-    parseNeuroLang(projectId: string, source: string): {
+    parseNeuroLang(projectId: string, source: string): Promise<{
         success: boolean;
         errors: string[];
-    };
+    }>;
     exportToNeuroLang(projectId: string): string;
     listProjects(): ProjectData[];
     deleteProject(projectId: string): boolean;

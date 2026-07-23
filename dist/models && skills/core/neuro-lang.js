@@ -26,6 +26,8 @@ import { NetSearchEngine } from './net-search.js';
 function yieldToEventLoop() {
     return new Promise(resolve => setImmediate(resolve));
 }
+/** evaluate()'s O(n^2) default-connection fill yields after roughly this many neuron pairs, keeping the interval between yields bounded regardless of neuron count. */
+const EVALUATE_YIELD_EVERY_PAIRS = 200000;
 // ── Parser ────────────────────────────────────────────────────────────────────
 export class NeuroLangInterpreter {
     constructor() {
@@ -88,10 +90,24 @@ export class NeuroLangInterpreter {
      * Add default connections from every neuron to every other neuron that
      * does not already have an explicit connection (weight = 0.1).
      * Returns the fully-connected neuron map.
+     *
+     * O(n^2) over the parsed neuron count, fully unguarded by parse()'s
+     * per-compile yield (this runs after parse() returns, and a plain
+     * "X"@value="..." line never touches codeToNet.compile() at all) --
+     * reachable unauthenticated via POST /api/neuri and POST
+     * /api/extension/build with a source string of many cheap neuron
+     * declarations, no @code= required. Yields to the event loop every
+     * EVALUATE_YIELD_EVERY source neurons so it can't monopolize the
+     * process the way the @code= compile loop used to (see ARCHITECTURE.md).
      */
-    evaluate(result) {
+    async evaluate(result) {
         const neurons = result.neurons;
         const names = Array.from(neurons.keys());
+        // Yield after roughly a fixed amount of pair-work rather than a fixed
+        // outer-loop iteration count, so the interval between yields stays
+        // bounded regardless of how many neurons were declared (a fixed outer
+        // stride would mean O(n) work per interval, growing unboundedly with n).
+        let pairsSinceYield = 0;
         for (const srcName of names) {
             const src = neurons.get(srcName);
             for (const dstName of names) {
@@ -100,6 +116,11 @@ export class NeuroLangInterpreter {
                 if (!src.connections.has(dstName)) {
                     src.connections.set(dstName, 0.1);
                 }
+            }
+            pairsSinceYield += names.length;
+            if (pairsSinceYield >= EVALUATE_YIELD_EVERY_PAIRS) {
+                pairsSinceYield = 0;
+                await yieldToEventLoop();
             }
         }
         return neurons;
