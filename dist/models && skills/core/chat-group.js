@@ -15,6 +15,16 @@ export class ChatGroup {
         this.completed = false;
         this.result = null;
         this.seq = 0;
+        /**
+         * NeuroclawSystem.collaborate() reuses one persistent ChatGroup instance
+         * for the process's whole lifetime, and post() had no bound at all --
+         * the same unbounded-growth pattern already fixed this session for
+         * SharedBlackboard's log and PredictionEngine's prediction store. A FIFO
+         * cap is the honest fit here too: getHistory() is a plain audit trail,
+         * and neither decide() nor discuss() ever reads past messages back in, so
+         * trimming old entries changes nothing about decision-making.
+         */
+        this.messagesCapacity = 5000;
         this.id = id;
         this.name = name;
         this.hive = hive;
@@ -44,6 +54,9 @@ export class ChatGroup {
             timestamp: Date.now(),
         };
         this.messages.push(msg);
+        if (this.messages.length > this.messagesCapacity) {
+            this.messages = this.messages.slice(-this.messagesCapacity);
+        }
         const author = this.hive.get(from);
         if (author) {
             // Shared context: the latest broadcast/message is visible to the group.

@@ -820,6 +820,14 @@ Added the same `if (this.anomalies.length > 1000) this.anomalies = this.anomalie
 
 Verified live: 1010 calls that each force a critical-latency anomaly cap `getAnomalies()`'s total stored count at exactly 1000. Purely in-memory — no real directory touched. Covered by a new dedicated `PerformanceMonitor anomaly capacity` suite (the raw class had no direct unit test before, only indirect coverage through `NeuroclawSystem`).
 
+### `ChatGroup.messages` had no cap either — the sixth unbounded-growth fix this pass (Section 14)
+
+`NeuroclawSystem.collaborate()` reuses one persistent `ChatGroup` instance for the process's entire lifetime, exactly like `SharedBlackboard`/`PredictionEngine`/`PerformanceMonitor` before it — and `post()` (called once per member on every `discuss()`, itself called once per `collaborate()`) pushed to a private `messages` array with no bound at all. Same family of bug, same fix: a FIFO cap.
+
+Confirmed this is genuinely safe to cap: `decide()` never reads `messages` back in — its votes come from fresh `agent.process()` calls each time — and `discuss()` doesn't consult prior history either, so trimming old entries changes nothing about how the group actually decides anything. `getHistory()` is a plain audit trail, same as `SharedBlackboard.history()`, with no importance ranking to preserve.
+
+Added a `messagesCapacity` (5000, matching the established precedent) and trim `messages` immediately after each `post()`. Verified live: 5010 posts cap `getHistory().length` at exactly 5000 with the oldest evicted first, and `decide()` still produces a correct, real trust-weighted tally after the churn. Purely in-memory — no real directory touched. Covered by a new dedicated `ChatGroup message history capacity` suite.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.

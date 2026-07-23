@@ -1668,6 +1668,31 @@ async function testSharedBlackboardLogCapacity() {
   check(board.read('agent1', 'key5009') === 'value5009', 'reads are unaffected by log trimming');
 }
 
+async function testChatGroupMessageCapacity() {
+  // Section 14: NeuroclawSystem.collaborate() reuses one persistent
+  // ChatGroup for the process's whole lifetime, and post() had no bound at
+  // all on `messages` -- the same unbounded-growth pattern already fixed
+  // this session for SharedBlackboard's log, PredictionEngine's prediction
+  // store, and PerformanceMonitor's anomalies. Verify the FIFO cap works
+  // and that decide() (which never reads message history back in) is
+  // unaffected by heavy churn.
+  const { HiveMind } = await load('models && skills/core/hive-mind.js');
+  const { ChatGroup } = await load('models && skills/core/chat-group.js');
+  const hive = new HiveMind({ totalTrust: 100, defaultThink: (_p, a) => a.specialization });
+  hive.spawn({ id: 'a1', role: 'coder', specialization: 'coding', capabilities: [] });
+  const group = new ChatGroup('g1', 'Test Group', hive);
+  group.addMember('a1');
+
+  for (let i = 0; i < 5010; i++) group.post('a1', `message number ${i}`);
+  const hist = group.getHistory();
+  check(hist.length === 5000, "ChatGroup's message history caps at a bounded size instead of growing forever");
+  check(hist[0].content === 'message number 10', 'the oldest messages are evicted first (FIFO)');
+  check(hist[hist.length - 1].content === 'message number 5009', 'the most recent message is always retained');
+
+  const decision = await group.decide('what should we do', ['proceed', 'reject']);
+  check(decision.decision === 'proceed' && decision.tally.proceed === 100, 'decide() is unaffected by heavy message-history churn (it never reads message history back in)');
+}
+
 async function testHiveMindAndChatGroups() {
   const { HiveMind } = await load('models && skills/core/hive-mind.js');
   const { ChatGroup } = await load('models && skills/core/chat-group.js');
@@ -3399,6 +3424,7 @@ async function main() {
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
+    ['ChatGroup message history capacity (Section 14)', testChatGroupMessageCapacity],
     ['SharedBlackboard log capacity (Section 13)', testSharedBlackboardLogCapacity],
     ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
