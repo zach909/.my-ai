@@ -920,11 +920,48 @@ async function testElasticCoreBlock() {
   const charToId = new Map(chars.map((c, i) => [c, i]));
   const idToChar = new Map(chars.map((c, i) => [i, c]));
   const trainer = new NeuroclawTrainer(chars.length, charToId, idToChar, { useElasticCore: true, epochs: 1, contextWindow: 2, hiddenDim: 4, elasticNeurons: 4, elasticStateDim: 3, learningRate: 0.05 });
-  trainer.train('ab ab ab ab ');
+  await trainer.train('ab ab ab ab ');
   check(trainer.getElasticCore() !== null && trainer.getSamplesProcessed() > 0 && Number.isFinite(trainer.getTrainingLoss()), 'TinyGPT trainer can route hidden-layer training through ElasticCoreBlock and update its parameters');
   const qat = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 4, seed: 8, quantizationAware: true, quantizationBits: 4 });
   const q = qat.forward(input, { drivenNeurons: new Set([0]) });
   check(Number.isFinite(q.quantizationDrift) && q.quantizationDrift > 0, 'ElasticCoreBlock QAT residual is tracked when quantization-aware settling is enabled');
+}
+
+async function testTrainerYieldsAndSerializes() {
+  // Section 26: trainOnText() (POST /api/train, CLI `train <text>`) used to
+  // run NeuroclawTrainer.train()'s n-gram/embedding/hidden-layer loops fully
+  // synchronously with no cap -- one unauthenticated request with a large
+  // enough body froze the entire process (every endpoint, every client) for
+  // as long as training took, confirmed live at ~28s for a 100KB body.
+  // train() now yields to the event loop periodically instead of
+  // monopolizing it.
+  const { NeuroclawTrainer } = await load('models && skills/trainer.js');
+  const chars = ['<pad>', '<bos>', '<eos>', '<unk>', ...'abcdefghijklmnopqrstuvwxyz '.split('')];
+  const charToId = new Map(chars.map((c, i) => [c, i]));
+  const idToChar = new Map(chars.map((c, i) => [i, c]));
+
+  const trainer = new NeuroclawTrainer(chars.length, charToId, idToChar, { hiddenDim: 8, epochs: 1 });
+  const text = 'the quick brown fox jumps over the lazy dog '.repeat(400);
+  let timerFiredDuringTraining = false;
+  let trainingDone = false;
+  setTimeout(() => { if (!trainingDone) timerFiredDuringTraining = true; }, 0);
+  await trainer.train(text);
+  trainingDone = true;
+  check(timerFiredDuringTraining, "NeuroclawTrainer.train() yields to the event loop instead of monopolizing it for the whole run (a 0ms timer fires mid-training, not only after)");
+  check(trainer.getSamplesProcessed() > 0, 'Training still genuinely runs to completion once yielding');
+
+  // Yielding mid-training means a second train() call can now start before
+  // the first finishes -- verify concurrent calls on the same instance
+  // serialize instead of interleaving on shared `this.weights` state.
+  const concurrent = new NeuroclawTrainer(chars.length, charToId, idToChar, { hiddenDim: 8, epochs: 1 });
+  const textA = 'aaa bbb ccc '.repeat(200);
+  const textB = 'ddd eee fff '.repeat(200);
+  const [countA, countB] = await Promise.all([
+    concurrent.train(textA).then(() => concurrent.getSamplesProcessed()),
+    concurrent.train(textB).then(() => concurrent.getSamplesProcessed()),
+  ]);
+  check(countA > 0 && countB > countA && Number.isFinite(concurrent.getTrainingLoss()),
+    'Two concurrent train() calls on the same trainer serialize (sample counts accumulate consistently) instead of corrupting shared state');
 }
 
 async function testNeuroLangElasticMaterializer() {
@@ -3601,6 +3638,7 @@ async function main() {
     ['ZipIO loop total context size when full (Section 1.10)', testZipLoopTotalContextSizeWhenFull],
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
     ['Elastic core transformer replacement', testElasticCoreBlock],
+    ['NeuroclawTrainer yields to event loop and serializes concurrent calls (Section 26)', testTrainerYieldsAndSerializes],
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],

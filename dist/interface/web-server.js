@@ -421,7 +421,7 @@ export class WebServer {
             try {
                 const body = await this.parseBody(req);
                 const text = body?.text ?? '';
-                this.runner.getLLM().trainOnText(text);
+                await this.runner.getLLM().trainOnText(text);
                 const stats = this.runner.getLLM().getStats();
                 this.sendJson(res, { ok: true, samplesProcessed: stats.samplesProcessed });
             }

@@ -131,11 +131,6 @@ export class CLI {
                 this.rl?.prompt();
                 return;
             }
-            if (lower.startsWith('train ')) {
-                this.handleTrain(trimmed.slice(6));
-                this.rl?.prompt();
-                return;
-            }
             if (lower.startsWith('search ')) {
                 this.handleSearch(trimmed.slice(7));
                 this.rl?.prompt();
@@ -173,6 +168,10 @@ export class CLI {
             }
             if (lower === 'quantize') {
                 this.enqueue(() => this.handleQuantize());
+                return;
+            }
+            if (lower.startsWith('train ')) {
+                this.enqueue(() => this.handleTrain(trimmed.slice(6)));
                 return;
             }
             if (lower.startsWith('generate ') || trimmed.startsWith('"') || trimmed.startsWith("'")) {
@@ -375,12 +374,12 @@ export class CLI {
         console.log(this.colorize(GRAY, `    (${ms}ms)`));
         console.log('');
     }
-    handleTrain(text) {
+    async handleTrain(text) {
         if (!text) {
             console.log(this.colorize(GRAY, '  Usage: train <text>'));
             return;
         }
-        this.llm.trainOnText(text);
+        await this.llm.trainOnText(text);
         const stats = this.llm.getStats();
         console.log(this.colorize(GREEN, `  Trained on ${text.length} chars. Total samples: ${stats.samplesProcessed}`));
     }

@@ -96,7 +96,7 @@ export class NeuroclawLLM {
             },
         });
     }
-    build() {
+    async build() {
         if (this.built)
             return;
         const project = this.builder.createProject("NeuroClaw LLM", "Full-stack neural language model");
@@ -168,17 +168,17 @@ export class NeuroclawLLM {
         }));
         this.valueAllocator.initializeNeurons(neuronStates);
         this.builder.trainNetSearch(this.projectId, 50);
-        this.trainer.train();
+        await this.trainer.train();
         this.trained = true;
         this.built = true;
     }
-    trainOnText(text) {
-        this.trainer.train(text);
+    async trainOnText(text) {
+        await this.trainer.train(text);
         this.trained = true;
     }
     async generate(prompt, options = {}) {
         if (!this.built)
-            this.build();
+            await this.build();
         this.context = (this.context + ' ' + prompt).slice(-this.config.contextLength);
         // Step 1: THORNS — intent detection, cross-check, simulation, plan
         const thornsOutput = await this.thornsEngine.think(prompt);
@@ -389,7 +389,7 @@ export class NeuroclawLLM {
     thinkAbout(prompt) {
         return this.thornsEngine.think(prompt);
     }
-    loadModel(model) {
+    async loadModel(model) {
         if (model.config) {
             const cfg = model.config;
             if (cfg.embeddingDim)
@@ -404,7 +404,7 @@ export class NeuroclawLLM {
         // Reload the builder with new config if already built
         if (this.built) {
             this.built = false;
-            this.build();
+            await this.build();
         }
     }
     unloadModel() {
