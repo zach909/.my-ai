@@ -552,6 +552,18 @@ def test_mesh_qat():
     check(out[0, 3:].tolist() == [4, 5, 6, 7, 8], "QAT mesh reproduces the sequence under quantization")
     check(m.quantization_error() < 0.05, "QAT quantization error stays small")
 
+    # _fake_quant()'s qmax = 2**(bits-1) - 1 is 0 at bits <= 1, making
+    # scale = max/qmax evaluate to inf and every quantized weight become nan
+    # (0 * inf) -- MeshBlock.__init__ now clamps quant_bits to [2, 16] so a
+    # config requesting an out-of-range bit-width still trains instead of
+    # silently producing a NaN model.
+    torch.manual_seed(0)
+    m_lowbits = build_model(ModelConfig(vocab_size=16, block_size=12, arch="mesh", mesh_neurons=20,
+                                        mesh_dims=4, mesh_input=6, settle_ticks=4,
+                                        quant_enabled=True, quant_bits=1))
+    _, loss_lowbits = m_lowbits(x, y)
+    check(torch.isfinite(loss_lowbits).item(), "QAT mesh: quant_bits=1 is clamped to a safe minimum instead of producing a NaN loss")
+
 
 def test_interference():
     try:

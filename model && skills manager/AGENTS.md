@@ -14,7 +14,7 @@ python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh -> checkpoints/gpt.pt
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
 
-python test_core.py                     # full unit/smoke suite (220 checks)
+python test_core.py                     # full unit/smoke suite (221 checks)
 python test_elastic_mesh.py             # mesh + expert-core smoke checks
 python main.py demo                     # end-to-end integration demo (test_integration.py):
                                          # proves NeuroLang, elastic values,

@@ -100,7 +100,7 @@ python build_corpus.py                  # build a local corpus (no downloads)
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # full check suite (220 checks), no checkpoint needed
+python test_core.py                     # full check suite (221 checks), no checkpoint needed
 python test_elastic_mesh.py             # mesh + expert-core smoke checks
 python main.py demo                     # end-to-end integration demo (see below)
 

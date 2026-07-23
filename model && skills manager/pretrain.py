@@ -54,7 +54,8 @@ def parse_args():
     ap.add_argument("--skill-groups", type=int, default=1)
     ap.add_argument("--skill-top-k", type=int, default=1)
     ap.add_argument("--quant", action="store_true", help="§8 quantization-aware training")
-    ap.add_argument("--quant-bits", type=int, default=8)
+    ap.add_argument("--quant-bits", type=int, default=8,
+                    help="clamped to [2, 16] internally (MeshBlock); values <= 1 would divide by zero")
     ap.add_argument("--quant-interference", action="store_true",
                     help="gate the mesh readout by wave-signature quantum interference")
     ap.add_argument("--skill-experts", action="store_true",
