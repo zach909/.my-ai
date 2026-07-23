@@ -100,7 +100,7 @@ python build_corpus.py                  # build a local corpus (no downloads)
 python train_tokenizer.py --vocab-size 8000
 python pretrain.py --device cuda        # trains the mesh (arch defaults to "mesh")
 python core.py --ckpt checkpoints/gpt.pt --candidates 5   # talk to it
-python test_core.py                     # full check suite (198 checks), no checkpoint needed
+python test_core.py                     # full check suite (216 checks), no checkpoint needed
 python test_elastic_mesh.py             # mesh + expert-core smoke checks
 python main.py demo                     # end-to-end integration demo (see below)
 
@@ -115,7 +115,9 @@ elastic-value self-healing, extension save/install (quantized), live Plugin
 Builder and Skill Builder calls against that same mesh, a real `core.py` chat
 session (empathy + the RL ledger + §5 quantum-interference selection, all
 active together, driven as a subprocess through a scripted conversation), and
-a real HTTP round-trip through the browser backend — 21 checks, no mocks.
+a real HTTP round-trip through the browser backend — 32 checks (28 without
+the TS backend built; the last 4 exercise the repo-root `interface/server.py`
+proxying to it), no mocks.
 
 ### Run the TypeScript backend (pipeline, plugins, Extension Builder)
 
