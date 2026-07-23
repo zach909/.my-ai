@@ -49,6 +49,7 @@ const NEGATION_PAIRS: Array<[string, string]> = [
 export class KnowledgeGraph {
   private concepts = new Map<string, Concept>();
   private relations: Relation[] = [];
+  private readonly relationsCapacity = 5000;
   private readonly dim: number;
 
   constructor(dim = 256) {
@@ -92,6 +93,7 @@ export class KnowledgeGraph {
       superseded: false,
     };
     this.relations.push(rel);
+    if (this.relations.length > this.relationsCapacity) this.relations.splice(0, this.relations.length - this.relationsCapacity);
     return rel;
   }
 

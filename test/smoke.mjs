@@ -3251,19 +3251,46 @@ async function testPerformanceMonitorAnomalyCapacity() {
 }
 
 async function testSelfMonitorLogCapacity() {
-  // observe() runs on every processQuery() and solve() call -- the system's
-  // two busiest entry points -- via monitor.observe('prediction.surprise', ...)
-  // and monitor.observe('solve.confidence', ...) in index.ts. `log` had no
-  // cap, so it grew forever on a long-running process, and anomalies()
-  // (called by hasFailure() on every one of those calls) does a full linear
-  // scan of `log`, so both memory and per-call CPU cost grew unboundedly with
-  // lifetime query count.
+  // observe() runs on every NeuroclawSystem.processQuery()/solve() call, via
+  // monitor.observe('prediction.surprise', ...) and
+  // monitor.observe('solve.confidence', ...) in index.ts -- exercised
+  // thousands of times by this smoke suite itself (NeuroclawSystem is not,
+  // today, reached by either live backend -- see ARCHITECTURE.md). `log` had
+  // no cap, so it grew forever across a long test/process run, and
+  // anomalies() (called by hasFailure() on every one of those calls) does a
+  // full linear scan of `log`, so both memory and per-call CPU cost grew
+  // unboundedly with lifetime call count.
   const { SelfMonitor } = await load('models && skills/core/self-monitor.js');
   const mon = new SelfMonitor();
   for (let i = 0; i < 6000; i++) mon.observe('prediction.surprise', Math.random());
   check(mon.history().length === 5000, "SelfMonitor's log caps at a bounded size instead of growing forever");
   const spike = mon.observe('prediction.surprise', 999999);
   check(spike.severity === 'failure' && mon.hasFailure(), 'SelfMonitor still correctly detects a genuine failure once capped');
+}
+
+async function testKnowledgeGraphRelationsCapacity() {
+  // Section 4: relate() is reached on every integrate() call (solve()'s
+  // success path in index.ts, and predictProperties()) with no bound on the
+  // `relations` array -- supersede() only flips a boolean, it never shrinks
+  // the array -- so this grew forever on a long-running process, and
+  // findContradictions() does a full O(n^2) scan over it on every call.
+  const { KnowledgeGraph } = await load('models && skills/core/knowledge-graph.js');
+  const kg = new KnowledgeGraph();
+  for (let i = 0; i < 5010; i++) kg.relate(`concept${i}`, 'is', `category${i % 10}`);
+  check(kg.neighbors('concept0').length === 0, "KnowledgeGraph's relations cap at a bounded size instead of growing forever -- the oldest relation is evicted");
+  check(kg.neighbors('concept10').length === 1, 'the oldest surviving relation after eviction is still queryable');
+  check(kg.neighbors('concept5009').length === 1, 'the most recently added relation is always retained');
+}
+
+async function testKnowledgeTransferSolvedCapacity() {
+  // Section 7: register() is reached on every solve() success (index.ts,
+  // alongside knowledge.integrate()) with no bound on `solved` -- the
+  // identical unbounded-push defect as KnowledgeGraph.relations, fixed the
+  // same way.
+  const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
+  const kt = new KnowledgeTransfer();
+  for (let i = 0; i < 5010; i++) kt.register(`optimize the flow for case ${i}`, `domain${i % 5}`, `method${i}`);
+  check(kt.size() === 5000, "KnowledgeTransfer's solved-problem store caps at a bounded size instead of growing forever");
 }
 
 async function testPerformanceMonitorTracksRealCalls() {
@@ -3529,6 +3556,8 @@ async function main() {
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
     ['PerformanceMonitor anomaly capacity (Self-Improvement Phase 3)', testPerformanceMonitorAnomalyCapacity],
     ['SelfMonitor log capacity (Section 11)', testSelfMonitorLogCapacity],
+    ['KnowledgeGraph relations capacity (Section 4)', testKnowledgeGraphRelationsCapacity],
+    ['KnowledgeTransfer solved-problem capacity (Section 7)', testKnowledgeTransferSolvedCapacity],
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],

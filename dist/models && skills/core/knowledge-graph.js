@@ -24,6 +24,7 @@ export class KnowledgeGraph {
     constructor(dim = 256) {
         this.concepts = new Map();
         this.relations = [];
+        this.relationsCapacity = 5000;
         this.dim = dim;
     }
     /** Add or update a concept (keyed by normalized name). */
@@ -61,6 +62,8 @@ export class KnowledgeGraph {
             superseded: false,
         };
         this.relations.push(rel);
+        if (this.relations.length > this.relationsCapacity)
+            this.relations.splice(0, this.relations.length - this.relationsCapacity);
         return rel;
     }
     /**
