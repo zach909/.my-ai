@@ -543,11 +543,15 @@ export class WebServer {
     // POST /api/apps/launch — launch an application via AppLauncher
     if (pathname === '/api/apps/launch' && method === 'POST') {
       try {
-        const body = await this.parseBody(req) as 
+        const body = await this.parseBody(req) as
           { command?: string; args?: string[]; name?: string; workspace?: number } | null;
-        
-        if (!body?.command) {
+
+        if (!body?.command || typeof body.command !== 'string') {
           this.sendJson(res, { error: 'Missing command field' }, 400);
+          return;
+        }
+        if (body.args !== undefined && (!Array.isArray(body.args) || !body.args.every(a => typeof a === 'string'))) {
+          this.sendJson(res, { error: 'args must be an array of strings' }, 400);
           return;
         }
 
@@ -606,11 +610,22 @@ export class WebServer {
     // POST /api/apps/launch-package — launch .deb/.exe/.apk packages
     if (pathname === '/api/apps/launch-package' && method === 'POST') {
       try {
-        const body = await this.parseBody(req) as 
+        const body = await this.parseBody(req) as
           { path?: string; type?: 'deb' | 'exe' | 'apk' } | null;
-        
-        if (!body?.path) {
+
+        if (!body?.path || typeof body.path !== 'string') {
           this.sendJson(res, { error: 'Missing path field' }, 400);
+          return;
+        }
+        // A path starting with "-" would be read as a flag by apt/wine/adb
+        // (e.g. "-y", "--allow-downgrades") once it lands in the args array
+        // below, rather than as the package path it's supposed to be --
+        // launch() no longer runs these through a shell (see app-launcher.js),
+        // so this is argument injection, not command injection, but it's the
+        // same "attacker-controlled string reaches a privileged command
+        // unvalidated" root cause and costs nothing to reject.
+        if (body.path.startsWith('-')) {
+          this.sendJson(res, { error: 'Invalid path field' }, 400);
           return;
         }
 

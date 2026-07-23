@@ -10,7 +10,7 @@
 
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1090,6 +1090,39 @@ async function testWebBackend() {
     const buildJson = JSON.parse(build.body);
     check(build.status === 200 && buildJson.ok === true && buildJson.neurons?.some(n => n.name === 'alpha'),
       'Web backend POST /api/extension/build actually builds and saves an extension (not an unconditional 400)');
+
+    // AppLauncher.launch() called spawn(command, args, {shell: true}), so a
+    // shell metacharacter (`;`, `&&`, backticks, ...) inside an *args* entry
+    // ran as an additional, unintended command rather than literal argv
+    // text -- reachable unauthenticated via this exact route with no auth
+    // or CSRF protection anywhere in front of it (interface/web-server.ts's
+    // parseBody() parses the body as JSON regardless of Content-Type,
+    // so even a same-origin-restricted CORS response can't stop the side
+    // effect of a cross-site "simple request"). Prove the fix directly: ask
+    // `echo` to print a string containing "; touch <marker>" and confirm
+    // the marker is never created -- the whole string must be treated as
+    // one literal argument to echo, never shell-interpreted.
+    const marker = join(tmpdir(), `applauncher_injection_probe_${Date.now()}`);
+    try {
+      const inject = await post('/api/apps/launch', { command: 'echo', args: [`hi; touch ${marker}`] });
+      const injectJson = JSON.parse(inject.body);
+      check(inject.status === 200 && injectJson.ok === true && typeof injectJson.pid === 'number',
+        'Web backend POST /api/apps/launch launches a real process and returns its pid');
+      await new Promise(r => setTimeout(r, 500));
+      check(!existsSync(marker),
+        'POST /api/apps/launch no longer shell-interprets metacharacters inside args (no extra command executed)');
+    } finally {
+      if (existsSync(marker)) rmSync(marker);
+    }
+
+    const badArgs = await post('/api/apps/launch', { command: 'echo', args: 'not-an-array' });
+    check(badArgs.status === 400, 'Web backend POST /api/apps/launch rejects a non-array args field instead of passing it to spawn()');
+
+    // A path beginning with "-" would be read as a flag by apt/wine/adb
+    // once threaded into their args array (e.g. "-y", "--allow-downgrades"),
+    // not as the package path it's supposed to be.
+    const badPath = await post('/api/apps/launch-package', { path: '--allow-downgrades', type: 'deb' });
+    check(badPath.status === 400, 'Web backend POST /api/apps/launch-package rejects a path that looks like a command-line flag');
   } finally {
     await web.stop();
   }
