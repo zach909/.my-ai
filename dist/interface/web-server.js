@@ -331,16 +331,28 @@ export class WebServer {
         // GET /api/dict/:word — thesaurus/dictionary lookup
         const dictMatch = pathname.match(/^\/api\/dict\/(.+)$/);
         if (dictMatch && method === 'GET') {
-            const word = decodeURIComponent(dictMatch[1]);
-            const thesaurus = this.runner.getThesaurus();
-            const def = thesaurus.getDefinition(word);
-            const syns = thesaurus.getSynonyms(word);
-            const examples = thesaurus.getExamples(word);
-            if (!def && syns.length === 0) {
-                this.sendJson(res, { error: `"${word}" not in dictionary` }, 404);
+            try {
+                const word = decodeURIComponent(dictMatch[1]);
+                const thesaurus = this.runner.getThesaurus();
+                const def = thesaurus.getDefinition(word);
+                const syns = thesaurus.getSynonyms(word);
+                const examples = thesaurus.getExamples(word);
+                if (!def && syns.length === 0) {
+                    this.sendJson(res, { error: `"${word}" not in dictionary` }, 404);
+                }
+                else {
+                    this.sendJson(res, { word, Y: def ?? '', X: syns, Z: examples });
+                }
             }
-            else {
-                this.sendJson(res, { word, Y: def ?? '', X: syns, Z: examples });
+            catch (err) {
+                // decodeURIComponent throws URIError on malformed percent-encoding
+                // (e.g. a trailing lone "%"); unlike every sibling handler in this
+                // file, this route had no try/catch, so that throw propagated out
+                // of the async handleRequest() as an unhandled rejection and
+                // crashed the whole process (Node's default since v15) -- a single
+                // unauthenticated GET took down the entire backend.
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 400);
             }
             return;
         }

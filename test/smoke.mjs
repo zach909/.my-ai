@@ -1022,6 +1022,20 @@ async function testWebBackend() {
     const convoJson = JSON.parse(convo.body);
     check(convo.status === 200 && typeof convoJson.response === 'string' && !convoJson.response.startsWith('[Plugin]'),
       'Web backend /api/chat routes plain conversation to neural generation, not a plugin');
+
+    // GET /api/dict/:word had no try/catch, unlike every sibling handler --
+    // decodeURIComponent() throws URIError on malformed percent-encoding
+    // (a trailing lone "%"), and since handleRequest() is the raw
+    // http.createServer callback with no .catch() and no process-wide
+    // unhandledRejection handler anywhere, that throw crashed the entire
+    // backend process on a single unauthenticated GET. Verify it now
+    // degrades to a clean 400 and the server survives to answer the next
+    // request.
+    const malformed = await get('/api/dict/%25%');
+    check(malformed.status === 400, 'Web backend /api/dict/:word returns 400 on malformed percent-encoding instead of crashing the process');
+    const stillAlive = await get('/api/status');
+    check(stillAlive.status === 200 && JSON.parse(stillAlive.body).running === true,
+      'Web backend is still running and responsive after a malformed /api/dict/:word request');
   } finally {
     await web.stop();
   }
