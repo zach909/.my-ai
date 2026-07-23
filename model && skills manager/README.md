@@ -52,9 +52,16 @@ transformer baseline can be compared apples-to-apples.
   positional embeddings, pre-LayerNorm blocks, causal multi-head self-attention
   (fused FlashAttention when available, explicit masked fallback otherwise),
   GELU MLP, weight-tied LM head.
-- **Elastic-mesh core** (`--use-elastic-mesh`): vale-gated settle dynamics,
-  dense all-to-all internal connectivity, MoE expert routing, and a
-  PennyLane-simulated quantum interference layer, as a drop-in for the MLP.
+- **Elastic-mesh core**: vale-gated settle dynamics, dense all-to-all internal
+  connectivity, MoE expert routing, and a PennyLane-simulated quantum
+  interference layer (`ElasticMeshFFN`, above) — a genuine drop-in module for
+  the MLP position, but `pretrain.py`'s `--use-elastic-mesh` flag (and its
+  `--mesh-num-experts`/`--mesh-top-k`/`--mesh-n-neurons`/`--mesh-settle-steps`/
+  `--mesh-n-qubits` companions) currently do **not** wire it into the model
+  `build_model()` actually constructs — confirmed live (identical model,
+  identical parameters, byte-identical output with the flag on or off). The
+  component itself is real and testable (`test_elastic_mesh.py`), just not yet
+  connected to this CLI flag.
 - **Configurable hyperparameters** via `tinygpt/config.py` and CLI flags.
 - **Pretraining** with AdamW, linear-warmup + cosine LR decay, automatic mixed
   precision (on CUDA), gradient accumulation, gradient clipping, checkpoints.
@@ -94,7 +101,7 @@ model && skills manager/
 │   ├── sampling.py         # temperature / top-k / top-p / repetition penalty
 │   └── utils.py            # seeding, device, LR schedule, checkpoint I/O
 ├── train_tokenizer.py      # step 1: train the tokenizer
-├── pretrain.py             # step 2: pretrain on Markdown (--skill-experts / --use-elastic-mesh optional; --use-moe is currently inert, see §1.5 below)
+├── pretrain.py             # step 2: pretrain on Markdown (--skill-experts optional; --use-moe / --use-elastic-mesh are currently inert, see §1.5 below)
 ├── finetune.py             # step 3: supervised fine-tune on chat data
 ├── chat.py                 # step 4: interactive / one-shot inference
 ├── core.py                 # the unified core (memory, veto, actions, guidance)
@@ -158,12 +165,13 @@ smoke config (`--vocab-size 2000`, `--n-layer 4 --n-head 4 --n-embd 192
 --block-size 128 --max-steps 2500`, default `checkpoints/`) still works for a
 quick end-to-end check.
 
-To exercise the elastic-mesh expert core explicitly, add `--use-elastic-mesh`
-to the `pretrain.py` command (optionally `--mesh-num-experts`, `--mesh-top-k`,
-`--mesh-n-neurons`, `--mesh-settle-steps`, `--mesh-n-qubits`). Everything else —
-tokenizer, data loading, optimizer, schedule, checkpointing, and inference
-sampling — is identical, which is the point: it isolates the model core as the
-only variable when comparing configurations.
+`pretrain.py --use-elastic-mesh` (and its `--mesh-num-experts`/`--mesh-top-k`/
+`--mesh-n-neurons`/`--mesh-settle-steps`/`--mesh-n-qubits` companions) currently
+has **no effect** on the model this command actually trains — `build_model()`
+always constructs the canonical mesh regardless of this flag (see above; the
+same currently-inert status as `--use-moe`, §1.5). `ElasticMeshFFN` is real and
+testable (`test_elastic_mesh.py`) as a standalone module, but there's no
+`pretrain.py` flag that connects it to a real training run today.
 
 ## Unified core (`core.py`)
 
