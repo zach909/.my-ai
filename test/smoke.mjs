@@ -1074,6 +1074,38 @@ async function testWebBackend() {
     check(stillAlive.status === 200 && JSON.parse(stillAlive.body).running === true,
       'Web backend is still running and responsive after a malformed /api/dict/:word request');
 
+    // handleRequest()'s very first line built `new URL(req.url, "http://" +
+    // req.headers.host)` with no guard at all -- req.headers.host is a raw,
+    // attacker-controlled string Node's HTTP parser never validates, so a
+    // malformed value (e.g. a non-numeric port) makes `new URL()` throw
+    // TypeError: Invalid URL. This runs before every route's own try/catch
+    // (including the /api/dict fix just above), so it crashed the entire
+    // backend on a single request regardless of path or method -- a
+    // distinct, unguarded instance of the same crash class one layer
+    // higher up. A same-origin fetch() can't set Host (forbidden header),
+    // but any local script/proxy/curl invocation can.
+    const badHost = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/', method: 'GET', headers: { Host: 'localhost:abc' } }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    check(badHost.status === 400, 'Web backend returns 400 on a malformed Host header instead of crashing the process');
+    const aliveAfterBadHost = await get('/api/status');
+    check(aliveAfterBadHost.status === 200 && JSON.parse(aliveAfterBadHost.body).running === true,
+      'Web backend is still running and responsive after a malformed Host header');
+
+    // POST /api/train's `body?.text ?? ''` only falls back on null/undefined,
+    // so a non-string truthy value (e.g. the JSON number 12345) sailed
+    // through untouched into NeuroclawTrainer.train(). `text.length` on a
+    // number is undefined, so every training loop's `i < text.length - order`
+    // is `i < NaN` -- always false -- and the request silently "succeeds"
+    // having trained on nothing, indistinguishable from a real request that
+    // legitimately produced zero samples.
+    const badTrain = await post('/api/train', { text: 12345 });
+    check(badTrain.status === 400, 'Web backend POST /api/train rejects a non-string text value instead of silently training on nothing');
+
     // POST /api/extension/build is the only real HTTP-level coverage of
     // ExtensionBuilder.parseNeuroLang() in this suite -- testExtensionBuilderFlow
     // (elsewhere) calls ExtensionBuilder directly, never through this handler.
