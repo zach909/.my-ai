@@ -103,8 +103,11 @@ export class CLI {
           this.neuriBlockMode = false;
           const code = this.neuriBlockLines.join('\n');
           this.neuriBlockLines = [];
-          this.handleNeuri(code);
-          this.rl?.setPrompt(this.colorize(CYAN, 'neuroclaw> '));
+          this.enqueue(async () => {
+            await this.handleNeuri(code);
+            this.rl?.setPrompt(this.colorize(CYAN, 'neuroclaw> '));
+          });
+          return;
         } else {
           this.neuriBlockLines.push(line);
           this.rl?.prompt();
@@ -130,10 +133,8 @@ export class CLI {
         console.log(this.colorize(GRAY, '  Enter NeuriLang code. Blank line to run.'));
         this.rl?.prompt(); return;
       }
-      if (lower.startsWith('train ')) { this.handleTrain(trimmed.slice(6)); this.rl?.prompt(); return; }
       if (lower.startsWith('search ')) { this.handleSearch(trimmed.slice(7)); this.rl?.prompt(); return; }
       if (lower.startsWith('nsearch ')) { this.handleNetSearchGenerate(trimmed.slice(8)); this.rl?.prompt(); return; }
-      if (lower.startsWith('neuri ')) { this.handleNeuri(trimmed.slice(6)); this.rl?.prompt(); return; }
       if (lower.startsWith('build ')) { this.handleBuild(trimmed.slice(6)); this.rl?.prompt(); return; }
       if (lower.startsWith('dict ') || lower.startsWith('lookup ')) {
         const word = trimmed.includes(' ') ? trimmed.slice(trimmed.indexOf(' ') + 1) : '';
@@ -143,6 +144,8 @@ export class CLI {
       if (lower === 'chat' || lower === 'start') { this.enqueue(() => this.startChat()); return; }
       if (lower === 'save') { this.enqueue(() => this.handleSave()); return; }
       if (lower === 'quantize') { this.enqueue(() => this.handleQuantize()); return; }
+      if (lower.startsWith('train ')) { this.enqueue(() => this.handleTrain(trimmed.slice(6))); return; }
+      if (lower.startsWith('neuri ')) { this.enqueue(() => this.handleNeuri(trimmed.slice(6))); return; }
       if (lower.startsWith('generate ') || trimmed.startsWith('"') || trimmed.startsWith("'")) {
         const prompt = lower.startsWith('generate ') ? trimmed.slice(9) : trimmed.replace(/^["']/, '').replace(/["']$/, '');
         this.enqueue(() => this.handleGenerate(prompt)); return;
@@ -337,9 +340,9 @@ export class CLI {
     console.log('');
   }
 
-  private handleTrain(text: string): void {
+  private async handleTrain(text: string): Promise<void> {
     if (!text) { console.log(this.colorize(GRAY, '  Usage: train <text>')); return; }
-    this.llm.trainOnText(text);
+    await this.llm.trainOnText(text);
     const stats = this.llm.getStats();
     console.log(this.colorize(GREEN, `  Trained on ${text.length} chars. Total samples: ${stats.samplesProcessed}`));
   }
@@ -376,10 +379,10 @@ export class CLI {
     console.log('');
   }
 
-  private handleNeuri(code: string): void {
+  private async handleNeuri(code: string): Promise<void> {
     if (!code) { console.log(this.colorize(GRAY, '  Usage: neuri <NeuriLang code>')); return; }
     const interp = new NeuroLangInterpreter();
-    const parsed = interp.parse(code);
+    const parsed = await interp.parse(code);
     if (parsed.errors.length > 0) {
       console.log(this.colorize(RED, '  NeuriLang errors:'));
       for (const err of parsed.errors) console.log(`    ${err}`);

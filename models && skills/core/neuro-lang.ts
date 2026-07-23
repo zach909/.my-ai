@@ -61,6 +61,11 @@ interface SerializedNeuron {
   isCodeNet: boolean;
 }
 
+/** Cooperative yield: hands control back to Node so other pending work (an HTTP request, a CLI prompt) can run before the next batch of parsing. */
+function yieldToEventLoop(): Promise<void> {
+  return new Promise(resolve => setImmediate(resolve));
+}
+
 // ── Parser ────────────────────────────────────────────────────────────────────
 
 export class NeuroLangInterpreter {
@@ -75,13 +80,25 @@ export class NeuroLangInterpreter {
   private netSearchEngine = new NetSearchEngine();
   private lastNeurons = new Map<string, NeuriNeuron>();
 
+  /**
+   * Bumped once per `"X"@code="..."` line that actually calls
+   * codeToNet.compile() (~100ms of fully synchronous MLP training each,
+   * see code-to-net.ts's fit()). parse() checks this after every line and
+   * yields to the event loop whenever it changes, so a source string
+   * packed with many `@code=` lines can't monopolize the process the way
+   * NeuroclawTrainer.train() used to (see ARCHITECTURE.md) -- reachable
+   * unauthenticated via POST /api/neuri and POST /api/extension/build,
+   * both of which parse fully attacker-controlled source with no line cap.
+   */
+  private compileCallCount = 0;
+
   // ── Public API ──────────────────────────────────────────────────────────────
 
   /**
    * Parse NeuriLang source code and return a ParseResult.
    * No connections are auto-added here — that happens in evaluate().
    */
-  parse(source: string): ParseResult {
+  async parse(source: string): Promise<ParseResult> {
     const neurons = new Map<string, NeuriNeuron>();
     const errors: string[] = [];
     const printOutputs: string[] = [];
@@ -99,12 +116,14 @@ export class NeuroLangInterpreter {
       const line = raw.replace(/--.*$/, '').trim();
       if (!line) continue;
 
+      const compilesBefore = this.compileCallCount;
       try {
         this.parseLine(line, neurons, printOutputs);
       } catch (err: unknown) {
         const msg = err instanceof Error ? err.message : String(err);
         errors.push(`Line ${lineNo + 1}: ${msg} (source: "${raw.trim()}")`);
       }
+      if (this.compileCallCount !== compilesBefore) await yieldToEventLoop();
     }
 
     this.lastNeurons = neurons;
@@ -398,6 +417,7 @@ export class NeuroLangInterpreter {
         try {
           this.codeNets.set(name, this.codeToNet.compile(name, m[2]));
         } catch { /* leave as a stored code string only */ }
+        this.compileCallCount++;
         return;
       }
     }

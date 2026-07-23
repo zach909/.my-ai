@@ -103,8 +103,8 @@ function BuilderPage() {
     setStatusMsg(`Installed with 8-bit quantization (${out.length.toLocaleString()} bytes deployed)`)
   }
 
-  const handleParse = () => {
-    const res = b.parseNeuroLang(neuroLang)
+  const handleParse = async () => {
+    const res = await b.parseNeuroLang(neuroLang)
     if (res.success) spreadUnplaced()
     setStatusMsg(res.success ? 'NeuroLang parsed — neurons added to the canvas' : `NeuroLang errors: ${res.errors.join('; ')}`)
   }

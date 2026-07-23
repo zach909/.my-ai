@@ -369,7 +369,7 @@ export class WebServer {
         const code = body?.code ?? '';
         const { NeuroLangInterpreter } = await import('../models && skills/core/neuro-lang.js');
         const interp = new NeuroLangInterpreter();
-        const parsed = interp.parse(code);
+        const parsed = await interp.parse(code);
         if (parsed.errors.length > 0) {
           this.sendJson(res, { errors: parsed.errors }, 400);
           return;
@@ -429,7 +429,7 @@ export class WebServer {
       try {
         const body = await this.parseBody(req) as { text?: string } | null;
         const text = body?.text ?? '';
-        this.runner.getLLM().trainOnText(text);
+        await this.runner.getLLM().trainOnText(text);
         const stats = this.runner.getLLM().getStats();
         this.sendJson(res, { ok: true, samplesProcessed: stats.samplesProcessed });
       } catch (err) {

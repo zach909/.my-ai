@@ -10,9 +10,24 @@ const DEFAULT_TRAINING_CONFIG = {
     elasticStateDim: 16,
 };
 const TRAINING_CORPUS = "the quick brown fox jumps over the lazy dog the cat sat on the mat hello world this is a test of the emergency broadcast system the rain in spain falls mainly on the plain it was the best of times it was the worst of times to be or not to be that is the question all that glitters is not gold a journey of a thousand miles begins with a single step knowledge is power time is money the early bird catches the worm practice makes perfect actions speak louder than words the pen is mightier than the sword when in rome do as the romans do necessity is the mother of invention a picture is worth a thousand words where there is smoke there is fire if you want something done right do it yourself the squeaky wheel gets the grease birds of a feather flock together dont count your chickens before they hatch every cloud has a silver lining two heads are better than one the grass is always greener on the other side";
+/** How many inner-loop iterations run before yielding to the event loop once. */
+const YIELD_EVERY_CHARS = 2000;
+/** Cooperative yield: hands control back to Node so other pending work (an HTTP request, a CLI prompt) can run before the next batch of training iterations. */
+function yieldToEventLoop() {
+    return new Promise(resolve => setImmediate(resolve));
+}
 export class NeuroclawTrainer {
     constructor(vocabSize, charToId, idToChar, config = {}) {
         this.elasticCore = null;
+        /**
+         * Serializes train() calls. Now that training yields to the event loop
+         * mid-run (see YIELD_EVERY_CHARS), a second call arriving while one is
+         * still in flight could otherwise interleave with it on the same
+         * `this.weights` object -- e.g. one call's buildNGramTables() resetting
+         * `ngramTables` while another call's loop is still populating the array
+         * it captured before the reset -- corrupting the shared model state.
+         */
+        this.trainingLock = Promise.resolve();
         this.config = { ...DEFAULT_TRAINING_CONFIG, ...config };
         this.vocabSize = vocabSize;
         this.charToId = charToId;
@@ -30,17 +45,36 @@ export class NeuroclawTrainer {
             samplesProcessed: 0,
         };
     }
-    train(text) {
-        const corpus = text ?? TRAINING_CORPUS;
-        this.buildNGramTables(corpus);
-        this.trainEmbeddings(corpus);
-        if (this.config.useElasticCore)
-            this.trainElasticCoreLayer(corpus);
-        else
-            this.trainHiddenLayer(corpus);
-        this.weights.trained = true;
+    /**
+     * Train on `text` (or the small built-in bootstrap corpus if omitted).
+     * `text` is caller-supplied and unbounded in length (POST /api/train, CLI
+     * `train <text>`) -- the n-gram/embedding/hidden-layer stages below are
+     * O(epochs * text.length * ...) with no cap, so this yields to the event
+     * loop periodically (YIELD_EVERY_CHARS) rather than monopolizing the
+     * single Node thread for the whole call, which previously froze every
+     * other request on the process for as long as training ran (confirmed
+     * live: a 100KB POST body froze /api/status for 15+ seconds; the 1MB
+     * request-body limit alone would allow ~2 minutes of total freeze).
+     */
+    async train(text) {
+        const run = async () => {
+            const corpus = text ?? TRAINING_CORPUS;
+            await this.buildNGramTables(corpus);
+            await this.trainEmbeddings(corpus);
+            if (this.config.useElasticCore)
+                this.trainElasticCoreLayer(corpus);
+            else
+                await this.trainHiddenLayer(corpus);
+            this.weights.trained = true;
+        };
+        // Chain onto the lock regardless of whether the previous run succeeded
+        // or failed, so one failed training call never wedges every call after
+        // it; each caller still awaits exactly its own run's completion/error.
+        const thisRun = this.trainingLock.then(run, run);
+        this.trainingLock = thisRun.then(() => undefined, () => undefined);
+        return thisRun;
     }
-    buildNGramTables(text) {
+    async buildNGramTables(text) {
         this.weights.ngramTables = [];
         const unigramCounts = new Float32Array(this.vocabSize);
         let totalChars = 0;
@@ -50,6 +84,8 @@ export class NeuroclawTrainer {
                 totals: new Map(),
             };
             for (let i = 0; i < text.length - order; i++) {
+                if (i > 0 && i % YIELD_EVERY_CHARS === 0)
+                    await yieldToEventLoop();
                 const context = text.slice(i, i + order);
                 const nextId = this.charToId.get(text[i + order] ?? "") ?? 3;
                 if (order === 1) {
@@ -72,7 +108,7 @@ export class NeuroclawTrainer {
             }
         }
     }
-    trainEmbeddings(text) {
+    async trainEmbeddings(text) {
         const dim = this.config.hiddenDim;
         for (let i = 0; i < this.vocabSize; i++) {
             const emb = new Float32Array(dim);
@@ -84,6 +120,8 @@ export class NeuroclawTrainer {
         const windowSize = 3;
         for (let epoch = 0; epoch < this.config.epochs; epoch++) {
             for (let i = windowSize; i < text.length - windowSize; i++) {
+                if (i > 0 && i % YIELD_EVERY_CHARS === 0)
+                    await yieldToEventLoop();
                 const centerId = this.charToId.get(text[i] ?? "") ?? 3;
                 const centerEmb = this.weights.embeddings.get(centerId);
                 for (let w = -windowSize; w <= windowSize; w++) {
@@ -104,7 +142,7 @@ export class NeuroclawTrainer {
             }
         }
     }
-    trainHiddenLayer(text) {
+    async trainHiddenLayer(text) {
         const dim = this.config.hiddenDim;
         const ctx = this.config.contextWindow;
         this.weights.hiddenWeights = [];
@@ -129,6 +167,8 @@ export class NeuroclawTrainer {
         for (let epoch = 0; epoch < this.config.epochs; epoch++) {
             const lr = this.config.learningRate / (1 + epoch * 0.5);
             for (let i = ctx; i < text.length - 1; i++) {
+                if (i > ctx && i % YIELD_EVERY_CHARS === 0)
+                    await yieldToEventLoop();
                 const contextIds = [];
                 for (let c = 0; c < ctx; c++) {
                     contextIds.push(this.charToId.get(text[i - ctx + c] ?? "") ?? 3);

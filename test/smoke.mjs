@@ -503,7 +503,7 @@ async function testNeuroLangLiveWiring() {
     '"alpha"@definishon="the color red"',
     '"beta"@definishon="the color blue"',
   ].join('\n');
-  const parsed = interp.parse(src);
+  const parsed = await interp.parse(src);
   check(parsed.errors.length === 0, `NeuroLang: DSL with @vale/@definishon aliases parses cleanly (errors: ${JSON.stringify(parsed.errors)})`);
 
   const engine = mkEngine();
@@ -535,7 +535,7 @@ async function testNeuroLangLiveWiring() {
     '"hot"@definishon="aaaaaaaaaa"',
     '"cold"@definishon="zzzzzzzzzz"',
   ].join('\n');
-  const parsed2 = interp.parse(src2);
+  const parsed2 = await interp.parse(src2);
   const engine2 = mkEngine();
   const runtime2 = new NeuroLangRuntime(engine2);
   runtime2.setNeuronId('hot', 3);
@@ -920,11 +920,48 @@ async function testElasticCoreBlock() {
   const charToId = new Map(chars.map((c, i) => [c, i]));
   const idToChar = new Map(chars.map((c, i) => [i, c]));
   const trainer = new NeuroclawTrainer(chars.length, charToId, idToChar, { useElasticCore: true, epochs: 1, contextWindow: 2, hiddenDim: 4, elasticNeurons: 4, elasticStateDim: 3, learningRate: 0.05 });
-  trainer.train('ab ab ab ab ');
+  await trainer.train('ab ab ab ab ');
   check(trainer.getElasticCore() !== null && trainer.getSamplesProcessed() > 0 && Number.isFinite(trainer.getTrainingLoss()), 'TinyGPT trainer can route hidden-layer training through ElasticCoreBlock and update its parameters');
   const qat = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 4, seed: 8, quantizationAware: true, quantizationBits: 4 });
   const q = qat.forward(input, { drivenNeurons: new Set([0]) });
   check(Number.isFinite(q.quantizationDrift) && q.quantizationDrift > 0, 'ElasticCoreBlock QAT residual is tracked when quantization-aware settling is enabled');
+}
+
+async function testTrainerYieldsAndSerializes() {
+  // Section 26: trainOnText() (POST /api/train, CLI `train <text>`) used to
+  // run NeuroclawTrainer.train()'s n-gram/embedding/hidden-layer loops fully
+  // synchronously with no cap -- one unauthenticated request with a large
+  // enough body froze the entire process (every endpoint, every client) for
+  // as long as training took, confirmed live at ~28s for a 100KB body.
+  // train() now yields to the event loop periodically instead of
+  // monopolizing it.
+  const { NeuroclawTrainer } = await load('models && skills/trainer.js');
+  const chars = ['<pad>', '<bos>', '<eos>', '<unk>', ...'abcdefghijklmnopqrstuvwxyz '.split('')];
+  const charToId = new Map(chars.map((c, i) => [c, i]));
+  const idToChar = new Map(chars.map((c, i) => [i, c]));
+
+  const trainer = new NeuroclawTrainer(chars.length, charToId, idToChar, { hiddenDim: 8, epochs: 1 });
+  const text = 'the quick brown fox jumps over the lazy dog '.repeat(400);
+  let timerFiredDuringTraining = false;
+  let trainingDone = false;
+  setTimeout(() => { if (!trainingDone) timerFiredDuringTraining = true; }, 0);
+  await trainer.train(text);
+  trainingDone = true;
+  check(timerFiredDuringTraining, "NeuroclawTrainer.train() yields to the event loop instead of monopolizing it for the whole run (a 0ms timer fires mid-training, not only after)");
+  check(trainer.getSamplesProcessed() > 0, 'Training still genuinely runs to completion once yielding');
+
+  // Yielding mid-training means a second train() call can now start before
+  // the first finishes -- verify concurrent calls on the same instance
+  // serialize instead of interleaving on shared `this.weights` state.
+  const concurrent = new NeuroclawTrainer(chars.length, charToId, idToChar, { hiddenDim: 8, epochs: 1 });
+  const textA = 'aaa bbb ccc '.repeat(200);
+  const textB = 'ddd eee fff '.repeat(200);
+  const [countA, countB] = await Promise.all([
+    concurrent.train(textA).then(() => concurrent.getSamplesProcessed()),
+    concurrent.train(textB).then(() => concurrent.getSamplesProcessed()),
+  ]);
+  check(countA > 0 && countB > countA && Number.isFinite(concurrent.getTrainingLoss()),
+    'Two concurrent train() calls on the same trainer serialize (sample counts accumulate consistently) instead of corrupting shared state');
 }
 
 async function testNeuroLangElasticMaterializer() {
@@ -933,7 +970,7 @@ async function testNeuroLangElasticMaterializer() {
   const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
 
   const interp = new NeuroLangInterpreter();
-  const parsed = interp.parse([
+  const parsed = await interp.parse([
     'name="alpha"',
     '"alpha"@connections=".beta*0.75"',
     '"alpha"@vale="0.6"',
@@ -1158,7 +1195,7 @@ async function testNeuralDefinitionDirectives() {
     'code@name="calc"', '"calc"@code="return a+b"',
     '"netsearch"@name="finder"', '"netsearch"@net="corpus/defs"',
   ].join('\n');
-  const r = it.parse(src);
+  const r = await it.parse(src);
   const neurons = it.evaluate(r);
   check(r.errors.length === 0, 'Neural Definition DSL parses all directives without error');
   check(neurons.get('alpha').value === 2.5 && neurons.get('alpha').vale === 0.8, 'name/@value/@vale applied');
@@ -1167,7 +1204,7 @@ async function testNeuralDefinitionDirectives() {
   // (".other*0.5+.third*0.3") must parse into one edge per target — guards
   // the doc comment against drifting back to a form the parser rejects.
   const itc = new NeuroLangInterpreter();
-  const rc = itc.parse(['name="other"', 'name="third"', 'name="n"',
+  const rc = await itc.parse(['name="other"', 'name="third"', 'name="n"',
                         '"n"@connections=".other*0.5+.third*0.3"'].join('\n'));
   const nc = itc.evaluate(rc);
   check(rc.errors.length === 0 && nc.get('n').connections.get('other') === 0.5
@@ -1176,15 +1213,15 @@ async function testNeuralDefinitionDirectives() {
   // Section 20 canonical form: `.target/variable*bias+weight` — the state-var
   // selector is accepted and the trailing additive weight folds into the edge.
   const its = new NeuroLangInterpreter();
-  const rs = its.parse(['name="y"', 'name="x"', '"x"@connections=".y/state*0.5+0.25"'].join('\n'));
+  const rs = await its.parse(['name="y"', 'name="x"', '"x"@connections=".y/state*0.5+0.25"'].join('\n'));
   const ns = its.evaluate(rs);
   check(rs.errors.length === 0, 'Section 20 connection form (.target/variable*bias+weight) parses without error');
   check(ns.get('x').connections.get('y') === 0.75, 'Section 20 form folds bias+additive into the edge weight (0.5+0.25)');
   // The bare state-selector form `.target/variable` defaults to weight 1.0.
-  const rs2 = its.parse(['name="y"', 'name="x"', '"x"@connections=".y/phase"'].join('\n'));
+  const rs2 = await its.parse(['name="y"', 'name="x"', '"x"@connections=".y/phase"'].join('\n'));
   check(rs2.errors.length === 0 && its.evaluate(rs2).get('x').connections.get('y') === 1.0, 'Section 20 bare state-selector defaults to weight 1.0');
   // A dotted numeric target (.5) is a connection to neuron "5", not an additive.
-  const rs3 = its.parse(['name="5"', 'name="q"', '"q"@connections=".5"'].join('\n'));
+  const rs3 = await its.parse(['name="5"', 'name="q"', '"q"@connections=".5"'].join('\n'));
   check(rs3.errors.length === 0 && its.evaluate(rs3).get('q').connections.get('5') === 1.0, 'Dotted numeric target ".5" connects to neuron "5", not an additive weight');
   check(neurons.get('calc').isCodeNet && neurons.get('calc').code === 'return a+b', 'code@name/@code create a code-net neuron');
   const finder = neurons.get('finder');
@@ -1193,7 +1230,7 @@ async function testNeuralDefinitionDirectives() {
   // @net binds to the most recently declared @name in parse order, even when
   // an earlier netsearch neuron (declared first) is still pending.
   const it2 = new NeuroLangInterpreter();
-  const r2 = it2.parse(['"netsearch"@name="first"', '"netsearch"@name="second"', '"netsearch"@net="loc/2"'].join('\n'));
+  const r2 = await it2.parse(['"netsearch"@name="first"', '"netsearch"@name="second"', '"netsearch"@net="loc/2"'].join('\n'));
   const n2 = it2.evaluate(r2);
   check(n2.get('second').netLocation === 'loc/2', 'netsearch@net binds to the most recent pending definition (parse order)');
   check(n2.get('first').netLocation === null, 'an earlier pending netsearch is not mis-bound by a later @net');
@@ -1683,7 +1720,7 @@ async function testNetSearchEngine() {
   // Integration: search the NeuroLang neuron map, honouring @net="self".
   const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
   const interp = new NeuroLangInterpreter();
-  interp.parse([
+  await interp.parse([
     'name="router"',
     '"router"@definition="routes inputs to the correct expert"',
     'name="memory"',
@@ -1727,7 +1764,7 @@ async function testCodeToNet() {
   // Integration: NeuroLang `@code` compiles a real, testable network.
   const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
   const interp = new NeuroLangInterpreter();
-  interp.parse('code@name="calc"\n"calc"@code="return a+b"');
+  await interp.parse('code@name="calc"\n"calc"@code="return a+b"');
   const net = interp.getCodeNet('calc');
   check(net && net.mode === 'function', 'NeuroLang @code compiles a behavioral code-net');
   const out = interp.evaluateCodeNet('calc', [3, 4]);
@@ -1758,6 +1795,30 @@ async function testCodeToNet() {
   check(throwingReport && throwingReport.samples > 0, 'testAgainst() still returns a real report by skipping the throwing sample(s), not silently reporting zero');
 }
 
+async function testNeuroLangParseYields() {
+  // Section 26: NeuroLangInterpreter.parse() calls codeToNet.compile() (~100ms
+  // of fully synchronous MLP training, see testCodeToNet above) once per
+  // "X"@code="..." line with no cap on line count -- reachable unauthenticated
+  // via POST /api/neuri and POST /api/extension/build, both of which parse
+  // fully attacker-controlled source. parse() now yields to the event loop
+  // after every line that actually compiles, so a source string packed with
+  // many @code= lines can't monopolize the process. Verify with a real
+  // multi-line, multi-compile source.
+  const { NeuroLangInterpreter } = await load('models && skills/core/neuro-lang.js');
+  const interp = new NeuroLangInterpreter();
+  const lines = [];
+  for (let i = 0; i < 8; i++) lines.push(`"n${i}"@code="a+b*a-a/2+a*a"`);
+  const source = lines.join('\n');
+
+  let timerFiredDuringParse = false;
+  let parseDone = false;
+  setTimeout(() => { if (!parseDone) timerFiredDuringParse = true; }, 0);
+  const parsed = await interp.parse(source);
+  parseDone = true;
+  check(timerFiredDuringParse, 'NeuroLangInterpreter.parse() yields to the event loop while compiling multiple @code= lines, instead of monopolizing it for the whole run');
+  check(parsed.errors.length === 0 && parsed.neurons.size === 8, 'parse() still compiles every @code= line correctly once yielding');
+}
+
 async function testNeuriLangCliWiring() {
   // Sections 21/22: NeuroLangInterpreter.getCodeNet()/testCodeNet()/netSearch()
   // are real and fully unit-tested (see testCodeToNet/testNetSearchEngine
@@ -1778,7 +1839,7 @@ async function testNeuriLangCliWiring() {
   const lines = [];
   console.log = (...args) => { lines.push(args.map(String).join(' ')); };
   try {
-    cli.handleNeuri([
+    await cli.handleNeuri([
       'name="squareIt"',
       '"squareIt"@code="x => x * x"',
       'name="widget"',
@@ -3601,6 +3662,7 @@ async function main() {
     ['ZipIO loop total context size when full (Section 1.10)', testZipLoopTotalContextSizeWhenFull],
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
     ['Elastic core transformer replacement', testElasticCoreBlock],
+    ['NeuroclawTrainer yields to event loop and serializes concurrent calls (Section 26)', testTrainerYieldsAndSerializes],
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
@@ -3611,6 +3673,7 @@ async function main() {
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
+    ['NeuroLang parse() yields to event loop across many @code= lines (Section 26)', testNeuroLangParseYields],
     ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],
     ['nsearch CLI command reaches netSearchGenerate (Section 22)', testNetSearchGenerateCliWiring],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],

@@ -45,8 +45,8 @@ export declare class NeuroclawLLM {
     private pipeline;
     constructor(config?: Partial<LLMConfig>);
     connectThesaurus(thesaurus: import("./thesaurus.js").ThesaurusDictionary): void;
-    build(): void;
-    trainOnText(text: string): void;
+    build(): Promise<void>;
+    trainOnText(text: string): Promise<void>;
     generate(prompt: string, options?: Partial<GenerateOptions>): Promise<string>;
     private buildTextResponse;
     private createSelfExtension;
@@ -56,7 +56,7 @@ export declare class NeuroclawLLM {
         name?: string;
         config?: Record<string, unknown>;
         weights?: Record<string, number[]>;
-    }): void;
+    }): Promise<void>;
     unloadModel(): void;
     getActiveModel(): {
         id: string;

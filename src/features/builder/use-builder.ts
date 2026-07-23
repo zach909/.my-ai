@@ -37,7 +37,7 @@ export interface BuilderApi {
   search: (query: string) => NeuronData[];
   simulate: (neuronId: string, inputValue: number) => string;
   addApiOutputLayer: (config: APIOutputConfig) => boolean;
-  parseNeuroLang: (source: string) => { success: boolean; errors: string[] };
+  parseNeuroLang: (source: string) => Promise<{ success: boolean; errors: string[] }>;
   exportNeuroLang: () => string;
   save: () => string | null;
   install: (bits: number) => Promise<string | null>;
@@ -113,8 +113,8 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       bump();
       return ok;
     },
-    parseNeuroLang: (source) => {
-      const res = engine.parseNeuroLang(projectId, source);
+    parseNeuroLang: async (source) => {
+      const res = await engine.parseNeuroLang(projectId, source);
       bump();
       return res;
     },

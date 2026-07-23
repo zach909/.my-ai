@@ -502,11 +502,11 @@ export class ExtensionBuilder {
         }
         return true;
     }
-    parseNeuroLang(projectId, source) {
+    async parseNeuroLang(projectId, source) {
         const project = this.projects.get(projectId);
         if (!project)
             return { success: false, errors: ['Project not found'] };
-        const result = this.neuroLang.parse(source);
+        const result = await this.neuroLang.parse(source);
         if (result.errors.length > 0) {
             return { success: false, errors: result.errors };
         }
