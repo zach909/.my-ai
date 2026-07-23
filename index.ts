@@ -1743,6 +1743,7 @@ export class NeuroclawSystem {
     alignment: number;
     hiveAgents: number;
     memories: number;
+    concepts: number;
     transferredMethods: number;
     trackedPredictions: number;
     architectureComponents: number;
@@ -1755,6 +1756,13 @@ export class NeuroclawSystem {
       alignment: this.empathy.getAlignmentScore(),
       hiveAgents: this.hive.list().length,
       memories: this.memory.size(),
+      // ASI §7: KnowledgeGraph.conceptCount() was built and unit-tested (via
+      // the class's own tests) but never surfaced here — the same "built but
+      // not surfaced in the one-stop status snapshot" gap the two fields
+      // below already closed once, then closed again for the two
+      // Self-Improvement fields after that, recurring a third time for the
+      // knowledge graph `solve()`/`learn()` build up throughout a session.
+      concepts: this.knowledge.conceptCount(),
       // ASI §7/§10: KnowledgeTransfer.size() and PredictionEngine.size() were
       // built and unit-tested but never surfaced anywhere — real counts of
       // how much cross-domain method transfer and outcome-prediction history

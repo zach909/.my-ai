@@ -2761,10 +2761,16 @@ async function testStatusCounts() {
     // already exist to catch, recurring for the two subsystems added after.
     check(before.architectureComponents >= 20, 'getStatus() surfaces a real ArchitectureMapper component count from construction, not zero');
     check(before.systemHealth === 'healthy', 'getStatus() reports healthy PerformanceMonitor status before any call has been measured');
+    // ASI §7: KnowledgeGraph.conceptCount() was built and unit-tested but
+    // never surfaced in this one-stop status snapshot -- the same gap the
+    // checks above already exist to catch, recurring a third time.
+    check(before.concepts === 0, 'getStatus() reports zero concepts before any activity');
 
     await sys.solve('calculate the average of a list of numbers');
     const afterSolve = sys.getStatus();
     check(afterSolve.transferredMethods === before.transferredMethods + 1, 'getStatus() reflects KnowledgeTransfer.size() growing after solve() registers a method');
+    check(afterSolve.concepts === sys.knowledge.conceptCount(), 'getStatus().concepts always matches the real KnowledgeGraph.conceptCount(), not a stale or fabricated number');
+    check(afterSolve.concepts > before.concepts, 'getStatus() reflects KnowledgeGraph.conceptCount() growing after solve() integrates its verified result as knowledge');
     // solve() now predicts the consequence of each candidate approach
     // (Section 2 step 6), so this alone already tracks several predictions --
     // not just the single processQuery() call below.
