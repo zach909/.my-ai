@@ -363,7 +363,7 @@ export class WebServer {
                 const code = body?.code ?? '';
                 const { NeuroLangInterpreter } = await import('../models && skills/core/neuro-lang.js');
                 const interp = new NeuroLangInterpreter();
-                const parsed = interp.parse(code);
+                const parsed = await interp.parse(code);
                 if (parsed.errors.length > 0) {
                     this.sendJson(res, { errors: parsed.errors }, 400);
                     return;

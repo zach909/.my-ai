@@ -22,6 +22,10 @@
  */
 import { CodeToNetCompiler } from './code-to-net.js';
 import { NetSearchEngine } from './net-search.js';
+/** Cooperative yield: hands control back to Node so other pending work (an HTTP request, a CLI prompt) can run before the next batch of parsing. */
+function yieldToEventLoop() {
+    return new Promise(resolve => setImmediate(resolve));
+}
 // ── Parser ────────────────────────────────────────────────────────────────────
 export class NeuroLangInterpreter {
     constructor() {
@@ -33,13 +37,24 @@ export class NeuroLangInterpreter {
         /** Net Search engine + the neuron map from the last parse it searches over. */
         this.netSearchEngine = new NetSearchEngine();
         this.lastNeurons = new Map();
+        /**
+         * Bumped once per `"X"@code="..."` line that actually calls
+         * codeToNet.compile() (~100ms of fully synchronous MLP training each,
+         * see code-to-net.ts's fit()). parse() checks this after every line and
+         * yields to the event loop whenever it changes, so a source string
+         * packed with many `@code=` lines can't monopolize the process the way
+         * NeuroclawTrainer.train() used to (see ARCHITECTURE.md) -- reachable
+         * unauthenticated via POST /api/neuri and POST /api/extension/build,
+         * both of which parse fully attacker-controlled source with no line cap.
+         */
+        this.compileCallCount = 0;
     }
     // ── Public API ──────────────────────────────────────────────────────────────
     /**
      * Parse NeuriLang source code and return a ParseResult.
      * No connections are auto-added here — that happens in evaluate().
      */
-    parse(source) {
+    async parse(source) {
         const neurons = new Map();
         const errors = [];
         const printOutputs = [];
@@ -55,6 +70,7 @@ export class NeuroLangInterpreter {
             const line = raw.replace(/--.*$/, '').trim();
             if (!line)
                 continue;
+            const compilesBefore = this.compileCallCount;
             try {
                 this.parseLine(line, neurons, printOutputs);
             }
@@ -62,6 +78,8 @@ export class NeuroLangInterpreter {
                 const msg = err instanceof Error ? err.message : String(err);
                 errors.push(`Line ${lineNo + 1}: ${msg} (source: "${raw.trim()}")`);
             }
+            if (this.compileCallCount !== compilesBefore)
+                await yieldToEventLoop();
         }
         this.lastNeurons = neurons;
         return { neurons, errors, printOutputs };
@@ -328,6 +346,7 @@ export class NeuroLangInterpreter {
                     this.codeNets.set(name, this.codeToNet.compile(name, m[2]));
                 }
                 catch { /* leave as a stored code string only */ }
+                this.compileCallCount++;
                 return;
             }
         }
