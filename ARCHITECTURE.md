@@ -933,6 +933,16 @@ Two separate check-count staleness issues, found in the same pass as the torch-g
 
 Doc-only changes; no code, build, or behavior impact. Verified by direct `grep -c` counts against the actual current test files, not estimated.
 
+### `pretrain.py --use-moe` is a documented, live CLI flag that has zero effect on the trained model (Section 1.5)
+
+`tinygpt/moe.py`'s `MoELayer` (a real, complete sparse MoE with load-balancing loss and per-expert usage tracking) was built for the transformer block this project retired in favor of the all-to-all mesh — its own consuming test's comment already says as much: "kept to wire into the mesh as skills, §3." `pretrain.py` still exposes real, working-looking `--use-moe`/`--n-experts`/`--moe-top-k` flags, threads them into `ModelConfig`, and prints `"MoE enabled: N experts, top-K"` — but `build_model()` (`tinygpt/model.py`) unconditionally returns `MeshLM(cfg)` and never reads any of the three fields anywhere. `README.md` documented this as a working, literal, runnable feature ("enable `--use-moe` to replace each block's MLP with a sparse MoE... Train with `python pretrain.py --use-moe --n-experts 8 --moe-top-k 2`").
+
+Verified live, exactly the kind of check that's only possible with `torch` actually installed (not static grep): built the same config with `use_moe=False` vs. `use_moe=True, n_experts=8, moe_top_k=2` (identical seed) — identical parameter count, zero `MoELayer` instances in either model, byte-identical forward-pass logits. The flag is 100% inert. The real, working sibling mechanism is `--skill-experts`, which genuinely attaches skill experts to the mesh via `ExpertMoE`/`cfg.expert_moe` (`mesh.py` does read that one).
+
+Minimal, safe fix — documentation and a print-statement correction only, no model/training behavior touched: corrected `README.md`'s §1.5 bullet and file-tree comment to state the flag is currently inert and point at `--skill-experts`; corrected `tinygpt/config.py`'s docstring to match; changed `pretrain.py`'s misleading "MoE enabled" print to an honest runtime warning, and its `--help` text to state the flag has no effect. Actually wiring `MoELayer` into `MeshLM` for real has no clear integration point (the mesh has no transformer block to replace) — left as a genuine, deferred architectural question, not attempted.
+
+Verified: `pretrain.py --help` shows the corrected flag description; the corrected warning message renders exactly as intended; `python3 test_core.py` still passes cleanly (214/0) with no behavior change to any model actually constructed.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.

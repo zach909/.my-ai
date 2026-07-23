@@ -41,7 +41,7 @@ def parse_args():
     ap.add_argument("--block-size", type=int, default=256)
     ap.add_argument("--dropout", type=float, default=0.1)
     # Mixture-of-Experts (skills)
-    ap.add_argument("--use-moe", action="store_true", help="replace block MLPs with sparse MoE")
+    ap.add_argument("--use-moe", action="store_true", help="currently has no effect (build_model() always constructs the mesh); see --skill-experts")
     ap.add_argument("--n-experts", type=int, default=4)
     ap.add_argument("--moe-top-k", type=int, default=2)
     # MeshLM (§1–§3, §8): the all-to-all mesh that build_model constructs
@@ -160,7 +160,9 @@ def main():
         mesh_settle_steps=args.mesh_settle_steps, mesh_n_qubits=args.mesh_n_qubits,
     )
     if args.use_moe:
-        print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")
+        print("WARNING: --use-moe currently has no effect -- build_model() always "
+              "constructs the mesh (MeshLM) regardless of this flag; MoELayer is not "
+              "wired into it. Use --skill-experts to attach real routed mesh experts.")
     if args.skill_experts:
         from tinygpt.plugins import default_registry
         moe = default_registry().attach_to_config(model_cfg)

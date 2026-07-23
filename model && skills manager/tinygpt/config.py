@@ -30,8 +30,14 @@ class ModelConfig:
     dropout: float = 0.1
     bias: bool = True              # bias in Linear/LayerNorm layers
     tie_weights: bool = True       # share token embedding with the LM head
-    # Mixture-of-Experts (skills). When use_moe is True, each block's MLP is
-    # replaced by a sparse MoE layer of n_experts experts routed top-k.
+    # Mixture-of-Experts (skills), built for the retired transformer block:
+    # when use_moe is True, each block's MLP was meant to be replaced by a
+    # sparse MoE layer of n_experts experts routed top-k. build_model() always
+    # constructs MeshLM regardless of this flag, so it currently has no effect
+    # on the model actually built (see tinygpt/moe.py's MoELayer, kept for
+    # wiring into the mesh as skills, §3, and test_core.py's test_moe). The
+    # real, working mesh-skill mechanism is ExpertMoE/expert_moe (below),
+    # attached via pretrain.py's --skill-experts.
     use_moe: bool = False
     n_experts: int = 4
     moe_top_k: int = 2

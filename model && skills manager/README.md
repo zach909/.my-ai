@@ -94,7 +94,7 @@ model && skills manager/
 │   ├── sampling.py         # temperature / top-k / top-p / repetition penalty
 │   └── utils.py            # seeding, device, LR schedule, checkpoint I/O
 ├── train_tokenizer.py      # step 1: train the tokenizer
-├── pretrain.py             # step 2: pretrain on Markdown (--use-moe / --use-elastic-mesh optional)
+├── pretrain.py             # step 2: pretrain on Markdown (--skill-experts / --use-elastic-mesh optional; --use-moe is currently inert, see §1.5 below)
 ├── finetune.py             # step 3: supervised fine-tune on chat data
 ├── chat.py                 # step 4: interactive / one-shot inference
 ├── core.py                 # the unified core (memory, veto, actions, guidance)
@@ -198,10 +198,16 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   releases GPU memory to save power and wakes instantly on the next input
   (`--idle-timeout`, default 120s; type `sleep` to trigger now). It only stops
   to save power when idle — never on drift.
-- **Mixture-of-Experts / skills** (§1.5) — enable `--use-moe` to replace each
-  block's MLP with a sparse MoE of named experts ("skills") routed top-k
-  (`tinygpt/moe.py`), with a load-balancing auxiliary loss and per-skill usage
-  tracking. Train with `python pretrain.py --use-moe --n-experts 8 --moe-top-k 2`.
+- **Mixture-of-Experts / skills** (§1.5) — `tinygpt/moe.py`'s `MoELayer` (a
+  sparse MoE of named experts routed top-k, with a load-balancing auxiliary
+  loss and per-skill usage tracking) was built for the retired transformer
+  block and is currently **not** wired into the mesh: `pretrain.py`'s
+  `--use-moe`/`--n-experts`/`--moe-top-k` flags exist and print a confirmation,
+  but `build_model()` never reads them, so they have no effect on the model
+  actually constructed (confirmed live: identical parameter count and
+  byte-identical output with the flag on or off). The real, working mechanism
+  for attaching skill experts to the mesh is `--skill-experts` (below), which
+  genuinely wires `ExpertMoE`/`expert_moe` into `MeshLM`.
 - **Extension builder** (§4) — teach the model declarative *definishon*
   contracts (`tinygpt/extension_builder.py`): `when "X" then it must reply "Y"`,
   trained with a constraint loss plus a don't-forget weight penalty, with
