@@ -1791,6 +1791,20 @@ async function testAutonomousLearningPredictionDiscovery() {
   const cmp2 = pred.observe(safe.id, 'completely unrelated and unexpected catastrophic failure output');
   check(cmp2.surprise > cmp.surprise, 'PredictionEngine: a divergent actual outcome registers higher surprise');
 
+  // predict() is reached on nearly every live NeuroclawSystem entry point
+  // with no existing bound at all -- most predictions are write-once-
+  // read-never, so this grew forever on a long-running process. Same FIFO
+  // cap pattern already applied to SharedBlackboard's log.
+  const predCap = new PredictionEngine();
+  let firstPredId;
+  for (let i = 0; i < 5010; i++) {
+    const p = predCap.predict(`do thing number ${i}`);
+    if (i === 0) firstPredId = p.id;
+  }
+  check(predCap.size() === 5000, "PredictionEngine's predictions cap at a bounded size instead of growing forever");
+  check(predCap.get(firstPredId) === undefined, 'the oldest prediction is evicted first (FIFO)');
+  check(predCap.observe(firstPredId, 'anything') === undefined, 'observe() on an evicted prediction id fails gracefully (undefined), not a crash');
+
   // DiscoveryEngine (ASI §11): hypothesis generation, falsification, creative combination.
   const { DiscoveryEngine } = await load('models && skills/core/discovery-engine.js');
   const disc = new DiscoveryEngine(kg);
