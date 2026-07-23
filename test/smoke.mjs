@@ -3120,6 +3120,30 @@ async function testArchitectureMapperIntegration() {
   }
 }
 
+async function testPerformanceMonitorAnomalyCapacity() {
+  // checkAnomalies() runs on every trackCall() across all six live
+  // NeuroclawSystem entry points -- real measured latency/CPU/memory/
+  // error-rate values legitimately cross the warning/critical thresholds
+  // under normal load, so this grows routinely on a long-running process.
+  // `points`/`predictions` (this same class) already cap themselves with
+  // the "slice to last N" idiom; `anomalies` had no cap at all, and its own
+  // clearOldAnomalies() existed to do the equivalent but had no call site.
+  const { PerformanceMonitor } = await load('models && skills/core/performance-monitor.js');
+  const mon = new PerformanceMonitor();
+  for (let i = 0; i < 1010; i++) {
+    mon.updateComponentMetrics({
+      componentId: 'test-component',
+      cpuPercent: 5,
+      memoryMB: 10,
+      latencyMs: 99999, // exceeds latencyCritical on every call
+      throughput: 1,
+      errorRate: 0,
+      lastUpdated: Date.now(),
+    });
+  }
+  check(mon.getAnomalies(100000).length === 1000, "PerformanceMonitor's anomalies cap at a bounded size instead of growing forever");
+}
+
 async function testPerformanceMonitorTracksRealCalls() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -3378,6 +3402,7 @@ async function main() {
     ['SharedBlackboard log capacity (Section 13)', testSharedBlackboardLogCapacity],
     ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
+    ['PerformanceMonitor anomaly capacity (Self-Improvement Phase 3)', testPerformanceMonitorAnomalyCapacity],
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
