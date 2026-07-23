@@ -2076,6 +2076,16 @@ async function testSolveIntegration() {
     check(patterns.length > 0, 'discoverPatterns() finds regularities across repeated solve() outcomes');
     check(patterns.some(h => h.cause === 'math' || h.effect === 'math'), 'discoverPatterns() surfaces the domain as part of a discovered pattern');
 
+    // ASI §5/§11: DiscoveryEngine.getHypothesis() existed but had no real
+    // caller-facing method of NeuroclawSystem's own -- only tests reaching
+    // past this class into the public `discovery` field directly. A caller
+    // who saved a hypothesis id from an earlier discoverPatterns() call
+    // should be able to look it back up later (e.g. to check whether it's
+    // since been confirmed, contradicted, or rejected).
+    check(sys.hypothesis('a-hypothesis-id-that-was-never-generated') === undefined, "hypothesis() returns undefined for an id that was never generated, rather than fabricating a result");
+    const sameHypothesis = sys.hypothesis(patterns[0].id);
+    check(JSON.stringify(sameHypothesis) === JSON.stringify(patterns[0]), "hypothesis(id) looks up the exact same hypothesis discoverPatterns() already returned, by its real id");
+
     // ASI §5/§12: the discovered "decompose -> verified" regularity should
     // have fed back into a real bias the reasoner will use on the next solve.
     const decomposeBias = patterns.find(h => (h.cause === 'decompose' && h.effect === 'verified') || (h.cause === 'verified' && h.effect === 'decompose'));

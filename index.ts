@@ -1310,6 +1310,18 @@ export class NeuroclawSystem {
     return this.discovery.generateHypotheses(topK);
   }
 
+  /**
+   * ASI §5/§11: a specific hypothesis by the id an earlier discoverPatterns()
+   * call returned — DiscoveryEngine.getHypothesis() existed and was exercised
+   * only by tests reaching past this class into the public `discovery` field
+   * directly, with no real caller-facing method of its own. Lets a caller
+   * check whether a previously-seen hypothesis has since been confirmed,
+   * rejected, or improved, rather than only ever seeing a fresh top-K list.
+   */
+  hypothesis(id: string) {
+    return this.discovery.getHypothesis(id);
+  }
+
   /** ASI §4: "identify contradictions" — every unresolved contradiction currently known. */
   findContradictions() {
     return this.knowledge.findContradictions();

@@ -768,6 +768,14 @@ Added `concepts: this.knowledge.conceptCount()` to `getStatus()`'s return value 
 
 Verified live: `concepts` reads `0` on a fresh instance, then grows to match `knowledge.conceptCount()` exactly after real `integrate()` calls (both direct and via `solve()`'s own knowledge-integration step). Covered by an extension to the existing `testStatusCounts` suite (the established precedent for every prior addition to this same object), not a new dedicated suite.
 
+### `DiscoveryEngine.getHypothesis()` had no real caller-facing method on `NeuroclawSystem` (Section 5/11)
+
+`discoverPatterns()` already wraps `DiscoveryEngine.generateHypotheses()` to surface a fresh top-K list of regularities, but there was no way for a caller who'd saved a specific hypothesis's `id` from an earlier call to look it back up later — to check whether it's since been confirmed by more evidence, contradicted, or rejected. `DiscoveryEngine.getHypothesis(id)` — a plain `Map.get(id)` — already existed to do exactly this, but the only two places that ever called it were tests reaching straight past `NeuroclawSystem` into its public `discovery` field, not a real method of the class's own API, unlike `findContradictions()`/`combineKnowledge()`/`predictProperties()`, which all wrap fields the same way.
+
+Added `hypothesis(id)` right next to `discoverPatterns()`. Safety-wise, this is categorically different from this pass's earlier `MixtureOfExperts.tick()` investigation (live-tested and reverted after exposing real numerical instability in `NeuronMesh.propagate()`'s gated path): it's a single, stateless, read-only `Map.get`, with no loop, no accumulation, and no relationship to the mesh/MoE machinery at all — the same risk profile as `KnowledgeGraph.conceptCount()`, fixed earlier this pass.
+
+Verified live: an id that was never generated returns `undefined` rather than fabricating a result; a real id taken from `discoverPatterns()`'s own return value looks up the exact same hypothesis object through `hypothesis()`. Covered by an extension to the existing solve()-integration test (the same test that already exercises `discoverPatterns()`), not a new dedicated suite.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
