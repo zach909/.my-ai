@@ -13,6 +13,14 @@ Guards the spec's Value System invariants (design doc, "Value System"):
 Run with: python3 test_value_system.py   (pure-stdlib except torch, which
 neurolang.py already requires — no external APIs).
 """
+import sys
+
+try:
+    import torch  # noqa: F401
+except ImportError:
+    print("torch not installed — test_value_system.py needs it (pip install torch)")
+    sys.exit(0)
+
 from neurolang import NeuroRuntime
 
 

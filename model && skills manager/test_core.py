@@ -261,6 +261,22 @@ def test_wave_signature_selection():
           "interference-based (§5) selection returns a finite-scored candidate")
     check(len(picked.ids) > 0, "interference-based selection produced a continuation")
 
+    # §5: interfere_select()'s Grover-style amplify_target/boost were always
+    # supported by the low-level primitive, but select_by_interference() --
+    # the only real caller core.py --select interference actually uses --
+    # never accepted or forwarded them, so nothing could ever reach the
+    # amplification path from a real chat session. With an overwhelming
+    # boost on a fixed target index, the Born-rule collapse should reliably
+    # favor that index over the group's natural interference pattern.
+    torch.manual_seed(7)
+    amplified = select_by_interference(model, ToyTok(), prompt_ids=[1, 2, 3], n=4, max_new_tokens=6,
+                                       temperature=1.0, top_k=20, top_p=0.95, repetition_penalty=1.1,
+                                       eos_id=None, device="cpu",
+                                       generator=torch.Generator().manual_seed(0),
+                                       amplify_target=0, boost=1e6)
+    check(amplified is not None and math.isfinite(amplified.score),
+          "select_by_interference() accepts amplify_target/boost and still returns a finite-scored candidate")
+
 
 class _CharTok:
     """Minimal deterministic tokenizer so the extension test needs no spm model."""
@@ -536,6 +552,18 @@ def test_mesh_qat():
     check(out[0, 3:].tolist() == [4, 5, 6, 7, 8], "QAT mesh reproduces the sequence under quantization")
     check(m.quantization_error() < 0.05, "QAT quantization error stays small")
 
+    # _fake_quant()'s qmax = 2**(bits-1) - 1 is 0 at bits <= 1, making
+    # scale = max/qmax evaluate to inf and every quantized weight become nan
+    # (0 * inf) -- MeshBlock.__init__ now clamps quant_bits to [2, 16] so a
+    # config requesting an out-of-range bit-width still trains instead of
+    # silently producing a NaN model.
+    torch.manual_seed(0)
+    m_lowbits = build_model(ModelConfig(vocab_size=16, block_size=12, arch="mesh", mesh_neurons=20,
+                                        mesh_dims=4, mesh_input=6, settle_ticks=4,
+                                        quant_enabled=True, quant_bits=1))
+    _, loss_lowbits = m_lowbits(x, y)
+    check(torch.isfinite(loss_lowbits).item(), "QAT mesh: quant_bits=1 is clamped to a safe minimum instead of producing a NaN loss")
+
 
 def test_interference():
     try:
@@ -634,6 +662,11 @@ def test_neurolang_spec_aliases():
     """The design doc's Neural Definition Format spells the two core directives
     "@value=" and "@definition="; this codebase's own dialect spells them
     "@vale=" and "@definishon=". Both spellings must parse identically."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip neurolang-spec-aliases test (torch not installed)")
+        return
     import neurolang
 
     dialect = '\n'.join([
@@ -956,6 +989,24 @@ def test_adaptive_routing():
     check(torch.allclose(modified.sum(), torch.tensor(1.0), atol=0.01) or modified.sum() > 0,
           "apply_routing_decision produces valid scores")
 
+    # decide_routing()'s own "explore" decision must genuinely soften the
+    # scores, not leave them unchanged (temperature_adjust used to default
+    # to 1.0 in this branch, making apply_routing_decision's pow(x, 1.0) a
+    # silent no-op -- only "tighten" explicitly set it).
+    explore_router = AdaptiveExpertRouter(n_experts=8, base_top_k=1, patience=2)
+    explore_router.update_confidence(0.1)
+    explore_router.update_confidence(0.1)
+    explore_router.expert_performance = torch.tensor([1.0] + [0.0] * 7)
+    explore_decision = explore_router.decide_routing(
+        current_top_k=1, active_experts=torch.tensor([1, 0, 0, 0, 0, 0, 0, 0], dtype=torch.bool))
+    check(explore_decision.action == "explore", "decide_routing reaches the explore branch under these conditions")
+    check(explore_decision.temperature_adjust != 1.0, "explore decision sets a real temperature_adjust, not the inert default")
+    explore_scores = torch.tensor([0.1, 0.2, 0.15, 0.05, 0.1, 0.1, 0.2, 0.1])
+    explore_out = explore_router.apply_routing_decision(explore_decision, explore_scores)
+    check(not torch.allclose(explore_scores, explore_out), "apply_routing_decision actually softens scores for a real explore decision")
+    check((explore_out.min() / explore_out.max()) > (explore_scores.min() / explore_scores.max()),
+          "explore softening moves the score distribution closer to uniform (min/max ratio increases)")
+
     # Test live guidance integration (API only, no full integration in sandbox)
     guidance = LiveGuidanceWithAdaptiveRouting(base_temperature=0.8, base_top_k=40)
     result = guidance.adjust_generation(logits=torch.randn(1, 100), confidence=0.3)
@@ -1071,6 +1122,11 @@ def test_continuous_input_buffer():
 
 
 def test_neurolang_dictionary():
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip neurolang-dictionary test (torch not installed)")
+        return
     import neurolang
     # "code" and "software" are not thesaurus synonyms, but the dictionary
     # glosses both onto the shared concept {program, ...} -> they auto-connect.

@@ -39,7 +39,9 @@ function defaultScorer(action, ctx) {
         if (DEFAULT_OBJECTIONABLE.includes(cap))
             score -= 0.5;
     }
-    if (action.reversible === false)
+    // Unknown (omitted) reversibility must fail safe, i.e. be treated the same
+    // as reversible: false, per this field's own doc comment above.
+    if ((action.reversible ?? false) === false)
         score -= 0.15;
     if (action.externalEffect)
         score -= 0.1;
@@ -81,7 +83,8 @@ export class AlignmentVeto {
             reasons.push(`self-model drift (${surprise.toFixed(3)}) — escalating to human confirmation`);
         }
         // Rule 3: human in the loop for irreversible / external-effect actions.
-        if (this.config.confirmIrreversible && (action.reversible === false || action.externalEffect)) {
+        // Unknown (omitted) reversibility fails safe: treated the same as false.
+        if (this.config.confirmIrreversible && ((action.reversible ?? false) === false || action.externalEffect)) {
             requiresConfirmation = true;
             reasons.push('irreversible or external-effect action — requires human confirmation');
         }

@@ -88,7 +88,10 @@ class MeshLM(nn.Module):
         # form. Straight-through estimator: forward uses quantized W, gradient
         # flows to the full-precision W unchanged.
         self.quant_enabled = cfg.quant_enabled
-        self.quant_bits = cfg.quant_bits
+        # Clamped: _fake_quant()'s qmax = 2**(bits-1) - 1 is 0 at bits <= 1,
+        # so scale = max/qmax becomes inf and every quantized weight becomes
+        # nan (0 * inf). 16 keeps qmax comfortably inside int range.
+        self.quant_bits = max(2, min(16, cfg.quant_bits))
 
         # §2 vale / value budget: per-neuron plasticity. vale in [0,1]; high-vale
         # neurons resist change, low-vale neurons learn readily. It gates the

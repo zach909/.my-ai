@@ -213,6 +213,17 @@ async function testQuantizationAwareTraining() {
   for (let i = 0; i < 8; i++) noQat.addExperience(mkExperience(i));
   await noQat.train();
   check(noQat.getQuantizationDrift() === 0, 'QAT: disabling quantization keeps drift at exactly zero (real toggle, not always-on)');
+
+  // BackgroundQuantizer's symmetric path divides by qMax = floor((2^bits-1)/2),
+  // which is 0 at bits <= 1 -- scale becomes Infinity, then 0 * Infinity = NaN,
+  // permanently poisoning the quantized weights. elastic-core.ts already
+  // clamps its identical field to [2, 16]; rlm.ts's RLMConfig had no such
+  // clamp, so a caller passing 0 or 1 silently corrupted the policy with no
+  // error. Verify both edge values are clamped instead of producing NaN.
+  const lowBits1 = new RLMTrainer({ stateDim: 4, actionDim: 5, hiddenDim: 4, explorationRate: 0, batchSize: 8, quantizationEnabled: true, quantizationBits: 1 });
+  check(Number.isFinite(lowBits1.getQuantizationDrift()), 'QAT: quantizationBits=1 is clamped to a safe minimum instead of producing NaN drift');
+  const lowBits0 = new RLMTrainer({ stateDim: 4, actionDim: 5, hiddenDim: 4, explorationRate: 0, batchSize: 8, quantizationEnabled: true, quantizationBits: 0 });
+  check(Number.isFinite(lowBits0.getQuantizationDrift()), 'QAT: quantizationBits=0 is clamped to a safe minimum instead of producing NaN drift');
 }
 
 async function testZipPersistence() {
@@ -231,6 +242,26 @@ async function testZipPersistence() {
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
+}
+
+async function testZipLoopTotalContextSizeWhenFull() {
+  // getTotalContextSize() used to compare tail/head directly (isValidChunk());
+  // tail === head is ambiguous between "empty" and "exactly full", and the
+  // old check resolved it as empty -- so a fully-populated (or overwriting)
+  // loop silently reported a context size of 0, even though iterateContext()
+  // (which walks `size` items instead of comparing head/tail) still yielded
+  // every chunk correctly. Verify the fix across empty -> partial -> exactly
+  // full -> overwriting.
+  const { InfiniteZipLoop } = await load('models && skills/core/zip-io.js');
+  const loop = new InfiniteZipLoop(5, false);
+  check(loop.getTotalContextSize() === 0, 'empty loop reports zero context size');
+  for (let i = 0; i < 2; i++) await loop.zipInput(`chunk${i}`);
+  check(loop.getTotalContextSize() > 0, 'partially-filled loop reports a nonzero context size');
+  for (let i = 2; i < 5; i++) await loop.zipInput(`chunk${i}`);
+  const fullSize = loop.getTotalContextSize();
+  check(fullSize > 0, 'an exactly-full loop still reports its real context size instead of silently reporting zero');
+  await loop.zipInput('chunk5'); // triggers overwrite; tail and head both advance, staying equal
+  check(loop.getTotalContextSize() === fullSize, 'context size is still correctly reported after an overwrite past capacity');
 }
 
 async function testProductionConfigAndEdges() {
@@ -685,6 +716,13 @@ async function testAlignmentVeto() {
   const irreversible = veto.evaluate({ id: 'c', name: 'delete data', capabilities: ['file-delete'], reversible: false });
   check(irreversible.requiresConfirmation, 'Veto escalates an irreversible action to confirmation');
 
+  // Unknown (omitted) reversibility must fail safe -- treated the same as
+  // reversible: false, per ProposedAction.reversible's own doc comment --
+  // not silently defaulted to reversible: true.
+  const unknownReversibility = veto.evaluate({ id: 'c2', name: 'delete data, unknown reversibility', capabilities: ['file-delete'] });
+  check(unknownReversibility.requiresConfirmation, 'Veto escalates an action with unknown (omitted) reversibility to confirmation, same as explicit false');
+  check(unknownReversibility.score === irreversible.score, 'Unknown reversibility scores identically to explicit reversible:false (fail safe), not to reversible:true');
+
   // Severe self-model drift fails safe → blocked.
   const drifting = veto.evaluate({ id: 'd', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.9 });
   check(!drifting.allowed, 'Veto blocks under severe self-model drift (fails safe)');
@@ -984,6 +1022,20 @@ async function testWebBackend() {
     const convoJson = JSON.parse(convo.body);
     check(convo.status === 200 && typeof convoJson.response === 'string' && !convoJson.response.startsWith('[Plugin]'),
       'Web backend /api/chat routes plain conversation to neural generation, not a plugin');
+
+    // GET /api/dict/:word had no try/catch, unlike every sibling handler --
+    // decodeURIComponent() throws URIError on malformed percent-encoding
+    // (a trailing lone "%"), and since handleRequest() is the raw
+    // http.createServer callback with no .catch() and no process-wide
+    // unhandledRejection handler anywhere, that throw crashed the entire
+    // backend process on a single unauthenticated GET. Verify it now
+    // degrades to a clean 400 and the server survives to answer the next
+    // request.
+    const malformed = await get('/api/dict/%25%');
+    check(malformed.status === 400, 'Web backend /api/dict/:word returns 400 on malformed percent-encoding instead of crashing the process');
+    const stillAlive = await get('/api/status');
+    check(stillAlive.status === 200 && JSON.parse(stillAlive.body).running === true,
+      'Web backend is still running and responsive after a malformed /api/dict/:word request');
   } finally {
     await web.stop();
   }
@@ -1064,6 +1116,22 @@ async function testExtensionBuilderFlow() {
   check(saved && saved.quantized !== true, 'Save keeps the project un-quantized (editable)');
   const installed = JSON.parse(await B.installWithQuantization(pid, { bits: 8 }));
   check(installed.quantized === true && installed.bits === 8, 'Install quantizes the extension before deployment');
+
+  // BackgroundQuantizer.quantize()'s qMax/levels hit 0 at bits <= 1, so
+  // scale divides by zero -> Infinity -> every dequantized weight becomes
+  // 0 * Infinity = NaN. installWithQuantization() (and the live
+  // POST /api/extension/build handler, which takes `bits` straight from an
+  // untrusted request body via `body?.bits ?? 8` -- note 0 passes `??`
+  // unchanged) had no clamp of its own; quantize() itself is now clamped as
+  // the shared root fix. Use a perfectly symmetric weight/bias so 'mixed'
+  // routes to the symmetric branch where the bug actually lived.
+  const p2 = B.createProject('symdemo', 'Symmetric weights').id;
+  const s1 = B.addNeuron(p2, 'sym_a', 0.5).id;
+  const s2 = B.addNeuron(p2, 'sym_b', 0.5).id;
+  B.connectNeurons(p2, s1, s2, 0.5, -0.5);
+  const lowBits = JSON.parse(await B.installWithQuantization(p2, { bits: 1 }));
+  const conn = lowBits.connections[0];
+  check(Number.isFinite(conn.weight) && Number.isFinite(conn.bias), 'Install with bits=1 clamps to a safe minimum instead of quantizing every weight to NaN');
 
   // Net Search: semantic search over definitions -> generate a wired network.
   B.addNeuron(pid, 'weather', 0.4);
@@ -1510,6 +1578,21 @@ async function testSelfHealer() {
   check(health.repairable === true && health.doomed === false, 'healthReport reflects post-heal component health');
 }
 
+async function testSelfHealerLogCapacity() {
+  // Section 24: heal() is called repeatedly from live NeuroclawSystem code
+  // paths (solve(), autonomousTask(), processQuery()'s prediction-surprise
+  // trigger), each invocation appending to `log` via record() with no cap --
+  // the same unbounded-growth pattern already fixed for SharedBlackboard,
+  // PerformanceMonitor, SelfMonitor, ChatGroup, KnowledgeGraph, etc.
+  // clearLog() exists but has no callers anywhere, so nothing ever trimmed
+  // it in practice.
+  const { SelfHealer } = await load('models && skills/core/self-healer.js');
+  const healer = new SelfHealer();
+  healer.register({ name: 'flaky', check: () => false, repair: () => {}, maxAttempts: 1 });
+  for (let i = 0; i < 2000; i++) await healer.heal();
+  check(healer.getLog().length === 5000, "SelfHealer's log caps at a bounded size instead of growing forever");
+}
+
 async function testPlanTracker() {
   const { PlanTracker } = await load('models && skills/core/plan-tracker.js');
   const plan = new PlanTracker();
@@ -1650,6 +1733,29 @@ async function testCodeToNet() {
   const out = interp.evaluateCodeNet('calc', [3, 4]);
   check(out && Math.abs(out[0] - 7) < 1.5, 'Compiled code-net approximates a+b');
   check(interp.testCodeNet('calc').passed, 'NeuroLang code-net passes the test-against-original check');
+
+  // fit()/testAgainst() each sample the user's function with their own RNG
+  // seed; buildFunction()'s safety probe only evaluates at one fixed input,
+  // so a conditional that only dereferences a bad property in a narrow input
+  // band can compile cleanly (the compile-time seed never lands in the band)
+  // yet still throw when testAgainst()'s *different* seed does land there.
+  // Previously that throw propagated uncaught out of testAgainst() -- and
+  // since cli.ts's handleNeuri() calls testCodeNet() synchronously with no
+  // try/catch of its own, a crafted `@code=` snippet crashed the whole
+  // interactive CLI process. Verify the sampling loops now skip a throwing
+  // sample instead of propagating it.
+  const throwing = '(x > 1.705 && x < 1.72) ? x.zzz() : x';
+  const throwingNet = c.compile('throwy', throwing, { seed: 1234 });
+  check(throwingNet.mode === 'function', 'A conditional that only throws in a narrow input band still compiles in function mode');
+  let threw = false;
+  let throwingReport;
+  try {
+    throwingReport = c.testAgainst(throwingNet, throwing, { seed: 1234 ^ 0x9e3779b9 });
+  } catch {
+    threw = true;
+  }
+  check(!threw, 'testAgainst() no longer crashes when a different sampling seed trips a real throw in the code');
+  check(throwingReport && throwingReport.samples > 0, 'testAgainst() still returns a real report by skipping the throwing sample(s), not silently reporting zero');
 }
 
 async function testNeuriLangCliWiring() {
@@ -3250,6 +3356,49 @@ async function testPerformanceMonitorAnomalyCapacity() {
   check(mon.getAnomalies(100000).length === 1000, "PerformanceMonitor's anomalies cap at a bounded size instead of growing forever");
 }
 
+async function testSelfMonitorLogCapacity() {
+  // observe() runs on every NeuroclawSystem.processQuery()/solve() call, via
+  // monitor.observe('prediction.surprise', ...) and
+  // monitor.observe('solve.confidence', ...) in index.ts -- exercised
+  // thousands of times by this smoke suite itself (NeuroclawSystem is not,
+  // today, reached by either live backend -- see ARCHITECTURE.md). `log` had
+  // no cap, so it grew forever across a long test/process run, and
+  // anomalies() (called by hasFailure() on every one of those calls) does a
+  // full linear scan of `log`, so both memory and per-call CPU cost grew
+  // unboundedly with lifetime call count.
+  const { SelfMonitor } = await load('models && skills/core/self-monitor.js');
+  const mon = new SelfMonitor();
+  for (let i = 0; i < 6000; i++) mon.observe('prediction.surprise', Math.random());
+  check(mon.history().length === 5000, "SelfMonitor's log caps at a bounded size instead of growing forever");
+  const spike = mon.observe('prediction.surprise', 999999);
+  check(spike.severity === 'failure' && mon.hasFailure(), 'SelfMonitor still correctly detects a genuine failure once capped');
+}
+
+async function testKnowledgeGraphRelationsCapacity() {
+  // Section 4: relate() is reached on every integrate() call (solve()'s
+  // success path in index.ts, and predictProperties()) with no bound on the
+  // `relations` array -- supersede() only flips a boolean, it never shrinks
+  // the array -- so this grew forever on a long-running process, and
+  // findContradictions() does a full O(n^2) scan over it on every call.
+  const { KnowledgeGraph } = await load('models && skills/core/knowledge-graph.js');
+  const kg = new KnowledgeGraph();
+  for (let i = 0; i < 5010; i++) kg.relate(`concept${i}`, 'is', `category${i % 10}`);
+  check(kg.neighbors('concept0').length === 0, "KnowledgeGraph's relations cap at a bounded size instead of growing forever -- the oldest relation is evicted");
+  check(kg.neighbors('concept10').length === 1, 'the oldest surviving relation after eviction is still queryable');
+  check(kg.neighbors('concept5009').length === 1, 'the most recently added relation is always retained');
+}
+
+async function testKnowledgeTransferSolvedCapacity() {
+  // Section 7: register() is reached on every solve() success (index.ts,
+  // alongside knowledge.integrate()) with no bound on `solved` -- the
+  // identical unbounded-push defect as KnowledgeGraph.relations, fixed the
+  // same way.
+  const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
+  const kt = new KnowledgeTransfer();
+  for (let i = 0; i < 5010; i++) kt.register(`optimize the flow for case ${i}`, `domain${i % 5}`, `method${i}`);
+  check(kt.size() === 5000, "KnowledgeTransfer's solved-problem store caps at a bounded size instead of growing forever");
+}
+
 async function testPerformanceMonitorTracksRealCalls() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -3449,6 +3598,7 @@ async function main() {
     ['Alignment veto', testAlignmentVeto],
     ['Number systems (complex/dual)', testNumberSystems],
     ['ZipIO persistence', testZipPersistence],
+    ['ZipIO loop total context size when full (Section 1.10)', testZipLoopTotalContextSizeWhenFull],
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
     ['Elastic core transformer replacement', testElasticCoreBlock],
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
@@ -3464,6 +3614,7 @@ async function main() {
     ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],
     ['nsearch CLI command reaches netSearchGenerate (Section 22)', testNetSearchGenerateCliWiring],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
+    ['SelfHealer log capacity (Section 24)', testSelfHealerLogCapacity],
     ['Context compression (Section 7)', testContextCompressor],
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
     ['AGI capability modules (ASI §2-10)', testAGIModules],
@@ -3512,6 +3663,9 @@ async function main() {
     ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
     ['PerformanceMonitor anomaly capacity (Self-Improvement Phase 3)', testPerformanceMonitorAnomalyCapacity],
+    ['SelfMonitor log capacity (Section 11)', testSelfMonitorLogCapacity],
+    ['KnowledgeGraph relations capacity (Section 4)', testKnowledgeGraphRelationsCapacity],
+    ['KnowledgeTransfer solved-problem capacity (Section 7)', testKnowledgeTransferSolvedCapacity],
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],

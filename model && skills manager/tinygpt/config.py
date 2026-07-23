@@ -30,8 +30,14 @@ class ModelConfig:
     dropout: float = 0.1
     bias: bool = True              # bias in Linear/LayerNorm layers
     tie_weights: bool = True       # share token embedding with the LM head
-    # Mixture-of-Experts (skills). When use_moe is True, each block's MLP is
-    # replaced by a sparse MoE layer of n_experts experts routed top-k.
+    # Mixture-of-Experts (skills), built for the retired transformer block:
+    # when use_moe is True, each block's MLP was meant to be replaced by a
+    # sparse MoE layer of n_experts experts routed top-k. build_model() always
+    # constructs MeshLM regardless of this flag, so it currently has no effect
+    # on the model actually built (see tinygpt/moe.py's MoELayer, kept for
+    # wiring into the mesh as skills, §3, and test_core.py's test_moe). The
+    # real, working mesh-skill mechanism is ExpertMoE/expert_moe (below),
+    # attached via pretrain.py's --skill-experts.
     use_moe: bool = False
     n_experts: int = 4
     moe_top_k: int = 2
@@ -50,7 +56,7 @@ class ModelConfig:
     skill_groups: int = 1                  # §3 partition neurons into this many skill groups (1 = no routing)
     skill_top_k: int = 1                   # §3 number of skill groups active per input
     quant_enabled: bool = False            # §8 quantization-aware training (fake-quant W in forward)
-    quant_bits: int = 8                    # §8 bit-width for QAT
+    quant_bits: int = 8                    # §8 bit-width for QAT; MeshBlock clamps this to [2, 16]
     expert_moe: Optional[object] = None    # optional ExpertMoE module for learned routing
     quant_interference: bool = False       # quantum: gate the readout by wave-signature interference (in the canonical mesh)
 

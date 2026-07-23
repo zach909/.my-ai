@@ -10,15 +10,18 @@ This script handles:
 
 Usage:
     python train_at_scale.py --data-dir data/pretrain --vocab-size 8000 \
-        --n-layer 12 --n-head 6 --n-embd 384 --block-size 256 \
+        --mesh-neurons 24 --block-size 256 \
         --batch-size 32 --grad-accum-steps 4 --max-steps 5000 \
         --device cuda --dtype bfloat16
 
-Recommended settings for RTX 5070 (~15M params):
-    - n_layer=12, n_head=6, n_embd=384 (or n_layer=8, n_head=8, n_embd=512 for ~29M)
-    - block_size=256
-    - batch_size=32 (gradient_accum=4 = effective batch 128)
-    - dtype=bfloat16 (Ampere/Ada/Blackwell GPUs)
+NOTE: --n-layer/--n-head/--n-embd (below) are accepted for CLI compatibility
+with pretrain.py but are never read by this script's ModelConfig(...) call
+(see main()) -- they have zero effect on model size. The only model-size
+knob this script actually threads through is --mesh-neurons (mesh_dims=4,
+mesh_input=8, settle_ticks=4 are hardcoded here). At the defaults
+(mesh_neurons=24, vocab_size=8000, block_size=256) the mesh built is
+~785K params, not the 15M/29M figures an n_layer/n_embd-based sizing
+recipe would suggest -- scale via --mesh-neurons instead.
 """
 from __future__ import annotations
 
@@ -203,9 +206,9 @@ def main():
     parser = argparse.ArgumentParser(description="Scale training for mesh on real corpus data")
     parser.add_argument("--data-dir", default="data/pretrain", help="Directory with corpus files")
     parser.add_argument("--vocab-size", type=int, default=8000, help="Tokenizer vocabulary size")
-    parser.add_argument("--n-layer", type=int, default=12, help="Number of mesh settle layers")
-    parser.add_argument("--n-head", type=int, default=6, help="Number of attention heads (unused for mesh)")
-    parser.add_argument("--n-embd", type=int, default=384, help="Mesh embedding dimension")
+    parser.add_argument("--n-layer", type=int, default=12, help="currently has no effect -- never passed to ModelConfig; scale via --mesh-neurons")
+    parser.add_argument("--n-head", type=int, default=6, help="currently has no effect -- never passed to ModelConfig; scale via --mesh-neurons")
+    parser.add_argument("--n-embd", type=int, default=384, help="currently has no effect -- never passed to ModelConfig; scale via --mesh-neurons")
     parser.add_argument("--block-size", type=int, default=256, help="Context length")
     parser.add_argument("--mesh-neurons", type=int, default=24, help="Number of neurons in mesh")
     parser.add_argument("--batch-size", type=int, default=32, help="Batch size")
@@ -255,6 +258,12 @@ def main():
 
     # Create dataloaders
     train_dl, val_dl = create_dataloaders(tokens, args.block_size, args.batch_size)
+
+    if (args.n_layer, args.n_head, args.n_embd) != (12, 6, 384):
+        print("WARNING: --n-layer/--n-head/--n-embd currently have no effect -- this script's "
+              "ModelConfig(...) call below never passes them, and build_model() always constructs "
+              "the mesh (MeshLM) sized by --mesh-neurons/mesh_dims/mesh_input regardless. "
+              "Use --mesh-neurons to change model size.")
 
     # Build model
     print("[Model] Building mesh...")

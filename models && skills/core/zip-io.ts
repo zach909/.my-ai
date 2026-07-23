@@ -206,33 +206,22 @@ export class InfiniteZipLoop {
   }
 
   /**
-   * Get the total uncompressed size of the current context window.
+   * Get the total uncompressed size of the current context window. Walks
+   * `size` logical slots from `tail`, the same tail/head-agnostic pattern
+   * `unzipAt()`/`iterateContext()`/`snapshotToDisk()` already use — a
+   * head/tail-range comparison (the previous implementation) is ambiguous
+   * exactly when the loop is full: `tail === head` then, same as when it's
+   * empty, so a direct `tail <= head` comparison silently reported the
+   * full-buffer case as containing nothing.
    */
   getTotalContextSize(): number {
     let total = 0;
-    for (let i = 0; i < this.capacity; i++) {
-      const chunk = this.buffer[i];
-      if (chunk && this.isValidChunk(i)) {
-        total += chunk.originalSize;
-      }
+    for (let count = 0; count < this.size; count++) {
+      const physicalIndex = (this.tail + count) % this.capacity;
+      const chunk = this.buffer[physicalIndex];
+      if (chunk) total += chunk.originalSize;
     }
     return total;
-  }
-
-  /**
-   * Helper to check if a physical index is within the valid logical range.
-   */
-  private isValidChunk(physicalIndex: number): boolean {
-    if (this.size === 0) return false;
-    
-    // Handle wrap-around cases
-    if (this.tail <= this.head) {
-      // Normal case: [tail, head)
-      return physicalIndex >= this.tail && physicalIndex < this.head;
-    } else {
-      // Wrapped case: [tail, capacity) U [0, head)
-      return physicalIndex >= this.tail || physicalIndex < this.head;
-    }
   }
 
   private async compressBuffer(buf: Buffer): Promise<Buffer> {

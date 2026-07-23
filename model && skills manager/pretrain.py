@@ -41,7 +41,7 @@ def parse_args():
     ap.add_argument("--block-size", type=int, default=256)
     ap.add_argument("--dropout", type=float, default=0.1)
     # Mixture-of-Experts (skills)
-    ap.add_argument("--use-moe", action="store_true", help="replace block MLPs with sparse MoE")
+    ap.add_argument("--use-moe", action="store_true", help="currently has no effect (build_model() always constructs the mesh); see --skill-experts")
     ap.add_argument("--n-experts", type=int, default=4)
     ap.add_argument("--moe-top-k", type=int, default=2)
     # MeshLM (§1–§3, §8): the all-to-all mesh that build_model constructs
@@ -54,7 +54,8 @@ def parse_args():
     ap.add_argument("--skill-groups", type=int, default=1)
     ap.add_argument("--skill-top-k", type=int, default=1)
     ap.add_argument("--quant", action="store_true", help="§8 quantization-aware training")
-    ap.add_argument("--quant-bits", type=int, default=8)
+    ap.add_argument("--quant-bits", type=int, default=8,
+                    help="clamped to [2, 16] internally (MeshBlock); values <= 1 would divide by zero")
     ap.add_argument("--quant-interference", action="store_true",
                     help="gate the mesh readout by wave-signature quantum interference")
     ap.add_argument("--skill-experts", action="store_true",
@@ -63,7 +64,8 @@ def parse_args():
     # keeping this entire training loop — data, optimizer, schedule,
     # checkpointing — identical either way.
     ap.add_argument("--use-elastic-mesh", action="store_true",
-                     help="Replace the MLP sublayer with the elastic mesh block (Section 5.2)")
+                     help="currently has no effect (build_model() always constructs the mesh); "
+                          "ElasticMeshFFN (Section 5.2) is a standalone module, see test_elastic_mesh.py")
     ap.add_argument("--mesh-num-experts", type=int, default=4)
     ap.add_argument("--mesh-top-k", type=int, default=2)
     ap.add_argument("--mesh-n-neurons", type=int, default=64)
@@ -160,7 +162,13 @@ def main():
         mesh_settle_steps=args.mesh_settle_steps, mesh_n_qubits=args.mesh_n_qubits,
     )
     if args.use_moe:
-        print(f"MoE enabled: {args.n_experts} experts, top-{args.moe_top_k}")
+        print("WARNING: --use-moe currently has no effect -- build_model() always "
+              "constructs the mesh (MeshLM) regardless of this flag; MoELayer is not "
+              "wired into it. Use --skill-experts to attach real routed mesh experts.")
+    if args.use_elastic_mesh:
+        print("WARNING: --use-elastic-mesh currently has no effect -- build_model() always "
+              "constructs the mesh (MeshLM) regardless of this flag; ElasticMeshFFN is a "
+              "standalone module (see test_elastic_mesh.py), not wired into training here.")
     if args.skill_experts:
         from tinygpt.plugins import default_registry
         moe = default_registry().attach_to_config(model_cfg)

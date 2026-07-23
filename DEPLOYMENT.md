@@ -60,15 +60,10 @@ python chat.py --ckpt checkpoints/gpt_final.pt --device cpu
 
 ### Training at Scale
 
-For a 15M parameter model on RTX 5070:
-
 ```bash
 python train_at_scale.py \
     --data-dir data/pretrain \
     --vocab-size 8000 \
-    --n-layer 12 \
-    --n-head 6 \
-    --n-embd 384 \
     --block-size 256 \
     --mesh-neurons 24 \
     --batch-size 32 \
@@ -81,15 +76,27 @@ python train_at_scale.py \
     --out-dir checkpoints
 ```
 
+`--n-layer`/`--n-head`/`--n-embd` are accepted for CLI compatibility with
+`pretrain.py` but currently have no effect here — `train_at_scale.py`'s
+`ModelConfig(...)` call never passes them through, and `build_model()`
+always constructs the mesh (`MeshLM`) sized by `--mesh-neurons` (with
+`mesh_dims`/`mesh_input`/`settle_ticks` hardcoded in this script, not
+exposed as flags). At the defaults above (`mesh-neurons=24`,
+`vocab-size=8000`, `block-size=256`) the model built is ~785K parameters,
+not the 15M/29M figures an n_layer/n_embd-based recipe would suggest —
+`train_at_scale.py` prints the real, measured parameter count
+(`model.num_params()`) right after building it, so check that rather than
+estimating from `--n-layer`/`--n-embd`.
+
 **Performance estimates**:
 - Throughput: ~500-800 tokens/sec (depends on batch size)
 - 50k steps: ~50-100 hours on RTX 5070
 - Best checkpoint: automatically saved when validation loss improves
 
 **Tuning for your hardware**:
-- **Lower memory**: reduce `batch-size` to 16, or `n-embd` to 256
+- **Lower memory**: reduce `batch-size` to 16
 - **Faster training**: increase `batch-size` to 64 (requires more VRAM)
-- **Larger model**: use `n-layer=12` + `n-embd=512` (~29M params)
+- **Larger model**: increase `--mesh-neurons` (the actual size knob this script reads)
 
 ### Interactive Chat
 

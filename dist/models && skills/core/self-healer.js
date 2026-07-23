@@ -19,6 +19,7 @@ export class SelfHealer {
         this.components = new Map();
         this.snapshots = new Map();
         this.log = [];
+        this.logCapacity = 5000;
     }
     register(component) {
         this.components.set(component.name, component);
@@ -123,6 +124,8 @@ export class SelfHealer {
     }
     record(msg) {
         this.log.push(`[${new Date().toISOString()}] ${msg}`);
+        if (this.log.length > this.logCapacity)
+            this.log.splice(0, this.log.length - this.logCapacity);
     }
 }
 function errMsg(e) {

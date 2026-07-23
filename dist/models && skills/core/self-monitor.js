@@ -21,6 +21,7 @@ export class SelfMonitor {
     constructor(cfg = {}) {
         this.baselines = new Map();
         this.log = [];
+        this.logCapacity = 5000;
         this.warn = cfg.warnThreshold ?? 2;
         this.fail = cfg.failThreshold ?? 4;
         this.alpha = cfg.alpha ?? 0.2;
@@ -40,6 +41,8 @@ export class SelfMonitor {
             this.baselines.set(name, { mean: actual, scale: Math.max(1e-9, Math.abs(actual) * 0.1), count: 1 });
             const obs = { name, expected: actual, actual, deviation: 0, severity: "normal", anomaly: false, timestamp: now };
             this.log.push(obs);
+            if (this.log.length > this.logCapacity)
+                this.log.splice(0, this.log.length - this.logCapacity);
             return obs;
         }
         const exp = expected ?? base.mean;
@@ -62,6 +65,8 @@ export class SelfMonitor {
         }
         const obs = { name, expected: exp, actual, deviation, severity, anomaly: severity !== "normal", timestamp: now };
         this.log.push(obs);
+        if (this.log.length > this.logCapacity)
+            this.log.splice(0, this.log.length - this.logCapacity);
         return obs;
     }
     /** The most recent observation per signal that is currently anomalous. */

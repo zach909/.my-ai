@@ -160,7 +160,18 @@ export class CodeToNetCompiler {
     for (let s = 0; s < n; s++) {
       const inp = new Array(built.arity);
       for (let i = 0; i < built.arity; i++) inp[i] = lo + rng() * (hi - lo);
-      const ref = built.f(...inp);
+      // A different RNG seed than fit()'s compile-time sampling can land on
+      // inputs that trip a real throw (e.g. a ternary branch that only
+      // dereferences a property in a narrow band never sampled at compile
+      // time) even though compile() succeeded -- skip the sample like a
+      // non-finite one, don't let it crash the caller (cli.ts's handleNeuri()
+      // calls this synchronously with no try/catch of its own).
+      let ref: number;
+      try {
+        ref = built.f(...inp);
+      } catch {
+        continue;
+      }
       if (!Number.isFinite(ref)) continue;
       const got = net.evaluate(inp)[0];
       const e = Math.abs(got - ref);
@@ -235,13 +246,22 @@ export class CodeToNetCompiler {
     const [lo, hi] = opts.domain ?? [-2, 2];
     const rng = mulberry32(opts.seed ?? 1234);
 
-    // Collect samples.
+    // Collect samples. buildFunction()'s own safety probe only evaluates f at
+    // one fixed input, so a conditional expression (e.g. a ternary that only
+    // dereferences a property in a narrow input band) can still throw here on
+    // some later sample -- treated the same as a non-finite result: skipped,
+    // not fatal.
     const X: number[][] = [];
     const Y: number[] = [];
     for (let s = 0; s < samples; s++) {
       const inp = new Array(arity);
       for (let i = 0; i < arity; i++) inp[i] = lo + rng() * (hi - lo);
-      const y = f(...inp);
+      let y: number;
+      try {
+        y = f(...inp);
+      } catch {
+        continue;
+      }
       if (Number.isFinite(y)) {
         X.push(inp);
         Y.push(y);

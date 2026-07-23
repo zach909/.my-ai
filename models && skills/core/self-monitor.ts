@@ -50,6 +50,7 @@ interface Baseline {
 export class SelfMonitor {
   private baselines = new Map<string, Baseline>();
   private log: Observation[] = [];
+  private readonly logCapacity = 5000;
   private readonly warn: number;
   private readonly fail: number;
   private readonly alpha: number;
@@ -76,6 +77,7 @@ export class SelfMonitor {
       this.baselines.set(name, { mean: actual, scale: Math.max(1e-9, Math.abs(actual) * 0.1), count: 1 });
       const obs: Observation = { name, expected: actual, actual, deviation: 0, severity: "normal", anomaly: false, timestamp: now };
       this.log.push(obs);
+      if (this.log.length > this.logCapacity) this.log.splice(0, this.log.length - this.logCapacity);
       return obs;
     }
 
@@ -100,6 +102,7 @@ export class SelfMonitor {
 
     const obs: Observation = { name, expected: exp, actual, deviation, severity, anomaly: severity !== "normal", timestamp: now };
     this.log.push(obs);
+    if (this.log.length > this.logCapacity) this.log.splice(0, this.log.length - this.logCapacity);
     return obs;
   }
 

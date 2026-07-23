@@ -20,11 +20,14 @@ const STRUCTURAL_VOCAB = new Set([
 export class KnowledgeTransfer {
     constructor() {
         this.solved = [];
+        this.solvedCapacity = 5000;
     }
     /** Register a solved problem and the method that worked. */
     register(problem, domain, method) {
         const rec = { problem, domain, method, structural: structuralTokens(problem) };
         this.solved.push(rec);
+        if (this.solved.length > this.solvedCapacity)
+            this.solved.splice(0, this.solved.length - this.solvedCapacity);
         return rec;
     }
     /**

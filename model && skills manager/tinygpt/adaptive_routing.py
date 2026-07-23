@@ -99,6 +99,7 @@ class AdaptiveExpertRouter:
             return RoutingDecision(
                 "explore",
                 new_top_k=new_top_k,
+                temperature_adjust=0.5,  # softer routing softmax (symmetric with tighten's 0.5)
                 reason=f"confidence={current_avg_confidence:.3f}, exploring {new_top_k} experts"
             )
 
