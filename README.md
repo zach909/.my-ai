@@ -130,13 +130,26 @@ node dist/index.js cli        # interactive shell
 (`HTML_TEMPLATE` in `interface/web-server.ts`) — chat, live subsystem stats,
 the plugin/skill catalog, and the NeuroLang Extension Builder (build → save
 un-quantized → install quantized), backed by `/api/chat`, `/api/status`,
-`/api/neuri`, `/api/plugins`, `/api/extension/*`. This is a different
-dashboard from `interface/index.html`, which is served by the *Python*
-backend (`python interface/server.py`, above) instead — that server handles
-`/api/chat`/`/api/model` itself and proxies `/api/systems` (→ this backend's
-own `/api/status`), `/api/plugins`, `/api/extension/*`, etc. to this same TS
-pipeline. The two dashboards and their backing servers are independent; run
-whichever one matches how you started the model.
+`/api/neuri`, `/api/plugins`, `/api/extension/*`.
+
+There are actually three different `server.py`-style backends in this repo,
+easy to conflate since two share the same relative filename:
+
+- `model && skills manager/interface/server.py` — the one shown above
+  (`python interface/server.py --ckpt checkpoints/gpt_sft.pt --port 8000`,
+  run from inside `model && skills manager/`): a minimal browser chat UI for
+  a trained TinyGPT checkpoint, no TS backend involved at all.
+- `interface/server.py` (repo root — run `python interface/server.py
+  [--ckpt PATH] [--port 7860]` from the repo *root*, not from `model &&
+  skills manager/`): serves `interface/index.html`, a third dashboard
+  distinct from both of the above, handles `/api/chat`/`/api/model` itself,
+  and proxies `/api/systems` (→ this TS backend's own `/api/status`),
+  `/api/plugins`, `/api/extension/*`, etc. to the same TS pipeline `node
+  dist/index.js web` runs.
+- `node dist/index.js web`'s own embedded dashboard, described just above.
+
+All three are real and independently runnable; pick whichever matches how
+you started the model and which dashboard you want.
 
 `NeuroclawSystem` (`index.ts`) ties the TypeScript subsystems into one platform.
 Beyond the neural pipeline it provides: a **Hive Mind** of specialized agents
