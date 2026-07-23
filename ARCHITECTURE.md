@@ -878,6 +878,10 @@ Verified live: a skill created through a real `learn()` call reports a version c
 
 `README.md` stated `npm test` runs "262 smoke checks" — stale from before this session's ~360 additional checks. Corrected to the current real count (623). Doc-only change.
 
+### `README.md` claimed the live server serves a file it never reads (Section 17)
+
+`README.md` stated "the backend serves `interface/index.html`," describing that file's chat/stats/catalog/Extension-Builder UI. In reality, `web-server.ts`'s `GET /` handler serves a hardcoded `HTML_TEMPLATE` string literal (titled "Neuroclaw Terminal") — `interface/index.html` is never read via any file-system call anywhere in `web-server.ts`/`runner.ts`. The two files aren't even the same design (different title, different styling). Compounding it: `index.html` itself fetches `/api/model` and `/api/systems`, neither of which exists anywhere in the live route list — so even if it *were* served, two of its own requests would 404. It reads as a superseded prototype left behind when the inline template replaced it, with nothing ever updating the README to match. Corrected the README to describe the actual served template and note the stale file. Doc-only change; no code, build, or test-suite impact.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.

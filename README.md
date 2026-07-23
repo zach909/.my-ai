@@ -126,10 +126,12 @@ node dist/index.js web 3000   # Neuroclaw dashboard + /api/* at http://localhost
 node dist/index.js cli        # interactive shell
 ```
 
-The backend serves `interface/index.html` — chat, live subsystem stats, the
-plugin/skill catalog, and the NeuroLang Extension Builder (build → save
-un-quantized → install quantized), backed by `/api/chat`, `/api/status`,
-`/api/neuri`, `/api/plugins`, `/api/extension/*`.
+The backend serves an embedded terminal-style dashboard (`HTML_TEMPLATE` in
+`interface/web-server.ts`) — chat, live subsystem stats, the plugin/skill
+catalog, and the NeuroLang Extension Builder (build → save un-quantized →
+install quantized), backed by `/api/chat`, `/api/status`, `/api/neuri`,
+`/api/plugins`, `/api/extension/*`. (`interface/index.html` is a separate,
+unused legacy file — the live server never reads or serves it.)
 
 `NeuroclawSystem` (`index.ts`) ties the TypeScript subsystems into one platform.
 Beyond the neural pipeline it provides: a **Hive Mind** of specialized agents
