@@ -1103,6 +1103,22 @@ async function testExtensionBuilderFlow() {
   const installed = JSON.parse(await B.installWithQuantization(pid, { bits: 8 }));
   check(installed.quantized === true && installed.bits === 8, 'Install quantizes the extension before deployment');
 
+  // BackgroundQuantizer.quantize()'s qMax/levels hit 0 at bits <= 1, so
+  // scale divides by zero -> Infinity -> every dequantized weight becomes
+  // 0 * Infinity = NaN. installWithQuantization() (and the live
+  // POST /api/extension/build handler, which takes `bits` straight from an
+  // untrusted request body via `body?.bits ?? 8` -- note 0 passes `??`
+  // unchanged) had no clamp of its own; quantize() itself is now clamped as
+  // the shared root fix. Use a perfectly symmetric weight/bias so 'mixed'
+  // routes to the symmetric branch where the bug actually lived.
+  const p2 = B.createProject('symdemo', 'Symmetric weights').id;
+  const s1 = B.addNeuron(p2, 'sym_a', 0.5).id;
+  const s2 = B.addNeuron(p2, 'sym_b', 0.5).id;
+  B.connectNeurons(p2, s1, s2, 0.5, -0.5);
+  const lowBits = JSON.parse(await B.installWithQuantization(p2, { bits: 1 }));
+  const conn = lowBits.connections[0];
+  check(Number.isFinite(conn.weight) && Number.isFinite(conn.bias), 'Install with bits=1 clamps to a safe minimum instead of quantizing every weight to NaN');
+
   // Net Search: semantic search over definitions -> generate a wired network.
   B.addNeuron(pid, 'weather', 0.4);
   const g = B.netSearchGenerate(pid, 'weather forecast for hidden regions', 2);

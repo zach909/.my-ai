@@ -10,7 +10,10 @@ export class BackgroundQuantizer {
      * Mixed: uses symmetric for layers with large spread, asymmetric otherwise.
      */
     quantize(weights, bits) {
-        const effectiveBits = bits ?? this.config.bits;
+        // Clamped: at bits <= 1, qMax (symmetric) or levels (asymmetric) hits
+        // 0, so scale divides by zero -> Infinity -> every dequantized weight
+        // becomes 0 * Infinity = NaN. 16 keeps qMax comfortably in range.
+        const effectiveBits = Math.max(2, Math.min(16, Math.floor(bits ?? this.config.bits)));
         const method = this.config.method;
         const levels = Math.pow(2, effectiveBits) - 1;
         const qMax = Math.floor(levels / 2);
