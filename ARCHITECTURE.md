@@ -856,6 +856,12 @@ Added a `SystemAccess:` line to `cli.ts`'s `printStatus()` (alongside the existi
 
 Verified live through the real `bootstrap()` composition root (not a hand-built CLI): the bootstrapped CLI carries a real `SystemAccess` instance, and `printStatus()` now prints real OS type, real terminal/file-access flags, and genuine validation warnings matching the actual sandboxed environment (GNOME/xinput unavailable, correctly reported rather than silently omitted). Also corrected the wiki's fictional test-coverage claim to describe what's actually verified today. Covered by an extension to the existing `App bootstrap` suite.
 
+### `wiki/Multi-Input.md` carried the same fictional test-coverage claim just fixed in its sibling page (Section 17)
+
+The immediately preceding fix corrected `wiki/System-Access.md`'s claim that `npm test` covers `DesktopEnv`/`SystemControlHub`/`KeyboardControl` — classes that don't exist anywhere in the repo — but `wiki/Multi-Input.md`, a second wiki page documenting the same `interface/multi-desktop.ts` module, carried the identical fiction verbatim (`WindowControl`, `KeyboardControl`, `press_key`/`type_text`/`mouse_move`, none of which exist). Corrected it to describe what's actually verified today: `SystemAccess`/`MultiDesktopManager` are only exercised indirectly (via `getMultiDesktop()`/`printStatus()`), and `MultiDesktopManager` itself — `VirtualDevice`/`DeviceBinding` creation, `getVirtualDevices()`/`getAllBindings()`, desktop exclusivity — has no direct unit coverage yet.
+
+Doc-only change; no code, build, or test suite affected.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
