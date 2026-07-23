@@ -429,11 +429,25 @@ export class CLI {
             if (codeResult !== null) {
                 console.log(`      ${this.colorize(YELLOW, '↳')} code result: ${codeResult}`);
             }
-            // Execute netsearch: query the LLM's neural net index
+            // Section 21: `@code=` also compiles a real behavioral Code-to-Net
+            // (interp.getCodeNet()/testCodeNet()) alongside the plain value eval
+            // above -- previously computed silently and never surfaced anywhere.
+            const codeNet = interp.getCodeNet(name);
+            if (codeNet) {
+                const test = interp.testCodeNet(name);
+                const modeInfo = codeNet.mode === 'function' ? `function(arity ${codeNet.arity})` : 'embedding';
+                const testInfo = test ? `, self-test ${test.passed ? 'passed' : 'FAILED'} (meanAbsErr ${test.meanAbsError.toFixed(4)})` : '';
+                console.log(`      ${this.colorize(YELLOW, '↳')} code-to-net: ${modeInfo}${testInfo}`);
+            }
+            // Section 22: search the current NeuroLang neuron mesh via the
+            // interpreter's own NetSearchEngine -- previously this called
+            // `this.llm.netSearch()`, an unrelated legacy project-file search
+            // (extension-builder), contradicting NeuroLangInterpreter.netSearch()'s
+            // own documented "self"/"mesh" = "the current neuron map" semantics.
             if (n.isNetSearch && n.netLocation) {
-                const hits = this.llm.netSearch(n.netLocation);
+                const hits = interp.netSearch(n.netLocation);
                 if (hits.length > 0) {
-                    console.log(`      ${this.colorize(YELLOW, '↳')} netsearch(${n.netLocation}): ${hits.slice(0, 3).map(h => `${h.results[0] || 'result'}(${h.confidence.toFixed(2)})`).join(', ')}`);
+                    console.log(`      ${this.colorize(YELLOW, '↳')} netsearch(${n.netLocation}): ${hits.slice(0, 3).map(h => `${h.name}(${h.score.toFixed(2)})`).join(', ')}`);
                 }
                 else {
                     console.log(`      ${this.colorize(GRAY, '↳')} netsearch(${n.netLocation}): no results`);

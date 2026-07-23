@@ -1543,6 +1543,43 @@ async function testCodeToNet() {
   check(interp.testCodeNet('calc').passed, 'NeuroLang code-net passes the test-against-original check');
 }
 
+async function testNeuriLangCliWiring() {
+  // Sections 21/22: NeuroLangInterpreter.getCodeNet()/testCodeNet()/netSearch()
+  // are real and fully unit-tested (see testCodeToNet/testNetSearchEngine
+  // above), but the live `neuri` CLI command never called them: it evaluated
+  // `@code=` via a raw `new Function` on the value string only, and resolved
+  // `"netsearch"@net=` through `this.llm.netSearch()` -- an unrelated legacy
+  // project-file search (extension-builder), not the interpreter's own
+  // NetSearchEngine over the current neuron mesh. This exercises the actual
+  // live CLI entry point, not just the underlying primitives.
+  const { NeuroclawSystem } = await load('index.js');
+  const { CLI } = await load('interface/cli.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  const sys = new NeuroclawSystem();
+  await sys.initialize();
+  const cli = new CLI(sys.llm, sys.pipeline, sys.thesaurus, sys.pluginRegistry);
+
+  const lines = [];
+  console.log = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    cli.handleNeuri([
+      'name="squareIt"',
+      '"squareIt"@code="x => x * x"',
+      'name="widget"',
+      '"widget"@definition="a gadget used for testing net search retrieval"',
+      '"netsearch"@name="finder"',
+      '"netsearch"@net="widget"',
+    ].join('\n'));
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+
+  check(lines.some(l => l.includes('code-to-net') && l.includes('function(arity 1)')), 'the live `neuri` command surfaces the real compiled Code-to-Net (mode/arity), not just a bare JS value eval');
+  check(lines.some(l => /self-test (passed|FAILED)/.test(l)), 'the live `neuri` command surfaces the code-net self-test result');
+  check(lines.some(l => l.includes('netsearch(widget): widget(')), 'the live `neuri` command\'s netsearch now genuinely searches the current NeuroLang neuron mesh (finds the "widget" neuron itself) instead of an unrelated legacy project search');
+}
+
 async function testHiveMindAndChatGroups() {
   const { HiveMind } = await load('models && skills/core/hive-mind.js');
   const { ChatGroup } = await load('models && skills/core/chat-group.js');
@@ -3174,6 +3211,7 @@ async function main() {
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
+    ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
     ['Context compression (Section 7)', testContextCompressor],
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],

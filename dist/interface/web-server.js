@@ -357,16 +357,27 @@ export class WebServer {
                     return;
                 }
                 const neurons = interp.evaluate(parsed);
-                const result = Array.from(neurons.entries()).map(([name, n]) => ({
-                    name,
-                    value: n.value,
-                    definition: n.definition,
-                    isNetSearch: n.isNetSearch,
-                    netLocation: n.netLocation,
-                    isCodeNet: n.isCodeNet,
-                    code: n.code,
-                    connections: Array.from(n.connections.entries()),
-                }));
+                // Sections 21/22: surface the interpreter's own Code-to-Net self-test
+                // and NetSearchEngine results -- previously this endpoint echoed back
+                // only the raw parsed flags/code, never actually running either
+                // built, unit-tested mechanism.
+                const result = Array.from(neurons.entries()).map(([name, n]) => {
+                    const codeNet = interp.getCodeNet(name);
+                    const codeNetTest = codeNet ? interp.testCodeNet(name) : undefined;
+                    const netSearchHits = n.isNetSearch && n.netLocation ? interp.netSearch(n.netLocation) : undefined;
+                    return {
+                        name,
+                        value: n.value,
+                        definition: n.definition,
+                        isNetSearch: n.isNetSearch,
+                        netLocation: n.netLocation,
+                        isCodeNet: n.isCodeNet,
+                        code: n.code,
+                        connections: Array.from(n.connections.entries()),
+                        codeNet: codeNet ? { mode: codeNet.mode, arity: codeNet.arity, test: codeNetTest } : undefined,
+                        netSearchHits,
+                    };
+                });
                 this.sendJson(res, { neurons: result, printOutputs: parsed.printOutputs });
             }
             catch (err) {
