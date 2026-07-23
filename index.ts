@@ -1643,6 +1643,45 @@ export class NeuroclawSystem {
   }
 
   /**
+   * Section 25: "user data should remain protected by encryption where
+   * sensitive data is stored or transmitted." `EncryptionManager` — real
+   * AES-256-GCM encryption with PBKDF2 password-based key derivation — was
+   * fully built, correct, and already instantiated (by `NeuroclawRunner`),
+   * but had zero call sites anywhere in the whole codebase: `saveMemory()`/
+   * `loadMemory()` write and read long-term memory as plaintext JSON.
+   *
+   * These are additive, encrypted siblings, not a change to the existing
+   * methods — silently changing `saveMemory()`'s file format would break
+   * loading any file already saved by it. They also deliberately take the
+   * key as a parameter rather than choosing a key-storage policy
+   * themselves: "how keys are managed" (§25) is a real design decision for
+   * the caller/deployment (a passphrase via `hashPassword()`, an OS
+   * keychain, a generated key file) that this method should not impose.
+   */
+  async saveMemoryEncrypted(path: string, key: Buffer): Promise<void> {
+    const enc = this.runner.getEncryptionManager();
+    const { encrypted, iv, tag } = enc.encrypt(this.memory.serialize(), key);
+    await writeFile(
+      path,
+      JSON.stringify({ encrypted: encrypted.toString("base64"), iv: iv.toString("base64"), tag: tag.toString("base64") }),
+      "utf-8",
+    );
+  }
+
+  /** Replace the current long-term memory with a snapshot previously saved by `saveMemoryEncrypted()`, using the same key. */
+  async loadMemoryEncrypted(path: string, key: Buffer): Promise<void> {
+    const enc = this.runner.getEncryptionManager();
+    const raw = JSON.parse(await readFile(path, "utf-8")) as { encrypted: string; iv: string; tag: string };
+    const json = enc.decrypt(Buffer.from(raw.encrypted, "base64"), key, Buffer.from(raw.iv, "base64"), Buffer.from(raw.tag, "base64"));
+    this.memory = LongTermMemory.deserialize(json);
+  }
+
+  /** A fresh random 256-bit key suitable for `saveMemoryEncrypted()`/`loadMemoryEncrypted()`. */
+  generateEncryptionKey(): Buffer {
+    return this.runner.getEncryptionManager().generateKey();
+  }
+
+  /**
    * ASI §9/§12: "which skills it has" / "use learning to create skills, use
    * skills to solve problems" — every skill `learn()` creates via the real
    * skill-maker plugin is written to `~/.neuroclaw/skills/*.neuri` and then

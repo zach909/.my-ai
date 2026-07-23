@@ -2841,6 +2841,51 @@ async function testMemoryPersistence() {
   }
 }
 
+async function testMemoryEncryptedPersistence() {
+  const { NeuroclawSystem } = await load('index.js');
+  const { readFile } = await import('node:fs/promises');
+  const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-memory-enc-'));
+  const path = join(dir, 'memory.enc.json');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    // Section 25: "user data should remain protected by encryption where
+    // sensitive data is stored or transmitted." EncryptionManager (real
+    // AES-256-GCM + PBKDF2 key derivation) was fully built and instantiated
+    // but had zero call sites anywhere -- saveMemory()/loadMemory() wrote
+    // and read plaintext JSON. These encrypted siblings are additive: they
+    // don't change saveMemory()/loadMemory()'s existing plaintext format.
+    const sys = new NeuroclawSystem();
+    await sys.initialize();
+    sys.memory.remember('a secret fact that should never appear in plaintext on disk', { importance: 0.8 });
+    const key = sys.generateEncryptionKey();
+    check(Buffer.isBuffer(key) && key.length === 32, 'generateEncryptionKey() produces a real 256-bit key, not a placeholder');
+    await sys.saveMemoryEncrypted(path, key);
+
+    const onDisk = await readFile(path, 'utf-8');
+    check(!onDisk.includes('secret fact'), 'saveMemoryEncrypted() genuinely encrypts -- the plaintext content never appears in the on-disk file');
+
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    await sys2.loadMemoryEncrypted(path, key);
+    check(sys2.memory.all().some(m => m.content.includes('secret fact')), 'loadMemoryEncrypted() with the correct key restores the real memory content');
+
+    const sys3 = new NeuroclawSystem();
+    await sys3.initialize();
+    const wrongKey = sys3.generateEncryptionKey();
+    let rejected = false;
+    try {
+      await sys3.loadMemoryEncrypted(path, wrongKey);
+    } catch {
+      rejected = true;
+    }
+    check(rejected, 'loadMemoryEncrypted() with the wrong key fails loudly (GCM auth tag verification), never silently returning garbage');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testArchitectureMapperIntegration() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -3104,6 +3149,7 @@ async function main() {
     ['Subproblem knowledge integration (Section 4)', testSubproblemKnowledgeIntegration],
     ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],
+    ['Encrypted memory persistence (Section 25)', testMemoryEncryptedPersistence],
     ['System status counts (Section 7/10)', testStatusCounts],
     ['Skill creation versioning (Section 5)', testSkillCreationVersioning],
     ['Self-authored skills inventory (Section 9/12)', testSelfAuthoredSkillsInventory],
