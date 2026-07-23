@@ -908,6 +908,14 @@ Its structurally identical sibling, `test_integration.py` (documented right next
 
 Test-file-only change — no production code, no persistent/shared state, no live chat/generation path, no new capability or surface. Verified live in this torch-less sandbox: before the fix, `python3 test_elastic_mesh.py` crashed with an uncaught `ModuleNotFoundError` and exit code 1; after, it prints a clear skip message and exits 0, stable across repeated runs.
 
+### `test_value_system.py` was a third instance of the same unguarded torch-crash bug (Section 3.1/9)
+
+A third occurrence of the exact pattern just fixed twice this pass in `test_core.py` and `test_elastic_mesh.py`: `test_value_system.py` does `from neurolang import NeuroRuntime` bare at module scope, which transitively hits `neurolang.py`'s unconditional `import torch` — no guard anywhere in the file. In a torch-less environment it crashed with an uncaught `ModuleNotFoundError` and exit code 1, printing no `check()` output at all rather than a clean skip.
+
+Applied the same whole-file guard `test_elastic_mesh.py` now uses (every check in this file needs torch, so a whole-file guard is the right fit, same as that case): `try: import torch / except ImportError: print(...); sys.exit(0)` before the `neurolang` import. Checked exhaustively for further recurrences: no other `test_*.py` in the repo imports torch/numpy/sentencepiece/pennylane at all, and no production entry point (`core.py`, `chat.py`, `finetune.py`, `pretrain.py`, `train_at_scale.py`, `extend.py`) is a smoke-check that should degrade gracefully — those have a hard torch dependency by design, not siblings of this guarded-test convention. The pattern is exhausted after this third fix.
+
+Test-file-only change — no production code, no persistent/shared state, no live chat/generation path, no new capability or surface. Verified live in this torch-less sandbox: before the fix, `python3 test_value_system.py` crashed with an uncaught traceback and exit code 1; after, it prints a clear skip message and exits 0, stable across repeated runs.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
