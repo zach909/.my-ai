@@ -213,6 +213,17 @@ async function testQuantizationAwareTraining() {
   for (let i = 0; i < 8; i++) noQat.addExperience(mkExperience(i));
   await noQat.train();
   check(noQat.getQuantizationDrift() === 0, 'QAT: disabling quantization keeps drift at exactly zero (real toggle, not always-on)');
+
+  // BackgroundQuantizer's symmetric path divides by qMax = floor((2^bits-1)/2),
+  // which is 0 at bits <= 1 -- scale becomes Infinity, then 0 * Infinity = NaN,
+  // permanently poisoning the quantized weights. elastic-core.ts already
+  // clamps its identical field to [2, 16]; rlm.ts's RLMConfig had no such
+  // clamp, so a caller passing 0 or 1 silently corrupted the policy with no
+  // error. Verify both edge values are clamped instead of producing NaN.
+  const lowBits1 = new RLMTrainer({ stateDim: 4, actionDim: 5, hiddenDim: 4, explorationRate: 0, batchSize: 8, quantizationEnabled: true, quantizationBits: 1 });
+  check(Number.isFinite(lowBits1.getQuantizationDrift()), 'QAT: quantizationBits=1 is clamped to a safe minimum instead of producing NaN drift');
+  const lowBits0 = new RLMTrainer({ stateDim: 4, actionDim: 5, hiddenDim: 4, explorationRate: 0, batchSize: 8, quantizationEnabled: true, quantizationBits: 0 });
+  check(Number.isFinite(lowBits0.getQuantizationDrift()), 'QAT: quantizationBits=0 is clamped to a safe minimum instead of producing NaN drift');
 }
 
 async function testZipPersistence() {

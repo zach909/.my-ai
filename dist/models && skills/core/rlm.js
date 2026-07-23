@@ -17,7 +17,11 @@ export class RLMTrainer {
             lookaheadSteps: config.thinkSteps ?? config.lookaheadSteps ?? 3,
             loopDetectionWindow: config.loopDetectionWindow ?? 20,
             quantizationEnabled: config.quantizationEnabled ?? true,
-            quantizationBits: config.quantizationBits ?? 8,
+            // Clamped like elastic-core.ts's identical field: BackgroundQuantizer's
+            // symmetric path divides by qMax = floor((2^bits - 1) / 2), which is 0
+            // at bits <= 1 (scale becomes Infinity, then 0 * Infinity = NaN),
+            // permanently poisoning the quantized weights/bias from then on.
+            quantizationBits: Math.max(2, Math.min(16, Math.floor(config.quantizationBits ?? 8))),
         };
         this.replayBuffer = new Array(this.config.replayBufferSize);
         this.bufferPosition = 0;
