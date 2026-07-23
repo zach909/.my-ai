@@ -375,9 +375,29 @@ export class NeuroclawSystem {
                 }
             },
         });
+        // ASI §24: this component had only a `check` -- no `repair`/`snapshot`/
+        // `restore` -- so `heal()`'s fallback tiers could never run for it:
+        // `snapshotAll()` below is a guaranteed no-op without a `snapshot` fn, and
+        // `heal()`'s restore branch only fires `if (c.restore && snapshots.has(name))`.
+        // A drifted trust budget was therefore guaranteed to be reported
+        // "unrecoverable" on first detection, with zero attempt at recovery, even
+        // though the fix already existed: `HiveMind.repairTrustInvariant()`
+        // rescales every agent back onto the fixed budget, and `HiveAgent.snapshot()`
+        // ({id, role, specialization, trust}) was fully implemented with no call
+        // sites anywhere. Wiring both closes the gap additively -- no existing
+        // behavior changes, `check` is untouched.
         this.healer.register({
             name: "hive-trust-invariant",
             check: () => this.hive.list().length === 0 || Math.abs(this.hive.totalTrustValue() - 100) < 1e-3,
+            repair: () => this.hive.repairTrustInvariant(),
+            snapshot: () => this.hive.list().map(a => a.snapshot()),
+            restore: (snap) => {
+                for (const s of snap) {
+                    const a = this.hive.get(s.id);
+                    if (a)
+                        a.trust = s.trust;
+                }
+            },
         });
         this.healer.snapshotAll();
         // Section 1.10 / §7: reload previously-checkpointed working context, so a

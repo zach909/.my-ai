@@ -2469,11 +2469,19 @@ async function testHealLog() {
   console.log = console.info = console.warn = () => {};
   try {
     await sys.initialize();
-    check(sys.healLog().length === 0, 'healLog() starts empty before any heal cycle runs');
+    // initialize() genuinely captures a known-good snapshot for
+    // "hive-trust-invariant" now that it has a real `snapshot` fn (Section 24:
+    // every self-healer step, including snapshot capture, must be logged --
+    // never silent), so the log is no longer empty at this point; it must
+    // not yet contain any repair/restore/unrecoverable entry, since no heal
+    // cycle has run.
+    const initialLog = sys.healLog();
+    check(initialLog.length > 0 && initialLog.every(l => l.includes('snapshot captured')), 'healLog() contains only real snapshot-capture entries before any heal cycle runs, never a repair/restore/unrecoverable entry');
+    const beforeHeal = initialLog.length;
     let broken = true;
     sys.healer.register({ name: 'fake-component', check: () => !broken, repair: () => { broken = false; } });
     await sys.selfHeal();
-    check(sys.healLog().length > 0, 'healLog() reflects a real repair recorded during selfHeal()');
+    check(sys.healLog().length > beforeHeal, 'healLog() grows to reflect a real repair recorded during selfHeal()');
     check(sys.healLog().some(l => l.includes('fake-component')), 'healLog() names the actual component that was repaired');
     const snapshot = sys.healLog().length;
     await sys.selfIntegrity(); // an unrelated call must not mutate the log
@@ -2504,6 +2512,55 @@ async function testPluginRegistryHealthCheck() {
     instance.onHealthCheck = async () => false;
     const after = await sys.healthReport();
     check(after['plugin-registry'] === false, "plugin-registry now genuinely reflects a single plugin's own failing health check, not just whether any plugins are active");
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testHiveTrustInvariantHealing() {
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // ASI §24: the "hive-trust-invariant" SelfHealer registration had only a
+    // `check` -- no `repair`/`snapshot`/`restore` -- so a drifted trust budget
+    // was guaranteed to be reported unrecoverable on first detection, with
+    // zero attempt at recovery, even though the fix already existed:
+    // HiveMind.repairTrustInvariant() rescales agents back onto the fixed
+    // budget, and HiveAgent.snapshot() was fully built with no call sites.
+    sys.hive.spawn({ id: 'agent-a', role: 'coder', specialization: 'js', capabilities: ['code'] });
+    sys.hive.spawn({ id: 'agent-b', role: 'writer', specialization: 'docs', capabilities: ['write'] });
+
+    const before = await sys.healer.healthReport();
+    check(before['hive-trust-invariant'] === true, 'hive-trust-invariant reports healthy when the trust budget is intact');
+
+    // Force a drift the repair step alone can fully fix (a real bug mutating
+    // one agent's trust outside reward()'s zero-sum bookkeeping).
+    sys.hive.get('agent-a').trust += 500;
+    check(Math.abs(sys.hive.totalTrustValue() - 100) > 1e-3, 'the forced drift genuinely breaks the invariant');
+
+    const report = await sys.healer.heal();
+    const result = report.results.find(r => r.component === 'hive-trust-invariant');
+    check(result.recovered && result.actions.includes('repaired'), 'repair() rescales the drifted trust budget back onto the fixed total');
+    check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-3, 'totalTrustValue() is exactly restored to the fixed budget after repair');
+
+    // Independently exercise the restore-from-snapshot fallback: capture a
+    // known-good per-agent distribution, corrupt individual agents' trust in
+    // a way rescaling-by-total wouldn't reproduce, then disable repair so
+    // heal() must fall through to the snapshot/restore tier.
+    sys.healer.snapshotAll();
+    const known = { a: sys.hive.get('agent-a').trust, b: sys.hive.get('agent-b').trust };
+    sys.hive.get('agent-a').trust = 1;
+    sys.hive.get('agent-b').trust = 1;
+    const realRepair = sys.hive.repairTrustInvariant.bind(sys.hive);
+    sys.hive.repairTrustInvariant = () => {};
+    const report2 = await sys.healer.heal();
+    const result2 = report2.results.find(r => r.component === 'hive-trust-invariant');
+    check(result2.actions.includes('restored-known-good') && result2.recovered, 'when repair cannot fix it, the known-good per-agent snapshot (HiveAgent.snapshot()) is restored instead');
+    check(Math.abs(sys.hive.get('agent-a').trust - known.a) < 1e-9 && Math.abs(sys.hive.get('agent-b').trust - known.b) < 1e-9, 'restore reproduces the exact prior per-agent trust distribution, not just the aggregate total');
+    sys.hive.repairTrustInvariant = realRepair;
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -3141,6 +3198,7 @@ async function main() {
     ['Self-monitor history introspection (Section 9/11)', testMonitorHistory],
     ['Self-healer log introspection (Section 24)', testHealLog],
     ['Plugin registry health check reaches self-healer (Section 24)', testPluginRegistryHealthCheck],
+    ['Hive trust invariant repair/restore reaches self-healer (Section 24)', testHiveTrustInvariantHealing],
     ['Empathy-driven tone adjustment (Section 3)', testEmpathyToneAdjustment],
     ['Self-model known-domains inventory (Section 9)', testKnownDomains],
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],

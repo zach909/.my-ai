@@ -314,6 +314,17 @@ export class HiveMind {
     return Promise.all(members.map(async agent => ({ agent, output: await agent.process(task) })));
   }
 
+  /**
+   * Repair a drifted trust budget by rescaling every agent's trust back onto
+   * the fixed total (Section 24: self-healing "revert to a known-good state" /
+   * "replace invalid connections" for the trust invariant). Public wrapper
+   * around the existing rebalancing logic `remove()` already relies on
+   * internally — exposed so a healer can call it as a repair step too.
+   */
+  repairTrustInvariant(): void {
+    this.renormalizeTrust();
+  }
+
   /** Resolve every open conflict using trust as the weight. */
   synchronize(): number {
     const open = this.blackboard.listConflicts();
