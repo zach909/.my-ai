@@ -250,6 +250,20 @@ export class CLI {
             if (gnome)
                 console.log(`    ${this.colorize(GRAY, '  Current desktop:')} ${current}${current === 'ai' ? this.colorize(CYAN, ' ← AI') : ''}`);
         }
+        // Section 26: SystemAccess is threaded through from main.ts on the live
+        // path, but only getMultiDesktop() was ever called on it -- its own
+        // introspection (getSystemInfo()) and honest degrade-with-warnings check
+        // (validateCapabilities()) never actually ran anywhere. Both are
+        // read-only/self-check only (no shell surface exposed here).
+        if (this.systemAccess) {
+            const info = this.systemAccess.getSystemInfo();
+            console.log(`    ${this.colorize(GREEN, '✓')} System access: ${info.os}, terminal:${info.terminalAccess} file:${info.fileAccess}`);
+            const validation = this.systemAccess.validateCapabilities();
+            for (const w of validation.warnings)
+                console.log(`    ${this.colorize(YELLOW, '○')} ${w}`);
+            for (const e of validation.errors)
+                console.log(`    ${this.colorize(RED, '✗')} ${e}`);
+        }
         console.log('');
     }
     printDesktopStatus() {

@@ -932,6 +932,21 @@ async function testBootstrap() {
   const reg = new PluginRegistry();
   await reg.bootstrap();
   check(reg.getPluginCount() > 0, `App bootstrap registers a plugin catalog (${reg.getPluginCount()} plugins)`);
+
+  // Section 26: SystemAccess is threaded through from main.ts's bootstrap()
+  // on the real live path, but only getMultiDesktop() was ever called on it
+  // -- getSystemInfo()/validateCapabilities() never actually ran anywhere.
+  // Exercise it through the real bootstrapped CLI, not a hand-built one.
+  check(!!cli.systemAccess, 'the real bootstrapped CLI carries a real SystemAccess instance, not undefined');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  const lines = [];
+  console.log = console.info = console.warn = (...args) => { lines.push(args.map(String).join(' ')); };
+  try {
+    cli.printStatus();
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+  check(lines.some(l => l.includes('System access:') && l.includes('terminal:') && l.includes('file:')), 'printStatus() now surfaces real SystemAccess.getSystemInfo() (OS/terminal/file config), not just multi-desktop state');
 }
 
 async function testWebBackend() {
