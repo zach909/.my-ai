@@ -12,6 +12,11 @@ import { Route as rootRouteImport } from './routes/__root'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
+import { Route as AppPlanningRouteImport } from './routes/app/planning'
+import { Route as AppKnowledgeRouteImport } from './routes/app/knowledge'
+import { Route as AppExperimentsRouteImport } from './routes/app/experiments'
+import { Route as AppEvaluationRouteImport } from './routes/app/evaluation'
+import { Route as AppArchitectureRouteImport } from './routes/app/architecture'
 
 const AppRoute = AppRouteImport.update({
   id: '/app',
@@ -28,28 +33,92 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPlanningRoute = AppPlanningRouteImport.update({
+  id: '/planning',
+  path: '/planning',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppKnowledgeRoute = AppKnowledgeRouteImport.update({
+  id: '/knowledge',
+  path: '/knowledge',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppExperimentsRoute = AppExperimentsRouteImport.update({
+  id: '/experiments',
+  path: '/experiments',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppEvaluationRoute = AppEvaluationRouteImport.update({
+  id: '/evaluation',
+  path: '/evaluation',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppArchitectureRoute = AppArchitectureRouteImport.update({
+  id: '/architecture',
+  path: '/architecture',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/app/architecture': typeof AppArchitectureRoute
+  '/app/evaluation': typeof AppEvaluationRoute
+  '/app/experiments': typeof AppExperimentsRoute
+  '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/planning': typeof AppPlanningRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
+  '/app/architecture': typeof AppArchitectureRoute
+  '/app/evaluation': typeof AppEvaluationRoute
+  '/app/experiments': typeof AppExperimentsRoute
+  '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/planning': typeof AppPlanningRoute
   '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
+  '/app/architecture': typeof AppArchitectureRoute
+  '/app/evaluation': typeof AppEvaluationRoute
+  '/app/experiments': typeof AppExperimentsRoute
+  '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/planning': typeof AppPlanningRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths: '/' | '/app' | '/app/'
+  fullPaths:
+    | '/'
+    | '/app'
+    | '/app/architecture'
+    | '/app/evaluation'
+    | '/app/experiments'
+    | '/app/knowledge'
+    | '/app/planning'
+    | '/app/'
   fileRoutesByTo: FileRoutesByTo
-  to: '/' | '/app'
-  id: '__root__' | '/' | '/app' | '/app/'
+  to:
+    | '/'
+    | '/app/architecture'
+    | '/app/evaluation'
+    | '/app/experiments'
+    | '/app/knowledge'
+    | '/app/planning'
+    | '/app'
+  id:
+    | '__root__'
+    | '/'
+    | '/app'
+    | '/app/architecture'
+    | '/app/evaluation'
+    | '/app/experiments'
+    | '/app/knowledge'
+    | '/app/planning'
+    | '/app/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
@@ -80,14 +149,59 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/planning': {
+      id: '/app/planning'
+      path: '/planning'
+      fullPath: '/app/planning'
+      preLoaderRoute: typeof AppPlanningRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/knowledge': {
+      id: '/app/knowledge'
+      path: '/knowledge'
+      fullPath: '/app/knowledge'
+      preLoaderRoute: typeof AppKnowledgeRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/experiments': {
+      id: '/app/experiments'
+      path: '/experiments'
+      fullPath: '/app/experiments'
+      preLoaderRoute: typeof AppExperimentsRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/evaluation': {
+      id: '/app/evaluation'
+      path: '/evaluation'
+      fullPath: '/app/evaluation'
+      preLoaderRoute: typeof AppEvaluationRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/architecture': {
+      id: '/app/architecture'
+      path: '/architecture'
+      fullPath: '/app/architecture'
+      preLoaderRoute: typeof AppArchitectureRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppArchitectureRoute: typeof AppArchitectureRoute
+  AppEvaluationRoute: typeof AppEvaluationRoute
+  AppExperimentsRoute: typeof AppExperimentsRoute
+  AppKnowledgeRoute: typeof AppKnowledgeRoute
+  AppPlanningRoute: typeof AppPlanningRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppArchitectureRoute: AppArchitectureRoute,
+  AppEvaluationRoute: AppEvaluationRoute,
+  AppExperimentsRoute: AppExperimentsRoute,
+  AppKnowledgeRoute: AppKnowledgeRoute,
+  AppPlanningRoute: AppPlanningRoute,
   AppIndexRoute: AppIndexRoute,
 }
 

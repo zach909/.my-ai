@@ -21,8 +21,14 @@ import {
 } from '@/components/ui/tooltip'
 import {
   LayoutDashboard,
+  FlaskConical,
+  Network,
+  Brain,
+  Gauge,
+  Goal,
   LogOut,
   PanelLeft,
+  Cpu,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -41,6 +47,11 @@ interface NavItemDef {
 // e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
   { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard', active: true },
+  { href: '/app/experiments', icon: <FlaskConical className="h-4 w-4" />, label: 'Experiments' },
+  { href: '/app/architecture', icon: <Network className="h-4 w-4" />, label: 'Architecture' },
+  { href: '/app/knowledge', icon: <Brain className="h-4 w-4" />, label: 'Knowledge & Reasoning' },
+  { href: '/app/evaluation', icon: <Gauge className="h-4 w-4" />, label: 'Evaluation' },
+  { href: '/app/planning', icon: <Goal className="h-4 w-4" />, label: 'Planning' },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {
@@ -105,9 +116,9 @@ export function AppSidebarShell() {
           {!collapsed && (
             <>
               <div className="flex items-center justify-center h-7 w-7 rounded-md bg-primary text-primary-foreground text-xs font-bold shrink-0">
-                A
+                <Cpu className="h-3.5 w-3.5" />
               </div>
-              <span className="flex-1 font-semibold text-sm truncate">App</span>
+              <span className="flex-1 font-semibold text-sm truncate">ASI Architect</span>
             </>
           )}
           <Tooltip>
@@ -136,7 +147,7 @@ export function AppSidebarShell() {
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-0.5">
           {!collapsed && (
             <p className="px-3 pt-1 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-              Main
+              Modules
             </p>
           )}
           {NAV_ITEMS.map(item => (
@@ -157,21 +168,21 @@ export function AppSidebarShell() {
               <TooltipTrigger asChild>
                 <button className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors cursor-pointer">
                   <Avatar className="h-6 w-6 shrink-0">
-                    <AvatarFallback className="text-[10px] bg-muted">U</AvatarFallback>
+                    <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
                   </Avatar>
                 </button>
               </TooltipTrigger>
-              <TooltipContent side="right">User · user@example.com</TooltipContent>
+              <TooltipContent side="right">Researcher · researcher@asi.architect</TooltipContent>
             </Tooltip>
           ) : (
             <button className="flex items-center gap-2 rounded-md hover:bg-accent transition-colors cursor-pointer w-full px-2 py-1.5">
               <Avatar className="h-6 w-6 shrink-0">
-                <AvatarFallback className="text-[10px] bg-muted">U</AvatarFallback>
+                <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
               </Avatar>
               <div className="flex-1 min-w-0 text-left">
-                <p className="text-xs font-medium leading-tight truncate">User</p>
+                <p className="text-xs font-medium leading-tight truncate">Researcher</p>
                 <p className="text-[10px] text-muted-foreground leading-tight truncate">
-                  user@example.com
+                  researcher@asi.architect
                 </p>
               </div>
             </button>
