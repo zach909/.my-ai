@@ -1647,6 +1647,27 @@ async function testNetSearchGenerateCliWiring() {
   check(lines.some(l => l.includes('No semantic matches') && l.includes('nothing generated')), 'the `nsearch` command never fabricates a result for a query with zero real evidence');
 }
 
+async function testSharedBlackboardLogCapacity() {
+  // Section 13: SharedBlackboard.write() is reached on every solve()/
+  // autonomousTask() step (agent.share()) with no existing bound on its
+  // internal audit log -- on a long-running process this grew forever.
+  // Unlike LongTermMemory, there's no importance signal to rank entries by,
+  // so a plain FIFO cap is the honest fit. Verify the cap works and that
+  // conflict tracking / reads (which use a separate Map, not the log) are
+  // unaffected by heavy log churn.
+  const { SharedBlackboard } = await load('models && skills/core/hive-mind.js');
+  const board = new SharedBlackboard();
+  for (let i = 0; i < 5010; i++) board.write('agent1', `key${i}`, `value${i}`);
+  check(board.history().length === 5000, "SharedBlackboard's log caps at a bounded size instead of growing forever");
+  check(board.history()[0].key === 'key10', 'the oldest entries are evicted first (FIFO), not the newest');
+  check(board.history()[board.history().length - 1].key === 'key5009', 'the most recent entry is always retained');
+
+  board.write('agentA', 'shared', 'valueA');
+  board.write('agentB', 'shared', 'valueB');
+  check(board.hasConflict('shared'), 'conflict detection is unaffected by heavy log churn (it reads a separate Map, not the log)');
+  check(board.read('agent1', 'key5009') === 'value5009', 'reads are unaffected by log trimming');
+}
+
 async function testHiveMindAndChatGroups() {
   const { HiveMind } = await load('models && skills/core/hive-mind.js');
   const { ChatGroup } = await load('models && skills/core/chat-group.js');
@@ -3340,6 +3361,7 @@ async function main() {
     ['Net Search engine (Section 22)', testNetSearchEngine],
     ['Long-term memory & retrieval (Section 7)', testLongTermMemory],
     ['Hive Mind & Chat Groups (Section 13-14)', testHiveMindAndChatGroups],
+    ['SharedBlackboard log capacity (Section 13)', testSharedBlackboardLogCapacity],
     ['ArchitectureMapper integration (Self-Improvement Phase 1)', testArchitectureMapperIntegration],
     ['PerformanceMonitor tracks real calls (Self-Improvement Phase 3)', testPerformanceMonitorTracksRealCalls],
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
