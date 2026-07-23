@@ -1530,6 +1530,21 @@ async function testSelfHealer() {
   check(health.repairable === true && health.doomed === false, 'healthReport reflects post-heal component health');
 }
 
+async function testSelfHealerLogCapacity() {
+  // Section 24: heal() is called repeatedly from live NeuroclawSystem code
+  // paths (solve(), autonomousTask(), processQuery()'s prediction-surprise
+  // trigger), each invocation appending to `log` via record() with no cap --
+  // the same unbounded-growth pattern already fixed for SharedBlackboard,
+  // PerformanceMonitor, SelfMonitor, ChatGroup, KnowledgeGraph, etc.
+  // clearLog() exists but has no callers anywhere, so nothing ever trimmed
+  // it in practice.
+  const { SelfHealer } = await load('models && skills/core/self-healer.js');
+  const healer = new SelfHealer();
+  healer.register({ name: 'flaky', check: () => false, repair: () => {}, maxAttempts: 1 });
+  for (let i = 0; i < 2000; i++) await healer.heal();
+  check(healer.getLog().length === 5000, "SelfHealer's log caps at a bounded size instead of growing forever");
+}
+
 async function testPlanTracker() {
   const { PlanTracker } = await load('models && skills/core/plan-tracker.js');
   const plan = new PlanTracker();
@@ -3528,6 +3543,7 @@ async function main() {
     ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],
     ['nsearch CLI command reaches netSearchGenerate (Section 22)', testNetSearchGenerateCliWiring],
     ['Self-healing / SelfHealer (Section 24)', testSelfHealer],
+    ['SelfHealer log capacity (Section 24)', testSelfHealerLogCapacity],
     ['Context compression (Section 7)', testContextCompressor],
     ['Capability routing / IntentRouter (Section 6)', testIntentRouter],
     ['AGI capability modules (ASI §2-10)', testAGIModules],

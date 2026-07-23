@@ -51,6 +51,7 @@ export class SelfHealer {
   private components = new Map<string, HealableComponent>();
   private snapshots = new Map<string, unknown>();
   private log: string[] = [];
+  private readonly logCapacity = 5000;
 
   register(component: HealableComponent): void {
     this.components.set(component.name, component);
@@ -160,6 +161,7 @@ export class SelfHealer {
 
   private record(msg: string): void {
     this.log.push(`[${new Date().toISOString()}] ${msg}`);
+    if (this.log.length > this.logCapacity) this.log.splice(0, this.log.length - this.logCapacity);
   }
 }
 
