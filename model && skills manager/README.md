@@ -11,7 +11,7 @@
 
 No Hugging Face Transformers, no Lightning, no distributed training, no
 external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
-`python test_core.py` runs 216 checks with no checkpoint needed.
+`python test_core.py` runs 220 checks with no checkpoint needed.
 # Prometheus Elastic Core — mesh AI
 
 > **Note:** the decoder-only GPT transformer described below has been **retired**.
@@ -26,7 +26,7 @@ A complete, from-scratch model stack in Python + PyTorch — no Hugging Face
 Transformers, no Lightning, no distributed training. It trains a small (a few
 hundred K to a few M parameter) model on a local Markdown corpus and runs
 locally on CPU or a single consumer GPU (e.g. an RTX 5070);
-`python test_core.py` runs the full 216-check suite with no checkpoint needed.
+`python test_core.py` runs the full 220-check suite with no checkpoint needed.
 
 The elastic-mesh core is vale-gated and all-to-all with MoE expert routing;
 its interference step is a *perfect classical simulation* of a small
@@ -108,11 +108,11 @@ model && skills manager/
 ├── extend.py               # batch-teach definishon contracts
 ├── neurolang.py            # NeuroLang DSL -> trainable mesh (extension builder)
 ├── example_experts.nl      # sample NeuroLang program (code@/netsearch@ experts)
-├── test_core.py            # 216 checks, no checkpoint needed
+├── test_core.py            # 220 checks, no checkpoint needed
 ├── test_elastic_mesh.py    # smoke test for the optional quantum block
 ├── chat.py                 # step 4: interactive / one-shot inference (the interface)
 ├── core.py                 # the unified core: model + memory + veto + actions
-├── test_core.py            # unified-core check suite (216 checks, no checkpoint needed)
+├── test_core.py            # unified-core check suite (220 checks, no checkpoint needed)
 ├── test_elastic_mesh.py    # smoke test for the elastic-mesh core
 ├── data/pretrain/          # .md corpus (build your own; see below)
 ├── data/sft/chat.jsonl     # chat fine-tuning data (sample included)

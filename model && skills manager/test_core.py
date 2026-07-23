@@ -977,6 +977,24 @@ def test_adaptive_routing():
     check(torch.allclose(modified.sum(), torch.tensor(1.0), atol=0.01) or modified.sum() > 0,
           "apply_routing_decision produces valid scores")
 
+    # decide_routing()'s own "explore" decision must genuinely soften the
+    # scores, not leave them unchanged (temperature_adjust used to default
+    # to 1.0 in this branch, making apply_routing_decision's pow(x, 1.0) a
+    # silent no-op -- only "tighten" explicitly set it).
+    explore_router = AdaptiveExpertRouter(n_experts=8, base_top_k=1, patience=2)
+    explore_router.update_confidence(0.1)
+    explore_router.update_confidence(0.1)
+    explore_router.expert_performance = torch.tensor([1.0] + [0.0] * 7)
+    explore_decision = explore_router.decide_routing(
+        current_top_k=1, active_experts=torch.tensor([1, 0, 0, 0, 0, 0, 0, 0], dtype=torch.bool))
+    check(explore_decision.action == "explore", "decide_routing reaches the explore branch under these conditions")
+    check(explore_decision.temperature_adjust != 1.0, "explore decision sets a real temperature_adjust, not the inert default")
+    explore_scores = torch.tensor([0.1, 0.2, 0.15, 0.05, 0.1, 0.1, 0.2, 0.1])
+    explore_out = explore_router.apply_routing_decision(explore_decision, explore_scores)
+    check(not torch.allclose(explore_scores, explore_out), "apply_routing_decision actually softens scores for a real explore decision")
+    check((explore_out.min() / explore_out.max()) > (explore_scores.min() / explore_scores.max()),
+          "explore softening moves the score distribution closer to uniform (min/max ratio increases)")
+
     # Test live guidance integration (API only, no full integration in sandbox)
     guidance = LiveGuidanceWithAdaptiveRouting(base_temperature=0.8, base_top_k=40)
     result = guidance.adjust_generation(logits=torch.randn(1, 100), confidence=0.3)
