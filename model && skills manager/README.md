@@ -242,6 +242,15 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
 - **Compressed circular I/O** (§9) — `ContinuousRunner` runs input and output as
   two bounded ring buffers (oldest overwritten at capacity), so the mesh keeps
   operating continuously without unbounded growth (`tinygpt/continuous.py`).
+  This is a real, tested mechanism (`MeshLM.enable_continuous()` genuinely
+  carries neuron state across `forward()` calls instead of resetting to
+  zeros) — but no live entry point actually turns it on: `chat.py`, `core.py`,
+  and `interface/server.py` all generate through `tinygpt/infer.py`'s
+  `Generator.generate()`, which never calls `enable_continuous()`, so every
+  real chat turn still runs from a fresh zeroed mesh state. `ContinuousRunner`
+  itself is only ever instantiated in `test_core.py`. Turn-to-turn continuity
+  in the actual running system comes entirely from `ZipLoopMemory`'s textual
+  grounding (§2), not from carried neuron state.
 - **Neural language refinement** — NeuroLang definitions are connected by both
   thesaurus relationships and dictionary meanings, so semantically related
   neurons wire together automatically (`neurolang.py`).
