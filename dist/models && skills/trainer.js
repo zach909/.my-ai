@@ -62,7 +62,7 @@ export class NeuroclawTrainer {
             await this.buildNGramTables(corpus);
             await this.trainEmbeddings(corpus);
             if (this.config.useElasticCore)
-                this.trainElasticCoreLayer(corpus);
+                await this.trainElasticCoreLayer(corpus);
             else
                 await this.trainHiddenLayer(corpus);
             this.weights.trained = true;
@@ -280,7 +280,7 @@ export class NeuroclawTrainer {
         }
         this.weights.trainingLoss = count > 0 ? totalLoss / count : 0;
     }
-    trainElasticCoreLayer(text) {
+    async trainElasticCoreLayer(text) {
         const dim = this.config.hiddenDim;
         const ctx = this.config.contextWindow;
         this.elasticCore = new ElasticCoreBlock({
@@ -305,6 +305,8 @@ export class NeuroclawTrainer {
         for (let epoch = 0; epoch < this.config.epochs; epoch++) {
             const lr = this.config.learningRate / (1 + epoch * 0.5);
             for (let i = ctx; i < text.length - 1; i++) {
+                if (i > ctx && i % YIELD_EVERY_CHARS === 0)
+                    await yieldToEventLoop();
                 const hiddenIn = new Float32Array(dim);
                 for (let c = 0; c < ctx; c++) {
                     const id = this.charToId.get(text[i - ctx + c] ?? '') ?? 3;
