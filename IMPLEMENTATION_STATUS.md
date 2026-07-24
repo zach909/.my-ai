@@ -118,7 +118,7 @@ Complete AI system with neural networks, machine learning, quantization, and ext
   - Strategy selection
 
 #### ✅ Quantizer (100%)
-- **Location:** `models && skills/core/quantizer.ts`
+- **Location:** `models && skills/core/quantizer.js` (JS-only module; no `.ts` source has ever existed here)
 - **Status:** Fully implemented
 - **Features:**
   - Symmetric/asymmetric/mixed quantization
