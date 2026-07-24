@@ -57,25 +57,40 @@ class TestRepairSystemDoesNotLeak(unittest.TestCase):
         # mocked), detected_damage pruned back to the same length a prior
         # detection saw -- rather than relying on the real update() loop to
         # happen to land there.
+        #
+        # Drives the prune through the real update_repairs() path (via its
+        # own "already complete" fast path) rather than hand-simulating it,
+        # since update_repairs() actually removes a completed id from
+        # active_repairs and detected_damage together, in the same pass --
+        # an earlier draft's comment claiming active_repairs is "left alone"
+        # by the real prune was itself wrong (caught by review after this
+        # test had already shipped; fixed here).
         repair = RepairSystem(nanobot_count=20)
         with patch('robotic_organism.systems.repair.time.time', return_value=1_000_000.0):
             first = repair.detect_damage((0.0, 0.0, 0.0), "tear", 0.2, affected_systems=["skin"])
-            self.assertEqual(len(repair.active_repairs), 1)
-
-            # Simulate the same pruning update_repairs() performs when a
-            # repair completes: drop it from detected_damage (but leave
-            # active_repairs alone here, exactly as the real prune does --
-            # active_repairs is only cleaned up separately, by id).
-            repair.detected_damage = [d for d in repair.detected_damage if d.id != first.id]
-
             second = repair.detect_damage((0.0, 0.0, 0.0), "tear", 0.2, affected_systems=["skin"])
+            self.assertEqual(len(repair.active_repairs), 2)
+            self.assertEqual(len(repair.detected_damage), 2)
 
-        self.assertNotEqual(first.id, second.id,
+            first.repair_complete = True
+            repair.update_repairs(dt=1.0)
+            self.assertNotIn(first.id, repair.active_repairs,
+                "test setup should actually prune the completed repair")
+            self.assertEqual(len(repair.detected_damage), 1,
+                "test setup should actually prune detected_damage back down to second's own creation-time length")
+
+            # detected_damage has shrunk back to the length it had when
+            # `second` was created -- under the old len(detected_damage) id
+            # scheme, this new detection (same mocked millisecond) would
+            # collide with `second`'s still-active id.
+            third = repair.detect_damage((0.0, 0.0, 0.0), "tear", 0.2, affected_systems=["skin"])
+
+        self.assertNotEqual(second.id, third.id,
             "damage_id must stay unique even when detected_damage has been pruned back to a length "
             "seen before, within the same millisecond")
-        self.assertIn(first.id, repair.active_repairs,
-            "the first report must still be tracked, not silently overwritten by a colliding id")
-        self.assertIn(second.id, repair.active_repairs)
+        self.assertIn(second.id, repair.active_repairs,
+            "the still-active repair must not be silently overwritten by a colliding id")
+        self.assertIn(third.id, repair.active_repairs)
         self.assertEqual(len(repair.active_repairs), 2)
 
 
