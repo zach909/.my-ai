@@ -10,7 +10,7 @@ Like the mesh itself, there are two real, connected implementations:
 
 | Layer | File | What it is |
 |---|---|---|
-| TypeScript runtime backend | `extension-builder/builder.ts` — `ExtensionBuilder` | Project/neuron/connection CRUD, Net Search, Code-to-Net, save/install |
+| TypeScript runtime backend | `extension-builder/builder.js` (JS-only module; no `.ts` source has ever existed here) — `ExtensionBuilder` | Project/neuron/connection CRUD, Net Search, Code-to-Net, save/install |
 | React visual editor | `src/features/builder/builder-canvas.tsx` + `use-builder.ts` | The actual drag-and-connect canvas — pointer-drag to move, click-click to connect, HTML5-drag to attach a label, click a connection's weight to delete it |
 | Python training core | `model && skills manager/tinygpt/extension_builder.py` — `ExtensionBuilder`, `Definishon` | Trains **contracts** (`when X then Y`) into a real mesh via gradient descent, then saves/installs |
 

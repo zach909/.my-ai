@@ -9,7 +9,7 @@ Performs a semantic search using a provided definition and trains a neural netwo
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript search engine | `models && skills/core/net-search.ts` — `NetSearchEngine` | Unified search over neural structures with **exact / semantic / neural / structural** modes, wired into NeuroLang (`interp.netSearch(...)`) |
-| TypeScript visual editor | `extension-builder/builder.ts` — `netSearch`, `netSearchGenerate` | Project-scoped semantic search plus a generated `netsearch`-type neuron wired to its matches |
+| TypeScript visual editor | `extension-builder/builder.js` (JS-only module; no `.ts` source has ever existed here) — `netSearch`, `netSearchGenerate` | Project-scoped semantic search plus a generated `netsearch`-type neuron wired to its matches |
 | Python training core | `tinygpt/neurolang.py` — `NetSearchManager` | Deterministic TF-IDF ranking *and* a trained deep-learning retrieval net, side by side |
 
 ## Four search modes (`NetSearchEngine`)
