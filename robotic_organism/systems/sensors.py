@@ -358,7 +358,7 @@ class SensorArray:
         avg_amplitude = (left_sample.amplitude + right_sample.amplitude) / 2
         
         # Direction from interaural differences
-        direction = (left_sample.direction or 0 + right_sample.direction or 0) / 2
+        direction = ((left_sample.direction or 0) + (right_sample.direction or 0)) / 2
         
         self.total_reads += 2
         
