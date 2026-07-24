@@ -183,7 +183,7 @@ Complete AI system with neural networks, machine learning, quantization, and ext
 - **TODO:** Full testing and integration
 
 #### ✅ Extension Builder (85%)
-- **Location:** `extension-builder/builder.ts`
+- **Location:** `extension-builder/builder.js` (JS-only module; no `.ts` source has ever existed at this path)
 - **Status:** Core complete, UI pending
 - **Features:**
   - Project management
@@ -232,10 +232,11 @@ Complete AI system with neural networks, machine learning, quantization, and ext
 - **Location:** `interface/web-server.ts`
 - **Status:** Core implemented
 - **Features:**
-  - HTTP/HTTPS support
+  - Plain HTTP only (the file imports `node:http` and nothing else --
+    no HTTPS, no WebSocket)
   - Route handling
-  - WebSocket for real-time
-- **TODO:** Full UI integration
+- **TODO:** Full UI integration; HTTPS and WebSocket support are not
+  implemented (previously documented as if they were)
 
 #### ⏳ Web UI Dashboard (20%)
 - **Location:** `src/`
