@@ -50,7 +50,7 @@ It's enforced at multiple, independent layers, not just claimed once in a README
 
 - [[Home]] - Main wiki page
 - [[Zip-IO]] - What gets encrypted (persisted memory)
-- [[System-Access]] - Why terminal/file actions are gated rather than open
+- [[System-Access]] - `executeCommand()`'s shell access has no live caller yet and is not currently gated by the alignment veto
 - [[Plugins]] - The local-only-or-honest-failure pattern every plugin follows
 
 ---
