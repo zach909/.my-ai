@@ -162,8 +162,13 @@ the registry instead:
 const definition = registry.getPlugin('file-system'); // PluginDefinition | undefined
 const active = registry.listActivePlugins();           // PluginDefinition[]
 
-// Route a message to whichever active plugin's intent map matches
-const result = await registry.dispatch('list files in Documents', 'file-system');
+// dispatch(input, intent)'s second argument is an intent bucket key
+// ('command', 'analysis', 'exploration', ...), not a plugin id -- passing
+// a plugin id like 'file-system' matches no bucket and always returns null.
+// 'command' is one of several intents whose candidate list includes
+// file-system (so does 'analysis'); dispatch tries each active candidate
+// in order until one returns a non-null result.
+const result = await registry.dispatch('list files in Documents', 'command');
 ```
 
 ## Plugin Manager
@@ -191,9 +196,10 @@ healthCheck(): Promise<Map<string, boolean>>
 ```
 
 (A separate, differently-shaped `PluginManager` class also exists in
-`models && skills/plugin-manager.ts` — it is not the one `interface/main.ts`
-actually uses, so its `executePlugin(pluginId, action, data)`-style API isn't
-what's documented above.)
+`models && skills/plugin-manager.js` (JS-only module; no `.ts` source has
+ever existed here) — it is not the one `interface/main.ts` actually uses,
+so its `executePlugin(pluginId, action, data)`-style API isn't what's
+documented above.)
 
 ## Security Considerations
 

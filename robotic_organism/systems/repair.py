@@ -188,7 +188,12 @@ class RepairSystem:
         self.detected_damage: List[DamageReport] = []
         self.repair_history: List[DamageReport] = []
         self.active_repairs: Dict[str, DamageReport] = {}
-        
+        # Monotonic counter for damage IDs -- len(self.detected_damage) is not
+        # monotonic once completed entries are pruned from it, so reusing it
+        # here could produce the same id twice within the same millisecond
+        # and silently overwrite an in-flight entry in active_repairs.
+        self._damage_seq = 0
+
         # Statistics
         self.total_repairs = 0
         self.successful_repairs = 0
@@ -216,7 +221,8 @@ class RepairSystem:
         except ValueError:
             dtype = DamageType.TEAR  # Default
         
-        damage_id = f"dmg_{int(time.time() * 1000)}_{len(self.detected_damage)}"
+        self._damage_seq += 1
+        damage_id = f"dmg_{int(time.time() * 1000)}_{self._damage_seq}"
         
         report = DamageReport(
             id=damage_id,
