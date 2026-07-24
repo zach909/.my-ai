@@ -10,7 +10,7 @@
 
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -159,6 +159,23 @@ async function testLLM() {
   const tr = llm.traceNeuron(3, 2, 5);
   check(tr && typeof tr.equation === 'string' && Number.isFinite(tr.value), 'LLM.traceNeuron exposes a symbolic trace');
   check(llm.traceNeuron(999999, 0, 5) === null, 'LLM.traceNeuron returns null for an out-of-range neuron');
+
+  // Section 4 quantization, reachable via the documented CLI `quantize`
+  // command (handleQuantize()): NeuroclawLLM.quantize() called
+  // installWithQuantization(this.projectId) with no options object, so the
+  // very next line's `options.bits` threw TypeError: Cannot read properties
+  // of undefined (reading 'bits'). drainQueue()'s try/catch kept the CLI
+  // alive, so this silently 100%-broke the feature instead of crashing --
+  // every "quantize" invocation errored instead of ever saving a quantized
+  // model. Exercise the real, documented path end-to-end.
+  const qllm = new NeuroclawLLM();
+  await qllm.build();
+  const quantized = await qllm.quantize();
+  check(typeof quantized === 'string' && quantized.length > 0,
+    'LLM.quantize() actually quantizes and returns saved model data instead of throwing');
+  const qdata = JSON.parse(quantized);
+  check(qdata.quantized === true && qdata.bits === 4,
+    'LLM.quantize() quantizes at the documented 4-bit level (matches handleQuantize()\'s "4-bit" message)');
 }
 
 async function testRLM() {
@@ -1074,6 +1091,38 @@ async function testWebBackend() {
     check(stillAlive.status === 200 && JSON.parse(stillAlive.body).running === true,
       'Web backend is still running and responsive after a malformed /api/dict/:word request');
 
+    // handleRequest()'s very first line built `new URL(req.url, "http://" +
+    // req.headers.host)` with no guard at all -- req.headers.host is a raw,
+    // attacker-controlled string Node's HTTP parser never validates, so a
+    // malformed value (e.g. a non-numeric port) makes `new URL()` throw
+    // TypeError: Invalid URL. This runs before every route's own try/catch
+    // (including the /api/dict fix just above), so it crashed the entire
+    // backend on a single request regardless of path or method -- a
+    // distinct, unguarded instance of the same crash class one layer
+    // higher up. A same-origin fetch() can't set Host (forbidden header),
+    // but any local script/proxy/curl invocation can.
+    const badHost = await new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path: '/', method: 'GET', headers: { Host: 'localhost:abc' } }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', reject);
+      req.end();
+    });
+    check(badHost.status === 400, 'Web backend returns 400 on a malformed Host header instead of crashing the process');
+    const aliveAfterBadHost = await get('/api/status');
+    check(aliveAfterBadHost.status === 200 && JSON.parse(aliveAfterBadHost.body).running === true,
+      'Web backend is still running and responsive after a malformed Host header');
+
+    // POST /api/train's `body?.text ?? ''` only falls back on null/undefined,
+    // so a non-string truthy value (e.g. the JSON number 12345) sailed
+    // through untouched into NeuroclawTrainer.train(). `text.length` on a
+    // number is undefined, so every training loop's `i < text.length - order`
+    // is `i < NaN` -- always false -- and the request silently "succeeds"
+    // having trained on nothing, indistinguishable from a real request that
+    // legitimately produced zero samples.
+    const badTrain = await post('/api/train', { text: 12345 });
+    check(badTrain.status === 400, 'Web backend POST /api/train rejects a non-string text value instead of silently training on nothing');
+
     // POST /api/extension/build is the only real HTTP-level coverage of
     // ExtensionBuilder.parseNeuroLang() in this suite -- testExtensionBuilderFlow
     // (elsewhere) calls ExtensionBuilder directly, never through this handler.
@@ -1090,6 +1139,61 @@ async function testWebBackend() {
     const buildJson = JSON.parse(build.body);
     check(build.status === 200 && buildJson.ok === true && buildJson.neurons?.some(n => n.name === 'alpha'),
       'Web backend POST /api/extension/build actually builds and saves an extension (not an unconditional 400)');
+
+    // `const bits = body?.bits ?? 8` took the request field with no type
+    // check, so a non-numeric bits value (e.g. a string) reached
+    // BackgroundQuantizer.quantize()'s Math.floor(bits) as NaN --
+    // Math.max/Math.min don't clamp NaN, they propagate it -- silently
+    // quantizing every connection weight to NaN (serialized as `null`)
+    // while the response still reported {ok:true}. Verify the route now
+    // rejects a non-numeric bits value instead of silently corrupting data.
+    const badBits = await post('/api/extension/build', {
+      name: 'bad_bits_test', code: 'name="alpha"\n"beta"@value="1"\n"alpha"@connections=".beta"',
+      quantize: true, bits: 'abc',
+    });
+    check(badBits.status === 400,
+      'Web backend POST /api/extension/build rejects a non-numeric bits value instead of silently producing NaN weights');
+
+    const goodBits = await post('/api/extension/build', {
+      name: 'good_bits_test', code: 'name="alpha"\n"beta"@value="1"\n"alpha"@connections=".beta"',
+      quantize: true, bits: 8,
+    });
+    const goodBitsJson = JSON.parse(goodBits.body);
+    check(goodBits.status === 200 && goodBitsJson.ok === true && goodBitsJson.bits === 8,
+      'Web backend POST /api/extension/build still accepts a valid numeric bits value');
+
+    // AppLauncher.launch() called spawn(command, args, {shell: true}), so a
+    // shell metacharacter (`;`, `&&`, backticks, ...) inside an *args* entry
+    // ran as an additional, unintended command rather than literal argv
+    // text -- reachable unauthenticated via this exact route with no auth
+    // or CSRF protection anywhere in front of it (interface/web-server.ts's
+    // parseBody() parses the body as JSON regardless of Content-Type,
+    // so even a same-origin-restricted CORS response can't stop the side
+    // effect of a cross-site "simple request"). Prove the fix directly: ask
+    // `echo` to print a string containing "; touch <marker>" and confirm
+    // the marker is never created -- the whole string must be treated as
+    // one literal argument to echo, never shell-interpreted.
+    const marker = join(tmpdir(), `applauncher_injection_probe_${Date.now()}`);
+    try {
+      const inject = await post('/api/apps/launch', { command: 'echo', args: [`hi; touch ${marker}`] });
+      const injectJson = JSON.parse(inject.body);
+      check(inject.status === 200 && injectJson.ok === true && typeof injectJson.pid === 'number',
+        'Web backend POST /api/apps/launch launches a real process and returns its pid');
+      await new Promise(r => setTimeout(r, 500));
+      check(!existsSync(marker),
+        'POST /api/apps/launch no longer shell-interprets metacharacters inside args (no extra command executed)');
+    } finally {
+      if (existsSync(marker)) rmSync(marker);
+    }
+
+    const badArgs = await post('/api/apps/launch', { command: 'echo', args: 'not-an-array' });
+    check(badArgs.status === 400, 'Web backend POST /api/apps/launch rejects a non-array args field instead of passing it to spawn()');
+
+    // A path beginning with "-" would be read as a flag by apt/wine/adb
+    // once threaded into their args array (e.g. "-y", "--allow-downgrades"),
+    // not as the package path it's supposed to be.
+    const badPath = await post('/api/apps/launch-package', { path: '--allow-downgrades', type: 'deb' });
+    check(badPath.status === 400, 'Web backend POST /api/apps/launch-package rejects a path that looks like a command-line flag');
   } finally {
     await web.stop();
   }
@@ -1206,6 +1310,29 @@ async function testExtensionBuilderFlow() {
   } finally {
     globalThis.setImmediate = realSetImmediate;
   }
+  // Math.max/Math.min don't clamp NaN, they propagate it -- so the bits<=1
+  // clamp above only guards against out-of-range *numbers*. A non-numeric
+  // bits value (POST /api/extension/build took `body?.bits ?? 8` straight
+  // from an untrusted request body with no type check) reached
+  // Math.floor(bits) as NaN and silently produced NaN weights for every
+  // connection -- serialized to `null` in the saved .ext.json, reporting
+  // {ok:true} the whole time. Verify the same symmetric project quantizes
+  // to finite weights even when `bits` is garbage.
+  const p3 = B.createProject('symdemo2', 'Symmetric weights, bad bits').id;
+  const t1 = B.addNeuron(p3, 'sym_c', 0.5).id;
+  const t2 = B.addNeuron(p3, 'sym_d', 0.5).id;
+  B.connectNeurons(p3, t1, t2, 0.5, -0.5);
+  const badBits = JSON.parse(await B.installWithQuantization(p3, { bits: 'abc' }));
+  const conn2 = badBits.connections[0];
+  check(Number.isFinite(conn2.weight) && Number.isFinite(conn2.bias), 'Install with a non-numeric bits value falls back to a safe default instead of quantizing every weight to NaN');
+
+  // installWithQuantization() itself must not throw when called with no
+  // options at all -- NeuroclawLLM.quantize() (models && skills/llm.js) did
+  // exactly this, so options.bits threw TypeError: Cannot read properties
+  // of undefined (reading 'bits') on every CLI `quantize` invocation.
+  const p4 = B.createProject('nooptions', 'Called with no options').id;
+  const noOptResult = await B.installWithQuantization(p4);
+  check(typeof noOptResult === 'string', 'installWithQuantization() tolerates being called with no options object (does not throw)');
 
   // Net Search: semantic search over definitions -> generate a wired network.
   B.addNeuron(pid, 'weather', 0.4);

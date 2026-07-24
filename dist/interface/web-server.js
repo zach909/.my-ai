@@ -257,7 +257,22 @@ export class WebServer {
         });
     }
     async handleRequest(req, res) {
-        const parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        let parsedUrl;
+        try {
+            // req.headers.host is a raw, attacker-controlled string with no
+            // validation from Node's HTTP parser -- a malformed value (a space,
+            // a non-numeric port, ...) makes new URL() throw TypeError: Invalid
+            // URL. This runs before every route's own try/catch (including the
+            // /api/dict fix below), as the raw http.createServer callback with
+            // no .catch() and no process-wide unhandledRejection handler, so an
+            // uncaught throw here crashed the entire backend on one request,
+            // regardless of path or method.
+            parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+        }
+        catch {
+            this.sendJson(res, { error: 'Invalid request' }, 400);
+            return;
+        }
         const pathname = parsedUrl.pathname;
         const method = req.method?.toUpperCase() ?? 'GET';
         if (method === 'OPTIONS') {
@@ -436,6 +451,10 @@ export class WebServer {
         if (pathname === '/api/train' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
+                if (body?.text !== undefined && typeof body.text !== 'string') {
+                    this.sendJson(res, { error: 'text must be a string' }, 400);
+                    return;
+                }
                 const text = body?.text ?? '';
                 await this.runner.getLLM().trainOnText(text);
                 const stats = this.runner.getLLM().getStats();
@@ -472,6 +491,10 @@ export class WebServer {
                 const parsed = await builder.parseNeuroLang(project.id, code);
                 if (!parsed.success) {
                     this.sendJson(res, { errors: parsed.errors }, 400);
+                    return;
+                }
+                if (body?.bits !== undefined && (typeof body.bits !== 'number' || !Number.isFinite(body.bits))) {
+                    this.sendJson(res, { error: 'bits must be a finite number' }, 400);
                     return;
                 }
                 const quantize = body?.quantize === true;
@@ -540,8 +563,12 @@ export class WebServer {
         if (pathname === '/api/apps/launch' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
-                if (!body?.command) {
+                if (!body?.command || typeof body.command !== 'string') {
                     this.sendJson(res, { error: 'Missing command field' }, 400);
+                    return;
+                }
+                if (body.args !== undefined && (!Array.isArray(body.args) || !body.args.every(a => typeof a === 'string'))) {
+                    this.sendJson(res, { error: 'args must be an array of strings' }, 400);
                     return;
                 }
                 const app = this.launcher.launch(body.command, {
@@ -596,8 +623,19 @@ export class WebServer {
         if (pathname === '/api/apps/launch-package' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
-                if (!body?.path) {
+                if (!body?.path || typeof body.path !== 'string') {
                     this.sendJson(res, { error: 'Missing path field' }, 400);
+                    return;
+                }
+                // A path starting with "-" would be read as a flag by apt/wine/adb
+                // (e.g. "-y", "--allow-downgrades") once it lands in the args array
+                // below, rather than as the package path it's supposed to be --
+                // launch() no longer runs these through a shell (see app-launcher.js),
+                // so this is argument injection, not command injection, but it's the
+                // same "attacker-controlled string reaches a privileged command
+                // unvalidated" root cause and costs nothing to reject.
+                if (body.path.startsWith('-')) {
+                    this.sendJson(res, { error: 'Invalid path field' }, 400);
                     return;
                 }
                 const packagePath = body.path;
