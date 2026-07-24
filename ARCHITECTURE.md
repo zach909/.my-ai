@@ -1350,6 +1350,24 @@ Verified the fix preserves identical processing timing: since the drain happens 
 
 Verified: `rm -rf dist && node scripts/build-backend.mjs` clean (Python-only change, unaffected); `node test/smoke.mjs` 665/665; `test_core.py` 219/219; full `robotic_organism` test discovery 8/8 (5 pre-existing + 3 new), all passing.
 
+### `SensorArray.update_audio()`'s binaural direction estimate was silently halved by an operator-precedence bug — the right ear's reading was never added
+
+A different bug class from the last round's list-growth leak, found in a sibling file of the same never-independently-audited `robotic_organism` package. This one is a live logic bug rather than a resource leak: wrong output on every single call, not a growing list.
+
+`robotic_organism/systems/sensors.py:361`:
+```python
+# Direction from interaural differences
+direction = (left_sample.direction or 0 + right_sample.direction or 0) / 2
+```
+The comment and the very next line's pattern (`avg_amplitude = (left_sample.amplitude + right_sample.amplitude) / 2`) make the intent obvious: average both ears' direction readings. But Python's `+` binds tighter than `or`, so this actually parses as `(left_sample.direction or (0 + right_sample.direction) or 0) / 2` — since `AudioSample.direction` (`sensors.py:219`: `math.sin(timestamp * 0.3) * math.pi / 4`) is truthy for all but an exact sine zero-crossing, the `or` chain short-circuits on `left_sample.direction` and `right_sample.direction` is never even added. Confirmed live in a Python REPL: with `left = 0.1108...`, `right = 0.3108...`, the buggy expression evaluates to exactly `left / 2`, discarding `right` entirely.
+
+Because both ears currently derive `direction` from the *same* `timestamp` with no per-ear offset (a separate, simplified-simulation characteristic, not itself a bug being fixed here), `left_sample.direction` and `right_sample.direction` are always numerically equal in practice — which makes the bug's effect exact and deterministic rather than merely "sometimes wrong": `estimated_direction` is always precisely half of the correct average, every single call. Confirmed this is a live path, not dead code: `SensorArray.update()` calls `update_audio()` (`sensors.py:441`), and `ArtificialOrganism.update()` — the organism's main per-tick integration loop, already the caller of the `energy_system.update()` fixed in the previous round — calls `sensor_array.update()` every tick (`organism.py:176`). `git blame` confirms the line is untouched since the original commit; `sensors.py` had zero prior test coverage.
+
+Fix: parenthesize each `... or 0` fallback individually before adding — `((left_sample.direction or 0) + (right_sample.direction or 0)) / 2` — matching the already-correct pattern one line above.
+
+Added `robotic_organism/systems/test_sensor_audio_direction.py` (new file): calls `update_audio()` at a fixed, non-zero-crossing timestamp and asserts `estimated_direction` equals the true average of both ears' computed directions. Proved it catches the exact regression via revert/restore: reverting the fix reproduced `-0.2245 != -0.4489` (the buggy value is exactly half the correct one, matching the bug's predicted mechanism precisely), restoring confirmed a clean pass.
+
+Verified: `rm -rf dist && node scripts/build-backend.mjs` clean (Python-only change, unaffected); `node test/smoke.mjs` 665/665; `test_core.py` 219/219; full `robotic_organism` test discovery 9/9 (8 pre-existing + 1 new).
 ### `README.md` claimed the mesh "keeps operating continuously" (§9) as a live characteristic of the shipped system — it's a fully-built, tested mechanism that no real entry point ever turns on
 
 A different bug class this round: not a logic error, but a "built but never wired" capability-completeness gap, in the Python `tinygpt` core rather than `robotic_organism`.
