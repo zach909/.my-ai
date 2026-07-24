@@ -1,70 +1,27 @@
-```
-# Python
 ```gitignore
-# Python cache
+# Compiled and build artifacts
+*.pyc
 __pycache__/
-*.pyc
-*.pyo
-*.pyd
-.Python
-env/
-venv/
-.venv/
-.ENV
-.venv.bak/
-pip-log.txt
-pip-delete-this-directory.txt
-.tox/
-.coverage
-.coverage.*
-.cache
-nosetests.xml
-coverage.xml
-*.cover
-*.log
-.pytest_cache/
-.mypy_cache/
-
-# Testing
-.pytest_cache/
-.coverage
-htmlcov/
-.cov/
-coverage.lcov
-
-# Distribution / packaging
-.Python
-build/
-develop-eggs/
-dist/
-downloads/
-eggs/
-.eggs/
-lib/
-lib64/
-parts/
-sdist/
-var/
-wheels/
-*.egg-info/
-.installed.cfg
-*.egg
-
-# IDE
-
-# Compiled Python files
-*.pyc
-*.pyo
-*.pyd
+*.o
+*.obj
+*.exe
+*.dll
 *.so
-*.egg-info/
+*.a
+*.out
 
 # Dependencies
+node_modules/
 venv/
 .venv/
 .env
 .env.local
-*.env.*
+.env.*
+
+# Build directories
+dist/
+build/
+target/
 
 # Logs and temporary files
 *.log
@@ -73,50 +30,44 @@ venv/
 *.swo
 
 # Coverage reports
-.coverage
-htmlcov/
-coverage/
-
-# IDE specific
-.vscode/
-.idea/
-*.swp
-*.swo
-*.tmp
-
-# OS
-.DS_Store
-Thumbs.db
-
-# Environment
-.env
-.env.local
-*.env.*
-
-# Logs
-*.log
-
-# Temporary files
-*.tmp
-*.swp
-*.swo
-
-# Coverage
-.coverage
 coverage/
 htmlcov/
+.coverage
 
-# IDE
+# Editors
 .vscode/
 .idea/
 
-# Build artifacts
-dist/
-build/
-*.o
-*.obj
-*.out
-# OS specific
+# System files
 .DS_Store
 Thumbs.db
+
+# Cache directories
+.mypy_cache/
+.pytest_cache/
+.gradle/
+
+# Compressed files
+*.zip
+*.gz
+*.tar
+*.tgz
+*.bz2
+*.xz
+*.7z
+*.rar
+*.zst
+*.lz4
+*.lzh
+*.cab
+*.arj
+*.rpm
+*.deb
+*.Z
+*.lz
+*.lzo
+*.tar.gz
+*.tar.bz2
+*.tar.xz
+*.tar.zst
 ```
