@@ -22,9 +22,22 @@
  */
 import { CodeToNetCompiler } from './code-to-net.js';
 import { NetSearchEngine } from './net-search.js';
-/** Cooperative yield: hands control back to Node so other pending work (an HTTP request, a CLI prompt) can run before the next batch of parsing. */
-function yieldToEventLoop() {
-    return new Promise(resolve => setImmediate(resolve));
+/**
+ * Cooperative yield: hands control back to the event loop so other pending
+ * work (an HTTP request, a CLI prompt, a browser repaint) can run before the
+ * next batch of parsing. Exported and reused by extension-builder/builder.js,
+ * which use-builder.ts documents as running directly in the browser with no
+ * Node dependencies -- setImmediate is Node-only (undefined in every major
+ * browser), so a bare `setImmediate(resolve)` would throw ReferenceError the
+ * first time a large enough parse crossed a yield threshold client-side.
+ */
+export function yieldToEventLoop() {
+    return new Promise(resolve => {
+        if (typeof setImmediate === 'function')
+            setImmediate(resolve);
+        else
+            setTimeout(resolve, 0);
+    });
 }
 /** evaluate()'s O(n^2) default-connection fill yields after roughly this many neuron pairs, keeping the interval between yields bounded regardless of neuron count. */
 const EVALUATE_YIELD_EVERY_PAIRS = 200000;
@@ -97,7 +110,7 @@ export class NeuroLangInterpreter {
      * reachable unauthenticated via POST /api/neuri and POST
      * /api/extension/build with a source string of many cheap neuron
      * declarations, no @code= required. Yields to the event loop every
-     * EVALUATE_YIELD_EVERY source neurons so it can't monopolize the
+     * EVALUATE_YIELD_EVERY_PAIRS neuron pairs so it can't monopolize the
      * process the way the @code= compile loop used to (see ARCHITECTURE.md).
      */
     async evaluate(result) {
@@ -107,6 +120,13 @@ export class NeuroLangInterpreter {
         // outer-loop iteration count, so the interval between yields stays
         // bounded regardless of how many neurons were declared (a fixed outer
         // stride would mean O(n) work per interval, growing unboundedly with n).
+        // The check itself must live in the *inner* loop: checking only once per
+        // outer iteration still lets a single iteration's inner loop -- itself
+        // names.length pair-operations -- run entirely unyielded whenever
+        // names.length exceeds the threshold, which defeats the "bounded
+        // regardless of n" guarantee for exactly the large-n case this exists
+        // to protect against (unbounded via the CLI's `neuri` command, which
+        // has no request-body size cap the way POST /api/neuri's 1MB limit does).
         let pairsSinceYield = 0;
         for (const srcName of names) {
             const src = neurons.get(srcName);
@@ -116,11 +136,11 @@ export class NeuroLangInterpreter {
                 if (!src.connections.has(dstName)) {
                     src.connections.set(dstName, 0.1);
                 }
-            }
-            pairsSinceYield += names.length;
-            if (pairsSinceYield >= EVALUATE_YIELD_EVERY_PAIRS) {
-                pairsSinceYield = 0;
-                await yieldToEventLoop();
+                pairsSinceYield++;
+                if (pairsSinceYield >= EVALUATE_YIELD_EVERY_PAIRS) {
+                    pairsSinceYield = 0;
+                    await yieldToEventLoop();
+                }
             }
         }
         return neurons;
