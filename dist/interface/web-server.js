@@ -474,6 +474,10 @@ export class WebServer {
                     this.sendJson(res, { errors: parsed.errors }, 400);
                     return;
                 }
+                if (body?.bits !== undefined && (typeof body.bits !== 'number' || !Number.isFinite(body.bits))) {
+                    this.sendJson(res, { error: 'bits must be a finite number' }, 400);
+                    return;
+                }
                 const quantize = body?.quantize === true;
                 const bits = body?.bits ?? 8;
                 const json = quantize
@@ -540,8 +544,12 @@ export class WebServer {
         if (pathname === '/api/apps/launch' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
-                if (!body?.command) {
+                if (!body?.command || typeof body.command !== 'string') {
                     this.sendJson(res, { error: 'Missing command field' }, 400);
+                    return;
+                }
+                if (body.args !== undefined && (!Array.isArray(body.args) || !body.args.every(a => typeof a === 'string'))) {
+                    this.sendJson(res, { error: 'args must be an array of strings' }, 400);
                     return;
                 }
                 const app = this.launcher.launch(body.command, {
@@ -596,8 +604,19 @@ export class WebServer {
         if (pathname === '/api/apps/launch-package' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
-                if (!body?.path) {
+                if (!body?.path || typeof body.path !== 'string') {
                     this.sendJson(res, { error: 'Missing path field' }, 400);
+                    return;
+                }
+                // A path starting with "-" would be read as a flag by apt/wine/adb
+                // (e.g. "-y", "--allow-downgrades") once it lands in the args array
+                // below, rather than as the package path it's supposed to be --
+                // launch() no longer runs these through a shell (see app-launcher.js),
+                // so this is argument injection, not command injection, but it's the
+                // same "attacker-controlled string reaches a privileged command
+                // unvalidated" root cause and costs nothing to reject.
+                if (body.path.startsWith('-')) {
+                    this.sendJson(res, { error: 'Invalid path field' }, 400);
                     return;
                 }
                 const packagePath = body.path;

@@ -443,7 +443,7 @@ export class ExtensionBuilder {
         };
         return JSON.stringify(data, null, 2);
     }
-    async installWithQuantization(projectId, options) {
+    async installWithQuantization(projectId, options = {}) {
         const project = this.projects.get(projectId);
         if (!project)
             return null;

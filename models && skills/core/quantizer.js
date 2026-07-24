@@ -13,7 +13,14 @@ export class BackgroundQuantizer {
         // Clamped: at bits <= 1, qMax (symmetric) or levels (asymmetric) hits
         // 0, so scale divides by zero -> Infinity -> every dequantized weight
         // becomes 0 * Infinity = NaN. 16 keeps qMax comfortably in range.
-        const effectiveBits = Math.max(2, Math.min(16, Math.floor(bits ?? this.config.bits)));
+        // Also NaN-safe: Math.max/Math.min don't clamp NaN, they propagate
+        // it, so a non-numeric bits value (e.g. a caller forwarding an
+        // unvalidated request field) would otherwise silently produce NaN
+        // weights for every connection instead of throwing or clamping --
+        // fall back to a safe default (8) whenever bits/config.bits isn't a
+        // finite number.
+        const requestedBits = Math.floor(Number(bits ?? this.config.bits));
+        const effectiveBits = Number.isFinite(requestedBits) ? Math.max(2, Math.min(16, requestedBits)) : 8;
         const method = this.config.method;
         const levels = Math.pow(2, effectiveBits) - 1;
         const qMax = Math.floor(levels / 2);

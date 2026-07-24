@@ -23,8 +23,19 @@ export class AppLauncher extends EventEmitter {
             ...options.env,
         };
         try {
+            // shell: false -- command and args are passed straight to
+            // execve(), never through /bin/sh -c. With shell: true, any
+            // shell metacharacter (`;`, `&&`, backticks, `$()`, ...) inside
+            // an attacker-controlled `command` or `args` entry runs as an
+            // *additional* command, not just an argument -- and both real
+            // callers (interface/web-server.ts's POST /api/apps/launch and
+            // POST /api/apps/launch-package) pass fully unauthenticated,
+            // network-supplied strings straight through to this call with
+            // no sanitization. Both callers already pass command/args as
+            // separate values (never a pre-joined shell command line), so
+            // shell: false changes nothing for legitimate use.
             const proc = spawn(command, options.args ?? [], {
-                shell: true,
+                shell: false,
                 stdio: ['ignore', 'pipe', 'pipe'],
                 detached: true,
                 env,
@@ -151,8 +162,12 @@ export class AppLauncher extends EventEmitter {
     }
     launchBrowser(url, workspace) {
         const targetWs = workspace ?? -1;
-        const cmd = url ? `xdg-open "${url}"` : 'xdg-open https://google.com';
-        return this.launch(cmd, { name: 'browser', workspace: targetWs, waitForWindow: true });
+        // Pass the URL as a literal arg, not baked into a shell command
+        // string -- launch() no longer runs commands through a shell (see
+        // launch()'s comment), so a pre-joined "xdg-open \"...\"" string
+        // would be looked up as one literal (nonexistent) executable name.
+        const target = url || 'https://google.com';
+        return this.launch('xdg-open', { name: 'browser', args: [target], workspace: targetWs, waitForWindow: true });
     }
     launchTerminal(workspace) {
         const targetWs = workspace ?? -1;
