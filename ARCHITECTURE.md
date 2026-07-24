@@ -1300,6 +1300,41 @@ Read `models && skills/core/zip-io.ts` directly: `ZipIOSystem` has no `append()`
 Fix: rewrote both code samples to the real, verified signatures, and corrected the surrounding prose about `ZipIOSystem`'s input/output separation and what `getDiskSpillPath()` actually does.
 
 Verified: doc-only change. `rm -rf dist && node scripts/build-backend.mjs` clean; `node test/smoke.mjs` 665/665; `test_core.py` 219/219. Also spot-checked the page's "Verifying it" section's claimed test names (`test_memory_compression`, `test_local_encryption`, `test_encrypted_memory`, `testZipPersistence`) against real source — all four genuinely exist and match, unaffected by this fix.
+### `tinygpt/system_control.py` and `DEPLOYMENT.md` made the same false veto-safety claim as PR #206's TS-side finding — the Python twin of the same bug, in a different module
+
+Same pattern as the `SystemAccess.executeCommand()` finding (PR #206), found independently in the Python side of the codebase this time. `tinygpt/system_control.py`'s own module docstring ended with "Safe action execution with veto layer," and `DEPLOYMENT.md`'s "Multi-Desktop Support" section repeated it as an explicit guarantee right after a runnable sample: "**Safety**: All actions require explicit approval from veto layer before execution."
+
+Read the file directly: `KeyboardMouseControl.press_key/type_text/mouse_move/mouse_click`, `WindowControl.focus_window/move_window`, and `ScreenCapture.screenshot/screen_recording_start` all call `subprocess.run`/`subprocess.Popen` on `xdotool`/`wmctrl`/`scrot`/`gnome-screenshot`/`ffmpeg` directly, with no gating of any kind. Grepped the file for `veto|Veto`: the only hit was the docstring's own claim — no `import` of `tinygpt.veto` or `AlignmentVeto` anywhere, and `SystemControlHub.__init__` never constructs one. Confirmed `SystemControlHub` has no live caller anywhere in the codebase beyond its own self-check in `test_core.py`'s `test_system_control()` — `core.py`, `chat.py`, `main.py`, and `extend.py` never import it.
+
+For contrast, `tinygpt/actions.py` genuinely does gate a desktop-adjacent action through the veto: `enable_shell_actions()` registers a `terminal` `ActionSpec` with `requires_confirmation=True`, and its docstring notes it "covers gnome/desktop control too (gsettings, wmctrl, xdotool, etc.)" — but that's a raw shell-command string that *could* invoke those same tools, gated through `ActionLayer.maybe_execute()`'s real `veto.evaluate()` + `confirm_fn()` call. It is a completely different, parallel path from `system_control.py`'s own dedicated, structured API, which has no such gate at all.
+
+Fix: corrected the docstring to state the honest, current reality (no veto gating on any of `KeyboardMouseControl`/`WindowControl`/`ScreenCapture`'s methods, no live caller beyond the self-test, and how it differs from `actions.py`'s genuinely-gated `terminal` action) and rewrote `DEPLOYMENT.md`'s "Safety" line to match. Deliberately not fixed in code — same reasoning as `SystemAccess.executeCommand()`: wiring real veto-gating in would mean deciding a confirmation-flow architecture for a currently synchronous, unwired API, a product decision rather than a unilateral bug fix.
+
+Verified: doc-only change (docstring + markdown), no logic touched. `rm -rf dist && node scripts/build-backend.mjs` clean; `node test/smoke.mjs` 665/665; `test_core.py` 219/219, including `test_system_control` unaffected.
+### `wiki/System-Access.md` and `wiki/Privacy.md` falsely claimed shell commands run through the alignment veto — they run through a bare `execSync()` with no live caller at all
+
+Found while independently re-verifying a background audit agent's report (a discipline this session has repeatedly needed: an agent's characterization is a lead, not a fact, until checked against real source). The agent's claim held up this time, plus one more stale-citation instance it didn't mention.
+
+`wiki/System-Access.md`'s Overview stated: "`interface/main.ts`'s composition root constructs one `SystemAccess` and threads it through both the CLI and the web backend's `NeuroclawRunner`, so terminal/file-system actions taken through either interface go through the same gated, veto-checked path (see [[Privacy]] and the alignment veto) rather than a raw shell escape." `wiki/Privacy.md`'s cross-reference repeated the same framing: "[[System-Access]] - Why terminal/file actions are gated rather than open."
+
+Read `interface/system-access.js` directly: `executeCommand()` is
+```js
+executeCommand(command, options) {
+    if (!this.config.terminalAccess) { throw new Error('Terminal access is disabled'); }
+    ...
+    const result = execSync(command, { encoding: 'utf8', timeout, cwd, maxBuffer: 10 * 1024 * 1024 });
+    return result;
+}
+```
+— a bare `execSync()` call. Grepped the whole file (and `cli.ts`/`runner.ts`/`web-server.ts`) for `veto|Veto`: zero hits anywhere in `interface/`. `AlignmentVeto` (`models && skills/core/alignment-veto.ts`) is a real, separate, well-tested class, but its only live construction sites are `index.ts` (the `NeuroclawSystem` orchestrator, already documented elsewhere as disconnected from both live backends) and `pipeline.ts` — never `system-access.js`.
+
+The first half of the wiki's claim — one `SystemAccess` built in `interface/main.ts` and threaded through both `CLI` and `NeuroclawRunner` — is true, confirmed directly (`interface/main.ts:28,34,45`). It's specifically the "gated, veto-checked... rather than a raw shell escape" clause that's fictional: `executeCommand()` has **no live caller at all** beyond its own `validateCapabilities()` self-test (`this.executeCommand('echo test')`, always a fixed, harmless string) — confirmed via a repo-wide grep for `executeCommand`, which turns up only the wiki sample, the method itself, that one self-test call, and the `.d.ts` signature. Neither the CLI nor the web backend ever calls it for a real user- or model-issued command. `interface/cli.ts` already has its own honest comment on this from an earlier audit pass ("Section 26: SystemAccess is threaded through from main.ts on the live path, but only getMultiDesktop() was ever called on it") — the wiki pages just never caught up to what the code already admits.
+
+Also fixed, same bug class as elsewhere this session: `wiki/System-Access.md:9` cited `interface/system-access.ts` as the file, but only `.js`/`.d.ts` exist (confirmed via `ls`) — no `.ts` source has ever existed at that path. (`interface/multi-desktop.ts`, cited two sections later, genuinely does exist as a real `.ts` file — verified separately, not the same bug.)
+
+Deliberately not fixed in code: adding real veto-gating to `executeCommand()` would require deciding a confirmation-flow architecture (the method is synchronous with no prompt/callback mechanism, and `VetoDecision.requiresConfirmation` implies a human-in-the-loop UX that doesn't exist yet for this call), and wiring a real caller into `cli.ts`/`web-server.ts` would mean deciding what triggers shell execution in the first place — both genuine product/architecture decisions, not a unilateral bug fix, matching this session's established precedent for `NeuroclawSystem`/`asi_core`/`robotic_organism`'s "built but never wired" gaps. Rewrote both wiki pages to state the current, honest reality instead: the capability exists and is constructed correctly, but has no veto gate and no live caller today.
+
+Verified: doc-only change. `rm -rf dist && node scripts/build-backend.mjs` clean; `node test/smoke.mjs` 665/665; `test_core.py` 219/219.
 
 ### What this is, honestly
 

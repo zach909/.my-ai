@@ -169,7 +169,7 @@ hub.keyboard.mouse_click(button=1)
 - X11: `wmctrl`, `xdotool`, `scrot` (most distros have these)
 - Wayland: limited; X11 recommended for full features
 
-**Safety**: All actions require explicit approval from veto layer before execution.
+**Safety**: These calls run immediately, with no confirmation step — `SystemControlHub`'s keyboard/mouse/window/screen methods (`tinygpt/system_control.py`) are not gated by the alignment veto and have no live caller anywhere in this codebase beyond their own self-check in `test_core.py`. This is unlike `core.py`'s separate, opt-in `--enable-shell` terminal action, which always requires human confirmation before running. Treat this API as trusted-caller-only until it's wired through a real gate.
 
 ## Continuous Operation & Memory
 
