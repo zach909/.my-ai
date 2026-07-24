@@ -112,11 +112,15 @@ python chat.py \
     --chat
 ```
 
-Features:
-- **Multi-line input**: Type `\` at line end to continue
-- **Actions**: Model can propose `ACTION: time | read_file <path> | system_info`
-- **Memory**: Each session saves conversation to `memory.json`
-- **Quit**: Type `quit` or `exit`
+`chat.py --chat` is a lightweight, single-line REPL: it keeps an in-memory
+chat history for the session (never persisted to disk) and rebuilds a chat
+prompt from it each turn.
+
+- **Reset**: type `reset` to clear the in-memory history
+- **Quit**: type `quit` or `exit`
+
+It has no `ACTION:` proposals and no `memory.json` persistence — those are
+`core.py` features (see "Continuous Operation & Memory" below), not `chat.py`.
 
 ## Code Execution Expert
 
@@ -176,14 +180,13 @@ python core.py \
     --ckpt checkpoints/gpt_best.pt \
     --candidates 5 \
     --idle-timeout 120 \
-    --enable-shell \
-    --use-guide
+    --enable-shell
 ```
 
 - **State carry**: Neuron state persists across inputs (§9)
 - **Memory**: Saved to `memory.json`, reloads on restart
 - **Shell actions**: Must approve each command (terminal off by default)
-- **Live guidance**: Steers generation when confidence drops (on by default)
+- **Live guidance**: Steers generation when confidence drops (on by default; disable with `--no-guide`)
 
 ## Extension Builder (Teaching New Behavior)
 
@@ -323,7 +326,7 @@ sudo apt install wmctrl xdotool scrot  # Ubuntu/Debian
 
 **Memory not persisting**:
 - Ensure `memory.json` is writable in the current directory
-- Set explicit path: `--memory-dir /path/to/persistent/storage`
+- Set explicit path: `--memory /path/to/persistent/storage/memory.json`
 
 ## References
 

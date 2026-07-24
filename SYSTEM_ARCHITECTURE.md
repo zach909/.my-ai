@@ -245,7 +245,7 @@ Manages plasticity budget across the system.
 
 ### 12. Quantization System
 
-**Location:** `models && skills/core/quantizer.ts`
+**Location:** `models && skills/core/quantizer.js` (JS-only module; no `.ts` source has ever existed here)
 
 Compresses models for deployment.
 
