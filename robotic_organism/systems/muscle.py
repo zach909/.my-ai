@@ -85,27 +85,46 @@ class MuscleFiber:
         target_shortening = self.rest_length * self.max_contraction * self.activation
         target_length = self.rest_length - target_shortening
         
-        # Move toward target length
+        # Move toward target length. Compare via a small epsilon rather than
+        # exact >/< -- target_length and current_length can each accumulate
+        # independent floating-point rounding (e.g. a caller setting
+        # current_length from the same rest_length/max_contraction inputs
+        # by a slightly different expression) and land a few ulps apart
+        # while being physically "at target."
         length_change_rate = 2.0  # meters/second
-        if self.current_length > target_length:
+        length_diff = target_length - self.current_length
+        LENGTH_EPS = 1e-9
+        if length_diff < -LENGTH_EPS:
             delta = min(
-                self.current_length - target_length,
+                -length_diff,
                 length_change_rate * dt
             )
             self.current_length -= delta
             self.velocity = delta / dt if dt > 0 else 0
             if self.activation > 0.5:
                 self.state = MuscleState.CONTRACTING
-        elif self.current_length < target_length:
+        elif length_diff > LENGTH_EPS:
             delta = min(
-                target_length - self.current_length,
+                length_diff,
                 length_change_rate * dt
             )
             self.current_length += delta
             self.velocity = -delta / dt if dt > 0 else 0
             if self.activation < 0.5:
                 self.state = MuscleState.RELAXING
-        
+        else:
+            # current_length has reached target_length -- the fiber's
+            # normal resting condition once motion completes. Neither
+            # branch above ever fires again from here, so without this,
+            # velocity stayed stuck at its last nonzero value forever and
+            # state was left at whatever CONTRACTING/RELAXING (or the
+            # untouched RELAXED default) it happened to be, never settling
+            # into CONTRACTED -- an enum value that was otherwise
+            # unreachable. Fatigue/damage checks below still have the final
+            # say if either applies this tick.
+            self.velocity = 0.0
+            self.state = MuscleState.CONTRACTED if self.current_length < self.rest_length else MuscleState.RELAXED
+
         # Update position (0.0 = relaxed, 1.0 = contracted)
         self.position = (self.rest_length - self.current_length) / (
             self.rest_length * self.max_contraction
