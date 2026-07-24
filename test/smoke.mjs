@@ -1077,6 +1077,22 @@ async function testWebBackend() {
     check(convo.status === 200 && typeof convoJson.response === 'string' && !convoJson.response.startsWith('[Plugin]'),
       'Web backend /api/chat routes plain conversation to neural generation, not a plugin');
 
+    // The client's chat UI (HTML_TEMPLATE, above) already assembles and
+    // sends the full conversation history with every request, but the
+    // handler only ever read `message` -- runner.generate()'s memoryContext
+    // parameter (Section 7 continuous context, already wired end-to-end
+    // from NeuroclawLLM.generate() through runner.ts) was always undefined
+    // on this, the only live HTTP entry point that has a real UI collecting
+    // history. Verify a supplied history entry actually grounds the response,
+    // same assertion style as the direct-call test in testLLM.
+    const withHistory = await post('/api/chat', {
+      message: 'hello world',
+      history: [{ role: 'user', content: 'earlier we set the port to 8080' }],
+    });
+    const withHistoryJson = JSON.parse(withHistory.body);
+    check(withHistory.status === 200 && withHistoryJson.response.includes('[Grounded in 1 related memory]') && withHistoryJson.response.includes('8080'),
+      'Web backend POST /api/chat wires client-supplied history into memoryContext grounding instead of discarding it');
+
     // GET /api/dict/:word had no try/catch, unlike every sibling handler --
     // decodeURIComponent() throws URIError on malformed percent-encoding
     // (a trailing lone "%"), and since handleRequest() is the raw

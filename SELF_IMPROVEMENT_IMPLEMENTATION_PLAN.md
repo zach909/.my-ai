@@ -210,7 +210,7 @@ interface Observation {
 **✅ Already Implemented:**
 
 1. **Quantization System** (Steps 53-54, 61-62):
-   - `quantizer.ts` with symmetric/asymmetric/mixed methods
+   - `quantizer.js` with symmetric/asymmetric/mixed methods (JS-only module; no `.ts` source has ever existed here)
    - Reduces memory and computation
 
 2. **MoE Router** (Steps 57-58):
@@ -328,7 +328,7 @@ export class EpisodicMemory {
 
 3. **Contradiction Detection** (Steps 105-107):
    - `knowledge-graph.ts` detects conflicts
-   - `thorns.ts` (Code-to-Net) does cross-checking
+   - `thorns.js` (Code-to-Net) does cross-checking (JS-only module; no `.ts` source has ever existed here)
 
 **⚠️ Needs Enhancement:**
 
@@ -479,7 +479,7 @@ interface PluginRegistry {
 
 1. **Code Understanding** (Steps 148, 161):
    - `code-to-net.ts` converts code to neural representations
-   - `thorns.ts` behavioral code analysis
+   - `thorns.js` behavioral code analysis (JS-only module; no `.ts` source has ever existed here)
 
 2. **Self-Improvement System** (Steps 149-157):
    - `self-improvement.ts` with versioning and evaluation
