@@ -1277,6 +1277,31 @@ An automated code-review bot's comments on already-merged PRs turned out not to 
 
 Verified: `rm -rf dist && node scripts/build-backend.mjs` clean; `node test/smoke.mjs` 665/665 (no TS code touched this round, unaffected); `test_core.py` 219/219; the extended `robotic_organism/systems/test_repair_transport_bounds.py` 5/5, with both new tests independently proven via revert/restore to catch their exact regressions.
 
+### `wiki/System-Access.md` and `wiki/Privacy.md` falsely claimed shell commands run through the alignment veto — they run through a bare `execSync()` with no live caller at all
+
+Found while independently re-verifying a background audit agent's report (a discipline this session has repeatedly needed: an agent's characterization is a lead, not a fact, until checked against real source). The agent's claim held up this time, plus one more stale-citation instance it didn't mention.
+
+`wiki/System-Access.md`'s Overview stated: "`interface/main.ts`'s composition root constructs one `SystemAccess` and threads it through both the CLI and the web backend's `NeuroclawRunner`, so terminal/file-system actions taken through either interface go through the same gated, veto-checked path (see [[Privacy]] and the alignment veto) rather than a raw shell escape." `wiki/Privacy.md`'s cross-reference repeated the same framing: "[[System-Access]] - Why terminal/file actions are gated rather than open."
+
+Read `interface/system-access.js` directly: `executeCommand()` is
+```js
+executeCommand(command, options) {
+    if (!this.config.terminalAccess) { throw new Error('Terminal access is disabled'); }
+    ...
+    const result = execSync(command, { encoding: 'utf8', timeout, cwd, maxBuffer: 10 * 1024 * 1024 });
+    return result;
+}
+```
+— a bare `execSync()` call. Grepped the whole file (and `cli.ts`/`runner.ts`/`web-server.ts`) for `veto|Veto`: zero hits anywhere in `interface/`. `AlignmentVeto` (`models && skills/core/alignment-veto.ts`) is a real, separate, well-tested class, but its only live construction sites are `index.ts` (the `NeuroclawSystem` orchestrator, already documented elsewhere as disconnected from both live backends) and `pipeline.ts` — never `system-access.js`.
+
+The first half of the wiki's claim — one `SystemAccess` built in `interface/main.ts` and threaded through both `CLI` and `NeuroclawRunner` — is true, confirmed directly (`interface/main.ts:28,34,45`). It's specifically the "gated, veto-checked... rather than a raw shell escape" clause that's fictional: `executeCommand()` has **no live caller at all** beyond its own `validateCapabilities()` self-test (`this.executeCommand('echo test')`, always a fixed, harmless string) — confirmed via a repo-wide grep for `executeCommand`, which turns up only the wiki sample, the method itself, that one self-test call, and the `.d.ts` signature. Neither the CLI nor the web backend ever calls it for a real user- or model-issued command. `interface/cli.ts` already has its own honest comment on this from an earlier audit pass ("Section 26: SystemAccess is threaded through from main.ts on the live path, but only getMultiDesktop() was ever called on it") — the wiki pages just never caught up to what the code already admits.
+
+Also fixed, same bug class as elsewhere this session: `wiki/System-Access.md:9` cited `interface/system-access.ts` as the file, but only `.js`/`.d.ts` exist (confirmed via `ls`) — no `.ts` source has ever existed at that path. (`interface/multi-desktop.ts`, cited two sections later, genuinely does exist as a real `.ts` file — verified separately, not the same bug.)
+
+Deliberately not fixed in code: adding real veto-gating to `executeCommand()` would require deciding a confirmation-flow architecture (the method is synchronous with no prompt/callback mechanism, and `VetoDecision.requiresConfirmation` implies a human-in-the-loop UX that doesn't exist yet for this call), and wiring a real caller into `cli.ts`/`web-server.ts` would mean deciding what triggers shell execution in the first place — both genuine product/architecture decisions, not a unilateral bug fix, matching this session's established precedent for `NeuroclawSystem`/`asi_core`/`robotic_organism`'s "built but never wired" gaps. Rewrote both wiki pages to state the current, honest reality instead: the capability exists and is constructed correctly, but has no veto gate and no live caller today.
+
+Verified: doc-only change. `rm -rf dist && node scripts/build-backend.mjs` clean; `node test/smoke.mjs` 665/665; `test_core.py` 219/219.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
