@@ -260,7 +260,21 @@ export class WebServer {
   }
 
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
-    const parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    let parsedUrl: URL;
+    try {
+      // req.headers.host is a raw, attacker-controlled string with no
+      // validation from Node's HTTP parser -- a malformed value (a space,
+      // a non-numeric port, ...) makes new URL() throw TypeError: Invalid
+      // URL. This runs before every route's own try/catch (including the
+      // /api/dict fix below), as the raw http.createServer callback with
+      // no .catch() and no process-wide unhandledRejection handler, so an
+      // uncaught throw here crashed the entire backend on one request,
+      // regardless of path or method.
+      parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
+    } catch {
+      this.sendJson(res, { error: 'Invalid request' }, 400);
+      return;
+    }
     const pathname = parsedUrl.pathname;
     const method = req.method?.toUpperCase() ?? 'GET';
 
@@ -444,6 +458,10 @@ export class WebServer {
     if (pathname === '/api/train' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as { text?: string } | null;
+        if (body?.text !== undefined && typeof body.text !== 'string') {
+          this.sendJson(res, { error: 'text must be a string' }, 400);
+          return;
+        }
         const text = body?.text ?? '';
         await this.runner.getLLM().trainOnText(text);
         const stats = this.runner.getLLM().getStats();
