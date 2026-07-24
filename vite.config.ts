@@ -242,6 +242,17 @@ export default defineConfig({
     strictPort: true,
     host: true,
     allowedHosts: true,
+    // src/components/Desktop.tsx (the only fetch('/api/...') caller anywhere
+    // in src/, confirmed by grep) calls the Node backend (interface/web-server.ts,
+    // default port 7861 per interface/main.ts) assuming same-origin -- with no
+    // proxy, that request 404s against this dev server, which has no /api routes
+    // of its own. This only bridges `vite`/`vite dev`; the static `vite build`
+    // output still has no route to the backend unless a hosting-layer reverse
+    // proxy provides one (see DESKTOP_LAUNCHER_IMPLEMENTATION.md and
+    // ARCHITECTURE.md for the disclosed production-deployment gap).
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:7861', changeOrigin: true },
+    },
   },
   build: {
     // Build into a clean temp dir; scripts/finalize-static-build.mjs then flattens
