@@ -12,15 +12,6 @@ from .neural_mesh import (
     create_mesh
 )
 
-__version__ = "0.1.0"
-__all__ = [
-    "NeuralMesh",
-    "NeuronRole", 
-    "NeuronState",
-    "SynapticConnection",
-    "create_mesh"
-"""ASI Core Package - Neural Architecture for Artificial Superintelligence"""
-
 from .neural_core import (
     NeuralCore,
     NeuralLayer,
@@ -39,19 +30,26 @@ from .neural_states import (
     StateType
 )
 
+__version__ = "0.1.0"
 __all__ = [
+    # Neural Mesh
+    "NeuralMesh",
+    "NeuronRole",
+    "NeuronState",
+    "SynapticConnection",
+    "create_mesh",
     # Neural Core
-    'NeuralCore',
-    'NeuralLayer',
-    'Neuron',
-    'Synapse',
-    'ActivationFunction',
-    'NeuronType',
+    "NeuralCore",
+    "NeuralLayer",
+    "Neuron",
+    "Synapse",
+    "ActivationFunction",
+    "NeuronType",
     # Neural States
-    'NeuralState',
-    'SynapticState',
-    'StateManager',
-    'LearningSystem',
-    'LearningRule',
-    'StateType'
+    "NeuralState",
+    "SynapticState",
+    "StateManager",
+    "LearningSystem",
+    "LearningRule",
+    "StateType"
 ]
