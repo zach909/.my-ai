@@ -174,12 +174,21 @@ class NeuralController:
         thalamus_neurons = self.regions[BrainRegion.THALAMUS]
         cortex_neurons = self.regions[BrainRegion.CORTEX]
         
-        for t_id in thalamus_neurons[:10]:
+        for i, t_id in enumerate(thalamus_neurons[:10]):
             neuron = self.neurons[t_id]
+            if i < 5:
+                # process_sensory_input() activates this neuron with
+                # {f'sensor_{i}': value} -- without a weight for that key
+                # in the neuron's own `inputs`, activate()'s
+                # self.inputs.get(..., 0.0) always falls back to 0.0
+                # regardless of the real sensor value, so every thalamus
+                # neuron's activation silently collapsed to a constant
+                # sigmoid(0) = 0.5 no matter what sensors actually reported.
+                neuron.inputs[f'sensor_{i}'] = 1.0
             # Connect to random cortex neurons
             targets = random.sample(cortex_neurons, min(5, len(cortex_neurons)))
             neuron.outputs.extend(targets)
-            
+
             for target_id in targets:
                 target = self.neurons[target_id]
                 target.inputs[t_id] = random.uniform(-0.5, 0.5)
