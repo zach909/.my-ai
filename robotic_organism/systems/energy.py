@@ -175,7 +175,14 @@ class EnergySystem:
             'power_distribution': {},
             'warnings': []
         }
-        
+
+        # material_buffer otherwise grows forever: consume_material() only
+        # ever appended to it, with nothing anywhere ever draining or
+        # capping it. Move intake into the queue that actually processes it.
+        if self.material_buffer:
+            self.processing_queue.extend(self.material_buffer)
+            self.material_buffer.clear()
+
         # Process material (energy acquisition)
         if self.currently_processing is None and self.processing_queue:
             self.currently_processing = self.processing_queue.pop(0)
