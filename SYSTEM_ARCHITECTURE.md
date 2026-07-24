@@ -57,22 +57,30 @@ Routes computations to specialized experts based on input characteristics.
 Safety layer that validates all actions before execution.
 
 **Capabilities:**
-- **Action Validation:** Checks if actions match user-defined policies
-- **Resource Constraints:** Limits memory, CPU, and network usage
-- **File System Protection:** Restricts access to sensitive directories
-- **User Approval:** Requires confirmation for risky actions
-- **Transparency:** Logs all veto decisions for auditing
+- **Objectionable Capability Check:** Blocks outright if a proposed action's
+  capability tags match a configured blocklist
+- **Self-Model Drift Gating:** Fails safe on unexpected internal state --
+  mild drift escalates to human confirmation, severe drift blocks outright
+- **Irreversibility Check:** Requires human confirmation for irreversible or
+  external-effect actions (unknown reversibility fails safe, treated as
+  irreversible)
+- **Benevolence Scoring:** Blocks actions scoring below a configurable
+  threshold from a pluggable scorer function
 
-**Safety Policies:**
+There is no resource (memory/CPU/network), file-system-directory, or
+persistent-logging model in the real implementation -- the class is a
+single `evaluate()` call over these four rules, nothing more.
+
+**Safety Policies** (the real `AlignmentVetoConfig`,
+`models && skills/core/alignment-veto.ts`):
 ```typescript
 {
-  allowedActions: Set<string>,      // Whitelist of permitted actions
-  blockedActions: Set<string>,      // Blacklist of forbidden actions
-  maxMemoryMB?: number,             // Memory limit
-  maxCPUPercent?: number,           // CPU usage limit
-  allowedDirectories?: string[],    // Writable directories
-  blockedDirectories?: string[],    // Protected directories
-  requireUserApprovalFor?: string[] // Actions needing confirmation
+  objectionableCapabilities: string[],  // Capability tags that block outright
+  driftTolerance: number,               // Surprise above this escalates to confirmation
+  severeDriftTolerance: number,         // Surprise above this blocks outright
+  confirmIrreversible: boolean,         // Require confirmation for irreversible/external actions
+  scoreThreshold: number,               // Benevolence score floor
+  scorer: (action, ctx) => number,      // Pluggable benevolence scorer
 }
 ```
 
@@ -201,7 +209,7 @@ NeuroPipeline (invokes through MoE)
 
 ### 10. Extension Builder
 
-**Location:** `extension-builder/builder.ts`
+**Location:** `extension-builder/builder.js` (JS-only module; no `.ts` source has ever existed at this path)
 
 Visual interface for creating and managing neural extensions.
 
@@ -427,38 +435,41 @@ Extension Learning Updates Over Time
 5. Automatically becomes MoE expert
 
 ### Customizing Safety
-1. Create custom `SafetyPolicy`
-2. Register with alignment veto
-3. Set as active policy
-4. User approvals stored persistently
+1. Construct `new AlignmentVeto(config)` with a `Partial<AlignmentVetoConfig>`
+   (any field you omit falls back to the class's own default)
+2. Call `veto.evaluate(action, ctx)` before executing a proposed action
+3. Check the returned `VetoDecision` (`{allowed, requiresConfirmation, score, reasons}`)
+
+There is no persisted "active policy" or stored-approvals mechanism -- each
+`AlignmentVeto` instance's config is fixed at construction time, and every
+`evaluate()` call is independent (no logging, no history).
 
 ## Monitoring and Debugging
 
-### Veto Log
-```typescript
-const log = system.veto.getVetoLog(10); // Last 10 decisions
-const stats = system.veto.getVetoStats();
-// { totalChecks, allowedActions, vetoedActions, vetoRate }
-```
-
 ### Pipeline Tracing
 ```typescript
-const result = await system.pipeline.run(input, options);
-// result.steps contains execution trace
-// Timing, shapes, and subsystem performance
+const result = await pipeline.run(embedding, inputText);
+// result.steps: PipelineStep[] -- the real execution trace
 ```
 
-### Mesh Statistics
+### Mesh Introspection
 ```typescript
-const stats = mesh.getStats();
-// { tickCount, activeNeurons, meanActivation, valeEntropy }
+const topology = mesh.getTopology();
+const nodeCount = mesh.getNodeCount();
+const groups = mesh.getGroups();
 ```
+`NeuronMesh` (`models && skills/core/mesh.ts`) has no `getStats()` method or
+`{tickCount, activeNeurons, meanActivation, valeEntropy}` shape -- that
+combination of fields only exists on an unrelated class, the frontend
+visualization engine at `src/features/mesh/mesh-engine.ts`, not the backend
+mesh this section is actually about.
 
 ### Empathy Tracking
-```typescript
-const context = system.empathy.getUserContext();
-// emotionalHistory, alignment score, preferences
-```
+`EmpathyEngine`'s (`models && skills/core/empathy.ts`) `userContext` is
+`private`, with no public accessor -- there is no `getUserContext()` method.
+Its effects are exposed only through the class's own public methods (e.g.
+`analyzeEmotion()`, `updateUserContext()`, `getAlignmentScore()`), not a
+single combined "get me the whole context" call.
 
 ## Future Enhancements
 
