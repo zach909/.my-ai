@@ -15,24 +15,28 @@ The AI receives compressed ("zipped") inputs and produces compressed outputs, bo
 
 ```typescript
 const zip = new ZipIOSystem(contextSize, persistDir, checkpointInterval);
-zip.append(input, output);            // one turn of context, compressed
-zip.getTotalContextSize();            // how much is actually held, post-compression
+await zip.ingest(input);              // one input turn, compressed into the input loop
+await zip.emit(output);               // the corresponding output, compressed into the output loop
+zip.inputLoop.getTotalContextSize();  // how much is actually held, post-compression (per loop)
+await zip.persist();                  // snapshot both loops to disk immediately
+await zip.restore();                  // reload both loops from their last disk checkpoint
 ```
 
-`InfiniteZipLoop` is the ring buffer underneath — once `getDiskSpillPath()`'s capacity is reached, the oldest entries are the ones that get overwritten (or spilled to disk, depending on configuration), never grown without bound. This is the direct implementation of "compressed input and output... circular buffers... continuous operation without requiring unlimited memory."
+`ZipIOSystem` has no `append()`/`getTotalContextSize()` of its own — input and output are two separate `InfiniteZipLoop` ring buffers (`inputLoop`/`outputLoop`), fed independently via `ingest()`/`emit()`, and `getTotalContextSize()` is a method on each loop, not on `ZipIOSystem` itself. Each `InfiniteZipLoop` overwrites its own oldest entries in place once its capacity is reached, never growing without bound; independently of that, it also auto-checkpoints to disk every `checkpointInterval` writes (`getDiskSpillPath()` just returns that checkpoint file's path) so `restore()` can recover context beyond the live in-memory window after a restart. This is the direct implementation of "compressed input and output... circular buffers... continuous operation without requiring unlimited memory."
 
 ## `ZipLoopMemory` (Python)
 
 ```python
 from tinygpt.memory import ZipLoopMemory
 
-memory = ZipLoopMemory(capacity_mb=50, passphrase="optional — local encryption at rest")
-memory.append("turn text")
-memory.save("--memory <path>")   # gzip-compressed, encrypted if a passphrase was given
-memory.load("--memory <path>")
+memory = ZipLoopMemory(capacity=512, persist_path="checkpoints/memory.json",
+                        passphrase="optional — local encryption at rest")
+memory.add("user", "turn text")
+memory.save()   # writes to persist_path, gzip-compressed, encrypted if a passphrase was given
+memory.load()   # re-reads from persist_path (also called automatically in __init__ if the file exists)
 ```
 
-`core.py` wires this in directly via `--memory <path>` and `--encrypt` / `MYAI_PASSPHRASE` — conversation memory persists across restarts, compressed, and optionally encrypted with a local stdlib cipher (no external key-management API). A real bug fixed during this project's development: `zlib` and a magic-byte constant were referenced but never imported/defined, and a leftover duplicate `save()`/`load()` code path silently discarded the compression and encryption *after* doing the real work correctly — meaning persisted memory was neither compressed nor encrypted despite the code appearing to do both. Fixed at the source; `test_memory_compression` and `test_encrypted_memory` in `test_core.py` cover it directly now.
+`capacity` is a turn count (the ring buffer's `maxlen`), not a byte/MB size. `save()`/`load()` take no arguments — the path is fixed once, at construction, as `persist_path`. `core.py` wires this in directly via its own `--memory <path>` CLI flag (which becomes `persist_path`) and `--encrypt` / `MYAI_PASSPHRASE` — conversation memory persists across restarts, compressed, and optionally encrypted with a local stdlib cipher (no external key-management API). A real bug fixed during this project's development: `zlib` and a magic-byte constant were referenced but never imported/defined, and a leftover duplicate `save()`/`load()` code path silently discarded the compression and encryption *after* doing the real work correctly — meaning persisted memory was neither compressed nor encrypted despite the code appearing to do both. Fixed at the source; `test_memory_compression` and `test_encrypted_memory` in `test_core.py` cover it directly now.
 
 ## Verifying it
 

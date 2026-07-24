@@ -1277,6 +1277,29 @@ An automated code-review bot's comments on already-merged PRs turned out not to 
 
 Verified: `rm -rf dist && node scripts/build-backend.mjs` clean; `node test/smoke.mjs` 665/665 (no TS code touched this round, unaffected); `test_core.py` 219/219; the extended `robotic_organism/systems/test_repair_transport_bounds.py` 5/5, with both new tests independently proven via revert/restore to catch their exact regressions.
 
+### `wiki/Zip-IO.md`'s code samples, on both the TypeScript and Python sides, called methods that don't exist — a different bug class from the last two rounds' veto-gating claims
+
+A different kind of doc bug this round: not a false safety claim, but flagship code samples that would raise a real exception if copy-pasted and run, on a wiki page (`Zip-IO.md`) neither this session nor any prior audit round had touched.
+
+**Python side (`ZipLoopMemory`).** The sample read:
+```python
+memory = ZipLoopMemory(capacity_mb=50, passphrase="optional — local encryption at rest")
+memory.append("turn text")
+memory.save("--memory <path>")
+memory.load("--memory <path>")
+```
+Read `tinygpt/memory.py` directly: `__init__(self, capacity: int = 512, persist_path: Optional[str] = None, passphrase: Optional[str] = None)` — `capacity` is a turn count (the ring buffer's `maxlen`), not a byte size, and there is no `capacity_mb` parameter at all. There is no `append()` method — the real method is `add(role: str, content: str)`, two positional args, not one. `save()`/`load()` take **zero** arguments each — the persist path is fixed once, at construction, as `persist_path`; the sample's `save("--memory <path>")` conflates `core.py`'s own `--memory <path>` CLI flag (confirmed real: `core.py:61`, `core.py:154`) with an argument to the Python method itself. Every line as written would raise `TypeError`/`AttributeError` if run. Confirmed via `core.py`'s real call sites (`core.py:154,203,319`: `ZipLoopMemory(capacity=512, persist_path=args.memory, passphrase=passphrase)`, then bare `memory.save()`) and `test_core.py`'s own usage, both of which already use the real signature — only the wiki sample was wrong.
+
+**TypeScript side (`ZipIOSystem`) — found independently while fixing the Python sample, not part of the originating report.** The adjacent sample read:
+```typescript
+zip.append(input, output);
+zip.getTotalContextSize();
+```
+Read `models && skills/core/zip-io.ts` directly: `ZipIOSystem` has no `append()` method and no `getTotalContextSize()` of its own at all. The real API is two separate async methods, `ingest(input)` and `emit(output)`, each feeding a separate `InfiniteZipLoop` (`inputLoop`/`outputLoop` — input and output were never combined into one "turn" the way the sample implied); `getTotalContextSize()` exists on each `InfiniteZipLoop` instance, not on `ZipIOSystem` itself (confirmed: `test/smoke.mjs`'s `testZipLoopTotalContextSizeWhenFull` calls it directly on a raw `InfiniteZipLoop`, never on a `ZipIOSystem`). The surrounding prose also mischaracterized `getDiskSpillPath()` as a capacity/overflow trigger ("once `getDiskSpillPath()`'s capacity is reached... or spilled to disk, depending on configuration") — it's actually just a plain getter for the checkpoint file path (`zip-io.ts:166-167: return this.diskSpillPath`); disk checkpointing happens periodically and independently of the in-memory ring buffer's own overwrite behavior, not as an alternative to it. Confirmed real usage via `test/smoke.mjs`'s `testZipPersistence`: `new ZipIOSystem(...)`, `await a.ingest(...)`, `await a.persist()`, then a second instance's `await b.restore()`.
+
+Fix: rewrote both code samples to the real, verified signatures, and corrected the surrounding prose about `ZipIOSystem`'s input/output separation and what `getDiskSpillPath()` actually does.
+
+Verified: doc-only change. `rm -rf dist && node scripts/build-backend.mjs` clean; `node test/smoke.mjs` 665/665; `test_core.py` 219/219. Also spot-checked the page's "Verifying it" section's claimed test names (`test_memory_compression`, `test_local_encryption`, `test_encrypted_memory`, `testZipPersistence`) against real source — all four genuinely exist and match, unaffected by this fix.
 ### `tinygpt/system_control.py` and `DEPLOYMENT.md` made the same false veto-safety claim as PR #206's TS-side finding — the Python twin of the same bug, in a different module
 
 Same pattern as the `SystemAccess.executeCommand()` finding (PR #206), found independently in the Python side of the codebase this time. `tinygpt/system_control.py`'s own module docstring ended with "Safe action execution with veto layer," and `DEPLOYMENT.md`'s "Multi-Desktop Support" section repeated it as an explicit guarantee right after a runnable sample: "**Safety**: All actions require explicit approval from veto layer before execution."
