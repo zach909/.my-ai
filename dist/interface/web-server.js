@@ -314,7 +314,21 @@ export class WebServer {
                     this.sendJson(res, { error: 'Missing message field' }, 400);
                     return;
                 }
-                const response = await this.runner.generate(message);
+                // The client (HTML_TEMPLATE's chat UI, above) already assembles and
+                // sends the full conversation history with every request, but this
+                // handler only ever read `message` -- runner.generate()'s second
+                // argument (memoryContext, threaded into NeuroclawLLM.generate() to
+                // ground the response in prior turns, Section 7 continuous context)
+                // was always undefined. History entries are filtered rather than
+                // rejected wholesale on a bad shape: this grounds the response, it
+                // isn't a security boundary, so a malformed entry just doesn't
+                // contribute rather than failing the whole chat request.
+                const history = Array.isArray(body?.history)
+                    ? body.history
+                        .filter((h) => typeof h?.role === 'string' && typeof h?.content === 'string')
+                        .map(h => `${h.role}: ${h.content}`)
+                    : undefined;
+                const response = await this.runner.generate(message, history);
                 this.sendJson(res, { response, timestamp: Date.now() });
             }
             catch (err) {
