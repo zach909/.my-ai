@@ -981,6 +981,38 @@ async function testTrainerYieldsAndSerializes() {
     'Two concurrent train() calls on the same trainer serialize (sample counts accumulate consistently) instead of corrupting shared state');
 }
 
+async function testElasticCoreTrainingYields() {
+  // trainElasticCoreLayer() was declared synchronous (not async) and called
+  // without `await` in train() -- unlike its three siblings
+  // (buildNGramTables/trainEmbeddings/trainHiddenLayer), it had no
+  // yieldToEventLoop() call anywhere in its epoch/text double loop, so a
+  // training run with useElasticCore=true reintroduced the exact
+  // total-server-freeze DoS the other three modes were already fixed for
+  // (Section 26). Call the method directly (TS `private` is compile-time
+  // only -- the compiled method is a plain callable) instead of going
+  // through train(): buildNGramTables()/trainEmbeddings() already yield
+  // correctly on a large-enough corpus, which would otherwise flip the
+  // "did a timer fire mid-run" flag on their own and mask a yield gap
+  // specifically in this method.
+  const { NeuroclawTrainer } = await load('models && skills/trainer.js');
+  const chars = ['<pad>', '<bos>', '<eos>', '<unk>', ...'abcdefghijklmnopqrstuvwxyz '.split('')];
+  const charToId = new Map(chars.map((c, i) => [c, i]));
+  const idToChar = new Map(chars.map((c, i) => [i, c]));
+
+  const trainer = new NeuroclawTrainer(chars.length, charToId, idToChar, {
+    useElasticCore: true, hiddenDim: 4, elasticNeurons: 4, elasticStateDim: 3, epochs: 1,
+  });
+  const text = 'the quick brown fox jumps over the lazy dog '.repeat(150); // well over YIELD_EVERY_CHARS
+  let timerFiredDuringTraining = false;
+  let trainingDone = false;
+  setTimeout(() => { if (!trainingDone) timerFiredDuringTraining = true; }, 0);
+  await trainer.trainElasticCoreLayer(text);
+  trainingDone = true;
+  check(timerFiredDuringTraining,
+    "NeuroclawTrainer.trainElasticCoreLayer() yields to the event loop instead of monopolizing it for the whole run");
+  check(trainer.getSamplesProcessed() > 0, 'Elastic-core training still genuinely runs to completion once yielding');
+}
+
 async function testNeuroLangElasticMaterializer() {
   const { NeuroLangInterpreter, ElasticNeuroLangRuntime } = await load('models && skills/core/neuro-lang.js');
   const { ElasticCoreBlock } = await load('models && skills/core/elastic-core.js');
@@ -3845,6 +3877,7 @@ async function main() {
     ['Continuous output loop (Section 4.1)', testContinuousOutputLoop],
     ['Elastic core transformer replacement', testElasticCoreBlock],
     ['NeuroclawTrainer yields to event loop and serializes concurrent calls (Section 26)', testTrainerYieldsAndSerializes],
+    ['NeuroclawTrainer elastic-core training path also yields to event loop (Section 26)', testElasticCoreTrainingYields],
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
