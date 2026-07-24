@@ -312,14 +312,29 @@ class RepairSystem:
                 self.successful_repairs += 1
                 self.total_repairs += 1
                 completed.append(damage_id)
-                
+
                 # Move to history
                 self.repair_history.append(damage)
-        
+
         # Remove completed from active
         for damage_id in completed:
             if damage_id in self.active_repairs:
                 del self.active_repairs[damage_id]
+
+        # detected_damage otherwise grows forever: get_repair_priority() sorts
+        # it on every update() tick, so a completed repair left in this list
+        # keeps costing an O(n log n) sort over an ever-larger n for the rest
+        # of the run. Drop completed reports the same tick they finish.
+        if completed:
+            completed_ids = set(completed)
+            self.detected_damage = [
+                d for d in self.detected_damage if d.id not in completed_ids
+            ]
+
+        # Keep repair_history manageable (same "keep log manageable" idiom
+        # ArtificialOrganism.system_bus already uses).
+        if len(self.repair_history) > 500:
+            self.repair_history = self.repair_history[-500:]
         
         # Update nanobots
         for nanobot in self.nanobots:

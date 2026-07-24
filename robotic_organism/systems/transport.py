@@ -319,27 +319,38 @@ class TransportSystem:
     def deliver_repair_materials(self, dt: float = 1.0):
         """Deliver repair materials along active routes."""
         completed = []
-        
+        delivered_timestamps = []
+
         for i, route in enumerate(self.repair_routes):
             if route['status'] == 'delivered':
                 completed.append(i)
                 continue
-            
+
             # Simulate delivery progress
             route['progress'] = route.get('progress', 0.0) + dt * 0.5
-            
+
             if route['progress'] >= 1.0:
                 route['status'] = 'delivered'
                 self.repairs_completed += 1
-                
+
                 # Mark damage as being repaired
                 for damage in self.active_damage:
                     if damage.timestamp == route['damage'].timestamp:
                         damage.severity *= 0.3  # Reduce severity after repair
-        
+                delivered_timestamps.append(route['damage'].timestamp)
+
         # Remove completed routes
         for i in sorted(completed, reverse=True):
             self.repair_routes.pop(i)
+
+        # active_damage otherwise grows forever: this loop (and update()'s own
+        # dedup scan over the whole list) both cost more every tick as it
+        # grows. Drop damage the same tick its route finishes delivering.
+        if delivered_timestamps:
+            delivered = set(delivered_timestamps)
+            self.active_damage = [
+                d for d in self.active_damage if d.timestamp not in delivered
+            ]
     
     def update(self, dt: float = 1.0) -> Dict:
         """Update transport system for one timestep."""
