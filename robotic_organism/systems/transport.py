@@ -332,6 +332,7 @@ class TransportSystem:
             if route['progress'] >= 1.0:
                 route['status'] = 'delivered'
                 self.repairs_completed += 1
+                completed.append(i)
 
                 # Mark damage as being repaired
                 for damage in self.active_damage:
