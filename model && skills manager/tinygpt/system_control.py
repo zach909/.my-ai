@@ -8,7 +8,16 @@ Provides:
 - Multi-input device monitoring (keyboard, mouse, joystick)
 - Window management and focus control
 - Screenshot/screen recording capabilities
-- Safe action execution with veto layer
+
+Note: the action-performing classes here (KeyboardMouseControl,
+WindowControl, ScreenCapture) call xdotool/wmctrl/scrot/ffmpeg directly via
+subprocess -- none of them are gated by the alignment veto (veto.py's
+AlignmentVeto) or require confirmation. The only veto-gated, confirmation-
+required path to desktop control is the separate, opt-in terminal action
+in actions.py (enable_shell_actions()) -- a raw shell command string that
+could itself invoke these same tools, not a call into this module.
+SystemControlHub has no live caller today beyond its own self-check in
+test_core.py's test_system_control().
 """
 from __future__ import annotations
 
