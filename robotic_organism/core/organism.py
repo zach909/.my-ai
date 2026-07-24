@@ -106,9 +106,12 @@ class ArtificialOrganism:
             processing_time=10.0  # seconds
         )
         
+        # consume_material() buffers the intake; EnergySystem.update() drains
+        # the buffer into processing_queue itself, so this shouldn't also
+        # call start_processing() directly -- that queued the same material
+        # a second time on top of the (already-redundant) buffered copy.
         self.energy_system.consume_material(material)
-        self.energy_system.start_processing(material)
-        
+
         self._log_system("METABOLISM", f"Consumed {material_name} ({mass}g)")
     
     def detect_damage(self, location: tuple, damage_type: str, severity: float):
