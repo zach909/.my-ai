@@ -41,6 +41,8 @@ function BuilderPage() {
   const [simResult, setSimResult] = useState<string | null>(null)
   const [neuroLang, setNeuroLang] = useState('')
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
+  const [codeToImport, setCodeToImport] = useState('')
+  const [codeName, setCodeName] = useState('')
 
   const selected = b.neurons.find((n) => n.id === selectedId) ?? null
 
@@ -118,6 +120,24 @@ function BuilderPage() {
     })
     if (ok) spreadUnplaced()
     setStatusMsg(ok ? 'API output layer added (POST /api/predict)' : 'Output layer failed')
+  }
+
+  const handleCodeToNet = () => {
+    if (!codeToImport.trim() || !codeName.trim()) {
+      setStatusMsg('Code-to-Net: provide code and a name')
+      return
+    }
+    const neuron = b.engine.addCodeNet(b.projectId, codeName.trim(), codeToImport, {
+      x: 60 + (b.neurons.length % 5) * 170,
+      y: 60 + Math.floor(b.neurons.length / 5) * 100,
+    })
+    if (neuron) {
+      setStatusMsg(`Code-to-Net: "${codeName}" converted to neural network`)
+      setCodeToImport('')
+      setCodeName('')
+    } else {
+      setStatusMsg('Code-to-Net: failed to create neuron')
+    }
   }
 
   return (
@@ -239,6 +259,35 @@ function BuilderPage() {
                   {searchMatches.size} match{searchMatches.size === 1 ? '' : 'es'} highlighted
                 </p>
               )}
+            </CardContent>
+          </Card>
+
+          <Card className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Code-to-Net
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Label htmlFor="code-name-input" className="sr-only">Code network name</Label>
+              <Input
+                id="code-name-input"
+                value={codeName}
+                onChange={(e) => setCodeName(e.target.value)}
+                placeholder="name (e.g. math_ops)"
+                className="h-8 text-xs"
+              />
+              <Label htmlFor="code-import-textarea" className="sr-only">Code to convert</Label>
+              <textarea
+                id="code-import-textarea"
+                value={codeToImport}
+                onChange={(e) => setCodeToImport(e.target.value)}
+                placeholder="Paste code here (Python, JS, etc.) — converts to neural network"
+                className="h-24 w-full resize-y rounded-md border border-input bg-transparent px-2 py-1.5 font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+              <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleCodeToNet}>
+                Convert code to neural net
+              </Button>
             </CardContent>
           </Card>
 
