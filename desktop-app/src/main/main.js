@@ -72,7 +72,7 @@ ipcMain.handle('select-directory', async () => {
   return result;
 });
 
-ipcMain.handle('select-file', async (options = {}) => {
+ipcMain.handle('select-file', async (event, options = {}) => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openFile'],
     filters: options.filters || [],
@@ -81,7 +81,7 @@ ipcMain.handle('select-file', async (options = {}) => {
   return result;
 });
 
-ipcMain.handle('read-file', async (filePath) => {
+ipcMain.handle('read-file', async (event, filePath) => {
   try {
     const content = fs.readFileSync(filePath, 'utf-8');
     return { success: true, content };
@@ -90,7 +90,7 @@ ipcMain.handle('read-file', async (filePath) => {
   }
 });
 
-ipcMain.handle('write-file', async (filePath, content) => {
+ipcMain.handle('write-file', async (event, filePath, content) => {
   try {
     fs.writeFileSync(filePath, content, 'utf-8');
     return { success: true };
@@ -112,7 +112,7 @@ ipcMain.handle('get-system-info', async () => {
 });
 
 // Process Management - Launch local processes
-ipcMain.handle('spawn-process', async (command, args = [], options = {}) => {
+ipcMain.handle('spawn-process', async (event, command, args = [], options = {}) => {
   return new Promise((resolve) => {
     const childProcess = spawn(command, args, {
       cwd: options.cwd || process.cwd(),
@@ -152,7 +152,7 @@ ipcMain.handle('spawn-process', async (command, args = [], options = {}) => {
   });
 });
 
-ipcMain.handle('exec-command', async (command, options = {}) => {
+ipcMain.handle('exec-command', async (event, command, options = {}) => {
   return new Promise((resolve) => {
     exec(command, {
       cwd: options.cwd || process.cwd(),
@@ -177,13 +177,13 @@ ipcMain.handle('exec-command', async (command, options = {}) => {
 });
 
 // Open external URLs in default browser
-ipcMain.handle('open-external', async (url) => {
+ipcMain.handle('open-external', async (event, url) => {
   await shell.openExternal(url);
   return { success: true };
 });
 
 // Show item in file manager
-ipcMain.handle('show-in-folder', async (filePath) => {
+ipcMain.handle('show-in-folder', async (event, filePath) => {
   shell.showItemInFolder(filePath);
   return { success: true };
 });
