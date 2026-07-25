@@ -78,6 +78,65 @@ def test_memory_compression():
           "a pre-compression plain-JSON checkpoint still loads (backward compatible)")
 
 
+def test_mmap_checkpoint_loading():
+    """Disk-offloading (core.py/chat.py/interface/server.py's --mmap): mmap
+    reads the checkpoint file's bytes lazily instead of eagerly, which is a
+    different code path in torch than a plain load, so the real risk this
+    feature could introduce is a mmap load that succeeds without error but
+    silently returns stale/wrong/partial weights. Verify bit-for-bit identity
+    and matching model output, not just "it didn't crash"."""
+    try:
+        import torch
+    except ImportError:
+        print("  skip mmap-checkpoint test (torch not installed)")
+        return
+    from unittest.mock import patch
+    from tinygpt.config import ModelConfig
+    from tinygpt.model import build_model
+    from tinygpt.utils import load_checkpoint, save_checkpoint
+
+    torch.manual_seed(0)
+    cfg = ModelConfig(vocab_size=32, block_size=12, dropout=0.0, arch="mesh",
+                      mesh_neurons=16, mesh_dims=4, mesh_input=5, settle_ticks=3)
+    model = build_model(cfg)
+    d = tempfile.mkdtemp()
+    path = os.path.join(d, "ckpt.pt")
+    save_checkpoint(path, model, None, cfg, step=7, best_val=1.23)
+
+    # Confirm mmap=True actually reaches torch.load -- a test that only
+    # compares eager vs. mmap output would pass even if load_checkpoint()
+    # silently dropped the mmap kwarg entirely, since correct behavior is
+    # for the two loads to be identical either way. Check the wiring itself.
+    with patch("tinygpt.utils.torch.load", wraps=torch.load) as spy:
+        load_checkpoint(path, mmap=True)
+        check(spy.call_args.kwargs.get("mmap") is True,
+              "load_checkpoint(mmap=True) actually passes mmap=True through to torch.load")
+    with patch("tinygpt.utils.torch.load", wraps=torch.load) as spy:
+        load_checkpoint(path, mmap=False)
+        check(spy.call_args.kwargs.get("mmap") is False,
+              "load_checkpoint(mmap=False) actually passes mmap=False through to torch.load")
+
+    eager = load_checkpoint(path, mmap=False)
+    mapped = load_checkpoint(path, mmap=True)
+    check(eager["step"] == 7 and mapped["step"] == 7,
+          "mmap load reads the same non-tensor metadata as eager load")
+    check(set(eager["model"].keys()) == set(mapped["model"].keys()),
+          "mmap load has the same set of weight tensors as eager load")
+    check(all(torch.equal(eager["model"][k], mapped["model"][k]) for k in eager["model"]),
+          "mmap-loaded weights are bit-identical to eagerly-loaded weights, not stale or corrupted")
+
+    mapped_model = build_model(cfg)
+    mapped_model.load_state_dict(mapped["model"])
+    model.eval()
+    mapped_model.eval()
+    x = torch.randint(0, cfg.vocab_size, (2, 6))
+    with torch.no_grad():
+        out_eager, _ = model(x)
+        out_mapped, _ = mapped_model(x)
+    check(torch.equal(out_eager, out_mapped),
+          "a model loaded via mmap produces identical output to one loaded eagerly")
+
+
 def test_actions():
     from tinygpt.actions import ActionLayer
     approve = ActionLayer(confirm_fn=lambda _: True)
@@ -1666,7 +1725,7 @@ def test_skills_attach_to_mesh():
 
 
 def main():
-    for fn in (test_veto, test_memory, test_actions, test_selection,
+    for fn in (test_veto, test_memory, test_mmap_checkpoint_loading, test_actions, test_selection,
                test_extension_builder, test_moe, test_mesh_learns, test_vale_budget,
                test_mesh_live_correction, test_mesh_state_memory, test_mesh_skills, test_mesh_qat, test_interference, test_continuous_runtime, test_neurolang_bridge, test_live_guide,
                test_shell_action_gated, test_experts, test_mesh_with_experts,

@@ -83,12 +83,16 @@ def parse_args():
     # idle power-save (the kill switch: sleep when there's nothing to do)
     ap.add_argument("--idle-timeout", type=float, default=120.0,
                     help="seconds of no input before releasing GPU memory to save power (0=off)")
+    ap.add_argument("--mmap", action="store_true",
+                    help="disk-offload: memory-map the checkpoint instead of loading it fully "
+                         "into RAM, so a model larger than available memory can still load "
+                         "(OS pages weights in from disk on demand; torch>=2.1, no new dependency)")
     ap.add_argument("--seed", type=int, default=None)
     return ap.parse_args()
 
 
-def load_model(ckpt_path: str, device: str):
-    ckpt = load_checkpoint(ckpt_path, map_location=device)
+def load_model(ckpt_path: str, device: str, mmap: bool = False):
+    ckpt = load_checkpoint(ckpt_path, map_location=device, mmap=mmap)
     model = build_model(ModelConfig(**ckpt["model_config"])).to(device)
     model.load_state_dict(ckpt["model"])
     model.eval()
@@ -141,7 +145,7 @@ def main():
         torch.manual_seed(args.seed)
     device = resolve_device(args.device)
 
-    model, ckpt = load_model(args.ckpt, device)
+    model, ckpt = load_model(args.ckpt, device, mmap=args.mmap)
     # resolve_tokenizer (shared with chat.py/interface/server.py via tinygpt.infer)
     # falls back to the checkpoint's own directory when the stored path is
     # relative to a training run's cwd that no longer matches ours.
@@ -164,7 +168,7 @@ def main():
         low_confidence=args.guide_low_confidence, patience=args.guide_patience)
 
     print("Prometheus/TinyGPT core.")
-    print(f"  model      : {args.ckpt} on {device}")
+    print(f"  model      : {args.ckpt} on {device}{' [mmap disk-offload]' if args.mmap else ''}")
     print(f"  selection  : best-of-{args.candidates} (predict-before-commit)")
     print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}"
           f"{' [encrypted at rest]' if passphrase else ''}")

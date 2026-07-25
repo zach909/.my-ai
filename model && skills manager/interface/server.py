@@ -221,12 +221,16 @@ def parse_args():
     ap.add_argument("--top-k", type=int, default=40)
     ap.add_argument("--top-p", type=float, default=0.95)
     ap.add_argument("--repetition-penalty", type=float, default=1.1)
+    ap.add_argument("--mmap", action="store_true",
+                    help="disk-offload: memory-map the checkpoint instead of loading it fully "
+                         "into RAM (see tinygpt/utils.py:load_checkpoint)")
     return ap.parse_args()
 
 
 def main():
     args = parse_args()
-    generator = load_generator(args.ckpt, device=args.device, tokenizer_path=args.tokenizer)
+    generator = load_generator(args.ckpt, device=args.device, tokenizer_path=args.tokenizer,
+                               mmap=args.mmap)
     gen_kwargs = dict(
         max_new_tokens=args.max_new_tokens, temperature=args.temperature,
         top_k=args.top_k, top_p=args.top_p, repetition_penalty=args.repetition_penalty,

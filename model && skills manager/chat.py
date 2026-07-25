@@ -31,6 +31,9 @@ def parse_args():
     ap.add_argument("--top-p", type=float, default=0.95)
     ap.add_argument("--repetition-penalty", type=float, default=1.1)
     ap.add_argument("--device", default="cuda")
+    ap.add_argument("--mmap", action="store_true",
+                    help="disk-offload: memory-map the checkpoint instead of loading it fully "
+                         "into RAM (see tinygpt/utils.py:load_checkpoint)")
     ap.add_argument("--seed", type=int, default=None)
     return ap.parse_args()
 
@@ -48,8 +51,10 @@ def main():
     if args.seed is not None:
         torch.manual_seed(args.seed)
 
-    generator = load_generator(args.ckpt, device=args.device, tokenizer_path=args.tokenizer)
-    print(f"loaded {args.ckpt} on {generator.device} | tokenizer {generator.tokenizer.model_path}")
+    generator = load_generator(args.ckpt, device=args.device, tokenizer_path=args.tokenizer,
+                               mmap=args.mmap)
+    print(f"loaded {args.ckpt} on {generator.device}{' [mmap disk-offload]' if args.mmap else ''} "
+          f"| tokenizer {generator.tokenizer.model_path}")
 
     # one-shot completion (raw continuation, not sentence-trimmed)
     if args.prompt is not None and not args.chat:
