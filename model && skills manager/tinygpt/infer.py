@@ -124,7 +124,7 @@ class Generator:
 
 def load_generator(ckpt_path: str, device: str = "cpu",
                    tokenizer_path: Optional[str] = None,
-                   quantize: bool = False) -> Generator:
+                   quantize: bool = False, mmap: bool = False) -> Generator:
     """Load a checkpoint into a ready-to-use `Generator`.
 
     The architecture (standard or elastic-mesh) and the tokenizer path are read
@@ -136,9 +136,15 @@ def load_generator(ckpt_path: str, device: str = "cpu",
     Measured note: for these tiny models it does NOT speed up CPU inference
     (quant/dequant overhead outweighs int8 matmul gains), so it's off by default
     and is a memory optimization, not a latency one.
+
+    `mmap=True` disk-offloads the checkpoint load itself (see
+    `load_checkpoint`'s docstring) — a separate, complementary memory
+    optimization from `quantize`: mmap reduces how much of the *stored*
+    checkpoint must resident in RAM at once, quantization reduces the size of
+    the *loaded* weights themselves.
     """
     device = resolve_device(device)
-    ckpt = load_checkpoint(ckpt_path, map_location=device)
+    ckpt = load_checkpoint(ckpt_path, map_location=device, mmap=mmap)
     config = ModelConfig(**ckpt["model_config"])
     model = build_model(config).to(device)
     model.load_state_dict(ckpt["model"])

@@ -180,6 +180,14 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   releases GPU memory to save power and wakes instantly on the next input
   (`--idle-timeout`, default 120s; type `sleep` to trigger now). It only stops
   to save power when idle — never on drift.
+- **Disk offloading** — `--mmap` memory-maps the checkpoint file instead of
+  reading every weight tensor into RAM up front (`tinygpt/utils.py`'s
+  `load_checkpoint`, built on `torch.load`'s own `mmap=` parameter, no new
+  dependency). The OS pages weights in from disk as they're actually touched
+  and can evict them under memory pressure — the same technique llama.cpp-style
+  CPU inference relies on — so a checkpoint larger than available RAM can still
+  load and run on a memory-constrained machine. Also available on `chat.py` and
+  `interface/server.py`.
 - **Mixture-of-Experts / skills** (§1.5) — `tinygpt/moe.py`'s `MoELayer` (a
   sparse MoE of named experts routed top-k, with a load-balancing auxiliary
   loss and per-skill usage tracking) was built for the retired transformer

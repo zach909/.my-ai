@@ -73,10 +73,21 @@ def save_checkpoint(path: str, model, optimizer, model_cfg: ModelConfig,
     torch.save(payload, path)
 
 
-def load_checkpoint(path: str, map_location: str = "cpu") -> dict:
+def load_checkpoint(path: str, map_location: str = "cpu", mmap: bool = False) -> dict:
+    """Load a checkpoint's state dict + metadata.
+
+    `mmap=True` memory-maps the checkpoint file instead of reading every tensor
+    storage into RAM up front (PyTorch >=2.1's built-in `torch.load(mmap=...)`):
+    pages are faulted in from disk by the OS as each weight is actually touched,
+    and can be evicted under memory pressure, so a model whose weights exceed
+    available RAM can still be loaded and run on a memory-constrained machine —
+    the same technique llama.cpp-style CPU inference relies on. No new
+    dependency: `mmap` has been a stdlib `torch.load` parameter since 2.1, and
+    requirements.txt already pins `torch>=2.1`.
+    """
     if not os.path.exists(path):
         raise FileNotFoundError(f"Checkpoint not found: {path}")
-    return torch.load(path, map_location=map_location, weights_only=False)
+    return torch.load(path, map_location=map_location, weights_only=False, mmap=mmap)
 
 
 def human_count(n: int) -> str:
