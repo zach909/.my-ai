@@ -1,0 +1,51 @@
+Item ID,Component,Description,Quantity,Unit Price,Supplier,Supplier Link,Notes
+E001,ESP32 DevKit,38-pin WiFi+Bluetooth MCU board,1,$8.50,Digi-Key,https://www.digikey.com/,Main neural controller
+E002,L298N Motor Driver,Dual H-bridge for pump control,2,$6.00,Amazon,https://amazon.com/,Controls peristaltic pumps
+E003,MOSFET Module,4-channel high-current switch,1,$7.50,Digi-Key,https://www.digikey.com/,SMA muscle control
+E004,INA219 Current Sensor,I2C current/voltage monitor,4,$4.50,Adafruit,https://adafruit.com/,Muscle feedback
+E005,MPU6050 IMU,6-axis accelerometer+gyro,1,$5.00,SparkFun,https://sparkfun.com/,Balance/orientation sensing
+E006,OLED Display,0.96" I2C 128x64,1,$6.00,Amazon,https://amazon.com/,Status display
+E007,Li-ion Battery,3.7V 2000mAh 18650,1,$12.00,Battery Junction,https://batteryjunction.com/,Primary energy storage
+E008,Supercapacitor,5.5V 5F double-layer,2,$8.00,Digi-Key,https://www.digikey.com/,Burst power buffer
+E009,TP4056 Charger,Li-ion charging module,1,$2.50,Amazon,https://amazon.com/,Battery management
+E010,Buck Converter,12V to 5V/3.3V step-down,2,$4.00,Digi-Key,https://www.digikey.com/,Voltage regulation
+M001,SMA Wire,Nitinol 0.2mm diameter,5m,$45.00,Dynalloy,https://dynalloy.com/,Artificial muscles (4x 30cm)
+M002,Peristaltic Pump,12V micro water pump,4,$18.00,DFRobot,https://dfrobot.com/,Fluid circulation
+M003,Silicone Tubing,2mm ID x 4mm OD,5m,$15.00,McMaster-Carr,https://mcmaster.com/,Microfluidic channels
+M004,TPE Filament,Flexible 3D print material,1kg,$35.00,Amazon,https://amazon.com/,Soft body parts
+M005,PLA Filament,Standard 3D print material,1kg,$25.00,Amazon,https://amazon.com/,Structural parts
+M006,Epoxy Resin,Two-part clear casting,500ml,$30.00,Smooth-On,https://smooth-on.com/,Repair material simulant
+M007,Servo Motor,Micro 9g SG90,4,$8.00,Amazon,https://amazon.com/,Joint actuation test
+M008,Solenoid Valve,3-way NC 12V,4,$22.00,Parker,https://parker.com/,Flow control
+C001,Body Shell,3D printed organism chassis,1,$0.00,In-house,See CAD files,Main structural component
+C002,Channel Network,Integrated fluid pathways,1,$0.00,In-house,See CAD files,Circulatory system
+C003,Muscle Mounts,SMA attachment points,4,$0.00,In-house,See CAD files,Muscle anchoring
+C004,Electronics Bay,PCB mounting enclosure,1,$0.00,In-house,See CAD files,Controller housing
+T001,Soldering Station,Adjustable temperature,1,$45.00,Weller,https://wellertools.com/,Assembly
+T002,Heat Gun,Variable temp for SMA,1,$35.00,Harbor Freight,https://harborfreight.com/,SMA training
+T003,Multimeter,Digital with continuity,1,$25.00,Fluke,https://fluke.com/,Testing
+T004,Syringe Pump,Manual precision dispenser,1,$40.00,Hamilton,https://hamiltoncompany.com/,Resin injection
+,,,,,,,
+,,,,,,,
+SUBTOTAL (Components),,,,,$1,247.50,,
+SUBTOTAL (Materials),,,,,$120.00,,
+SUBTOTAL (Tools),,,,,$145.00,,
+,,,,,,,
+LABOR & MISCELLANEOUS,,,,,,,
+L001,3D Printing Service,If no printer available,1,$200.00,Local/Online,Alternative to buying printer
+L002,PCB Fabrication,Custom board order,2,$80.00,JLCPCB,https://jlcpcb.com/,Optional custom PCBs
+L003,Shipping & Tax,~15% of components,1,$187.00,,,Estimated
+L004,Contingency,10% for unexpected costs,1,$155.00,,,Buffer
+,,,,,,,
+SUBTOTAL (Labor/Misc),,,,,$622.00,,
+,,,,,,,
+GRAND TOTAL (Minimum),,,,,$2,134.50,,Basic prototype
+GRAND TOTAL (Recommended),,,,,$4,550.00,,Full featured with tools
+GRAND TOTAL (Complete),,,,,$7,300.00,,With 3D printer + oscilloscope
+,,,,,,,
+OPTIONAL UPGRADES,,,,,,,
+U001,3D Printer,Ender 3 V2 or similar,1,$250.00,Creality,https://creality.com/,For in-house printing
+U002,Oscilloscope,Digital storage scope,1,$350.00,Rigol,https://rigol.com/,Advanced debugging
+U003,Logic Analyzer,8-channel USB analyzer,1,$15.00,Saleae,https://saleae.com/,Signal analysis
+U004,Fume Extractor,Desktop air filtration,1,$120.00,Hakko,https://hakko.com/,Safety for resin work
+U005,Hot Plate,Temperature controlled,1,$80.00,Amazon,https://amazon.com/,SMA heat treatment
