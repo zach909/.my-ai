@@ -1,0 +1,340 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'">
+  <title>Cross-Platform Desktop App</title>
+  <style>
+    * {
+      margin: 0;
+      padding: 0;
+      box-sizing: border-box;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+      background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+      min-height: 100vh;
+      display: flex;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+    }
+
+    .container {
+      background: white;
+      border-radius: 12px;
+      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+      padding: 40px;
+      max-width: 800px;
+      width: 100%;
+    }
+
+    h1 {
+      color: #333;
+      margin-bottom: 10px;
+      font-size: 2em;
+    }
+
+    .platform-badge {
+      display: inline-block;
+      background: #667eea;
+      color: white;
+      padding: 4px 12px;
+      border-radius: 20px;
+      font-size: 0.9em;
+      margin-bottom: 20px;
+    }
+
+    .section {
+      margin: 30px 0;
+      padding: 20px;
+      background: #f8f9fa;
+      border-radius: 8px;
+      border-left: 4px solid #667eea;
+    }
+
+    .section h2 {
+      color: #555;
+      margin-bottom: 15px;
+      font-size: 1.3em;
+    }
+
+    .btn {
+      background: #667eea;
+      color: white;
+      border: none;
+      padding: 12px 24px;
+      border-radius: 6px;
+      cursor: pointer;
+      font-size: 1em;
+      margin: 5px;
+      transition: all 0.3s ease;
+    }
+
+    .btn:hover {
+      background: #5568d3;
+      transform: translateY(-2px);
+      box-shadow: 0 4px 12px rgba(102, 126, 234, 0.4);
+    }
+
+    .btn:active {
+      transform: translateY(0);
+    }
+
+    .output {
+      background: #1e1e1e;
+      color: #d4d4d4;
+      padding: 15px;
+      border-radius: 6px;
+      font-family: 'Courier New', monospace;
+      font-size: 0.9em;
+      margin-top: 15px;
+      max-height: 200px;
+      overflow-y: auto;
+      white-space: pre-wrap;
+      word-break: break-all;
+    }
+
+    .info-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+      gap: 15px;
+      margin-top: 15px;
+    }
+
+    .info-item {
+      background: white;
+      padding: 15px;
+      border-radius: 6px;
+      box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    }
+
+    .info-item label {
+      display: block;
+      color: #888;
+      font-size: 0.85em;
+      margin-bottom: 5px;
+    }
+
+    .info-item span {
+      color: #333;
+      font-weight: 600;
+      font-size: 1.1em;
+    }
+
+    .status {
+      padding: 10px 15px;
+      border-radius: 6px;
+      margin: 10px 0;
+      font-weight: 500;
+    }
+
+    .status.success {
+      background: #d4edda;
+      color: #155724;
+      border: 1px solid #c3e6cb;
+    }
+
+    .status.error {
+      background: #f8d7da;
+      color: #721c24;
+      border: 1px solid #f5c6cb;
+    }
+
+    .status.info {
+      background: #d1ecf1;
+      color: #0c5460;
+      border: 1px solid #bee5eb;
+    }
+  </style>
+</head>
+<body>
+  <div class="container">
+    <h1>🚀 Cross-Platform Desktop App</h1>
+    <div class="platform-badge" id="platformBadge">Loading...</div>
+
+    <!-- System Information Section -->
+    <div class="section">
+      <h2>📊 System Information</h2>
+      <button class="btn" onclick="loadSystemInfo()">Refresh System Info</button>
+      <div class="info-grid" id="systemInfo">
+        <div class="info-item">
+          <label>Platform</label>
+          <span id="platform">-</span>
+        </div>
+        <div class="info-item">
+          <label>Architecture</label>
+          <span id="arch">-</span>
+        </div>
+        <div class="info-item">
+          <label>Node Version</label>
+          <span id="nodeVersion">-</span>
+        </div>
+        <div class="info-item">
+          <label>Electron Version</label>
+          <span id="electronVersion">-</span>
+        </div>
+        <div class="info-item">
+          <label>Home Directory</label>
+          <span id="homeDir">-</span>
+        </div>
+      </div>
+    </div>
+
+    <!-- File System Operations Section -->
+    <div class="section">
+      <h2>📁 File System Operations</h2>
+      <button class="btn" onclick="selectDirectory()">Select Directory</button>
+      <button class="btn" onclick="selectFile()">Select File</button>
+      <div id="fileOutput" class="output">File operations will appear here...</div>
+    </div>
+
+    <!-- Process Management Section -->
+    <div class="section">
+      <h2>⚙️ Process Management</h2>
+      <button class="btn" onclick="runCommand('pwd')">Run: pwd (Unix)</button>
+      <button class="btn" onclick="runCommand('dir')">Run: dir (Windows)</button>
+      <button class="btn" onclick="runCommand('echo Hello from Desktop App!')">Run: Echo Test</button>
+      <div id="processOutput" class="output">Process output will appear here...</div>
+    </div>
+
+    <!-- External Links Section -->
+    <div class="section">
+      <h2>🌐 External Links</h2>
+      <button class="btn" onclick="openLink('https://www.electronjs.org')">Electron Docs</button>
+      <button class="btn" onclick="openLink('https://www.electron.build')">Electron Builder</button>
+    </div>
+  </div>
+
+  <script>
+    // Initialize platform badge
+    document.getElementById('platformBadge').textContent = 
+      `Running on: ${window.electronAPI.platform.toUpperCase()}`;
+
+    // Load system information on startup
+    async function loadSystemInfo() {
+      try {
+        const info = await window.electronAPI.getSystemInfo();
+        document.getElementById('platform').textContent = info.platform;
+        document.getElementById('arch').textContent = info.arch;
+        document.getElementById('nodeVersion').textContent = info.nodeVersion;
+        document.getElementById('electronVersion').textContent = info.electronVersion;
+        document.getElementById('homeDir').textContent = info.homeDir;
+        showStatus('systemInfo', 'System info loaded successfully', 'success');
+      } catch (error) {
+        console.error('Error loading system info:', error);
+        showStatus('systemInfo', 'Error loading system info', 'error');
+      }
+    }
+
+    // File System Operations
+    async function selectDirectory() {
+      try {
+        const result = await window.electronAPI.selectDirectory();
+        if (!result.canceled && result.filePaths.length > 0) {
+          document.getElementById('fileOutput').textContent = 
+            `Selected Directory:\n${result.filePaths[0]}`;
+          
+          // Try to read the directory contents
+          const readResult = await window.electronAPI.readFile(result.filePaths[0]);
+          if (!readResult.success) {
+            document.getElementById('fileOutput').textContent += 
+              `\n\nNote: This is a directory, not a file.`;
+          }
+        } else {
+          document.getElementById('fileOutput').textContent = 'No directory selected';
+        }
+      } catch (error) {
+        document.getElementById('fileOutput').textContent = `Error: ${error.message}`;
+      }
+    }
+
+    async function selectFile() {
+      try {
+        const result = await window.electronAPI.selectFile({
+          title: 'Select a file',
+          filters: [
+            { name: 'All Files', extensions: ['*'] },
+            { name: 'Text Files', extensions: ['txt', 'md', 'json', 'js'] },
+          ]
+        });
+        if (!result.canceled && result.filePaths.length > 0) {
+          const filePath = result.filePaths[0];
+          document.getElementById('fileOutput').textContent = `Selected: ${filePath}`;
+          
+          // Read and display file content
+          const readResult = await window.electronAPI.readFile(filePath);
+          if (readResult.success) {
+            document.getElementById('fileOutput').textContent += 
+              `\n\n--- File Content (first 500 chars) ---\n${readResult.content.substring(0, 500)}`;
+          } else {
+            document.getElementById('fileOutput').textContent += 
+              `\n\nError reading file: ${readResult.error}`;
+          }
+        } else {
+          document.getElementById('fileOutput').textContent = 'No file selected';
+        }
+      } catch (error) {
+        document.getElementById('fileOutput').textContent = `Error: ${error.message}`;
+      }
+    }
+
+    // Process Management
+    async function runCommand(command) {
+      const outputDiv = document.getElementById('processOutput');
+      outputDiv.textContent = `Executing: ${command}\n...`;
+      
+      try {
+        const result = await window.electronAPI.execCommand(command);
+        
+        if (result.success) {
+          outputDiv.textContent = `Command: ${command}\n\nExit Code: 0\n\nSTDOUT:\n${result.stdout}`;
+          if (result.stderr) {
+            outputDiv.textContent += `\nSTDERR:\n${result.stderr}`;
+          }
+        } else {
+          outputDiv.textContent = `Command failed!\n\nError: ${result.error}\n\nSTDOUT:\n${result.stdout || ''}\nSTDERR:\n${result.stderr || ''}`;
+        }
+      } catch (error) {
+        outputDiv.textContent = `Error executing command: ${error.message}`;
+      }
+    }
+
+    // External Links
+    async function openLink(url) {
+      try {
+        await window.electronAPI.openExternal(url);
+      } catch (error) {
+        console.error('Error opening link:', error);
+      }
+    }
+
+    // Helper function to show status messages
+    function showStatus(elementId, message, type) {
+      const element = document.getElementById(elementId);
+      if (element) {
+        const statusDiv = document.createElement('div');
+        statusDiv.className = `status ${type}`;
+        statusDiv.textContent = message;
+        element.parentNode.insertBefore(statusDiv, element.nextSibling);
+        
+        setTimeout(() => {
+          statusDiv.remove();
+        }, 3000);
+      }
+    }
+
+    // Set up process output listener
+    window.electronAPI.onProcessOutput((data) => {
+      const outputDiv = document.getElementById('processOutput');
+      outputDiv.textContent += `\n[${data.type}] ${data.data}`;
+      outputDiv.scrollTop = outputDiv.scrollHeight;
+    });
+
+    // Load system info on page load
+    loadSystemInfo();
+  </script>
+</body>
+</html>
