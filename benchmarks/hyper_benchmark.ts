@@ -8,9 +8,13 @@ function benchmark() {
   };
 
   const engine = new HyperDimensionalEngine(config);
-  const input = new Array(config.dimensions).fill(0).map(() => Math.random() * 2 - 1);
+  // OPTIMIZATION: Use Float32Array instead of regular array for better memory locality and SIMD potential
+  const input = new Float32Array(config.dimensions);
+  for (let i = 0; i < config.dimensions; i++) {
+    input[i] = Math.random() * 2 - 1;
+  }
 
-  // Warmup
+  // Warmup - ensure JIT compilation and cache warming
   for (let i = 0; i < 5; i++) {
     engine.process(input);
   }
@@ -22,7 +26,13 @@ function benchmark() {
   }
   const end = performance.now();
 
-  console.log(`Average execution time: ${((end - start) / iterations).toFixed(2)}ms`);
+  const avgTime = (end - start) / iterations;
+  const opsPerSec = 1000 / avgTime;
+  console.log(`HyperDimensional Engine Benchmark:`);
+  console.log(`  Config: ${config.neuronCount} neurons, ${config.dimensions} dimensions, ${config.propagationSteps} steps`);
+  console.log(`  Average execution time: ${avgTime.toFixed(2)}ms`);
+  console.log(`  Operations per second: ${opsPerSec.toFixed(2)}`);
+  console.log(`  Total iterations: ${iterations}`);
 }
 
 benchmark();
