@@ -39,8 +39,13 @@ class EmailPlugin(Plugin):
             "smtp_port": smtp_port,
         }
         os.makedirs(os.path.dirname(_CREDS_FILE), exist_ok=True)
-        with open(_CREDS_FILE, "w") as f:
+        # Securely create the credential file with restrictive (0o600) permissions
+        # to prevent unauthorized local reading on multi-user systems.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(_CREDS_FILE, flags, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(self._creds, f)
+        os.chmod(_CREDS_FILE, 0o600)
         return f"Email configured for {email_addr}"
 
     def _get_imap(self) -> imaplib.IMAP4_SSL:
