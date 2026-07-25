@@ -218,7 +218,7 @@ See `docs/failure_mode_analysis.md` for:
 ### Run the Simulation Demo
 ```bash
 cd /workspace/artificial_organism_project
-python src/simulation/organism_simulator.py
+python3 src/simulation/organism_simulator.py
 ```
 
 This demonstrates:
@@ -235,6 +235,9 @@ cat docs/roadmap.md
 
 # Materials requirements
 cat materials/materials_requirements.md
+
+# Implementation plan (HOW TO BUILD IT)
+cat IMPLEMENTATION_PLAN.md
 
 # Interface standards
 cat docs/interface_standards.md
