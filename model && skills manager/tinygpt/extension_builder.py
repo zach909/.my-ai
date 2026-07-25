@@ -327,8 +327,19 @@ def dequantize_state_dict(qsd: Dict[str, dict]) -> Dict[str, torch.Tensor]:
 
 def load_extension(path: str, model) -> dict:
     """Load a saved project or an installed (quantized) extension into `model`.
-    Returns the stored payload (config, contracts, format)."""
-    payload = torch.load(path, map_location="cpu", weights_only=False)
+    Returns the stored payload (config, contracts, format).
+
+    weights_only=True: install_extension() (below) explicitly documents this
+    as the "community-shared extension" load path, and weights_only=False
+    lets torch.load's pickle deserializer execute arbitrary code embedded in
+    the file via __reduce__/__setstate__ -- a real RCE vector for any file
+    from a source you didn't create yourself. Every real payload this project
+    ever writes (_project_payload/save_project/install, above) is plain
+    dicts/lists/strings/bools/floats plus torch.Tensor -- exactly what
+    weights_only's safe allowlist supports, so this is a pure hardening
+    fix with no behavior change for genuine files.
+    """
+    payload = torch.load(path, map_location="cpu", weights_only=True)
     state = payload["model"]
     if payload.get("quantized"):
         state = dequantize_state_dict(state)
