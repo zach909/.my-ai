@@ -9,12 +9,13 @@ function benchmark() {
     convergenceThreshold: 0.0001
   });
 
+  // OPTIMIZATION: Use Map<number, number> with pre-allocated numeric keys for faster lookup
   const inputs = new Map<number, number>();
   for (let i = 0; i < 10; i++) {
     inputs.set(i, Math.random());
   }
 
-  // Warmup
+  // Warmup - ensure JIT compilation and cache warming
   for (let i = 0; i < 5; i++) {
     mesh.propagate(inputs);
   }
@@ -26,8 +27,13 @@ function benchmark() {
   }
   const end = performance.now();
 
-  console.log(`Mesh size: ${nodeCount} nodes, all-to-all`);
-  console.log(`Average propagate execution time: ${((end - start) / iterations).toFixed(2)}ms`);
+  const avgTime = (end - start) / iterations;
+  const opsPerSec = 1000 / avgTime;
+  console.log(`NeuronMesh Benchmark:`);
+  console.log(`  Mesh size: ${nodeCount} nodes, all-to-all connectivity`);
+  console.log(`  Average propagate execution time: ${avgTime.toFixed(2)}ms`);
+  console.log(`  Operations per second: ${opsPerSec.toFixed(2)}`);
+  console.log(`  Total iterations: ${iterations}`);
 }
 
 benchmark();

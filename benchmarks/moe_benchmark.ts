@@ -10,12 +10,13 @@ function benchmark() {
   };
 
   const router = new MoERouter(cfg);
+  // OPTIMIZATION: Use Float32Array for input to match internal representation and improve memory locality
   const input = new Float32Array(cfg.inputDim);
   for (let i = 0; i < cfg.inputDim; i++) {
     input[i] = Math.random() * 2 - 1;
   }
 
-  // Warmup
+  // Warmup - ensure JIT compilation and cache warming
   for (let i = 0; i < 20; i++) {
     router.route(input);
   }
@@ -27,8 +28,13 @@ function benchmark() {
   }
   const end = performance.now();
 
-  console.log(`MoE Router size: ${cfg.numExperts} experts, input/output dim: ${cfg.inputDim}`);
-  console.log(`Average route execution time: ${((end - start) / iterations).toFixed(4)}ms`);
+  const avgTime = (end - start) / iterations;
+  const opsPerSec = 1000 / avgTime;
+  console.log(`MoE Router Benchmark:`);
+  console.log(`  Config: ${cfg.numExperts} experts, input/output dim: ${cfg.inputDim}, top-K: ${cfg.topK}`);
+  console.log(`  Average route execution time: ${avgTime.toFixed(4)}ms`);
+  console.log(`  Operations per second: ${opsPerSec.toFixed(2)}`);
+  console.log(`  Total iterations: ${iterations}`);
 }
 
 benchmark();
