@@ -1469,6 +1469,74 @@ def test_email_plugin():
             check("b@x.com" in out and "Second" in out, "list surfaces the second message's From/Subject")
 
 
+def test_web_plugin():
+    """The "web" plugin: the other deliberate exception (alongside "email") to
+    this registry's local-only design. No live network assumed in this
+    environment, so http.client's connection classes are mocked (same
+    discipline as test_email_plugin's smtplib/imaplib mocks) -- what's under
+    test is the SSRF-refusal logic and that a successful fetch is parsed
+    correctly, not that a real remote server answers."""
+    from unittest.mock import patch, MagicMock
+    from tinygpt.plugins import WebPlugin
+
+    plugin = WebPlugin()
+    check(plugin.available(), "web plugin is always available (stdlib only, no config needed)")
+
+    # Hostname-literal refusals never even attempt DNS resolution or a socket.
+    for bad_url in ("http://localhost/secret", "http://127.0.0.1/", "http://10.1.2.3/",
+                    "http://192.168.1.1/admin", "ftp://example.com/"):
+        r = plugin.dispatch("fetch", bad_url)
+        check(r.ok and "refused" in r.output.lower(),
+              f"fetching {bad_url!r} is refused without touching the network")
+
+    # A hostname that resolves to a private IP (the DNS-rebinding case) must
+    # still be refused -- caught by the post-resolution check, not the
+    # hostname-literal one, since "definitely-public-looking.example" isn't
+    # itself a private-IP literal.
+    with patch("socket.gethostbyname", return_value="10.0.0.5"):
+        r = plugin.dispatch("fetch", "http://definitely-public-looking.example/")
+        check(r.ok and "refused" in r.output.lower() and "10.0.0.5" in r.output,
+              "a hostname that resolves to a private IP is refused post-resolution (DNS-rebinding case)")
+
+    # A genuine successful fetch: DNS resolves to a real-looking public IP,
+    # the HTTP round-trip is mocked.
+    with patch("socket.gethostbyname", return_value="93.184.216.34"), \
+         patch("http.client.HTTPSConnection") as MockConn:
+        mock_conn = MagicMock()
+        MockConn.return_value = mock_conn
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = b"<html><head><title>Example Domain</title></head><body></body></html>"
+        mock_conn.getresponse.return_value = mock_resp
+        r = plugin.dispatch("fetch", "https://example.com/")
+        check(r.ok, "a fetch to a public, resolved address succeeds")
+        MockConn.assert_called_once_with("93.184.216.34", 443, timeout=10)
+        mock_conn.request.assert_called_once()
+        call_kwargs = mock_conn.request.call_args
+        check(call_kwargs[0][0] == "GET" and call_kwargs[1]["headers"]["Host"] == "example.com",
+              "the request is sent to the resolved IP with the original hostname as the Host header")
+        check("Example Domain" in r.output, "the page title is extracted from a successful fetch")
+
+    # search reuses the same protected fetch path.
+    with patch("socket.gethostbyname", return_value="20.0.0.1"), \
+         patch("http.client.HTTPSConnection") as MockConn:
+        mock_conn = MagicMock()
+        MockConn.return_value = mock_conn
+        mock_resp = MagicMock()
+        mock_resp.read.return_value = (
+            b'<a class="result__a" href="https://a.example/">First <b>Result</b></a>'
+            b'<a class="result__a" href="https://b.example/">Second Result</a>'
+        )
+        mock_conn.getresponse.return_value = mock_resp
+        r = plugin.dispatch("search", "test query")
+        check(r.ok and "a.example" in r.output and "First Result" in r.output,
+              "search parses the first result's title/URL, stripping nested HTML tags")
+        check("b.example" in r.output and "Second Result" in r.output,
+              "search parses the second result too")
+
+    bad = plugin.dispatch("fetch", "")
+    check(bad.ok and "usage" in bad.output.lower(), "an empty fetch arg returns a usage message, not a crash")
+
+
 def test_browser_server():
     """"Runs on your machine": the browser backend (interface/server.py) reuses
     tinygpt.infer.Generator, the exact code path chat.py uses, so the CLI and
@@ -1737,6 +1805,7 @@ def main():
                test_plugin_skill_registry, test_skills_attach_to_mesh,
                test_quantum_interference_in_mesh, test_local_encryption,
                test_encrypted_memory, test_output_layer, test_local_plugins, test_email_plugin,
+               test_web_plugin,
                test_plugin_builder, test_skill_builder, test_learn_and_extend,
                test_install_community_extension, test_self_healing,
                test_browser_server,

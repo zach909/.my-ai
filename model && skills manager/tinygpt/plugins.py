@@ -2,12 +2,15 @@
 of extension are distinguished and connected to the mesh.
 
   - A **plugin** connects to a *service* (a local capability: the file system,
-    diagnostics, a screenshot tool, …). Plugins are local-only connectors:
-    there are **no external APIs** here. A plugin declares what local service it
-    fronts, whether that service is actually available on this host, and a
-    `dispatch()` that runs a real local handler where one exists (file system,
-    diagnostics) or returns a clear "unavailable on this host" otherwise — it
-    never phones out.
+    diagnostics, a screenshot tool, …). Plugins are local-only connectors by
+    design: there are **no third-party API services** here. A plugin declares
+    what local service it fronts, whether that service is actually available
+    on this host, and a `dispatch()` that runs a real local handler where one
+    exists (file system, diagnostics) or returns a clear "unavailable on this
+    host" otherwise — it never phones out. `email` and `web` are the two
+    deliberate exceptions that do reach the real network (SMTP/IMAP for mail,
+    HTTP for web fetch/search) — called out explicitly in their own class
+    docstrings rather than silently treated the same as the local-only ones.
   - A **skill** is a Mixture-of-Experts expert (`tinygpt/experts.py`) that plugs
     straight into the mesh's settle loop. `build_expert_moe()` turns the
     registered skills into a real `ExpertMoE`, and `attach_to_config()` wires
@@ -21,14 +24,18 @@ Python core, instead of only in the TypeScript tree.
 from __future__ import annotations
 
 import getpass
+import http.client
+import ipaddress
 import json
 import os
 import platform
+import re
 import shutil
 import socket
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Callable, Dict, List, Optional
+from urllib.parse import quote, urlparse
 
 
 class ExtensionType(str, Enum):
@@ -325,6 +332,127 @@ class EmailPlugin(Plugin):
         return "\n".join(lines)
 
 
+def _is_private_ip_literal(hostname: str) -> bool:
+    """True only when `hostname` is *itself* a private/loopback/link-local/
+    reserved/multicast IP literal (e.g. "127.0.0.1"). False for anything that
+    doesn't even parse as an IP -- an ordinary DNS name like "example.com" is
+    not caught here; it still gets checked after resolution by
+    `_is_private_resolved_ip`. Deliberately NOT fail-closed: every ordinary
+    hostname fails to parse as an IP, so fail-closed here would refuse all of
+    them before DNS resolution ever ran."""
+    try:
+        ip = ipaddress.ip_address(hostname)
+    except ValueError:
+        return False
+    return (ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+
+def _is_private_resolved_ip(ip_str: str) -> bool:
+    """True for a private/loopback/link-local/reserved/multicast *resolved*
+    address, and for anything that fails to parse as an IP at all (fail
+    closed) -- unlike the hostname check above, this only ever runs on
+    `socket.gethostbyname`'s return value, which should always be a real IP;
+    if it somehow isn't, treat that as unsafe rather than let it through."""
+    try:
+        ip = ipaddress.ip_address(ip_str)
+    except ValueError:
+        return True
+    return (ip.is_private or ip.is_loopback or ip.is_link_local
+            or ip.is_reserved or ip.is_multicast or ip.is_unspecified)
+
+
+class WebPlugin(Plugin):
+    """Real web access: fetch a URL's content, or run a text search over the
+    public web. Alongside `email`, this is the other deliberate exception to
+    this registry's local-only design (see the module docstring) -- reaches
+    the real network over plain HTTP(S), stdlib only (`http.client`,
+    `urllib.parse`), no third-party search/scraping API in front of it.
+
+    Mirrors `models && skills/plugins/browser.ts`'s `BrowserPlugin.fetchUrl`
+    SSRF protections: reject non-http(s) schemes, reject hostnames that are
+    themselves a private/loopback/link-local literal, resolve DNS once and
+    connect directly to the *resolved* IP (rejecting it too if private) --
+    closing the DNS-rebinding TOCTOU window a hostname-only check would leave
+    open, the same reasoning the TypeScript version documents for pinning its
+    request to the resolved address instead of trusting the hostname twice.
+    """
+
+    def __init__(self):
+        super().__init__("web", "Web", "net.web", ["fetch", "search"])
+
+    def available(self) -> bool:
+        return True
+
+    def _run(self, command: str, arg: str) -> str:
+        cmd = (command or "fetch").strip().lower()
+        if cmd == "fetch":
+            return self._fetch(arg.strip())
+        if cmd == "search":
+            return self._search(arg.strip())
+        return f"unknown web command {cmd!r} (use fetch|search)"
+
+    def _fetch_raw(self, url: str, max_bytes: int = 65536) -> str:
+        """Fetch `url`'s body as text, or raise ValueError with a clear,
+        user-facing reason if it's refused or fails."""
+        parsed = urlparse(url if "://" in url else f"https://{url}")
+        if parsed.scheme not in ("http", "https"):
+            raise ValueError(f"unsupported scheme {parsed.scheme!r} (http/https only)")
+        hostname = parsed.hostname or ""
+        if not hostname or hostname.lower() == "localhost":
+            raise ValueError(f"access to private/local host {hostname!r} is forbidden")
+        if _is_private_ip_literal(hostname):
+            raise ValueError(f"access to private/local address {hostname!r} is forbidden")
+        try:
+            resolved_ip = socket.gethostbyname(hostname)
+        except OSError as e:
+            raise ValueError(f"DNS resolution failed for {hostname!r}: {e}")
+        if _is_private_resolved_ip(resolved_ip):
+            raise ValueError(f"access to private/local address {resolved_ip!r} is forbidden")
+
+        port = parsed.port or (443 if parsed.scheme == "https" else 80)
+        path = (parsed.path or "/") + (f"?{parsed.query}" if parsed.query else "")
+        conn_cls = http.client.HTTPSConnection if parsed.scheme == "https" else http.client.HTTPConnection
+        conn = conn_cls(resolved_ip, port, timeout=10)
+        try:
+            conn.request("GET", path, headers={"Host": hostname, "User-Agent": "Mozilla/5.0 (Neuroclaw)"})
+            resp = conn.getresponse()
+            return resp.read(max_bytes).decode("utf-8", errors="replace")
+        finally:
+            conn.close()
+
+    def _fetch(self, url: str) -> str:
+        if not url:
+            return "usage: plugin: web fetch <url>"
+        try:
+            body = self._fetch_raw(url)
+        except ValueError as e:
+            return f"refused: {e}"
+        except OSError as e:
+            return f"fetch failed: {e}"
+        title_match = re.search(r"<title[^>]*>(.*?)</title>", body, re.IGNORECASE | re.DOTALL)
+        title = re.sub(r"\s+", " ", title_match.group(1)).strip() if title_match else url
+        return f"Fetched {url} ({len(body)} bytes) -- {title[:120]}"
+
+    def _search(self, query: str) -> str:
+        if not query:
+            return "usage: plugin: web search <query>"
+        try:
+            html = self._fetch_raw(f"https://html.duckduckgo.com/html/?q={quote(query)}")
+        except (ValueError, OSError) as e:
+            return f"web search failed: {e}"
+        matches = re.findall(
+            r'class="result__a"[^>]*href="([^"]*)"[^>]*>(.*?)</a>', html, re.DOTALL)
+        if not matches:
+            return f"(no results for {query!r})"
+        lines = []
+        for href, raw_title in matches[:5]:
+            title = re.sub(r"<[^>]*>", "", raw_title)
+            title = re.sub(r"\s+", " ", title).strip()
+            lines.append(f"{title or '(untitled)'} -- {href}")
+        return "\n".join(lines)
+
+
 class ChromeAppsPlugin(Plugin):
     """Chrome applications connector: detects a locally-installed Chrome/Chromium
     and reports the launch command for a local app (it does not open a network
@@ -365,6 +493,7 @@ _PLUGIN_CLASSES: Dict[str, Callable[[], Plugin]] = {
     "device-connectivity": DeviceConnectivityPlugin,
     "browser": ChromeAppsPlugin,
     "email": EmailPlugin,
+    "web": WebPlugin,
 }
 
 # id -> (display name, service, kind) for the local JSON-store plugins.
