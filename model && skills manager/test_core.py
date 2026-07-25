@@ -860,6 +860,46 @@ def test_extension_install():
           "an installed (quantized) extension still reproduces the trained behaviour")
 
 
+def test_load_extension_rejects_unsafe_pickle():
+    """load_extension() is install_extension()'s own documented "community-
+    shared extension" load path -- it must never execute arbitrary code
+    embedded in a malicious file. weights_only=True restricts deserialization
+    to a safe allowlist (tensors, plain containers) instead of running
+    whatever __reduce__ payload a pickle stream contains."""
+    try:
+        import torch  # noqa: F401
+    except ImportError:
+        print("  skip load_extension-security test (torch not installed)")
+        return
+    import os as _os
+    import torch
+    from tinygpt.extension_builder import load_extension
+
+    d = tempfile.mkdtemp()
+    marker_path = os.path.join(d, "pwned_marker")
+
+    class _MaliciousPayload:
+        def __reduce__(self):
+            return (_os.system, (f"touch {marker_path}",))
+
+    malicious_path = os.path.join(d, "malicious.ext")
+    torch.save({"model": {}, "quantized": False, "evil": _MaliciousPayload()}, malicious_path)
+
+    class _DummyModel:
+        def load_state_dict(self, state):
+            pass
+
+    raised = False
+    try:
+        load_extension(malicious_path, _DummyModel())
+    except Exception:
+        raised = True
+
+    check(raised, "load_extension() refuses to deserialize a file containing a non-allowlisted pickled object")
+    check(not os.path.exists(marker_path),
+          "the malicious __reduce__ payload never actually executed (no marker file was created)")
+
+
 def test_moe():
     # MoE layer tested in isolation (the transformer that used to host it is
     # retired; the module is kept to wire into the mesh as skills, §3).
@@ -1807,7 +1847,7 @@ def main():
                test_encrypted_memory, test_output_layer, test_local_plugins, test_email_plugin,
                test_web_plugin,
                test_plugin_builder, test_skill_builder, test_learn_and_extend,
-               test_install_community_extension, test_self_healing,
+               test_install_community_extension, test_load_extension_rejects_unsafe_pickle, test_self_healing,
                test_browser_server,
                test_code_to_net, test_net_search, test_adaptive_routing,
                test_system_control):
