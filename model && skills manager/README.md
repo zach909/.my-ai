@@ -237,6 +237,17 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   passkeys) fail cleanly. *Skills* are MoE experts. `plugins` / `skills` /
   `plugin: <id> [cmd] [arg]` commands list and dispatch; `pretrain.py
   --skill-experts` attaches the skills onto the mesh as real routed experts.
+  - **Email** is the one plugin that genuinely reaches the network (every other
+    plugin above is local-only): `plugin: email send <to>|<subject>|<body>` and
+    `plugin: email list` / `plugin: email unread` send/read real mail via
+    stdlib `smtplib`/`imaplib` — no bundled provider SDK, no third-party API in
+    front of it. Configure via environment variables: `MYAI_SMTP_HOST`,
+    `MYAI_SMTP_USER`, `MYAI_SMTP_PASSWORD` (`MYAI_SMTP_PORT`, default 587) to
+    send; `MYAI_IMAP_HOST`, `MYAI_IMAP_USER`/`MYAI_IMAP_PASSWORD` (falling back
+    to the SMTP user/password if unset), `MYAI_IMAP_PORT` (default 993) to
+    read. `available()` honestly reports unconfigured rather than pretending —
+    previously this was a permanent stub in `_SERVICE_PLUGINS` that always
+    reported unavailable.
 - **Quantum interference in the mesh** — every neuron has a unique wave signature
   + amplitude (`MeshLM.neuron_waves`); `--quant-interference` gates the readout
   by differentiable interference between the neurons' waves, inside the forward
