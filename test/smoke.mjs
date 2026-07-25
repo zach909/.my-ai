@@ -1303,6 +1303,36 @@ async function testChromeApps() {
   check(!b.isPrivateHost('8.8.8.8'), 'BrowserPlugin: isPrivateHost identifies 8.8.8.8 as public');
 }
 
+// EmailPlugin.trySendmail() used to interpolate email.from/to/subject/body
+// directly into a `echo "..." | sendmail ...` shell command with only `"`
+// escaped -- backticks/$() are still interpreted by the shell inside double
+// quotes, a real command injection the moment send() reached attacker-
+// influenced content. buildSendmailInvocation() is the extracted, testable
+// piece: the MIME content must go to the child process's stdin (`input`),
+// never appear in the shell `command` string itself.
+async function testEmailPluginCommandInjection() {
+  const { EmailPlugin } = await load('plugins/email.js');
+  const e = new EmailPlugin({ id: 'email', name: 'Email', type: 'api-connection', capabilities: ['email'] });
+
+  const payload = '`touch /tmp/pwned-by-email-plugin` $(echo also-pwned)';
+  const mime = [
+    `From: attacker@example.com`,
+    `To: <victim@example.com>`,
+    `Subject: ${payload}`,
+    '',
+    payload,
+  ].join('\r\n');
+
+  const { command, input } = e.buildSendmailInvocation(mime, '/usr/sbin/sendmail');
+
+  check(!command.includes(payload) && !command.includes('touch') && !command.includes('$('),
+    'EmailPlugin: the shell command string never contains attacker-controlled MIME content');
+  check(command === '/usr/sbin/sendmail -t -i',
+    'EmailPlugin: the shell command is exactly the sendmail binary + fixed flags, nothing else');
+  check(input === mime,
+    'EmailPlugin: the full MIME content (including the attacker-controlled payload) is passed via stdin, not the command line');
+}
+
 // Extension Builder: the drag-connect editor, drag labels, per-neuron
 // simulation, API-capable output layers, neuron search, and the
 // save(no-quant) -> install(quantized) lifecycle all work end-to-end.
@@ -3883,6 +3913,7 @@ async function main() {
     ['Web backend (server.py bridge)', testWebBackend],
     ['Extension catalog fully active', testExtensionCatalogFullyActive],
     ['Chrome Apps', testChromeApps],
+    ['EmailPlugin command injection fix', testEmailPluginCommandInjection],
     ['Extension Builder flow', testExtensionBuilderFlow],
     ['Neural Definition directives', testNeuralDefinitionDirectives],
     ['End-to-end encryption', testEncryption],
