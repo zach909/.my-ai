@@ -51,3 +51,8 @@
 **Vulnerability:** Security tests checking payload limits on HTTP servers can become flaky or fail with socket/connection errors (`BrokenPipeError`, `ConnectionResetError`, `RemoteDisconnected`, `ResponseNotReady`) if the server aggressively closes the connection to protect against DoS attacks without fully reading the request body.
 **Learning:** Aggressively drops/connection-closures are a correct and necessary defensive behavior to prevent memory exhaustion, but HTTP client libraries in tests can crash if they try to write the rest of a massive payload to a dead socket.
 **Prevention:** In test harnesses verifying DoS protections, wrap both the connection request and response-gathering sequences to catch socket-level exceptions and count abrupt connection closures/TCP resets as successful payload rejections.
+
+## 2026-08-28 - Secure Credential File Permissions in Python EmailPlugin
+**Vulnerability:** The Python-based `EmailPlugin` stored plain-text email passwords on disk using default file creation APIs, making the credentials potentially world-readable depending on the host's system `umask`.
+**Learning:** Standard Python `open` calls follow the default `umask` (often `0o022`), creating files with group/world-readable permissions (e.g., `0o644`). For sensitive files containing plain-text keys, tokens, or credentials, this introduces local privilege escalation and credential leakage risks.
+**Prevention:** Always create sensitive credential files with highly restrictive permissions (`0o600` or owner-only read/write) by using `os.open` with a mode argument and calling `os.chmod` to ensure that any pre-existing wider permissions are corrected.
