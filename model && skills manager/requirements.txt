@@ -12,3 +12,11 @@ sentencepiece>=0.1.99
 # QPU needed). The canonical mesh does not need it; test_elastic_mesh.py skips
 # cleanly when it is absent.
 # pennylane>=0.35
+
+# OPTIONAL — only for desktop_app.py (the native desktop chat window).
+# Tkinter is Python's own stdlib GUI toolkit, not a pip package, so it isn't
+# listed above: it ships by default with the python.org Windows/macOS
+# installers, but on Debian/Ubuntu it's a separate OS package matched to your
+# Python's minor version, e.g.:
+#   sudo apt install python3.11-tk   # check your version with `python3 --version`
+# test_desktop_app.py skips cleanly when tkinter isn't importable.

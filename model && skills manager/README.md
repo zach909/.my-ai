@@ -294,6 +294,32 @@ A contract holds when the model actually produces the required continuation
 (verified by greedy generation). Contradictory contracts (same prompt, different
 required replies) are detected and reported instead of looping forever.
 
+### Native desktop app (`desktop_app.py`)
+
+```bash
+python desktop_app.py --ckpt checkpoints/gpt_sft.pt
+```
+
+A real, native window — Tkinter, Python's own stdlib GUI toolkit. No browser,
+no Electron/Chromium runtime, no webview: this opens as a genuine OS window
+using Tk's native widgets, not a page rendered in a browser engine (unlike
+`interface/server.py`, which is a browser-based backend by design). It drives
+the exact same `tinygpt/engine.py` `ConversationEngine` `core.py`'s terminal
+CLI uses (memory, empathy, best-of-N/interference selection, live guidance,
+the reasoning ledger, the gated action layer) — refactored out of `core.py` so
+the terminal and the GUI can never drift apart on what a "turn" actually does,
+the same reasoning `tinygpt/infer.py` already applies one level down for
+`chat.py`/`interface/server.py`'s shared generation path. Model generation
+runs on a background thread so the window stays responsive while it thinks;
+a model-proposed `ACTION:` becomes a real native confirmation dialog instead
+of the terminal's y/N prompt. Accepts the same flags as `core.py` (`--ckpt`,
+`--candidates`, `--encrypt`, `--mmap`, `--enable-shell`, …).
+
+Tkinter ships by default with the standard python.org Windows/macOS
+installers. On some Linux distributions it's one extra OS package matched to
+your Python's minor version — e.g. `sudo apt install python3.11-tk` on
+Ubuntu/Debian (check with `python3 --version`) — see `INSTALL.md`.
+
 ## Checkpoints are self-describing binaries
 
 Each `.pt` checkpoint stores the full `ModelConfig`, so `chat.py` and

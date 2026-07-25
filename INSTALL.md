@@ -123,6 +123,19 @@ source .venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 
+### Native Desktop App (optional)
+
+`model && skills manager/desktop_app.py` is a native chat window (Tkinter —
+no browser, no Electron) for the Python AI core; see that folder's
+`README.md` for usage. Tkinter ships by default on the python.org Windows/
+macOS installers. On Debian/Ubuntu it's a separate OS package matched to
+your Python's minor version:
+
+```bash
+python3 --version                 # e.g. Python 3.11.x
+sudo apt install python3.11-tk    # match the version above
+```
+
 ---
 
 ## Uninstall
