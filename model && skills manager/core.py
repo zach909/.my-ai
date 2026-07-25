@@ -15,6 +15,11 @@ it as real, working layers:
 This is the honest unification: a real (small) language model, with real
 orchestration/safety/memory/selection around it — no faked capability.
 
+The orchestration itself (`tinygpt/engine.py`'s `ConversationEngine`) is shared
+with `desktop_app.py`'s native GUI, so the terminal and the GUI can never drift
+apart on what a "turn" actually does — the same reasoning `tinygpt/infer.py`
+already applies one level down for `chat.py`/`interface/server.py`.
+
 Usage:
     python core.py --ckpt checkpoints/gpt_sft.pt            # chat
     python core.py --ckpt checkpoints/gpt.pt --candidates 5 # best-of-5 selection
@@ -22,29 +27,12 @@ Usage:
 from __future__ import annotations
 
 import argparse
-
-import torch
-
 import select
 import sys
 
-from tinygpt.actions import ActionLayer, enable_shell_actions
-from tinygpt.config import ModelConfig
-from tinygpt.data import build_chat_prompt
-from tinygpt.empathy import EmpathyEngine
-from tinygpt.extension_builder import Definishon, ExtensionBuilder
-from tinygpt.infer import resolve_tokenizer
-from tinygpt.live_guide import LiveGuide
-from tinygpt.memory import ZipLoopMemory
-from tinygpt.model import build_model
-from tinygpt.plugins import default_registry, ExtensionType
-from tinygpt.rl import ReasoningLedger
-from tinygpt.selection import best_of_n, select_by_interference
-from tinygpt.tokenizer import Tokenizer
-from tinygpt.utils import load_checkpoint, resolve_device, save_checkpoint
-from tinygpt.veto import AlignmentVeto
-
-ROLE_MARKERS = ("<|user|>", "<|assistant|>", "<|system|>")
+from tinygpt.engine import ConversationEngine, EngineConfig
+from tinygpt.extension_builder import Definishon
+from tinygpt.utils import save_checkpoint
 
 
 def parse_args():
@@ -91,25 +79,26 @@ def parse_args():
     return ap.parse_args()
 
 
-def load_model(ckpt_path: str, device: str, mmap: bool = False):
-    ckpt = load_checkpoint(ckpt_path, map_location=device, mmap=mmap)
-    model = build_model(ModelConfig(**ckpt["model_config"])).to(device)
-    model.load_state_dict(ckpt["model"])
-    model.eval()
-    return model, ckpt
-
-
-def clean_reply(text: str) -> str:
-    for marker in ROLE_MARKERS:
-        if marker in text:
-            text = text.split(marker)[0]
-    return text.strip()
+def engine_config_from_args(args) -> EngineConfig:
+    return EngineConfig(
+        ckpt=args.ckpt, tokenizer=args.tokenizer, device=args.device, mmap=args.mmap,
+        candidates=args.candidates, max_new_tokens=args.max_new_tokens,
+        temperature=args.temperature, top_k=args.top_k, top_p=args.top_p,
+        repetition_penalty=args.repetition_penalty, memory=args.memory,
+        memory_turns=args.memory_turns, encrypt=args.encrypt, select=args.select,
+        empathy=not args.no_empathy, empathy_state=args.empathy_state,
+        ledger=not args.no_ledger, ledger_path=args.ledger,
+        actions=not args.no_actions, enable_shell=args.enable_shell,
+        guide=not args.no_guide, guide_low_confidence=args.guide_low_confidence,
+        guide_patience=args.guide_patience, seed=args.seed,
+    )
 
 
 def _power_save(device: str) -> None:
     """Kill switch = save power when idle. Release GPU memory; the model stays
     loaded and wakes instantly on the next input. Never stops on drift."""
     if device == "cuda":
+        import torch
         try:
             torch.cuda.empty_cache()
         except Exception:
@@ -141,44 +130,20 @@ def read_input(prompt: str, idle_timeout: float, device: str):
 
 def main():
     args = parse_args()
-    if args.seed is not None:
-        torch.manual_seed(args.seed)
-    device = resolve_device(args.device)
-
-    model, ckpt = load_model(args.ckpt, device, mmap=args.mmap)
-    # resolve_tokenizer (shared with chat.py/interface/server.py via tinygpt.infer)
-    # falls back to the checkpoint's own directory when the stored path is
-    # relative to a training run's cwd that no longer matches ours.
-    tok_path = resolve_tokenizer(
-        args.tokenizer or ckpt.get("tokenizer", "checkpoints/spm.model"), args.ckpt)
-    tokenizer = Tokenizer(tok_path)
-
-    import os as _os
-    passphrase = args.encrypt or _os.environ.get("MYAI_PASSPHRASE")
-    memory = ZipLoopMemory(capacity=512, persist_path=args.memory, passphrase=passphrase)
-    empathy = None if args.no_empathy else EmpathyEngine(persist_path=args.empathy_state)
-    ledger = None if args.no_ledger else ReasoningLedger(persist_path=args.ledger)
-    registry = default_registry()   # plugins (local services) + skills (MoE experts)
-    veto = AlignmentVeto()
-    action_layer = None if args.no_actions else ActionLayer(veto=veto)
-    if action_layer is not None and args.enable_shell:
-        enable_shell_actions(action_layer)
-    guide = None if args.no_guide else LiveGuide(
-        base_temperature=args.temperature, base_top_k=args.top_k, base_top_p=args.top_p,
-        low_confidence=args.guide_low_confidence, patience=args.guide_patience)
+    engine = ConversationEngine(engine_config_from_args(args))
 
     print("Prometheus/TinyGPT core.")
-    print(f"  model      : {args.ckpt} on {device}{' [mmap disk-offload]' if args.mmap else ''}")
+    print(f"  model      : {args.ckpt} on {engine.device}{' [mmap disk-offload]' if args.mmap else ''}")
     print(f"  selection  : best-of-{args.candidates} (predict-before-commit)")
-    print(f"  memory     : zip-loop ({len(memory)} turns loaded){' @ ' + args.memory if args.memory else ''}"
-          f"{' [encrypted at rest]' if passphrase else ''}")
+    print(f"  memory     : zip-loop ({len(engine.memory)} turns loaded){' @ ' + args.memory if args.memory else ''}"
+          f"{' [encrypted at rest]' if engine.memory.passphrase else ''}")
     shell_note = " + terminal (opt-in, always confirms)" if (not args.no_actions and args.enable_shell) else ""
     print(f"  actions    : {'disabled' if args.no_actions else 'human-in-the-loop (read-only allowlist)' + shell_note}")
     print(f"  guidance   : {'off' if args.no_guide else 'live (steer drift back mid-generation, §7)'}")
     print(f"  select     : {'§5 interference (phase consensus + collapse)' if args.select == 'interference' else 'confidence ranking'}")
-    print(f"  empathy    : {'off' if empathy is None else 'on (mood-aware sampling, remembered preferences)'}")
-    print(f"  ledger     : {'off' if ledger is None else f'{len(ledger)} completed reasoning step(s); repeats scored down'}")
-    print(f"  extensions : {len(registry.plugins())} plugin(s) + {len(registry.skills())} skill(s) "
+    print(f"  empathy    : {'off' if engine.empathy is None else 'on (mood-aware sampling, remembered preferences)'}")
+    print(f"  ledger     : {'off' if engine.ledger is None else f'{len(engine.ledger)} completed reasoning step(s); repeats scored down'}")
+    print(f"  extensions : {len(engine.registry.plugins())} plugin(s) + {len(engine.registry.skills())} skill(s) "
           f"(plugins connect to local services; skills are mesh experts)")
     print(f"  power-save : {'off' if args.idle_timeout <= 0 else f'release GPU after {args.idle_timeout:.0f}s idle'}")
     print("  Type 'exit' to quit, 'reset' to clear memory, 'mood' for the empathy read.")
@@ -189,11 +154,9 @@ def main():
         print("  The model can propose 'ACTION: time' / 'list_dir <p>' / 'read_file <p>' / "
               "'system_info' — each needs your approval.\n")
 
-    builder = ExtensionBuilder(model, tokenizer, device=device)
-
     while True:
         try:
-            line = read_input("you> ", args.idle_timeout, device)
+            line = read_input("you> ", args.idle_timeout, engine.device)
         except KeyboardInterrupt:
             print()
             break
@@ -204,11 +167,11 @@ def main():
         if user.lower() in ("exit", "quit"):
             break
         if user.lower() == "reset":
-            memory.clear(); memory.save()
+            engine.reset_memory()
             print("(memory cleared)")
             continue
         if user.lower() == "sleep":
-            _power_save(device)
+            _power_save(engine.device)
             print("(power-save — released GPU cache; keep typing to continue)")
             continue
         if user.lower().startswith("teach:") and "=>" in user:
@@ -221,38 +184,38 @@ def main():
                 continue
             contract = [Definishon(when=when, then=then)]
             print(f"[teach] training: when {when!r} => then {then!r} ...")
-            res = builder.train(contract, epochs=200, lr=1e-3, weight_penalty=1e-3,
-                                tolerance=0.5)
+            res = engine.builder.train(contract, epochs=200, lr=1e-3, weight_penalty=1e-3,
+                                       tolerance=0.5)
             ok = "learned" if contract[0].satisfied else "did not fully converge"
             print(f"[teach] {ok} in {res.epochs} epochs (loss {contract[0].final_loss:.3f})")
-            save_checkpoint(args.ckpt, model, None, model.cfg, ckpt.get("step", 0),
-                            ckpt.get("best_val", float('inf')),
-                            extra={"tokenizer": tok_path, "extended": True})
+            save_checkpoint(args.ckpt, engine.model, None, engine.model.cfg,
+                            engine.ckpt.get("step", 0), engine.ckpt.get("best_val", float('inf')),
+                            extra={"tokenizer": engine.tokenizer_path, "extended": True})
             print(f"[teach] saved -> {args.ckpt}")
             continue
-        if user.lower() == "mood" and empathy is not None:
-            print(f"({empathy.describe()})")
+        if user.lower() == "mood" and engine.empathy is not None:
+            print(f"({engine.mood()})")
             continue
         if user.lower().startswith("simulate:"):
             # Extension Builder: simulate the output of an individual neuron
             try:
                 nid = int(user.split(":", 1)[1].strip())
-                sim = model.simulate_neuron(nid)
+                sim = engine.model.simulate_neuron(nid)
                 infl = ", ".join(f"#{i}({v:.2f})" for i, v in sim["influenced"])
                 print(f"[neuron {nid}] amplitude {sim['amplitude']:.3f}, "
                       f"wave signature {sim['wave_signature']:.3f}; drove {infl}")
             except (ValueError, IndexError) as e:
-                print(f"(usage: simulate: <neuron_id 0..{model.N - 1}>; {e})")
+                print(f"(usage: simulate: <neuron_id 0..{engine.model.N - 1}>; {e})")
             continue
         if user.lower().startswith("neurons:"):
             # Extension Builder: search neurons within the model by input
             query = user.split(":", 1)[1].strip()
-            hits = builder.search_neurons(query, top_k=5)
+            hits = engine.builder.search_neurons(query, top_k=5)
             print("[search] " + ", ".join(f"#{i}({v:.2f})" for i, v in hits))
             continue
         if user.lower() in ("plugins", "skills"):
             # plugins connect to local services; skills are MoE experts
-            summ = registry.summary()
+            summ = engine.registry.summary()
             for line in summ[user.lower()]:
                 print(f"  - {line}")
             continue
@@ -262,69 +225,20 @@ def main():
             pid = rest[0] if rest else ""
             cmd = rest[1] if len(rest) > 1 else ""
             arg = rest[2] if len(rest) > 2 else ""
-            res = registry.dispatch(pid, cmd, arg)
+            res = engine.registry.dispatch(pid, cmd, arg)
             print(f"[plugin] {res.output if res.ok else res.reason}")
             continue
         if not user:
             continue
 
-        memory.add("user", user)
-        if empathy is not None:
-            empathy.observe(user)
-
-        # build prompt from recent zip-loop memory + the assistant header
-        turns = memory.recent(args.memory_turns)
-        prompt = build_chat_prompt(turns, tokenizer) + "<|assistant|>\n"
-        prompt_ids = [tokenizer.bos_id] + tokenizer.encode(prompt)
-
-        # empathy: a frustrated, aroused user gets tighter sampling (more
-        # careful, less rambling) without needing to be told to calm down
-        temperature, top_p = args.temperature, args.top_p
-        if empathy is not None:
-            adj = empathy.sampling_adjustment()
-            temperature = args.temperature * adj["temperature_scale"]
-            if args.top_p is not None:
-                top_p = args.top_p * adj["top_p_scale"]
-
-        # section 11 (predict-before-commit) + section 7 (live guidance): generate
-        # N candidates under live guidance — when the model drifts into sustained
-        # low confidence mid-generation, sampling tightens to steer it back rather
-        # than stopping. Commit via §5 quantum interference over the mesh's wave
-        # signatures (--select interference) or plain confidence ranking
-        # (default); either way the reasoning ledger discounts repeats first.
-        if guide is not None:
-            guide.corrections = 0
-        select_fn = select_by_interference if args.select == "interference" else best_of_n
-        best = select_fn(
-            model, tokenizer, prompt_ids, n=args.candidates,
-            max_new_tokens=args.max_new_tokens, temperature=temperature,
-            top_k=args.top_k, top_p=top_p,
-            repetition_penalty=args.repetition_penalty, eos_id=tokenizer.eos_id,
-            device=device, guide=guide, ledger=ledger,
-        )
-        reply = clean_reply(best.text)
-        print(f"bot> {reply}")
+        result = engine.respond(user)
+        print(f"bot> {result.reply}")
         if args.candidates > 1:
-            print(f"     (chose best of {args.candidates}, confidence {best.score:.3f})")
-        if guide is not None and guide.corrections > 0:
-            print(f"     (live guidance steered {guide.corrections} time(s))")
-        if ledger is not None:
-            ledger.record(reply)
-
-        # section 3 + action layer: any proposed ACTION is vetoed + confirmed
-        if action_layer is not None:
-            result = action_layer.maybe_execute(reply)
-            if result.proposed:
-                print(f"[action] {result.output}")
-                if result.executed:
-                    memory.add("system", f"action result: {result.output[:500]}")
-
-        memory.add("assistant", reply)
-        memory.save()
-        if empathy is not None:
-            empathy.save()
-        if ledger is not None:
-            ledger.save()
+            print(f"     (chose best of {args.candidates}, confidence {result.confidence:.3f})")
+        if result.guidance_corrections > 0:
+            print(f"     (live guidance steered {result.guidance_corrections} time(s))")
+        if result.action_output is not None:
+            print(f"[action] {result.action_output}")
         print()
 
 
