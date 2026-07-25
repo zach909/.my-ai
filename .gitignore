@@ -1,45 +1,4 @@
-```
-# Compiled and build artifacts
-*.o
-*.obj
-*.bin
-*.hex
-*.elf
-
-# Dependencies
-node_modules/
-venv/
-.venv/
-__pycache__/
-*.egg-info/
-
-# Logs and temp files
-*.log
-*.tmp
-*.swp
-
-# Environment
-.env
-.env.local
-*.env.*
-
-# Editors
-.vscode/
-.idea/
-
-# Build directories
-build/
-dist/
-target/
-
-# Compression files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-```
+# Documentation
+artificial_organism_project/PHASE1_EXECUTIVE_SUMMARY.md
+artificial_organism_project/PHASE1_FINAL_REPORT.md
+artificial_organism_project/PHASE1_POWER_VALIDATION.md
