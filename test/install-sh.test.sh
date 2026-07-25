@@ -98,6 +98,134 @@ if command -v node &> /dev/null; then
     check $? "check_prerequisites() passes for real against this machine's actual Node/Python"
 fi
 
+# --- run_step() must surface a failing command's error instead of letting
+#     `set -e` kill the script with zero explanation (the actual bug: a
+#     silently-failed `npm install --silent` used to look identical to a
+#     successful one, and every later step -- desktop shortcut, `npm run
+#     lint` -- would then fail for reasons that looked unrelated) ---
+# NOTE: this test script has `install.sh` sourced into it above, which means
+# its `set -e` is now live in *this* shell too. A bare `out="$(cmd)"` where
+# cmd's exit status is non-zero is a simple command failing under `set -e`,
+# so it would kill this whole test script right here rather than just the
+# command substitution's subshell -- every assertion below that expects a
+# non-zero exit status uses `|| rc=$?` (an OR-list is exempt from `set -e`)
+# to capture it safely instead.
+rc=0
+out="$( (run_step "fake install failed" false) 2>&1 )" || rc=$?
+case "$out" in
+    *"fake install failed"*)
+        check 0 "run_step() prints the failure message when the wrapped command fails"
+        ;;
+    *)
+        check 1 "run_step() prints the failure message when the wrapped command fails (got: $out)"
+        ;;
+esac
+check $([ "$rc" -ne 0 ] && echo 0 || echo 1) "run_step() exits non-zero when the wrapped command fails"
+
+rc=0
+out="$( (run_step "should not print" true) 2>&1 )" || rc=$?
+check $([ "$rc" -eq 0 ] && echo 0 || echo 1) "run_step() exits zero when the wrapped command succeeds"
+case "$out" in
+    *"should not print"*)
+        check 1 "run_step() prints nothing extra when the wrapped command succeeds"
+        ;;
+    *)
+        check 0 "run_step() prints nothing extra when the wrapped command succeeds"
+        ;;
+esac
+
+# --- is_wsl() ---
+(
+    unset WSL_DISTRO_NAME WSL_INTEROP
+    if is_wsl; then
+        # Only true if this actual machine's kernel really reports it
+        if grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null; then
+            check 0 "is_wsl() with no WSL markers only returns true on a real WSL kernel"
+        else
+            check 1 "is_wsl() with no WSL markers only returns true on a real WSL kernel"
+        fi
+    else
+        check 0 "is_wsl() with no WSL markers only returns true on a real WSL kernel"
+    fi
+)
+
+(
+    export WSL_DISTRO_NAME="Ubuntu"
+    if is_wsl; then
+        check 0 "is_wsl() returns true when WSL_DISTRO_NAME is set"
+    else
+        check 1 "is_wsl() returns true when WSL_DISTRO_NAME is set"
+    fi
+)
+
+# --- create_linux_shortcut()'s $HOME/Desktop handling: every branch must
+#     print something explaining what happened, instead of the old
+#     behavior of silently doing nothing when ~/Desktop doesn't exist
+#     (indistinguishable from a broken install) ---
+_shortcut_tmp="$(mktemp -d)"
+trap '[ -n "${_shortcut_tmp:-}" ] && rm -rf "$_shortcut_tmp"' EXIT
+
+# Case 1: a real ~/Desktop folder exists -- the shortcut must be created
+# there and marked trusted (via `gio`, stubbed here so the test doesn't
+# depend on a real GNOME session being available).
+_fake_home="$_shortcut_tmp/home_with_desktop"
+mkdir -p "$_fake_home/Desktop"
+_fake_bin="$_shortcut_tmp/bin"
+mkdir -p "$_fake_bin"
+_gio_log="$_shortcut_tmp/gio.log"
+cat > "$_fake_bin/gio" << 'FAKE_GIO'
+#!/bin/bash
+echo "$@" >> "$GIO_LOG"
+FAKE_GIO
+chmod +x "$_fake_bin/gio"
+
+out="$(HOME="$_fake_home" GIO_LOG="$_gio_log" PATH="$_fake_bin:$PATH" bash -c 'source install.sh > /dev/null; create_linux_shortcut' 2>&1)"
+if [ -f "$_fake_home/Desktop/neuroclaw.desktop" ]; then
+    check 0 "create_linux_shortcut() creates a Desktop shortcut when ~/Desktop exists"
+else
+    check 1 "create_linux_shortcut() creates a Desktop shortcut when ~/Desktop exists"
+fi
+if [ -f "$_gio_log" ] && grep -q "metadata::trusted true" "$_gio_log"; then
+    check 0 "create_linux_shortcut() marks the Desktop shortcut trusted via gio"
+else
+    check 1 "create_linux_shortcut() marks the Desktop shortcut trusted via gio (log: $(cat "$_gio_log" 2>/dev/null))"
+fi
+case "$out" in
+    *"Icon added to your Desktop"*)
+        check 0 "create_linux_shortcut() reports the Desktop icon was added"
+        ;;
+    *)
+        check 1 "create_linux_shortcut() reports the Desktop icon was added (got: $out)"
+        ;;
+esac
+
+# Case 2: no ~/Desktop and not WSL -- must explain why, not stay silent.
+_fake_home2="$_shortcut_tmp/home_no_desktop"
+mkdir -p "$_fake_home2"
+out="$(HOME="$_fake_home2" WSL_DISTRO_NAME= WSL_INTEROP= bash -c 'unset WSL_DISTRO_NAME WSL_INTEROP; source install.sh > /dev/null; create_linux_shortcut' 2>&1)"
+case "$out" in
+    *"no ~/Desktop folder found"*)
+        check 0 "create_linux_shortcut() explains when no ~/Desktop folder exists (non-WSL)"
+        ;;
+    *)
+        check 1 "create_linux_shortcut() explains when no ~/Desktop folder exists (non-WSL) (got: $out)"
+        ;;
+esac
+
+# Case 3: no ~/Desktop and WSL -- must give the WSL-specific explanation.
+out="$(HOME="$_fake_home2" WSL_DISTRO_NAME="Ubuntu" bash -c 'source install.sh > /dev/null; create_linux_shortcut' 2>&1)"
+case "$out" in
+    *"running under WSL"*)
+        check 0 "create_linux_shortcut() gives WSL-specific guidance when no ~/Desktop folder exists"
+        ;;
+    *)
+        check 1 "create_linux_shortcut() gives WSL-specific guidance when no ~/Desktop folder exists (got: $out)"
+        ;;
+esac
+
+rm -rf "$_shortcut_tmp"
+trap - EXIT
+
 echo ""
 echo "$_passed passed, $_failed failed"
 [ "$_failed" -eq 0 ]
