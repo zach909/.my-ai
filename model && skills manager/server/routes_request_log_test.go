@@ -1,13 +1,17 @@
 package server
 
 import (
+	"context"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/gin-gonic/gin"
 )
@@ -85,6 +89,53 @@ func TestInferenceRequestLoggerMiddlewareWritesReplayArtifacts(t *testing.T) {
 	bodyFileName := filepath.Base(bodyFiles[0])
 	if !strings.Contains(curlString, "@\"${SCRIPT_DIR}/"+bodyFileName+"\"") {
 		t.Fatalf("curl log does not reference sibling body file: %s", curlString)
+	}
+}
+
+// TestInferenceRequestLoggerCurlReplayScriptIsShellSafe proves method, host,
+// and Content-Type -- all attacker-controlled -- can't smuggle shell commands
+// into the generated replay script. It doesn't just check the script's text;
+// it actually runs it with `sh`, the exact way the logger's own message
+// tells an operator to ("replay using curl with `sh %s`"), and confirms none
+// of the injected commands executed. curl itself is expected to fail (the
+// hostnames are garbage) -- that's fine, the injection would happen during
+// the shell's own argument evaluation, before curl is ever invoked.
+func TestInferenceRequestLoggerCurlReplayScriptIsShellSafe(t *testing.T) {
+	logDir := t.TempDir()
+	l := &inferenceRequestLogger{dir: logDir}
+
+	markerDir := t.TempDir()
+	methodMarker := filepath.Join(markerDir, "method_pwned")
+	hostMarker := filepath.Join(markerDir, "host_pwned")
+	ctMarker := filepath.Join(markerDir, "contenttype_pwned")
+
+	maliciousMethod := fmt.Sprintf("GET$(touch %s)", methodMarker)
+	maliciousHost := fmt.Sprintf("evil.example$(touch %s)", hostMarker)
+	maliciousContentType := fmt.Sprintf("application/json`touch %s`", ctMarker)
+
+	l.log("/api/generate", maliciousMethod, "http", maliciousHost, maliciousContentType, []byte("{}"))
+
+	scriptFiles, err := filepath.Glob(filepath.Join(logDir, "*_request.sh"))
+	if err != nil {
+		t.Fatalf("failed to glob replay scripts: %v", err)
+	}
+	if len(scriptFiles) != 1 {
+		t.Fatalf("expected exactly one replay script, got %d (%v)", len(scriptFiles), scriptFiles)
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, "sh", scriptFiles[0])
+	_ = cmd.Run() // curl failing against a garbage hostname is expected and fine
+
+	for name, marker := range map[string]string{
+		"method":       methodMarker,
+		"host":         hostMarker,
+		"content-type": ctMarker,
+	} {
+		if _, err := os.Stat(marker); err == nil {
+			t.Fatalf("%s injection executed: marker file %s was created by running the replay script", name, marker)
+		}
 	}
 }
 
