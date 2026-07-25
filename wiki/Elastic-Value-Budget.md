@@ -61,32 +61,46 @@ When the model encountered a "bad neuron":
 
 ### ValueRangeAllocator
 
-The ValueRangeAllocator manages the value budget:
+The real class (`models && skills/core/value-range.ts`) tracks a
+`Map<string, number>` of value points per neuron ID (`allocations`), not a
+`Map<string, Neuron>` of neuron objects, and there's no `allocate()`/
+`demoteOthers()` pair — the zero-sum redistribution happens directly inside
+each update method:
 
 ```typescript
 class ValueRangeAllocator {
-    totalBudget: number;
-    neurons: Map<string, Neuron>;
-    
-    allocate(neuronId: string, newValue: number): void {
-        // Calculate value difference
-        const diff = newValue - this.neurons.get(neuronId).value;
-        
-        // Check if within budget
-        if (this.currentTotal + diff > this.totalBudget) {
-            // Must demote other neurons first
-            this.demoteOthers(diff);
-        }
-        
-        // Update neuron value
-        this.neurons.get(neuronId).value = newValue;
-    }
-    
-    demoteOthers(amount: number): void {
-        // Find lowest-value neurons
-        // Reduce their values to free budget
-        // Maintain minimum value threshold
-    }
+    constructor(config: {
+        enabled: boolean;
+        totalPoints: number;
+        minLearningRate: number;
+        maxLearningRate: number;
+        redistributionInterval: number;
+        decayFactor: number;
+    }) { /* ... */ }
+
+    // Distribute totalPoints equally across all neurons (fresh start).
+    initializeNeurons(neuronStates: NeuronState[]): void { /* ... */ }
+
+    // Add a neuron to the existing budget without resetting it -- its
+    // initial points come proportionally out of the existing neurons.
+    addNeuron(id: string, initialPoints?: number): void { /* ... */ }
+
+    // Zero-sum update: nudges one neuron's points by delta*0.1, then
+    // redistributes the opposite amount proportionally across every
+    // other neuron, then re-normalizes back to exactly totalPoints.
+    updateNeuronValue(id: string, delta: number): void { /* ... */ }
+
+    // Demotion: takes 50% of a neuron's points and splits them equally
+    // across every other neuron.
+    demoteNeuron(id: string): void { /* ... */ }
+
+    // Learning-rate view: more points -> minLearningRate (stable),
+    // fewer points -> maxLearningRate (plastic).
+    getDistribution(): { totalPoints: number; neuronAllocations: { id: string; valuePoints: number; learningRate: number }[] } { /* ... */ }
+
+    // Vale view ([0,1] fraction of totalPoints) -- consulted by
+    // state-transition gating, a *different* consumer of the same points.
+    getValeFractions(): Map<string, number> { /* ... */ }
 }
 ```
 

@@ -1,17 +1,3 @@
-# Prometheus Elastic Core — mesh AI (model & skills manager)
-
-> **Note:** the decoder-only GPT transformer described in earlier revisions has
-> been **retired**. The model is now the **all-to-all neuron mesh**
-> (`tinygpt/mesh.py`, §1), which the same training/inference infrastructure
-> trains unchanged (`build_model()` returns the mesh; `arch` defaults to
-> `"mesh"`). See the repository root `README.md` for the nine mechanisms and
-> honest limitations. The tokenizer / data loader / AdamW loop / sampling all
-> still apply; only the core computation block changed from attention to the
-> mesh.
-
-No Hugging Face Transformers, no Lightning, no distributed training, no
-external APIs. Runs locally on CPU or a single consumer GPU (e.g. an RTX 5070);
-`python test_core.py` runs 221 checks with no checkpoint needed.
 # Prometheus Elastic Core — mesh AI
 
 > **Note:** the decoder-only GPT transformer described below has been **retired**.
@@ -26,7 +12,7 @@ A complete, from-scratch model stack in Python + PyTorch — no Hugging Face
 Transformers, no Lightning, no distributed training. It trains a small (a few
 hundred K to a few M parameter) model on a local Markdown corpus and runs
 locally on CPU or a single consumer GPU (e.g. an RTX 5070);
-`python test_core.py` runs the full 221-check suite with no checkpoint needed.
+`python test_core.py` runs the full 219-check suite with no checkpoint needed.
 
 The elastic-mesh core is vale-gated and all-to-all with MoE expert routing;
 its interference step is a *perfect classical simulation* of a small
@@ -95,24 +81,17 @@ model && skills manager/
 │   ├── actions.py          # human-in-the-loop action layer (gated terminal)
 │   ├── live_guide.py       # §7 live correction while generating
 │   ├── infer.py            # Generator + load_generator (checkpoint -> chat)
-│   ├── mesh.py             # the all-to-all neuron mesh (the model, §1)
-│   ├── model.py            # build_model() — returns the mesh
-│   ├── elastic_mesh.py     # Section 5.2 elastic-mesh core (quantum-simulated QIL)
 │   ├── sampling.py         # temperature / top-k / top-p / repetition penalty
 │   └── utils.py            # seeding, device, LR schedule, checkpoint I/O
 ├── train_tokenizer.py      # step 1: train the tokenizer
 ├── pretrain.py             # step 2: pretrain on Markdown (--skill-experts optional; --use-moe / --use-elastic-mesh are currently inert, see §1.5 below)
 ├── finetune.py             # step 3: supervised fine-tune on chat data
-├── chat.py                 # step 4: interactive / one-shot inference
+├── chat.py                 # step 4: interactive / one-shot inference (the interface)
 ├── core.py                 # the unified core (memory, veto, actions, guidance)
 ├── extend.py               # batch-teach definishon contracts
 ├── neurolang.py            # NeuroLang DSL -> trainable mesh (extension builder)
 ├── example_experts.nl      # sample NeuroLang program (code@/netsearch@ experts)
-├── test_core.py            # 221 checks, no checkpoint needed
-├── test_elastic_mesh.py    # smoke test for the optional quantum block
-├── chat.py                 # step 4: interactive / one-shot inference (the interface)
-├── core.py                 # the unified core: model + memory + veto + actions
-├── test_core.py            # unified-core check suite (221 checks, no checkpoint needed)
+├── test_core.py            # unified-core check suite (219 checks, no checkpoint needed)
 ├── test_elastic_mesh.py    # smoke test for the elastic-mesh core
 ├── data/pretrain/          # .md corpus (build your own; see below)
 ├── data/sft/chat.jsonl     # chat fine-tuning data (sample included)
@@ -148,15 +127,6 @@ python pretrain.py --data-dir data/pretrain --tokenizer checkpoints_v2/spm.model
 python chat.py --ckpt checkpoints_v2/gpt_v2.pt --chat --device cpu
 ```
 
-The prose corpus matters far more than model size for fluency. A smaller/faster
-smoke config (`--vocab-size 2000 --block-size 128 --max-steps 2500`, default
-`checkpoints/`) still works for a quick end-to-end check.
-
-To attach the skill experts (coding, net-search, plugin-builder, skill-builder,
-self-healing) onto the mesh as real routed MoE experts, add `--skill-experts`
-to the `pretrain.py` command. The optional PennyLane quantum block
-(`tinygpt/elastic_mesh.py`) is a separate, importable component — see
-`test_elastic_mesh.py` — not a `pretrain.py` flag.
 The prose corpus matters far more than model size for fluency: on CPU this
 ~14M-param model reaches recognizable dramatic English — character speech tags
 and stage directions — within ~1500 steps, where an earlier 2.2M-param model on
@@ -164,6 +134,10 @@ and stage directions — within ~1500 steps, where an earlier 2.2M-param model o
 smoke config (`--vocab-size 2000`, `--n-layer 4 --n-head 4 --n-embd 192
 --block-size 128 --max-steps 2500`, default `checkpoints/`) still works for a
 quick end-to-end check.
+
+To attach the skill experts (coding, net-search, plugin-builder, skill-builder,
+self-healing) onto the mesh as real routed MoE experts, add `--skill-experts`
+to the `pretrain.py` command.
 
 `pretrain.py --use-elastic-mesh` (and its `--mesh-num-experts`/`--mesh-top-k`/
 `--mesh-n-neurons`/`--mesh-settle-steps`/`--mesh-n-qubits` companions) currently
@@ -242,6 +216,15 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
 - **Compressed circular I/O** (§9) — `ContinuousRunner` runs input and output as
   two bounded ring buffers (oldest overwritten at capacity), so the mesh keeps
   operating continuously without unbounded growth (`tinygpt/continuous.py`).
+  This is a real, tested mechanism (`MeshLM.enable_continuous()` genuinely
+  carries neuron state across `forward()` calls instead of resetting to
+  zeros) — but no live entry point actually turns it on: `chat.py`, `core.py`,
+  and `interface/server.py` all generate through `tinygpt/infer.py`'s
+  `Generator.generate()`, which never calls `enable_continuous()`, so every
+  real chat turn still runs from a fresh zeroed mesh state. `ContinuousRunner`
+  itself is only ever instantiated in `test_core.py`. Turn-to-turn continuity
+  in the actual running system comes entirely from `ZipLoopMemory`'s textual
+  grounding (§2), not from carried neuron state.
 - **Neural language refinement** — NeuroLang definitions are connected by both
   thesaurus relationships and dictionary meanings, so semantically related
   neurons wire together automatically (`neurolang.py`).
@@ -269,7 +252,6 @@ python core.py --ckpt checkpoints/gpt_sft.pt --candidates 5
   numeric Python function into a trained neural net; `main.py netsearch <query>
   <doc>...` trains a retrieval net and ranks documents. Both also drive from the
   NeuroLang DSL (`code@`, `netsearch@`).
-  `teach: <prompt> => <required reply>`.
 
 Run the core's tests (no checkpoint needed) with:
 
@@ -296,8 +278,6 @@ required replies) are detected and reported instead of looping forever.
 ## Checkpoints are self-describing binaries
 
 Each `.pt` checkpoint stores the full `ModelConfig`, so `chat.py` and
-`finetune.py` reconstruct the exact mesh architecture automatically — you only
-pass the `.pt` path.
 `finetune.py` reconstruct the exact architecture (mesh, MoE, or elastic-mesh
 configuration) automatically — you only pass the `.pt` path.
 

@@ -188,7 +188,12 @@ class RepairSystem:
         self.detected_damage: List[DamageReport] = []
         self.repair_history: List[DamageReport] = []
         self.active_repairs: Dict[str, DamageReport] = {}
-        
+        # Monotonic counter for damage IDs -- len(self.detected_damage) is not
+        # monotonic once completed entries are pruned from it, so reusing it
+        # here could produce the same id twice within the same millisecond
+        # and silently overwrite an in-flight entry in active_repairs.
+        self._damage_seq = 0
+
         # Statistics
         self.total_repairs = 0
         self.successful_repairs = 0
@@ -216,7 +221,8 @@ class RepairSystem:
         except ValueError:
             dtype = DamageType.TEAR  # Default
         
-        damage_id = f"dmg_{int(time.time() * 1000)}_{len(self.detected_damage)}"
+        self._damage_seq += 1
+        damage_id = f"dmg_{int(time.time() * 1000)}_{self._damage_seq}"
         
         report = DamageReport(
             id=damage_id,
@@ -312,14 +318,29 @@ class RepairSystem:
                 self.successful_repairs += 1
                 self.total_repairs += 1
                 completed.append(damage_id)
-                
+
                 # Move to history
                 self.repair_history.append(damage)
-        
+
         # Remove completed from active
         for damage_id in completed:
             if damage_id in self.active_repairs:
                 del self.active_repairs[damage_id]
+
+        # detected_damage otherwise grows forever: get_repair_priority() sorts
+        # it on every update() tick, so a completed repair left in this list
+        # keeps costing an O(n log n) sort over an ever-larger n for the rest
+        # of the run. Drop completed reports the same tick they finish.
+        if completed:
+            completed_ids = set(completed)
+            self.detected_damage = [
+                d for d in self.detected_damage if d.id not in completed_ids
+            ]
+
+        # Keep repair_history manageable (same "keep log manageable" idiom
+        # ArtificialOrganism.system_bus already uses).
+        if len(self.repair_history) > 500:
+            self.repair_history = self.repair_history[-500:]
         
         # Update nanobots
         for nanobot in self.nanobots:

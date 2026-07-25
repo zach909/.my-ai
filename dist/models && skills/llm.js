@@ -449,7 +449,7 @@ export class NeuroclawLLM {
     async quantize() {
         if (!this.built)
             return null;
-        return this.builder.installWithQuantization(this.projectId);
+        return this.builder.installWithQuantization(this.projectId, { bits: 4 });
     }
     save() {
         if (!this.built)

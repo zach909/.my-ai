@@ -6,7 +6,7 @@ The AI has controlled access to the terminal and file system, and runs its own v
 
 **Purpose**: Let the AI actually act on the local machine (run commands, use the file system, control a UI) without a human having to relay every action manually, while never colliding with what the user is doing on their own desktop.
 
-**File**: `interface/system-access.ts` — `SystemAccess`
+**File**: `interface/system-access.js` (JS-only module; no `.ts` source has ever existed here) — `SystemAccess`
 
 ```typescript
 const access = new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
@@ -17,7 +17,7 @@ access.isLinuxGNOME();             // multi-desktop is GNOME-specific today
 access.getMultiDesktop();          // -> MultiDesktopManager, see below
 ```
 
-`interface/main.ts`'s composition root constructs one `SystemAccess` and threads it through both the CLI and the web backend's `NeuroclawRunner`, so terminal/file-system actions taken through either interface go through the same gated, veto-checked path (see [[Privacy]] and the alignment veto) rather than a raw shell escape.
+`interface/main.ts`'s composition root does construct one `SystemAccess` and thread it through both the CLI and the web backend's `NeuroclawRunner` — but `executeCommand()` itself is not gated by the alignment veto at all: it's a bare `execSync()` call with no `AlignmentVeto` reference anywhere in the file. It also has no live caller today beyond its own `validateCapabilities()` self-check (`this.executeCommand('echo test')`); neither the CLI nor `NeuroclawRunner` calls it for a real user- or model-issued command — `interface/cli.ts`'s own comment on this notes that only `getMultiDesktop()` is actually exercised on the live path. If real shell-command execution is wired up in the future, it does not currently route through the alignment veto (see [[Privacy]]) — that gate would need to be added at the call site, the same way `AlignmentVeto.evaluate()` is already used elsewhere (e.g. `pipeline.ts`).
 
 ## Multiple desktops, keyboards, and mice
 
@@ -46,7 +46,7 @@ Without a second virtual pointer/keyboard and workspace, an AI acting on "the" d
 ## See Also
 
 - [[Home]] - Main wiki page
-- [[Privacy]] - Why terminal/file-system actions are veto-gated
+- [[Privacy]] - `executeCommand()`'s shell access has no live caller yet and is not currently gated by the alignment veto
 - [[Plugins]] - The same honest-unavailable-on-this-host pattern used throughout
 
 ---

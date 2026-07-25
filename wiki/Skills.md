@@ -12,14 +12,18 @@ Skills are expert modules added to the Mixture of Experts (MoE) system in Promet
 
 ### Core Skills
 
+None of these skills have a dedicated wiki page yet (the individual
+`Skill-*` pages this section used to link to don't exist), so the entries
+below are plain names, not links.
+
 | Skill | Description |
 |-------|-------------|
-| [[Plugin-Maker|Skill-PluginMaker]] | Creates new plugins dynamically |
-| [[Skill-Maker|Skill-SkillMaker]] | Creates new skills dynamically |
-| [[Coding|Skill-Coding]] | Programming in 500+ languages |
-| [[Image|Skill-Image]] | Image generation and processing |
-| [[Video|Skill-Video]] | Video creation and editing |
-| [[Game|Skill-Game]] | Game development and logic |
+| Plugin-Maker | Creates new plugins dynamically |
+| Skill-Maker | Creates new skills dynamically |
+| Coding | Programming in 500+ languages |
+| Image | Image generation and processing |
+| Video | Video creation and editing |
+| Game | Game development and logic |
 
 ### Programming Skills
 
@@ -46,45 +50,42 @@ The coding skill supports 500+ programming languages:
 
 ## Creating a Skill
 
-### Skill Structure
+There's no `ExpertBase` class anywhere in the codebase, and a skill isn't a
+class you extend at all -- it's a plain data record (`SkillDefinition`,
+`plugin_manager/types.ts`) registered against the plugin that implements it:
 
 ```typescript
-// Example skill structure
-import { ExpertBase } from './models && skills/moe';
-
-export class CodingSkill extends ExpertBase {
-    name: string = "coding-expert";
-    domain: string = "programming";
-    
-    // Capability description for MoE routing
-    capabilities: string[] = [
-        "code generation",
-        "code review",
-        "debugging",
-        "refactoring"
-    ];
-    
-    async process(input: string): Promise<string> {
-        // Process input with specialized knowledge
-        return result;
-    }
-    
-    async train(data: any): Promise<void> {
-        // Learn from training data
-    }
-}
+// The real shape (plugin_manager/types.ts)
+type SkillDefinition = {
+    id: string;
+    name: string;
+    description: string;
+    expertIndex: number;      // which MoE expert slot this skill routes to
+    specialization: string;
+    trainingData?: string;
+    selfAuthored: boolean;
+};
 ```
 
 ### Registering a Skill
 
-Skills are registered with the MoE system:
+Skills are registered on the `PluginRegistry` (`plugin_manager/registry.ts`),
+against the raw numeric expert slot they route to on `MoERouter`
+(`models && skills/core/moe-router.ts`) -- there is no `registerExpert()`
+method, and an "expert" is a weight/bias array or `{id, name, specialization}`
+config, not a class instance:
 
 ```typescript
-// In skills-manager.ts
-const codingSkill = new CodingSkill();
-moe.registerExpert(codingSkill);
+const expertId = moeRouter.addExpert({
+    id: 'coding-expert', name: 'Coding', specialization: 'programming',
+});
+registry.registerSkill(
+    { id: 'coding', name: 'Coding', description: '...',
+      expertIndex: expertId, specialization: 'programming', selfAuthored: false },
+    pluginId,
+);
 
-// The MoE will now route coding-related queries to this expert
+// registry.listActiveSkills() / registry.getSkill('coding') surface it from here on
 ```
 
 ## How Skills Work with MoE
@@ -188,9 +189,10 @@ Skills can improve themselves:
 ### Direct Invocation
 
 ```typescript
-// Access skill directly (advanced)
-const codingSkill = moe.getExpert('coding');
-const code = await codingSkill.generate('sort algorithm in Python');
+// Access skill metadata directly (advanced) -- getSkill() returns the
+// SkillDefinition record, not a live object with a .generate() method
+const skill = registry.getSkill('coding');
+console.log(skill?.expertIndex, skill?.specialization);
 ```
 
 ## Skill Extensions

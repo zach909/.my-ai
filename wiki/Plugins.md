@@ -10,81 +10,99 @@ Plugins are API connections to external services and system features in Promethe
 
 ## Plugin Categories
 
+None of these plugins have a dedicated wiki page yet (the individual
+`Plugin-*` pages this section used to link to don't exist), so the entries
+below are plain names, not links.
+
 ### System Access Plugins
 
 | Plugin | Description |
 |--------|-------------|
-| [[File System|Plugin-FileSystem]] | Read/write files, directory navigation |
-| [[Terminal|Plugin-Terminal]] | Execute shell commands, run scripts |
-| [[Multi-Desktop|Plugin-MultiDesktop]] | GNOME multi-desktop management |
-| [[Multi-Input|Plugin-MultiInput]] | Multiple mouse/keyboard support |
+| File System | Read/write files, directory navigation |
+| Terminal | Execute shell commands, run scripts |
+| Multi-Desktop | GNOME multi-desktop management |
+| Multi-Input | Multiple mouse/keyboard support |
 
 ### Hardware Plugins
 
 | Plugin | Description |
 |--------|-------------|
-| [[Camera|Plugin-Camera]] | Camera access, photo capture |
-| [[Microphone|Plugin-Microphone]] | Audio input, voice recording |
-| [[Location|Plugin-Location]] | GPS and location services |
-| [[Screenshots|Plugin-Screenshots]] | Screen capture and recording |
+| Camera | Camera access, photo capture |
+| Microphone | Audio input, voice recording |
+| Location | GPS and location services |
+| Screenshots | Screen capture and recording |
 
 ### Communication Plugins
 
 | Plugin | Description |
 |--------|-------------|
-| [[Email|Plugin-Email]] | Email sending/receiving |
-| [[Messaging|Plugin-Messaging]] | SMS and instant messaging |
-| [[Phone Calls|Plugin-PhoneCalls]] | Voice call management |
-| [[Call History|Plugin-CallHistory]] | Call log access |
-| [[Contacts|Plugin-Contacts]] | Contact management |
-| [[Notifications|Plugin-Notifications]] | System notifications |
+| Email | Email sending/receiving |
+| Messaging | SMS and instant messaging |
+| Phone Calls | Voice call management |
+| Call History | Call log access |
+| Contacts | Contact management |
+| Notifications | System notifications |
 
 ### Application Plugins
 
 | Plugin | Description |
 |--------|-------------|
-| [[Browser|Plugin-Browser]] | Web browsing, web automation |
-| [[Calendar|Plugin-Calendar]] | Calendar events, scheduling |
-| [[Tasks|Plugin-Tasks]] | Task management, to-do lists |
-| [[Radios|Plugin-Radios]] | Radio streaming |
-| [[Voice Activation|Plugin-VoiceActivation]] | Voice command activation |
-| [[App Diagnostics|Plugin-AppDiagnostics]] | Application monitoring |
+| Browser | Web browsing, web automation |
+| Calendar | Calendar events, scheduling |
+| Tasks | Task management, to-do lists |
+| Radios | Radio streaming |
+| Voice Activation | Voice command activation |
+| App Diagnostics | Application monitoring |
 
 ### Security & Identity Plugins
 
 | Plugin | Description |
 |--------|-------------|
-| [[Passkeys|Plugin-Passkeys]] | Passkey authentication |
-| [[Account Info|Plugin-AccountInfo]] | Account management |
+| Passkeys | Passkey authentication |
+| Account Info | Account management |
 
 ### Advanced Plugins
 
 | Plugin | Description |
 |--------|-------------|
-| [[Other Devices|Plugin-OtherDevices]] | Cross-device communication |
-| [[Self-Heal|Plugin-SelfHeal]] | Self-repair and error recovery |
+| Other Devices | Cross-device communication |
+| Self-Heal | Self-repair and error recovery |
 
 ## Creating a Plugin
 
-### Plugin Structure
+There are two, unrelated plugin systems in this codebase — a TypeScript one
+(`plugin_manager/sdk.ts`'s `BasePlugin`, used by the live `plugins/*.ts`
+files wired into `interface/main.ts`) and a separate Python one
+(`plugins/plugin_base.py`'s `Plugin`, used by the Python `plugins/plugin_*.py`
+files). Neither is named `PluginBase` with an `execute(command)` method —
+that shape doesn't exist anywhere in the codebase.
+
+### TypeScript Plugin Structure
 
 ```typescript
-// Example plugin structure
-import { PluginBase } from './plugin_base';
+// Example plugin structure, matching the real plugins/browser.ts
+import { BasePlugin } from '../plugin_manager/sdk.js';
+import type { PluginDefinition } from '../plugin_manager/types.js';
 
-export class MyPlugin extends PluginBase {
-    name: string = "my-plugin";
-    version: string = "1.0.0";
-    
-    async initialize(): Promise<void> {
+export class MyPlugin extends BasePlugin {
+    constructor(definition: PluginDefinition) {
+        super(definition);
+    }
+
+    // Called once the registry activates this plugin instance.
+    async onActivate(context: PluginContext): Promise<void> {
+        await super.onActivate(context);
         // Setup plugin
     }
-    
-    async execute(command: string): Promise<any> {
+
+    // Handle a message routed to this plugin.
+    async onMessage(message: unknown): Promise<unknown> {
         // Handle commands
+        return message;
     }
-    
-    async shutdown(): Promise<void> {
+
+    async onDeactivate(): Promise<void> {
+        await super.onDeactivate();
         // Cleanup
     }
 }
@@ -93,22 +111,32 @@ export class MyPlugin extends PluginBase {
 ### Python Plugin Example
 
 ```python
-# plugins/plugin_example.py
-from plugin_base import PluginBase
+# plugins/plugin_example.py — matching the real plugins/plugin_base.py
+from .plugin_base import Plugin
 
-class ExamplePlugin(PluginBase):
-    def __init__(self):
-        super().__init__()
-        self.name = "example"
-    
-    def execute(self, command):
-        # Process command
+class ExamplePlugin(Plugin):
+    name = "example"
+
+    def _setup(self) -> None:
+        # Populate self.tools with {tool_name: callable}
+        self.tools["do_thing"] = self._do_thing
+
+    def _do_thing(self, *args, **kwargs):
         return result
 ```
 
+Call a Python plugin's tool with `plugin.call("do_thing", ...)`, not a generic
+`execute(command)` method.
+
 ### Registration
 
-Plugins are automatically discovered in the `plugins/` directory. The plugin manager handles loading and initialization.
+TypeScript plugins are wired up explicitly in `interface/main.ts`'s
+`buildCore()`/`PluginRegistry.bootstrap()` — they are not auto-discovered
+just by existing in `plugins/`. The registry's real API
+(`plugin_manager/registry.ts`): `register(definition, instance)`,
+`activate(pluginId)`/`deactivate(pluginId)`, `listPlugins()`, `getPlugin(pluginId)`
+(returns the plugin's `PluginDefinition`, not a live instance with methods
+on it), `dispatch(input, intent)`, `healthCheck()`.
 
 ## Using Plugins
 
@@ -124,39 +152,54 @@ Plugins are automatically discovered in the `plugins/` directory. The plugin man
 
 ### Programmatic Access
 
-```typescript
-// Access plugin through plugin manager
-const fileSystem = pluginManager.getPlugin('file-system');
-const files = await fileSystem.listDirectory('/home/user');
+`PluginRegistry.getPlugin(pluginId)` returns the plugin's `PluginDefinition`
+(metadata) — not a live instance with plugin-specific methods like
+`.listDirectory()`/`.capture()`. To actually run something, dispatch through
+the registry instead:
 
-const camera = pluginManager.getPlugin('camera');
-const photo = await camera.capture();
+```typescript
+// Real PluginRegistry API (plugin_manager/registry.ts)
+const definition = registry.getPlugin('file-system'); // PluginDefinition | undefined
+const active = registry.listActivePlugins();           // PluginDefinition[]
+
+// dispatch(input, intent)'s second argument is an intent bucket key
+// ('command', 'analysis', 'exploration', ...), not a plugin id -- passing
+// a plugin id like 'file-system' matches no bucket and always returns null.
+// 'command' is one of several intents whose candidate list includes
+// file-system (so does 'analysis'); dispatch tries each active candidate
+// in order until one returns a non-null result.
+const result = await registry.dispatch('list files in Documents', 'command');
 ```
 
 ## Plugin Manager
 
-The plugin manager (`plugin_manager/`) handles:
+The plugin registry (`plugin_manager/registry.ts`, the class actually wired
+up in `interface/main.ts`) handles:
 
-- **Discovery**: Finding plugins in the plugins directory
-- **Loading**: Initializing plugins on startup
-- **Routing**: Directing commands to appropriate plugins
-- **Lifecycle**: Managing plugin state (start, stop, reload)
+- **Registration**: `register(definition, instance)` adds a plugin instance
+- **Lifecycle**: `activate(pluginId)`/`deactivate(pluginId)`
+- **Routing**: `dispatch(input, intent)` sends input to the right plugin
+- **Health**: `healthCheck()` reports each active plugin's `onHealthCheck()` result
 
-### Plugin Manager API
+### Plugin Registry API
 
 ```typescript
-// Get a plugin by name
-getPlugin(name: string): PluginBase
-
-// List all available plugins
-listPlugins(): string[]
-
-// Check if plugin is loaded
-isPluginLoaded(name: string): boolean
-
-// Reload a plugin
-reloadPlugin(name: string): Promise<void>
+// plugin_manager/registry.ts's real, live PluginRegistry class
+register(definition: PluginDefinition, instance: BasePlugin): void
+activate(pluginId: string): Promise<void>
+deactivate(pluginId: string): Promise<void>
+listPlugins(): PluginDefinition[]
+listActivePlugins(): PluginDefinition[]
+getPlugin(pluginId: string): PluginDefinition | undefined
+dispatch(input: string, intent: string): Promise<string | null>
+healthCheck(): Promise<Map<string, boolean>>
 ```
+
+(A separate, differently-shaped `PluginManager` class also exists in
+`models && skills/plugin-manager.js` (JS-only module; no `.ts` source has
+ever existed here) — it is not the one `interface/main.ts` actually uses,
+so its `executePlugin(pluginId, action, data)`-style API isn't what's
+documented above.)
 
 ## Security Considerations
 

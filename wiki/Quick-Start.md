@@ -28,16 +28,24 @@ npm install
 
 ### 3. Build the Project
 
+`npm run build` builds the React/Vite visual editor (`src/`) — it does **not**
+build the Node/TypeScript AI backend (CLI + HTTP API). Build that separately:
+
 ```bash
-# Compile TypeScript and build all components
-npm run build
+# Compile the Node/TypeScript backend (CLI + HTTP API) into dist/
+node scripts/build-backend.mjs
 ```
 
 ### 4. Run the AI
 
+There is no `npm start` script. Run the built backend directly:
+
 ```bash
-# Start the Prometheus Elastic Core
-npm start
+# Interactive CLI
+node dist/interface/main.js cli
+
+# HTTP API (default port 7861; pass a port number to use another)
+node dist/interface/main.js web 7861
 ```
 
 ## Directory Structure
@@ -46,66 +54,93 @@ npm start
 .my-ai/
 ├── interface/              # User interface components
 │   ├── index.html         # Main UI
-│   ├── cli.ts            # Command-line interface
-│   └── server.py         # Python backend server
+│   ├── cli.ts             # Command-line interface (source; compiled to dist/interface/cli.js)
+│   └── server.py          # Python backend server
 ├── models && skills/      # Core AI models and skills
-│   ├── moe.ts            # Mixture of Experts
-│   ├── neuron.ts         # Neuron definitions
-│   └── tokenizer.ts      # Text tokenization
+│   ├── moe.ts             # Mixture of Experts
+│   ├── neuron.js          # Neuron definitions (JS-only module, no .ts source)
+│   └── tokenizer.js       # Text tokenization (JS-only module, no .ts source)
 ├── plugins/               # System plugins
 │   ├── file-system.ts    # File system access
 │   ├── browser.ts        # Web browsing
 │   └── camera.ts         # Camera access
-├── extension-builder/     # Visual extension builder
-│   ├── builder.ts        # Builder logic
+├── extension-builder/     # Extension builder engine
+│   ├── builder.js         # Builder logic (JS-only module, no .ts source; also
+│   │                       # run directly in the browser by src/components/Desktop.tsx)
 │   └── neurolang-builder.html
 ├── plugin_manager/        # Plugin management system
-└── dist/                  # Built distribution files
+└── dist/                  # Built distribution files (backend build output)
 ```
 
 ## First Steps
 
 ### Verify Installation
 
-After running `npm start`, you should see:
-- Interface server starting
-- Plugin manager initializing
-- Model loading complete
-- Ready prompt
+After running `node dist/interface/main.js cli`, you should see:
+- Subsystem activation log lines (plugins/skills initializing)
+- The Neuroclaw banner
+- LLM/pipeline/plugin counts
+- The `neuroclaw>` prompt
 
 ### Basic Usage
 
 #### Command Line Interface
 
 ```bash
-# Launch the CLI
-node interface/cli.ts
+# Build the backend once, then launch the interactive CLI
+node scripts/build-backend.mjs
+node dist/interface/main.js cli
 
 # Example commands
-> Hello, how are you?
-> Help me write some code
-> Open the file browser
+> chat
+  you> Hello, how are you?
+  you> /exit
+> help
 ```
+
+`interface/cli.ts` only defines the `CLI` class — `node interface/cli.ts` on
+its own does nothing visible, since nothing instantiates or starts it.
+`interface/main.ts` is the actual composition root that wires the dependency
+graph together and starts the CLI; always go through the built
+`dist/interface/main.js` above, not the raw source file.
 
 #### Web Interface
 
-Open your browser to the local server URL (typically `http://localhost:3000`).
+The HTTP API is served by the backend itself, not by `npm run dev`'s Vite
+dev server: after `node dist/interface/main.js web 7861`, open
+`http://localhost:7861` for the built-in chat UI, or call the JSON routes
+directly (`GET /api/status`, `POST /api/chat`, etc.). The separate `src/`
+React app (started with `npm run dev`, port 3000) is a different UI that
+talks to this same backend through a dev-server proxy — both need to be
+running for it to work end-to-end.
 
 ### Creating Your First Extension
 
-1. Open the Extension Builder:
+The Extension Builder (`extension-builder/builder.js`) is a class you drive
+through the CLI or the HTTP API, not a script you run standalone:
+
+1. From the running CLI, the `neuri <code>` command takes everything after
+   `neuri ` as one line of NeuriLang source, so it only fits a single
+   directive per call:
+   ```
+   > neuri name="greeting"
+     NeuriLang: 1 neurons defined
+       greeting value:0
+   ```
+   Setting multiple properties on one neuron (`@vale=`, `@definishon=`, ...)
+   needs a NeuriLang source string with real embedded newlines between
+   directives — not practical to type interactively line-by-line at this
+   prompt, since each Enter submits a separate top-level CLI command. Use
+   the HTTP API for that instead:
    ```bash
-   node extension-builder/builder.ts
+   curl -X POST http://localhost:7861/api/extension/build \
+     -H "Content-Type: application/json" \
+     -d '{"name":"greeting_ext","code":"name=\"greeting\"\n\"greeting\"@vale=\"0.9\"\n\"greeting\"@definishon=\"Hello!\"","quantize":true}'
    ```
 
-2. Create a simple neuron:
-   ```
-   name="greeting"
-   vale="10"
-   definishon="Hello!"
-   ```
-
-3. Save and install with quantization
+2. The API response's `savedAs` field is the extension file written under
+   `extension-builder/extensions/`. Pass `"quantize": false` to save at full
+   precision instead.
 
 ### Using Plugins
 
@@ -151,10 +186,14 @@ Adjust these settings for your hardware:
 
 **Build fails:**
 ```bash
-# Clear cache and rebuild
+# Frontend (src/): clear cache and rebuild
 rm -rf node_modules
 npm install
 npm run build
+
+# Backend (CLI + HTTP API): clear dist/ and recompile
+rm -rf dist
+node scripts/build-backend.mjs
 ```
 
 **Plugin not loading:**

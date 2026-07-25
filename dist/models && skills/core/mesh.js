@@ -161,7 +161,16 @@ export class NeuronMesh {
                 for (let i = 0; i < N; i++) {
                     let sum = biases[i];
                     const start = rowStarts[i], end = rowStarts[i + 1];
-                    for (let k = start; k < end; k++) {
+                    // OPTIMIZATION: 4x loop unrolling for row-major dot product
+                    const limit = end - 3;
+                    let k = start;
+                    for (; k < limit; k += 4) {
+                        sum += curr[flatIndices[k]] * flatWeights[k]
+                            + curr[flatIndices[k + 1]] * flatWeights[k + 1]
+                            + curr[flatIndices[k + 2]] * flatWeights[k + 2]
+                            + curr[flatIndices[k + 3]] * flatWeights[k + 3];
+                    }
+                    for (; k < end; k++) {
                         sum += curr[flatIndices[k]] * flatWeights[k];
                     }
                     next[i] = activate(sum);
@@ -169,7 +178,9 @@ export class NeuronMesh {
                 }
                 residual = 0;
                 for (let i = 0; i < N; i++) {
-                    residual += Math.abs(next[i] - curr[i]);
+                    // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
+                    const diff = next[i] - curr[i];
+                    residual += diff < 0 ? -diff : diff;
                     curr[i] = next[i];
                     nodes[i].activation = curr[i];
                     nodes[i].activationHistory.push(curr[i]);
@@ -203,7 +214,16 @@ export class NeuronMesh {
                     else {
                         let sum = biases[i];
                         const start = rowStarts[i], end = rowStarts[i + 1];
-                        for (let k = start; k < end; k++) {
+                        // OPTIMIZATION: 4x loop unrolling for row-major dot product
+                        const limit = end - 3;
+                        let k = start;
+                        for (; k < limit; k += 4) {
+                            sum += curr[flatIndices[k]] * flatWeights[k]
+                                + curr[flatIndices[k + 1]] * flatWeights[k + 1]
+                                + curr[flatIndices[k + 2]] * flatWeights[k + 2]
+                                + curr[flatIndices[k + 3]] * flatWeights[k + 3];
+                        }
+                        for (; k < end; k++) {
                             sum += curr[flatIndices[k]] * flatWeights[k];
                         }
                         const comp = activate(sum);
@@ -213,7 +233,9 @@ export class NeuronMesh {
                 }
                 residual = 0;
                 for (let i = 0; i < N; i++) {
-                    residual += Math.abs(next[i] - curr[i]);
+                    // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
+                    const diff = next[i] - curr[i];
+                    residual += diff < 0 ? -diff : diff;
                     curr[i] = next[i];
                     nodes[i].activation = curr[i];
                     nodes[i].activationHistory.push(curr[i]);
