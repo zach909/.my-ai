@@ -1,0 +1,68 @@
+Item ID,Component,Description,Quantity,Unit Price,Supplier,Notes,Voltage,Current Max,Status
+P001,Fuse Holder + 5A Fuse,PTC resettable or fast-blow,1,$8.00,Digi-Key,Battery protection,3.7V,5A,ADDED - SAFETY CRITICAL
+P002,BMS Module,1S Li-ion Protection Board 5A,1,$6.00,Amazon/Adafruit,Overcharge/discharge protection,3.7V,5A,ADDED - SAFETY CRITICAL
+P003,Resistors 100Ω,1/4W 5% through-hole,10,$0.50,Digi-Key,MOSFET gate current limiting,NA,NA,ADDED
+P004,Schottky Diodes,1N5819 1A 40V,8,$0.80,Digi-Key,Back-EMF protection for pumps,NA,1A,ADDED
+P005,Electrolytic Capacitors,100µF 10V,4,$1.00,Digi-Key,Power rail decoupling,NA,NA,ADDED
+P006,Heat Sinks,Small TO-220 package,4,$3.00,Digi-Key,MOSFET cooling,NA,NA,ADDED
+P007,Thermal Paste,1g tube,1,$5.00,Amazon,Heat sink attachment,NA,NA,ADDED
+P008,Silicone Wire,22 AWG red/black 10ft,2,$12.00,Amazon,Power wiring,NA,5A,ADDED
+P009,Pulldown Resistors,10kΩ 1/4W,2,$0.50,Digi-Key,GPIO 12 boot mode,NA,NA,ADDED
+E001,ESP32 DevKit V1,30-pin WiFi+Bluetooth MCU,1,$8.50,Digi-Key,Main controller (revised pinout),3.3V,500mA,VERIFIED
+E002,TB6612FNG Motor Driver,Dual motor driver 1.2A,2,$7.50,Digi-Key,REPLACES L298N (more efficient),3.7-12V,1.2A,CHANGED
+E003,IRLZ44N MOSFET Module,Logic-level N-channel 47A,1,$9.00,Digi-Key,SMA muscle control (with heat sinks),3.7V,10A,UPDATED SPEC
+E004,INA219 Current Sensor,I2C voltage/current monitor,2,$8.50,Adafruit,Reduced quantity (addresses limited),3.3V,NA,QUANTITY REDUCED
+E005,MPU6050 IMU,6-axis accelerometer+gyro,1,$5.00,SparkFun,Balance/orientation sensing,3.3V,5mA,VERIFIED
+E006,OLED Display,0.96" I2C 128x64 SSD1306,1,$6.00,Amazon,Status display,3.3V,20mA,VERIFIED
+E007,Li-ion Battery,3.7V 3000mAh 18650 (UPGRADED),1,$15.00,Battery Junction,Increased capacity for longer runtime,3.7V,5A,UPGRADED CAPACITY
+E008,Supercapacitor,5.5V 5F double-layer,2,$8.00,Digi-Key,Burst power buffer (add balancing),5.5V,NA,VOLTAGE NOTE ADDED
+E009,TP4056 Charger,Li-ion charging module with BMS,1,$3.50,Amazon,Include battery holder,5V,1A,UPDATED
+E010,Boost Converter,MT3608 DC-DC 3.7V→5V 2A,2,$5.00,Digi-Key,REPLACES buck converter (critical fix),3.7V→5V,2A,CHANGED - CRITICAL FIX
+M001,Flexinol Actuator Wire,Nitinol 0.2mm 70°C 400mA,5m,$55.00,Dynalloy,Part# FL020-70-CURRENT,3.7V,450mA,SPECIFIED PART NUMBER
+M002,Peristaltic Pump,3.7V micro water pump 50mL/min,4,$22.00,DFRobot,Voltage matched to battery,3.7V,300mA,VOLTAGE CORRECTED
+M003,Silicone Tubing,2mm ID x 4mm OD,5m,$15.00,McMaster-Carr,Microfluidic channels,NA,NA,VERIFIED
+M004,TPE Filament,Flexible 3D print material 1kg,1,$40.00,Amazon,Soft body parts,NA,NA,VERIFIED
+M005,PLA Filament,Standard 3D print material 1kg,1,$28.00,Amazon,Structural parts,NA,NA,VERIFIED
+M006,Epoxy Resin,Two-part clear casting 500ml,1,$35.00,Smooth-On,Repair material simulant,NA,NA,VERIFIED
+M007,Pressure Sensor (Optional),MPX5010DP differential,2,$18.00,Digi-Key,Damage detection (fluid pressure),5V,NA,ADDED FOR DAMAGE DETECTION
+T001,Soldering Station,Adjustable temperature 350°C,1,$45.00,Weller,Assembly,NA,NA,VERIFIED
+T002,Heat Gun,Variable temp for SMA,1,$35.00,Harbor Freight,SMA training,NA,NA,VERIFIED
+T003,Multimeter,Digital with continuity,1,$25.00,Fluke,Testing,NA,NA,VERIFIED
+T004,Syringe Pump,Manual precision dispenser,1,$40.00,Hamilton,Resin injection,NA,NA,VERIFIED
+,,,,,,,
+SUBTOTAL (Protection),,,,$41.80,,,NEW CATEGORY
+SUBTOTAL (Electronics),,,,$82.50,,,CORRECTED
+SUBTOTAL (Materials),,,,$213.00,,,CORRECTED
+SUBTOTAL (Tools),,,,$145.00,,,UNCHANGED
+,,,,,,,
+LABOR & MISCELLANEOUS,,,,,,,,
+L001,3D Printing Service,If no printer available,1,$200.00,Local/Online,Alternative to buying printer,NA,NA,VERIFIED
+L002,PCB Fabrication,Custom board order,1,$60.00,JLCPCB,Optional custom PCBs (reduced),NA,NA,UPDATED
+L003,Shipping & Tax,~15% of components,1,$120.00,,,Estimated (reduced),NA,NA,RECALCULATED
+L004,Contingency,15% for unexpected costs,1,$135.00,,,Buffer (increased from 10%),NA,NA,INCREASED
+,,,,,,,
+SUBTOTAL (Labor/Misc),,,,$515.00,,,RECALCULATED
+,,,,,,,
+GRAND TOTAL (Minimum),,,,,$2,560.00,,Basic prototype with safety components,CORRECTED FROM $2,134.50
+GRAND TOTAL (Recommended),,,,,$5,200.00,,Full featured with tools and testing,CORRECTED FROM $4,550.00
+GRAND TOTAL (Complete),,,,,$8,100.00,,With 3D printer + oscilloscope,CORRECTED FROM $7,300.00
+,,,,,,,
+OPTIONAL UPGRADES,,,,,,,,
+U001,3D Printer,Ender 3 V2 or similar,1,$250.00,Creality,For in-house printing,NA,NA,VERIFIED
+U002,Oscilloscope,Digital storage scope,1,$350.00,Rigol,Advanced debugging,NA,NA,VERIFIED
+U003,Logic Analyzer,8-channel USB analyzer,1,$15.00,Saleae,Signal analysis,NA,NA,VERIFIED
+U004,Fume Extractor,Desktop air filtration,1,$120.00,Hakko,Safety for resin work,NA,NA,VERIFIED
+U005,Hot Plate,Temperature controlled,1,$80.00,Amazon,SMA heat treatment,NA,NA,VERIFIED
+U006,Emergency Stop Button,25mm NC momentary,1,$12.00,Digi-Key,Safety cutoff,NA,5A,ADDED - SAFETY
+U007,Battery Holder,18650 single with wires,2,$4.00,Amazon,Secure battery mounting,NA,5A,ADDED
+U008,Enclosure,Waterproof project box 150x100x60mm,1,$18.00,Amazon,Electronics protection,NA,NA,ADDED
+,,,,,,,
+NOTES,,,,,,,,
+"Voltage mismatch fixed: Buck converter replaced with boost converter (3.7V→5V)",,,,,,,,
+"Motor driver changed: L298N replaced with TB6612FNG (higher efficiency, lower voltage drop)",,,,,,,,
+"SMA wire specified: Flexinol 0.2mm 70°C requiring 400-450mA (not 1.5A)",,,,,,,,
+"Battery upgraded: 2000mAh → 3000mAh for ~72 min runtime (was ~48 min)",,,,,,,,
+"Safety components added: Fuse, BMS, diodes, capacitors, heat sinks",,,,,,,,
+"Pump voltage corrected: 12V pumps replaced with 3.7V pumps (direct battery operation)",,,,,,,,
+"Current sensors reduced: 4 → 2 due to I2C address limitations",,,,,,,,
+"Total cost increase: +$425 minimum (+20% from original estimate)",,,,,,,,
