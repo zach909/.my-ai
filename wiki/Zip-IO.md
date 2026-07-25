@@ -9,7 +9,7 @@ The AI receives compressed ("zipped") inputs and produces compressed outputs, bo
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `models && skills/core/zip-io.ts` — `InfiniteZipLoop`, `ZipIOSystem` | Circular buffer with optional disk spill once in-memory capacity is reached |
-| Python training core | `tinygpt/memory.py` — `ZipLoopMemory` | Gzip-compressed circular buffer with optional local encryption at rest |
+| Python training core | `tinygpt/memory.py` — `ZipLoopMemory` | Zlib-compressed circular buffer with optional local encryption at rest |
 
 ## `ZipIOSystem` (TypeScript)
 
@@ -17,7 +17,7 @@ The AI receives compressed ("zipped") inputs and produces compressed outputs, bo
 const zip = new ZipIOSystem(contextSize, persistDir, checkpointInterval);
 await zip.ingest(input);              // one input turn, compressed into the input loop
 await zip.emit(output);               // the corresponding output, compressed into the output loop
-zip.inputLoop.getTotalContextSize();  // how much is actually held, post-compression (per loop)
+zip.inputLoop.getTotalContextSize();  // total uncompressed bytes currently held in the ring buffer (per loop)
 await zip.persist();                  // snapshot both loops to disk immediately
 await zip.restore();                  // reload both loops from their last disk checkpoint
 ```
@@ -32,7 +32,7 @@ from tinygpt.memory import ZipLoopMemory
 memory = ZipLoopMemory(capacity=512, persist_path="checkpoints/memory.json",
                         passphrase="optional — local encryption at rest")
 memory.add("user", "turn text")
-memory.save()   # writes to persist_path, gzip-compressed, encrypted if a passphrase was given
+memory.save()   # writes to persist_path, zlib-compressed, encrypted if a passphrase was given
 memory.load()   # re-reads from persist_path (also called automatically in __init__ if the file exists)
 ```
 

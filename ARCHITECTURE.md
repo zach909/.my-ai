@@ -1472,6 +1472,15 @@ New `test_desktop_app.py` (skips cleanly if tkinter isn't importable, or if neit
 
 `python3 test_core.py`: 236/236 unaffected (no changes to that file this round). `python3 test_desktop_app.py`: 7/7. `test_integration.py`'s `run_core_session()`: 8/8, run directly.
 
+### Two doc-accuracy mistakes in my own already-merged Zip-IO fix, caught by automated review (`wiki/Zip-IO.md`)
+
+Qodo's review on the now-merged PR that rewrote `wiki/Zip-IO.md`'s code samples (replacing a stale, never-real "flagship API" sample) flagged two inaccuracies in that same rewrite — a useful reminder that "verify against real source" has to apply to my own fixes, not just the bugs I'm auditing for.
+
+1. The TypeScript sample's comment on `zip.inputLoop.getTotalContextSize()` claimed it reports how much is held "post-compression." Checked directly against `models && skills/core/zip-io.ts`: the method's own docstring says "Get the total uncompressed size of the current context window," and the body sums `chunk.originalSize` (line 222), never `chunk.compressedSize`. The claim was backwards — fixed to describe it as the total uncompressed bytes currently held per loop.
+2. The Python sample's comment on `memory.save()` claimed the persisted file is "gzip-compressed." Checked directly against `tinygpt/memory.py`: `save()` builds `payload = _ZIP_MAGIC + zlib.compress(raw, level=6)` — a custom-framed raw zlib stream, not the gzip container format (which has its own distinct header/trailer). The same "gzip" mislabeling also appeared in the file's own layer-comparison table, predating this fix entirely — fixed all three occurrences to say "zlib-compressed."
+
+Both are doc-only; no source changed. `node test/smoke.mjs` and `python3 test_core.py` pass unchanged, as expected for a documentation-only correction.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
