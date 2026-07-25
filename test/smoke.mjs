@@ -1187,6 +1187,26 @@ async function testExtensionBuilderFlow() {
   const conn = lowBits.connections[0];
   check(Number.isFinite(conn.weight) && Number.isFinite(conn.bias), 'Install with bits=1 clamps to a safe minimum instead of quantizing every weight to NaN');
 
+  // parseNeuroLang()'s connection-wiring loop yields via a local
+  // yieldToEventLoop() (not a bare `setImmediate(resolve)`) specifically
+  // because this file (per src/features/builder/use-builder.ts's own doc
+  // comment) is imported directly into the browser with no build step, and
+  // setImmediate is a Node-only global -- undefined in every major browser.
+  // Simulate that environment (delete the global) and confirm a parse large
+  // enough to cross the yield threshold completes instead of throwing
+  // ReferenceError partway through.
+  const realSetImmediate = globalThis.setImmediate;
+  try {
+    delete globalThis.setImmediate;
+    const p3 = B.createProject('browser_sim', 'No setImmediate global').id;
+    const manyLines = [];
+    for (let i = 0; i < 600; i++) manyLines.push(`"n${i}"@value="1"`);
+    const browserResult = await B.parseNeuroLang(p3, manyLines.join('\n'));
+    check(browserResult.success === true, 'ExtensionBuilder.parseNeuroLang() completes in a browser-like environment with no global setImmediate');
+  } finally {
+    globalThis.setImmediate = realSetImmediate;
+  }
+
   // Net Search: semantic search over definitions -> generate a wired network.
   B.addNeuron(pid, 'weather', 0.4);
   const g = B.netSearchGenerate(pid, 'weather forecast for hidden regions', 2);
