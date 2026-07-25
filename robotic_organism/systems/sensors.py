@@ -413,7 +413,7 @@ class SensorArray:
             posture=posture
         )
     
-    def detect_damage(self, location: Tuple[float, float, float], 
+    def detect_damage(self, location: Tuple[float, float, float],
                       severity: float) -> Dict:
         """Register damage detection."""
         report = {
@@ -423,6 +423,15 @@ class SensorArray:
             'detected_by': 'damage_sensor'
         }
         self.damage_sensors.append(report)
+        # Keep manageable (same idiom RepairSystem.repair_history and
+        # ArtificialOrganism.system_bus already use) -- update()/get_status()
+        # only ever read the trailing few entries ([-10:]/[-5:]), so nothing
+        # downstream needs the full history retained. Now that
+        # ArtificialOrganism.detect_damage() actually calls this (previously
+        # unreachable), a long-running organism taking damage regularly would
+        # otherwise grow this list without bound.
+        if len(self.damage_sensors) > 200:
+            self.damage_sensors = self.damage_sensors[-200:]
         self.total_reads += 1
         return report
     

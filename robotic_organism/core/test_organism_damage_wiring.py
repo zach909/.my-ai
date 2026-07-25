@@ -8,6 +8,14 @@ get_status() surface damage counts as len(self.damage_sensors[...]), every
 tick's reported damage_reports/recent_damage silently stayed at 0 forever,
 no matter how much real damage the organism took, contradicting sensors.py's
 own "the brain receives information about the entire body" docstring.
+
+Also covers a follow-on bug an automated review caught in this same fix:
+wiring detect_damage() through to sensor_array made SensorArray.damage_sensors
+reachable and growing for the first time, but it was never capped -- the
+same "unbounded growth on a hot path" bug class already fixed elsewhere in
+this codebase (RepairSystem.repair_history, EnergySystem.material_buffer),
+just newly introduced here since this list was previously unreachable dead
+code.
 """
 
 import unittest
@@ -40,6 +48,19 @@ class TestOrganismDamageReachesSensorArray(unittest.TestCase):
             "sensor array, not silently dropped")
         self.assertEqual(len(organism.sensor_array.damage_sensors), 3,
             "the underlying damage_sensors list itself must actually grow")
+
+    def test_damage_sensors_list_stays_bounded_across_many_events(self):
+        organism = ArtificialOrganism()
+        for _ in range(500):
+            organism.detect_damage((0.0, 0.0, 0.0), "tear", 0.1)
+
+        self.assertLessEqual(len(organism.sensor_array.damage_sensors), 200,
+            "damage_sensors must be capped instead of growing forever now "
+            "that detect_damage() actually reaches it on every real event")
+        self.assertEqual(
+            organism.sensor_array.get_status()['internal']['recent_damage'], 5,
+            "the reported recent_damage count (a fixed [-5:] slice) is "
+            "unaffected by capping the underlying list to a larger bound")
 
 
 if __name__ == '__main__':
