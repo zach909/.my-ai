@@ -4,15 +4,20 @@
 
 set -e
 
-# Modern color palette (tech/AI themed)
-BLUE='#3B82F6'      # Bright blue
-PURPLE='#8B5CF6'    # Violet/purple
-CYAN='#06B6D4'      # Cyan
-GREEN='#10B981'     # Emerald green
-YELLOW='#F59E0B'    # Amber
-RED='#EF4444'       # Red
-GRAY='#6B7280'      # Gray
-NC='\033[0m'        # No Color
+# Modern color palette (tech/AI themed). These must be real ANSI escape
+# codes for `echo -e` to render them as color -- a bare hex string like
+# "#3B82F6" is not an escape sequence and prints literally, e.g.
+# "#3B82F6Detected OS: Linux" instead of colored text. The hex values above
+# each name are the intended design colors; ANSI's fixed 16-color palette
+# can only approximate them, so these pick the closest standard color.
+BLUE='\033[0;34m'    # Bright blue   (#3B82F6)
+PURPLE='\033[0;35m'  # Violet/purple (#8B5CF6)
+CYAN='\033[0;36m'    # Cyan          (#06B6D4)
+GREEN='\033[0;32m'   # Emerald green (#10B981)
+YELLOW='\033[0;33m'  # Amber         (#F59E0B)
+RED='\033[0;31m'     # Red           (#EF4444)
+GRAY='\033[0;90m'    # Gray          (#6B7280)
+NC='\033[0m'         # No Color
 
 # Banner with gradient effect simulation
 echo ""
@@ -34,26 +39,43 @@ fi
 OS="$(uname -s)"
 echo -e "${BLUE}Detected OS: ${OS}${NC}"
 
-# Function to install dependencies
-install_dependencies() {
-    echo -e "    ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo -e "    ${PURPLE}Step 1${NC} ${GRAY}Installing dependencies...${NC}"
-    echo -e "    ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
-    echo ""
-    
+# Check required tools are installed and new enough. Side-effect-free (no
+# installs), so it can be exercised directly in tests without triggering a
+# real npm/pip install. Exits the whole script on failure, same as before
+# this was split out of install_dependencies().
+check_prerequisites() {
     # Check if Node.js is installed
     if ! command -v node &> /dev/null; then
         echo -e "    ${RED}✗ Node.js is not installed. Please install Node.js 18+ first.${NC}"
         echo "    Visit: https://nodejs.org/"
         exit 1
     fi
-    
+
+    # Check Node.js is new enough -- an old version passes the check above
+    # but fails confusingly later, deep inside npm/pnpm install or vite build
+    NODE_MAJOR="$(node -v | sed 's/^v//' | cut -d. -f1)"
+    if [ "$NODE_MAJOR" -lt 18 ]; then
+        echo -e "    ${RED}✗ Node.js 18+ required (found $(node -v)). Please upgrade.${NC}"
+        echo "    Visit: https://nodejs.org/"
+        exit 1
+    fi
+
     # Check if Python is installed
     if ! command -v python3 &> /dev/null; then
         echo -e "    ${RED}✗ Python 3 is not installed. Please install Python 3.11+ first.${NC}"
         exit 1
     fi
-    
+}
+
+# Function to install dependencies
+install_dependencies() {
+    echo -e "    ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo -e "    ${PURPLE}Step 1${NC} ${GRAY}Installing dependencies...${NC}"
+    echo -e "    ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
+    echo ""
+
+    check_prerequisites
+
     # Install Node.js dependencies
     echo -e "    ${GRAY}→ Installing Node.js dependencies...${NC}"
     if command -v pnpm &> /dev/null; then
@@ -75,10 +97,12 @@ install_dependencies() {
         fi
         # Activate virtual environment
         source venv/bin/activate
-        # Install requirements
-        pip3 install -r requirements.txt --disable-pip-version-check
-        deactivate
+        # Install requirements (inside the venv only -- installing again
+        # after deactivate would silently fall through to the system pip,
+        # polluting the global Python environment instead of the isolated
+        # venv this step just created)
         pip3 install -r requirements.txt --quiet --disable-pip-version-check
+        deactivate
     fi
     cd ..
     
@@ -347,5 +371,9 @@ main() {
     show_completion
 }
 
-# Run installer
-main
+# Run installer (skipped when sourced rather than executed directly, e.g.
+# by test/install-sh.test.sh, so its functions/variables can be exercised
+# without triggering a real npm install/build/desktop-shortcut run)
+if [[ "${BASH_SOURCE[0]}" == "${0}" ]]; then
+    main
+fi
