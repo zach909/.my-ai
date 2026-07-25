@@ -1404,6 +1404,71 @@ def test_local_plugins():
           "chrome-apps connector probes locally (no external call)")
 
 
+def test_email_plugin():
+    """The "Email" extension (design notes) was previously registered only as
+    an always-unavailable stub in _SERVICE_PLUGINS -- real send/receive via
+    stdlib smtplib/imaplib now backs it, configured through MYAI_SMTP_*/
+    MYAI_IMAP_* env vars. No live mail server in this environment, so SMTP/
+    IMAP themselves are mocked (real, standard practice for testing an
+    external-service integration); what's under test is that the plugin
+    builds the right calls, not that a real server accepts them."""
+    from unittest.mock import patch, MagicMock
+    from tinygpt.plugins import EmailPlugin
+
+    plugin = EmailPlugin()
+
+    with patch.dict(os.environ, {}, clear=True):
+        check(not plugin.available(), "email plugin reports unavailable with no config at all")
+        r = plugin.dispatch("send", "a@b.com|hi|body")
+        check(not r.ok and "not available on this host" in r.reason,
+              "dispatch()'s own availability gate (not the plugin's internal message) blocks an unconfigured send")
+
+    smtp_env = {"MYAI_SMTP_HOST": "smtp.example.com", "MYAI_SMTP_USER": "me@example.com",
+                "MYAI_SMTP_PASSWORD": "secret"}
+    with patch.dict(os.environ, smtp_env, clear=True):
+        check(plugin.available(), "email plugin reports available once SMTP config is present")
+
+        with patch("smtplib.SMTP") as MockSMTP:
+            mock_conn = MagicMock()
+            MockSMTP.return_value.__enter__.return_value = mock_conn
+            result = plugin.dispatch("send", "you@example.com|Subject line|Body text")
+            check(result.ok, "send succeeds when SMTP is configured and reachable (mocked)")
+            MockSMTP.assert_called_once_with("smtp.example.com", 587, timeout=10)
+            mock_conn.starttls.assert_called_once()
+            mock_conn.login.assert_called_once_with("me@example.com", "secret")
+            check(mock_conn.send_message.call_count == 1, "send actually calls send_message exactly once")
+            sent_msg = mock_conn.send_message.call_args[0][0]
+            check(sent_msg["To"] == "you@example.com" and sent_msg["Subject"] == "Subject line",
+                  "the constructed email carries the right To/Subject")
+            check(sent_msg.get_content().strip() == "Body text",
+                  "the constructed email carries the right body")
+
+        bad = plugin.dispatch("send", "onlyonefield")
+        check(bad.ok and "usage" in bad.output.lower(),
+              "a malformed send arg returns a usage message instead of crashing")
+
+    with patch.dict(os.environ, {}, clear=True):
+        no_imap = plugin._run("unread", "")
+        check("not configured" in no_imap, "reading mail without IMAP config reports what's missing, not a crash")
+
+    imap_env = {"MYAI_IMAP_HOST": "imap.example.com", "MYAI_IMAP_USER": "me@example.com",
+                "MYAI_IMAP_PASSWORD": "secret"}
+    with patch.dict(os.environ, imap_env, clear=True):
+        with patch("imaplib.IMAP4_SSL") as MockIMAP:
+            mock_conn = MagicMock()
+            MockIMAP.return_value.__enter__.return_value = mock_conn
+            mock_conn.search.return_value = ("OK", [b"1 2"])
+            mock_conn.fetch.side_effect = [
+                ("OK", [(b"1 (RFC822.HEADER)", b"From: a@x.com\r\nSubject: First\r\n\r\n")]),
+                ("OK", [(b"2 (RFC822.HEADER)", b"From: b@x.com\r\nSubject: Second\r\n\r\n")]),
+            ]
+            out = plugin._run("list", "")
+            mock_conn.login.assert_called_once_with("me@example.com", "secret")
+            mock_conn.select.assert_called_once_with("INBOX")
+            check("a@x.com" in out and "First" in out, "list surfaces the first message's From/Subject")
+            check("b@x.com" in out and "Second" in out, "list surfaces the second message's From/Subject")
+
+
 def test_browser_server():
     """"Runs on your machine": the browser backend (interface/server.py) reuses
     tinygpt.infer.Generator, the exact code path chat.py uses, so the CLI and
@@ -1671,7 +1736,7 @@ def main():
                test_continuous_input_buffer, test_neurolang_dictionary,
                test_plugin_skill_registry, test_skills_attach_to_mesh,
                test_quantum_interference_in_mesh, test_local_encryption,
-               test_encrypted_memory, test_output_layer, test_local_plugins,
+               test_encrypted_memory, test_output_layer, test_local_plugins, test_email_plugin,
                test_plugin_builder, test_skill_builder, test_learn_and_extend,
                test_install_community_extension, test_self_healing,
                test_browser_server,

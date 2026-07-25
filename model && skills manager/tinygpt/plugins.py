@@ -222,6 +222,109 @@ class _JsonStorePlugin(Plugin):
         return f"unknown {self._kind} command {cmd!r} (use add|list|clear)"
 
 
+class EmailPlugin(Plugin):
+    """Real email send/receive over the network: SMTP to send, IMAP to read the
+    inbox. Uses only Python's own stdlib (smtplib, imaplib, email) -- no bundled
+    mail-provider SDK, no third-party API service in front of it -- and reads
+    the server + credentials from environment variables, the same pattern
+    `MYAI_PASSPHRASE` already uses for local memory encryption.
+
+    This is the "Email" extension the design notes list among the AI's
+    connectable services; it was previously registered only as an
+    always-unavailable stub (a bare `Plugin` instance in `_SERVICE_PLUGINS`,
+    honest about there being no real implementation behind it, but never
+    actually implemented). Unlike this registry's other plugins, sending mail
+    is a genuine outbound network action, not a purely local one -- documented
+    here rather than silently treated the same as the local-only plugins.
+    """
+
+    def __init__(self):
+        super().__init__("email", "Email", "os.mail", ["send", "list", "unread"])
+
+    def _smtp_config(self) -> Optional[tuple]:
+        host = os.environ.get("MYAI_SMTP_HOST")
+        user = os.environ.get("MYAI_SMTP_USER")
+        password = os.environ.get("MYAI_SMTP_PASSWORD")
+        if not (host and user and password):
+            return None
+        port = int(os.environ.get("MYAI_SMTP_PORT", "587"))
+        return host, port, user, password
+
+    def _imap_config(self) -> Optional[tuple]:
+        host = os.environ.get("MYAI_IMAP_HOST")
+        user = os.environ.get("MYAI_IMAP_USER") or os.environ.get("MYAI_SMTP_USER")
+        password = os.environ.get("MYAI_IMAP_PASSWORD") or os.environ.get("MYAI_SMTP_PASSWORD")
+        if not (host and user and password):
+            return None
+        port = int(os.environ.get("MYAI_IMAP_PORT", "993"))
+        return host, port, user, password
+
+    def available(self) -> bool:
+        return self._smtp_config() is not None or self._imap_config() is not None
+
+    def _run(self, command: str, arg: str) -> str:
+        cmd = (command or "list").strip().lower()
+        if cmd == "send":
+            return self._send(arg)
+        if cmd in ("list", "unread"):
+            return self._fetch(unread_only=(cmd == "unread"))
+        return f"unknown email command {cmd!r} (use send|list|unread)"
+
+    def _send(self, arg: str) -> str:
+        cfg = self._smtp_config()
+        if cfg is None:
+            return ("email send not configured -- set MYAI_SMTP_HOST, MYAI_SMTP_USER, "
+                    "MYAI_SMTP_PASSWORD (optionally MYAI_SMTP_PORT, default 587)")
+        parts = arg.split("|", 2)
+        if len(parts) < 3 or not parts[0].strip():
+            return "usage: plugin: email send <to>|<subject>|<body>"
+        to, subject, body = (p.strip() for p in parts)
+        host, port, user, password = cfg
+        import smtplib
+        from email.message import EmailMessage
+        msg = EmailMessage()
+        msg["From"] = user
+        msg["To"] = to
+        msg["Subject"] = subject
+        msg.set_content(body)
+        if port == 465:
+            with smtplib.SMTP_SSL(host, port, timeout=10) as s:
+                s.login(user, password)
+                s.send_message(msg)
+        else:
+            with smtplib.SMTP(host, port, timeout=10) as s:
+                s.starttls()
+                s.login(user, password)
+                s.send_message(msg)
+        return f"sent to {to}: {subject!r}"
+
+    def _fetch(self, unread_only: bool) -> str:
+        cfg = self._imap_config()
+        if cfg is None:
+            return ("email read not configured -- set MYAI_IMAP_HOST, MYAI_IMAP_USER "
+                    "(or MYAI_SMTP_USER), MYAI_IMAP_PASSWORD (or MYAI_SMTP_PASSWORD)")
+        host, port, user, password = cfg
+        import imaplib
+        import email as email_lib
+        with imaplib.IMAP4_SSL(host, port, timeout=10) as m:
+            m.login(user, password)
+            m.select("INBOX")
+            typ, data = m.search(None, "UNSEEN" if unread_only else "ALL")
+            if typ != "OK":
+                return f"IMAP search failed: {typ}"
+            ids = data[0].split() if data and data[0] else []
+            lines = []
+            for msg_id in reversed(ids[-10:]):
+                typ, msg_data = m.fetch(msg_id, "(RFC822.HEADER)")
+                if typ != "OK" or not msg_data or not msg_data[0]:
+                    continue
+                header = email_lib.message_from_bytes(msg_data[0][1])
+                lines.append(f"{header.get('From', '?')} -- {header.get('Subject', '(no subject)')}")
+        if not lines:
+            return "(no unread messages)" if unread_only else "(inbox empty)"
+        return "\n".join(lines)
+
+
 class ChromeAppsPlugin(Plugin):
     """Chrome applications connector: detects a locally-installed Chrome/Chromium
     and reports the launch command for a local app (it does not open a network
@@ -261,6 +364,7 @@ _PLUGIN_CLASSES: Dict[str, Callable[[], Plugin]] = {
     "account-info": AccountInfoPlugin,
     "device-connectivity": DeviceConnectivityPlugin,
     "browser": ChromeAppsPlugin,
+    "email": EmailPlugin,
 }
 
 # id -> (display name, service, kind) for the local JSON-store plugins.
@@ -283,7 +387,6 @@ _SERVICE_PLUGINS: List = [
     ("voice-activation", "Voice Activation", "hw.microphone"),
     ("phone-calls", "Phone Calls", "os.telephony"),
     ("call-history", "Call History", "os.telephony"),
-    ("email", "Email", "os.mail"),
     ("radio", "Radio", "hw.radio"),
     ("passkeys", "Passkeys", "os.keystore"),
 ]
