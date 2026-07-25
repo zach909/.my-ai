@@ -10,7 +10,7 @@
     "lint:css": "stylelint \"src/**/*.css\" --fix --quiet",
     "lint:js": "eslint . --ext ts,tsx --report-unused-disable-directives",
     "lint:types": "tsc --noEmit",
-    "lint": "bun run lint:types && bun run lint:js && bun run lint:css"
+    "lint": "npm run lint:types && npm run lint:js && npm run lint:css"
   },
   "devDependencies": {
     "typescript": "~6.0.2",
