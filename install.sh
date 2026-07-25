@@ -67,6 +67,33 @@ check_prerequisites() {
     fi
 }
 
+# True when running inside WSL (Windows Subsystem for Linux). Side-effect-free
+# so it's safe to call from create_linux_shortcut() and from tests alike.
+is_wsl() {
+    [ -n "${WSL_DISTRO_NAME:-}" ] && return 0
+    [ -n "${WSL_INTEROP:-}" ] && return 0
+    [ -r /proc/sys/kernel/osrelease ] && grep -qi microsoft /proc/sys/kernel/osrelease 2>/dev/null
+}
+
+# Run a command whose real output is normally suppressed (--silent/--quiet
+# install steps). `set -e` alone would kill the script here with zero
+# explanation -- bash prints nothing when a `set -e`-tracked command fails,
+# so a quiet failing install looks identical to a quiet successful one until
+# later steps start breaking for reasons that look unrelated (e.g. desktop
+# integration never running, or `npm run lint` failing on missing tools).
+# Wrapping the command in this `if` also stops `set -e` from firing on it at
+# all, which is what lets us print a real diagnostic before exiting ourselves.
+run_step() {
+    local error_message="$1"
+    shift
+    if ! "$@"; then
+        echo ""
+        echo -e "    ${RED}✗ ${error_message}${NC}"
+        echo -e "    ${GRAY}→ Re-run manually to see the full error: ${NC}$*"
+        exit 1
+    fi
+}
+
 # Function to install dependencies
 install_dependencies() {
     echo -e "    ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
@@ -79,21 +106,21 @@ install_dependencies() {
     # Install Node.js dependencies
     echo -e "    ${GRAY}→ Installing Node.js dependencies...${NC}"
     if command -v pnpm &> /dev/null; then
-        pnpm install --silent
+        run_step "pnpm install failed" pnpm install --silent
     elif command -v npm &> /dev/null; then
-        npm install --silent
+        run_step "npm install failed" npm install --silent
     else
         echo -e "    ${RED}✗ Neither pnpm nor npm found. Please install a package manager.${NC}"
         exit 1
     fi
-    
+
     # Install Python dependencies
     echo -e "    ${GRAY}→ Installing Python dependencies...${NC}"
     cd "model && skills manager"
     if [ -f "requirements.txt" ]; then
         # Create virtual environment if it doesn't exist
         if [ ! -d "venv" ]; then
-            python3 -m venv venv
+            run_step "python3 -m venv venv failed" python3 -m venv venv
         fi
         # Activate virtual environment
         source venv/bin/activate
@@ -101,7 +128,7 @@ install_dependencies() {
         # after deactivate would silently fall through to the system pip,
         # polluting the global Python environment instead of the isolated
         # venv this step just created)
-        pip3 install -r requirements.txt --quiet --disable-pip-version-check
+        run_step "pip3 install -r requirements.txt failed" pip3 install -r requirements.txt --quiet --disable-pip-version-check
         deactivate
     fi
     cd ..
@@ -117,7 +144,7 @@ build_app() {
     echo -e "    ${CYAN}━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━${NC}"
     echo ""
     
-    npm run build --silent
+    run_step "npm run build failed" npm run build --silent
     echo -e "    ${GREEN}✓ Application built successfully${NC}"
     echo ""
 }
@@ -180,8 +207,18 @@ StartupNotify=true
 DESKTOP_ENTRY
 
     chmod +x "$DESKTOP_FILE"
-    
-    # Also create a desktop icon on the actual desktop if it exists
+
+    # Best-effort: refresh the desktop-entry cache so the new app shows up in
+    # the applications menu immediately instead of only after the next login.
+    command -v update-desktop-database &> /dev/null && \
+        update-desktop-database "$HOME/.local/share/applications" &> /dev/null || true
+
+    # Also create a desktop icon on the actual desktop if the folder exists --
+    # but on WSL, $HOME is the Linux-side home directory, which has no
+    # Desktop folder even though the user does have a real Windows desktop
+    # (it lives under /mnt/c/Users/<name>/Desktop instead). Silently doing
+    # nothing here used to leave the user thinking installation had failed;
+    # now every case prints exactly what happened and why.
     if [ -d "$HOME/Desktop" ]; then
         cat > "$HOME/Desktop/neuroclaw.desktop" << DESKTOP_LINK
 [Desktop Entry]
@@ -192,10 +229,26 @@ URL=$DESKTOP_FILE
 Icon=$HOME/.local/share/icons/neuroclaw.svg
 DESKTOP_LINK
         chmod +x "$HOME/Desktop/neuroclaw.desktop"
+        # GNOME/Nautilus refuses to treat a new .desktop file dropped onto the
+        # Desktop as a real launcher until it's marked "trusted" -- without
+        # this it shows up as an inert file with a warning badge, not a
+        # working icon, which looks identical to "nothing was installed".
+        command -v gio &> /dev/null && \
+            gio set "$HOME/Desktop/neuroclaw.desktop" metadata::trusted true &> /dev/null || true
+        echo -e "    ${GREEN}✓ Desktop integration complete${NC}"
+        echo -e "    ${GRAY}→ Icon added to your Desktop and applications menu${NC}"
+    elif is_wsl; then
+        echo -e "    ${GREEN}✓ Desktop integration complete${NC}"
+        echo -e "    ${GRAY}→ Find Neuroclaw in your applications menu${NC}"
+        echo -e "    ${YELLOW}Note:${NC} running under WSL, which has no Linux-side"
+        echo -e "    ${GRAY}  ~/Desktop folder -- your real Windows desktop can't be${NC}"
+        echo -e "    ${GRAY}  written to automatically. Launch with ./start.sh instead,${NC}"
+        echo -e "    ${GRAY}  or pin a shortcut to it yourself.${NC}"
+    else
+        echo -e "    ${GREEN}✓ Desktop integration complete${NC}"
+        echo -e "    ${GRAY}→ Find Neuroclaw in your applications menu${NC}"
+        echo -e "    ${GRAY}  (no ~/Desktop folder found, so no icon was placed there)${NC}"
     fi
-    
-    echo -e "    ${GREEN}✓ Desktop integration complete${NC}"
-    echo -e "    ${GRAY}→ Find Neuroclaw in your applications menu${NC}"
     echo ""
 }
 
