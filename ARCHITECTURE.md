@@ -1492,6 +1492,22 @@ Caught by my own test, not by a deliberate revert-and-check: `test_web_plugin`'s
 
 `python3 test_core.py`: 249/249 passed (up from 236 — 13 new checks).
 
+### Every Electron IPC handler in `desktop-app/` was silently receiving the wrong argument (`desktop-app/src/main/main.js`)
+
+Found auditing `desktop-app/` — a separate, standalone Electron project (its own `package.json`, `npm start` → `electron .`) added in an earlier round and never audited since. Electron's documented contract for `ipcMain.handle(channel, listener)` is that `listener` is always invoked as `(event, ...args)`: the injected `IpcMainInvokeEvent` is always the first parameter, real caller arguments start at position two. Every handler here that takes at least one argument — `select-file`, `read-file`, `write-file`, `spawn-process`, `exec-command`, `open-external`, `show-in-folder` — omitted that leading `event` parameter, so every declared parameter was bound one position early: the first named parameter received the event object instead of the real argument, and the true last argument the renderer passed was silently dropped entirely.
+
+This wasn't a hypothetical: `preload.js` itself gets the contract right two lines away (`ipcRenderer.on('process-output', (event, data) => callback(data))`), making the omission in `main.js` an inconsistency, not an intentional design choice. The failure mode splits into two shapes:
+- `read-file`/`write-file`/`exec-command`/`spawn-process`/`open-external`/`show-in-folder`: the first real argument (a file path, a command, a URL) got passed to a Node/Electron API expecting a string, where an object was received instead — `fs.readFileSync(event, 'utf-8')` and friends throw `TypeError`, caught by each handler's own try/catch (where one exists) and surfaced as a generic `{success: false}` failure with no indication of the real cause.
+- `select-file`: no throw at all — `options` (the caller's real filters/title) is silently discarded, and the dialog always falls back to its `[]`/`'Select File'` defaults regardless of what was actually requested. A silent-wrong-output bug, not a crash.
+
+This is the entire native-OS integration surface of a shipped, standalone app, and its own `README.md`'s "Features" section documents these as working ("File System Access: Read/write files, select directories"; "Process Management: Spawn and execute native commands") — none of it worked as documented.
+
+Fixed by adding the leading `event` parameter to all seven affected handlers.
+
+No real Electron runtime is installed in this environment (`desktop-app/` has no `node_modules` — `electron` is a devDependency, never `npm install`ed here, and downloading it just to test would be a heavy, environment-specific dependency this fix doesn't actually need). Verified instead with a lightweight mock of Electron's module surface (`desktop-app/test/ipc-handlers.test.js`, run via `npm test` in that directory): `require('electron')` is redirected via `Module._resolveFilename` (the same technique `proxyquire`/`rewire` use) to a fake `app`/`BrowserWindow`/`ipcMain`/`dialog`/`shell`, `ipcMain.handle()` is captured into a map instead of registering with a real IPC bus, and each of the seven handlers is invoked directly with a fake event object followed by real arguments — exercising the actual production handler functions, not a reimplementation of their logic. Covers a real file read/write round-trip, a real `echo` both via `exec` and via `spawn`, and — specifically for the silent-wrong-output case — asserts `dialog.showOpenDialog` was actually called with the caller's real `filters`/`title`, not the defaults.
+
+Proved the test isn't vacuous: reverted the `read-file` fix alone, confirmed exactly that one check failed (8/9), restored, confirmed a clean 9/9.
+
 ### What this is, honestly
 
 This is deterministic, local, token/structure-based reasoning and bookkeeping — not a claim of general intelligence or subjective understanding. It gives the system a real, testable **scaffold** for the behaviors §1–§13 describe (decompose, delegate, recall, avoid repeated mistakes, calibrate confidence, transfer structurally similar methods, improve only on measured gains) built out of the project's existing primitives (the Value System, the hive, long-term memory, the neural runner). Actual capability on any given problem is still bounded by what the underlying neural pipeline and MoE experts can do — this layer organizes and directs that capability rather than manufacturing new raw intelligence out of bookkeeping.
