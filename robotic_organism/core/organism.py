@@ -116,6 +116,15 @@ class ArtificialOrganism:
     
     def detect_damage(self, location: tuple, damage_type: str, severity: float):
         """Report damage to the organism."""
+        # Report to the sensor array too -- the brain's own damage-sensor
+        # readings (sensor_array.update()/get_status()'s "damage_reports"/
+        # "recent_damage" counts) are separate bookkeeping from the repair
+        # system's queue below, and only sensor_array.detect_damage() appends
+        # to it. Without this call those counts stay permanently at 0
+        # regardless of real damage, contradicting sensors.py's own "the
+        # brain receives information about the entire body" docstring.
+        self.sensor_array.detect_damage(location=location, severity=severity)
+
         # Report to repair system
         self.repair_system.detect_damage(
             location=location,
