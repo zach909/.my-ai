@@ -19,9 +19,21 @@ class ScreenshotPlugin(Plugin):
         }
         self._recorder = None
 
+    def _safe_path(self, path: str) -> str:
+        # Prevent argument injection and path traversal outside of CWD and /tmp
+        if path.strip().startswith("-"):
+            raise ValueError("Security Error: Potential argument injection.")
+        target = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+        cwd = os.path.realpath(os.getcwd())
+        tmp = os.path.realpath("/tmp")
+        if not (target.startswith(cwd + os.sep) or target == cwd or target.startswith(tmp + os.sep) or target == tmp):
+            raise ValueError("Security Error: Path traversal outside of allowed directories.")
+        return target
+
     def _capture(self, path: str = None) -> str:
         if path is None:
             path = f"/tmp/screenshot_{int(time.time())}.png"
+        path = self._safe_path(path)
         for tool, args in [
             ("scrot",           [path]),
             ("gnome-screenshot", ["-f", path]),
@@ -37,6 +49,7 @@ class ScreenshotPlugin(Plugin):
     def _capture_area(self, x: int, y: int, w: int, h: int, path: str = None) -> str:
         if path is None:
             path = f"/tmp/area_{int(time.time())}.png"
+        path = self._safe_path(path)
         for tool, args in [
             ("scrot",  ["-a", f"{x},{y},{w},{h}", path]),
             ("import", ["-crop", f"{w}x{h}+{x}+{y}", "root:", path]),
@@ -50,6 +63,7 @@ class ScreenshotPlugin(Plugin):
     def _record(self, path: str = None, fps: int = 25) -> str:
         if path is None:
             path = f"/tmp/recording_{int(time.time())}.mp4"
+        path = self._safe_path(path)
         for tool, args in [
             ("ffmpeg",  ["-f", "x11grab", "-r", str(fps), "-i", ":0.0",
                          "-c:v", "libx264", "-preset", "fast", path]),
