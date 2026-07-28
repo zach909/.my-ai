@@ -19,6 +19,15 @@ class ScreenshotPlugin(Plugin):
         }
         self._recorder = None
 
+    def _safe_path(self, path: str) -> str:
+        # Prevent argument injection and path traversal outside of CWD and /tmp
+        if path.strip().startswith("-"):
+            raise ValueError("Security Error: Potential argument injection.")
+        target = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+        cwd = os.path.realpath(os.getcwd())
+        tmp = os.path.realpath("/tmp")
+        if not (target.startswith(cwd + os.sep) or target == cwd or target.startswith(tmp + os.sep) or target == tmp):
+            raise ValueError("Security Error: Path traversal outside of allowed directories.")
     def _safe_path(self, path: Optional[str], default_filename: str) -> str:
         if path is None:
             return os.path.join("/tmp", default_filename)
