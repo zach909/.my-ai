@@ -15,6 +15,8 @@ export class MoERouter {
         this.utilization = new Map();
         this.routerWeights = new Float32Array(this.config.inputDim * this.config.expertCount);
         this.routerBias = new Float32Array(this.config.expertCount);
+        this.scoresScratch = new Array(this.config.expertCount);
+        this.selectScratch = new Int32Array(this.config.expertCount);
         this.initializeExpertWeights();
         this.initializeExperts();
     }
@@ -199,6 +201,8 @@ export class MoERouter {
         const newBias = new Float32Array(newCount);
         newBias.set(this.routerBias);
         this.routerBias = newBias;
+        this.scoresScratch = new Array(newCount);
+        this.selectScratch = new Int32Array(newCount);
         this.config.expertCount = newCount;
     }
     removeExpert(expertId) {
@@ -232,6 +236,8 @@ export class MoERouter {
         this.utilization = newUtil;
         this.routerWeights = newWeights;
         this.routerBias = newBias;
+        this.scoresScratch = new Array(survivors.length);
+        this.selectScratch = new Int32Array(survivors.length);
         this.config.expertCount = survivors.length;
         return true;
     }
@@ -262,9 +268,8 @@ export class MoERouter {
     }
     computeRouterScores(input) {
         const expertCount = this.config.expertCount;
-        // OPTIMIZATION: Use direct JS array instead of Float64Array + Array.from to avoid
-        // TypedArray initialization overhead and conversion pass.
-        const scores = new Array(expertCount);
+        // OPTIMIZATION: Use pre-allocated scoresScratch array to avoid GC and allocations.
+        const scores = this.scoresScratch;
         for (let e = 0; e < expertCount; e++) {
             scores[e] = this.routerBias[e];
         }
@@ -280,10 +285,44 @@ export class MoERouter {
         return scores;
     }
     selectTopK(scores) {
-        // OPTIMIZATION: Direct Int32Array index-sorting. Avoids object creation per score
-        // and multiple array mapping passes. Highly memory efficient.
         const k = Math.min(this.config.topK, scores.length);
-        const indices = new Int32Array(scores.length);
+        // OPTIMIZATION: Avoid sorting and allocations for small k
+        if (k === 1) {
+            let maxIdx = 0;
+            let maxVal = scores[0];
+            for (let i = 1; i < scores.length; i++) {
+                if (scores[i] > maxVal) {
+                    maxVal = scores[i];
+                    maxIdx = i;
+                }
+            }
+            return [maxIdx];
+        }
+        else if (k === 2 && scores.length >= 2) {
+            let max0 = 0, max1 = 1;
+            if (scores[1] > scores[0]) {
+                max0 = 1;
+                max1 = 0;
+            }
+            let val0 = scores[max0];
+            let val1 = scores[max1];
+            for (let i = 2; i < scores.length; i++) {
+                const val = scores[i];
+                if (val > val0) {
+                    val1 = val0;
+                    max1 = max0;
+                    val0 = val;
+                    max0 = i;
+                }
+                else if (val > val1) {
+                    val1 = val;
+                    max1 = i;
+                }
+            }
+            return [max0, max1];
+        }
+        // OPTIMIZATION: Reuse pre-allocated selectScratch buffer to avoid allocations.
+        const indices = this.selectScratch;
         for (let i = 0; i < scores.length; i++) {
             indices[i] = i;
         }
@@ -295,11 +334,23 @@ export class MoERouter {
         return result;
     }
     softmax(values) {
+        const len = values.length;
+        // OPTIMIZATION: Specialize softmax for len === 1 and len === 2 to bypass allocation
+        if (len === 1) {
+            return [1.0];
+        }
+        else if (len === 2) {
+            const v0 = values[0], v1 = values[1];
+            const max = v0 > v1 ? v0 : v1;
+            const e0 = Math.exp(v0 - max);
+            const e1 = Math.exp(v1 - max);
+            const sum = e0 + e1;
+            return [e0 / sum, e1 / sum];
+        }
         // OPTIMIZATION: Single-pass loops over standard arrays without spread operator
         // or nested/higher-order functions, avoiding GC and engine optimization boundaries.
-        let max = 0;
-        const len = values.length;
-        for (let i = 0; i < len; i++) {
+        let max = values[0];
+        for (let i = 1; i < len; i++) {
             if (values[i] > max) {
                 max = values[i];
             }
