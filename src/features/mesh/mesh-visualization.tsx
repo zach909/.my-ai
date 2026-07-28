@@ -8,9 +8,9 @@
  * Provides camera orbit controls for inspection.
  */
 
-import { useRef, useMemo, useEffect } from 'react';
+import { useRef, useMemo } from 'react';
 import { Canvas, useFrame, type ThreeEvent } from '@react-three/fiber';
-import { OrbitControls, Text, Line } from '@react-three/drei';
+import { OrbitControls, Text } from '@react-three/drei';
 import * as THREE from 'three';
 import type { MeshState, Neuron } from '@/features/mesh/types';
 
@@ -115,7 +115,7 @@ interface MeshConnectionsProps {
   dims: number;
 }
 
-function MeshConnections({ neuronPositions, meshState, dims }: MeshConnectionsProps) {
+function MeshConnections({ neuronPositions, meshState }: MeshConnectionsProps) {
   const lines: THREE.Vector3[][] = [];
 
   for (let i = 0; i < meshState.neurons.length; i++) {
@@ -139,7 +139,6 @@ function MeshConnections({ neuronPositions, meshState, dims }: MeshConnectionsPr
     <group>
       {lines.map(([a, b], idx) => {
         // Connection opacity based on co-activation strength
-        const midpoint = a.clone().add(b).multiplyScalar(0.5);
         const len = a.distanceTo(b);
         const opacity = Math.min(1, len > 2 ? 0.5 : 0.8);
 

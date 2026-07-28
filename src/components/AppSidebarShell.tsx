@@ -85,7 +85,8 @@ export function AppSidebarShell() {
   // differ from the server markup → hydration mismatch on hard refresh.
   const [collapsed, setCollapsed] = useState(false)
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time restore of a persisted preference; reading localStorage in the useState initializer causes an SSR hydration mismatch
+    // Mount-time restore of a persisted preference; reading localStorage in
+    // the useState initializer would cause an SSR hydration mismatch instead.
     if (localStorage.getItem(SIDEBAR_KEY) === 'true') setCollapsed(true)
   }, [])
 

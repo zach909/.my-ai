@@ -17,8 +17,6 @@ import {
   Zap,
   Brain,
   Activity,
-  ChevronDown,
-  ChevronUp,
 } from 'lucide-react';
 import type { MeshStats, Neuron } from '@/features/mesh/types';
 
