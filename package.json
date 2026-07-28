@@ -17,6 +17,12 @@
     "bench": "bun run bench:hyper && bun run bench:mesh && bun run bench:moe"
   },
   "devDependencies": {
+    "@types/node": "^26.1.1",
+    "@types/react": "^19.2.17",
+    "@types/react-dom": "^19.2.3",
+    "@types/three": "^0.185.1",
+    "react": "^19.2.8",
+    "react-dom": "^19.2.8",
     "@types/react": "^19.2.17",
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.185.1",
