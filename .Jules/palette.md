@@ -9,3 +9,7 @@
 ## 2026-07-22 - [Accessible Input Association & Icon Button Accessibility]
 **Learning:** To make sliders and text inputs screen-reader accessible and descriptive, they must be explicitly associated with their respective label elements using matching `id` and `htmlFor` attributes. Additionally, icon-only buttons require descriptive `aria-label` and matching `title` properties to guarantee that assistive technologies can read their purpose, and hover interactions provide clear tooltips.
 **Action:** Always link visual label texts to input controls with `htmlFor` and `id`, and provide both `aria-label` and `title` to visual-only icon buttons.
+
+## 2026-07-28 - [TanStack Router Link Refactoring & Interactive Sidebar Polish]
+**Learning:** Replacing raw `<a>` tags with TanStack Router `<Link>` and dynamic `activeProps` in nav menus eliminates full-page reloads and guarantees synchronized, accurate route highlighting. Pairing this with descriptive `aria-label` definitions on icon-only/collapsed states and tactile transition feedback (`active:scale-95`) provides an extremely polished and accessible SPA feel.
+**Action:** Always prefer framework-native routing links over raw anchor elements for navigation menus, and explicitly apply a11y labels and focus rings to all sidebar control actions.
