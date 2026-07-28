@@ -1,4 +1,4 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Cpu, FlaskConical, Network, Brain } from 'lucide-react'
 
@@ -30,7 +30,7 @@ function DashboardHome() {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {MODULES.map(({ title, description, icon: Icon, href }) => (
-          <a key={title} href={href}>
+          <Link key={title} to={href as any}>
             <Card className="h-full transition-colors hover:border-primary/50 cursor-pointer">
               <CardHeader className="flex flex-row items-center gap-3 pb-2">
                 <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary">
@@ -42,7 +42,7 @@ function DashboardHome() {
                 <p className="text-sm text-muted-foreground">{description}</p>
               </CardContent>
             </Card>
-          </a>
+          </Link>
         ))}
       </div>
     </div>
