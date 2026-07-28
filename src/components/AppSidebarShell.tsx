@@ -11,6 +11,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
+import { Link } from '@tanstack/react-router'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,7 +39,6 @@ interface NavItemDef {
   href: string
   icon: ReactNode
   label: string
-  active?: boolean
 }
 
 // Every href here MUST have a real route file, and every page you add under
@@ -46,7 +46,7 @@ interface NavItemDef {
 // 404. Only the shipped dashboard route is listed; add yours as you create them,
 // e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
-  { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard', active: true },
+  { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
   { href: '/app/experiments', icon: <FlaskConical className="h-4 w-4" />, label: 'Experiments' },
   { href: '/app/architecture', icon: <Network className="h-4 w-4" />, label: 'Architecture' },
   { href: '/app/knowledge', icon: <Brain className="h-4 w-4" />, label: 'Knowledge & Reasoning' },
@@ -56,19 +56,23 @@ const NAV_ITEMS: NavItemDef[] = [
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {
   const link = (
-    <a
-      href={item.href}
+    <Link
+      to={item.href as any}
+      activeOptions={{ exact: true }}
+      activeProps={{
+        className: 'bg-accent text-foreground font-medium',
+      }}
+      inactiveProps={{
+        className: 'text-muted-foreground hover:bg-accent hover:text-foreground',
+      }}
       className={cn(
         'flex items-center gap-2.5 rounded-md text-sm transition-colors cursor-pointer',
-        collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full',
-        item.active
-          ? 'bg-accent text-foreground font-medium'
-          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+        collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full'
       )}
     >
       <span className="shrink-0">{item.icon}</span>
       {!collapsed && <span className="truncate">{item.label}</span>}
-    </a>
+    </Link>
   )
   if (!collapsed) return link
   return (
