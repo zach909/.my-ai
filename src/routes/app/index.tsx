@@ -30,13 +30,19 @@ function DashboardHome() {
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
         {MODULES.map(({ title, description, icon: Icon, href }) => (
+          <Link
+            key={title}
+            to={href}
+            className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] transition-transform duration-100"
+          >
+            <Card className="h-full transition-colors group-hover:border-primary/50 cursor-pointer">
           <Link key={title} to={href as any}>
             <Card className="h-full transition-colors hover:border-primary/50 cursor-pointer">
               <CardHeader className="flex flex-row items-center gap-3 pb-2">
-                <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary">
+                <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary group-hover:bg-primary/20 transition-colors">
                   <Icon className="h-4 w-4" />
                 </div>
-                <CardTitle className="text-sm font-medium">{title}</CardTitle>
+                <CardTitle className="text-sm font-medium group-hover:text-primary transition-colors">{title}</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground">{description}</p>
