@@ -28,6 +28,47 @@ class ScreenshotPlugin(Plugin):
         tmp = os.path.realpath("/tmp")
         if not (target.startswith(cwd + os.sep) or target == cwd or target.startswith(tmp + os.sep) or target == tmp):
             raise ValueError("Security Error: Path traversal outside of allowed directories.")
+    def _safe_path(self, path: Optional[str], default_filename: str) -> str:
+        if path is None:
+            return os.path.join("/tmp", default_filename)
+        path_str = path.strip()
+        if path_str.startswith("-"):
+            raise ValueError("Security Error: Invalid path (potential argument injection)")
+        # Resolve target path
+        target = os.path.realpath(os.path.abspath(os.path.expanduser(path_str)))
+        cwd = os.path.realpath(os.getcwd())
+        tmp = os.path.realpath("/tmp")
+        # Check if it starts with cwd or tmp
+        is_in_cwd = os.path.commonpath([target, cwd]) == cwd
+        is_in_tmp = os.path.commonpath([target, tmp]) == tmp
+        if not (is_in_cwd or is_in_tmp):
+            raise ValueError("Security Error: Path traversal detected. Path must be within the current working directory or /tmp")
+        return target
+
+    def _capture(self, path: str = None) -> str:
+        path = self._safe_path(path, f"screenshot_{int(time.time())}.png")
+    def _safe_path(self, path: str) -> str:
+        """Validate and resolve target paths to prevent path traversal and argument injection.
+
+        Enforces that target paths remain either within the current working directory or /tmp directory.
+        """
+        if path.strip().startswith("-"):
+            raise ValueError("Security Error: Potential argument injection detected in path.")
+
+        target = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+
+        cwd = os.path.realpath(os.getcwd())
+        tmp_resolved = os.path.realpath("/tmp")
+
+        rel_cwd = os.path.relpath(target, cwd)
+        rel_tmp = os.path.relpath(target, tmp_resolved)
+
+        is_inside_cwd = not rel_cwd.startswith("..") and not os.path.isabs(rel_cwd)
+        is_inside_tmp = not rel_tmp.startswith("..") and not os.path.isabs(rel_tmp)
+
+        if not (is_inside_cwd or is_inside_tmp):
+            raise ValueError("Security Error: Path traversal or unauthorized path detected.")
+
         return target
 
     def _capture(self, path: str = None) -> str:
@@ -47,6 +88,7 @@ class ScreenshotPlugin(Plugin):
         return "No screenshot tool available"
 
     def _capture_area(self, x: int, y: int, w: int, h: int, path: str = None) -> str:
+        path = self._safe_path(path, f"area_{int(time.time())}.png")
         if path is None:
             path = f"/tmp/area_{int(time.time())}.png"
         path = self._safe_path(path)
@@ -61,6 +103,7 @@ class ScreenshotPlugin(Plugin):
         return "No area screenshot tool available"
 
     def _record(self, path: str = None, fps: int = 25) -> str:
+        path = self._safe_path(path, f"recording_{int(time.time())}.mp4")
         if path is None:
             path = f"/tmp/recording_{int(time.time())}.mp4"
         path = self._safe_path(path)

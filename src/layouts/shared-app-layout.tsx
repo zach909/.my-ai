@@ -19,6 +19,7 @@ export type SharedLayoutContextValue = {
 const SharedLayoutContext = createContext<SharedLayoutContextValue | null>(null)
 
 /** Use inside routes/pages that need app name or layout metadata — never for duplicating Shell. */
+// eslint-disable-next-line react-refresh/only-export-components -- hook, not a component; belongs with SharedAppLayout, its provider
 export function useSharedLayout(): SharedLayoutContextValue {
   const ctx = useContext(SharedLayoutContext)
   if (!ctx) {

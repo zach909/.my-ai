@@ -11,6 +11,7 @@
  */
 import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
+import { Link } from '@tanstack/react-router'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -38,7 +39,6 @@ interface NavItemDef {
   href: string
   icon: ReactNode
   label: string
-  active?: boolean
 }
 
 // Every href here MUST have a real route file, and every page you add under
@@ -46,7 +46,7 @@ interface NavItemDef {
 // 404. Only the shipped dashboard route is listed; add yours as you create them,
 // e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
-  { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard', active: true },
+  { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
   { href: '/app/experiments', icon: <FlaskConical className="h-4 w-4" />, label: 'Experiments' },
   { href: '/app/architecture', icon: <Network className="h-4 w-4" />, label: 'Architecture' },
   { href: '/app/knowledge', icon: <Brain className="h-4 w-4" />, label: 'Knowledge & Reasoning' },
@@ -56,19 +56,28 @@ const NAV_ITEMS: NavItemDef[] = [
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {
   const link = (
-    <a
-      href={item.href}
+    <Link
+      to={item.href}
+      activeOptions={{ exact: true }}
       className={cn(
-        'flex items-center gap-2.5 rounded-md text-sm transition-colors cursor-pointer',
-        collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full',
-        item.active
-          ? 'bg-accent text-foreground font-medium'
-          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
+        'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
+      activeProps={{
+        className: 'bg-accent text-foreground font-medium',
+      }}
+      inactiveProps={{
+        className: 'text-muted-foreground hover:bg-accent hover:text-foreground',
+      }}
+      className={cn(
+        'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.97]',
+        collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full'
       )}
+      activeProps={{
+        className: 'bg-accent text-foreground font-semibold shadow-xs',
+      }}
     >
       <span className="shrink-0">{item.icon}</span>
       {!collapsed && <span className="truncate">{item.label}</span>}
-    </a>
+    </Link>
   )
   if (!collapsed) return link
   return (
@@ -85,7 +94,8 @@ export function AppSidebarShell() {
   // differ from the server markup → hydration mismatch on hard refresh.
   const [collapsed, setCollapsed] = useState(false)
   useEffect(() => {
-    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time restore of a persisted preference; reading localStorage in the useState initializer causes an SSR hydration mismatch
+    // Mount-time restore of a persisted preference; reading localStorage in
+    // the useState initializer would cause an SSR hydration mismatch instead.
     if (localStorage.getItem(SIDEBAR_KEY) === 'true') setCollapsed(true)
   }, [])
 
@@ -126,8 +136,10 @@ export function AppSidebarShell() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground"
+                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition-transform"
                 onClick={toggle}
+                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               >
                 <PanelLeft
                   className={cn(
@@ -166,7 +178,12 @@ export function AppSidebarShell() {
           {collapsed ? (
             <Tooltip>
               <TooltipTrigger asChild>
-                <button className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors cursor-pointer">
+                <button
+                  className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer"
+                  aria-label="User profile: Researcher, researcher@asi.architect"
+                  aria-label="User profile details"
+                  className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.95]"
+                >
                   <Avatar className="h-6 w-6 shrink-0">
                     <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
                   </Avatar>
@@ -175,7 +192,12 @@ export function AppSidebarShell() {
               <TooltipContent side="right">Researcher · researcher@asi.architect</TooltipContent>
             </Tooltip>
           ) : (
-            <button className="flex items-center gap-2 rounded-md hover:bg-accent transition-colors cursor-pointer w-full px-2 py-1.5">
+            <button
+              className="flex items-center gap-2 rounded-md hover:bg-accent transition-all duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer w-full px-2 py-1.5"
+              aria-label="User profile: Researcher, researcher@asi.architect"
+              aria-label="User profile details"
+              className="flex items-center gap-2 rounded-md hover:bg-accent transition-all duration-150 cursor-pointer w-full px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.98]"
+            >
               <Avatar className="h-6 w-6 shrink-0">
                 <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
               </Avatar>
@@ -196,7 +218,10 @@ export function AppSidebarShell() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  aria-label="Sign out"
+                  aria-label="Sign out"
+                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground active:scale-95 transition-transform"
                 >
                   <LogOut className="h-4 w-4 shrink-0" />
                 </Button>
@@ -208,7 +233,10 @@ export function AppSidebarShell() {
               type="button"
               variant="ghost"
               size="sm"
-              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground"
+              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              aria-label="Sign out"
+              aria-label="Sign out"
+              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground active:scale-[0.98] transition-transform"
             >
               <LogOut className="h-4 w-4 shrink-0" />
               Sign out
