@@ -58,6 +58,7 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
   const link = (
     <Link
       to={item.href}
+      to={item.href as any}
       activeOptions={{ exact: true }}
       activeProps={{
         className: 'bg-accent text-foreground font-medium',
@@ -67,6 +68,7 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
       }}
       className={cn(
         'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.97]',
+        'flex items-center gap-2.5 rounded-md text-sm transition-colors cursor-pointer',
         collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full'
       )}
     >
