@@ -36,8 +36,6 @@ function DashboardHome() {
             className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] transition-transform duration-100"
           >
             <Card className="h-full transition-colors group-hover:border-primary/50 cursor-pointer">
-          <Link key={title} to={href as any}>
-            <Card className="h-full transition-colors hover:border-primary/50 cursor-pointer">
               <CardHeader className="flex flex-row items-center gap-3 pb-2">
                 <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary group-hover:bg-primary/20 transition-colors">
                   <Icon className="h-4 w-4" />
