@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react'
+import { useState, useCallback } from 'react'
 import { Folder, Terminal, Globe, Mail, Calendar, Phone, Camera, Radio, FileText, Settings, Cpu, Code } from 'lucide-react'
 
 /**
@@ -18,6 +18,7 @@ export interface AppItem {
  * Default applications registry
  * Supports launching .deb (Linux), .exe (Windows via wine), .apk (Android via adb)
  */
+// eslint-disable-next-line react-refresh/only-export-components -- app registry data, not a component; belongs with the Desktop component it configures
 export const DEFAULT_APPS: AppItem[] = [
   // System Apps
   {
@@ -136,6 +137,7 @@ export const DEFAULT_APPS: AppItem[] = [
 /**
  * Custom hook for app launching via IPC
  */
+// eslint-disable-next-line react-refresh/only-export-components -- hook, not a component; belongs with the Desktop component that uses it
 export function useAppLauncher() {
   const [launchingApps, setLaunchingApps] = useState<Set<string>>(new Set())
   const [error, setError] = useState<string | null>(null)
