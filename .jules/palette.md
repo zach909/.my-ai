@@ -27,3 +27,7 @@
 ## 2026-07-18 - [Form Input and Range Slider Accessibility]
 **Learning:** For visually minimalist or card-based UI panels where traditional form labels might clutter the design, using screen-reader only labels (`sr-only`) linked via `id` and `htmlFor` provides full WCAG AA accessibility compliance without changing the visual look and feel.
 **Action:** Use visually hidden `<Label>` components paired with explicit `id` attributes on form inputs, textareas, and range sliders to enable accessible screen reader interactions in compact designs.
+
+## 2026-07-27 - [Dynamic Sidebar and Card Accessibility & Tactile Interactions]
+**Learning:** Replaced slow/jarring standard `<a>` links with native TanStack Router `<Link>` components to enable rapid SPA client-side transitions and prevent full-page state loss. Adding descriptive `aria-label` tags to icon-only buttons (such as sidebar collapse, user row triggers, and sign out) ensures screen readers understand context. Integrating focus offsets with custom active scale states (`active:scale-*`) provides satisfying tactile responsiveness.
+**Action:** Always favor native routing `<Link>` over raw `<a>` inside modern client-side dashboards, ensure all interactive buttons/triggers have descriptive ARIA labels, and apply focus-visible ring styles coupled with press-state scale animations.
