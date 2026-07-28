@@ -13,3 +13,6 @@
 ## 2026-07-28 - [TanStack Router Link Refactoring & Interactive Sidebar Polish]
 **Learning:** Replacing raw `<a>` tags with TanStack Router `<Link>` and dynamic `activeProps` in nav menus eliminates full-page reloads and guarantees synchronized, accurate route highlighting. Pairing this with descriptive `aria-label` definitions on icon-only/collapsed states and tactile transition feedback (`active:scale-95`) provides an extremely polished and accessible SPA feel.
 **Action:** Always prefer framework-native routing links over raw anchor elements for navigation menus, and explicitly apply a11y labels and focus rings to all sidebar control actions.
+## 2026-07-26 - [Dynamic Client-Side Routing & Active Sidebar Highlights]
+**Learning:** Using raw anchor tags (`<a>`) in sidebar headers or layout structures causes full page reloads that discard local client state and create layout flicker. Refactoring these navigation bars to use `@tanstack/react-router`'s `<Link>` with `activeOptions={{ exact: true }}` and `activeProps`/`inactiveProps` provides instantaneous SPA transitions and eliminates hardcoded active states.
+**Action:** Use framework-native `<Link>` elements for internal navigation, and bind active styles dynamically via routing context instead of manual component states.
