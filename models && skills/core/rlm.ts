@@ -77,6 +77,7 @@ export class RLMTrainer {
   private currentExplorationRate: number;
   private bufferSize: number = 0;
   private qValuesBuffer: Float32Array;
+  private prioritiesBuffer: number[];
 
   // Section 6: quantization-aware training. The forward pass (both action
   // selection and TD-target computation) reads quantizedWeights/Bias, a
@@ -125,6 +126,7 @@ export class RLMTrainer {
     this.policyBias = new Float32Array(this.config.actionDim);
     this.targetWeights = new Float32Array(this.config.stateDim * this.config.actionDim);
     this.targetBias = new Float32Array(this.config.actionDim);
+    this.prioritiesBuffer = new Array(this.config.replayBufferSize);
     this.initializePolicy(this.policyWeights, this.policyBias);
     this.initializePolicy(this.targetWeights, this.targetBias);
 
@@ -265,9 +267,8 @@ export class RLMTrainer {
     const discount = this.config.discountFactor;
 
     for (const exp of batch) {
-      // Create a copy since computeQValues reuses the buffer
-      const qValues = new Float32Array(this.computeQValues(exp.state));
-      const currentQ = qValues[exp.action];
+      // Avoid copying since computeQValues reuses the buffer; reading currentQ immediately avoids the allocation.
+      const currentQ = this.computeQValues(exp.state)[exp.action];
 
       const targetQValues = this.computeQValues(exp.nextState);
       let maxNextQ = -Infinity;
@@ -339,9 +340,8 @@ export class RLMTrainer {
   }
 
   private computeTDError(experience: Experience): number {
-    // Create a copy since computeQValues reuses the buffer
-    const qValues = new Float32Array(this.computeQValues(experience.state));
-    const currentQ = qValues[experience.action];
+    // Avoid copying since computeQValues reuses the buffer; reading currentQ immediately avoids the allocation.
+    const currentQ = this.computeQValues(experience.state)[experience.action];
 
     const targetQValues = this.computeQValues(experience.nextState);
     let maxNextQ = -Infinity;
@@ -368,25 +368,36 @@ export class RLMTrainer {
   }
 
   private sampleBatch(): Experience[] {
-    if (this.bufferSize === 0) return [];
+    const bufferSize = this.bufferSize;
+    if (bufferSize === 0) return [];
 
-    const available = this.replayBuffer.slice(0, this.bufferSize);
-    const priorities = available.map(e => e.priority || 1);
-    const totalPriority = priorities.reduce((s, p) => s + p, 0);
+    let totalPriority = 0;
+    const priorities = this.prioritiesBuffer;
+
+    for (let i = 0; i < bufferSize; i++) {
+      const p = this.replayBuffer[i].priority || 1;
+      totalPriority += p;
+      priorities[i] = totalPriority;
+    }
+
     const batch: Experience[] = [];
-    const batchSize = Math.min(this.config.batchSize, available.length);
+    const batchSize = Math.min(this.config.batchSize, bufferSize);
 
     for (let i = 0; i < batchSize; i++) {
-      let r = Math.random() * totalPriority;
-      let idx = 0;
-      for (let j = 0; j < available.length; j++) {
-        r -= priorities[j];
-        if (r <= 0) {
-          idx = j;
-          break;
+      const target = Math.random() * totalPriority;
+      let low = 0;
+      let high = bufferSize - 1;
+      let idx = high;
+      while (low <= high) {
+        const mid = (low + high) >> 1;
+        if (priorities[mid] >= target) {
+          idx = mid;
+          high = mid - 1;
+        } else {
+          low = mid + 1;
         }
       }
-      batch.push(available[idx]);
+      batch.push(this.replayBuffer[idx]);
     }
 
     return batch;
