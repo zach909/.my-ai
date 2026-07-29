@@ -18,6 +18,7 @@ import re
 import subprocess
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Callable, Dict, List, Optional, Tuple
 
 from .veto import AlignmentVeto, ProposedAction, VetoDecision
@@ -46,6 +47,27 @@ class ActionResult:
     decision: Optional[VetoDecision] = None
 
 
+# ---- path safety utilities ------------------------------------
+def _is_path_safe(path: str, allow_parent_ref: bool = False) -> bool:
+    """Check if a path is safe from directory traversal attacks.
+
+    Returns True if the resolved absolute path does not try to escape the home directory
+    or the current working directory. Prevents attacks like '../../../etc/passwd'.
+    """
+    try:
+        requested = Path(path).resolve()
+        allowed_dirs = [Path.home(), Path.cwd()]
+        for allowed_dir in allowed_dirs:
+            try:
+                requested.relative_to(allowed_dir)
+                return True
+            except ValueError:
+                continue
+        return False
+    except (OSError, RuntimeError):
+        return False
+
+
 # ---- built-in, read-only, safe actions ------------------------------------
 def _act_time(_: str) -> str:
     return f"Current time: {datetime.now().isoformat(timespec='seconds')}"
@@ -58,6 +80,8 @@ def _act_system_info(_: str) -> str:
 
 def _act_list_dir(arg: str) -> str:
     path = arg.strip() or "."
+    if not _is_path_safe(path):
+        return f"Path rejected: directory traversal not allowed. Use paths within home or current directory."
     if not os.path.isdir(path):
         return f"Not a directory: {path}"
     entries = sorted(os.listdir(path))[:100]
@@ -66,6 +90,8 @@ def _act_list_dir(arg: str) -> str:
 
 def _act_read_file(arg: str) -> str:
     path = arg.strip()
+    if not _is_path_safe(path):
+        return f"Path rejected: directory traversal not allowed. Use paths within home or current directory."
     if not os.path.isfile(path):
         return f"Not a file: {path}"
     with open(path, "r", encoding="utf-8", errors="ignore") as f:
