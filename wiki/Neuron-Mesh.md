@@ -10,8 +10,9 @@ The neuron mesh is the substrate that replaces a transformer's fixed layer struc
 
 | Layer | File | What it is |
 |---|---|---|
-| TypeScript runtime backend | `models && skills/core/mesh.ts` — `NeuronMesh`, `ElasticCoreBlock` | The live pipeline's mesh: `propagate()` runs settle ticks with lazy CSR caching for performance (see the `.jules/bolt.md` engineering log for the specific cache-locality work) |
-| Python training core | `model && skills manager/tinygpt/mesh.py` — `NeuronMesh` (`MeshLM`) | The *trainable* mesh: a real `nn.Module` with backprop, quantization-aware training, and the zero-sum vale system |
+| TypeScript runtime backend | `models && skills/core/mesh.ts` — `NeuronMesh` | The live pipeline's mesh: `propagate()` runs settle ticks with lazy CSR caching for performance (see the `.jules/bolt.md` engineering log for the specific cache-locality work) |
+| TypeScript extension mesh | `models && skills/core/elastic-core.ts` — `ElasticCoreBlock` | The extension-builder-editable, growable mesh: `addNeuron` preserves full density; `applyGradients` scales high-vale neuron updates down |
+| Python training core | `models && skills/tinygpt/mesh.py` — `NeuronMesh` (`MeshLM`) | The *trainable* mesh: a real `nn.Module` with backprop, quantization-aware training, and the zero-sum vale system |
 
 ## The Python trainable mesh
 
@@ -31,7 +32,7 @@ out = mesh.generate(ids, max_new_tokens=20)
 
 ## The TypeScript live pipeline mesh
 
-`NeuronMesh.propagate()` is the hot path the whole live pipeline routes through — `ElasticCoreBlock` builds on it for the extension-builder-editable, growable mesh (`addNeuron` preserves full density; `applyGradients` scales high-vale neuron updates down, mirroring the Python side's vale gating in a from-scratch TypeScript implementation). Performance work on this path (loop reordering for cache locality, lazy CSR invalidation, fast-path allocation avoidance) is logged with before/after measurements in `.jules/bolt.md`.
+`NeuronMesh.propagate()` is the hot path the whole live pipeline routes through — `ElasticCoreBlock` (in `elastic-core.ts`) builds on it for the extension-builder-editable, growable mesh, with `addNeuron` and `applyGradients` mirroring the Python side's vale gating in a from-scratch TypeScript implementation. Performance work on this path (loop reordering for cache locality, lazy CSR invalidation, fast-path allocation avoidance) is logged with before/after measurements in `.jules/bolt.md`.
 
 ## Verifying it
 

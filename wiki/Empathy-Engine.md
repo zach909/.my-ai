@@ -45,7 +45,7 @@ from tinygpt.empathy import EmpathyEngine, read_mood
 empathy = EmpathyEngine(smoothing=0.35, history=50)
 reading = empathy.observe("this is broken and terrible, please fix it now!!!")
 print(empathy.describe())            # "(neutral, calm, assertive (valence -0.12, arousal 0.37, ...))"
-adj = empathy.sampling_adjustment()  # {"temperature_delta": ..., ...}
+adj = empathy.sampling_adjustment()  # {"temperature_scale": ..., ...}
 empathy.save()  /  empathy.load()    # persists to --empathy-state (local JSON, no external API)
 ```
 
