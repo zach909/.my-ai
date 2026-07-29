@@ -1,14 +1,3 @@
-/**
- * Collapsible SaaS sidebar — OPT-IN (rendered by SharedAppLayout, which the
- * template root does NOT apply by default). Only reach for this when building a
- * SaaS / dashboard app; landing & marketing pages stay full-bleed.
- *
- * Expands to 15rem, collapses to 3rem (icon-only).
- * State is persisted to localStorage. Tooltips appear automatically when collapsed.
- *
- * A native flex-col implementation (shadcn Button/Avatar/Tooltip primitives) for
- * full layout control — every line is yours to edit.
- */
 import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
@@ -41,10 +30,6 @@ interface NavItemDef {
   label: string
 }
 
-// Every href here MUST have a real route file, and every page you add under
-// `src/routes/app/` should get an entry here — a nav link with no route ships a
-// 404. Only the shipped dashboard route is listed; add yours as you create them,
-// e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
   { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
   { href: '/app/experiments', icon: <FlaskConical className="h-4 w-4" />, label: 'Experiments' },
@@ -69,6 +54,12 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
         'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.97]',
         collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full'
       )}
+      activeProps={{
+        className: 'bg-accent text-foreground font-semibold shadow-xs',
+      }}
+      inactiveProps={{
+        className: 'text-muted-foreground hover:bg-accent hover:text-foreground',
+      }}
     >
       <span className="shrink-0">{item.icon}</span>
       {!collapsed && <span className="truncate">{item.label}</span>}
@@ -84,13 +75,8 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
 }
 
 export function AppSidebarShell() {
-  // SSR always renders expanded; the saved preference is restored after mount.
-  // Reading localStorage in the initializer makes the client's first render
-  // differ from the server markup → hydration mismatch on hard refresh.
   const [collapsed, setCollapsed] = useState(false)
   useEffect(() => {
-    // Mount-time restore of a persisted preference; reading localStorage in
-    // the useState initializer would cause an SSR hydration mismatch instead.
     if (localStorage.getItem(SIDEBAR_KEY) === 'true') setCollapsed(true)
   }, [])
 
@@ -132,6 +118,7 @@ export function AppSidebarShell() {
                 variant="ghost"
                 size="sm"
                 className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 onClick={toggle}
                 aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               >
@@ -149,7 +136,7 @@ export function AppSidebarShell() {
           </Tooltip>
         </div>
 
-        {/* ── Nav (only this section scrolls) ───────────── */}
+        {/* ── Nav ────────────────────────────────────────── */}
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-0.5">
           {!collapsed && (
             <p className="px-3 pt-1 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
@@ -161,7 +148,7 @@ export function AppSidebarShell() {
           ))}
         </div>
 
-        {/* ── Footer (always pinned to bottom) ──────────── */}
+        {/* ── Footer ─────────────────────────────────────── */}
         <div
           className={cn(
             'shrink-0 border-t border-border',
@@ -175,6 +162,9 @@ export function AppSidebarShell() {
                 <button
                   className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer"
                   aria-label="User profile: Researcher, researcher@asi.architect"
+                  type="button"
+                  className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.95]"
+                  aria-label="User profile details"
                 >
                   <Avatar className="h-6 w-6 shrink-0">
                     <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
@@ -187,6 +177,9 @@ export function AppSidebarShell() {
             <button
               className="flex items-center gap-2 rounded-md hover:bg-accent transition-all duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer w-full px-2 py-1.5"
               aria-label="User profile: Researcher, researcher@asi.architect"
+              type="button"
+              className="flex items-center gap-2 rounded-md hover:bg-accent transition-all duration-150 cursor-pointer w-full px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.98]"
+              aria-label="User profile details"
             >
               <Avatar className="h-6 w-6 shrink-0">
                 <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
@@ -208,7 +201,7 @@ export function AppSidebarShell() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                   aria-label="Sign out"
                 >
                   <LogOut className="h-4 w-4 shrink-0" />
@@ -222,6 +215,7 @@ export function AppSidebarShell() {
               variant="ghost"
               size="sm"
               className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground active:scale-[0.98] transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               aria-label="Sign out"
             >
               <LogOut className="h-4 w-4 shrink-0" />
