@@ -58,18 +58,31 @@ function ChatPage() {
     scrollToBottom()
   }, [messages])
 
-  const simulateAgentResponse = (userMessage: string): string => {
-    // Simple response simulation — in production, this would call a real API
-    const responses = [
-      `You asked: "${userMessage}"\n\nHere are some approaches to consider:\n\n(A) Start with foundational research to understand the core concepts\n(B) Jump directly to implementation using proven patterns\n(C) Combine both — research key areas while building a prototype`,
-      `That's an interesting question. Let me break it down:\n\n1. First step: Define the scope and requirements\n2. Second step: Identify key constraints and dependencies\n3. Third step: Design the solution architecture\n4. Fourth step: Implement and validate\n\nWhich of these would you like to explore further? (A) Step 1 details (B) Step 2 analysis (C) Full implementation guide`,
-      `Based on your input, here are the key considerations:\n- **Performance**: Critical factor for this type of work\n- **Scalability**: Important for long-term sustainability\n- **Maintainability**: Essential for team collaboration\n\nWould you like me to (A) Deep-dive into performance optimization (B) Focus on scalability strategies (C) Discuss maintenance best practices?`,
-      `I can help with that! Here's what I recommend:\n\n✓ Break down the problem into smaller, manageable pieces\n✓ Validate assumptions at each step\n✓ Document your reasoning for future reference\n✓ Test your solution against edge cases\n\nReady to start? (A) Yes, let's begin (B) I need more clarification (C) Let me gather more information first`,
-    ]
-    return responses[Math.floor(Math.random() * responses.length)]
+  const callBotAPI = async (userMessage: string): Promise<{ message: string; multipleChoiceOptions?: string[] }> => {
+    try {
+      const response = await fetch('/api/chat/messages', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ message: userMessage }),
+      })
+      if (!response.ok) {
+        const error = await response.json()
+        throw new Error(error.error || 'Failed to get response')
+      }
+      const data = await response.json()
+      return {
+        message: data.message,
+        multipleChoiceOptions: data.multipleChoiceOptions,
+      }
+    } catch (error) {
+      console.error('Bot API error:', error)
+      return {
+        message: 'I encountered an error processing your message. Please try again.',
+      }
+    }
   }
 
-  const handleSendMessage = (text?: string) => {
+  const handleSendMessage = async (text?: string) => {
     const messageText = text || input
     if (!messageText.trim()) return
 
@@ -83,19 +96,20 @@ function ChatPage() {
     setMessages((prev) => [...prev, userMsg])
     setInput('')
 
-    // Simulate agent response
+    // Get response from bot API
     setLoading(true)
-    setTimeout(() => {
-      const agentResponse = simulateAgentResponse(messageText)
+    try {
+      const response = await callBotAPI(messageText)
       const agentMsg: Message = {
         id: `msg_${Date.now()}_assistant`,
         role: 'assistant',
-        content: agentResponse,
+        content: response.message,
         timestamp: Date.now(),
       }
       setMessages((prev) => [...prev, agentMsg])
+    } finally {
       setLoading(false)
-    }, 800)
+    }
   }
 
   const handleUseAsPrompt = (text: string) => {

@@ -345,6 +345,33 @@ export class WebServer {
       return;
     }
 
+    if (pathname === '/api/chat/messages' && method === 'POST') {
+      try {
+        const { ChatBot, getBot } = await import('../src/server/bot-service.js');
+        const body = await this.parseBody(req) as
+          { message?: string; history?: Array<{ role?: string; content?: string }> } | null;
+        const message = body?.message;
+        if (!message || typeof message !== 'string') {
+          this.sendJson(res, { error: 'Missing message field' }, 400);
+          return;
+        }
+        const bot = await getBot();
+        const response = await bot.processMessage(message);
+        this.sendJson(res, {
+          message: response.message,
+          confidence: response.confidence,
+          reasoning: response.reasoning,
+          multipleChoiceOptions: response.multipleChoiceOptions,
+          metadata: response.metadata,
+          timestamp: Date.now(),
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.sendJson(res, { error: msg }, 500);
+      }
+      return;
+    }
+
     if (pathname === '/api/thorns' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as { message?: string } | null;
