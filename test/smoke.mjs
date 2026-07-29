@@ -3879,6 +3879,56 @@ async function testCompressionSummary() {
   }
 }
 
+async function testNoDuplicateJsxAttributes() {
+  // AppSidebarShell.tsx has landed with duplicate JSX attributes on the same
+  // element four separate times this history (each time from a manual
+  // merge-conflict resolution that kept both the old and new version of a
+  // prop instead of picking one) -- once as a hard TS1136/TS1005 syntax error
+  // (an unclosed className={cn(...) interrupted by a second activeProps),
+  // three more times as `tsc --noEmit`'s TS17001 "JSX elements cannot have
+  // multiple attributes with the same name". None of the plain-duplicate
+  // cases break `npm run build` (esbuild's JSX transform tolerates them,
+  // last one wins silently) -- only `tsc --noEmit` catches them, and nothing
+  // was re-running that automatically after each merge. This is a static,
+  // line-oriented scan (this codebase always writes one JSX attribute per
+  // line) rather than a full JSX parser: within each element's attribute
+  // block -- reset at a line opening a new tag (`<Foo`) or closing one (a
+  // bare `>` / `/>`) -- no attribute name may start a line twice.
+  const fs = await import('node:fs');
+  const path = await import('node:path');
+  const srcDir = resolve(process.cwd(), 'src');
+
+  function walk(dir) {
+    let out = [];
+    for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) out = out.concat(walk(full));
+      else if (entry.isFile() && /\.(tsx|jsx)$/.test(entry.name)) out.push(full);
+    }
+    return out;
+  }
+
+  const problems = [];
+  for (const file of walk(srcDir)) {
+    const lines = fs.readFileSync(file, 'utf8').split('\n');
+    let seen = new Map();
+    lines.forEach((raw, idx) => {
+      const line = raw.trim();
+      if (/^<[A-Za-z]/.test(line)) { seen = new Map(); return; }
+      if (/^\/?>\s*$/.test(line)) { seen = new Map(); return; }
+      const m = line.match(/^([A-Za-z_][A-Za-z0-9_-]*)=/);
+      if (!m) return;
+      const name = m[1];
+      if (seen.has(name)) {
+        problems.push(`${path.relative(process.cwd(), file)}:${idx + 1} duplicate JSX attribute "${name}" (first seen at line ${seen.get(name)})`);
+      } else {
+        seen.set(name, idx + 1);
+      }
+    });
+  }
+  check(problems.length === 0, `No duplicate JSX attribute on one element across src/**/*.tsx${problems.length ? ' -- ' + problems.join('; ') : ''}`);
+}
+
 async function main() {
   const suites = [
     ['MoE router', testMoE],
@@ -3978,6 +4028,7 @@ async function main() {
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
+    ['No duplicate JSX attributes across src/**/*.tsx (recurring bad-merge regression guard)', testNoDuplicateJsxAttributes],
   ];
   for (const [name, fn] of suites) {
     results.push(`\n${name}:`);
