@@ -116,9 +116,36 @@ class BrowserPlugin(Plugin):
     def _get_text(self) -> str:
         return "Browser text extraction requires CDP WebSocket connection."
 
+    def _safe_path(self, path: str) -> str:
+        """Validate and resolve target paths to prevent path traversal and argument injection.
+
+        Enforces that target paths remain either within the current working directory or /tmp directory.
+        """
+        import os
+
+        if path.strip().startswith("-"):
+            raise ValueError("Security Error: Potential argument injection detected in path.")
+
+        target = os.path.realpath(os.path.abspath(os.path.expanduser(path)))
+
+        cwd = os.path.realpath(os.getcwd())
+        tmp_resolved = os.path.realpath("/tmp")
+
+        rel_cwd = os.path.relpath(target, cwd)
+        rel_tmp = os.path.relpath(target, tmp_resolved)
+
+        is_inside_cwd = not rel_cwd.startswith("..") and not os.path.isabs(rel_cwd)
+        is_inside_tmp = not rel_tmp.startswith("..") and not os.path.isabs(rel_tmp)
+
+        if not (is_inside_cwd or is_inside_tmp):
+            raise ValueError("Security Error: Path traversal or unauthorized path detected.")
+
+        return target
+
     def _screenshot(self, path: str = "/tmp/screenshot.png") -> str:
         """Take a screenshot using scrot or import (no browser needed)."""
         import subprocess, shutil
+        path = self._safe_path(path)
         for tool in ("scrot", "import", "gnome-screenshot"):
             if shutil.which(tool):
                 subprocess.run([tool, path], capture_output=True)
