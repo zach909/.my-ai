@@ -109,11 +109,13 @@ export class NeuronMesh {
             this.refreshCache();
         const nodes = this.cachedNodes;
         const N = nodes.length;
-        // Fast construction of histories and nodeHistory Map to avoid overhead of double arrays and lookup
+        const maxIters = this.config.maxIterations;
+        // Bolt's Optimization: Pre-allocate standard arrays of size maxIters
+        // to completely avoid memory allocations and garbage collection pressure in hot loops.
         const histories = [];
         const nodeHistory = new Map();
         for (let i = 0; i < N; i++) {
-            const arr = [];
+            const arr = new Array(maxIters);
             histories.push(arr);
             nodeHistory.set(nodes[i].id, arr);
         }
@@ -157,24 +159,28 @@ export class NeuronMesh {
         let iteration = 0, converged = false, residual = 0;
         // Fast-path: When there are no gates and no vale gating (most common case)
         if (!activeGroups && !vale) {
-            for (; iteration < this.config.maxIterations; iteration++) {
+            for (; iteration < maxIters; iteration++) {
                 for (let i = 0; i < N; i++) {
                     let sum = biases[i];
                     const start = rowStarts[i], end = rowStarts[i + 1];
-                    // OPTIMIZATION: 4x loop unrolling for row-major dot product
-                    const limit = end - 3;
+                    // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
+                    const limit = end - 7;
                     let k = start;
-                    for (; k < limit; k += 4) {
+                    for (; k < limit; k += 8) {
                         sum += curr[flatIndices[k]] * flatWeights[k]
                             + curr[flatIndices[k + 1]] * flatWeights[k + 1]
                             + curr[flatIndices[k + 2]] * flatWeights[k + 2]
-                            + curr[flatIndices[k + 3]] * flatWeights[k + 3];
+                            + curr[flatIndices[k + 3]] * flatWeights[k + 3]
+                            + curr[flatIndices[k + 4]] * flatWeights[k + 4]
+                            + curr[flatIndices[k + 5]] * flatWeights[k + 5]
+                            + curr[flatIndices[k + 6]] * flatWeights[k + 6]
+                            + curr[flatIndices[k + 7]] * flatWeights[k + 7];
                     }
                     for (; k < end; k++) {
                         sum += curr[flatIndices[k]] * flatWeights[k];
                     }
                     next[i] = activate(sum);
-                    histories[i].push(next[i]);
+                    histories[i][iteration] = next[i];
                 }
                 residual = 0;
                 for (let i = 0; i < N; i++) {
@@ -183,7 +189,6 @@ export class NeuronMesh {
                     residual += diff < 0 ? -diff : diff;
                     curr[i] = next[i];
                     nodes[i].activation = curr[i];
-                    nodes[i].activationHistory.push(curr[i]);
                 }
                 if (this.checkConvergence(residual)) {
                     converged = true;
@@ -206,7 +211,7 @@ export class NeuronMesh {
                     hasV[i] = 1;
                 }
             }
-            for (; iteration < this.config.maxIterations; iteration++) {
+            for (; iteration < maxIters; iteration++) {
                 for (let i = 0; i < N; i++) {
                     if (gates[i]) {
                         next[i] = curr[i];
@@ -214,14 +219,18 @@ export class NeuronMesh {
                     else {
                         let sum = biases[i];
                         const start = rowStarts[i], end = rowStarts[i + 1];
-                        // OPTIMIZATION: 4x loop unrolling for row-major dot product
-                        const limit = end - 3;
+                        // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
+                        const limit = end - 7;
                         let k = start;
-                        for (; k < limit; k += 4) {
+                        for (; k < limit; k += 8) {
                             sum += curr[flatIndices[k]] * flatWeights[k]
                                 + curr[flatIndices[k + 1]] * flatWeights[k + 1]
                                 + curr[flatIndices[k + 2]] * flatWeights[k + 2]
-                                + curr[flatIndices[k + 3]] * flatWeights[k + 3];
+                                + curr[flatIndices[k + 3]] * flatWeights[k + 3]
+                                + curr[flatIndices[k + 4]] * flatWeights[k + 4]
+                                + curr[flatIndices[k + 5]] * flatWeights[k + 5]
+                                + curr[flatIndices[k + 6]] * flatWeights[k + 6]
+                                + curr[flatIndices[k + 7]] * flatWeights[k + 7];
                         }
                         for (; k < end; k++) {
                             sum += curr[flatIndices[k]] * flatWeights[k];
@@ -229,7 +238,7 @@ export class NeuronMesh {
                         const comp = activate(sum);
                         next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
                     }
-                    histories[i].push(next[i]);
+                    histories[i][iteration] = next[i];
                 }
                 residual = 0;
                 for (let i = 0; i < N; i++) {
@@ -238,7 +247,6 @@ export class NeuronMesh {
                     residual += diff < 0 ? -diff : diff;
                     curr[i] = next[i];
                     nodes[i].activation = curr[i];
-                    nodes[i].activationHistory.push(curr[i]);
                 }
                 if (this.checkConvergence(residual)) {
                     converged = true;
@@ -246,9 +254,16 @@ export class NeuronMesh {
                 }
             }
         }
+        // Bolt's Optimization: Truncate pre-allocated arrays and bulk-append history to node's activationHistory
+        const finalIters = converged ? iteration + 1 : iteration;
+        for (let i = 0; i < N; i++) {
+            const history = histories[i];
+            history.length = finalIters;
+            nodes[i].activationHistory.push(...history);
+        }
         return {
             finalStates: new Map(nodes.map(n => [n.id, n.activation])),
-            iterations: iteration + 1, converged, residual, nodeHistory
+            iterations: finalIters, converged, residual, nodeHistory
         };
     }
     /**
