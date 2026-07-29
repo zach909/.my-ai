@@ -52,7 +52,18 @@ def _xinput_available() -> bool:
 
 
 def _get_xinput_devices() -> List[dict]:
-    """Enumerate xinput devices with their master/slave status."""
+    """Enumerate xinput devices with their master/slave status.
+
+    Floating (unmastered) devices are listed by `xinput list --long` after
+    all master/slave trees, tagged "floating slave" -- since that text still
+    contains the substring "slave", a plain `"slave" in line` check used to
+    misattribute every floating device as a slave of whichever master was
+    last seen (in practice, always the keyboard master, since xinput lists
+    it after the pointer master). A floating device isn't a slave of
+    anything by definition, so it's tracked here as its own top-level
+    pseudo-master entry (`type: "floating"`, no slaves) instead of being
+    nested under the wrong master.
+    """
     if not _xinput_available():
         return []
     r = _run(["xinput", "list", "--long"], timeout=3)
@@ -61,7 +72,11 @@ def _get_xinput_devices() -> List[dict]:
     devices = []
     current_master = None
     for line in r.split("\n"):
-        if "master" in line.lower() and "pointer" in line.lower():
+        if "floating" in line.lower() and "slave" in line.lower():
+            m = re.search(r"id=(\d+)", line)
+            if m:
+                devices.append({"id": int(m.group(1)), "type": "floating", "name": line.strip(), "slaves": []})
+        elif "master" in line.lower() and "pointer" in line.lower():
             m = re.search(r"id=(\d+)", line)
             if m:
                 current_master = {"id": int(m.group(1)), "type": "pointer", "name": line.strip(), "slaves": []}
@@ -104,6 +119,7 @@ class GnomePlugin:
         self._user_ws: int = 0
         self._virtual_pointer_id: Optional[int] = None
         self._virtual_keyboard_id: Optional[int] = None
+        self._floated_devices: List[dict] = []
         self._setup()
 
     def _setup(self) -> None:
@@ -411,13 +427,27 @@ class GnomePlugin:
         floated = []
 
         for master in devices:
+            if master["type"] == "floating":
+                continue
             for slave in master.get("slaves", []):
-                # Skip XTEST and virtual core devices
-                if "XTEST" in slave["name"] or "Virtual core" in master["name"]:
+                # Skip XTEST and virtual-core-synthesized pseudo-devices
+                # (e.g. "Virtual core XTEST pointer") -- both substrings
+                # describe the *slave's own name*, not the master it's
+                # currently attached to. Checking master["name"] here would
+                # match every default master ("Virtual core pointer"/
+                # "Virtual core keyboard"), skipping every real physical
+                # device attached to them -- the overwhelmingly common case
+                # before any dedicated AI master has been created.
+                if "XTEST" in slave["name"] or "Virtual core" in slave["name"]:
                     continue
                 # Float the slave device from its current master
                 _run(["xinput", "float", str(slave["id"])], timeout=3)
                 floated.append(slave["name"])
+                # Record the device's type *now*, while it's still attached
+                # and its type is unambiguous -- once floating, xinput's own
+                # listing no longer distinguishes pointer from keyboard, so
+                # this is the only reliable point to capture it for restore.
+                self._floated_devices.append({"id": slave["id"], "name": slave["name"], "type": master["type"]})
 
         if floated:
             return {"isolated": True, "method": "xinput", "floated": floated}
@@ -426,27 +456,37 @@ class GnomePlugin:
     def _restore_input(self) -> dict:
         """Restore physical input devices to the user.
 
-        Reattaches previously floated devices back to the virtual core pointer/keyboard.
+        Reattaches devices this instance floated via `_isolate_input()` back
+        to the matching-type virtual core master, using the type recorded at
+        float time. Only devices this instance actually floated are
+        restored -- `xinput`'s "floating slave" listing doesn't retain
+        whether a floating device was originally a pointer or keyboard, so
+        re-deriving type from a fresh query at restore time is unreliable
+        (it previously matched every floating device against whichever
+        master happened to be last in the device list, silently reattaching
+        e.g. a floated mouse to the keyboard master).
         """
         if not _xinput_available():
             return {"restored": False, "method": "none"}
 
-        devices = _get_xinput_devices()
-        for master in devices:
-            for slave in master.get("slaves", []):
-                if "XTEST" in slave["name"]:
-                    continue
-                if "floating" in slave["name"].lower():
-                    # Find appropriate master to reattach to
-                    target_master = None
-                    for m in devices:
-                        if m["type"] == master["type"] and "Virtual core" in m["name"]:
-                            target_master = m["id"]
-                            break
-                    if target_master:
-                        _run(["xinput", "reattach", str(slave["id"]), str(target_master)], timeout=3)
+        if not self._floated_devices:
+            return {"restored": False, "method": "xinput", "note": "No devices were floated by this session"}
 
-        return {"restored": True, "method": "xinput"}
+        devices = _get_xinput_devices()
+        restored = []
+        for floated in self._floated_devices:
+            target_master = next(
+                (m["id"] for m in devices if m["type"] == floated["type"] and "Virtual core" in m["name"]),
+                None,
+            )
+            if target_master:
+                _run(["xinput", "reattach", str(floated["id"]), str(target_master)], timeout=3)
+                restored.append(floated["name"])
+
+        self._floated_devices = []
+        if restored:
+            return {"restored": True, "method": "xinput", "devices": restored}
+        return {"restored": False, "method": "xinput", "note": "No matching virtual core master found"}
 
     def _list_physical_devices(self) -> List[dict]:
         """List all physical input devices detected by the system."""
@@ -456,6 +496,14 @@ class GnomePlugin:
         if _xinput_available():
             xdevs = _get_xinput_devices()
             for master in xdevs:
+                if master["type"] == "floating":
+                    devices.append({
+                        "id": master["id"],
+                        "name": master["name"],
+                        "type": "floating",
+                        "master": None,
+                    })
+                    continue
                 for slave in master.get("slaves", []):
                     devices.append({
                         "id": slave["id"],
