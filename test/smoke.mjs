@@ -1333,6 +1333,42 @@ async function testEmailPluginCommandInjection() {
     'EmailPlugin: the full MIME content (including the attacker-controlled payload) is passed via stdin, not the command line');
 }
 
+async function testSelfReplicatePluginConstructs() {
+  // self_replicate.ts's constructor used __dirname to locate the repo root
+  // (for its clones/ directory) -- CommonJS-only, and this whole backend runs
+  // as native ESM (package.json's "type": "module"), so importing this file
+  // and constructing the class threw ReferenceError: __dirname is not
+  // defined, immediately, every time -- confirmed live via a real `import`
+  // (not just `node -e`, which masked the failure in one quick manual check).
+  // Zero current callers reference this class (not plugins/index.ts, not
+  // registry-data.ts's PLUGIN_LIST, no prior test), but its own
+  // SELF_REPLICATION_GUIDE.md presents this exact construction as a working
+  // usage example.
+  const { SelfReplicatePlugin } = await load('plugins/self_replicate.js');
+  let plugin;
+  let threw = null;
+  try {
+    plugin = new SelfReplicatePlugin();
+  } catch (e) {
+    threw = e;
+  }
+  check(threw === null, `SelfReplicatePlugin constructs without throwing${threw ? ` (threw: ${threw.message})` : ''}`);
+  check(existsSync(plugin.cloneDir), 'SelfReplicatePlugin.cloneDir points at a real, existing directory');
+
+  // cloneDir isn't configurable (it's always <repo root>/clones), so clean up
+  // the state file this writes to real disk -- unlike every other test here,
+  // this one can't use a tmpdir, so it must not leave a lasting side effect.
+  const result = plugin.clone('Investigate a bug', { role: 'debugger' });
+  const stateFile = join(plugin.cloneDir, `${result.clone_id}.state.json`);
+  try {
+    check(result.success === true && typeof result.clone_id === 'string' && result.clone_id.startsWith('clone_'),
+      'SelfReplicatePlugin.clone() creates a clone with a real id');
+    check(result.config.role === 'debugger', 'SelfReplicatePlugin.clone() applies the requested role override');
+  } finally {
+    if (existsSync(stateFile)) rmSync(stateFile);
+  }
+}
+
 // Extension Builder: the drag-connect editor, drag labels, per-neuron
 // simulation, API-capable output layers, neuron search, and the
 // save(no-quant) -> install(quantized) lifecycle all work end-to-end.
@@ -3964,6 +4000,7 @@ async function main() {
     ['Extension catalog fully active', testExtensionCatalogFullyActive],
     ['Chrome Apps', testChromeApps],
     ['EmailPlugin command injection fix', testEmailPluginCommandInjection],
+    ['SelfReplicatePlugin constructs under native ESM (no __dirname)', testSelfReplicatePluginConstructs],
     ['Extension Builder flow', testExtensionBuilderFlow],
     ['Neural Definition directives', testNeuralDefinitionDirectives],
     ['End-to-end encryption', testEncryption],
