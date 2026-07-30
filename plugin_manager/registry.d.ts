@@ -17,6 +17,7 @@ export declare class PluginRegistry {
     listSkills(): SkillDefinition[];
     listActiveSkills(): SkillDefinition[];
     getPlugin(pluginId: string): PluginDefinition | undefined;
+    getPluginInstance(pluginId: string): BasePlugin | undefined;
     getSkill(skillId: string): SkillDefinition | undefined;
     getPluginCount(): number;
     getSkillCount(): number;
