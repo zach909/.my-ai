@@ -7,13 +7,66 @@
 const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
 const path = require('path');
 const fs = require('fs');
-const { spawn, exec } = require('child_process');
+const http = require('http');
+const { spawn, exec, execFileSync } = require('child_process');
+const { startAppServer } = require('./app-server');
 
 // Keep a global reference of the window object to prevent garbage collection
 let mainWindow;
+let backendProcess;
+let appServer;
+
+const REPO_ROOT = path.join(__dirname, '..', '..', '..');
+const BACKEND_PORT = 7861;
+const APP_PORT = 4173;
+// Set by test/ipc-handlers.test.js: that suite only exercises the IPC
+// handlers below via a fake Electron shell and must not spawn a real
+// backend process or block on ensureBuilt()/waitForBackend().
+const SKIP_BACKEND = process.env.DESKTOP_APP_SKIP_BACKEND === '1';
 
 /**
- * Create the main application window
+ * Build whichever half of the app (backend JS / frontend static site) is
+ * missing from `<repo>/dist`. Fast no-op on a repo that already ships a
+ * prebuilt dist/ (the normal case for a packaged app); only a from-source
+ * dev checkout pays the build cost, once.
+ */
+function ensureBuilt() {
+  const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+  if (!fs.existsSync(path.join(REPO_ROOT, 'dist', 'interface', 'main.js'))) {
+    console.log('[desktop-app] backend not built — running scripts/build-backend.mjs...');
+    execFileSync('node', ['scripts/build-backend.mjs'], { cwd: REPO_ROOT, stdio: 'inherit' });
+  }
+
+  if (!fs.existsSync(path.join(REPO_ROOT, 'dist', 'index.html'))) {
+    console.log('[desktop-app] frontend not built — running npm run build...');
+    execFileSync(npmCmd, ['run', 'build'], { cwd: REPO_ROOT, stdio: 'inherit' });
+  }
+}
+
+/** Poll the backend's /api/status until it responds or `timeoutMs` elapses. */
+function waitForBackend(port, timeoutMs = 15000) {
+  const deadline = Date.now() + timeoutMs;
+  return new Promise((resolve, reject) => {
+    const attempt = () => {
+      const req = http.get({ host: '127.0.0.1', port, path: '/api/status', timeout: 1000 }, (res) => {
+        res.resume();
+        resolve();
+      });
+      req.on('error', () => {
+        if (Date.now() > deadline) return reject(new Error('Backend did not become ready in time'));
+        setTimeout(attempt, 300);
+      });
+      req.on('timeout', () => req.destroy());
+    };
+    attempt();
+  });
+}
+
+/**
+ * Create the main application window, pointed at the local app-server
+ * (static frontend + /api proxy to the Neuroclaw backend) rather than the
+ * template's demo HTML page.
  */
 function createWindow() {
   mainWindow = new BrowserWindow({
@@ -27,8 +80,11 @@ function createWindow() {
     icon: path.join(__dirname, '../../assets/icon.png'),
   });
 
-  // Load the renderer HTML
-  mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  if (SKIP_BACKEND) {
+    mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
+  } else {
+    mainWindow.loadURL(`http://127.0.0.1:${APP_PORT}`);
+  }
 
   // Open DevTools in development (optional)
   // mainWindow.webContents.openDevTools();
@@ -38,10 +94,48 @@ function createWindow() {
   });
 }
 
+async function startNeuroclaw() {
+  ensureBuilt();
+
+  backendProcess = spawn('node', ['dist/interface/main.js', 'web', String(BACKEND_PORT)], {
+    cwd: REPO_ROOT,
+    stdio: 'inherit',
+  });
+  backendProcess.on('exit', (code) => {
+    console.log(`[desktop-app] backend process exited with code ${code}`);
+  });
+
+  await waitForBackend(BACKEND_PORT);
+
+  appServer = await startAppServer({
+    distDir: path.join(REPO_ROOT, 'dist'),
+    backendPort: BACKEND_PORT,
+    port: APP_PORT,
+  });
+}
+
+function stopNeuroclaw() {
+  if (appServer) {
+    appServer.close();
+    appServer = undefined;
+  }
+  if (backendProcess) {
+    backendProcess.kill();
+    backendProcess = undefined;
+  }
+}
+
 /**
  * Application lifecycle events
  */
-app.whenReady().then(() => {
+app.whenReady().then(async () => {
+  if (!SKIP_BACKEND) {
+    try {
+      await startNeuroclaw();
+    } catch (error) {
+      console.error('[desktop-app] failed to start Neuroclaw:', error);
+    }
+  }
   createWindow();
 
   app.on('activate', () => {
@@ -57,6 +151,10 @@ app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('will-quit', () => {
+  stopNeuroclaw();
 });
 
 /**
