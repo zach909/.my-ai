@@ -38,7 +38,6 @@ npm test
 ├── plugin_manager/        # Plugin management system
 ├── plugins/               # System plugins
 ├── public/                # Public assets
-├── robotic_organism/      # Robotics simulation
 ├── scripts/               # Build and utility scripts
 ├── src/                   # Source code
 ├── test/                  # Test files
