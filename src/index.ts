@@ -21,6 +21,7 @@ import { SelfHealer } from "../models && skills/core/self-healer.js";
 import { ContextCompressor } from "../models && skills/core/context-compressor.js";
 import { IntentRouter } from "../models && skills/core/intent-router.js";
 import { PromptingSkill } from "../models && skills/core/prompting-skill.js";
+import { WorkingMemory } from "../models && skills/core/working-memory.js";
 import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
@@ -68,6 +69,7 @@ export class NeuroclawSystem {
   compressor: ContextCompressor;
   router: IntentRouter;
   prompting: PromptingSkill;
+  workingMemory: WorkingMemory;
   // AGI / ASI capability layer (integrated in solve()).
   monitor: SelfMonitor;
   mistakes: MistakeTracker;
@@ -157,6 +159,11 @@ export class NeuroclawSystem {
     // the resulting goal onto the shared PlanTracker (Section 24) -- reuses
     // router/plan/empathy above rather than keeping a parallel private state.
     this.prompting = new PromptingSkill(this.router, this.plan, this.empathy);
+    // Working memory (Section 3): task-scoped scratch state (inputs, active
+    // reasoning, temporary calculations, intermediate results). Goal/
+    // constraints/plan are never duplicated here -- always read through to
+    // this.plan, the single source of truth Section 24 owns.
+    this.workingMemory = new WorkingMemory(this.plan);
 
     // AGI / ASI capability layer. These are wired together — the reasoner draws
     // available info from memory, avoids known mistakes, delegates subproblems
