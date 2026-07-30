@@ -353,11 +353,6 @@ export class WebServer {
     if (pathname === '/api/chat/messages' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as { message?: string } | null;
-    if (pathname === '/api/chat/messages' && method === 'POST') {
-      try {
-        const { ChatBot, getBot } = await import('../src/server/bot-service.js');
-        const body = await this.parseBody(req) as
-          { message?: string; history?: Array<{ role?: string; content?: string }> } | null;
         const message = body?.message;
         if (!message || typeof message !== 'string') {
           this.sendJson(res, { error: 'Missing message field' }, 400);
@@ -371,7 +366,6 @@ export class WebServer {
           confidence: response.confidence,
           reasoning: response.reasoning,
           suggestions: response.suggestions,
-          multipleChoiceOptions: response.multipleChoiceOptions,
           metadata: response.metadata,
           timestamp: Date.now(),
         });

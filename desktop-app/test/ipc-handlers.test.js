@@ -91,6 +91,11 @@ require.cache[FAKE_ELECTRON_ID] = {
   exports: fakeElectron,
 };
 
+// This suite only exercises the IPC handlers below via the fake Electron
+// shell above -- it must not spawn a real backend process or block on
+// main.js's ensureBuilt()/waitForBackend() startup sequence.
+process.env.DESKTOP_APP_SKIP_BACKEND = '1';
+
 const mainPath = path.join(__dirname, '..', 'src', 'main', 'main.js');
 delete require.cache[require.resolve(mainPath)];
 require(mainPath);
