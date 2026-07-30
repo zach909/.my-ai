@@ -44,5 +44,29 @@ class TestBrowserSecurity(unittest.TestCase):
         self.assertIn("Security Error", str(ctx.exception))
         self.assertIn("Path traversal", str(ctx.exception))
 
+    def test_screenshot_valid_paths(self):
+        # Valid paths inside CWD or /tmp should not raise ValueError
+        try:
+            p1 = self.plugin._safe_path("test_shot.png")
+            p2 = self.plugin._safe_path("/tmp/test_shot.png")
+            self.assertTrue(isinstance(p1, str))
+            self.assertTrue(isinstance(p2, str))
+        except ValueError as e:
+            self.fail(f"Valid path raised ValueError: {e}")
+
+    def test_screenshot_argument_injection(self):
+        # Paths starting with '-' should be blocked (e.g. scrot's --exec=<cmd>)
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.call("screenshot", "--exec=touch /tmp/pwned")
+        self.assertIn("Security Error", str(ctx.exception))
+        self.assertIn("argument injection", str(ctx.exception).lower())
+
+    def test_screenshot_path_traversal(self):
+        # Paths escaping CWD or /tmp should be blocked
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.call("screenshot", "/etc/cron.d/evil")
+        self.assertIn("Security Error", str(ctx.exception))
+        self.assertIn("path traversal", str(ctx.exception).lower())
+
 if __name__ == "__main__":
     unittest.main()

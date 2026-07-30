@@ -1,0 +1,152 @@
+<div style="position:relative;width:100%;height:460px;background:var(--surface-1);border-radius:12px;overflow:hidden;">
+<canvas id="c3" style="width:100%;height:100%;display:block;touch-action:none;"></canvas>
+<div style="position:absolute;bottom:10px;left:12px;font-size:12px;color:var(--text-muted);">Drag to rotate · scroll to zoom</div>
+</div>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function(){
+var container = document.getElementById('c3');
+var scene = new THREE.Scene();
+var camera = new THREE.PerspectiveCamera(40, 1, 0.1, 100);
+var renderer = new THREE.WebGLRenderer({canvas: container, antialias:true, alpha:true});
+function resize(){
+  var w = container.clientWidth, h = container.clientHeight;
+  renderer.setSize(w, h, false);
+  camera.aspect = w/h;
+  camera.updateProjectionMatrix();
+}
+renderer.setPixelRatio(Math.min(window.devicePixelRatio,2));
+
+var hemi = new THREE.HemisphereLight(0xffffff, 0x555555, 1.1);
+scene.add(hemi);
+var dir = new THREE.DirectionalLight(0xffffff, 0.9);
+dir.position.set(3,5,4);
+scene.add(dir);
+var dir2 = new THREE.DirectionalLight(0xffffff, 0.4);
+dir2.position.set(-3,-2,-4);
+scene.add(dir2);
+
+var group = new THREE.Group();
+scene.add(group);
+
+function buildStrip(points, width, depth, twistFn, segCount){
+  var curve = new THREE.CatmullRomCurve3(points, true, 'catmullrom', 0.4);
+  var n = segCount;
+  var positions = [];
+  var normals = [];
+  var uvs = [];
+  var samples = curve.getSpacedPoints(n);
+  var frames = curve.computeFrenetFrames(n, true);
+  var ringCount = 3;
+  for(var i=0;i<=n;i++){
+    var p = samples[i];
+    var normal = frames.normals[i];
+    var binormal = frames.binormals[i];
+    var tangent = frames.tangents[i];
+    var t = i/n;
+    var twist = twistFn(t);
+    var localUp = new THREE.Vector3().copy(normal).multiplyScalar(Math.cos(twist)).add(binormal.clone().multiplyScalar(Math.sin(twist)));
+    localUp.normalize();
+    var faceNormal = new THREE.Vector3().crossVectors(localUp, tangent).normalize();
+    var left = p.clone().addScaledVector(localUp, -width/2);
+    var center = p.clone().addScaledVector(faceNormal, -depth);
+    var right = p.clone().addScaledVector(localUp, width/2);
+    positions.push(left.x,left.y,left.z);
+    positions.push(center.x,center.y,center.z);
+    positions.push(right.x,right.y,right.z);
+    var nLeft = faceNormal.clone().applyAxisAngle(tangent, 0.5).normalize();
+    var nRight = faceNormal.clone().applyAxisAngle(tangent, -0.5).normalize();
+    normals.push(nLeft.x,nLeft.y,nLeft.z);
+    normals.push(faceNormal.x,faceNormal.y,faceNormal.z);
+    normals.push(nRight.x,nRight.y,nRight.z);
+    uvs.push(t,0); uvs.push(t,0.5); uvs.push(t,1);
+  }
+  var indices = [];
+  for(var i=0;i<n;i++){
+    for(var k=0;k<ringCount-1;k++){
+      var a0=i*ringCount+k, b0=i*ringCount+k+1;
+      var a1=(i+1)*ringCount+k, b1=(i+1)*ringCount+k+1;
+      indices.push(a0,a1,b0);
+      indices.push(a1,b1,b0);
+    }
+  }
+  var geo = new THREE.BufferGeometry();
+  geo.setAttribute('position', new THREE.Float32BufferAttribute(positions,3));
+  geo.setAttribute('normal', new THREE.Float32BufferAttribute(normals,3));
+  geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs,2));
+  geo.setIndex(indices);
+  return geo;
+}
+
+var N = 5;
+var a = 1.05, b = 0.85, h = 0.62;
+var pts = [];
+for(var i=0;i<N;i++){
+  var ang = i * (2*Math.PI/N);
+  var x = a*Math.cos(ang);
+  var y = h*Math.sin(2*ang);
+  var z = b*Math.sin(ang);
+  pts.push(new THREE.Vector3(x,y,z));
+}
+
+function twistFn(t){
+  return Math.PI * 1.1 * t + Math.sin(t*Math.PI*2*N)*0.18;
+}
+
+var geo = buildStrip(pts, 0.32, 0.045, twistFn, 300);
+
+var mat = new THREE.MeshStandardMaterial({
+  color: 0xb9b6ad,
+  metalness: 0.75,
+  roughness: 0.5,
+  side: THREE.DoubleSide
+});
+var mesh = new THREE.Mesh(geo, mat);
+group.add(mesh);
+
+var planeMat = new THREE.MeshBasicMaterial({color:0x000000, transparent:true, opacity:0.06});
+var plane = new THREE.Mesh(new THREE.CircleGeometry(2.2, 48), planeMat);
+plane.rotation.x = -Math.PI/2;
+plane.position.y = -0.75;
+group.add(plane);
+
+var rotY = 0.5, rotX = -0.18, zoom = 4.0;
+function updateCamera(){
+  camera.position.x = zoom * Math.sin(rotY) * Math.cos(rotX);
+  camera.position.z = zoom * Math.cos(rotY) * Math.cos(rotX);
+  camera.position.y = zoom * Math.sin(rotX) + 0.25;
+  camera.lookAt(0,0.1,0);
+}
+updateCamera();
+
+var isDragging = false, prevX=0, prevY=0, autoRotate=true;
+container.addEventListener('pointerdown', function(e){
+  isDragging = true; prevX = e.clientX; prevY = e.clientY; autoRotate=false;
+  container.setPointerCapture(e.pointerId);
+});
+container.addEventListener('pointerup', function(){ isDragging=false; });
+container.addEventListener('pointermove', function(e){
+  if(!isDragging) return;
+  var dx = e.clientX - prevX, dy = e.clientY - prevY;
+  rotY -= dx*0.008;
+  rotX += dy*0.006;
+  rotX = Math.max(-1.1, Math.min(1.1, rotX));
+  prevX = e.clientX; prevY = e.clientY;
+});
+container.addEventListener('wheel', function(e){
+  e.preventDefault();
+  zoom += e.deltaY*0.003;
+  zoom = Math.max(2.0, Math.min(7, zoom));
+}, {passive:false});
+
+function animate(){
+  requestAnimationFrame(animate);
+  if(autoRotate) rotY += 0.004;
+  updateCamera();
+  renderer.render(scene, camera);
+}
+resize();
+window.addEventListener('resize', resize);
+animate();
+})();
+</script>

@@ -10,7 +10,7 @@ Imports source or binary code and converts it into an equivalent neural network 
 |---|---|---|
 | TypeScript runtime backend (structural) | `extension-builder/builder.js` (JS-only module; no `.ts` source has ever existed here) — `importCodeToNet(projectId, name, binaryCode)` → `core/thorns.js` `CodeToNet` (also JS-only; no `.ts` source has ever existed here) | Imports binary code into a new `codenet`-type neuron chain (topology) |
 | TypeScript runtime backend (behavioral) | `models && skills/core/code-to-net.ts` — `CodeToNetCompiler` / `CodeNet` | Trains a real network that approximates a numeric function, or embeds it — the same two modes as Python, wired into the NeuroLang `@code` directive |
-| Python training core | `tinygpt/neurolang.py` — `train_codenet(name, code, ...)` | Trains a real network against the code, with two distinct modes |
+| Python training core | `neurolang.py` (package root, not under `tinygpt/`) — `train_codenet(name, code, ...)` | Trains a real network against the code, with two distinct modes |
 
 ## Two real modes (Python)
 

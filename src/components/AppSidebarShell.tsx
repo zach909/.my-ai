@@ -1,14 +1,3 @@
-/**
- * Collapsible SaaS sidebar — OPT-IN (rendered by SharedAppLayout, which the
- * template root does NOT apply by default). Only reach for this when building a
- * SaaS / dashboard app; landing & marketing pages stay full-bleed.
- *
- * Expands to 15rem, collapses to 3rem (icon-only).
- * State is persisted to localStorage. Tooltips appear automatically when collapsed.
- *
- * A native flex-col implementation (shadcn Button/Avatar/Tooltip primitives) for
- * full layout control — every line is yours to edit.
- */
 import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
@@ -42,10 +31,6 @@ interface NavItemDef {
   label: string
 }
 
-// Every href here MUST have a real route file, and every page you add under
-// `src/routes/app/` should get an entry here — a nav link with no route ships a
-// 404. Only the shipped dashboard route is listed; add yours as you create them,
-// e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
   { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
   { href: '/app/chat', icon: <MessageSquare className="h-4 w-4" />, label: 'AI Chat' },
@@ -86,13 +71,8 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
 }
 
 export function AppSidebarShell() {
-  // SSR always renders expanded; the saved preference is restored after mount.
-  // Reading localStorage in the initializer makes the client's first render
-  // differ from the server markup → hydration mismatch on hard refresh.
   const [collapsed, setCollapsed] = useState(false)
   useEffect(() => {
-    // Mount-time restore of a persisted preference; reading localStorage in
-    // the useState initializer would cause an SSR hydration mismatch instead.
     if (localStorage.getItem(SIDEBAR_KEY) === 'true') setCollapsed(true)
   }, [])
 
@@ -151,7 +131,7 @@ export function AppSidebarShell() {
           </Tooltip>
         </div>
 
-        {/* ── Nav (only this section scrolls) ───────────── */}
+        {/* ── Nav ────────────────────────────────────────── */}
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-0.5">
           {!collapsed && (
             <p className="px-3 pt-1 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
@@ -163,7 +143,7 @@ export function AppSidebarShell() {
           ))}
         </div>
 
-        {/* ── Footer (always pinned to bottom) ──────────── */}
+        {/* ── Footer ─────────────────────────────────────── */}
         <div
           className={cn(
             'shrink-0 border-t border-border',
