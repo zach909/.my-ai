@@ -177,6 +177,17 @@ export class EmpathyEngine {
   }
 
   /**
+   * Get the tracked user context (recent inputs, emotional history, alignment).
+   */
+  getUserContext(): UserContext {
+    return {
+      ...this.userContext,
+      recentInputs: [...this.userContext.recentInputs],
+      emotionalHistory: [...this.userContext.emotionalHistory],
+    };
+  }
+
+  /**
    * Get the user's average emotional state from history
    */
   getUserAverageEmotion(): EmotionalState {

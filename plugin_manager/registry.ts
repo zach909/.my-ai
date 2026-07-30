@@ -68,6 +68,10 @@ export class PluginRegistry {
     return this.definitions.get(pluginId);
   }
 
+  getPluginInstance(pluginId: string): BasePlugin | undefined {
+    return this.plugins.get(pluginId);
+  }
+
   getSkill(skillId: string): SkillDefinition | undefined {
     return this.skills.get(skillId);
   }
