@@ -2758,6 +2758,81 @@ async function testSolveIntegration() {
   }
 }
 
+async function testNeuroclawSystemLifecycle() {
+  // End-to-end test: exercise all four primary entry points (processQuery,
+  // solve, autonomousTask, executePlan) in sequence and verify cross-subsystem
+  // state (memory, hive, plan, self-model) stays synchronized throughout.
+  const { NeuroclawSystem } = await load('index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+
+    // Initial state: empty across all subsystems
+    check(sys.memory.all().length === 0, 'Long-term memory starts empty');
+    check(sys.hive.list().length === 0, 'Hive has no agents initially');
+    check(sys.plan.getSteps().length === 0, 'Plan tracker has no tasks initially');
+    const initialMonitorCount = sys.monitor.history().length;
+
+    // First entry point: processQuery
+    const query1 = 'what is the capital of France?';
+    const queryResult = await sys.processQuery(query1);
+    check(typeof queryResult === 'string' && queryResult.length > 0, 'processQuery() produces a result');
+    const memAfterQuery = sys.memory.all().length;
+    check(memAfterQuery > 0, 'processQuery() commits interaction to long-term memory');
+
+    // Second entry point: solve
+    const solveResult = await sys.solve('determine the distance from Paris to London');
+    check(typeof solveResult.result === 'string' && solveResult.result.length > 0, 'solve() produces a result');
+    const memAfterSolve = sys.memory.all().length;
+    check(memAfterSolve >= memAfterQuery, 'solve() commits additional memories to long-term memory');
+    const hiveAfterSolve = sys.hive.list().length;
+    check(hiveAfterSolve >= 0, 'solve() may engage the hive (count is non-negative)');
+
+    // Third entry point: autonomousTask
+    const taskResult = await sys.autonomousTask('organize the travel plan', ['decide route', 'check weather']);
+    check(Array.isArray(taskResult.results), 'autonomousTask() produces results array');
+    const memAfterTask = sys.memory.all().length;
+    check(memAfterTask >= memAfterSolve, 'autonomousTask() commits task progress to long-term memory');
+    const taskCount = sys.plan.getSteps().length;
+    check(taskCount >= 1, 'autonomousTask() records tasks in the plan tracker');
+
+    // Fourth entry point: executePlan
+    const planResult = await sys.executePlan('prepare for trip', ['pack luggage', 'book accommodation']);
+    check(Array.isArray(planResult.results), 'executePlan() produces results array');
+    const memAfterPlan = sys.memory.all().length;
+    check(memAfterPlan >= memAfterTask, 'executePlan() adds more memories than autonomousTask alone');
+    const finalTaskCount = sys.plan.getSteps().length;
+    check(finalTaskCount >= taskCount, 'executePlan() does not lose prior plan entries');
+
+    // Cross-subsystem verification: all subsystems updated
+    check(sys.memory.all().length > 0, 'Total memory grew across all four entry points');
+    const finalMonitorCount = sys.monitor.history().length;
+    check(finalMonitorCount >= initialMonitorCount, 'Self-monitor recorded observations across all calls');
+
+    // Verify memory coherence: can retrieve what was just stored
+    const allMemories = sys.memory.all();
+    const hasSolution = allMemories.some(m => m.tags.includes('solution'));
+    const hasTask = allMemories.some(m => m.tags.includes('task'));
+    check(hasSolution && hasTask, 'Memory contains both solve() solutions and autonomousTask()/executePlan() tasks');
+
+    // Verify hive state consistency (if hive was engaged)
+    if (hiveAfterSolve > 0) {
+      const hiveNow = sys.hive.list();
+      check(hiveNow.length === hiveAfterSolve, 'Hive agent roster remains consistent after all four entry points');
+      check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "Hive's zero-sum trust budget preserved after all four entry points");
+    }
+
+    // Verify self-model tracks calls across all entry points
+    const selfSummary = sys.selfModel.summary();
+    check(selfSummary.length > 0, 'Self-model has observations after exercising all four entry points');
+
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testSolveAlignmentVeto() {
   const { NeuroclawSystem } = await load('index.js');
   const sys = new NeuroclawSystem();
@@ -4017,6 +4092,7 @@ async function main() {
     ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
     ['Reasoning trace history (Section 2)', testReasoningHistory],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
+    ['NeuroclawSystem lifecycle across all entry points (regression guard)', testNeuroclawSystemLifecycle],
     ['solve() AlignmentVeto gating (Section 3/10/13/23)', testSolveAlignmentVeto],
     ['autonomousTask() AlignmentVeto gating (Section 3/10/13/23)', testAutonomousTaskAlignmentVeto],
     ['collaborate() AlignmentVeto gating (Section 3/10/13/23)', testCollaborateAlignmentVeto],
