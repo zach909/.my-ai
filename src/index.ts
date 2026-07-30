@@ -20,6 +20,7 @@ import { PlanTracker } from "../models && skills/core/plan-tracker.js";
 import { SelfHealer } from "../models && skills/core/self-healer.js";
 import { ContextCompressor } from "../models && skills/core/context-compressor.js";
 import { IntentRouter } from "../models && skills/core/intent-router.js";
+import { PromptingSkill } from "../models && skills/core/prompting-skill.js";
 import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
@@ -66,6 +67,7 @@ export class NeuroclawSystem {
   healer: SelfHealer;
   compressor: ContextCompressor;
   router: IntentRouter;
+  prompting: PromptingSkill;
   // AGI / ASI capability layer (integrated in solve()).
   monitor: SelfMonitor;
   mistakes: MistakeTracker;
@@ -151,6 +153,10 @@ export class NeuroclawSystem {
     // Capability router (Section 6): decides which high-level capability a
     // query activates (recall / summarize / heal / generate).
     this.router = new IntentRouter();
+    // Prompting skill (Section 10): understands/improves prompts and records
+    // the resulting goal onto the shared PlanTracker (Section 24) -- reuses
+    // router/plan/empathy above rather than keeping a parallel private state.
+    this.prompting = new PromptingSkill(this.router, this.plan, this.empathy);
 
     // AGI / ASI capability layer. These are wired together — the reasoner draws
     // available info from memory, avoids known mistakes, delegates subproblems
