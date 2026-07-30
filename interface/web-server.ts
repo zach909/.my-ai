@@ -590,7 +590,7 @@ export class WebServer {
         const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
         let files: string[] = [];
         try { files = (await fs.readdir(dir)).filter(f => f.endsWith('.ext.json')); } catch { files = []; }
-        const extensions = [];
+        const extensions: Array<{ file: string; name: string; neurons: number; quantized?: boolean; bits?: number | null }> = [];
         for (const f of files) {
           try {
             const data = JSON.parse(await fs.readFile(path.join(dir, f), 'utf8'));
