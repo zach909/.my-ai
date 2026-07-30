@@ -3,10 +3,10 @@
  * Implements PHASE 2 steps 23-34: Automated testing framework.
  */
 
-import { ArchitectureMapper } from '../models && skills/core/architecture-mapper';
-import { PerformanceMonitor } from '../models && skills/core/performance-monitor';
-import { MistakeTracker } from '../models && skills/core/mistake-tracker';
-import { SelfImprovement } from '../models && skills/core/self-improvement';
+import { ArchitectureMapper } from '../../models && skills/core/architecture-mapper.js';
+import { PerformanceMonitor } from '../../models && skills/core/performance-monitor.js';
+import { MistakeTracker } from '../../models && skills/core/mistake-tracker.js';
+import { SelfImprovement } from '../../models && skills/core/self-improvement.js';
 
 describe('ArchitectureMapper', () => {
   let mapper: ArchitectureMapper;
@@ -69,7 +69,7 @@ describe('ArchitectureMapper', () => {
       inputs: [],
       outputs: [],
       performanceMetrics: {
-        avgLatency: 5000,
+        avgLatency: 6000,
         p95Latency: 8000,
         p99Latency: 10000,
         errorRate: 0.1,
