@@ -345,6 +345,14 @@ export class WebServer {
       return;
     }
 
+    // POST /api/chat/messages — powers the React app's /app/chat page.
+    // Distinct from /api/chat above (the standalone HTML terminal UI's
+    // endpoint, which calls runner.generate() directly): this one goes
+    // through ChatBot.processMessage(), which also returns agent-suggested
+    // follow-up prompts alongside the reply.
+    if (pathname === '/api/chat/messages' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { message?: string } | null;
     if (pathname === '/api/chat/messages' && method === 'POST') {
       try {
         const { ChatBot, getBot } = await import('../src/server/bot-service.js');
@@ -355,12 +363,14 @@ export class WebServer {
           this.sendJson(res, { error: 'Missing message field' }, 400);
           return;
         }
+        const { getBot } = await import('../src/server/bot-service.js');
         const bot = await getBot();
         const response = await bot.processMessage(message);
         this.sendJson(res, {
           message: response.message,
           confidence: response.confidence,
           reasoning: response.reasoning,
+          suggestions: response.suggestions,
           multipleChoiceOptions: response.multipleChoiceOptions,
           metadata: response.metadata,
           timestamp: Date.now(),

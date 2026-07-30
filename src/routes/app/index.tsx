@@ -13,6 +13,7 @@ export const Route = createFileRoute('/app/')({
 })
 
 const MODULES = [
+  { title: 'AI Chat', description: 'Talk to the AI assistant with agent-suggested follow-up prompts.', icon: MessageSquare, href: '/app/chat' },
   { title: 'AI Chat', description: 'Talk to the AI assistant with prompt clips, quick questions, and multiple-choice interactions.', icon: MessageSquare, href: '/app/chat' },
   { title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols.', icon: FlaskConical, href: '/app/experiments' },
   { title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.', icon: Network, href: '/app/architecture' },

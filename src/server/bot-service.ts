@@ -1,6 +1,13 @@
 /**
  * Bot Service — AI agent that powers the chat interface.
  *
+ * Handles message processing, response generation, and follow-up prompt
+ * suggestions. Optionally integrates with NeuroclawSystem for reasoning,
+ * memory, and planning; falls back to a simplified analytical mode when no
+ * system instance is supplied.
+ */
+
+import type { NeuroclawSystem } from '../../index'
  * Handles message processing, response generation, and integration with
  * the NeuroclawSystem for reasoning, memory, and planning capabilities.
  *
@@ -20,6 +27,8 @@ export interface BotResponse {
   message: string
   confidence: number
   reasoning?: string
+  /** Suggested follow-up prompts the agent thinks the user may want to send next. */
+  suggestions: string[]
   multipleChoiceOptions?: string[]
   metadata?: {
     domain?: string
@@ -54,6 +63,9 @@ export class ChatBot {
   }
 
   /**
+   * Process a user message and generate a response with follow-up suggestions.
+   */
+  async processMessage(userMessage: string): Promise<BotResponse> {
    * Process a user message and generate a response.
    */
   async processMessage(userMessage: string): Promise<BotResponse> {
@@ -68,6 +80,19 @@ export class ChatBot {
     this.trimHistory()
 
     try {
+      const response = this.system
+        ? await this.processWithSystem(userMessage)
+        : await this.processSimplified(userMessage)
+
+      this.conversationHistory.push({
+        id: `msg_${Date.now()}_assistant`,
+        role: 'assistant',
+        content: response.message,
+        timestamp: Date.now(),
+      })
+      this.trimHistory()
+
+      return response
       // If we have a system, use it for reasoning
       if (this.system) {
         return await this.processWithSystem(userMessage)
@@ -79,6 +104,11 @@ export class ChatBot {
       return {
         message: 'I encountered an error processing your message. Please try again.',
         confidence: 0.3,
+        suggestions: ['Try rephrasing your question', 'Ask something else'],
+      }
+    }
+  }
+
       }
     }
   }
@@ -91,6 +121,40 @@ export class ChatBot {
       throw new Error('System not initialized')
     }
 
+    const intent = this.detectIntent(userMessage)
+
+    switch (intent) {
+      case 'plan': {
+        const result = await this.system.autonomousTask('user request', [userMessage])
+        const message = result.results?.[0]?.result || 'Planning in progress...'
+        return {
+          message,
+          confidence: 0.8,
+          suggestions: this.generateSuggestions(userMessage, message, 'planning'),
+          metadata: { domain: 'planning', usedPlanning: true },
+        }
+      }
+
+      case 'recall': {
+        const message = await this.system.processQuery(userMessage)
+        return {
+          message,
+          confidence: 0.85,
+          suggestions: this.generateSuggestions(userMessage, message, 'recall'),
+          metadata: { usedMemory: true },
+        }
+      }
+
+      case 'solve':
+      default: {
+        const result = await this.system.solve(userMessage)
+        return {
+          message: result.result,
+          confidence: result.confidence,
+          suggestions: this.generateSuggestions(userMessage, result.result, result.domain),
+          metadata: { domain: result.domain },
+        }
+      }
     // Try to route to the appropriate capability
     const intent = this.detectIntent(userMessage)
 
@@ -132,6 +196,10 @@ export class ChatBot {
 
   /**
    * Simplified processing without the full system (fallback mode).
+   */
+  private async processSimplified(userMessage: string): Promise<BotResponse> {
+    const response = this.generateResponse(userMessage)
+    const suggestions = this.generateSuggestions(userMessage, response.message, response.domain)
    * Still generates thoughtful responses with optional multiple-choice.
    */
   private async processSimplified(userMessage: string): Promise<BotResponse> {
@@ -152,6 +220,25 @@ export class ChatBot {
       message: response.message,
       confidence: response.confidence,
       reasoning: response.reasoning,
+      suggestions,
+      metadata: { domain: response.domain },
+    }
+  }
+
+  private detectIntent(message: string): 'plan' | 'recall' | 'solve' | 'help' {
+    const lower = message.toLowerCase()
+    if (lower.includes('plan') || lower.includes('schedule') || lower.includes('organize')) return 'plan'
+    if (lower.includes('remember') || lower.includes('recall') || lower.includes('what was')) return 'recall'
+    if (lower.includes('help') || lower.includes('how')) return 'solve'
+    return 'solve'
+  }
+
+  private generateResponse(userMessage: string): {
+    message: string
+    confidence: number
+    reasoning?: string
+    domain: string
+  } {
       multipleChoiceOptions: options,
       metadata: {
         domain: response.domain,
@@ -255,6 +342,8 @@ export class ChatBot {
     }
   }
 
+  private analyzeMessage(message: string): { type: string; keyPoints: string[] } {
+    const lower = message.toLowerCase()
   /**
    * Analyze the structure and content of a message.
    */
@@ -274,6 +363,10 @@ export class ChatBot {
             ? 'planning'
             : 'general',
       keyPoints: message.split(/[.!?]/).filter((s) => s.trim().length > 0),
+    }
+  }
+
+  private buildAnalyticalResponse(userMessage: string, analysis: { type: string }): string {
       hasProblem: lower.includes('problem') || lower.includes('issue') || lower.includes('wrong'),
     }
   }
@@ -293,6 +386,65 @@ export class ChatBot {
   }
 
   /**
+   * Generate follow-up prompt suggestions based on the domain of the last
+   * exchange — the agent proactively proposes what to ask next, rather than
+   * relying on the user having saved anything themselves.
+   */
+  private generateSuggestions(userMessage: string, responseMessage: string, domain?: string): string[] {
+    const byDomain: Record<string, string[]> = {
+      coding: [
+        'Show me example code for this',
+        'What edge cases should I handle?',
+        'How would I test this?',
+      ],
+      analysis: [
+        'What patterns should I look for?',
+        'Can you summarize the key findings?',
+        'What are the implications of this?',
+      ],
+      planning: [
+        'Break this into smaller milestones',
+        'What are the biggest risks here?',
+        'What should I prioritize first?',
+      ],
+      recall: [
+        'What else do you remember about this?',
+        'How does this relate to what we discussed before?',
+      ],
+      help: [
+        'Help me break down a complex problem',
+        'Create a detailed plan with milestones',
+        'Show me best practices for this domain',
+      ],
+      greeting: [
+        'Help me break down a complex problem',
+        'What are potential risks or edge cases?',
+        'Walk me through a step-by-step approach',
+      ],
+      social: [
+        'What else can you help with?',
+      ],
+      general: [
+        'Can you go deeper on this?',
+        'What are the tradeoffs here?',
+        'Give me a concrete example',
+      ],
+    }
+
+    const pool = byDomain[domain ?? 'general'] ?? byDomain.general
+    // Multiple-choice option lines already embedded in the response shouldn't
+    // be duplicated as suggestions — those are handled inline by the UI.
+    const hasInlineOptions = /\([A-Z]\)\s*[^\n]+/.test(responseMessage)
+    const suggestions = hasInlineOptions ? [] : [...pool]
+
+    // Always offer a way to keep going deeper on the current thread.
+    if (!hasInlineOptions) {
+      suggestions.push(`Tell me more about "${userMessage.slice(0, 30)}${userMessage.length > 30 ? '...' : ''}"`)
+    }
+
+    return suggestions.slice(0, 4)
+  }
+
    * Generate multiple-choice options for a topic.
    */
   private generateOptions(userMessage: string): string[] {
