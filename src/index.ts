@@ -3,43 +3,43 @@ import { writeFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { NeuroclawLLM } from "./models && skills/llm.js";
-import { NeuroPipeline } from "./models && skills/core/pipeline.js";
-import { ThesaurusDictionary } from "./models && skills/thesaurus.js";
-import { PluginRegistry } from "./plugin_manager/registry.js";
-import { NeuroclawRunner } from "./interface/runner.js";
-import { WebServer } from "./interface/web-server.js";
-import { CLI } from "./interface/cli.js";
-import { AlignmentVeto } from "./models && skills/core/alignment-veto.js";
-import { ZipIOSystem } from "./models && skills/core/zip-io.js";
-import { EmpathyEngine } from "./models && skills/core/empathy.js";
-import { HiveMind, SharedBlackboard } from "./models && skills/core/hive-mind.js";
-import { ChatGroup } from "./models && skills/core/chat-group.js";
-import { LongTermMemory } from "./models && skills/core/long-term-memory.js";
-import { PlanTracker } from "./models && skills/core/plan-tracker.js";
-import { SelfHealer } from "./models && skills/core/self-healer.js";
-import { ContextCompressor } from "./models && skills/core/context-compressor.js";
-import { IntentRouter } from "./models && skills/core/intent-router.js";
-import { SelfMonitor } from "./models && skills/core/self-monitor.js";
-import { MistakeTracker } from "./models && skills/core/mistake-tracker.js";
-import { KnowledgeGraph } from "./models && skills/core/knowledge-graph.js";
-import { ReasoningEngine, ReasoningStep } from "./models && skills/core/reasoning-engine.js";
-import { KnowledgeTransfer } from "./models && skills/core/knowledge-transfer.js";
-import { SelfModel } from "./models && skills/core/self-model.js";
-import { SelfImprovement } from "./models && skills/core/self-improvement.js";
-import { AutonomousLearner } from "./models && skills/core/autonomous-learner.js";
-import { PredictionEngine } from "./models && skills/core/prediction-engine.js";
-import { DiscoveryEngine } from "./models && skills/core/discovery-engine.js";
-import { ArchitectureMapper, Bottleneck, WasteReport, ComponentType } from "./models && skills/core/architecture-mapper.js";
-import { PerformanceMonitor, ComponentMetrics, SystemHealth } from "./models && skills/core/performance-monitor.js";
+import { NeuroclawLLM } from "../models && skills/llm.js";
+import { NeuroPipeline } from "../models && skills/core/pipeline.js";
+import { ThesaurusDictionary } from "../models && skills/thesaurus.js";
+import { PluginRegistry } from "../plugin_manager/registry.js";
+import { NeuroclawRunner } from "../interface/runner.js";
+import { WebServer } from "../interface/web-server.js";
+import { CLI } from "../interface/cli.js";
+import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
+import { ZipIOSystem } from "../models && skills/core/zip-io.js";
+import { EmpathyEngine } from "../models && skills/core/empathy.js";
+import { HiveMind, SharedBlackboard } from "../models && skills/core/hive-mind.js";
+import { ChatGroup } from "../models && skills/core/chat-group.js";
+import { LongTermMemory } from "../models && skills/core/long-term-memory.js";
+import { PlanTracker } from "../models && skills/core/plan-tracker.js";
+import { SelfHealer } from "../models && skills/core/self-healer.js";
+import { ContextCompressor } from "../models && skills/core/context-compressor.js";
+import { IntentRouter } from "../models && skills/core/intent-router.js";
+import { SelfMonitor } from "../models && skills/core/self-monitor.js";
+import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
+import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
+import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
+import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.js";
+import { SelfModel } from "../models && skills/core/self-model.js";
+import { SelfImprovement } from "../models && skills/core/self-improvement.js";
+import { AutonomousLearner } from "../models && skills/core/autonomous-learner.js";
+import { PredictionEngine } from "../models && skills/core/prediction-engine.js";
+import { DiscoveryEngine } from "../models && skills/core/discovery-engine.js";
+import { ArchitectureMapper, Bottleneck, WasteReport, ComponentType } from "../models && skills/core/architecture-mapper.js";
+import { PerformanceMonitor, ComponentMetrics, SystemHealth } from "../models && skills/core/performance-monitor.js";
 
 // Plugins & skills — the whole extension catalog is instantiated through the
 // shared factory so every entry in `pluginExtensions` gets a real
 // implementation, not just a hand-picked subset.
-import { CallHistoryPlugin } from "./plugins/call-history.js";
-import { PhoneCallsPlugin } from "./plugins/phone-calls.js";
-import { createPluginInstance, pluginExtensions } from "./plugins/index.js";
-import type { SkillDefinition } from "./plugin_manager/types.js";
+import { CallHistoryPlugin } from "../plugins/call-history.js";
+import { PhoneCallsPlugin } from "../plugins/phone-calls.js";
+import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
+import type { SkillDefinition } from "../plugin_manager/types.js";
 
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -640,12 +640,12 @@ export class NeuroclawSystem {
    * invoked (the same "creation" path a user request would trigger) rather
    * than a parallel mechanism.
    */
-  async learn(information: string, opts?: import("./models && skills/core/autonomous-learner.js").LearnOptions) {
+  async learn(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
     if (!this.initialized) await this.initialize();
     return this.trackCall("learn", async () => this.learnImpl(information, opts));
   }
 
-  private async learnImpl(information: string, opts?: import("./models && skills/core/autonomous-learner.js").LearnOptions) {
+  private async learnImpl(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
     const result = this.learner.learn(information, opts);
     if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
       // ASI §3/§10/§13/§23: gate the real side effect through the same

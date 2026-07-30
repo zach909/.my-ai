@@ -261,8 +261,12 @@ export class NeuronMesh {
             history.length = finalIters;
             nodes[i].activationHistory.push(...history);
         }
+        const finalStates = new Map();
+        for (let i = 0; i < N; i++) {
+            finalStates.set(nodes[i].id, nodes[i].activation);
+        }
         return {
-            finalStates: new Map(nodes.map(n => [n.id, n.activation])),
+            finalStates,
             iterations: finalIters, converged, residual, nodeHistory
         };
     }
