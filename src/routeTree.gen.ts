@@ -18,6 +18,7 @@ import { Route as AppPlanningRouteImport } from './routes/app/planning'
 import { Route as AppKnowledgeRouteImport } from './routes/app/knowledge'
 import { Route as AppExperimentsRouteImport } from './routes/app/experiments'
 import { Route as AppEvaluationRouteImport } from './routes/app/evaluation'
+import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppArchitectureRouteImport } from './routes/app/architecture'
 
 const DesktopRoute = DesktopRouteImport.update({
@@ -65,6 +66,11 @@ const AppEvaluationRoute = AppEvaluationRouteImport.update({
   path: '/evaluation',
   getParentRoute: () => AppRoute,
 } as any)
+const AppChatRoute = AppChatRouteImport.update({
+  id: '/chat',
+  path: '/chat',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppArchitectureRoute = AppArchitectureRouteImport.update({
   id: '/architecture',
   path: '/architecture',
@@ -77,6 +83,7 @@ export interface FileRoutesByFullPath {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/architecture': typeof AppArchitectureRoute
+  '/app/chat': typeof AppChatRoute
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
@@ -88,6 +95,7 @@ export interface FileRoutesByTo {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/architecture': typeof AppArchitectureRoute
+  '/app/chat': typeof AppChatRoute
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
@@ -101,6 +109,7 @@ export interface FileRoutesById {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/architecture': typeof AppArchitectureRoute
+  '/app/chat': typeof AppChatRoute
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
@@ -115,6 +124,7 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/architecture'
+    | '/app/chat'
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
@@ -126,6 +136,7 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/architecture'
+    | '/app/chat'
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
@@ -138,6 +149,7 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/architecture'
+    | '/app/chat'
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
@@ -217,6 +229,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppEvaluationRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/chat': {
+      id: '/app/chat'
+      path: '/chat'
+      fullPath: '/app/chat'
+      preLoaderRoute: typeof AppChatRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/architecture': {
       id: '/app/architecture'
       path: '/architecture'
@@ -229,6 +248,7 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppArchitectureRoute: typeof AppArchitectureRoute
+  AppChatRoute: typeof AppChatRoute
   AppEvaluationRoute: typeof AppEvaluationRoute
   AppExperimentsRoute: typeof AppExperimentsRoute
   AppKnowledgeRoute: typeof AppKnowledgeRoute
@@ -238,6 +258,7 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppArchitectureRoute: AppArchitectureRoute,
+  AppChatRoute: AppChatRoute,
   AppEvaluationRoute: AppEvaluationRoute,
   AppExperimentsRoute: AppExperimentsRoute,
   AppKnowledgeRoute: AppKnowledgeRoute,

@@ -30,6 +30,7 @@ import {
   LogOut,
   PanelLeft,
   Cpu,
+  MessageSquare,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -47,6 +48,7 @@ interface NavItemDef {
 // e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
   { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
+  { href: '/app/chat', icon: <MessageSquare className="h-4 w-4" />, label: 'AI Chat' },
   { href: '/app/experiments', icon: <FlaskConical className="h-4 w-4" />, label: 'Experiments' },
   { href: '/app/architecture', icon: <Network className="h-4 w-4" />, label: 'Architecture' },
   { href: '/app/knowledge', icon: <Brain className="h-4 w-4" />, label: 'Knowledge & Reasoning' },
@@ -59,10 +61,8 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
     <Link
       to={item.href}
       activeOptions={{ exact: true }}
-      className={cn(
-        'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 cursor-pointer text-muted-foreground hover:bg-accent hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none',
       activeProps={{
-        className: 'bg-accent text-foreground font-medium',
+        className: 'bg-accent text-foreground font-semibold shadow-xs',
       }}
       inactiveProps={{
         className: 'text-muted-foreground hover:bg-accent hover:text-foreground',
@@ -71,9 +71,6 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
         'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.97]',
         collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full'
       )}
-      activeProps={{
-        className: 'bg-accent text-foreground font-semibold shadow-xs',
-      }}
     >
       <span className="shrink-0">{item.icon}</span>
       {!collapsed && <span className="truncate">{item.label}</span>}
@@ -136,8 +133,7 @@ export function AppSidebarShell() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition-transform"
+                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 onClick={toggle}
                 aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               >
@@ -179,10 +175,9 @@ export function AppSidebarShell() {
             <Tooltip>
               <TooltipTrigger asChild>
                 <button
-                  className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer"
-                  aria-label="User profile: Researcher, researcher@asi.architect"
-                  aria-label="User profile details"
+                  type="button"
                   className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.95]"
+                  aria-label="User profile details"
                 >
                   <Avatar className="h-6 w-6 shrink-0">
                     <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
@@ -193,10 +188,9 @@ export function AppSidebarShell() {
             </Tooltip>
           ) : (
             <button
-              className="flex items-center gap-2 rounded-md hover:bg-accent transition-all duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer w-full px-2 py-1.5"
-              aria-label="User profile: Researcher, researcher@asi.architect"
-              aria-label="User profile details"
+              type="button"
               className="flex items-center gap-2 rounded-md hover:bg-accent transition-all duration-150 cursor-pointer w-full px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.98]"
+              aria-label="User profile details"
             >
               <Avatar className="h-6 w-6 shrink-0">
                 <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
@@ -218,10 +212,8 @@ export function AppSidebarShell() {
                   type="button"
                   variant="ghost"
                   size="sm"
-                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-95 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                   aria-label="Sign out"
-                  aria-label="Sign out"
-                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground active:scale-95 transition-transform"
                 >
                   <LogOut className="h-4 w-4 shrink-0" />
                 </Button>
@@ -233,10 +225,8 @@ export function AppSidebarShell() {
               type="button"
               variant="ghost"
               size="sm"
-              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground transition-all duration-150 active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground active:scale-[0.98] transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
               aria-label="Sign out"
-              aria-label="Sign out"
-              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground active:scale-[0.98] transition-transform"
             >
               <LogOut className="h-4 w-4 shrink-0" />
               Sign out
