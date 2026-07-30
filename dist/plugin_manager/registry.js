@@ -52,6 +52,9 @@ export class PluginRegistry {
     getPlugin(pluginId) {
         return this.definitions.get(pluginId);
     }
+    getPluginInstance(pluginId) {
+        return this.plugins.get(pluginId);
+    }
     getSkill(skillId) {
         return this.skills.get(skillId);
     }
