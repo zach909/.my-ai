@@ -6,7 +6,7 @@ import path from 'path';
 import fs from 'node:fs';
 // Blink Visual Editor: stamps data-blnk-id on JSX + injects iframe-side picker
 // runtime. Self-contained (no external deps) so this template stays portable.
-import { blinkTaggerPlugin } from './blink-tagger.plugin.mjs';
+import { blinkTaggerPlugin } from './plugins/blink-tagger.plugin.mjs';
 
 // Blink: guarantee global CSS survives agent rewrites of src/routes/__root.tsx.
 // TanStack Start only emits a stylesheet for CSS imported by a ROUTE module, and
