@@ -270,17 +270,34 @@ export class MoERouter {
         const expertCount = this.config.expertCount;
         // OPTIMIZATION: Use pre-allocated scoresScratch array to avoid GC and allocations.
         const scores = this.scoresScratch;
-        for (let e = 0; e < expertCount; e++) {
-            scores[e] = this.routerBias[e];
-        }
         // Optimized router scoring with sequential (row-major) memory access.
+        // Loop order: experts outer, input inner for better cache utilization
         const weights = this.routerWeights;
-        for (let i = 0; i < input.length; i++) {
-            const inputVal = input[i];
-            const offset = i * expertCount;
-            for (let e = 0; e < expertCount; e++) {
-                scores[e] += inputVal * weights[offset + e];
+        const inputLen = input.length;
+        const bias = this.routerBias;
+        // Process each expert sequentially for better L1 cache usage
+        for (let exp = 0; exp < expertCount; exp++) {
+            let score = bias[exp];
+            let wIdx = exp;
+            // Unroll by 8x for SIMD-friendly access pattern
+            let i = 0;
+            const limit = inputLen - 7;
+            for (; i < limit; i += 8) {
+                score += input[i] * weights[wIdx]
+                    + input[i + 1] * weights[wIdx + expertCount]
+                    + input[i + 2] * weights[wIdx + 2 * expertCount]
+                    + input[i + 3] * weights[wIdx + 3 * expertCount]
+                    + input[i + 4] * weights[wIdx + 4 * expertCount]
+                    + input[i + 5] * weights[wIdx + 5 * expertCount]
+                    + input[i + 6] * weights[wIdx + 6 * expertCount]
+                    + input[i + 7] * weights[wIdx + 7 * expertCount];
+                wIdx += 8 * expertCount;
             }
+            for (; i < inputLen; i++) {
+                score += input[i] * weights[wIdx];
+                wIdx += expertCount;
+            }
+            scores[exp] = score;
         }
         return scores;
     }
