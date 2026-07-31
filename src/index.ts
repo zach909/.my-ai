@@ -26,6 +26,7 @@ import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
 import { WorldModel } from "../models && skills/core/world-model.js";
+import { MathEngine } from "../models && skills/core/math-engine.js";
 import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "../models && skills/core/self-model.js";
@@ -76,6 +77,7 @@ export class NeuroclawSystem {
   mistakes: MistakeTracker;
   knowledge: KnowledgeGraph;
   worldModel: WorldModel;
+  math: MathEngine;
   reasoner: ReasoningEngine;
   transfer: KnowledgeTransfer;
   selfModel: SelfModel;
@@ -177,6 +179,9 @@ export class NeuroclawSystem {
     // World model (Section 4): spec-aligned entity/causal/temporal vocabulary
     // over the same KnowledgeGraph -- not a second, duplicate graph.
     this.worldModel = new WorldModel(this.knowledge);
+    // Math engine (Section 13): deterministic verification of numeric
+    // reasoning steps, independent of neural prediction.
+    this.math = new MathEngine();
     this.transfer = new KnowledgeTransfer();
     this.selfModel = new SelfModel();
     this.improvement = new SelfImprovement();

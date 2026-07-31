@@ -1,0 +1,385 @@
+/**
+ * Mathematics (Spec Section 13).
+ *
+ * A deterministic, local mathematical toolkit whose headline purpose is
+ * exactly what the spec asks for: "mathematical tools should be used to
+ * verify reasoning rather than relying only on neural predictions" --
+ * MathEngine.verify() independently recomputes a claimed numeric result
+ * and reports whether it actually checks out.
+ *
+ * Deliberately NOT a full symbolic computer-algebra system -- symbolic
+ * algebra/calculus/formal-proof engines are each a multi-year undertaking
+ * on their own. Coverage here is real and testable but bounded: a safe
+ * expression evaluator (arithmetic + algebra via variable substitution),
+ * basic geometry formulas, calculus via numerical differentiation/
+ * integration, statistics, probability/combinatorics, small-matrix linear
+ * algebra, 1D optimization via golden-section search, and "formal proof"
+ * reduced to numerically verifying a claimed identity holds at sample
+ * points rather than a symbolic theorem prover.
+ *
+ * The expression evaluator is a hand-written recursive-descent parser, not
+ * eval()/Function() -- those would let a plain string parameter execute
+ * arbitrary JavaScript.
+ */
+
+// ---------------------------------------------------------------------------
+// Arithmetic / Algebra: safe expression evaluation (+ - * / ^, parentheses,
+// unary +/-, named variables). Algebra is "arithmetic with named variables
+// substituted at evaluation time" rather than a separate solver.
+// ---------------------------------------------------------------------------
+
+type Token =
+  | { type: "num"; value: number }
+  | { type: "ident"; value: string }
+  | { type: "op"; value: "+" | "-" | "*" | "/" | "^" }
+  | { type: "lparen" }
+  | { type: "rparen" };
+
+function tokenize(expr: string): Token[] {
+  const tokens: Token[] = [];
+  let i = 0;
+  while (i < expr.length) {
+    const c = expr[i];
+    if (/\s/.test(c)) { i++; continue; }
+    if (/[0-9.]/.test(c)) {
+      let j = i;
+      while (j < expr.length && /[0-9.]/.test(expr[j])) j++;
+      const numStr = expr.slice(i, j);
+      const value = Number(numStr);
+      if (Number.isNaN(value)) throw new Error(`Invalid number in expression: "${numStr}"`);
+      tokens.push({ type: "num", value });
+      i = j;
+      continue;
+    }
+    if (/[a-zA-Z_]/.test(c)) {
+      let j = i;
+      while (j < expr.length && /[a-zA-Z0-9_]/.test(expr[j])) j++;
+      tokens.push({ type: "ident", value: expr.slice(i, j) });
+      i = j;
+      continue;
+    }
+    if (c === "+" || c === "-" || c === "*" || c === "/" || c === "^") {
+      tokens.push({ type: "op", value: c });
+      i++;
+      continue;
+    }
+    if (c === "(") { tokens.push({ type: "lparen" }); i++; continue; }
+    if (c === ")") { tokens.push({ type: "rparen" }); i++; continue; }
+    throw new Error(`Unexpected character in expression: "${c}"`);
+  }
+  return tokens;
+}
+
+class ExpressionParser {
+  private pos = 0;
+  constructor(private readonly tokens: Token[], private readonly vars: Record<string, number>) {}
+
+  parse(): number {
+    const value = this.parseExpr();
+    if (this.pos < this.tokens.length) throw new Error(`Unexpected trailing input in expression at token ${this.pos}`);
+    return value;
+  }
+
+  private peek(): Token | undefined {
+    return this.tokens[this.pos];
+  }
+
+  private consume(): Token {
+    const t = this.tokens[this.pos];
+    if (!t) throw new Error("Unexpected end of expression");
+    this.pos++;
+    return t;
+  }
+
+  private parseExpr(): number {
+    let value = this.parseTerm();
+    for (;;) {
+      const t = this.peek();
+      if (t?.type === "op" && (t.value === "+" || t.value === "-")) {
+        this.consume();
+        const rhs = this.parseTerm();
+        value = t.value === "+" ? value + rhs : value - rhs;
+      } else break;
+    }
+    return value;
+  }
+
+  private parseTerm(): number {
+    let value = this.parseUnary();
+    for (;;) {
+      const t = this.peek();
+      if (t?.type === "op" && (t.value === "*" || t.value === "/")) {
+        this.consume();
+        const rhs = this.parseUnary();
+        if (t.value === "/") {
+          if (rhs === 0) throw new Error("Division by zero in expression");
+          value = value / rhs;
+        } else {
+          value = value * rhs;
+        }
+      } else break;
+    }
+    return value;
+  }
+
+  private parseUnary(): number {
+    const t = this.peek();
+    if (t?.type === "op" && (t.value === "-" || t.value === "+")) {
+      this.consume();
+      const value = this.parseUnary();
+      return t.value === "-" ? -value : value;
+    }
+    return this.parsePower();
+  }
+
+  private parsePower(): number {
+    const base = this.parsePrimary();
+    const t = this.peek();
+    if (t?.type === "op" && t.value === "^") {
+      this.consume();
+      const exponent = this.parseUnary(); // right-associative: 2^-2 is valid
+      return Math.pow(base, exponent);
+    }
+    return base;
+  }
+
+  private parsePrimary(): number {
+    const t = this.consume();
+    if (t.type === "num") return t.value;
+    if (t.type === "ident") {
+      if (!(t.value in this.vars)) throw new Error(`Unknown variable in expression: "${t.value}"`);
+      return this.vars[t.value];
+    }
+    if (t.type === "lparen") {
+      const value = this.parseExpr();
+      const close = this.consume();
+      if (close.type !== "rparen") throw new Error("Expected closing parenthesis");
+      return value;
+    }
+    throw new Error("Unexpected token in expression");
+  }
+}
+
+/** Safely evaluate an arithmetic/algebraic expression (no eval()/Function()). */
+export function evaluateExpression(expr: string, vars: Record<string, number> = {}): number {
+  const tokens = tokenize(expr);
+  return new ExpressionParser(tokens, vars).parse();
+}
+
+// ---------------------------------------------------------------------------
+// Geometry
+// ---------------------------------------------------------------------------
+
+export function distance2D(x1: number, y1: number, x2: number, y2: number): number {
+  return Math.sqrt((x2 - x1) ** 2 + (y2 - y1) ** 2);
+}
+export function circleArea(radius: number): number {
+  return Math.PI * radius * radius;
+}
+export function circleCircumference(radius: number): number {
+  return 2 * Math.PI * radius;
+}
+export function triangleArea(base: number, height: number): number {
+  return 0.5 * base * height;
+}
+export function rectangleArea(width: number, height: number): number {
+  return width * height;
+}
+
+// ---------------------------------------------------------------------------
+// Calculus: numerical differentiation/integration (finite differences /
+// composite trapezoidal rule) rather than symbolic manipulation.
+// ---------------------------------------------------------------------------
+
+export function numericalDerivative(f: (x: number) => number, x: number, h = 1e-6): number {
+  return (f(x + h) - f(x - h)) / (2 * h);
+}
+
+export function numericalIntegral(f: (x: number) => number, a: number, b: number, steps = 1000): number {
+  if (steps <= 0) throw new Error("steps must be positive");
+  const h = (b - a) / steps;
+  let sum = (f(a) + f(b)) / 2;
+  for (let i = 1; i < steps; i++) sum += f(a + i * h);
+  return sum * h;
+}
+
+// ---------------------------------------------------------------------------
+// Statistics
+// ---------------------------------------------------------------------------
+
+export function mean(values: number[]): number {
+  if (values.length === 0) throw new Error("mean of an empty array is undefined");
+  return values.reduce((a, b) => a + b, 0) / values.length;
+}
+
+export function median(values: number[]): number {
+  if (values.length === 0) throw new Error("median of an empty array is undefined");
+  const sorted = [...values].sort((a, b) => a - b);
+  const mid = Math.floor(sorted.length / 2);
+  return sorted.length % 2 === 0 ? (sorted[mid - 1] + sorted[mid]) / 2 : sorted[mid];
+}
+
+/** Sample variance (n-1 denominator) by default; pass sample=false for population variance. */
+export function variance(values: number[], sample = true): number {
+  if (values.length < (sample ? 2 : 1)) throw new Error("not enough values to compute variance");
+  const m = mean(values);
+  const sumSq = values.reduce((acc, v) => acc + (v - m) ** 2, 0);
+  return sumSq / (values.length - (sample ? 1 : 0));
+}
+
+export function standardDeviation(values: number[], sample = true): number {
+  return Math.sqrt(variance(values, sample));
+}
+
+// ---------------------------------------------------------------------------
+// Probability / combinatorics
+// ---------------------------------------------------------------------------
+
+export function factorial(n: number): number {
+  if (!Number.isInteger(n) || n < 0) throw new Error("factorial requires a non-negative integer");
+  let result = 1;
+  for (let i = 2; i <= n; i++) result *= i;
+  return result;
+}
+
+export function permutations(n: number, k: number): number {
+  if (k > n || k < 0) throw new Error("invalid n/k for permutations");
+  return factorial(n) / factorial(n - k);
+}
+
+export function combinations(n: number, k: number): number {
+  if (k > n || k < 0) throw new Error("invalid n/k for combinations");
+  return factorial(n) / (factorial(k) * factorial(n - k));
+}
+
+export function binomialProbability(n: number, k: number, p: number): number {
+  if (p < 0 || p > 1) throw new Error("probability p must be in [0,1]");
+  return combinations(n, k) * p ** k * (1 - p) ** (n - k);
+}
+
+// ---------------------------------------------------------------------------
+// Linear algebra (small vectors/matrices)
+// ---------------------------------------------------------------------------
+
+export function dotProduct(a: number[], b: number[]): number {
+  if (a.length !== b.length) throw new Error("vectors must be the same length");
+  return a.reduce((sum, v, i) => sum + v * b[i], 0);
+}
+
+export function matrixMultiply(a: number[][], b: number[][]): number[][] {
+  const aRows = a.length, aCols = a[0]?.length ?? 0;
+  const bRows = b.length, bCols = b[0]?.length ?? 0;
+  if (aCols !== bRows) throw new Error("matrix dimensions do not match for multiplication");
+  const result: number[][] = Array.from({ length: aRows }, () => new Array(bCols).fill(0));
+  for (let i = 0; i < aRows; i++) {
+    for (let j = 0; j < bCols; j++) {
+      let sum = 0;
+      for (let k = 0; k < aCols; k++) sum += a[i][k] * b[k][j];
+      result[i][j] = sum;
+    }
+  }
+  return result;
+}
+
+export function transpose(m: number[][]): number[][] {
+  if (m.length === 0) return [];
+  return m[0].map((_, colIndex) => m.map(row => row[colIndex]));
+}
+
+/** Determinant via cofactor expansion -- fine for the small matrices this toolkit targets. */
+export function determinant(m: number[][]): number {
+  const n = m.length;
+  if (n === 0 || m.some(row => row.length !== n)) throw new Error("determinant requires a square matrix");
+  if (n === 1) return m[0][0];
+  if (n === 2) return m[0][0] * m[1][1] - m[0][1] * m[1][0];
+  let det = 0;
+  for (let col = 0; col < n; col++) {
+    const minor = m.slice(1).map(row => row.filter((_, c) => c !== col));
+    const sign = col % 2 === 0 ? 1 : -1;
+    det += sign * m[0][col] * determinant(minor);
+  }
+  return det;
+}
+
+// ---------------------------------------------------------------------------
+// Optimization: 1D minimization via golden-section search.
+// ---------------------------------------------------------------------------
+
+const GOLDEN_RATIO = (Math.sqrt(5) - 1) / 2;
+
+export function goldenSectionSearch(f: (x: number) => number, a: number, b: number, tolerance = 1e-6): { x: number; value: number } {
+  let lo = a, hi = b;
+  let c = hi - GOLDEN_RATIO * (hi - lo);
+  let d = lo + GOLDEN_RATIO * (hi - lo);
+  while (Math.abs(hi - lo) > tolerance) {
+    if (f(c) < f(d)) {
+      hi = d;
+    } else {
+      lo = c;
+    }
+    c = hi - GOLDEN_RATIO * (hi - lo);
+    d = lo + GOLDEN_RATIO * (hi - lo);
+  }
+  const x = (lo + hi) / 2;
+  return { x, value: f(x) };
+}
+
+// ---------------------------------------------------------------------------
+// MathEngine: the actual Section 13 mandate -- "used to verify reasoning
+// rather than relying only on neural predictions."
+// ---------------------------------------------------------------------------
+
+export interface VerificationResult {
+  verified: boolean;
+  actual: number;
+  claimed: number;
+  difference: number;
+}
+
+export interface IdentityVerificationResult {
+  verified: boolean;
+  /** The first sample point where the identity failed to hold, if any. */
+  failedAt?: Record<string, number>;
+  maxDifference: number;
+}
+
+export class MathEngine {
+  /**
+   * Independently evaluate an arithmetic/algebraic expression and compare it
+   * against a claimed result. This is the toolkit's headline entry point --
+   * a reasoning step that claims "2 * (3 + 4) = 14" gets checked here rather
+   * than trusted outright.
+   */
+  verify(expression: string, claimedResult: number, vars: Record<string, number> = {}, tolerance = 1e-9): VerificationResult {
+    const actual = evaluateExpression(expression, vars);
+    const difference = Math.abs(actual - claimedResult);
+    return { verified: difference <= tolerance, actual, claimed: claimedResult, difference };
+  }
+
+  /**
+   * Numerically verify a claimed identity/equation holds across a set of
+   * sample points -- a bounded, deterministic stand-in for a symbolic
+   * "formal proof" engine (Section 13). Not proof by exhaustion; a genuine
+   * counterexample among the samples is conclusive, but agreement across
+   * samples is evidence, not a proof, for anything beyond simple polynomial
+   * identities.
+   */
+  verifyIdentity(
+    lhs: string,
+    rhs: string,
+    samples: Array<Record<string, number>>,
+    tolerance = 1e-6
+  ): IdentityVerificationResult {
+    let maxDifference = 0;
+    for (const vars of samples) {
+      const l = evaluateExpression(lhs, vars);
+      const r = evaluateExpression(rhs, vars);
+      const diff = Math.abs(l - r);
+      maxDifference = Math.max(maxDifference, diff);
+      if (diff > tolerance) {
+        return { verified: false, failedAt: vars, maxDifference };
+      }
+    }
+    return { verified: true, maxDifference };
+  }
+}
