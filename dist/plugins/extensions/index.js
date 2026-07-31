@@ -342,24 +342,86 @@ export class SelfHealExtension extends BasePlugin {
     async onHealthCheck() { return true; }
 }
 export class SkillMakerExtension extends BasePlugin {
+    /**
+     * Message format: "<description>" or "<description> :: <source1>; <source2>; ..."
+     * (same " :: " convention UniversalLanguageSkill's `create` command uses
+     * below for its own two-part input). Sources are freeform strings
+     * recording what informed the skill -- e.g. a NetSearch hit, a
+     * LongTermMemory recollection, a user-supplied reference -- never a
+     * fetched external URL (Section 17: no external APIs for the core system).
+     * When omitted, the wiki records the description itself as the only
+     * source, rather than fabricating provenance that doesn't exist.
+     */
     async onMessage(message) {
         const input = String(message ?? '').trim();
         if (!input)
-            return { type: 'skill-maker', message: 'Provide skill description to generate a skill file' };
-        const name = input.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9_-]/g, '');
+            return { type: 'skill-maker', message: 'Provide skill description to generate a skill file (optionally "description :: source1; source2")' };
+        const [descriptionPart, sourcesPart] = input.split(/\s+::\s+/);
+        const description = descriptionPart.trim();
+        const sources = sourcesPart
+            ? sourcesPart.split(';').map(s => s.trim()).filter(Boolean)
+            : [];
+        const name = description.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9_-]/g, '');
         const skillDir = join(homedir(), '.neuroclaw', 'skills');
         if (!existsSync(skillDir))
             mkdirSync(skillDir, { recursive: true });
-        const words = input.toLowerCase().split(/\s+/);
-        const skillContent = this.generateSkill(name, input, words);
-        writeFileSync(join(skillDir, `${name}.neuri`), skillContent, 'utf-8');
+        const words = description.toLowerCase().split(/\s+/);
+        const skillContent = this.generateSkill(name, description, words);
+        const skillPath = join(skillDir, `${name}.neuri`);
+        writeFileSync(skillPath, skillContent, 'utf-8');
+        // Every self-authored skill gets a wiki entry alongside it recording what
+        // it does AND what informed it -- a provenance trail, not just the
+        // generated neuron code itself.
+        const wikiDir = join(homedir(), '.neuroclaw', 'skills-wiki');
+        if (!existsSync(wikiDir))
+            mkdirSync(wikiDir, { recursive: true });
+        const neuronNames = this.extractNeuronNames(skillContent);
+        const wikiContent = this.generateWikiDoc(name, description, sources, neuronNames);
+        const wikiPath = join(wikiDir, `${name}.md`);
+        writeFileSync(wikiPath, wikiContent, 'utf-8');
         return {
             type: 'skill-maker',
             skill: name,
-            path: join(skillDir, `${name}.neuri`),
-            description: input,
+            path: skillPath,
+            wikiPath,
+            description,
+            sources,
             content: skillContent,
         };
+    }
+    extractNeuronNames(skillContent) {
+        const names = [];
+        for (const line of skillContent.split('\n')) {
+            const m = line.match(/^name="([^"]+)"/);
+            if (m)
+                names.push(m[1]);
+        }
+        return names;
+    }
+    generateWikiDoc(name, description, sources, neuronNames) {
+        const lines = [];
+        lines.push(`# ${name}`);
+        lines.push('');
+        lines.push(`**Description:** ${description}`);
+        lines.push('');
+        lines.push(`**Generated:** ${new Date().toISOString()}`);
+        lines.push('');
+        lines.push('## Neurons');
+        lines.push('');
+        for (const n of neuronNames)
+            lines.push(`- \`${n}\``);
+        lines.push('');
+        lines.push('## Sources and info used');
+        lines.push('');
+        if (sources.length > 0) {
+            for (const s of sources)
+                lines.push(`- ${s}`);
+        }
+        else {
+            lines.push(`- Generated directly from the description above; no additional sources were supplied.`);
+        }
+        lines.push('');
+        return lines.join('\n');
     }
     generateSkill(name, description, words) {
         const lines = [];
