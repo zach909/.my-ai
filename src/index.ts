@@ -26,7 +26,7 @@ import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
 import { WorldModel } from "../models && skills/core/world-model.js";
-import { MathEngine } from "../models && skills/core/math-engine.js";
+import { MathEngine, evaluateExpression } from "../models && skills/core/math-engine.js";
 import { Critic } from "../models && skills/core/critic.js";
 import { SkillLibrary } from "../models && skills/core/skill-library.js";
 import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
@@ -1533,11 +1533,95 @@ export class NeuroclawSystem {
    * subproblem delegation), so they all share one team and trust budget
    * instead of each maintaining its own copy of this bootstrap logic.
    */
+  /**
+   * ASI §22: "different agents can focus on: Mathematics, Coding, Science,
+   * Planning, Creativity, Criticism, Research, Verification." Only three of
+   * these (planning/coding/review) had a real dedicated agent -- a math,
+   * science, or creative subproblem had no capability gate at all (see
+   * domainToCapability() above) and was routed to whichever of the three
+   * generic agents scored highest, none of which actually specializes in it.
+   * Each new agent's mind is a thin adapter over the real system that
+   * specialization already has (MathEngine/DiscoveryEngine/KnowledgeGraph+
+   * LongTermMemory/Critic), not a fourth copy of the same runner.generate()
+   * -- exactly the pluggable-mind mechanism HiveAgentSpec.think already
+   * supports, previously only ever left at its runner.generate() default.
+   */
   private ensureDefaultTeam(): void {
     if (this.hive.list().length > 0) return;
     this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
     this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
     this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
+    this.hive.spawn({
+      id: "mathematician", role: "mathematician", specialization: "math", capabilities: ["math"],
+      think: async (prompt) => {
+        // §13: "verify reasoning rather than relying only on neural
+        // predictions" -- when the task actually contains a standalone
+        // arithmetic expression, compute it for real instead of guessing.
+        const candidate = prompt.match(/-?\d+(?:\.\d+)?(?:\s*[-+*/^()]\s*-?\d+(?:\.\d+)?)+/);
+        if (candidate) {
+          try {
+            const value = evaluateExpression(candidate[0]);
+            return `${candidate[0].trim()} = ${value}`;
+          } catch {
+            // Matched text wasn't actually a valid expression -- fall through.
+          }
+        }
+        return this.runner.generate(prompt);
+      },
+    });
+    this.hive.spawn({
+      id: "scientist", role: "scientist", specialization: "science", capabilities: ["science"],
+      think: async (prompt) => {
+        // §11/§12: ground the answer in an active, evidence-tested hypothesis
+        // that actually concerns this prompt, rather than only ever
+        // generating from scratch.
+        const key = prompt.toLowerCase();
+        const relevant = this.discovery.activeHypotheses()
+          .find(h => key.includes(h.cause.toLowerCase()) || key.includes(h.effect.toLowerCase()));
+        const grounded = relevant
+          ? `${prompt}\n(Tested hypothesis: "${relevant.cause}" -> "${relevant.effect}", confidence ${relevant.confidence.toFixed(2)})`
+          : prompt;
+        return this.runner.generate(grounded);
+      },
+    });
+    this.hive.spawn({
+      id: "creative", role: "creative", specialization: "creativity", capabilities: ["creativity"],
+      think: async (prompt) => {
+        // §11: "creativity by combining concepts that have not previously
+        // been connected" -- a real combination of two salient terms from
+        // the prompt, not a generic creative-sounding completion.
+        const terms = uniqueLongTokens(prompt);
+        const combo = terms.length >= 2 ? this.discovery.combine(terms[0], terms[1]) : null;
+        return combo
+          ? `${combo.name}: ${combo.definition}`
+          : this.runner.generate(prompt);
+      },
+    });
+    this.hive.spawn({
+      id: "researcher", role: "researcher", specialization: "research", capabilities: ["research"],
+      think: async (prompt) => {
+        // §4/§12: gather actual grounding evidence from the knowledge graph
+        // and long-term memory before generating, instead of answering blind.
+        const known = this.knowledge.search(prompt, 3).map(h => h.concept.definition || h.concept.name);
+        const recalled = this.memory.retrieve(prompt, { topK: 3 }).map(h => h.item.content);
+        const evidence = Array.from(new Set([...known, ...recalled])).filter(Boolean);
+        const grounded = evidence.length ? `${prompt}\n(Known: ${evidence.join("; ")})` : prompt;
+        return this.runner.generate(grounded);
+      },
+    });
+    this.hive.spawn({
+      id: "verifier", role: "verifier", specialization: "verification", capabilities: ["verification"],
+      think: async (prompt) => {
+        // §23: the verifier's output IS the independent critique, not a
+        // generated answer -- so this participates as a real voice in
+        // collaborate()/discuss() rather than the Critic only ever being
+        // reachable through solve()/reviewClaim().
+        const report = await this.critic.review({ claim: prompt, task: prompt });
+        return report.passed
+          ? `Verified (confidence ${report.confidence.toFixed(2)}): no issues found.`
+          : `Not verified (confidence ${report.confidence.toFixed(2)}): ${report.issues.join("; ")}`;
+      },
+    });
   }
 
   /**
@@ -1959,12 +2043,32 @@ function classifyDomain(text: string): string {
 function domainToCapability(domain: string): string | undefined {
   if (domain === "coding") return "coding";
   if (domain === "planning") return "planning";
+  // ASI §22: math/science/creativity subproblems used to have no capability
+  // gate at all -- classifyDomain() already recognized these domains, but
+  // domainToCapability() silently dropped them, so a math subproblem could
+  // land on any default-team agent regardless of specialization. Gated now
+  // that dedicated math/science/creative agents actually exist (see
+  // ensureDefaultTeam()).
+  if (domain === "math") return "math";
+  if (domain === "science") return "science";
+  if (domain === "creativity") return "creativity";
   return undefined;
 }
 
 /** Case/whitespace-insensitive text key, matching the normalization used across the core modules. */
 function normalizeText(text: string): string {
   return (text || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** The most distinctive (longest, de-duplicated) words in a prompt, longest first -- used to pick DiscoveryEngine.combine()'s two source concepts. */
+function uniqueLongTokens(text: string): string[] {
+  const seen = new Set<string>();
+  const words = (text || "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);
+  const unique: string[] = [];
+  for (const w of words) {
+    if (!seen.has(w)) { seen.add(w); unique.push(w); }
+  }
+  return unique.sort((a, b) => b.length - a.length);
 }
 
 // Singleton instance for module-level access

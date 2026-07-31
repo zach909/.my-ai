@@ -1250,7 +1250,7 @@ async function testWebBackend() {
 // Every extension in the catalog must get a real implementation and go active
 // through the top-level system, not just a hand-picked subset.
 async function testExtensionCatalogFullyActive() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   await sys.initialize();
   const status = sys.getStatus();
@@ -1636,7 +1636,7 @@ async function testLongTermMemory() {
 }
 
 async function testSkillCreationVersioning() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -1687,7 +1687,7 @@ async function testSkillCreationVersioning() {
 }
 
 async function testSelfAuthoredSkillsInventory() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -1717,7 +1717,7 @@ async function testSelfAuthoredSkillsInventory() {
 }
 
 async function testAutonomousTask() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   // Suppress the subsystem/plugin boot logging so the suite output stays clean.
   const orig = { log: console.log, info: console.info, warn: console.warn };
@@ -1778,7 +1778,7 @@ async function testAutonomousTask() {
 }
 
 async function testProcessQuerySelfHeal() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2108,7 +2108,7 @@ async function testNeuriLangCliWiring() {
   // project-file search (extension-builder), not the interpreter's own
   // NetSearchEngine over the current neuron mesh. This exercises the actual
   // live CLI entry point, not just the underlying primitives.
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const { CLI } = await load('interface/cli.js');
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2144,7 +2144,7 @@ async function testNetSearchGenerateCliWiring() {
   // sibling searchNeurons() (plain substring match), which the `search`
   // CLI command already used. This exercises the new `nsearch` command
   // through the real CLI/LLM/builder stack, not just the underlying method.
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const { CLI } = await load('interface/cli.js');
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2615,7 +2615,7 @@ async function testAGIModules() {
 }
 
 async function testReasoningHistory() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2643,7 +2643,7 @@ async function testReasoningHistory() {
 }
 
 async function testSolveIntegration() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2671,7 +2671,7 @@ async function testSolveIntegration() {
     // generic runner directly (the spec's explicit "should integrate with the
     // existing Mixture of Experts, hive-mind, chat-group, and extension
     // systems", made concrete rather than bypassed).
-    check(sys.hive.list().length === 3, 'solve() lazily engages the default hive team for subproblem delegation');
+    check(sys.hive.list().length === 8, 'solve() lazily engages the default hive team for subproblem delegation');
     check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, "The hive's zero-sum trust budget is preserved after real delegation");
 
     // Monitor -> self-heal wiring: a forced failure-level anomaly on the
@@ -2762,7 +2762,7 @@ async function testNeuroclawSystemLifecycle() {
   // End-to-end test: exercise all four primary entry points (processQuery,
   // solve, autonomousTask, executePlan) in sequence and verify cross-subsystem
   // state (memory, hive, plan, self-model) stays synchronized throughout.
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2834,7 +2834,7 @@ async function testNeuroclawSystemLifecycle() {
 }
 
 async function testSolveAlignmentVeto() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2860,7 +2860,7 @@ async function testSolveAlignmentVeto() {
 }
 
 async function testAutonomousTaskAlignmentVeto() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2886,7 +2886,7 @@ async function testAutonomousTaskAlignmentVeto() {
 }
 
 async function testCollaborateAlignmentVeto() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2908,7 +2908,7 @@ async function testCollaborateAlignmentVeto() {
 }
 
 async function testExecutePlanAlignmentVeto() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2930,7 +2930,7 @@ async function testExecutePlanAlignmentVeto() {
 }
 
 async function testLearnAlignmentVeto() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2954,7 +2954,7 @@ async function testLearnAlignmentVeto() {
 }
 
 async function testCreativeCombinationRefinement() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -2996,7 +2996,7 @@ async function testEmpathyVeto() {
   check(e.shouldVeto(0, 0.3) === true, 'shouldVeto() fires under genuine misalignment at low confidence');
   check(e.shouldVeto(0, 0.9) === false, 'shouldVeto() does not fire when confidence is high enough to override the misalignment');
 
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3014,7 +3014,7 @@ async function testEmpathyVeto() {
 }
 
 async function testImprovementTargets() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3043,7 +3043,7 @@ async function testImprovementTargets() {
 }
 
 async function testCollaborateCompletion() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3077,7 +3077,7 @@ async function testCollaborateCompletion() {
 }
 
 async function testCombineKnowledge() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3096,7 +3096,7 @@ async function testCombineKnowledge() {
 }
 
 async function testPredictProperties() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3119,7 +3119,7 @@ async function testPredictProperties() {
 }
 
 async function testMistakeAssumption() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3143,7 +3143,7 @@ async function testMistakeAssumption() {
 }
 
 async function testMistakeCauseClassification() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
   try {
@@ -3198,7 +3198,7 @@ async function testMistakeCauseClassification() {
 }
 
 async function testMonitorHistory() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3216,7 +3216,7 @@ async function testMonitorHistory() {
 }
 
 async function testExactMemorySearch() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3240,7 +3240,7 @@ async function testExactMemorySearch() {
 }
 
 async function testHealLog() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3269,7 +3269,7 @@ async function testHealLog() {
 }
 
 async function testPluginRegistryHealthCheck() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3295,7 +3295,7 @@ async function testPluginRegistryHealthCheck() {
 }
 
 async function testHiveTrustInvariantHealing() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3344,7 +3344,7 @@ async function testHiveTrustInvariantHealing() {
 }
 
 async function testEmpathyToneAdjustment() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
   try {
@@ -3367,7 +3367,7 @@ async function testEmpathyToneAdjustment() {
 }
 
 async function testKnownDomains() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3408,7 +3408,7 @@ async function testKnownDomains() {
 }
 
 async function testApproachBiasEvaluateGate() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3448,7 +3448,7 @@ async function testApproachBiasEvaluateGate() {
 }
 
 async function testStatusCounts() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3489,7 +3489,7 @@ async function testStatusCounts() {
 }
 
 async function testCapabilityDefaultDeny() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3533,7 +3533,7 @@ async function testCapabilityDefaultDeny() {
 }
 
 async function testHiveDelegationReward() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3571,8 +3571,54 @@ async function testHiveDelegationReward() {
   }
 }
 
+async function testSpecializedHiveAgents() {
+  const { NeuroclawSystem } = await load('src/index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    sys.ensureDefaultTeam();
+
+    // ASI §22: "different agents can focus on: Mathematics, Coding, Science,
+    // Planning, Creativity, Criticism, Research, Verification" -- previously
+    // only planning/coding/review had a real dedicated agent; math/science/
+    // creativity subproblems had no capability gate at all and landed on
+    // whichever generic agent scored highest.
+    const ids = sys.hive.list().map(a => a.id).sort();
+    check(
+      JSON.stringify(ids) === JSON.stringify(['coder', 'creative', 'mathematician', 'planner', 'researcher', 'reviewer', 'scientist', 'verifier']),
+      'The default team now has a dedicated agent for every Section 22 specialization'
+    );
+    check(Math.abs(sys.hive.totalTrustValue() - 100) < 1e-6, 'Trust budget stays zero-sum across the expanded 8-agent team');
+
+    // The mathematician's mind is a real, independently-checkable computation
+    // when the subproblem actually contains one -- not a fourth copy of the
+    // generic runner.
+    const mathOut = await sys.hive.get('mathematician').process('what is 12 * 4');
+    check(mathOut.includes('48'), "The mathematician agent's think function actually computes an embedded arithmetic expression");
+
+    // The verifier's mind is the real Critic, not a generated guess -- a
+    // claim with no supporting facts at all still passes (nothing to
+    // contradict), and the response is the critique itself.
+    const verifyOut = await sys.hive.get('verifier').process('the sky is blue');
+    check(/verified/i.test(verifyOut), "The verifier agent's think function returns a real Critic verdict, not free-text generation");
+
+    // A math subproblem should delegate to the mathematician now that the
+    // capability gate exists (mirrors the existing coder/planner routing
+    // check for Section 16/23 default-deny).
+    const sys2 = new NeuroclawSystem();
+    await sys2.initialize();
+    sys2.ensureDefaultTeam();
+    await sys2.solve('calculate the total and then calculate the average');
+    check(sys2.lastDelegations.get('calculate the total') === 'mathematician', 'A math subproblem delegates to the mathematician while its capability is intact, not a generic team member');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testSubproblemKnowledgeIntegration() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3607,7 +3653,7 @@ async function testSubproblemKnowledgeIntegration() {
 }
 
 async function testHiveResultSharing() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3656,7 +3702,7 @@ async function testHiveResultSharing() {
 }
 
 async function testMemoryPersistence() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-memory-'));
   const path = join(dir, 'memory.json');
   const orig = { log: console.log, info: console.info, warn: console.warn };
@@ -3682,7 +3728,7 @@ async function testMemoryPersistence() {
 }
 
 async function testMemoryEncryptedPersistence() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const { readFile } = await import('node:fs/promises');
   const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-memory-enc-'));
   const path = join(dir, 'memory.enc.json');
@@ -3727,7 +3773,7 @@ async function testMemoryEncryptedPersistence() {
 }
 
 async function testArchitectureMapperIntegration() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3816,7 +3862,7 @@ async function testKnowledgeTransferSolvedCapacity() {
 }
 
 async function testPerformanceMonitorTracksRealCalls() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3859,7 +3905,7 @@ async function testPerformanceMonitorTracksRealCalls() {
 }
 
 async function testMemoryForgetting() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3896,7 +3942,7 @@ async function testMemoryForgetting() {
 }
 
 async function testZipIOPersistence() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-zipio-'));
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3931,7 +3977,7 @@ async function testZipIOPersistence() {
 }
 
 async function testPipelineZipIOPersistence() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const dir = mkdtempSync(join(tmpdir(), 'neuroclaw-pipeline-zipio-'));
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -3970,7 +4016,7 @@ async function testPipelineZipIOPersistence() {
 }
 
 async function testCompressionSummary() {
-  const { NeuroclawSystem } = await load('index.js');
+  const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
   const orig = { log: console.log, info: console.info, warn: console.warn };
   console.log = console.info = console.warn = () => {};
@@ -4116,6 +4162,7 @@ async function main() {
     ['Approach-bias evaluate() gate (Section 5)', testApproachBiasEvaluateGate],
     ['Capability default-deny enforcement (Section 16/23)', testCapabilityDefaultDeny],
     ['Hive delegation reward/demotion (Section 8)', testHiveDelegationReward],
+    ['Specialized hive agents for every Section 22 role', testSpecializedHiveAgents],
     ['Subproblem knowledge integration (Section 4)', testSubproblemKnowledgeIntegration],
     ['Hive result sharing & conflict resolution (Section 8/13)', testHiveResultSharing],
     ['Long-term memory persistence (Section 4)', testMemoryPersistence],
