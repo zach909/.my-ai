@@ -27,6 +27,7 @@ import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
 import { WorldModel } from "../models && skills/core/world-model.js";
 import { MathEngine } from "../models && skills/core/math-engine.js";
+import { Critic } from "../models && skills/core/critic.js";
 import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "../models && skills/core/self-model.js";
@@ -78,6 +79,8 @@ export class NeuroclawSystem {
   knowledge: KnowledgeGraph;
   worldModel: WorldModel;
   math: MathEngine;
+  /** Section 23: a genuinely separate system that reviews an answer rather than trusting the process that produced it to judge itself. */
+  critic: Critic;
   reasoner: ReasoningEngine;
   transfer: KnowledgeTransfer;
   selfModel: SelfModel;
@@ -182,6 +185,11 @@ export class NeuroclawSystem {
     // Math engine (Section 13): deterministic verification of numeric
     // reasoning steps, independent of neural prediction.
     this.math = new MathEngine();
+    // Critic (Section 23): independently reviews a claim rather than trusting
+    // the reasoner's own `verified` flag as the only check -- reuses the same
+    // KnowledgeGraph/MathEngine/MistakeTracker instances above instead of
+    // duplicating their logic.
+    this.critic = new Critic({ knowledge: this.knowledge, math: this.math, mistakes: this.mistakes });
     this.transfer = new KnowledgeTransfer();
     this.selfModel = new SelfModel();
     this.improvement = new SelfImprovement();
@@ -288,6 +296,7 @@ export class NeuroclawSystem {
     register("discovery", "Discovery Engine", "learning", ["knowledge"], ["observation"], ["hypothesis/combination"]);
     register("learner", "Autonomous Learner", "learning", ["knowledge"], ["information"], ["learn decision"]);
     register("reasoner", "Reasoning Engine", "reasoning", ["memory", "mistakes", "hive", "knowledge", "selfModel", "discovery", "predictor"], ["problem"], ["reasoning result"]);
+    register("critic", "Critic", "safety", ["knowledge", "math", "mistakes"], ["claim/candidate answers"], ["verification report"]);
     // The six public action-taking entry points (`trackCall()`'s component ids)
     // sit on top of the subsystems above — real dependency edges, not a
     // fabricated grouping.
@@ -1075,6 +1084,7 @@ export class NeuroclawSystem {
     transfers: string[];
     subresults: number;
     contradictions: string[];
+    criticIssues: string[];
     trace: ReasoningStep[];
   }> {
     if (!this.initialized) await this.initialize();
@@ -1090,6 +1100,7 @@ export class NeuroclawSystem {
     transfers: string[];
     subresults: number;
     contradictions: string[];
+    criticIssues: string[];
     trace: ReasoningStep[];
   }> {
     // ASI §3/§10/§13/§23: gate solve()'s *real* execution (hive delegation,
@@ -1113,7 +1124,7 @@ export class NeuroclawSystem {
       return {
         result: `[Withheld] ${solveDecision.reasons.join("; ")}`,
         confidence: 0, verified: false, domain: classifyDomain(problem), approach: "none",
-        transfers: [], subresults: 0, contradictions: [], trace: [],
+        transfers: [], subresults: 0, contradictions: [], criticIssues: [], trace: [],
       };
     }
     // Track which hive agent (if any) handles each subproblem in *this*
@@ -1277,6 +1288,17 @@ export class NeuroclawSystem {
     // evidence the system shouldn't be fully confident — a deserved
     // reduction, not an arbitrary penalty.
     if (contradictions.length > 0) confidence = Math.max(0, confidence - 0.15);
+    // ASI §23: "the AI should not rely on a single process to judge its own
+    // answer" — the reasoner's `verified` flag above is computed by the exact
+    // process that produced the answer (did every subproblem resolve). The
+    // Critic is a genuinely separate system: it independently challenges
+    // every assumption the chosen approach rested on against the supporting
+    // evidence, and re-checks known failure patterns for this task from
+    // scratch, rather than trusting how the reasoner already applied them
+    // internally.
+    const criticReport = await this.critic.review(Critic.fromReasoningResult(r));
+    const unsupportedAssumptions = criticReport.assumptionChallenges.filter(a => !a.supported);
+    if (unsupportedAssumptions.length > 0) confidence = Math.max(0, confidence - 0.1);
     // ASI §5: "which memories are unreliable" — reinforce or demote the
     // specific long-term memories that grounded this reasoning pass (r.available),
     // based on whether the outcome actually verified. A memory that repeatedly
@@ -1338,7 +1360,7 @@ export class NeuroclawSystem {
     const finalResult = solveDecision.requiresConfirmation
       ? `${r.result}\n  [Confirm before acting: ${solveDecision.reasons.join("; ")}]`
       : r.result;
-    return { result: finalResult, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, trace: r.trace };
+    return { result: finalResult, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, criticIssues: criticReport.issues, trace: r.trace };
   }
 
   /**
@@ -1374,6 +1396,27 @@ export class NeuroclawSystem {
   /** ASI §4: "combine information from multiple memories" — follow a concept's relations outward and return what's reachable. */
   combineKnowledge(concept: string, depth = 2): string[] {
     return this.knowledge.follow(concept, [], depth).map(c => c.definition || c.name);
+  }
+
+  /**
+   * ASI §23: independently review any claim (not just a solve() result) —
+   * known error patterns, calculation checks, assumption challenges,
+   * contradiction search, and optional code tests. Exposed directly so a
+   * caller can critique a candidate answer that never went through solve()
+   * at all (e.g. one produced by a plugin or an external source).
+   */
+  async reviewClaim(input: Parameters<Critic["review"]>[0]) {
+    return this.critic.review(input);
+  }
+
+  /**
+   * ASI §23: "the final answer can be selected after multiple systems
+   * evaluate the result" — independently review several candidate answers to
+   * the same problem (e.g. from different hive agents via `collaborate()`)
+   * and select whichever one best survives scrutiny.
+   */
+  async compareAnswers(candidates: Array<{ id: string } & Parameters<Critic["review"]>[0]>) {
+    return this.critic.compareAnswers(candidates);
   }
 
   /**
