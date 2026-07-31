@@ -28,6 +28,7 @@ import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
 import { WorldModel } from "../models && skills/core/world-model.js";
 import { MathEngine } from "../models && skills/core/math-engine.js";
 import { Critic } from "../models && skills/core/critic.js";
+import { SkillLibrary } from "../models && skills/core/skill-library.js";
 import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "../models && skills/core/self-model.js";
@@ -81,6 +82,7 @@ export class NeuroclawSystem {
   math: MathEngine;
   /** Section 23: a genuinely separate system that reviews an answer rather than trusting the process that produced it to judge itself. */
   critic: Critic;
+  skillLibrary: SkillLibrary;
   reasoner: ReasoningEngine;
   transfer: KnowledgeTransfer;
   selfModel: SelfModel;
@@ -190,6 +192,11 @@ export class NeuroclawSystem {
     // KnowledgeGraph/MathEngine/MistakeTracker instances above instead of
     // duplicating their logic.
     this.critic = new Critic({ knowledge: this.knowledge, math: this.math, mistakes: this.mistakes });
+    // Skill library: search/load skills SkillMakerExtension has already
+    // written to disk (~/.neuroclaw/skills + skills-wiki), so a skill one
+    // instance built is discoverable and loadable by another instead of
+    // being recreated from scratch.
+    this.skillLibrary = new SkillLibrary();
     this.transfer = new KnowledgeTransfer();
     this.selfModel = new SelfModel();
     this.improvement = new SelfImprovement();
