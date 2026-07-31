@@ -27,6 +27,7 @@ import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
 import { WorldModel } from "../models && skills/core/world-model.js";
 import { MathEngine } from "../models && skills/core/math-engine.js";
+import { SkillLibrary } from "../models && skills/core/skill-library.js";
 import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "../models && skills/core/self-model.js";
@@ -78,6 +79,7 @@ export class NeuroclawSystem {
   knowledge: KnowledgeGraph;
   worldModel: WorldModel;
   math: MathEngine;
+  skillLibrary: SkillLibrary;
   reasoner: ReasoningEngine;
   transfer: KnowledgeTransfer;
   selfModel: SelfModel;
@@ -182,6 +184,11 @@ export class NeuroclawSystem {
     // Math engine (Section 13): deterministic verification of numeric
     // reasoning steps, independent of neural prediction.
     this.math = new MathEngine();
+    // Skill library: search/load skills SkillMakerExtension has already
+    // written to disk (~/.neuroclaw/skills + skills-wiki), so a skill one
+    // instance built is discoverable and loadable by another instead of
+    // being recreated from scratch.
+    this.skillLibrary = new SkillLibrary();
     this.transfer = new KnowledgeTransfer();
     this.selfModel = new SelfModel();
     this.improvement = new SelfImprovement();
