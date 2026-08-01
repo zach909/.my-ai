@@ -9,6 +9,27 @@
 
 import type { NeuroclawSystem } from '../index'
 
+/** A route the bot knows about and can reference/point users to. */
+export interface AppRoute {
+  path: string
+  title: string
+  description: string
+}
+
+/** Every route in the app, so the bot can tell users where to go. */
+export const APP_ROUTES: AppRoute[] = [
+  { path: '/', title: 'ASI Architect', description: 'A full-stack platform for prototyping, integrating, and evaluating the essential modules required for building an Artificial Superintelligence.' },
+  { path: '/desktop', title: 'Desktop', description: 'Desktop application shell.' },
+  { path: '/builder', title: 'Extension Builder', description: 'Build and manage extensions.' },
+  { path: '/app', title: 'Dashboard', description: 'ASI Architect — Prototype & Evaluate Superintelligence Modules.' },
+  { path: '/app/chat', title: 'AI Chat', description: 'Talk to the AI assistant with agent-suggested follow-up prompts.' },
+  { path: '/app/planning', title: 'Planning', description: 'Define goal hierarchies, task decomposition, and strategic planning for ASI agents.' },
+  { path: '/app/architecture', title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.' },
+  { path: '/app/knowledge', title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.' },
+  { path: '/app/evaluation', title: 'Evaluation', description: 'Measure and benchmark ASI module performance against defined criteria.' },
+  { path: '/app/experiments', title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols.' },
+]
+
 export interface BotMessage {
   id: string
   role: 'user' | 'assistant'
@@ -89,6 +110,9 @@ export class ChatBot {
     const intent = this.detectIntent(userMessage)
 
     switch (intent) {
+      case 'route':
+        return this.buildRouteResponse()
+
       case 'plan': {
         const result = await this.system.autonomousTask('user request', [userMessage])
         const message = result.results?.[0]?.result || 'Planning in progress...'
@@ -127,6 +151,10 @@ export class ChatBot {
    * Simplified processing without the full system (fallback mode).
    */
   private async processSimplified(userMessage: string): Promise<BotResponse> {
+    if (this.isRouteQuery(userMessage.toLowerCase())) {
+      return this.buildRouteResponse()
+    }
+
     const response = this.generateResponse(userMessage)
     const suggestions = this.generateSuggestions(userMessage, response.message, response.domain)
 
@@ -139,12 +167,31 @@ export class ChatBot {
     }
   }
 
-  private detectIntent(message: string): 'plan' | 'recall' | 'solve' | 'help' {
+  private detectIntent(message: string): 'plan' | 'recall' | 'solve' | 'help' | 'route' {
     const lower = message.toLowerCase()
+    if (this.isRouteQuery(lower)) return 'route'
     if (lower.includes('plan') || lower.includes('schedule') || lower.includes('organize')) return 'plan'
     if (lower.includes('remember') || lower.includes('recall') || lower.includes('what was')) return 'recall'
     if (lower.includes('help') || lower.includes('how')) return 'solve'
     return 'solve'
+  }
+
+  private isRouteQuery(lowerMessage: string): boolean {
+    return (
+      /\b(where|which page|which route|navigate|go to|take me to)\b/.test(lowerMessage) &&
+      /\b(page|pages|route|routes|section|screen|tab)\b/.test(lowerMessage)
+    ) || /\blist (all )?(the )?(pages|routes)\b/.test(lowerMessage)
+  }
+
+  /** The bot always has awareness of every app route — no filtering or restriction. */
+  private buildRouteResponse(): BotResponse {
+    const list = APP_ROUTES.map((r) => `• **${r.title}** (\`${r.path}\`) — ${r.description}`).join('\n')
+    return {
+      message: `Here are all the pages in the app:\n\n${list}`,
+      confidence: 0.9,
+      suggestions: ['Take me to AI Chat', 'What can I do in Planning?', 'List all pages'],
+      metadata: { domain: 'route' },
+    }
   }
 
   private generateResponse(userMessage: string): {
