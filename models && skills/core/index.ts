@@ -1,5 +1,25 @@
-export { BackgroundQuantizer } from './quantizer';
-export type { QuantizerConfig } from './quantizer';
+export { BackgroundQuantizer, CalibrationCollector, packLevels, unpackLevels, clampBits } from './quantizer';
+export type {
+  QuantizerConfig,
+  QuantizationMethod,
+  QuantizationMode,
+  QuantizationScale,
+  CalibrationStats,
+  QuantizedTensor,
+} from './quantizer';
+export {
+  detectHardwareProfile,
+  computeSensitivity,
+  resolveLayerBits,
+  estimateMemorySavings,
+  estimatePowerSavingsPercent,
+  estimatePerformanceGain,
+} from './quantization-hardware';
+export type { HardwareProfile, HardwareKernel, LayerPrecisionRule, MixedPrecisionPolicy, MemoryEstimate } from './quantization-hardware';
+export { BackgroundQuantizationScheduler } from './quantization-scheduler';
+export type { QuantizationJobStatus, QuantizationJobProgress, QuantizationJobResult, ScheduleOptions } from './quantization-scheduler';
+export { loadQuantizationConfig, normalizeQuantizationConfig, DEFAULT_QUANTIZATION_CONFIG } from './quantization-config';
+export type { QuantizationSystemConfig } from './quantization-config';
 export { ValueRangeAllocator } from './value-range';
 export type { ValueRangeConfig, NeuronAllocation } from './value-range';
 export { MoERouter } from './moe-router';
