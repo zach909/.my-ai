@@ -57,6 +57,14 @@ eb.install("greeter.install.ext", contracts, bits=8)  # quantized, smaller on di
 - `python main.py demo` (`test_integration.py`, §3) saves a project un-quantized, installs it quantized, confirms the installed file is smaller, and reloads the installed extension into a **fresh** model object to prove the behaviour genuinely persisted rather than surviving in memory.
 - `npm test` (`test/smoke.mjs`)'s "Extension Builder flow" section covers drag-connect, drag-label, simulate, output layers, Net Search (including the null-result edge cases for an empty or untokenizable query), and the save-vs-install size/behaviour distinction directly.
 
+## Implementation specification
+
+`docs/EXTENSION_BUILDER_SPEC.md` is the full build-out spec for everything
+this page describes plus the gaps not yet built: the versioned `.ext`/`.extproj`
+file format, the `.extpkg` package format, the install/uninstall procedure,
+a real debugger (breakpoints, step propagation, activation inspector), a
+unified search command palette, and the full test matrix.
+
 ## See Also
 
 - [[Home]] - Main wiki page
