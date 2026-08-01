@@ -19,6 +19,7 @@ This directory contains all project documentation organized by category.
 - skill_agent_architecture.py - Skill agent architecture design
 - EXTENSION_SYSTEM.md - Extension System: automatic creation, lifecycle, versioning, dependencies, permissions, storage, compression, quantization, and security for memory/logic/skill/plugin extensions (implementation: `extension_system/`)
 - SHARED_WIKI_SYSTEM.md - Shared Wiki system design (automatic documentation, linking, version history, citations, knowledge graph, search, APIs, storage, testing)
+- PORT_SYSTEM.md - Port System: multi-input/multi-output communication layer connecting users, external software, hardware, plugins, and extensions to the neural core (structure, states, protocols, data formats, translation, routing, scheduling, synchronization, permissions, failure recovery)
 
 ### Deployment & Installation
 - DEPLOYMENT.md - Deployment instructions
