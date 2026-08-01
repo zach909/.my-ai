@@ -30,6 +30,14 @@ from .neural_states import (
     StateType
 )
 
+from .vale_system import (
+    ValeSystem,
+    ValeConfig,
+    DonorPolicy,
+    RecipientPolicy,
+    ValeError,
+    ValeConfigError,
+    ValeInvariantError,
 from .hyperdim_thinking import (
     HDVector,
     bind,
@@ -69,6 +77,14 @@ __all__ = [
     "LearningSystem",
     "LearningRule",
     "StateType",
+    # Vale System
+    "ValeSystem",
+    "ValeConfig",
+    "DonorPolicy",
+    "RecipientPolicy",
+    "ValeError",
+    "ValeConfigError",
+    "ValeInvariantError",
     # Hyper-Dimensional Thinking
     "HDVector",
     "bind",
