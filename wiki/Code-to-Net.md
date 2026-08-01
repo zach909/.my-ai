@@ -45,6 +45,20 @@ code@name="doubler"
 
 Attaching code with `@code` now compiles it into a real, testable `CodeNet` behind the scenes. Retrieve/run it via the interpreter: `interp.getCodeNet("doubler")`, `interp.evaluateCodeNet("doubler", [3])`, `interp.testCodeNet("doubler")`. See [[NeuroLang]] for the full directive reference.
 
+## Implementation specification
+
+`docs/CODE_TO_NET_SPEC.md` is the full build-out spec for the compiler
+behind this page — it names three distinct equivalence tiers instead of
+the current two-way function/embedding split: a new **affine tier** that
+compiles linear numeric expressions (e.g. `2*x - 3*y + 5`) directly into an
+exact linear neuron circuit with zero training and zero approximation
+error, above the existing sampled/fitted tier (real code with branches or
+`Math.*` calls) and the existing embedding/identity-only fallback. It also
+specifies `materializeGraph()` — turning a compiled function into real,
+visual-editor-visible `NeuronData`/`ConnectionData` — plus optimization
+passes, a debugger (`explainEvaluate`, `divergenceReport`), and the full
+test matrix.
+
 ## Verifying it
 
 `python test_core.py`'s `test_code_to_net` builds a real function (`doubler`) and confirms it lands in `function_approximation` mode with a real, converging loss curve. `npm test` (`test/smoke.mjs`) covers both the TypeScript sides: `importCodeToNet` producing a `codenet`-type `NeuronData` entry (structural), and the **Behavioral Code-to-Net (Section 21)** suite — function-mode approximation, test-against-original, embedding fallback, serialization round-trip, and the NeuroLang `@code` integration.
