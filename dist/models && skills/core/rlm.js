@@ -2,6 +2,7 @@ import { BackgroundQuantizer } from './quantizer.js';
 export class RLMTrainer {
     constructor(config = {}) {
         this.bufferSize = 0;
+        this.cachedTotalPriority = 0;
         this.config = {
             stateDim: config.stateDim ?? config.hiddenDim ?? 64,
             actionDim: config.actionDim ?? 10,
@@ -129,10 +130,24 @@ export class RLMTrainer {
         return { action: bestAction, thinkingSteps };
     }
     addExperience(experience) {
-        if (!this.replayBuffer[this.bufferPosition]) {
+        const oldExp = this.replayBuffer[this.bufferPosition];
+        const oldP = oldExp ? (oldExp.priority || 1) : 0;
+        const newP = experience.priority || 1;
+        const diff = newP - oldP;
+        this.replayBuffer[this.bufferPosition] = experience;
+        const prev = this.bufferPosition > 0 ? this.prioritiesBuffer[this.bufferPosition - 1] : 0;
+        this.prioritiesBuffer[this.bufferPosition] = prev + newP;
+        if (oldExp) {
+            if (diff !== 0) {
+                for (let i = this.bufferPosition + 1; i < this.bufferSize; i++) {
+                    this.prioritiesBuffer[i] += diff;
+                }
+            }
+        }
+        else {
             this.bufferSize++;
         }
-        this.replayBuffer[this.bufferPosition] = experience;
+        this.cachedTotalPriority = this.prioritiesBuffer[this.bufferSize - 1];
         this.bufferPosition = (this.bufferPosition + 1) % this.config.replayBufferSize;
         this.totalReward += experience.reward;
         this.stepCount++;
@@ -248,13 +263,8 @@ export class RLMTrainer {
         const bufferSize = this.bufferSize;
         if (bufferSize === 0)
             return [];
-        let totalPriority = 0;
         const priorities = this.prioritiesBuffer;
-        for (let i = 0; i < bufferSize; i++) {
-            const p = this.replayBuffer[i].priority || 1;
-            totalPriority += p;
-            priorities[i] = totalPriority;
-        }
+        const totalPriority = this.cachedTotalPriority;
         const batch = [];
         const batchSize = Math.min(this.config.batchSize, bufferSize);
         for (let i = 0; i < batchSize; i++) {

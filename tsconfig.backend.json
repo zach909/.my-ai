@@ -24,7 +24,8 @@
     "interface/**/*.ts",
     "plugin_manager/**/*.ts",
     "plugins/**/*.ts",
-    "extension-builder/**/*.ts"
+    "extension-builder/**/*.ts",
+    "extension_system/**/*.ts"
   ],
   "exclude": ["node_modules", "dist", "**/*.d.ts", "src", "model && skills manager"]
 }
