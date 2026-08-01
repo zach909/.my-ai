@@ -43,6 +43,7 @@ out = mesh.generate(ids, max_new_tokens=20)
 
 ## See Also
 
+- `docs/NEURAL_MESH_DESIGN.md` - Full implementation spec: math model, scaling past dense O(N²) storage, memory layout, connection storage modes, sparse/MoE routing, parallel execution, stability, synchronization, APIs, and required test coverage
 - [[Home]] - Main wiki page
 - [[Elastic-Value-Budget]] - The zero-sum plasticity system gating every neuron's learning rate
 - [[Quantum-Net]] - Wave signatures and interference, computed from the mesh's settled state
