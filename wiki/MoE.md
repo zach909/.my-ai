@@ -43,6 +43,13 @@ This is a genuine trainable sparse layer — gradients only flow through the `to
 - `python test_core.py`'s `test_skills_attach_to_mesh` confirms the Python skill registry's experts genuinely attach to and route through a real mesh.
 - `python main.py demo` (`test_integration.py`, §4) builds a brand-new skill live via the Skill Builder and confirms it registers as a routable expert on the same mesh already in use.
 
+## Foreground MoE Spec
+
+Expert creation/deletion/merging/splitting, a trainable router-gate option,
+dynamic routing knobs, capacity-based load balancing, and parallel execution
+modes are specified (implementation-ready, not yet all built) in
+[`docs/FOREGROUND_MOE_SPEC.md`](../docs/FOREGROUND_MOE_SPEC.md).
+
 ## See Also
 
 - [[Home]] - Main wiki page
