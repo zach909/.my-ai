@@ -16,3 +16,7 @@
 ## 2026-07-26 - [Dynamic Client-Side Routing & Active Sidebar Highlights]
 **Learning:** Using raw anchor tags (`<a>`) in sidebar headers or layout structures causes full page reloads that discard local client state and create layout flicker. Refactoring these navigation bars to use `@tanstack/react-router`'s `<Link>` with `activeOptions={{ exact: true }}` and `activeProps`/`inactiveProps` provides instantaneous SPA transitions and eliminates hardcoded active states.
 **Action:** Use framework-native `<Link>` elements for internal navigation, and bind active styles dynamically via routing context instead of manual component states.
+
+## 2026-08-01 - [Input Focus Preservation & Chat Log Accessibility]
+**Learning:** Toggling disabled states on inputs causes browsers to drop active keyboard focus. Restoring focus programmatically via a React ref when async tasks finish prevents user disruption and ensures fluid navigation. Wrapping chat lists in a `role="log"` live region keeps assistive technologies seamlessly informed.
+**Action:** For chat and input-heavy interfaces, pair `role="log"` container regions with a ref-based programmatic focus restoration on input fields once processing states conclude.
