@@ -29,7 +29,7 @@ check() {
 }
 
 # --- color variables must be real ANSI escapes, not literal hex strings ---
-source install.sh > /dev/null
+source scripts/install.sh > /dev/null
 
 for name in BLUE PURPLE CYAN GREEN YELLOW RED GRAY; do
     # The variables are single-quoted ('\033[...m'), so their raw value is
@@ -179,7 +179,7 @@ echo "$@" >> "$GIO_LOG"
 FAKE_GIO
 chmod +x "$_fake_bin/gio"
 
-out="$(HOME="$_fake_home" GIO_LOG="$_gio_log" PATH="$_fake_bin:$PATH" bash -c 'source install.sh > /dev/null; create_linux_shortcut' 2>&1)"
+out="$(HOME="$_fake_home" GIO_LOG="$_gio_log" PATH="$_fake_bin:$PATH" bash -c 'source scripts/install.sh > /dev/null; create_linux_shortcut' 2>&1)"
 if [ -f "$_fake_home/Desktop/neuroclaw.desktop" ]; then
     check 0 "create_linux_shortcut() creates a Desktop shortcut when ~/Desktop exists"
 else
@@ -202,7 +202,7 @@ esac
 # Case 2: no ~/Desktop and not WSL -- must explain why, not stay silent.
 _fake_home2="$_shortcut_tmp/home_no_desktop"
 mkdir -p "$_fake_home2"
-out="$(HOME="$_fake_home2" WSL_DISTRO_NAME= WSL_INTEROP= bash -c 'unset WSL_DISTRO_NAME WSL_INTEROP; source install.sh > /dev/null; create_linux_shortcut' 2>&1)"
+out="$(HOME="$_fake_home2" WSL_DISTRO_NAME= WSL_INTEROP= bash -c 'unset WSL_DISTRO_NAME WSL_INTEROP; source scripts/install.sh > /dev/null; create_linux_shortcut' 2>&1)"
 case "$out" in
     *"no ~/Desktop folder found"*)
         check 0 "create_linux_shortcut() explains when no ~/Desktop folder exists (non-WSL)"
@@ -213,7 +213,7 @@ case "$out" in
 esac
 
 # Case 3: no ~/Desktop and WSL -- must give the WSL-specific explanation.
-out="$(HOME="$_fake_home2" WSL_DISTRO_NAME="Ubuntu" bash -c 'source install.sh > /dev/null; create_linux_shortcut' 2>&1)"
+out="$(HOME="$_fake_home2" WSL_DISTRO_NAME="Ubuntu" bash -c 'source scripts/install.sh > /dev/null; create_linux_shortcut' 2>&1)"
 case "$out" in
     *"running under WSL"*)
         check 0 "create_linux_shortcut() gives WSL-specific guidance when no ~/Desktop folder exists"
