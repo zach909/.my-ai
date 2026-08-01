@@ -17,6 +17,7 @@ This directory contains all project documentation organized by category.
 - asi_architecture.md - ASI (Artificial Super Intelligence) architecture
 - asi_architecture_v2.md - Updated ASI architecture v2
 - skill_agent_architecture.py - Skill agent architecture design
+- FOREGROUND_MOE_SPEC.md - Implementation-ready spec for the Foreground Mixture of Experts system (routing, router network, expert create/delete/merge/split, skill vs. extension experts, dynamic routing, load balancing, parallel execution, memory interaction, APIs, algorithms, testing)
 
 ### Deployment & Installation
 - DEPLOYMENT.md - Deployment instructions
