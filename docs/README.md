@@ -17,6 +17,7 @@ This directory contains all project documentation organized by category.
 - asi_architecture.md - ASI (Artificial Super Intelligence) architecture
 - asi_architecture_v2.md - Updated ASI architecture v2
 - skill_agent_architecture.py - Skill agent architecture design
+- SHARED_WIKI_SYSTEM.md - Shared Wiki system design (automatic documentation, linking, version history, citations, knowledge graph, search, APIs, storage, testing)
 
 ### Deployment & Installation
 - DEPLOYMENT.md - Deployment instructions
@@ -30,6 +31,7 @@ This directory contains all project documentation organized by category.
 - SELF_IMPROVEMENT_PROGRESS.md - Progress on self-improvement features
 - PERFORMANCE_OPTIMIZATION_PLAN.md - Performance optimization strategies
 - DESKTOP_LAUNCHER_IMPLEMENTATION.md - Desktop launcher implementation details
+- EXTENSION_BUILDER_SPEC.md - Extension Builder implementation specification (visual/graph editor, drag-and-drop, search, debugging, quantization, packaging, installation, APIs, file format, testing)
 
 ### Configuration & Guidelines
 - CLAUDE.md - Claude-specific configuration

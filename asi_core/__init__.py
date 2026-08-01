@@ -38,6 +38,21 @@ from .vale_system import (
     ValeError,
     ValeConfigError,
     ValeInvariantError,
+from .hyperdim_thinking import (
+    HDVector,
+    bind,
+    unbind,
+    bundle,
+    permute,
+    cosine_similarity,
+    NeuronPhase,
+    HDConfig,
+    Message,
+    MemoryTrace,
+    TickResult,
+    MemoryStore,
+    HDNeuron,
+    HDThinkingSystem
 )
 
 __version__ = "0.1.0"
@@ -70,4 +85,19 @@ __all__ = [
     "ValeError",
     "ValeConfigError",
     "ValeInvariantError",
+    # Hyper-Dimensional Thinking
+    "HDVector",
+    "bind",
+    "unbind",
+    "bundle",
+    "permute",
+    "cosine_similarity",
+    "NeuronPhase",
+    "HDConfig",
+    "Message",
+    "MemoryTrace",
+    "TickResult",
+    "MemoryStore",
+    "HDNeuron",
+    "HDThinkingSystem"
 ]
