@@ -31,6 +31,7 @@ This directory contains all project documentation organized by category.
 - PERFORMANCE_OPTIMIZATION_PLAN.md - Performance optimization strategies
 - DESKTOP_LAUNCHER_IMPLEMENTATION.md - Desktop launcher implementation details
 - EXTENSION_BUILDER_SPEC.md - Extension Builder implementation specification (visual/graph editor, drag-and-drop, search, debugging, quantization, packaging, installation, APIs, file format, testing)
+- NET_SEARCH_SPEC.md - Net Search implementation specification (indexing, semantic search, training, temporary neural networks, ranking, validation, APIs, data structures, testing)
 
 ### Configuration & Guidelines
 - CLAUDE.md - Claude-specific configuration
