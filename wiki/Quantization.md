@@ -42,6 +42,17 @@ Both the Python `ExtensionBuilder.install()` and the TypeScript `ExtensionBuilde
 
 `python main.py demo` (`test_integration.py`, §3) checks this concretely, not just conceptually: it saves a real trained contract un-quantized, installs it at 8 bits, confirms the installed file is measurably smaller on disk than the saved one, and — the important part — reloads the *installed, quantized* extension into a completely fresh model object and confirms it still reproduces the exact trained reply. Quantization here is lossy in principle (bit-width reduction) but the QAT training loop keeps it from being lossy in practice for the behaviours that were actually trained.
 
+## Background Quantization system
+
+The full implementation-level design — architecture, algorithms (dynamic
+vs. static, symmetric/asymmetric/mixed, mixed precision), data structures,
+the background job scheduler, hardware-aware estimation, configuration,
+and edge cases — lives in
+[`docs/architecture/BACKGROUND_QUANTIZATION.md`](../docs/architecture/BACKGROUND_QUANTIZATION.md).
+Implementation: `models && skills/core/quantizer.ts`,
+`quantization-hardware.ts`, `quantization-scheduler.ts`,
+`quantization-config.ts`.
+
 ## See Also
 
 - [[Home]] - Main wiki page
