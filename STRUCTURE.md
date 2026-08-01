@@ -41,6 +41,12 @@ Comprehensive documentation:
 #### `/extension-builder/`
 Tools for building and managing extensions.
 
+#### `/extension_system/`
+Extension System: lifecycle, versioning, dependency resolution, permissions,
+and content-addressable storage (with compression/quantization) for
+automatically-created memory, logic, skill, and plugin extensions. See
+`docs/EXTENSION_SYSTEM.md`.
+
 #### `/interface/`
 User interface components and CLI tools.
 
