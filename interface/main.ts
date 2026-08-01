@@ -6,6 +6,7 @@ import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
 import { SystemAccess } from "./system-access.js";
+import { CapabilitiesRegistry } from "./capabilities.js";
 import { CLI } from "./cli.js";
 import { NeuroclawRunner } from "./runner.js";
 import { WebServer } from "./web-server.js";
@@ -26,12 +27,16 @@ async function buildCore() {
   // registry (the `plugins` command and status counts) instead of an empty one.
   await pluginRegistry.bootstrap();
   const systemAccess = new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
-  return { llm, pipeline, thesaurus, pluginRegistry, systemAccess };
+  // Detects live capabilities and (if scripts/install.sh has run) loads this
+  // machine's storage/OS/BIOS/driver profile for personalization -- see
+  // CapabilitiesRegistry.getPersonalizationPrompt().
+  const capabilities = new CapabilitiesRegistry();
+  return { llm, pipeline, thesaurus, pluginRegistry, systemAccess, capabilities };
 }
 
 export async function bootstrap(): Promise<CLI> {
-  const { llm, pipeline, thesaurus, pluginRegistry, systemAccess } = await buildCore();
-  return new CLI(llm, pipeline, thesaurus, pluginRegistry, systemAccess, systemAccess.getMultiDesktop());
+  const { llm, pipeline, thesaurus, pluginRegistry, systemAccess, capabilities } = await buildCore();
+  return new CLI(llm, pipeline, thesaurus, pluginRegistry, systemAccess, systemAccess.getMultiDesktop(), capabilities);
 }
 
 /**

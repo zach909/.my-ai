@@ -5,6 +5,7 @@ import type { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import type { PluginRegistry } from "../plugin_manager/registry.js";
 import type { SystemAccess } from "./system-access.js";
 import type { MultiDesktopManager } from "./multi-desktop.js";
+import type { CapabilitiesRegistry } from "./capabilities.js";
 import { NeuroLangInterpreter } from "../models && skills/core/neuro-lang.js";
 
 const RESET = '\x1b[0m';
@@ -26,6 +27,7 @@ export class CLI {
   private pluginRegistry: PluginRegistry;
   private systemAccess?: SystemAccess;
   private multiDesktop?: MultiDesktopManager;
+  private capabilities?: CapabilitiesRegistry;
   private rl: readline.Interface | null = null;
   private interactiveMode = false;
   private commandQueue: Array<() => Promise<void>> = [];
@@ -40,6 +42,7 @@ export class CLI {
     pluginRegistry: PluginRegistry,
     systemAccess?: SystemAccess,
     multiDesktop?: MultiDesktopManager,
+    capabilities?: CapabilitiesRegistry,
   ) {
     this.llm = llm;
     this.pipeline = pipeline;
@@ -47,6 +50,7 @@ export class CLI {
     this.pluginRegistry = pluginRegistry;
     this.systemAccess = systemAccess;
     this.multiDesktop = multiDesktop;
+    this.capabilities = capabilities;
   }
 
   private enqueue(fn: () => Promise<void>): void {
@@ -124,6 +128,7 @@ export class CLI {
       if (lower === 'help') { this.printHelp(); this.rl?.prompt(); return; }
       if (lower === 'status') { this.printStatus(); this.rl?.prompt(); return; }
       if (lower === 'desktop') { this.printStatus(); this.printDesktopStatus(); this.rl?.prompt(); return; }
+      if (lower === 'sysinfo') { this.printSysInfo(); this.rl?.prompt(); return; }
       if (lower === 'plugins' || lower === 'skills') { this.printPlugins(); this.rl?.prompt(); return; }
       if (lower === 'neuri') {
         // Enter block mode — collect NeuriLang lines until a blank line
@@ -189,6 +194,7 @@ export class CLI {
     console.log(`    ${this.colorize(GREEN, 'quantize')}        ${this.colorize(GRAY, 'Save model with quantization')}`);
     console.log(`    ${this.colorize(GREEN, 'status')}          ${this.colorize(GRAY, 'Show system status')}`);
     console.log(`    ${this.colorize(GREEN, 'desktop')}         ${this.colorize(GRAY, 'Show desktop & input device status')}`);
+    console.log(`    ${this.colorize(GREEN, 'sysinfo')}         ${this.colorize(GRAY, 'Show this machine\'s personalization profile')}`);
     console.log(`    ${this.colorize(GREEN, 'help')}            ${this.colorize(GRAY, 'Show this help')}`);
     console.log(`    ${this.colorize(GREEN, 'exit')}            ${this.colorize(GRAY, 'Exit')}`);
     console.log('');
@@ -258,6 +264,22 @@ export class CLI {
     }
     console.log(`    ${this.colorize(GREEN, 'Input isolation:')} ${this.multiDesktop.hasXinput() ? this.colorize(GREEN, 'xinput available') : this.colorize(GRAY, 'none')}`);
     console.log(`    ${this.colorize(GREEN, 'AI workspace:')} ${aiWs === 'active' ? this.colorize(GREEN, 'active') : this.colorize(GRAY, 'not initialized')}`);
+    console.log('');
+  }
+
+  private printSysInfo(): void {
+    const profile = this.capabilities?.getPersonalizationPrompt();
+    if (!profile) {
+      console.log(this.colorize(GRAY, '  No system profile found. Run scripts/install.sh to generate one.'));
+      console.log('');
+      return;
+    }
+    console.log('');
+    console.log(this.colorize(BOLD, '  Personalization profile (from scripts/install.sh):'));
+    console.log('');
+    for (const line of profile.split('\n')) {
+      console.log(`  ${this.colorize(GRAY, line)}`);
+    }
     console.log('');
   }
 
