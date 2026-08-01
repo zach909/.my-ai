@@ -57,6 +57,17 @@ Both search paths are real and run side by side deliberately: `hard_search` is a
 
 `netSearchGenerate(projectId, query, topK)` runs the search and, if there are matches, creates a new `netsearch`-type neuron and wires it to each match with a weighted edge automatically — turning a search result directly into a permanent part of the graph rather than a one-off query response. It returns `null` for an empty or untokenizable query, and `null` when there are zero semantic matches, rather than fabricating a result.
 
+## Implementation specification
+
+`docs/NET_SEARCH_SPEC.md` is the full build-out spec for the "trains a
+neural network that performs the requested behavior" half of this page —
+formalizing the query-scoped **temporary network** this document's
+`netSearchGenerate` section only touches on: its training pipeline (hard
+negatives, epoch/time budget), its TTL/LRU lifecycle, the validation gate
+that decides whether it's trustworthy or should fall back to raw ranking,
+and the `promote()` path into the permanent `netsearch` neuron this page
+already describes.
+
 ## Verifying it
 
 `python test_core.py`'s `test_net_search` covers indexing, training, and both search modes on a real corpus. `npm test` (`test/smoke.mjs`) covers two TypeScript sides: the Extension Builder section covers `netSearchGenerate`'s neuron creation, its weighted wiring to each match, and both null-result edge cases; the **Net Search engine (Section 22)** suite covers all four modes plus the NeuroLang `@net="self"` binding and search integration.
