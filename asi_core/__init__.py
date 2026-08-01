@@ -30,6 +30,16 @@ from .neural_states import (
     StateType
 )
 
+from .vale_system import (
+    ValeSystem,
+    ValeConfig,
+    DonorPolicy,
+    RecipientPolicy,
+    ValeError,
+    ValeConfigError,
+    ValeInvariantError,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # Neural Mesh
@@ -51,5 +61,13 @@ __all__ = [
     "StateManager",
     "LearningSystem",
     "LearningRule",
-    "StateType"
+    "StateType",
+    # Vale System
+    "ValeSystem",
+    "ValeConfig",
+    "DonorPolicy",
+    "RecipientPolicy",
+    "ValeError",
+    "ValeConfigError",
+    "ValeInvariantError",
 ]
