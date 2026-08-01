@@ -1,4 +1,7 @@
-export { BackgroundQuantizer } from './quantizer';
+export { BackgroundQuantizer, CalibrationCollector, packLevels, unpackLevels, clampBits } from './quantizer';
+export { detectHardwareProfile, computeSensitivity, resolveLayerBits, estimateMemorySavings, estimatePowerSavingsPercent, estimatePerformanceGain, } from './quantization-hardware';
+export { BackgroundQuantizationScheduler } from './quantization-scheduler';
+export { loadQuantizationConfig, normalizeQuantizationConfig, DEFAULT_QUANTIZATION_CONFIG } from './quantization-config';
 export { ValueRangeAllocator } from './value-range';
 export { MoERouter } from './moe-router';
 export { ExpertNetwork } from './expert';
