@@ -30,6 +30,7 @@ This directory contains all project documentation organized by category.
 - SELF_IMPROVEMENT_PROGRESS.md - Progress on self-improvement features
 - PERFORMANCE_OPTIMIZATION_PLAN.md - Performance optimization strategies
 - DESKTOP_LAUNCHER_IMPLEMENTATION.md - Desktop launcher implementation details
+- EXTENSION_BUILDER_SPEC.md - Extension Builder implementation specification (visual/graph editor, drag-and-drop, search, debugging, quantization, packaging, installation, APIs, file format, testing)
 
 ### Configuration & Guidelines
 - CLAUDE.md - Claude-specific configuration
