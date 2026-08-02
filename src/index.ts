@@ -2090,13 +2090,19 @@ export async function getNeuroclawSystem(): Promise<NeuroclawSystem> {
 async function main() {
   const system = await getNeuroclawSystem();
 
+  // Loopback-only unless NEUROCLAW_WEB_HOST opts into remote access, in
+  // which case NEUROCLAW_WEB_PASSWORD is required -- see WebServer.start()'s
+  // doc comment for why an unauthenticated remote bind is refused outright.
+  const webHost = process.env.NEUROCLAW_WEB_HOST || "127.0.0.1";
+  const webPassword = process.env.NEUROCLAW_WEB_PASSWORD;
+
   const mode = process.argv[2];
   if (mode === "web") {
     const port = parseInt(process.argv[3] || "3000", 10);
     console.log(`Starting TS backend web server on port ${port}...`);
     const webServer = new WebServer(system.runner);
-    await webServer.start(port);
-    console.log(`Neuroclaw TS backend online at http://localhost:${port}`);
+    await webServer.start(port, webHost, webPassword);
+    console.log(`Neuroclaw TS backend online at http://${webHost}:${port}`);
   } else if (mode === "cli") {
     console.log("Launching interactive Neuroclaw command-line interface...");
     const cli = new CLI(system.llm, system.pipeline, system.thesaurus, system.pluginRegistry);
@@ -2106,8 +2112,8 @@ async function main() {
     const port = 3000;
     console.log(`No mode specified. Starting default web server on port ${port}...`);
     const webServer = new WebServer(system.runner);
-    await webServer.start(port);
-    console.log(`Neuroclaw operational at http://localhost:${port}`);
+    await webServer.start(port, webHost, webPassword);
+    console.log(`Neuroclaw operational at http://${webHost}:${port}`);
   }
 }
 
