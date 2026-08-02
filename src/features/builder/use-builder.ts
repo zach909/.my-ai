@@ -41,6 +41,14 @@ export interface BuilderApi {
   exportNeuroLang: () => string;
   save: () => string | null;
   install: (bits: number) => Promise<string | null>;
+  /** Create a netsearch-type neuron holding a text corpus, searchable via netSearch()/netSearchGenerate(). */
+  addNetSearchNeuron: (name: string, corpus: string, position?: { x: number; y: number }) => NeuronData | null;
+  /** Substring search over every netsearch neuron's corpus (spec: "search neural content"). */
+  netSearch: (query: string) => Array<{ results: string[]; confidence: number }>;
+  /** Generate a new neuron wired to the best semantic matches for `query` across all neurons (spec: "train equivalent neural networks"). */
+  netSearchGenerate: (query: string, topK?: number) => { neuron: NeuronData; matches: Array<{ id: string; name: string; score: number }> } | null;
+  /** "Train" every netsearch neuron's corpus association. */
+  trainNetSearch: (epochs: number) => boolean;
 }
 
 export function useBuilder(initialName = 'My Extension'): BuilderApi {
@@ -124,6 +132,22 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       const out = await engine.installWithQuantization(projectId, { bits });
       bump();
       return out;
+    },
+    addNetSearchNeuron: (name, corpus, position) => {
+      const n = engine.addNetSearch(projectId, name, corpus, '', '', position);
+      bump();
+      return n;
+    },
+    netSearch: (query) => engine.netSearch(projectId, query),
+    netSearchGenerate: (query, topK = 3) => {
+      const out = engine.netSearchGenerate(projectId, query, topK);
+      bump();
+      return out;
+    },
+    trainNetSearch: (epochs) => {
+      const ok = engine.trainNetSearch(projectId, epochs);
+      bump();
+      return ok;
     },
   };
 }
