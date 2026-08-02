@@ -224,6 +224,23 @@ export class WebServer {
         res.end(html);
     }
     async parseBody(req) {
+        // CSRF: this server has no auth and setSecurityHeaders() never sends
+        // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
+        // response -- but that alone doesn't stop the *request* from being
+        // sent and acted on. A POST whose Content-Type is one of the CORS
+        // "simple" types (text/plain, multipart/form-data,
+        // application/x-www-form-urlencoded) never triggers a preflight, so
+        // any page a victim's browser has open could silently POST here
+        // (e.g. to /api/apps/launch, which passes body.command straight to
+        // AppLauncher.launch() with no allowlist) and have it processed
+        // before this fix. Requiring the real application/json content type
+        // forces a real preflight for every POST body this server accepts --
+        // and that preflight gets rejected by the browser itself, since no
+        // Access-Control-Allow-Origin is ever sent back.
+        const contentType = req.headers['content-type'] ?? '';
+        if (!/^application\/json(;|$)/i.test(contentType.trim())) {
+            throw new Error('Content-Type must be application/json');
+        }
         const LIMIT = 1024 * 1024; // 1MB limit
         let totalSize = 0;
         return new Promise((resolve, reject) => {
