@@ -214,6 +214,17 @@ class NeuronPhase(Enum):
     CONSOLIDATING = "consolidating"
 
 
+class MemoryKind(Enum):
+    """
+    Spec Part 3 section 22 ("Types of Memory"). Short-term working memory
+    isn't stored here at all — it's the live `HDNeuron.state.tmp`, which is
+    already exactly that: high-activity, temporary, low-vale. This enum
+    covers what actually gets written into `MemoryStore`.
+    """
+    LONG_TERM = "long_term"      # proven-useful, high-value & low-surprise outcomes
+    EXPERIENCE = "experience"    # confidently negative outcomes: mistakes/failures to avoid repeating
+
+
 @dataclass
 class HDConfig:
     dimensions: int = 512
@@ -222,7 +233,8 @@ class HDConfig:
     leak_val: float = 0.05
     leak_tmp: float = 0.7  # fraction replaced by new evidence each tick
     predictor_lr: float = 0.05
-    theta_val: float = 0.6       # consolidation threshold: value/vale
+    theta_val: float = 0.6       # long-term consolidation threshold: value/vale must exceed this
+    theta_experience: float = 0.3  # experience-memory threshold: value/vale must fall below this
     theta_meta: float = 0.3      # consolidation threshold: surprise must be below this
     theta_merge: float = 0.85    # merge into existing memory trace if similarity exceeds this
     theta_confident: float = 0.8  # reasoning early-exit confidence
@@ -244,6 +256,7 @@ class MemoryTrace:
     value: HDVector
     strength: float = 1.0
     last_tick: int = 0
+    kind: str = MemoryKind.LONG_TERM.value
 
 
 @dataclass
@@ -262,20 +275,25 @@ class MemoryStore:
         self.config = config
         self.traces: List[MemoryTrace] = []
 
-    def write(self, key: HDVector, value: HDVector, tick: int) -> bool:
-        """Insert a trace, merging into an existing similar one instead of growing unboundedly."""
+    def write(self, key: HDVector, value: HDVector, tick: int, kind: str = MemoryKind.LONG_TERM.value) -> bool:
+        """Insert a trace, merging into an existing similar trace of the same
+        kind instead of growing unboundedly (a mistake should never merge
+        into a proven-good long-term trace just because they look similar)."""
         for trace in self.traces:
-            if cosine_similarity(key, trace.key) >= self.config.theta_merge:
+            if trace.kind == kind and cosine_similarity(key, trace.key) >= self.config.theta_merge:
                 trace.value = bundle(trace.value, value, weights=[trace.strength, 1.0])
                 trace.key = bundle(trace.key, key, weights=[trace.strength, 1.0])
                 trace.strength = min(2.0, trace.strength + 1.0)
                 trace.last_tick = tick
                 return False
-        self.traces.append(MemoryTrace(key=key.copy(), value=value.copy(), strength=1.0, last_tick=tick))
+        self.traces.append(
+            MemoryTrace(key=key.copy(), value=value.copy(), strength=1.0, last_tick=tick, kind=kind)
+        )
         return True
 
-    def recall(self, cue: HDVector, k: int = 1) -> List[MemoryTrace]:
-        scored = sorted(self.traces, key=lambda t: cosine_similarity(cue, t.key), reverse=True)
+    def recall(self, cue: HDVector, k: int = 1, kind: Optional[str] = None) -> List[MemoryTrace]:
+        pool = self.traces if kind is None else [t for t in self.traces if t.kind == kind]
+        scored = sorted(pool, key=lambda t: cosine_similarity(cue, t.key), reverse=True)
         return scored[:k]
 
     def decay_and_prune(self) -> None:
@@ -371,7 +389,11 @@ class HDNeuron:
         )
         error_norm = error_vec.norm()
         self._update_predictor(prev_state, error_vec)
-        surprise = math.log1p(math.exp(min(50.0, error_norm)))  # softplus, overflow-safe
+        # Overflow-safe softplus of error_norm, shifted so surprise -> 0 as
+        # error_norm -> 0 (unshifted softplus floors at ln(2) even for a
+        # perfect prediction, which made consolidation's avg_meta < theta_meta
+        # check unreachable at the default threshold).
+        surprise = math.log1p(math.exp(min(50.0, error_norm))) - math.log(2.0)
         self.state.meta = [surprise] * len(self.state.meta)
         self.last_error = surprise
 
@@ -382,6 +404,17 @@ class HDNeuron:
         avg_val = sum(self.state.val) / len(self.state.val)
         avg_meta = sum(self.state.meta) / len(self.state.meta)
         return avg_val > self.config.theta_val and avg_meta < self.config.theta_meta
+
+    def should_record_experience(self) -> bool:
+        """
+        Spec Part 3 section 22: experience memory captures confidently bad
+        outcomes ("a previous coding mistake", "a failed experiment") so
+        they aren't repeated — the mirror image of should_consolidate()'s
+        confidently good outcomes.
+        """
+        avg_val = sum(self.state.val) / len(self.state.val)
+        avg_meta = sum(self.state.meta) / len(self.state.meta)
+        return avg_val < self.config.theta_experience and avg_meta < self.config.theta_meta
 
 
 # ---------------------------------------------------------------------------
@@ -501,19 +534,25 @@ class HDThinkingSystem:
     def consolidate(self) -> int:
         count = 0
         for neuron in self.neurons.values():
+            kind = None
             if neuron.should_consolidate():
+                kind = MemoryKind.LONG_TERM.value
+            elif neuron.should_record_experience():
+                kind = MemoryKind.EXPERIENCE.value
+
+            if kind is not None:
                 key = HDVector(neuron.state.ctx + [0.0] * (self.config.dimensions - len(neuron.state.ctx)),
                                neuron.state._bounds)
                 value = HDVector(neuron.state.sem + [0.0] * (self.config.dimensions - len(neuron.state.sem)),
                                   neuron.state._bounds)
-                if self.memory.write(key, value, self.current_tick):
+                if self.memory.write(key, value, self.current_tick, kind=kind):
                     count += 1
                 neuron.consolidation_count += 1
         self.memory.decay_and_prune()
         return count
 
-    def recall(self, cue: HDVector, k: int = 1) -> List[MemoryTrace]:
-        return self.memory.recall(cue, k)
+    def recall(self, cue: HDVector, k: int = 1, kind: Optional[str] = None) -> List[MemoryTrace]:
+        return self.memory.recall(cue, k, kind=kind)
 
     # -- Reasoning -----------------------------------------------------
 

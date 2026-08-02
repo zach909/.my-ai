@@ -32,7 +32,7 @@ from typing import Callable, Dict, List, Optional
 
 from .neural_mesh import NeuralMesh
 from .vale_system import ValeSystem, ValeConfig
-from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector, cosine_similarity
+from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector, MemoryKind, cosine_similarity
 from .neural_states import StateManager, LearningSystem
 
 
@@ -113,6 +113,8 @@ class UnifiedBrain:
             self.states.register_synapse(str(source_id), str(target_id))
 
         self.skills: Dict[str, Skill] = {}
+        self._pattern_skills: Dict[int, str] = {}  # id(trace) -> skill name
+        self._pattern_counter = 0
         self._sync_vale_to_mesh()
 
     # -- Skills / extension points -----------------------------------
@@ -282,3 +284,47 @@ class UnifiedBrain:
             "memory_size": len(self.hd.memory),
             "vale_invariant_ok": self.vale.validate_invariant(),
         }
+
+    # -- Self-improvement loop (spec Part 3 section 36) -------------------
+
+    def self_improve(self, min_strength: float = 1.5) -> List[str]:
+        """
+        Close the loop described in section 36: experience -> memory ->
+        pattern -> skill -> permanent ability. A long-term memory trace
+        that has been merged/reinforced enough times (strength above
+        min_strength, i.e. the same pattern was seen and confirmed more
+        than once — see section 24, "Pattern learned") is promoted into a
+        permanent skill via register_skill, so it participates in future
+        perceive() cycles without the brain needing to re-derive it.
+        Skills whose backing pattern later gets pruned from memory are
+        retired, so nothing "successful" is faked as permanent forever.
+        """
+        created: List[str] = []
+        live_ids = set()
+
+        for trace in self.hd.memory.traces:
+            if trace.kind != MemoryKind.LONG_TERM.value or trace.strength < min_strength:
+                continue
+            trace_id = id(trace)
+            live_ids.add(trace_id)
+            if trace_id in self._pattern_skills:
+                continue
+
+            self._pattern_counter += 1
+            name = f"pattern_{self._pattern_counter}"
+            pattern = list(trace.value.sem)
+
+            def _apply_pattern(values: List[float], pattern: List[float] = pattern) -> List[float]:
+                if not pattern:
+                    return values
+                return [(v + pattern[i % len(pattern)]) / 2.0 for i, v in enumerate(values)]
+
+            self.register_skill(name, _apply_pattern)
+            self._pattern_skills[trace_id] = name
+            created.append(name)
+
+        for trace_id in list(self._pattern_skills):
+            if trace_id not in live_ids:
+                self.unregister_skill(self._pattern_skills.pop(trace_id))
+
+        return created
