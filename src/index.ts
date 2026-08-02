@@ -424,8 +424,13 @@ export class NeuroclawSystem {
     }
 
     // Wire dependencies
+<<<<<<< HEAD
+    const callHistoryInstance = this.pluginRegistry.getPluginInstance("call-history") as CallHistoryPlugin;
+    const phoneCallsInstance = this.pluginRegistry.getPluginInstance("phone-calls") as PhoneCallsPlugin;
+=======
     const callHistoryInstance = this.pluginRegistry.getPluginInstance("call-history") as CallHistoryPlugin | undefined;
     const phoneCallsInstance = this.pluginRegistry.getPluginInstance("phone-calls") as PhoneCallsPlugin | undefined;
+>>>>>>> ddf6547eb3b3382d81eb0233ed38f410b742e297
     if (callHistoryInstance && phoneCallsInstance) {
       callHistoryInstance.setSource(phoneCallsInstance);
     }
