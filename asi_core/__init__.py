@@ -64,6 +64,13 @@ from .unified_brain import (
     Introspection,
 )
 
+from .extension_system import (
+    ExtensionSystem,
+    Extension,
+    ExtensionStage,
+    ExtensionError,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # Neural Mesh
@@ -114,4 +121,9 @@ __all__ = [
     "UnifiedBrain",
     "CycleResult",
     "Introspection",
+    # Extension System
+    "ExtensionSystem",
+    "Extension",
+    "ExtensionStage",
+    "ExtensionError",
 ]
