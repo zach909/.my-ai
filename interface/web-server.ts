@@ -3,6 +3,7 @@ import crypto from 'node:crypto';
 import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
+import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
 
 const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
@@ -225,6 +226,7 @@ export class WebServer {
   // /app/chat-groups page's own login prompt), even over an already-trusted
   // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
   private readonly chatGroupsLock = new PasswordLock();
+  private readonly chatHistory = new ChatHistoryStore();
 
   constructor(runner: NeuroclawRunner, launcher?: AppLauncher) {
     this.runner = runner;
@@ -567,6 +569,79 @@ export class WebServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.sendJson(res, { error: msg }, 500);
+      }
+      return;
+    }
+
+    // GET /api/chat-history/search?q=...&exclude=<threadId>&source=chat|chat-group
+    // Token-overlap match against every persisted thread's messages, for the
+    // "this looks like your earlier chat about X — continue there?" prompt.
+    // Never called for an incognito conversation (the frontend simply skips
+    // both this and /save entirely in that mode).
+    if (pathname === '/api/chat-history/search' && method === 'GET') {
+      const q = parsedUrl.searchParams.get('q') ?? '';
+      const exclude = parsedUrl.searchParams.get('exclude') ?? undefined;
+      const sourceParam = parsedUrl.searchParams.get('source');
+      const source: ChatSource | undefined = sourceParam === 'chat' || sourceParam === 'chat-group' ? sourceParam : undefined;
+      const matches = this.chatHistory.search(q, { excludeId: exclude, source, limit: 3 });
+      this.sendJson(res, {
+        matches: matches.map(m => ({
+          threadId: m.thread.id,
+          title: m.thread.title,
+          source: m.thread.source,
+          score: m.score,
+          snippet: m.snippet,
+          updatedAt: m.thread.updatedAt,
+        })),
+      });
+      return;
+    }
+
+    // GET /api/chat-history/threads/:id — full message history for "continue there".
+    const threadMatch = pathname.match(/^\/api\/chat-history\/threads\/([^/]+)$/);
+    if (threadMatch && method === 'GET') {
+      try {
+        const thread = this.chatHistory.loadThread(decodeURIComponent(threadMatch[1]));
+        if (!thread) {
+          this.sendJson(res, { error: 'Thread not found' }, 404);
+          return;
+        }
+        this.sendJson(res, { thread });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.sendJson(res, { error: msg }, 400);
+      }
+      return;
+    }
+
+    // POST /api/chat-history/save — append one message to a thread, creating
+    // it if threadId is omitted/unknown. Called after every exchange in
+    // non-incognito AI Chat / Chat Groups sessions.
+    if (pathname === '/api/chat-history/save' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as
+          { threadId?: string; source?: string; role?: string; content?: string } | null;
+        if (body?.source !== 'chat' && body?.source !== 'chat-group') {
+          this.sendJson(res, { error: 'source must be "chat" or "chat-group"' }, 400);
+          return;
+        }
+        if (body.role !== 'user' && body.role !== 'assistant') {
+          this.sendJson(res, { error: 'role must be "user" or "assistant"' }, 400);
+          return;
+        }
+        if (typeof body.content !== 'string' || !body.content) {
+          this.sendJson(res, { error: 'Missing content field' }, 400);
+          return;
+        }
+        const thread = this.chatHistory.appendMessage(
+          { role: body.role, content: body.content, timestamp: Date.now() },
+          body.source,
+          body.threadId
+        );
+        this.sendJson(res, { threadId: thread.id });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.sendJson(res, { error: msg }, 400);
       }
       return;
     }

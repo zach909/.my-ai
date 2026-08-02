@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Users, Send, Vote, Zap, Lock } from 'lucide-react'
+import { Users, Send, Vote, Zap, Lock, EyeOff, History } from 'lucide-react'
 
 function Chip({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -56,6 +56,14 @@ interface Round {
   discussion: string[]
   decision: string
   complete: boolean
+}
+
+interface ChatMatch {
+  threadId: string
+  title: string
+  score: number
+  snippet: string
+  updatedAt: number
 }
 
 function chatGroupsHeaders(password: string | null): HeadersInit {
@@ -130,6 +138,9 @@ function ChatGroupsPage() {
   const [rounds, setRounds] = useState<Round[]>([])
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [incognito, setIncognito] = useState(false)
+  const [threadId, setThreadId] = useState<string | undefined>(undefined)
+  const [pendingMatch, setPendingMatch] = useState<{ match: ChatMatch; text: string } | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
@@ -187,10 +198,56 @@ function ChatGroupsPage() {
     return true
   }
 
-  const submitTask = async () => {
-    const text = task.trim()
-    if (!text) return
-    setTask('')
+  // A round's discussion/decision/complete is packed into the assistant
+  // message's content as JSON so continueThread() below can rebuild real
+  // Round objects instead of losing that structure to plain text.
+  const saveToHistory = async (role: 'user' | 'assistant', content: string, id: string | undefined): Promise<string | undefined> => {
+    if (incognito) return id
+    try {
+      const res = await fetch('/api/chat-history/save', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threadId: id, source: 'chat-group', role, content }),
+      })
+      if (!res.ok) return id
+      const data = await res.json()
+      return data.threadId ?? id
+    } catch {
+      return id
+    }
+  }
+
+  const continueThread = async (match: ChatMatch) => {
+    setPendingMatch(null)
+    try {
+      const res = await fetch(`/api/chat-history/threads/${encodeURIComponent(match.threadId)}`)
+      if (!res.ok) return
+      const data = await res.json()
+      const msgs: Array<{ role: 'user' | 'assistant'; content: string }> = data.thread?.messages ?? []
+      const restored: Round[] = []
+      for (let i = 0; i < msgs.length - 1; i += 2) {
+        if (msgs[i].role !== 'user' || msgs[i + 1]?.role !== 'assistant') continue
+        try {
+          const parsed = JSON.parse(msgs[i + 1].content)
+          restored.push({
+            id: `restored_${i}`,
+            task: msgs[i].content,
+            discussion: Array.isArray(parsed.discussion) ? parsed.discussion : [],
+            decision: parsed.decision ?? '',
+            complete: !!parsed.complete,
+          })
+        } catch {
+          // Older/foreign entry that isn't a packed round -- skip rather than crash the restore.
+        }
+      }
+      if (restored.length > 0) setRounds(restored)
+      setThreadId(match.threadId)
+    } catch {
+      // Match couldn't be loaded -- fall through and just keep the current session.
+    }
+  }
+
+  const runRound = async (text: string) => {
     setLoading(true)
     setError(null)
     try {
@@ -206,22 +263,46 @@ function ChatGroupsPage() {
       }
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Collaboration failed')
-      setRounds((prev) => [
-        ...prev,
-        {
-          id: `round_${Date.now()}`,
-          task: text,
-          discussion: Array.isArray(data.discussion) ? data.discussion : [],
-          decision: data.decision ?? '',
-          complete: !!data.complete,
-        },
-      ])
+      const discussion = Array.isArray(data.discussion) ? data.discussion : []
+      const decision = data.decision ?? ''
+      const complete = !!data.complete
+      setRounds((prev) => [...prev, { id: `round_${Date.now()}`, task: text, discussion, decision, complete }])
+      const savedId = await saveToHistory('user', text, threadId)
+      const finalId = await saveToHistory('assistant', JSON.stringify({ discussion, decision, complete }), savedId)
+      if (finalId !== threadId) setThreadId(finalId)
       if (agents.length === 0) refreshAgents(password)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
+  }
+
+  const submitTask = async () => {
+    const text = task.trim()
+    if (!text) return
+    setTask('')
+
+    // Only check for a match at the start of a genuinely new session (no
+    // thread adopted, no rounds run yet) -- once a session is underway
+    // there's nothing to "continue" into instead.
+    if (!incognito && !threadId && rounds.length === 0) {
+      try {
+        const res = await fetch(`/api/chat-history/search?q=${encodeURIComponent(text)}&source=chat-group`)
+        if (res.ok) {
+          const data = await res.json()
+          const best: ChatMatch | undefined = data.matches?.[0]
+          if (best && best.score > 0.3) {
+            setPendingMatch({ match: best, text })
+            return
+          }
+        }
+      } catch {
+        // Search unavailable -- fall through and just run normally.
+      }
+    }
+
+    await runRound(text)
   }
 
   if (locked === null) return null
@@ -254,7 +335,48 @@ function ChatGroupsPage() {
       </Card>
 
       <div className="flex flex-1 flex-col">
+        <div className="flex items-center justify-end px-1 pb-2">
+          <Button
+            variant={incognito ? 'default' : 'outline'}
+            size="sm"
+            onClick={() => setIncognito((v) => !v)}
+            className="gap-1.5 text-xs"
+            title={incognito ? 'Incognito: this session is not saved' : 'Turn on incognito mode (nothing gets saved)'}
+          >
+            <EyeOff size={12} />
+            {incognito ? 'Incognito on' : 'Incognito'}
+          </Button>
+        </div>
+
         <div role="log" aria-live="polite" className="flex-1 space-y-4 overflow-y-auto px-1 py-1">
+          {pendingMatch && (
+            <div className="flex items-start gap-2 rounded-lg border border-primary/40 bg-primary/5 px-4 py-3 text-sm">
+              <History size={15} className="mt-0.5 shrink-0 text-primary" />
+              <div className="flex-1 space-y-2">
+                <p>
+                  This looks like an earlier session <span className="font-medium">&ldquo;{pendingMatch.match.title}&rdquo;</span> — continue there instead?
+                </p>
+                <p className="text-xs text-muted-foreground">{pendingMatch.match.snippet}</p>
+                <div className="flex gap-2">
+                  <Button size="sm" onClick={() => continueThread(pendingMatch.match).then(() => runRound(pendingMatch.text))}>
+                    Continue there
+                  </Button>
+                  <Button
+                    size="sm"
+                    variant="outline"
+                    onClick={() => {
+                      const text = pendingMatch.text
+                      setPendingMatch(null)
+                      runRound(text)
+                    }}
+                  >
+                    Start new
+                  </Button>
+                </div>
+              </div>
+            </div>
+          )}
+
           {rounds.length === 0 && !loading && (
             <p className="text-sm text-muted-foreground">
               Submit a task below — the hive's chat group will discuss it and vote on a decision.
