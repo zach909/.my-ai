@@ -20,8 +20,11 @@ export class NotificationsPlugin extends BasePlugin {
         console.log(`[Notification] ${title}: ${body}`);
         if (process.env.DISPLAY) {
             try {
-                const { execSync } = await import("node:child_process");
-                execSync(`notify-send "${title.replace(/"/g, '\\"')}" "${body.replace(/"/g, '\\"')}"`, { timeout: 3000, stdio: "ignore" });
+                const { execFileSync } = await import("node:child_process");
+                // execFileSync (no shell) so title/body reach notify-send as literal
+                // argv entries -- string-interpolating into execSync's shell command
+                // would let `$(...)`/backticks in a title execute arbitrary commands.
+                execFileSync("notify-send", [title, body], { timeout: 3000, stdio: "ignore" });
             }
             catch { }
         }

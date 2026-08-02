@@ -27,14 +27,18 @@ architectural difference (not a relabeled MLP):
     whole circuit an ordinary differentiable nn.Module, trained by the same
     backprop as everything else in the model.
 
-Causal self-attention (model.py's CausalSelfAttention) is kept unchanged:
-the TypeScript elastic mesh is a settle-to-convergence network over a
-single state vector with no notion of sequence order or causality, so it
-has no substitute for the transformer's token-mixing mechanism. This block
-only replaces the *position-wise* MLP sublayer, which isolates the actual
-comparison Section 5.2 asks for — does the elastic mesh's richer internal
-per-position dynamics beat a plain 2-layer MLP, holding everything else
-(tokenizer, data, optimizer, schedule, attention) fixed.
+Written against the decoder-only transformer baseline (model.py's
+CausalSelfAttention), which this block's docstring originally described as
+"kept unchanged": the TypeScript elastic mesh is a settle-to-convergence
+network over a single state vector with no notion of sequence order or
+causality, so it had no substitute for the transformer's token-mixing
+mechanism, and this block only replaced the *position-wise* MLP sublayer.
+That comparison point no longer applies -- model.py has since retired the
+transformer baseline entirely in favor of the all-to-all neuron mesh
+(MeshLM, tinygpt/mesh.py) as the model. ElasticMeshFFN itself is unaffected
+and still tested standalone (test_elastic_mesh.py); build_model() just
+never constructs a model that would use it (see pretrain.py's
+--use-elastic-mesh warning).
 """
 from __future__ import annotations
 

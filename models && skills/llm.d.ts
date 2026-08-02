@@ -1,4 +1,5 @@
 import { ExtensionBuilder } from "../extension-builder/builder.js";
+import { ExtensionManager } from "../extension_system/manager.js";
 import { MoERouter } from "./core/moe-router.js";
 import { NeuroPipeline } from "./core/pipeline.js";
 import { Tokenizer } from "./tokenizer.js";
@@ -41,6 +42,7 @@ export declare class NeuroclawLLM {
     private context;
     private selfExtensions;
     private selfExtensionsDir;
+    private extensionManager;
     private generationCount;
     private pipeline;
     constructor(config?: Partial<LLMConfig>);
@@ -106,6 +108,7 @@ export declare class NeuroclawLLM {
     traceNeuron(neuronId: number, dim: number, topK?: number): any;
     demoteFailingNeurons(failureId: string): void;
     getBuilder(): ExtensionBuilder;
+    getExtensionManager(): ExtensionManager;
     getTokenizer(): Tokenizer;
     getTrainer(): NeuroclawTrainer;
     getMoERouter(): MoERouter;

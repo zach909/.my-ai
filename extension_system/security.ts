@@ -27,6 +27,7 @@ export class PermissionDeniedError extends Error {
 const SENSITIVE_PERMISSIONS: ReadonlySet<ExtensionPermission> = new Set([
   "camera",
   "microphone",
+  "voice-activation",
   "location",
   "contacts",
   "email",

@@ -29,6 +29,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: '/app/knowledge', title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.' },
   { path: '/app/evaluation', title: 'Evaluation', description: 'Measure and benchmark ASI module performance against defined criteria.' },
   { path: '/app/experiments', title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols.' },
+  { path: '/app/chat-groups', title: 'Chat Groups', description: 'Hive-mind agents collaborating on a task through a shared chat group.' },
 ]
 
 export interface BotMessage {
@@ -66,6 +67,11 @@ export class ChatBot {
     if (this.system) {
       await this.system.initialize()
     }
+  }
+
+  /** The underlying NeuroclawSystem, if one was supplied — undefined in fallback mode. */
+  getSystem(): NeuroclawSystem | undefined {
+    return this.system
   }
 
   /**
@@ -403,6 +409,12 @@ let botInstance: ChatBot | null = null
 export async function getBot(system?: NeuroclawSystem): Promise<ChatBot> {
   if (!botInstance) {
     botInstance = new ChatBot()
+    await botInstance.initialize(system)
+  } else if (system && !botInstance.getStatus().hasSystem) {
+    // The singleton was created by an earlier no-system call (fallback
+    // mode) -- upgrade it now that a real system is available, instead of
+    // silently discarding this argument and staying in fallback mode
+    // forever, which is what happened before this fix.
     await botInstance.initialize(system)
   }
   return botInstance

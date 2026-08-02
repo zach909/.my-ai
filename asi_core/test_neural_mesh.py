@@ -277,13 +277,14 @@ class TestLearningWithValeGating(unittest.TestCase):
         post_act = {1: 0.6}
         
         conn_key = (0, 1)
-        initial = mesh_positive.connections[conn_key].weight_matrix[0][0]
-        
+        initial_positive = mesh_positive.connections[conn_key].weight_matrix[0][0]
+        initial_negative = mesh_negative.connections[conn_key].weight_matrix[0][0]
+
         mesh_positive.apply_hebbian_learning(pre_act, post_act, reward_signal=1.0, dt=0.1)
         mesh_negative.apply_hebbian_learning(pre_act, post_act, reward_signal=-1.0, dt=0.1)
-        
-        delta_positive = mesh_positive.connections[conn_key].weight_matrix[0][0] - initial
-        delta_negative = mesh_negative.connections[conn_key].weight_matrix[0][0] - initial
+
+        delta_positive = mesh_positive.connections[conn_key].weight_matrix[0][0] - initial_positive
+        delta_negative = mesh_negative.connections[conn_key].weight_matrix[0][0] - initial_negative
         
         # Opposite rewards should produce opposite changes
         self.assertGreater(delta_positive, delta_negative)
@@ -377,10 +378,136 @@ class TestExpertGroupRouting(unittest.TestCase):
         for nid in active_mask:
             self.assertIn(mesh.neurons[nid].group, {0, 1})
 
+    def test_manual_active_groups_unaffected_when_auto_route_disabled(self):
+        """auto_route defaults to False: activate() must not overwrite a
+        caller-set active_groups restriction."""
+        mesh = NeuralMesh(n_neurons=16, n_groups=4, continuous=True)
+        mesh.active_groups = {2}
+        mesh.activate([0.5, 0.1, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3])
+        self.assertEqual(mesh.active_groups, {2})
+
+    def test_auto_route_selects_top_k_groups(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4, continuous=True, seed=1, auto_route=True)
+        mesh.activate([0.5, 0.1, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3])
+        self.assertEqual(len(mesh.active_groups), mesh.skill_top_k)
+        for g in mesh.active_groups:
+            self.assertIn(g, range(4))
+
+    def test_auto_route_never_starves_a_group_forever(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4, continuous=True, seed=1, auto_route=True)
+        seen = set()
+        for _ in range(20):
+            mesh.activate([0.5, 0.1, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3])
+            seen |= mesh.active_groups
+        self.assertEqual(seen, {0, 1, 2, 3})
+
+    def test_groups_have_default_names(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4)
+        self.assertEqual(mesh.get_group_name(0), "expert_0")
+
+    def test_set_group_name(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4)
+        mesh.set_group_name(0, "coding")
+        self.assertEqual(mesh.get_group_name(0), "coding")
+
+    def test_set_group_name_out_of_range_raises(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4)
+        with self.assertRaises(ValueError):
+            mesh.set_group_name(99, "nope")
+
+    def test_active_expert_names_reflects_active_groups(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4)
+        mesh.set_group_name(0, "coding")
+        mesh.set_group_name(1, "language")
+        mesh.active_groups = {0, 1}
+        self.assertEqual(mesh.active_expert_names(), ["coding", "language"])
+
+
+class TestExpertGroupCreation(unittest.TestCase):
+    """Test dynamic expert creation (spec Part 4 section 42)."""
+
+    def test_add_expert_group_increases_counts(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=2, n_input=4)
+        group_id, new_ids = mesh.add_expert_group("robotics", 4)
+        self.assertEqual(group_id, 2)
+        self.assertEqual(mesh.n_groups, 3)
+        self.assertEqual(mesh.n_neurons, 20)
+        self.assertEqual(new_ids, [16, 17, 18, 19])
+
+    def test_new_neurons_are_assigned_to_the_new_group(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=2, n_input=4)
+        group_id, new_ids = mesh.add_expert_group("robotics", 4)
+        for nid in new_ids:
+            self.assertEqual(mesh.neurons[nid].group, group_id)
+
+    def test_new_group_is_named(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=2, n_input=4)
+        group_id, _ = mesh.add_expert_group("robotics", 4)
+        self.assertEqual(mesh.get_group_name(group_id), "robotics")
+
+    def test_new_neurons_are_wired_all_to_all(self):
+        mesh = NeuralMesh(n_neurons=8, n_groups=2, n_input=2)
+        _, new_ids = mesh.add_expert_group("robotics", 3)
+        for i in range(mesh.n_neurons):
+            for j in range(mesh.n_neurons):
+                if i != j:
+                    self.assertIn((i, j), mesh.connections)
+
+    def test_mesh_still_activates_after_growth(self):
+        mesh = NeuralMesh(n_neurons=8, n_groups=2, n_input=2, continuous=True)
+        mesh.add_expert_group("robotics", 3)
+        output = mesh.activate([0.5, 0.2])
+        for val in output:
+            self.assertFalse(math.isnan(val) or math.isinf(val))
+
+    def test_invalid_neuron_count_raises(self):
+        mesh = NeuralMesh(n_neurons=8, n_groups=2, n_input=2)
+        with self.assertRaises(ValueError):
+            mesh.add_expert_group("robotics", 0)
+
+    def test_repeated_growth_keeps_ids_and_groups_unique(self):
+        mesh = NeuralMesh(n_neurons=8, n_groups=2, n_input=2)
+        _, first_ids = mesh.add_expert_group("robotics", 2)
+        _, second_ids = mesh.add_expert_group("vision", 2)
+        self.assertEqual(set(first_ids) & set(second_ids), set())
+        self.assertEqual(mesh.n_groups, 4)
+        self.assertEqual(mesh.get_group_name(2), "robotics")
+        self.assertEqual(mesh.get_group_name(3), "vision")
+
+
+class TestDSLConnectionOverride(unittest.TestCase):
+    """set_connection_weight/add_dsl_bias back the Neural Definition
+    Language's `"name"@connections="target*weight+bias"` override (see
+    neural_dsl.execute())."""
+
+    def test_set_connection_weight_overwrites_whole_matrix(self):
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=3, n_input=2, n_groups=2)
+        mesh.set_connection_weight(0, 1, 0.42)
+        conn = mesh.connections[(0, 1)]
+        for row in conn.weight_matrix:
+            for w in row:
+                self.assertAlmostEqual(w, 0.42)
+
+    def test_set_connection_weight_missing_connection_raises(self):
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=3, n_input=2, n_groups=2)
+        with self.assertRaises(ValueError):
+            mesh.set_connection_weight(0, 0, 0.5)
+
+    def test_add_dsl_bias_accumulates_and_feeds_into_input(self):
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=2, n_input=2, n_groups=2, seed=3)
+        target = 5
+        before = mesh.compute_neuron_input(target)
+        mesh.add_dsl_bias(target, 1.0)
+        mesh.add_dsl_bias(target, 0.5)
+        self.assertAlmostEqual(mesh.neurons[target].dsl_bias, 1.5)
+        after = mesh.compute_neuron_input(target)
+        for b, a in zip(before, after):
+            self.assertAlmostEqual(a - b, 1.5)
+
 
 class TestStatePersistence(unittest.TestCase):
     """Test state save/load functionality."""
-    
+
     def test_save_state_structure(self):
         """Test saved state has correct structure."""
         mesh = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4)
@@ -419,11 +546,36 @@ class TestStatePersistence(unittest.TestCase):
         """Test loading incompatible config raises error."""
         mesh1 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4)
         state = mesh1.save_state()
-        
+
         mesh2 = NeuralMesh(n_neurons=32, n_dimensions=4, n_input=4)
-        
+
         with self.assertRaises(ValueError):
             mesh2.load_state(state)
+
+    def test_group_count_mismatch_raises_error(self):
+        mesh1 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4, n_groups=2)
+        state = mesh1.save_state()
+        mesh2 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4, n_groups=4)
+        with self.assertRaises(ValueError):
+            mesh2.load_state(state)
+
+    def test_save_load_state_preserves_group_names_and_active_groups(self):
+        """Regression test: save_state() used to omit group names/scores/
+        active selection entirely, so load_state() silently reset a
+        restored mesh's expert groups back to unnamed defaults."""
+        mesh1 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4, n_groups=4, auto_route=True, seed=1)
+        mesh1.set_group_name(0, "coding")
+        mesh1.set_group_name(1, "language")
+        mesh1.activate([0.5, 0.2, -0.1, 0.4])
+        state = mesh1.save_state()
+
+        mesh2 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4, n_groups=4)
+        mesh2.load_state(state)
+
+        self.assertEqual(mesh2.get_group_name(0), "coding")
+        self.assertEqual(mesh2.get_group_name(1), "language")
+        self.assertEqual(mesh2.group_scores, mesh1.group_scores)
+        self.assertEqual(mesh2.active_groups, mesh1.active_groups)
 
 
 class TestStatisticsAndDiagnostics(unittest.TestCase):

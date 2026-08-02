@@ -10,6 +10,27 @@
 import { execSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
+// Same destructive-command denylist as desktop-app/src/main/main.js's
+// isBlockedCommand() (itself ported from plugin_terminal.py's _is_blocked)
+// -- launchOnDesktop() below runs `command` through a real shell (it needs
+// shell:true to support pipes/redirects in an arbitrary command line, the
+// same reason plugin_gnome.py's _launch_on_desktop keeps shell=True rather
+// than switching to execFile), so an unguarded caller can run anything,
+// including fork bombs and `rm -rf /`.
+const FORK_BOMB = /:\(\)\{\s*[:\s|&]+\};:/;
+const DANGEROUS_SIMPLE = /\bmkfs|\bshutdown|\breboot|\bhalt|\bpoweroff/i;
+const DD_RAW_DISK = /\bdd\b.*\bof=\/dev\/(sd[a-z]|nvme|mmcblk)/i;
+const RM_CMD = /\brm\b/i;
+const RM_RECURSIVE = /(?<![\w-])-[a-zA-Z]*r[a-zA-Z]*(?![\w-])|--recursive\b/i;
+const RM_FORCE = /(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*(?![\w-])|--force\b/i;
+const ROOT_LIKE_PATH = /(?<!\S)\/+[*.]{0,3}(?=\s|$|;|&|\|)/;
+
+function isBlockedCommand(cmd: string): boolean {
+  if (FORK_BOMB.test(cmd) || DANGEROUS_SIMPLE.test(cmd) || DD_RAW_DISK.test(cmd)) return true;
+  if (RM_CMD.test(cmd) && RM_RECURSIVE.test(cmd) && RM_FORCE.test(cmd) && ROOT_LIKE_PATH.test(cmd)) return true;
+  return false;
+}
+
 const EXT_DBUS_DEST = 'org.gnome.Shell.Extensions.MultiInput';
 const EXT_DBUS_PATH = '/org/gnome/Shell/Extensions/MultiInput';
 const EXT_DBUS_IFACE = 'org.gnome.Shell.Extensions.MultiInput';
@@ -293,6 +314,7 @@ export class MultiDesktopManager {
    * disturbing whichever desktop is currently focused.
    */
   launchOnDesktop(command: string, desktopId: string = 'ai'): void {
+    if (isBlockedCommand(command)) return;
     const cur = this.currentDesktop;
     this.switchToDesktop(desktopId);
     try {

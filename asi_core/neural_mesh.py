@@ -65,10 +65,19 @@ class NeuronState:
     # Statistics
     average_activation: float = 0.0
     update_count: int = 0
-    
-    def initialize_state(self, dimensions: int):
+
+    # Explicit per-neuron input bias set by the Neural Definition Language's
+    # `"name"@connections="target*weight+bias"` override (see neural_dsl.py):
+    # a DSL-declared connection's bias term is additive input this neuron
+    # receives every settle tick, on top of whatever the all-to-all weights
+    # compute, so an explicit override can express "this neuron leans toward
+    # firing/not firing" independent of its incoming weights.
+    dsl_bias: float = 0.0
+
+    def initialize_state(self, dimensions: int, rng: Optional[random.Random] = None):
         """Initialize state vector with given dimensions."""
-        self.state_vector = [random.gauss(0, 0.1) for _ in range(dimensions)]
+        source = rng or random
+        self.state_vector = [source.gauss(0, 0.1) for _ in range(dimensions)]
         self.input_flag = 0.0
         
     def get_content_state(self) -> List[float]:
@@ -100,10 +109,11 @@ class SynapticConnection:
     eligibility_trace: float = 0.0
     eligibility_decay: float = 0.9
     
-    def initialize_weights(self, dimensions: int, scale: float = 0.1):
+    def initialize_weights(self, dimensions: int, scale: float = 0.1, rng: Optional[random.Random] = None):
         """Initialize weight matrix with small random values."""
+        source = rng or random
         self.weight_matrix = [
-            [random.gauss(0, scale) for _ in range(dimensions)]
+            [source.gauss(0, scale) for _ in range(dimensions)]
             for _ in range(dimensions)
         ]
     
@@ -137,12 +147,16 @@ class NeuralMesh:
         vale_init: float = 0.1,
         divergence_tolerance: float = 0.5,
         sustained_divergence_ticks: int = 3,
-        continuous: bool = False
+        continuous: bool = False,
+        seed: Optional[int] = None,
+        auto_route: bool = False,
+        group_score_decay: float = 0.9
     ):
         # Validate configuration
         assert n_dimensions >= 2, "Need dim 0 for input flag plus >=1 content dim"
         assert 1 <= n_input < n_neurons, "Input neurons must be subset of total"
-        
+
+        self._rng = random.Random(seed) if seed is not None else random
         self.n_neurons = n_neurons
         self.n_dimensions = n_dimensions
         self.n_input = n_input
@@ -174,6 +188,21 @@ class NeuralMesh:
         # Skill/expert routing
         self.active_groups: Set[int] = set(range(n_groups))  # All active by default
         self.skill_top_k = min(2, n_groups)
+
+        # Optional top-k expert-group router. When disabled (default),
+        # `active_groups` is purely caller-controlled, as before. When
+        # enabled, `activate()` recomputes it every call from each group's
+        # recent-activity score, always keeping one round-robin exploration
+        # slot so a group that has never been picked is not starved forever.
+        self.auto_route = auto_route
+        self.group_score_decay = group_score_decay
+        self.group_scores: List[float] = [0.0] * n_groups
+        self._route_explore_cursor = 0
+
+        # Spec Part 4 section 39: expert groups are given human-readable
+        # names ("Coding Expert", "Language Expert", ...) instead of being
+        # addressed only by numeric id. Unnamed groups get a stable default.
+        self.group_names: Dict[int, str] = {i: f"expert_{i}" for i in range(n_groups)}
         
     def _initialize_neurons(self):
         """Create all neurons with appropriate roles and groups."""
@@ -195,7 +224,7 @@ class NeuralMesh:
                 group=group,
                 vale=self.vale_total / self.n_neurons  # Equal initial distribution
             )
-            neuron.initialize_state(self.n_dimensions)
+            neuron.initialize_state(self.n_dimensions, rng=self._rng)
             self.neurons[i] = neuron
     
     def _initialize_connections(self):
@@ -210,7 +239,7 @@ class NeuralMesh:
                         target_id=target_id,
                         base_learning_rate=0.01
                     )
-                    conn.initialize_weights(self.n_dimensions, scale)
+                    conn.initialize_weights(self.n_dimensions, scale, rng=self._rng)
                     self.connections[(source_id, target_id)] = conn
     
     def redistribute_vale(self, changes: Dict[int, float]):
@@ -308,11 +337,31 @@ class NeuralMesh:
                         result[target_d] += conn.weight_matrix[target_d][source_d] * source.state_vector[source_d]
         
         # Add bias (stored as connection from a virtual bias neuron)
-        # For simplicity, we add a small constant bias
+        # For simplicity, we add a small constant bias, plus any explicit
+        # DSL-declared bias for this neuron (see NeuronState.dsl_bias).
+        total_bias = 0.01 + neuron.dsl_bias
         for d in range(self.n_dimensions):
-            result[d] += 0.01
-        
+            result[d] += total_bias
+
         return result
+
+    def set_connection_weight(self, source_id: int, target_id: int, weight: float) -> None:
+        """
+        Explicit connection override (Neural Definition Language spec:
+        `"name"@connections="target*weight+bias"`). Uniformly overwrites the
+        source->target weight matrix with `weight`, replacing whatever
+        random/learned matrix was there -- the DSL's explicit connection
+        statement is meant to pin a specific weight, not nudge it.
+        """
+        conn = self.connections.get((source_id, target_id))
+        if conn is None:
+            raise ValueError(f"no such connection: {source_id} -> {target_id}")
+        conn.weight_matrix = [[weight for _ in range(self.n_dimensions)] for _ in range(self.n_dimensions)]
+
+    def add_dsl_bias(self, target_id: int, bias: float) -> None:
+        """Accumulate an explicit DSL-declared bias onto a neuron's input term."""
+        if target_id in self.neurons:
+            self.neurons[target_id].dsl_bias += bias
     
     def activate(self, input_vector: List[float]) -> List[float]:
         """
@@ -339,7 +388,12 @@ class NeuralMesh:
         
         # Clamp inputs
         self.clamp_input_neurons(input_vector)
-        
+
+        # Route to top-k expert groups before settling, using scores from
+        # the previous cycle's activity (opt-in; see auto_route).
+        if self.auto_route:
+            self.update_group_routing()
+
         # Run settle loop
         settled_state = self._settle()
         
@@ -430,19 +484,128 @@ class NeuralMesh:
         return prev_state
     
     def _get_active_neurons(self) -> Optional[Set[int]]:
-        """Get set of active neurons based on expert routing."""
+        """
+        Get set of active neurons based on expert routing.
+
+        `active_groups` is the gate: by default every group is active, but a
+        caller may restrict it manually, or `auto_route=True` can be set to
+        have `activate()` recompute it every call via `update_group_routing`
+        (top-k expert-group selection, see that method).
+        """
         if self.n_groups <= 1:
             return None  # All neurons active
-        
-        # For now, all groups are active
-        # In full implementation, router would select top-k groups
+
         active_neurons = set()
         for neuron_id, neuron in self.neurons.items():
             if neuron.group in self.active_groups:
                 active_neurons.add(neuron_id)
         
         return active_neurons
-    
+
+    def update_group_routing(self) -> Set[int]:
+        """
+        Recompute `active_groups` as a top-k expert-group selection.
+
+        Each group's score is an EMA of its members' mean absolute
+        activation from the previous cycle, so groups that have recently
+        been useful are favored (spec: "Activate experts" as part of the
+        continuous tick cycle). One slot of `skill_top_k` is always
+        reserved for round-robin exploration of a currently-inactive group,
+        so a group with a stale low score is never starved permanently.
+        """
+        for group in range(self.n_groups):
+            members = [n for n in self.neurons.values() if n.group == group]
+            avg_activity = (
+                sum(abs(n.activation) for n in members) / len(members) if members else 0.0
+            )
+            self.group_scores[group] = (
+                self.group_score_decay * self.group_scores[group]
+                + (1 - self.group_score_decay) * avg_activity
+            )
+
+        top_k = max(1, min(self.skill_top_k, self.n_groups))
+        ranked = sorted(range(self.n_groups), key=lambda g: self.group_scores[g], reverse=True)
+
+        if top_k >= self.n_groups:
+            selected = set(range(self.n_groups))
+        else:
+            selected = set(ranked[: top_k - 1]) if top_k > 1 else set()
+            remaining = [g for g in range(self.n_groups) if g not in selected]
+            for _ in range(len(remaining)):
+                candidate = remaining[self._route_explore_cursor % len(remaining)]
+                self._route_explore_cursor += 1
+                if candidate not in selected:
+                    selected.add(candidate)
+                    break
+
+        self.active_groups = selected
+        return selected
+
+    def set_group_name(self, group_id: int, name: str) -> None:
+        """Assign a human-readable name to an expert group (spec section 39)."""
+        if not (0 <= group_id < self.n_groups):
+            raise ValueError(f"no such group: {group_id}")
+        self.group_names[group_id] = name
+
+    def get_group_name(self, group_id: int) -> str:
+        return self.group_names.get(group_id, f"expert_{group_id}")
+
+    def active_expert_names(self) -> List[str]:
+        """Human-readable names of the currently active expert groups."""
+        return [self.get_group_name(g) for g in sorted(self.active_groups)]
+
+    def add_expert_group(self, name: str, n_new_neurons: int) -> Tuple[int, List[int]]:
+        """
+        Spec Part 4 section 42 (Expert Creation): grow the mesh with a
+        brand new, named expert group of freshly initialized neurons,
+        wired all-to-all with every existing neuron (preserving the mesh's
+        own all-to-all invariant) and with each other.
+
+        New neurons start at vale=0.0 as a placeholder. This mesh has no
+        opinion on where their real vale stake should come from — a caller
+        that also owns a ValeSystem (UnifiedBrain does) should call
+        vale.add_neurons() and re-sync immediately afterward, since
+        ValeSystem is the single source of truth for vale.
+
+        Returns (new_group_id, new_neuron_ids).
+        """
+        if n_new_neurons < 1:
+            raise ValueError("n_new_neurons must be >= 1")
+
+        existing_ids = list(self.neurons.keys())
+
+        new_group_id = self.n_groups
+        self.n_groups += 1
+        self.group_scores.append(0.0)
+        self.group_names[new_group_id] = name
+
+        start_id = self.n_neurons
+        new_ids = list(range(start_id, start_id + n_new_neurons))
+        self.n_neurons += n_new_neurons
+
+        for nid in new_ids:
+            neuron = NeuronState(neuron_id=nid, role=NeuronRole.HIDDEN, group=new_group_id, vale=0.0)
+            neuron.initialize_state(self.n_dimensions, rng=self._rng)
+            self.neurons[nid] = neuron
+
+        scale = 1.0 / math.sqrt(self.n_neurons * self.n_dimensions)
+
+        def _wire(source_id: int, target_id: int) -> None:
+            conn = SynapticConnection(source_id=source_id, target_id=target_id, base_learning_rate=0.01)
+            conn.initialize_weights(self.n_dimensions, scale, rng=self._rng)
+            self.connections[(source_id, target_id)] = conn
+
+        for nid in new_ids:
+            for other in existing_ids:
+                _wire(nid, other)
+                _wire(other, nid)
+            for other in new_ids:
+                if other != nid:
+                    _wire(nid, other)
+
+        self.active_groups.add(new_group_id)
+        return new_group_id, new_ids
+
     def _apply_divergence_correction(
         self,
         prev_state: Dict[int, List[float]],
@@ -595,19 +758,26 @@ class NeuralMesh:
             'diagnostics': {
                 'live_corrections': self._live_corrections,
                 'divergence_events': self._divergence_events
+            },
+            'groups': {
+                'names': dict(self.group_names),
+                'scores': list(self.group_scores),
+                'active': sorted(self.active_groups),
             }
         }
-    
+
     def load_state(self, state: Dict):
         """Load mesh state from serialization."""
         config = state.get('config', {})
-        
+
         # Verify config matches
         if config.get('n_neurons') != self.n_neurons:
             raise ValueError("Neuron count mismatch")
         if config.get('n_dimensions') != self.n_dimensions:
             raise ValueError("Dimension count mismatch")
-        
+        if config.get('n_groups') != self.n_groups:
+            raise ValueError("Group count mismatch")
+
         # Load neurons
         for nid_str, n_data in state.get('neurons', {}).items():
             nid = int(nid_str)
@@ -634,6 +804,17 @@ class NeuralMesh:
         diag = state.get('diagnostics', {})
         self._live_corrections = diag.get('live_corrections', 0)
         self._divergence_events = diag.get('divergence_events', 0)
+
+        # Load expert group names/scores/active selection
+        groups = state.get('groups', {})
+        if groups:
+            self.group_names = {int(k): v for k, v in groups.get('names', {}).items()}
+            saved_scores = groups.get('scores')
+            if saved_scores is not None and len(saved_scores) == self.n_groups:
+                self.group_scores = list(saved_scores)
+            active = groups.get('active')
+            if active is not None:
+                self.active_groups = set(active)
 
 
 # Convenience function for creating standard configurations

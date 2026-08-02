@@ -42,6 +42,10 @@ function BuilderPage() {
   const [neuroLang, setNeuroLang] = useState('')
   const [statusMsg, setStatusMsg] = useState<string | null>(null)
   const [codeToImport, setCodeToImport] = useState('')
+  const [netSearchName, setNetSearchName] = useState('')
+  const [netSearchCorpus, setNetSearchCorpus] = useState('')
+  const [netSearchQuery, setNetSearchQuery] = useState('')
+  const [netSearchResults, setNetSearchResults] = useState<Array<{ results: string[]; confidence: number }>>([])
   const [codeName, setCodeName] = useState('')
 
   const selected = b.neurons.find((n) => n.id === selectedId) ?? null
@@ -138,6 +142,48 @@ function BuilderPage() {
     } else {
       setStatusMsg('Code-to-Net: failed to create neuron')
     }
+  }
+
+  const handleAddNetSearchNeuron = () => {
+    if (!netSearchName.trim() || !netSearchCorpus.trim()) {
+      setStatusMsg('Net Search: provide a name and corpus text')
+      return
+    }
+    const neuron = b.addNetSearchNeuron(netSearchName.trim(), netSearchCorpus, {
+      x: 60 + (b.neurons.length % 5) * 170,
+      y: 60 + Math.floor(b.neurons.length / 5) * 100,
+    })
+    setStatusMsg(neuron ? `Net Search: "${netSearchName}" corpus neuron added` : 'Net Search: failed to add neuron')
+    if (neuron) {
+      setNetSearchName('')
+      setNetSearchCorpus('')
+    }
+  }
+
+  const handleSearchCorpus = () => {
+    if (!netSearchQuery.trim()) return
+    const results = b.netSearch(netSearchQuery.trim())
+    setNetSearchResults(results)
+    setStatusMsg(results.length > 0 ? `Net Search: found matches in ${results.length} corpus neuron(s)` : 'Net Search: no corpus matches')
+  }
+
+  const handleGenerateNetwork = () => {
+    if (!netSearchQuery.trim()) {
+      setStatusMsg('Net Search: enter a query first')
+      return
+    }
+    const out = b.netSearchGenerate(netSearchQuery.trim())
+    if (out) spreadUnplaced()
+    setStatusMsg(
+      out
+        ? `Net Search: generated "${out.neuron.name}" from ${out.matches.length} match(es)`
+        : 'Net Search: no matches to generate from'
+    )
+  }
+
+  const handleTrainNetSearch = () => {
+    const trained = b.trainNetSearch(5)
+    setStatusMsg(trained ? 'Net Search: trained corpus neuron(s)' : 'Net Search: nothing to train (add a corpus neuron first)')
   }
 
   return (
@@ -288,6 +334,66 @@ function BuilderPage() {
               <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleCodeToNet}>
                 Convert code to neural net
               </Button>
+            </CardContent>
+          </Card>
+
+          <Card className="border-border">
+            <CardHeader className="pb-2">
+              <CardTitle className="text-xs font-medium uppercase tracking-wider text-muted-foreground">
+                Net Search
+              </CardTitle>
+            </CardHeader>
+            <CardContent className="space-y-2">
+              <Label htmlFor="netsearch-name-input" className="sr-only">Corpus neuron name</Label>
+              <Input
+                id="netsearch-name-input"
+                value={netSearchName}
+                onChange={(e) => setNetSearchName(e.target.value)}
+                placeholder="corpus name (e.g. faq_docs)"
+                className="h-8 text-xs"
+              />
+              <Label htmlFor="netsearch-corpus-textarea" className="sr-only">Corpus text</Label>
+              <textarea
+                id="netsearch-corpus-textarea"
+                value={netSearchCorpus}
+                onChange={(e) => setNetSearchCorpus(e.target.value)}
+                placeholder="Paste searchable text, one fact/line per row"
+                className="h-16 w-full resize-y rounded-md border border-input bg-transparent px-2 py-1.5 font-mono text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              />
+              <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleAddNetSearchNeuron}>
+                Add corpus neuron
+              </Button>
+              <div className="border-t border-border pt-2">
+                <Label htmlFor="netsearch-query-input" className="sr-only">Net Search query</Label>
+                <Input
+                  id="netsearch-query-input"
+                  value={netSearchQuery}
+                  onChange={(e) => setNetSearchQuery(e.target.value)}
+                  placeholder="search query"
+                  className="h-8 text-xs"
+                />
+                <div className="mt-1.5 flex gap-1.5">
+                  <Button size="sm" variant="secondary" className="h-7 flex-1 text-xs" onClick={handleSearchCorpus}>
+                    Search corpus
+                  </Button>
+                  <Button size="sm" className="h-7 flex-1 text-xs" onClick={handleGenerateNetwork}>
+                    Generate network
+                  </Button>
+                </div>
+                <Button size="sm" variant="outline" className="mt-1.5 h-7 w-full text-xs" onClick={handleTrainNetSearch}>
+                  Train corpus neuron(s)
+                </Button>
+                {netSearchResults.length > 0 && (
+                  <div className="mt-2 space-y-1 rounded bg-muted px-2 py-1.5 text-[11px]">
+                    {netSearchResults.map((r, i) => (
+                      <div key={i}>
+                        <span className="text-muted-foreground">conf {r.confidence.toFixed(2)}:</span>{' '}
+                        {r.results.join(' · ')}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
             </CardContent>
           </Card>
 

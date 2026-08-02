@@ -24,6 +24,7 @@ from asi_core.hyperdim_thinking import (
     HDNeuron,
     HDThinkingSystem,
     MemoryStore,
+    MemoryKind,
 )
 
 
@@ -146,6 +147,24 @@ class TestPrediction(unittest.TestCase):
         preds = system.predict(horizon=3)
         self.assertEqual(set(preds.keys()), set(system.neurons.keys()))
 
+    def test_surprise_reaches_default_consolidation_threshold_on_a_learned_pattern(self):
+        """
+        Regression test: surprise used to be an unshifted softplus of the
+        prediction error norm, which floors at ln(2) ~= 0.693 even for a
+        perfectly predicted (zero-error) input. Since HDConfig.theta_meta
+        defaults to 0.3, should_consolidate()'s avg_meta < theta_meta check
+        was permanently unreachable, so nothing could ever consolidate.
+        """
+        config = HDConfig(dimensions=32, predictor_lr=0.2)
+        neuron = HDNeuron(neuron_id=0, config=config, seed=0)
+        pattern = HDVector.random(32, seed=99)
+
+        surprise = 1.0
+        for _ in range(200):
+            surprise = neuron.step(pattern, reward=1.0)
+
+        self.assertLess(surprise, config.theta_meta)
+
 
 class TestMemory(unittest.TestCase):
     def setUp(self):
@@ -175,6 +194,22 @@ class TestMemory(unittest.TestCase):
         for _ in range(200000):
             self.store.decay_and_prune()
         self.assertEqual(len(self.store), 0)
+
+    def test_kind_is_recorded_and_filters_recall(self):
+        key = HDVector.random(64, seed=1)
+        self.store.write(key, HDVector.random(64, seed=2), tick=0, kind=MemoryKind.EXPERIENCE.value)
+        self.assertEqual(self.store.traces[0].kind, MemoryKind.EXPERIENCE.value)
+
+        cue = key.copy()
+        self.assertEqual(len(self.store.recall(cue, k=1, kind=MemoryKind.LONG_TERM.value)), 0)
+        self.assertEqual(len(self.store.recall(cue, k=1, kind=MemoryKind.EXPERIENCE.value)), 1)
+
+    def test_similar_keys_of_different_kinds_do_not_merge(self):
+        key1 = HDVector.random(64, seed=1)
+        key2 = key1.copy()
+        self.store.write(key1, HDVector.random(64, seed=2), tick=0, kind=MemoryKind.LONG_TERM.value)
+        self.store.write(key2, HDVector.random(64, seed=3), tick=1, kind=MemoryKind.EXPERIENCE.value)
+        self.assertEqual(len(self.store), 2)
 
 
 class TestReasoning(unittest.TestCase):
@@ -215,6 +250,21 @@ class TestSystemIntegration(unittest.TestCase):
         self.assertEqual(stats["n_neurons"], 10)
         self.assertGreaterEqual(stats["memory_size"], 0)
 
+    def test_consolidate_produces_both_long_term_and_experience_traces(self):
+        config = HDConfig(dimensions=32, predictor_lr=0.2)
+        system = HDThinkingSystem(n_neurons=2, dimensions=32, n_input=1, config=config, seed=7)
+        good_pattern = HDVector.random(32, seed=1)
+        bad_pattern = HDVector.random(32, seed=2)
+
+        for _ in range(150):
+            system.tick(inputs={0: good_pattern}, reward=1.0)
+        for _ in range(150):
+            system.tick(inputs={0: bad_pattern}, reward=0.0)
+
+        kinds = {t.kind for t in system.memory.traces}
+        self.assertIn(MemoryKind.LONG_TERM.value, kinds)
+        self.assertIn(MemoryKind.EXPERIENCE.value, kinds)
+
     def test_save_load_state_reproduces_next_tick(self):
         system_a = HDThinkingSystem(n_neurons=8, dimensions=32, n_input=2, seed=5)
         system_b = HDThinkingSystem(n_neurons=8, dimensions=32, n_input=2, seed=5)
@@ -234,6 +284,29 @@ class TestSystemIntegration(unittest.TestCase):
             b_state = result_b.activations[nid].data
             for x, y in zip(a_state, b_state):
                 self.assertAlmostEqual(x, y, places=6)
+
+    def test_save_load_state_preserves_memory_trace_kind(self):
+        """Regression test: save_state() used to omit MemoryTrace.kind
+        entirely, so load_state() silently reset every restored trace back
+        to LONG_TERM regardless of whether it was originally EXPERIENCE."""
+        config = HDConfig(dimensions=32, predictor_lr=0.2)
+        system_a = HDThinkingSystem(n_neurons=2, dimensions=32, n_input=1, config=config, seed=7)
+        good_pattern = HDVector.random(32, seed=1)
+        bad_pattern = HDVector.random(32, seed=2)
+
+        for _ in range(150):
+            system_a.tick(inputs={0: good_pattern}, reward=1.0)
+        for _ in range(150):
+            system_a.tick(inputs={0: bad_pattern}, reward=0.0)
+
+        original_kinds = sorted(t.kind for t in system_a.memory.traces)
+        self.assertIn(MemoryKind.EXPERIENCE.value, original_kinds)
+
+        system_b = HDThinkingSystem(n_neurons=2, dimensions=32, n_input=1, config=config, seed=7)
+        system_b.load_state(system_a.save_state())
+        restored_kinds = sorted(t.kind for t in system_b.memory.traces)
+
+        self.assertEqual(original_kinds, restored_kinds)
 
 
 if __name__ == "__main__":

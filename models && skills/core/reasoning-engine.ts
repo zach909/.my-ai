@@ -275,14 +275,34 @@ export class ReasoningEngine {
     const transferNote = chosen === "transfer" && opts.transferHints && opts.transferHints.length > 0
       ? `\nTransferred method${opts.transferHints.length > 1 ? "s" : ""}: ${opts.transferHints.map(h => `"${h.method}" (from ${h.domain})`).join(" + ")}`
       : "";
-    // Unlike the approach-specific notes above, a creative combination is
-    // exploratory context discovered *during* reasoning, not tied to whichever
-    // approach ends up solving the decomposed subproblems — so it's surfaced
-    // whenever one was synthesized, regardless of which approach was chosen.
-    const creativeNote = creativeCombination
-      ? `\nCreative exploration (unverified): "${creativeCombination.name}" — ${creativeCombination.definition}`
-      : "";
-    const result = subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n") + analogyNote + transferNote + creativeNote;
+    // A creative combination (combine() of two terms the knowledge graph has
+    // no definition for yet -- see the `creativeCombination` block above) is
+    // a training-time discovery mechanism, not a conversational answer: on a
+    // knowledge graph with few learned definitions -- i.e. most ordinary
+    // messages on a fresh system -- `missing.length >= 2` is true almost
+    // always, so appending it unconditionally here meant nearly every
+    // solve()/collaborate() reply included a "Creative exploration
+    // (unverified): X-Y hybrid: a combination of X (no definition) and Y (no
+    // definition)..." line as if it were part of the actual response. It
+    // stays available on the returned object (`creativeCombination`,
+    // `trace`) for callers that explicitly want to inspect discovery
+    // activity -- it just isn't glued onto the chat-facing text anymore.
+    // decompose()'s fallback for a single atomic question (no "and"/"then"/
+    // comma structure to genuinely split on) is the synthetic pair
+    // `["analyze: <problem>", "solve: <problem>"]` -- two views of the exact
+    // same question, not real subproblems. Bulleting both ("- analyze: Can
+    // you go deeper on this?: ...\n- solve: Can you go deeper on this?:
+    // ...") reads as a reasoning-trace dump, not a conversational answer, for
+    // what's usually just a normal chat message. Prefer the "solve:" result
+    // alone in that case; genuine multi-part decompositions (2+ real
+    // subproblems) still get the full bulleted breakdown.
+    const isSyntheticFallback = subresults.length === 2
+      && subresults[0].subproblem === `analyze: ${problem.trim()}`
+      && subresults[1].subproblem === `solve: ${problem.trim()}`;
+    const body = isSyntheticFallback
+      ? subresults[1].result
+      : subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n");
+    const result = body + analogyNote + transferNote;
 
     // 11. Verify the final result.
     const verified = subresults.length > 0 && failed.length === 0;

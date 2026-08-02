@@ -20,6 +20,8 @@ import {
   PanelLeft,
   Cpu,
   MessageSquare,
+  Users,
+  Blocks,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -34,6 +36,8 @@ interface NavItemDef {
 const NAV_ITEMS: NavItemDef[] = [
   { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
   { href: '/app/chat', icon: <MessageSquare className="h-4 w-4" />, label: 'AI Chat' },
+  { href: '/app/chat-groups', icon: <Users className="h-4 w-4" />, label: 'Chat Groups' },
+  { href: '/builder', icon: <Blocks className="h-4 w-4" />, label: 'Extension Builder' },
   { href: '/app/experiments', icon: <FlaskConical className="h-4 w-4" />, label: 'Experiments' },
   { href: '/app/architecture', icon: <Network className="h-4 w-4" />, label: 'Architecture' },
   { href: '/app/knowledge', icon: <Brain className="h-4 w-4" />, label: 'Knowledge & Reasoning' },

@@ -4,7 +4,7 @@
  * (compression + quantization round-trip), and automatic creation.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ExtensionManager, DependencyError } from '../../extension_system/manager.js';
@@ -43,6 +43,25 @@ describe('ExtensionManager', () => {
 
   afterEach(() => {
     rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it('rejects an id containing path-traversal segments instead of writing outside rootDir', async () => {
+    // ExtensionManager only slugifies `id` when it derives one from `name`;
+    // a caller-supplied id reaches ExtensionStore as-is, and path.join()
+    // normalizes ".." segments -- so an id of "../../../tmp/pwned" would
+    // resolve completely outside rootDir without a guard at the store layer.
+    const outside = join(tmpdir(), 'neuroclaw-traversal-pwned');
+    rmSync(outside, { recursive: true, force: true });
+
+    await expect(manager.install({
+      id: `../../../../../../..${outside}`,
+      name: 'Malicious',
+      kind: 'skill',
+      description: 'Attempts a path-traversal write',
+      payload: Buffer.from('pwned'),
+    })).rejects.toThrow(/must not contain path separators/);
+
+    expect(existsSync(outside)).toBe(false);
   });
 
   it('installs and activates a skill extension', async () => {
@@ -150,6 +169,28 @@ describe('ExtensionManager', () => {
 
     manager.permissions.grant('camera-tool', 'camera');
     const activated = await manager.activate('camera-tool');
+    expect(activated.state).toBe('active');
+  });
+
+  it('requires explicit grant for voice-activation before activation, like microphone', async () => {
+    // voice-activation means continuous passive listening for a wake word --
+    // at least as privacy-sensitive as on-demand microphone access, which is
+    // already gated. It was previously missing from SENSITIVE_PERMISSIONS
+    // and would auto-grant silently on install.
+    await manager.install({
+      id: 'wake-word-tool',
+      name: 'Wake Word Tool',
+      kind: 'plugin',
+      description: 'Listens for a wake word',
+      permissions: ['voice-activation'],
+      payload: Buffer.from('c'),
+    });
+
+    expect(manager.permissions.isGranted('wake-word-tool', 'voice-activation')).toBe(false);
+    await expect(manager.activate('wake-word-tool')).rejects.toThrow(PermissionDeniedError);
+
+    manager.permissions.grant('wake-word-tool', 'voice-activation');
+    const activated = await manager.activate('wake-word-tool');
     expect(activated.state).toBe('active');
   });
 

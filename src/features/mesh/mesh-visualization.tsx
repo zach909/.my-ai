@@ -17,7 +17,15 @@ import type { MeshState, Neuron } from '@/features/mesh/types';
 // ─── Layout: arrange neurons on a 3D sphere ────────────────────────────────
 
 /** Fibonacci sphere — evenly distributes N points on a sphere surface. */
-function fibonacciSphere(n: number, radius: number): THREE.Vector3[] {
+// eslint-disable-next-line react-refresh/only-export-components -- math utility function, not a component; tested in unit tests and used in MeshVisualization component
+export function fibonacciSphere(n: number, radius: number): THREE.Vector3[] {
+  if (n <= 1) {
+    // i / (n - 1) below divides by zero once n === 1 (0/0 = NaN), which
+    // propagates into every coordinate -- reached whenever the mesh has
+    // exactly one neuron, or zero (MeshScene's `Math.max(neuronCount, 1)`
+    // still calls this every render, even before meshState loads).
+    return n === 1 ? [new THREE.Vector3(0, radius, 0)] : [];
+  }
   const points: THREE.Vector3[] = [];
   const phi = Math.PI * (3 - Math.sqrt(5));
 

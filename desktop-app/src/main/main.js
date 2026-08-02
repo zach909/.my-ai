@@ -11,6 +11,29 @@ const http = require('http');
 const { spawn, exec, execFileSync } = require('child_process');
 const { startAppServer } = require('./app-server');
 
+/**
+ * Best-effort blocklist for the most common catastrophic-accident shell
+ * patterns, ported from plugins/plugin_terminal.py's `_is_blocked` (that
+ * Python terminal plugin guards this exact class of full-shell-access
+ * capability; this file's exec-command/spawn-process IPC handlers are the
+ * equivalent surface exposed to the renderer via preload.js's
+ * contextBridge, but had no guard at all). NOT a security boundary against
+ * a deliberately hostile command -- see plugin_terminal.py's docstring.
+ */
+const FORK_BOMB = /:\(\)\{\s*[:\s|&]+\};:/;
+const DANGEROUS_SIMPLE = /\bmkfs|\bshutdown|\breboot|\bhalt|\bpoweroff/i;
+const DD_RAW_DISK = /\bdd\b.*\bof=\/dev\/(sd[a-z]|nvme|mmcblk)/i;
+const RM_CMD = /\brm\b/i;
+const RM_RECURSIVE = /(?<![\w-])-[a-zA-Z]*r[a-zA-Z]*(?![\w-])|--recursive\b/i;
+const RM_FORCE = /(?<![\w-])-[a-zA-Z]*f[a-zA-Z]*(?![\w-])|--force\b/i;
+const ROOT_LIKE_PATH = /(?<!\S)\/+[*.]{0,3}(?=\s|$|;|&|\|)/;
+
+function isBlockedCommand(cmd) {
+  if (FORK_BOMB.test(cmd) || DANGEROUS_SIMPLE.test(cmd) || DD_RAW_DISK.test(cmd)) return true;
+  if (RM_CMD.test(cmd) && RM_RECURSIVE.test(cmd) && RM_FORCE.test(cmd) && ROOT_LIKE_PATH.test(cmd)) return true;
+  return false;
+}
+
 // Keep a global reference of the window object to prevent garbage collection
 let mainWindow;
 let backendProcess;
@@ -211,6 +234,9 @@ ipcMain.handle('get-system-info', async () => {
 
 // Process Management - Launch local processes
 ipcMain.handle('spawn-process', async (event, command, args = [], options = {}) => {
+  if (isBlockedCommand([command, ...args].join(' '))) {
+    return { success: false, error: 'Blocked: destructive command pattern detected' };
+  }
   return new Promise((resolve) => {
     const childProcess = spawn(command, args, {
       cwd: options.cwd || process.cwd(),
@@ -251,6 +277,9 @@ ipcMain.handle('spawn-process', async (event, command, args = [], options = {}) 
 });
 
 ipcMain.handle('exec-command', async (event, command, options = {}) => {
+  if (isBlockedCommand(command)) {
+    return { success: false, error: 'Blocked: destructive command pattern detected', stdout: '', stderr: '' };
+  }
   return new Promise((resolve) => {
     exec(command, {
       cwd: options.cwd || process.cwd(),

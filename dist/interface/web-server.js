@@ -1,5 +1,8 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { AppLauncher } from './app-launcher.js';
+import { EncryptionManager } from './encryption.js';
+import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
 const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -178,24 +181,124 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 </script>
 </body>
 </html>`;
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+/**
+ * A single password check, kept only in memory for the lifetime of one
+ * running server process -- never written to disk, never persisted across
+ * restarts. Compares with crypto.timingSafeEqual over a PBKDF2 hash (a
+ * per-instance random salt) rather than comparing plaintext directly.
+ */
+class PasswordLock {
+    constructor() {
+        this.hash = null;
+        this.salt = null;
+        this.encryption = new EncryptionManager();
+    }
+    async set(password) {
+        this.salt = crypto.randomBytes(16);
+        this.hash = await this.encryption.hashPassword(password, this.salt);
+    }
+    get required() {
+        return this.hash !== null;
+    }
+    async check(suppliedPassword) {
+        if (!this.required)
+            return true;
+        const suppliedHash = await this.encryption.hashPassword(suppliedPassword || ' ', this.salt).catch(() => null);
+        if (!suppliedHash || suppliedHash.length !== this.hash.length)
+            return false;
+        return crypto.timingSafeEqual(suppliedHash, this.hash);
+    }
+}
 export class WebServer {
     constructor(runner, launcher) {
         this.server = null;
         this.port = 0;
+        // Set only when start() is given a non-localhost host and a password --
+        // see start()'s doc comment for why binding remotely without one is refused.
+        this.remoteAccessLock = new PasswordLock();
+        // Independent of remoteAccessLock: gates only /api/chat-groups/* (and the
+        // /app/chat-groups page's own login prompt), even over an already-trusted
+        // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
+        this.chatGroupsLock = new PasswordLock();
+        this.chatHistory = new ChatHistoryStore();
         this.runner = runner;
         this.launcher = launcher ?? new AppLauncher();
     }
-    async start(port = 3000) {
+    /**
+     * Start the server. `host` defaults to loopback-only, matching every prior
+     * version of this file -- passing anything else exposes the AI's full
+     * capabilities (terminal-adjacent app launching, file/extension writes,
+     * ...) to the local network, so that path requires `password` and gates
+     * every request behind HTTP Basic Auth. Binding remotely with no password
+     * is refused outright rather than silently serving unauthenticated.
+     */
+    async start(port = 3000, host = '127.0.0.1', password) {
         if (this.server)
             throw new Error('Web server already running');
         this.port = port;
+        const isLocal = LOCAL_HOSTS.has(host);
+        if (!isLocal) {
+            if (!password) {
+                throw new Error(`Refusing to bind to ${host}: a password is required for non-localhost access ` +
+                    `(set NEUROCLAW_WEB_PASSWORD). Binding stays loopback-only otherwise.`);
+            }
+            await this.remoteAccessLock.set(password);
+        }
+        if (process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD) {
+            await this.chatGroupsLock.set(process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD);
+        }
         await this.runner.start();
         return new Promise((resolve, reject) => {
             this.server = http.createServer((req, res) => this.handleRequest(req, res));
-            // Security: Bind to localhost only to prevent external access to the AI's capabilities
-            this.server.listen(port, '127.0.0.1', () => resolve());
+            this.server.listen(port, host, () => resolve());
             this.server.on('error', (err) => { this.server = null; reject(err); });
         });
+    }
+    /** Constant-time check of an incoming `Authorization: Basic ...` header's password against `lock`. */
+    async isAuthorizedBasic(req, lock) {
+        if (!lock.required)
+            return true;
+        const header = req.headers.authorization ?? '';
+        const match = /^Basic\s+(\S+)$/i.exec(header);
+        if (!match)
+            return false;
+        let decoded;
+        try {
+            decoded = Buffer.from(match[1], 'base64').toString('utf8');
+        }
+        catch {
+            return false;
+        }
+        const sep = decoded.indexOf(':');
+        const suppliedPassword = sep === -1 ? decoded : decoded.slice(sep + 1);
+        return lock.check(suppliedPassword);
+    }
+    requireAuth(res) {
+        this.setSecurityHeaders(res);
+        res.setHeader('WWW-Authenticate', 'Basic realm="Neuroclaw", charset="UTF-8"');
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Authentication required' }));
+    }
+    /**
+     * Gate for /api/chat-groups/* specifically, checked via a plain header
+     * (not Authorization: Basic -- the chat-groups page shows its own login
+     * form rather than the browser's native basic-auth prompt) so it can be
+     * locked independently of remoteAccessLock, including over an
+     * already-trusted localhost connection.
+     */
+    async isChatGroupsAuthorized(req) {
+        if (!this.chatGroupsLock.required)
+            return true;
+        const supplied = req.headers['x-chat-groups-password'];
+        if (typeof supplied !== 'string')
+            return false;
+        return this.chatGroupsLock.check(supplied);
+    }
+    requireChatGroupsAuth(res) {
+        this.setSecurityHeaders(res);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Chat groups password required' }));
     }
     async stop() {
         if (!this.server)
@@ -224,6 +327,23 @@ export class WebServer {
         res.end(html);
     }
     async parseBody(req) {
+        // CSRF: this server has no auth and setSecurityHeaders() never sends
+        // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
+        // response -- but that alone doesn't stop the *request* from being
+        // sent and acted on. A POST whose Content-Type is one of the CORS
+        // "simple" types (text/plain, multipart/form-data,
+        // application/x-www-form-urlencoded) never triggers a preflight, so
+        // any page a victim's browser has open could silently POST here
+        // (e.g. to /api/apps/launch, which passes body.command straight to
+        // AppLauncher.launch() with no allowlist) and have it processed
+        // before this fix. Requiring the real application/json content type
+        // forces a real preflight for every POST body this server accepts --
+        // and that preflight gets rejected by the browser itself, since no
+        // Access-Control-Allow-Origin is ever sent back.
+        const contentType = req.headers['content-type'] ?? '';
+        if (!/^application\/json(;|$)/i.test(contentType.trim())) {
+            throw new Error('Content-Type must be application/json');
+        }
         const LIMIT = 1024 * 1024; // 1MB limit
         let totalSize = 0;
         return new Promise((resolve, reject) => {
@@ -276,9 +396,27 @@ export class WebServer {
         const pathname = parsedUrl.pathname;
         const method = req.method?.toUpperCase() ?? 'GET';
         if (method === 'OPTIONS') {
+            // No credentials are ever readable from a CORS preflight, so gating
+            // it behind auth would only break legitimate preflighted requests --
+            // the real request right after this is still checked below.
             this.setSecurityHeaders(res);
             res.writeHead(204);
             res.end();
+            return;
+        }
+        if (!(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
+            this.requireAuth(res);
+            return;
+        }
+        // Unauthenticated on purpose (a boolean, nothing sensitive) -- the
+        // chat-groups page needs to know whether to show its login form
+        // *before* it has a password to send.
+        if (pathname === '/api/chat-groups/lock-status' && method === 'GET') {
+            this.sendJson(res, { locked: this.chatGroupsLock.required });
+            return;
+        }
+        if (pathname.startsWith('/api/chat-groups/') && !(await this.isChatGroupsAuthorized(req))) {
+            this.requireChatGroupsAuth(res);
             return;
         }
         if (pathname === '/' && method === 'GET') {
@@ -351,7 +489,8 @@ export class WebServer {
                     return;
                 }
                 const { getBot } = await import('../src/server/bot-service.js');
-                const bot = await getBot();
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const bot = await getBot(await getNeuroclawSystem());
                 const response = await bot.processMessage(message);
                 this.sendJson(res, {
                     message: response.message,
@@ -365,6 +504,126 @@ export class WebServer {
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // GET /api/chat-groups/agents — hive agents available to the default
+        // chat group, for the /app/chat-groups page's roster panel.
+        if (pathname === '/api/chat-groups/agents' && method === 'GET') {
+            try {
+                const { getBot } = await import('../src/server/bot-service.js');
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const bot = await getBot(await getNeuroclawSystem());
+                const system = bot.getSystem();
+                if (!system) {
+                    this.sendJson(res, { error: 'Hive mind unavailable in fallback mode' }, 503);
+                    return;
+                }
+                this.sendJson(res, { agents: system.hive.list().map(a => a.snapshot()) });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // POST /api/chat-groups/collaborate — runs NeuroclawSystem.collaborate(),
+        // which has the hive's chat group discuss a task and vote on a decision.
+        // Powers the /app/chat-groups page.
+        if (pathname === '/api/chat-groups/collaborate' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const task = body?.task;
+                if (!task || typeof task !== 'string') {
+                    this.sendJson(res, { error: 'Missing task field' }, 400);
+                    return;
+                }
+                const { getBot } = await import('../src/server/bot-service.js');
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const bot = await getBot(await getNeuroclawSystem());
+                const system = bot.getSystem();
+                if (!system) {
+                    this.sendJson(res, { error: 'Hive mind unavailable in fallback mode' }, 503);
+                    return;
+                }
+                const result = await system.collaborate(task);
+                this.sendJson(res, {
+                    discussion: result.discussion,
+                    decision: result.decision,
+                    complete: result.complete,
+                    timestamp: Date.now(),
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // GET /api/chat-history/search?q=...&exclude=<threadId>&source=chat|chat-group
+        // Token-overlap match against every persisted thread's messages, for the
+        // "this looks like your earlier chat about X — continue there?" prompt.
+        // Never called for an incognito conversation (the frontend simply skips
+        // both this and /save entirely in that mode).
+        if (pathname === '/api/chat-history/search' && method === 'GET') {
+            const q = parsedUrl.searchParams.get('q') ?? '';
+            const exclude = parsedUrl.searchParams.get('exclude') ?? undefined;
+            const sourceParam = parsedUrl.searchParams.get('source');
+            const source = sourceParam === 'chat' || sourceParam === 'chat-group' ? sourceParam : undefined;
+            const matches = this.chatHistory.search(q, { excludeId: exclude, source, limit: 3 });
+            this.sendJson(res, {
+                matches: matches.map(m => ({
+                    threadId: m.thread.id,
+                    title: m.thread.title,
+                    source: m.thread.source,
+                    score: m.score,
+                    snippet: m.snippet,
+                    updatedAt: m.thread.updatedAt,
+                })),
+            });
+            return;
+        }
+        // GET /api/chat-history/threads/:id — full message history for "continue there".
+        const threadMatch = pathname.match(/^\/api\/chat-history\/threads\/([^/]+)$/);
+        if (threadMatch && method === 'GET') {
+            try {
+                const thread = this.chatHistory.loadThread(decodeURIComponent(threadMatch[1]));
+                if (!thread) {
+                    this.sendJson(res, { error: 'Thread not found' }, 404);
+                    return;
+                }
+                this.sendJson(res, { thread });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 400);
+            }
+            return;
+        }
+        // POST /api/chat-history/save — append one message to a thread, creating
+        // it if threadId is omitted/unknown. Called after every exchange in
+        // non-incognito AI Chat / Chat Groups sessions.
+        if (pathname === '/api/chat-history/save' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                if (body?.source !== 'chat' && body?.source !== 'chat-group') {
+                    this.sendJson(res, { error: 'source must be "chat" or "chat-group"' }, 400);
+                    return;
+                }
+                if (body.role !== 'user' && body.role !== 'assistant') {
+                    this.sendJson(res, { error: 'role must be "user" or "assistant"' }, 400);
+                    return;
+                }
+                if (typeof body.content !== 'string' || !body.content) {
+                    this.sendJson(res, { error: 'Missing content field' }, 400);
+                    return;
+                }
+                const thread = this.chatHistory.appendMessage({ role: body.role, content: body.content, timestamp: Date.now() }, body.source, body.threadId);
+                this.sendJson(res, { threadId: thread.id });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 400);
             }
             return;
         }
