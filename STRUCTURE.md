@@ -92,9 +92,6 @@ Test files including core tests and integration tests.
 Additional test suites:
 - `security/` - Security-focused tests
 
-#### `/utils/`
-Utility functions and helpers.
-
 #### `/wiki/`
 Wiki documentation.
 

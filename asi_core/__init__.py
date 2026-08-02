@@ -38,6 +38,8 @@ from .vale_system import (
     ValeError,
     ValeConfigError,
     ValeInvariantError,
+)
+
 from .hyperdim_thinking import (
     HDVector,
     bind,
