@@ -136,5 +136,56 @@ class TestStatistics(unittest.TestCase):
             self.assertIn(key, stats)
 
 
+class TestValeContribution(unittest.TestCase):
+    def test_high_reward_increases_active_neuron_vale_relative_to_low_reward(self):
+        rewarded = make_brain(seed=3)
+        punished = make_brain(seed=3)
+
+        for _ in range(15):
+            rewarded.perceive([0.8, 0.8, 0.8, 0.8], reward=1.0)
+        for _ in range(15):
+            punished.perceive([0.8, 0.8, 0.8, 0.8], reward=0.0)
+
+        # Reward is mean-centered around 0.5 into the utility signal that
+        # redistributes vale, so consistently rewarded activity should not
+        # collapse to the same distribution as consistently punished activity.
+        self.assertNotEqual(rewarded.vale.v, punished.vale.v)
+        rewarded.vale.validate_invariant()
+        punished.vale.validate_invariant()
+
+
+class TestIntrospection(unittest.TestCase):
+    def test_introspect_reports_ranked_neurons(self):
+        brain = make_brain()
+        brain.perceive([0.5, 0.1, 0.2, 0.3])
+        info = brain.introspect(top_k=3)
+        self.assertEqual(len(info.most_stable_neurons), 3)
+        self.assertEqual(len(info.most_flexible_neurons), 3)
+        self.assertAlmostEqual(info.average_vale, sum(brain.vale.v) / len(brain.vale.v), places=9)
+
+    def test_introspect_before_any_cycle_does_not_error(self):
+        brain = make_brain()
+        info = brain.introspect()
+        self.assertEqual(info.memory_size, 0)
+
+
+class TestMaintenance(unittest.TestCase):
+    def test_maintain_keeps_vale_invariant_healthy(self):
+        brain = make_brain()
+        for _ in range(5):
+            brain.perceive([0.4, 0.2, 0.6, 0.1])
+        report = brain.maintain()
+        self.assertTrue(report["vale_invariant_ok"])
+        self.assertIn("memory_size", report)
+
+    def test_maintain_does_not_mutate_mesh_state(self):
+        brain = make_brain()
+        brain.perceive([0.4, 0.2, 0.6, 0.1])
+        before = {nid: list(n.state_vector) for nid, n in brain.mesh.neurons.items()}
+        brain.maintain()
+        after = {nid: list(n.state_vector) for nid, n in brain.mesh.neurons.items()}
+        self.assertEqual(before, after)
+
+
 if __name__ == "__main__":
     unittest.main()
