@@ -366,5 +366,46 @@ class TestMistakeTracking(unittest.TestCase):
         self.assertTrue(record.correction_worked)
 
 
+class TestMultiPathReasoning(unittest.TestCase):
+    def test_empty_memory_returns_no_paths(self):
+        brain = make_brain()
+        paths = brain.multi_path_reason([0.5, 0.2, -0.1, 0.4])
+        self.assertEqual(paths, [])
+
+    def test_paths_are_sorted_strongest_first(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        for _ in range(150):
+            brain.perceive([-0.9, -0.9, -0.9, -0.9], reward=0.02)
+
+        paths = brain.multi_path_reason([0.9, 0.9, 0.9, 0.9], n_paths=5)
+        self.assertTrue(len(paths) >= 2)
+        confidences = [p.confidence for p in paths]
+        self.assertEqual(confidences, sorted(confidences, reverse=True))
+
+    def test_long_term_paths_rank_above_experience_paths_for_matching_query(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        for _ in range(150):
+            brain.perceive([-0.9, -0.9, -0.9, -0.9], reward=0.02)
+
+        paths = brain.multi_path_reason([0.9, 0.9, 0.9, 0.9], n_paths=5)
+        best = paths[0]
+        self.assertEqual(best.supporting_trace_kind, "long_term")
+        self.assertGreater(best.confidence, 0.0)
+
+    def test_experience_path_confidence_is_nonpositive(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([-0.9, -0.9, -0.9, -0.9], reward=0.02)
+
+        paths = brain.multi_path_reason([-0.9, -0.9, -0.9, -0.9], n_paths=3)
+        for p in paths:
+            if p.supporting_trace_kind == "experience":
+                self.assertLessEqual(p.confidence, 0.0)
+
+
 if __name__ == "__main__":
     unittest.main()

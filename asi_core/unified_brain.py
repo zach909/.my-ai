@@ -58,6 +58,19 @@ class CycleResult:
 
 
 @dataclass
+class ReasoningPath:
+    """
+    One candidate reasoning path (spec Part 7 section 108). Rather than
+    committing to the single nearest memory trace, multi_path_reason()
+    recalls several candidates and scores each as its own path.
+    """
+    solution: List[float]
+    expected_outcome: List[float]
+    confidence: float
+    supporting_trace_kind: Optional[str]
+
+
+@dataclass
 class Introspection:
     """Self-observation snapshot (spec Part 2 section 18)."""
     most_stable_neurons: List[int]
@@ -318,6 +331,46 @@ class UnifiedBrain:
             self._vector_to_hd(a), self._vector_to_hd(b), self._vector_to_hd(c)
         )
         return list(result.sem)
+
+    def multi_path_reason(self, input_vector: List[float], n_paths: int = 3) -> List[ReasoningPath]:
+        """
+        Spec Part 7 section 108 (Multi-Path Reasoning): recall several
+        candidate memory traces for the given input and score each as its
+        own path, strongest first, instead of committing to a single
+        nearest match.
+
+        A path is stronger when it matches previous experience (higher
+        cosine similarity to the cue) and comes from reliable,
+        repeatedly-confirmed knowledge (higher trace.strength,
+        MemoryKind.LONG_TERM). It's weaker — and can go outright negative —
+        when the closest match is a known mistake (MemoryKind.EXPERIENCE):
+        a confident match to a bad outcome is a contradiction to avoid, not
+        support for the path (section 108: "weaker when it conflicts with
+        high-value memories").
+        """
+        cue = self._vector_to_hd(input_vector)
+        traces = self.hd.memory.recall(cue, k=n_paths)
+
+        paths: List[ReasoningPath] = []
+        for trace in traces:
+            similarity = cosine_similarity(cue, trace.key)
+            reliability = min(1.0, trace.strength / 2.0)  # strength caps at 2.0 in MemoryStore.write
+            if trace.kind == MemoryKind.EXPERIENCE.value:
+                confidence = -abs(similarity) * reliability
+            else:
+                confidence = similarity * reliability
+
+            paths.append(
+                ReasoningPath(
+                    solution=list(trace.value.sem),
+                    expected_outcome=list(trace.value.sem),
+                    confidence=confidence,
+                    supporting_trace_kind=trace.kind,
+                )
+            )
+
+        paths.sort(key=lambda p: p.confidence, reverse=True)
+        return paths
 
     def get_statistics(self) -> Dict:
         return {
