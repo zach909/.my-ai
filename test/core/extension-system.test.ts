@@ -153,6 +153,28 @@ describe('ExtensionManager', () => {
     expect(activated.state).toBe('active');
   });
 
+  it('requires explicit grant for voice-activation before activation, like microphone', async () => {
+    // voice-activation means continuous passive listening for a wake word --
+    // at least as privacy-sensitive as on-demand microphone access, which is
+    // already gated. It was previously missing from SENSITIVE_PERMISSIONS
+    // and would auto-grant silently on install.
+    await manager.install({
+      id: 'wake-word-tool',
+      name: 'Wake Word Tool',
+      kind: 'plugin',
+      description: 'Listens for a wake word',
+      permissions: ['voice-activation'],
+      payload: Buffer.from('c'),
+    });
+
+    expect(manager.permissions.isGranted('wake-word-tool', 'voice-activation')).toBe(false);
+    await expect(manager.activate('wake-word-tool')).rejects.toThrow(PermissionDeniedError);
+
+    manager.permissions.grant('wake-word-tool', 'voice-activation');
+    const activated = await manager.activate('wake-word-tool');
+    expect(activated.state).toBe('active');
+  });
+
   it('auto-grants non-sensitive permissions on install', async () => {
     await manager.install({
       id: 'coding-tool',
