@@ -36,6 +36,7 @@ from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector, MemoryKind,
 from .neural_states import StateManager, LearningSystem
 from .extension_system import ExtensionSystem, Extension
 from .circular_context import CircularContextSystem
+from .mistake_tracker import MistakeTracker, MistakeRecord
 
 
 Skill = Callable[[List[float]], List[float]]
@@ -52,6 +53,8 @@ class CycleResult:
     active_skills: List[str] = field(default_factory=list)
     active_groups: List[int] = field(default_factory=list)
     active_experts: List[str] = field(default_factory=list)
+    mistake_signature: Optional[str] = None
+    mistake_repeated: bool = False
 
 
 @dataclass
@@ -85,6 +88,8 @@ class UnifiedBrain:
         seed: Optional[int] = 42,
         expert_names: Optional[List[str]] = None,
         context_capacity: int = 32,
+        mistake_reward_threshold: float = 0.3,
+        mistake_repeat_penalty: float = -1.0,
     ):
         self.mesh = NeuralMesh(
             n_neurons=n_neurons,
@@ -137,6 +142,15 @@ class UnifiedBrain:
             on_input_evict=self._compress_evicted_context,
             on_output_evict=self._compress_evicted_context,
         )
+
+        # Spec Part 7 sections 111-112 (Self-Correction / Mistake
+        # Tracking): a low-reward cycle is logged as a mistake, bucketed by
+        # which experts were active and roughly what the input looked
+        # like, so a *repeated* mistake (not just one bad cycle) is
+        # distinguishable and can be penalized harder.
+        self.mistakes = MistakeTracker()
+        self.mistake_reward_threshold = mistake_reward_threshold
+        self.mistake_repeat_penalty = mistake_repeat_penalty
 
         self._sync_vale_to_mesh()
 
@@ -234,9 +248,33 @@ class UnifiedBrain:
         #    the richer per-synapse plasticity rules.
         activations = {nid: n.activation for nid, n in self.mesh.neurons.items()}
         signed_reward = (reward - 0.5) * 2.0  # -1 (harmful) .. 0 (neutral) .. +1 (helpful)
+
+        # 5a. Self-correction (spec Part 7 sections 111-112): a low-reward
+        #     cycle is logged as a mistake, bucketed by which experts were
+        #     active and the rough shape of the input. A *repeated*
+        #     mistake gets an extra vale penalty on top of the normal
+        #     reward-driven contribution below, on the neurons that were
+        #     actually active for it.
+        mistake_signature: Optional[str] = None
+        mistake_repeated = False
+        if reward < self.mistake_reward_threshold:
+            mistake_signature = self._mistake_signature(input_vector)
+            self.mistakes.record(
+                mistake_signature,
+                what=f"low-reward outcome (reward={reward:.2f}) for input {input_vector}",
+                why=f"experts {self.mesh.active_expert_names()} were active and produced an unsatisfactory result",
+                contributing_systems=self.mesh.active_expert_names(),
+            )
+            mistake_repeated = self.mistakes.is_repeated(mistake_signature)
+
         contributions = [
             self.mesh.neurons[i].activation * signed_reward for i in range(len(self.vale.v))
         ]
+        if mistake_repeated:
+            for nid, neuron in self.mesh.neurons.items():
+                if neuron.group in self.mesh.active_groups:
+                    contributions[nid] += self.mistake_repeat_penalty * abs(neuron.activation)
+
         self.vale.step(utility=contributions)
         for nid, neuron in self.mesh.neurons.items():
             self.vale.record_activity(nid, neuron.activation, contribution=neuron.activation * signed_reward)
@@ -263,7 +301,15 @@ class UnifiedBrain:
             active_skills=list(self.skills.keys()),
             active_groups=sorted(self.mesh.active_groups),
             active_experts=self.mesh.active_expert_names(),
+            mistake_signature=mistake_signature,
+            mistake_repeated=mistake_repeated,
         )
+
+    def _mistake_signature(self, input_vector: List[float]) -> str:
+        """Bucket a situation by rounded input shape and which experts were
+        active, so near-identical mistakes accumulate onto one record."""
+        bucket = tuple(round(v, 1) for v in input_vector)
+        return f"{sorted(self.mesh.active_groups)}:{bucket}"
 
     def reason(self, a: List[float], b: List[float], c: List[float]) -> List[float]:
         """Analogy-style reasoning over three externally supplied vectors:
