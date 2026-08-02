@@ -4,6 +4,7 @@ node_modules/
 # Build artifacts
 dist/
 .vite-out/
+.tanstack/
 build/
 target/
 
