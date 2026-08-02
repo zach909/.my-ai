@@ -181,15 +181,45 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 </body>
 </html>`;
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+/**
+ * A single password check, kept only in memory for the lifetime of one
+ * running server process -- never written to disk, never persisted across
+ * restarts. Compares with crypto.timingSafeEqual over a PBKDF2 hash (a
+ * per-instance random salt) rather than comparing plaintext directly.
+ */
+class PasswordLock {
+    constructor() {
+        this.hash = null;
+        this.salt = null;
+        this.encryption = new EncryptionManager();
+    }
+    async set(password) {
+        this.salt = crypto.randomBytes(16);
+        this.hash = await this.encryption.hashPassword(password, this.salt);
+    }
+    get required() {
+        return this.hash !== null;
+    }
+    async check(suppliedPassword) {
+        if (!this.required)
+            return true;
+        const suppliedHash = await this.encryption.hashPassword(suppliedPassword || ' ', this.salt).catch(() => null);
+        if (!suppliedHash || suppliedHash.length !== this.hash.length)
+            return false;
+        return crypto.timingSafeEqual(suppliedHash, this.hash);
+    }
+}
 export class WebServer {
     constructor(runner, launcher) {
         this.server = null;
         this.port = 0;
         // Set only when start() is given a non-localhost host and a password --
         // see start()'s doc comment for why binding remotely without one is refused.
-        this.passwordHash = null;
-        this.passwordSalt = null;
-        this.encryption = new EncryptionManager();
+        this.remoteAccessLock = new PasswordLock();
+        // Independent of remoteAccessLock: gates only /api/chat-groups/* (and the
+        // /app/chat-groups page's own login prompt), even over an already-trusted
+        // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
+        this.chatGroupsLock = new PasswordLock();
         this.runner = runner;
         this.launcher = launcher ?? new AppLauncher();
     }
@@ -211,12 +241,10 @@ export class WebServer {
                 throw new Error(`Refusing to bind to ${host}: a password is required for non-localhost access ` +
                     `(set NEUROCLAW_WEB_PASSWORD). Binding stays loopback-only otherwise.`);
             }
-            this.passwordSalt = crypto.randomBytes(16);
-            this.passwordHash = await this.encryption.hashPassword(password, this.passwordSalt);
+            await this.remoteAccessLock.set(password);
         }
-        else {
-            this.passwordHash = null;
-            this.passwordSalt = null;
+        if (process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD) {
+            await this.chatGroupsLock.set(process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD);
         }
         await this.runner.start();
         return new Promise((resolve, reject) => {
@@ -225,13 +253,9 @@ export class WebServer {
             this.server.on('error', (err) => { this.server = null; reject(err); });
         });
     }
-    /** True once start() has required and validated a remote-access password. */
-    get authRequired() {
-        return this.passwordHash !== null;
-    }
-    /** Constant-time check of an incoming `Authorization: Basic ...` header's password against the configured one. */
-    async isAuthorized(req) {
-        if (!this.authRequired)
+    /** Constant-time check of an incoming `Authorization: Basic ...` header's password against `lock`. */
+    async isAuthorizedBasic(req, lock) {
+        if (!lock.required)
             return true;
         const header = req.headers.authorization ?? '';
         const match = /^Basic\s+(\S+)$/i.exec(header);
@@ -246,16 +270,33 @@ export class WebServer {
         }
         const sep = decoded.indexOf(':');
         const suppliedPassword = sep === -1 ? decoded : decoded.slice(sep + 1);
-        const suppliedHash = await this.encryption.hashPassword(suppliedPassword || ' ', this.passwordSalt).catch(() => null);
-        if (!suppliedHash || suppliedHash.length !== this.passwordHash.length)
-            return false;
-        return crypto.timingSafeEqual(suppliedHash, this.passwordHash);
+        return lock.check(suppliedPassword);
     }
     requireAuth(res) {
         this.setSecurityHeaders(res);
         res.setHeader('WWW-Authenticate', 'Basic realm="Neuroclaw", charset="UTF-8"');
         res.writeHead(401, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: 'Authentication required' }));
+    }
+    /**
+     * Gate for /api/chat-groups/* specifically, checked via a plain header
+     * (not Authorization: Basic -- the chat-groups page shows its own login
+     * form rather than the browser's native basic-auth prompt) so it can be
+     * locked independently of remoteAccessLock, including over an
+     * already-trusted localhost connection.
+     */
+    async isChatGroupsAuthorized(req) {
+        if (!this.chatGroupsLock.required)
+            return true;
+        const supplied = req.headers['x-chat-groups-password'];
+        if (typeof supplied !== 'string')
+            return false;
+        return this.chatGroupsLock.check(supplied);
+    }
+    requireChatGroupsAuth(res) {
+        this.setSecurityHeaders(res);
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Chat groups password required' }));
     }
     async stop() {
         if (!this.server)
@@ -361,8 +402,19 @@ export class WebServer {
             res.end();
             return;
         }
-        if (this.authRequired && !(await this.isAuthorized(req))) {
+        if (!(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
             this.requireAuth(res);
+            return;
+        }
+        // Unauthenticated on purpose (a boolean, nothing sensitive) -- the
+        // chat-groups page needs to know whether to show its login form
+        // *before* it has a password to send.
+        if (pathname === '/api/chat-groups/lock-status' && method === 'GET') {
+            this.sendJson(res, { locked: this.chatGroupsLock.required });
+            return;
+        }
+        if (pathname.startsWith('/api/chat-groups/') && !(await this.isChatGroupsAuthorized(req))) {
+            this.requireChatGroupsAuth(res);
             return;
         }
         if (pathname === '/' && method === 'GET') {

@@ -185,6 +185,34 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 
+/**
+ * A single password check, kept only in memory for the lifetime of one
+ * running server process -- never written to disk, never persisted across
+ * restarts. Compares with crypto.timingSafeEqual over a PBKDF2 hash (a
+ * per-instance random salt) rather than comparing plaintext directly.
+ */
+class PasswordLock {
+  private hash: Buffer | null = null;
+  private salt: Buffer | null = null;
+  private readonly encryption = new EncryptionManager();
+
+  async set(password: string): Promise<void> {
+    this.salt = crypto.randomBytes(16);
+    this.hash = await this.encryption.hashPassword(password, this.salt);
+  }
+
+  get required(): boolean {
+    return this.hash !== null;
+  }
+
+  async check(suppliedPassword: string): Promise<boolean> {
+    if (!this.required) return true;
+    const suppliedHash = await this.encryption.hashPassword(suppliedPassword || ' ', this.salt!).catch(() => null);
+    if (!suppliedHash || suppliedHash.length !== this.hash!.length) return false;
+    return crypto.timingSafeEqual(suppliedHash, this.hash!);
+  }
+}
+
 export class WebServer {
   private runner: NeuroclawRunner;
   private launcher: AppLauncher;
@@ -192,9 +220,11 @@ export class WebServer {
   private port = 0;
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
-  private passwordHash: Buffer | null = null;
-  private passwordSalt: Buffer | null = null;
-  private readonly encryption = new EncryptionManager();
+  private readonly remoteAccessLock = new PasswordLock();
+  // Independent of remoteAccessLock: gates only /api/chat-groups/* (and the
+  // /app/chat-groups page's own login prompt), even over an already-trusted
+  // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
+  private readonly chatGroupsLock = new PasswordLock();
 
   constructor(runner: NeuroclawRunner, launcher?: AppLauncher) {
     this.runner = runner;
@@ -220,11 +250,10 @@ export class WebServer {
           `(set NEUROCLAW_WEB_PASSWORD). Binding stays loopback-only otherwise.`
         );
       }
-      this.passwordSalt = crypto.randomBytes(16);
-      this.passwordHash = await this.encryption.hashPassword(password, this.passwordSalt);
-    } else {
-      this.passwordHash = null;
-      this.passwordSalt = null;
+      await this.remoteAccessLock.set(password);
+    }
+    if (process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD) {
+      await this.chatGroupsLock.set(process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD);
     }
     await this.runner.start();
     return new Promise<void>((resolve, reject) => {
@@ -234,14 +263,9 @@ export class WebServer {
     });
   }
 
-  /** True once start() has required and validated a remote-access password. */
-  private get authRequired(): boolean {
-    return this.passwordHash !== null;
-  }
-
-  /** Constant-time check of an incoming `Authorization: Basic ...` header's password against the configured one. */
-  private async isAuthorized(req: http.IncomingMessage): Promise<boolean> {
-    if (!this.authRequired) return true;
+  /** Constant-time check of an incoming `Authorization: Basic ...` header's password against `lock`. */
+  private async isAuthorizedBasic(req: http.IncomingMessage, lock: PasswordLock): Promise<boolean> {
+    if (!lock.required) return true;
     const header = req.headers.authorization ?? '';
     const match = /^Basic\s+(\S+)$/i.exec(header);
     if (!match) return false;
@@ -253,9 +277,7 @@ export class WebServer {
     }
     const sep = decoded.indexOf(':');
     const suppliedPassword = sep === -1 ? decoded : decoded.slice(sep + 1);
-    const suppliedHash = await this.encryption.hashPassword(suppliedPassword || ' ', this.passwordSalt!).catch(() => null);
-    if (!suppliedHash || suppliedHash.length !== this.passwordHash!.length) return false;
-    return crypto.timingSafeEqual(suppliedHash, this.passwordHash!);
+    return lock.check(suppliedPassword);
   }
 
   private requireAuth(res: http.ServerResponse): void {
@@ -263,6 +285,26 @@ export class WebServer {
     res.setHeader('WWW-Authenticate', 'Basic realm="Neuroclaw", charset="UTF-8"');
     res.writeHead(401, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ error: 'Authentication required' }));
+  }
+
+  /**
+   * Gate for /api/chat-groups/* specifically, checked via a plain header
+   * (not Authorization: Basic -- the chat-groups page shows its own login
+   * form rather than the browser's native basic-auth prompt) so it can be
+   * locked independently of remoteAccessLock, including over an
+   * already-trusted localhost connection.
+   */
+  private async isChatGroupsAuthorized(req: http.IncomingMessage): Promise<boolean> {
+    if (!this.chatGroupsLock.required) return true;
+    const supplied = req.headers['x-chat-groups-password'];
+    if (typeof supplied !== 'string') return false;
+    return this.chatGroupsLock.check(supplied);
+  }
+
+  private requireChatGroupsAuth(res: http.ServerResponse): void {
+    this.setSecurityHeaders(res);
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Chat groups password required' }));
   }
 
   async stop(): Promise<void> {
@@ -366,8 +408,21 @@ export class WebServer {
       return;
     }
 
-    if (this.authRequired && !(await this.isAuthorized(req))) {
+    if (!(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
       this.requireAuth(res);
+      return;
+    }
+
+    // Unauthenticated on purpose (a boolean, nothing sensitive) -- the
+    // chat-groups page needs to know whether to show its login form
+    // *before* it has a password to send.
+    if (pathname === '/api/chat-groups/lock-status' && method === 'GET') {
+      this.sendJson(res, { locked: this.chatGroupsLock.required });
+      return;
+    }
+
+    if (pathname.startsWith('/api/chat-groups/') && !(await this.isChatGroupsAuthorized(req))) {
+      this.requireChatGroupsAuth(res);
       return;
     }
 
