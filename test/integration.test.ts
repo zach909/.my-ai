@@ -167,6 +167,17 @@ describe('Neuroclaw Integration Tests', () => {
       expect(score).toBeGreaterThanOrEqual(0);
       expect(score).toBeLessThanOrEqual(1);
     });
+
+    it('should not double-count punctuation arousal into the keyword-match average', () => {
+      // "happy!" matches exactly one keyword ("happy", arousal 0.7) and
+      // contributes exactly one exclamation mark (arousalFromPunctuation =
+      // min(1, 1*0.2) = 0.2, no caps/questions). arousal blends the two 50/50:
+      // (0.7 + 0.2) / 2 = 0.45. The old code folded arousalFromPunctuation
+      // into totalArousal *before* dividing by matchCount too, double-
+      // counting it and yielding 0.55 instead.
+      const emotion = empathy.analyzeEmotion('happy!');
+      expect(emotion.arousal).toBeCloseTo(0.45, 5);
+    });
   });
 
   // ZipIOSystem's real write path is ingest()/emit() (both Promise<void>,
