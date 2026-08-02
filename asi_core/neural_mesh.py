@@ -190,6 +190,11 @@ class NeuralMesh:
         self.group_score_decay = group_score_decay
         self.group_scores: List[float] = [0.0] * n_groups
         self._route_explore_cursor = 0
+
+        # Spec Part 4 section 39: expert groups are given human-readable
+        # names ("Coding Expert", "Language Expert", ...) instead of being
+        # addressed only by numeric id. Unnamed groups get a stable default.
+        self.group_names: Dict[int, str] = {i: f"expert_{i}" for i in range(n_groups)}
         
     def _initialize_neurons(self):
         """Create all neurons with appropriate roles and groups."""
@@ -507,6 +512,19 @@ class NeuralMesh:
 
         self.active_groups = selected
         return selected
+
+    def set_group_name(self, group_id: int, name: str) -> None:
+        """Assign a human-readable name to an expert group (spec section 39)."""
+        if not (0 <= group_id < self.n_groups):
+            raise ValueError(f"no such group: {group_id}")
+        self.group_names[group_id] = name
+
+    def get_group_name(self, group_id: int) -> str:
+        return self.group_names.get(group_id, f"expert_{group_id}")
+
+    def active_expert_names(self) -> List[str]:
+        """Human-readable names of the currently active expert groups."""
+        return [self.get_group_name(g) for g in sorted(self.active_groups)]
 
     def _apply_divergence_correction(
         self,

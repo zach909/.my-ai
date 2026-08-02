@@ -50,6 +50,7 @@ class CycleResult:
     recalled_confidence: float = 0.0
     active_skills: List[str] = field(default_factory=list)
     active_groups: List[int] = field(default_factory=list)
+    active_experts: List[str] = field(default_factory=list)
 
 
 @dataclass
@@ -63,6 +64,7 @@ class Introspection:
     memory_size: int
     active_skills: List[str]
     active_groups: List[int]
+    active_experts: List[str]
 
 
 class UnifiedBrain:
@@ -80,6 +82,7 @@ class UnifiedBrain:
         n_groups: int = 4,
         hd_dimensions: int = 256,
         seed: Optional[int] = 42,
+        expert_names: Optional[List[str]] = None,
     ):
         self.mesh = NeuralMesh(
             n_neurons=n_neurons,
@@ -90,6 +93,12 @@ class UnifiedBrain:
             seed=seed,
             auto_route=True,
         )
+
+        # Spec Part 4 section 39: name expert groups (e.g. "coding",
+        # "language", "reasoning") instead of leaving them as bare ids.
+        if expert_names:
+            for group_id, name in enumerate(expert_names[:n_groups]):
+                self.mesh.set_group_name(group_id, name)
 
         # ValeSystem replaces the mesh's own redistribute_vale bookkeeping
         # as the single conserving ledger of plasticity budget.
@@ -221,6 +230,7 @@ class UnifiedBrain:
             recalled_confidence=recalled_confidence,
             active_skills=list(self.skills.keys()),
             active_groups=sorted(self.mesh.active_groups),
+            active_experts=self.mesh.active_expert_names(),
         )
 
     def reason(self, a: List[float], b: List[float], c: List[float]) -> List[float]:
@@ -265,6 +275,7 @@ class UnifiedBrain:
             memory_size=len(self.hd.memory),
             active_skills=list(self.skills.keys()),
             active_groups=sorted(self.mesh.active_groups),
+            active_experts=self.mesh.active_expert_names(),
         )
 
     # -- Background maintenance (spec Part 2 section 19) ------------------
