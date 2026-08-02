@@ -313,6 +313,30 @@ class TestExtensionCreation(unittest.TestCase):
         ext = brain.create_extension("empty", purpose="nothing bundled")
         self.assertEqual(ext.stage.value, "failed")
 
+    def test_create_extension_quantizes_real_weight_snapshot(self):
+        """Spec: 'extensions get quantized when the extension is done' --
+        create_extension() must hand real numeric weights (the brain's
+        vale ledger + mesh connections) to background_quantization, not
+        just flip a flag."""
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        brain.self_improve(min_strength=1.2)
+
+        ext = brain.create_extension("coding", purpose="write code")
+        self.assertEqual(ext.stage.value, "quantized")
+        self.assertIsNotNone(ext.quantized_bundle)
+        layer_names = {layer["layer_name"] for layer in ext.quantized_bundle["layers"]}
+        self.assertEqual(layer_names, {"vale", "connections"})
+
+    def test_extension_weight_snapshot_matches_vale_and_connections(self):
+        brain = make_brain(n_neurons=8, n_groups=2, n_input=2, hd_dimensions=16)
+        snapshot = brain._extension_weight_snapshot()
+        self.assertEqual(snapshot["vale"], list(brain.vale.v))
+        n = len(brain.vale.v)
+        self.assertEqual(len(snapshot["connections"]), n)
+        self.assertEqual(len(snapshot["connections"][0]), n)
+
 
 class TestCircularContext(unittest.TestCase):
     def test_input_and_output_are_recorded_each_cycle(self):

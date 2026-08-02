@@ -8,6 +8,7 @@
  */
 
 import type { NeuroclawSystem } from '../index'
+import { logError, getRecentErrors, type LoggedError } from '../lib/error-log'
 
 /** A route the bot knows about and can reference/point users to. */
 export interface AppRoute {
@@ -49,6 +50,8 @@ export interface BotResponse {
     usedMemory?: boolean
     usedPlanning?: boolean
   }
+  /** Set when this response reports an error, so callers can look it up via getRecentErrors(). */
+  errorId?: string
 }
 
 /**
@@ -99,11 +102,14 @@ export class ChatBot {
 
       return response
     } catch (error) {
+      const logged = logError('bot-service.processMessage', error, { userMessage })
       console.error('Bot processing error:', error)
       return {
         message: 'I encountered an error processing your message. Please try again.',
         confidence: 0.3,
-        suggestions: ['Try rephrasing your question', 'Ask something else'],
+        suggestions: ['Try rephrasing your question', 'What was the error?', 'Ask something else'],
+        metadata: { domain: 'error' },
+        errorId: logged.id,
       }
     }
   }
@@ -118,6 +124,9 @@ export class ChatBot {
     switch (intent) {
       case 'route':
         return this.buildRouteResponse()
+
+      case 'error':
+        return this.buildErrorResponse()
 
       case 'plan': {
         const result = await this.system.autonomousTask('user request', [userMessage])
@@ -157,7 +166,11 @@ export class ChatBot {
    * Simplified processing without the full system (fallback mode).
    */
   private async processSimplified(userMessage: string): Promise<BotResponse> {
-    if (this.isRouteQuery(userMessage.toLowerCase())) {
+    const lower = userMessage.toLowerCase()
+    if (this.isErrorQuery(lower)) {
+      return this.buildErrorResponse()
+    }
+    if (this.isRouteQuery(lower)) {
       return this.buildRouteResponse()
     }
 
@@ -173,8 +186,9 @@ export class ChatBot {
     }
   }
 
-  private detectIntent(message: string): 'plan' | 'recall' | 'solve' | 'help' | 'route' {
+  private detectIntent(message: string): 'plan' | 'recall' | 'solve' | 'help' | 'route' | 'error' {
     const lower = message.toLowerCase()
+    if (this.isErrorQuery(lower)) return 'error'
     if (this.isRouteQuery(lower)) return 'route'
     if (lower.includes('plan') || lower.includes('schedule') || lower.includes('organize')) return 'plan'
     if (lower.includes('remember') || lower.includes('recall') || lower.includes('what was')) return 'recall'
@@ -189,6 +203,11 @@ export class ChatBot {
     ) || /\blist (all )?(the )?(pages|routes)\b/.test(lowerMessage)
   }
 
+  private isErrorQuery(lowerMessage: string): boolean {
+    return /\b(what (was|happened)|why did (it|that) fail|what went wrong|show me the error|error detail)\b/.test(lowerMessage)
+      && /\berror|fail|wrong|broke|crash/.test(lowerMessage)
+  }
+
   /** The bot always has awareness of every app route — no filtering or restriction. */
   private buildRouteResponse(): BotResponse {
     const list = APP_ROUTES.map((r) => `• **${r.title}** (\`${r.path}\`) — ${r.description}`).join('\n')
@@ -197,6 +216,34 @@ export class ChatBot {
       confidence: 0.9,
       suggestions: ['Take me to AI Chat', 'What can I do in Planning?', 'List all pages'],
       metadata: { domain: 'route' },
+    }
+  }
+
+  /** Explain the most recent logged application error in detail, if any. */
+  private buildErrorResponse(): BotResponse {
+    const recent = getRecentErrors(5)
+    if (recent.length === 0) {
+      return {
+        message: "I don't have any recent errors logged — nothing has failed recently.",
+        confidence: 0.85,
+        suggestions: ['List all pages', 'Ask something else'],
+        metadata: { domain: 'error' },
+      }
+    }
+
+    const details = recent
+      .map((e: LoggedError) => {
+        const when = new Date(e.timestamp).toISOString()
+        const ctx = e.context ? `\n  context: ${JSON.stringify(e.context)}` : ''
+        return `• [${when}] (${e.source}) ${e.message}${ctx}`
+      })
+      .join('\n')
+
+    return {
+      message: `Here's what happened, most recent first:\n\n${details}`,
+      confidence: 0.9,
+      suggestions: ['What caused that?', 'List all pages'],
+      metadata: { domain: 'error' },
     }
   }
 

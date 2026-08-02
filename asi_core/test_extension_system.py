@@ -77,6 +77,36 @@ class TestExtensionLifecycle(unittest.TestCase):
         with self.assertRaises(ExtensionError):
             system.quantize("coding")
 
+    def test_quantize_with_weights_produces_real_quantized_bundle(self):
+        """quantize() must actually run background_quantization.Quantizer
+        over supplied weights, not just flip a flag."""
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        system.test("coding")
+        system.optimize("coding")
+        weights = {"layer1": [0.1, 0.5, -0.3, 0.9], "layer2": [[1.0, 2.0], [3.0, 4.0]]}
+        ext = system.quantize("coding", weights=weights)
+
+        self.assertIsNotNone(ext.quantized_bundle)
+        self.assertEqual(ext.quantized_bundle["bits"], 4)
+        layer_names = {layer["layer_name"] for layer in ext.quantized_bundle["layers"]}
+        self.assertEqual(layer_names, {"layer1", "layer2"})
+        # Quantized values must actually fit in 4-bit signed range.
+        for layer in ext.quantized_bundle["layers"]:
+            for value in layer["data"]:
+                self.assertGreaterEqual(value, -8)
+                self.assertLessEqual(value, 7)
+        self.assertGreater(ext.quantized_bundle["compression_ratio"], 1.0)
+
+    def test_quantize_without_weights_only_flips_flag(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        system.test("coding")
+        system.optimize("coding")
+        ext = system.quantize("coding")
+        self.assertTrue(ext.quantized)
+        self.assertIsNone(ext.quantized_bundle)
+
 
 class TestExtensionMerge(unittest.TestCase):
     def test_merge_combines_skills_and_removes_source(self):
