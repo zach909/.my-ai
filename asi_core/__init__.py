@@ -105,6 +105,11 @@ from .hive_mind import (
     ShareRecord,
 )
 
+from .background_quantization import (
+    Quantizer,
+    BillingSystem,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # Neural Mesh
@@ -184,4 +189,7 @@ __all__ = [
     "HiveMind",
     "TrustSystem",
     "ShareRecord",
+    # Background Quantization
+    "Quantizer",
+    "BillingSystem",
 ]
