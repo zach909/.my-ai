@@ -69,7 +69,21 @@ export class ExtensionStore {
   }
 
   private dir(id: string, version: string): string {
+    // ExtensionManager.install() only slugifies `id` when it derives one from
+    // `name` -- a caller-supplied `id` (or any `version`) reaches here as-is.
+    // path.join() normalizes ".." segments, so an id like
+    // "../../../tmp/pwned" would resolve completely outside rootDir. Reject
+    // anything but a single path segment; no legitimate id/version needs a
+    // path separator.
+    this.assertSafeSegment(id, "id");
+    this.assertSafeSegment(version, "version");
     return join(this.rootDir, id, version);
+  }
+
+  private assertSafeSegment(segment: string, label: "id" | "version"): void {
+    if (!segment || segment === "." || segment === ".." || segment.includes("/") || segment.includes("\\")) {
+      throw new Error(`Invalid extension ${label} "${segment}": must not contain path separators or be "." / ".."`);
+    }
   }
 
   /** Encode and persist a payload, returning the StorageEncoding to embed in the manifest. */

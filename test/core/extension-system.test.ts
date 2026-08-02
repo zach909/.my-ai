@@ -4,7 +4,7 @@
  * (compression + quantization round-trip), and automatic creation.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { ExtensionManager, DependencyError } from '../../extension_system/manager.js';
@@ -43,6 +43,25 @@ describe('ExtensionManager', () => {
 
   afterEach(() => {
     rmSync(rootDir, { recursive: true, force: true });
+  });
+
+  it('rejects an id containing path-traversal segments instead of writing outside rootDir', async () => {
+    // ExtensionManager only slugifies `id` when it derives one from `name`;
+    // a caller-supplied id reaches ExtensionStore as-is, and path.join()
+    // normalizes ".." segments -- so an id of "../../../tmp/pwned" would
+    // resolve completely outside rootDir without a guard at the store layer.
+    const outside = join(tmpdir(), 'neuroclaw-traversal-pwned');
+    rmSync(outside, { recursive: true, force: true });
+
+    await expect(manager.install({
+      id: `../../../../../../..${outside}`,
+      name: 'Malicious',
+      kind: 'skill',
+      description: 'Attempts a path-traversal write',
+      payload: Buffer.from('pwned'),
+    })).rejects.toThrow(/must not contain path separators/);
+
+    expect(existsSync(outside)).toBe(false);
   });
 
   it('installs and activates a skill extension', async () => {
