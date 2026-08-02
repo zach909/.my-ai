@@ -28,7 +28,7 @@ addition to the mesh's own Hebbian update.
 """
 
 from dataclasses import dataclass, field
-from typing import Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 
 from .neural_mesh import NeuralMesh
 from .vale_system import ValeSystem, ValeConfig
@@ -40,6 +40,21 @@ from .mistake_tracker import MistakeTracker, MistakeRecord
 
 
 Skill = Callable[[List[float]], List[float]]
+
+
+@dataclass
+class SkillRecord:
+    """
+    Spec Part 8 section 143 (Skill Storage Format). The callable itself
+    lives in UnifiedBrain.skills; this is the metadata a skill accrues by
+    actually running — activation_count and performance_score aren't
+    something a caller sets, they're measured from the reward of every
+    cycle in which the skill participated.
+    """
+    name: str
+    activation_count: int = 0
+    performance_score: float = 0.0  # EMA of reward across cycles this skill ran in
+    improvement_history: List[float] = field(default_factory=list)
 
 
 @dataclass
@@ -55,6 +70,33 @@ class CycleResult:
     active_experts: List[str] = field(default_factory=list)
     mistake_signature: Optional[str] = None
     mistake_repeated: bool = False
+
+
+@dataclass
+class ReasoningPath:
+    """
+    One candidate reasoning path (spec Part 7 section 108). Rather than
+    committing to the single nearest memory trace, multi_path_reason()
+    recalls several candidates and scores each as its own path.
+    """
+    solution: List[float]
+    expected_outcome: List[float]
+    confidence: float
+    supporting_trace_kind: Optional[str]
+
+
+@dataclass
+class DebugSnapshot:
+    """Spec Part 8 section 153 (Debugging System)."""
+    active_neuron_count: int
+    active_experts: List[str]
+    memory_size: int
+    context_input_size: int
+    context_output_size: int
+    predictions_made: int
+    recent_average_surprise: float
+    errors_detected: List[str]
+    extensions_installed: List[str]
 
 
 @dataclass
@@ -130,6 +172,7 @@ class UnifiedBrain:
             self.states.register_synapse(str(source_id), str(target_id))
 
         self.skills: Dict[str, Skill] = {}
+        self.skill_records: Dict[str, SkillRecord] = {}
         self._pattern_skills: Dict[int, str] = {}  # id(trace) -> skill name
         self._pattern_counter = 0
         self.extensions = ExtensionSystem()
@@ -164,13 +207,23 @@ class UnifiedBrain:
         into the brain without the brain needing to know about it.
         """
         self.skills[name] = fn
+        self.skill_records.setdefault(name, SkillRecord(name=name))
 
     def unregister_skill(self, name: str) -> None:
+        """Removes the skill from active rotation; its SkillRecord (spec
+        section 143: performance history) is kept for later inspection."""
         self.skills.pop(name, None)
 
-    def _apply_skills(self, output: List[float]) -> List[float]:
-        for fn in self.skills.values():
+    def _apply_skills(self, output: List[float], reward: float) -> List[float]:
+        decay = 0.9
+        for name, fn in self.skills.items():
             output = fn(output)
+            record = self.skill_records.setdefault(name, SkillRecord(name=name))
+            record.activation_count += 1
+            record.performance_score = decay * record.performance_score + (1 - decay) * reward
+            record.improvement_history.append(record.performance_score)
+            if len(record.improvement_history) > 50:
+                record.improvement_history.pop(0)
         return output
 
     # -- Vale <-> Mesh sync -----------------------------------------
@@ -238,7 +291,7 @@ class UnifiedBrain:
             reasoned = list(raw_output)
 
         # 4. Skills: pluggable expert transforms (Mixture-of-Experts seam).
-        output = self._apply_skills(reasoned)
+        output = self._apply_skills(reasoned, reward)
 
         # 5. Learning: derive each neuron's contribution to this cycle's
         #    outcome from the reward signal (spec Part 2 section 9: vale
@@ -319,6 +372,46 @@ class UnifiedBrain:
         )
         return list(result.sem)
 
+    def multi_path_reason(self, input_vector: List[float], n_paths: int = 3) -> List[ReasoningPath]:
+        """
+        Spec Part 7 section 108 (Multi-Path Reasoning): recall several
+        candidate memory traces for the given input and score each as its
+        own path, strongest first, instead of committing to a single
+        nearest match.
+
+        A path is stronger when it matches previous experience (higher
+        cosine similarity to the cue) and comes from reliable,
+        repeatedly-confirmed knowledge (higher trace.strength,
+        MemoryKind.LONG_TERM). It's weaker — and can go outright negative —
+        when the closest match is a known mistake (MemoryKind.EXPERIENCE):
+        a confident match to a bad outcome is a contradiction to avoid, not
+        support for the path (section 108: "weaker when it conflicts with
+        high-value memories").
+        """
+        cue = self._vector_to_hd(input_vector)
+        traces = self.hd.memory.recall(cue, k=n_paths)
+
+        paths: List[ReasoningPath] = []
+        for trace in traces:
+            similarity = cosine_similarity(cue, trace.key)
+            reliability = min(1.0, trace.strength / 2.0)  # strength caps at 2.0 in MemoryStore.write
+            if trace.kind == MemoryKind.EXPERIENCE.value:
+                confidence = -abs(similarity) * reliability
+            else:
+                confidence = similarity * reliability
+
+            paths.append(
+                ReasoningPath(
+                    solution=list(trace.value.sem),
+                    expected_outcome=list(trace.value.sem),
+                    confidence=confidence,
+                    supporting_trace_kind=trace.kind,
+                )
+            )
+
+        paths.sort(key=lambda p: p.confidence, reverse=True)
+        return paths
+
     def get_statistics(self) -> Dict:
         return {
             "mesh": self.mesh.get_statistics(),
@@ -375,6 +468,102 @@ class UnifiedBrain:
             "memory_size": len(self.hd.memory),
             "vale_invariant_ok": self.vale.validate_invariant(),
         }
+
+    # -- Debugging (spec Part 8 section 153) -------------------------------
+
+    def debug_snapshot(self, top_k_errors: int = 5) -> DebugSnapshot:
+        """
+        Section 153 asks for one debugging view covering "active neurons,
+        activated experts, memory used, predictions made, errors
+        detected" — each of those is already tracked by a different
+        subsystem (NeuralMesh, HDThinkingSystem, CircularContextSystem,
+        MistakeTracker); this aggregates them instead of making a caller
+        know which subsystem to query for each.
+        """
+        active_neuron_count = sum(
+            1 for n in self.mesh.neurons.values() if n.group in self.mesh.active_groups
+        )
+        errors = [f"{r.what} (x{r.occurrences})" for r in self.mistakes.most_repeated(top_k_errors)]
+        recent_surprise = self.hd.history[-1]["avg_surprise"] if self.hd.history else 0.0
+
+        return DebugSnapshot(
+            active_neuron_count=active_neuron_count,
+            active_experts=self.mesh.active_expert_names(),
+            memory_size=len(self.hd.memory),
+            context_input_size=len(self.context.input_buffer),
+            context_output_size=len(self.context.output_buffer),
+            predictions_made=self.hd.current_tick,
+            recent_average_surprise=recent_surprise,
+            errors_detected=errors,
+            extensions_installed=list(self.extensions.extensions.keys()),
+        )
+
+    # -- Backup / restore (spec Part 9 section 171-172) --------------------
+
+    def backup(self) -> Dict[str, Any]:
+        """
+        A portable snapshot of everything the brain has learned and
+        built: mesh, vale, hyper-dimensional memory, extensions, mistake
+        history, skill performance records, and circular context buffers.
+
+        Deliberately NOT included: the raw callables in self.skills.
+        Arbitrary Python closures can't be safely or portably serialized —
+        a caller-registered skill must be re-registered after restore(),
+        and pattern skills created by self_improve() can be regenerated by
+        calling self_improve() again once memory has been restored (their
+        backing traces come back with their original vale/strength).
+        """
+        return {
+            "mesh": self.mesh.save_state(),
+            "vale": self.vale.to_dict(),
+            "hd": self.hd.save_state(),
+            "extensions": self.extensions.to_dict(),
+            "mistakes": self.mistakes.to_dict(),
+            "skill_records": {
+                name: {
+                    "activation_count": r.activation_count,
+                    "performance_score": r.performance_score,
+                    "improvement_history": list(r.improvement_history),
+                }
+                for name, r in self.skill_records.items()
+            },
+            "context": {
+                "input": self.context.input_buffer.items,
+                "output": self.context.output_buffer.items,
+            },
+        }
+
+    def restore(self, backup: Dict[str, Any]) -> None:
+        """
+        Restore state produced by backup(). This brain must already be
+        constructed with matching architecture (n_neurons, n_dimensions,
+        n_groups, ...) — restore() loads state into the existing instance
+        rather than reconstructing one, the same contract
+        NeuralMesh.load_state()/ValeSystem.from_dict() already use, and
+        raises ValueError (via mesh.load_state) if the architecture
+        doesn't match.
+        """
+        self.mesh.load_state(backup["mesh"])
+        self.vale = ValeSystem.from_dict(backup["vale"])
+        self.hd.load_state(backup["hd"])
+        self.extensions = ExtensionSystem.from_dict(backup.get("extensions", {}))
+        self.mistakes = MistakeTracker.from_dict(backup.get("mistakes", {}))
+
+        self.skill_records = {
+            name: SkillRecord(
+                name=name,
+                activation_count=r["activation_count"],
+                performance_score=r["performance_score"],
+                improvement_history=list(r["improvement_history"]),
+            )
+            for name, r in backup.get("skill_records", {}).items()
+        }
+
+        ctx = backup.get("context", {})
+        self.context.input_buffer.load_items(ctx.get("input", []))
+        self.context.output_buffer.load_items(ctx.get("output", []))
+
+        self._sync_vale_to_mesh()
 
     # -- Self-improvement loop (spec Part 3 section 36) -------------------
 

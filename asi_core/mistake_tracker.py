@@ -79,3 +79,32 @@ class MistakeTracker:
         if record is None:
             raise KeyError(f"no mistake recorded under signature {signature!r}")
         return record
+
+    # -- Serialization (spec Part 9 section 171, Backup System) -----------
+
+    def to_dict(self) -> Dict[str, Dict]:
+        return {
+            signature: {
+                "what": r.what,
+                "why": r.why,
+                "contributing_systems": list(r.contributing_systems),
+                "correction": r.correction,
+                "correction_worked": r.correction_worked,
+                "occurrences": r.occurrences,
+            }
+            for signature, r in self.records.items()
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Dict]) -> "MistakeTracker":
+        tracker = cls()
+        for signature, r in data.items():
+            tracker.records[signature] = MistakeRecord(
+                what=r["what"],
+                why=r["why"],
+                contributing_systems=list(r.get("contributing_systems", [])),
+                correction=r.get("correction"),
+                correction_worked=r.get("correction_worked"),
+                occurrences=r.get("occurrences", 1),
+            )
+        return tracker

@@ -102,6 +102,39 @@ class TestSkills(unittest.TestCase):
         for doubled, original in zip(result_with.output, result_without.output):
             self.assertAlmostEqual(doubled, original * 2, places=9)
 
+    def test_register_skill_creates_a_skill_record(self):
+        brain = make_brain()
+        brain.register_skill("double", lambda v: v)
+        self.assertIn("double", brain.skill_records)
+        self.assertEqual(brain.skill_records["double"].activation_count, 0)
+
+    def test_skill_record_tracks_activation_count_and_performance(self):
+        brain = make_brain()
+        brain.register_skill("double", lambda v: [x * 2 for x in v])
+        for _ in range(3):
+            brain.perceive([0.4, 0.1, 0.2, 0.3], reward=0.9)
+        record = brain.skill_records["double"]
+        self.assertEqual(record.activation_count, 3)
+        self.assertEqual(len(record.improvement_history), 3)
+        self.assertGreater(record.performance_score, 0.0)
+
+    def test_unregister_skill_preserves_its_record(self):
+        brain = make_brain()
+        brain.register_skill("double", lambda v: [x * 2 for x in v])
+        brain.perceive([0.4, 0.1, 0.2, 0.3], reward=0.9)
+        brain.unregister_skill("double")
+        self.assertNotIn("double", brain.skills)
+        self.assertIn("double", brain.skill_records)
+        self.assertEqual(brain.skill_records["double"].activation_count, 1)
+
+    def test_skill_not_run_after_unregister_does_not_gain_activations(self):
+        brain = make_brain()
+        brain.register_skill("double", lambda v: [x * 2 for x in v])
+        brain.perceive([0.4, 0.1, 0.2, 0.3], reward=0.9)
+        brain.unregister_skill("double")
+        brain.perceive([0.4, 0.1, 0.2, 0.3], reward=0.9)
+        self.assertEqual(brain.skill_records["double"].activation_count, 1)
+
 
 class TestDeterminism(unittest.TestCase):
     def test_seeded_construction_is_reproducible(self):
@@ -364,6 +397,153 @@ class TestMistakeTracking(unittest.TestCase):
         result = brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
         record = brain.mistakes.correct(result.mistake_signature, correction="raised vale on other groups", worked=True)
         self.assertTrue(record.correction_worked)
+
+
+class TestMultiPathReasoning(unittest.TestCase):
+    def test_empty_memory_returns_no_paths(self):
+        brain = make_brain()
+        paths = brain.multi_path_reason([0.5, 0.2, -0.1, 0.4])
+        self.assertEqual(paths, [])
+
+    def test_paths_are_sorted_strongest_first(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        for _ in range(150):
+            brain.perceive([-0.9, -0.9, -0.9, -0.9], reward=0.02)
+
+        paths = brain.multi_path_reason([0.9, 0.9, 0.9, 0.9], n_paths=5)
+        self.assertTrue(len(paths) >= 2)
+        confidences = [p.confidence for p in paths]
+        self.assertEqual(confidences, sorted(confidences, reverse=True))
+
+    def test_long_term_paths_rank_above_experience_paths_for_matching_query(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        for _ in range(150):
+            brain.perceive([-0.9, -0.9, -0.9, -0.9], reward=0.02)
+
+        paths = brain.multi_path_reason([0.9, 0.9, 0.9, 0.9], n_paths=5)
+        best = paths[0]
+        self.assertEqual(best.supporting_trace_kind, "long_term")
+        self.assertGreater(best.confidence, 0.0)
+
+    def test_experience_path_confidence_is_nonpositive(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([-0.9, -0.9, -0.9, -0.9], reward=0.02)
+
+        paths = brain.multi_path_reason([-0.9, -0.9, -0.9, -0.9], n_paths=3)
+        for p in paths:
+            if p.supporting_trace_kind == "experience":
+                self.assertLessEqual(p.confidence, 0.0)
+
+
+class TestDebugSnapshot(unittest.TestCase):
+    def test_snapshot_before_any_activity_does_not_error(self):
+        brain = make_brain()
+        snap = brain.debug_snapshot()
+        self.assertEqual(snap.memory_size, 0)
+        self.assertEqual(snap.errors_detected, [])
+        self.assertEqual(snap.extensions_installed, [])
+
+    def test_snapshot_reflects_context_buffers(self):
+        brain = make_brain(context_capacity=10)
+        brain.perceive([0.5, 0.1, 0.2, 0.3])
+        brain.perceive([0.5, 0.1, 0.2, 0.3])
+        snap = brain.debug_snapshot()
+        self.assertEqual(snap.context_input_size, 2)
+        self.assertEqual(snap.context_output_size, 2)
+
+    def test_snapshot_reflects_errors_detected(self):
+        brain = make_brain()
+        brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        snap = brain.debug_snapshot()
+        self.assertEqual(len(snap.errors_detected), 1)
+        self.assertIn("x2", snap.errors_detected[0])
+
+    def test_snapshot_reflects_installed_extensions(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        brain.self_improve(min_strength=1.2)
+        brain.create_extension("coding", purpose="write code")
+        snap = brain.debug_snapshot()
+        self.assertIn("coding", snap.extensions_installed)
+
+    def test_snapshot_active_neuron_count_matches_active_groups(self):
+        brain = make_brain(n_neurons=16, n_groups=2, n_input=4)
+        brain.perceive([0.5, 0.1, 0.2, 0.3])
+        snap = brain.debug_snapshot()
+        expected = sum(
+            1 for n in brain.mesh.neurons.values() if n.group in brain.mesh.active_groups
+        )
+        self.assertEqual(snap.active_neuron_count, expected)
+
+
+class TestBackupRestore(unittest.TestCase):
+    def _make_and_populate(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(80):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        for _ in range(3):
+            brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        brain.self_improve(min_strength=1.2)
+        brain.create_extension("coding", purpose="write code")
+        return brain
+
+    def test_restore_reproduces_vale(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        restored = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        restored.restore(backup)
+
+        self.assertEqual(restored.vale.v, brain.vale.v)
+        self.assertTrue(restored.vale.validate_invariant())
+
+    def test_restore_reproduces_memory_including_kind(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        restored = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        restored.restore(backup)
+
+        original_kinds = [t.kind for t in brain.hd.memory.traces]
+        restored_kinds = [t.kind for t in restored.hd.memory.traces]
+        self.assertEqual(restored_kinds, original_kinds)
+
+    def test_restore_reproduces_extensions_and_mistakes(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        restored = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        restored.restore(backup)
+
+        self.assertEqual(
+            set(restored.extensions.extensions.keys()), set(brain.extensions.extensions.keys())
+        )
+        self.assertEqual(set(restored.mistakes.records.keys()), set(brain.mistakes.records.keys()))
+
+    def test_restored_brain_still_perceives(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        restored = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        restored.restore(backup)
+
+        result = restored.perceive([0.1, 0.1, 0.1, 0.1])
+        self.assertTrue(len(result.output) > 0)
+
+    def test_restore_into_mismatched_architecture_raises(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        mismatched = make_brain(n_neurons=32, n_groups=2, hd_dimensions=32)
+        with self.assertRaises(ValueError):
+            mismatched.restore(backup)
 
 
 if __name__ == "__main__":

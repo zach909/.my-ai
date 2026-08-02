@@ -599,7 +599,13 @@ class HDThinkingSystem:
                 for nid, n in self.neurons.items()
             },
             "memory": [
-                {"key": t.key.data, "value": t.value.data, "strength": t.strength, "last_tick": t.last_tick}
+                {
+                    "key": t.key.data,
+                    "value": t.value.data,
+                    "strength": t.strength,
+                    "last_tick": t.last_tick,
+                    "kind": t.kind,
+                }
                 for t in self.memory.traces
             ],
         }
@@ -613,13 +619,14 @@ class HDThinkingSystem:
                 neuron.state = HDVector(list(n_data["state"]), neuron.state._bounds)
                 neuron.predictor_diag = list(n_data["predictor_diag"])
                 neuron.consolidation_count = n_data.get("consolidation_count", 0)
+        bounds = HDVector.zeros(self.config.dimensions)._bounds
         self.memory.traces = [
             MemoryTrace(
-                key=HDVector(list(t["key"]), self.memory.traces[0].key._bounds if self.memory.traces
-                             else HDVector.zeros(self.config.dimensions)._bounds),
-                value=HDVector(list(t["value"]), HDVector.zeros(self.config.dimensions)._bounds),
+                key=HDVector(list(t["key"]), bounds),
+                value=HDVector(list(t["value"]), bounds),
                 strength=t["strength"],
                 last_tick=t["last_tick"],
+                kind=t.get("kind", MemoryKind.LONG_TERM.value),
             )
             for t in state.get("memory", [])
         ]

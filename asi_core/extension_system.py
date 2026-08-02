@@ -57,6 +57,36 @@ class Extension:
     quantized: bool = False
     version: int = 1
 
+    def to_dict(self) -> Dict[str, Any]:
+        """Spec Part 9 section 171 (Backup System)."""
+        return {
+            "name": self.name,
+            "purpose": self.purpose,
+            "skills": list(self.skills),
+            "memory_trace_ids": list(self.memory_trace_ids),
+            "permissions": list(self.permissions),
+            "documentation": self.documentation,
+            "stage": self.stage.value,
+            "test_results": dict(self.test_results),
+            "quantized": self.quantized,
+            "version": self.version,
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "Extension":
+        return cls(
+            name=data["name"],
+            purpose=data["purpose"],
+            skills=list(data.get("skills", [])),
+            memory_trace_ids=list(data.get("memory_trace_ids", [])),
+            permissions=list(data.get("permissions", [])),
+            documentation=data.get("documentation", ""),
+            stage=ExtensionStage(data.get("stage", ExtensionStage.CREATED.value)),
+            test_results=dict(data.get("test_results", {})),
+            quantized=data.get("quantized", False),
+            version=data.get("version", 1),
+        )
+
 
 class ExtensionSystem:
     """Manages the lifecycle of self-created and human-created extensions."""
@@ -210,6 +240,30 @@ class ExtensionSystem:
     def history(self, name: str) -> List[Extension]:
         """Past versions of an extension, oldest first, most recent last."""
         return list(self._history.get(name, []))
+
+    # -- Serialization (spec Part 9 section 171, Backup System) -----------
+
+    def to_dict(self) -> Dict[str, Any]:
+        return {
+            "extensions": {name: ext.to_dict() for name, ext in self.extensions.items()},
+            "history": {
+                name: [ext.to_dict() for ext in versions]
+                for name, versions in self._history.items()
+            },
+        }
+
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> "ExtensionSystem":
+        system = cls()
+        system.extensions = {
+            name: Extension.from_dict(ext_data)
+            for name, ext_data in data.get("extensions", {}).items()
+        }
+        system._history = {
+            name: [Extension.from_dict(v) for v in versions]
+            for name, versions in data.get("history", {}).items()
+        }
+        return system
 
     def _get(self, name: str) -> Extension:
         ext = self.extensions.get(name)
