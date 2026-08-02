@@ -140,7 +140,9 @@ class NeuralMesh:
         divergence_tolerance: float = 0.5,
         sustained_divergence_ticks: int = 3,
         continuous: bool = False,
-        seed: Optional[int] = None
+        seed: Optional[int] = None,
+        auto_route: bool = False,
+        group_score_decay: float = 0.9
     ):
         # Validate configuration
         assert n_dimensions >= 2, "Need dim 0 for input flag plus >=1 content dim"
@@ -178,6 +180,16 @@ class NeuralMesh:
         # Skill/expert routing
         self.active_groups: Set[int] = set(range(n_groups))  # All active by default
         self.skill_top_k = min(2, n_groups)
+
+        # Optional top-k expert-group router. When disabled (default),
+        # `active_groups` is purely caller-controlled, as before. When
+        # enabled, `activate()` recomputes it every call from each group's
+        # recent-activity score, always keeping one round-robin exploration
+        # slot so a group that has never been picked is not starved forever.
+        self.auto_route = auto_route
+        self.group_score_decay = group_score_decay
+        self.group_scores: List[float] = [0.0] * n_groups
+        self._route_explore_cursor = 0
         
     def _initialize_neurons(self):
         """Create all neurons with appropriate roles and groups."""
@@ -343,7 +355,12 @@ class NeuralMesh:
         
         # Clamp inputs
         self.clamp_input_neurons(input_vector)
-        
+
+        # Route to top-k expert groups before settling, using scores from
+        # the previous cycle's activity (opt-in; see auto_route).
+        if self.auto_route:
+            self.update_group_routing()
+
         # Run settle loop
         settled_state = self._settle()
         
@@ -434,19 +451,63 @@ class NeuralMesh:
         return prev_state
     
     def _get_active_neurons(self) -> Optional[Set[int]]:
-        """Get set of active neurons based on expert routing."""
+        """
+        Get set of active neurons based on expert routing.
+
+        `active_groups` is the gate: by default every group is active, but a
+        caller may restrict it manually, or `auto_route=True` can be set to
+        have `activate()` recompute it every call via `update_group_routing`
+        (top-k expert-group selection, see that method).
+        """
         if self.n_groups <= 1:
             return None  # All neurons active
-        
-        # For now, all groups are active
-        # In full implementation, router would select top-k groups
+
         active_neurons = set()
         for neuron_id, neuron in self.neurons.items():
             if neuron.group in self.active_groups:
                 active_neurons.add(neuron_id)
         
         return active_neurons
-    
+
+    def update_group_routing(self) -> Set[int]:
+        """
+        Recompute `active_groups` as a top-k expert-group selection.
+
+        Each group's score is an EMA of its members' mean absolute
+        activation from the previous cycle, so groups that have recently
+        been useful are favored (spec: "Activate experts" as part of the
+        continuous tick cycle). One slot of `skill_top_k` is always
+        reserved for round-robin exploration of a currently-inactive group,
+        so a group with a stale low score is never starved permanently.
+        """
+        for group in range(self.n_groups):
+            members = [n for n in self.neurons.values() if n.group == group]
+            avg_activity = (
+                sum(abs(n.activation) for n in members) / len(members) if members else 0.0
+            )
+            self.group_scores[group] = (
+                self.group_score_decay * self.group_scores[group]
+                + (1 - self.group_score_decay) * avg_activity
+            )
+
+        top_k = max(1, min(self.skill_top_k, self.n_groups))
+        ranked = sorted(range(self.n_groups), key=lambda g: self.group_scores[g], reverse=True)
+
+        if top_k >= self.n_groups:
+            selected = set(range(self.n_groups))
+        else:
+            selected = set(ranked[: top_k - 1]) if top_k > 1 else set()
+            remaining = [g for g in range(self.n_groups) if g not in selected]
+            for _ in range(len(remaining)):
+                candidate = remaining[self._route_explore_cursor % len(remaining)]
+                self._route_explore_cursor += 1
+                if candidate not in selected:
+                    selected.add(candidate)
+                    break
+
+        self.active_groups = selected
+        return selected
+
     def _apply_divergence_correction(
         self,
         prev_state: Dict[int, List[float]],

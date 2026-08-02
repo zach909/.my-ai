@@ -378,6 +378,29 @@ class TestExpertGroupRouting(unittest.TestCase):
         for nid in active_mask:
             self.assertIn(mesh.neurons[nid].group, {0, 1})
 
+    def test_manual_active_groups_unaffected_when_auto_route_disabled(self):
+        """auto_route defaults to False: activate() must not overwrite a
+        caller-set active_groups restriction."""
+        mesh = NeuralMesh(n_neurons=16, n_groups=4, continuous=True)
+        mesh.active_groups = {2}
+        mesh.activate([0.5, 0.1, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3])
+        self.assertEqual(mesh.active_groups, {2})
+
+    def test_auto_route_selects_top_k_groups(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4, continuous=True, seed=1, auto_route=True)
+        mesh.activate([0.5, 0.1, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3])
+        self.assertEqual(len(mesh.active_groups), mesh.skill_top_k)
+        for g in mesh.active_groups:
+            self.assertIn(g, range(4))
+
+    def test_auto_route_never_starves_a_group_forever(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4, continuous=True, seed=1, auto_route=True)
+        seen = set()
+        for _ in range(20):
+            mesh.activate([0.5, 0.1, 0.2, 0.3, 0.4, 0.1, 0.2, 0.3])
+            seen |= mesh.active_groups
+        self.assertEqual(seen, {0, 1, 2, 3})
+
 
 class TestStatePersistence(unittest.TestCase):
     """Test state save/load functionality."""

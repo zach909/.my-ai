@@ -48,6 +48,7 @@ class CycleResult:
     average_surprise: float
     recalled_confidence: float = 0.0
     active_skills: List[str] = field(default_factory=list)
+    active_groups: List[int] = field(default_factory=list)
 
 
 @dataclass
@@ -60,6 +61,7 @@ class Introspection:
     average_surprise: float
     memory_size: int
     active_skills: List[str]
+    active_groups: List[int]
 
 
 class UnifiedBrain:
@@ -85,6 +87,7 @@ class UnifiedBrain:
             n_groups=n_groups,
             continuous=True,
             seed=seed,
+            auto_route=True,
         )
 
         # ValeSystem replaces the mesh's own redistribute_vale bookkeeping
@@ -213,6 +216,7 @@ class UnifiedBrain:
             average_surprise=sum(tick_result.surprises.values()) / max(1, len(tick_result.surprises)),
             recalled_confidence=recalled_confidence,
             active_skills=list(self.skills.keys()),
+            active_groups=sorted(self.mesh.active_groups),
         )
 
     def reason(self, a: List[float], b: List[float], c: List[float]) -> List[float]:
@@ -256,6 +260,7 @@ class UnifiedBrain:
             average_surprise=recent_surprise,
             memory_size=len(self.hd.memory),
             active_skills=list(self.skills.keys()),
+            active_groups=sorted(self.mesh.active_groups),
         )
 
     # -- Background maintenance (spec Part 2 section 19) ------------------
