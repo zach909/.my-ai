@@ -429,9 +429,14 @@ create_start_script() {
     cat > start.sh << 'START_SCRIPT'
 #!/bin/bash
 # Neuroclaw — Prometheus Elastic Core Launcher
+#
+# Opens the real desktop-app/ Electron shell (a native app window that owns
+# the backend + UI directly) rather than a browser tab -- clicking the
+# Neuroclaw icon should open a separate app, not add a tab to whatever
+# browser happens to be running.
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-cd "$SCRIPT_DIR"
+cd "$SCRIPT_DIR/desktop-app"
 
 echo ""
 echo -e "    \033[0;34m╔═══════════════════════════════════════════╗\033[0m"
@@ -439,26 +444,13 @@ echo -e "    \033[0;34m║\033[0m       \033[0;35m🧠 Neuroclaw AI\033[0m \033[
 echo -e "    \033[0;34m╚═══════════════════════════════════════════╝\033[0m"
 echo ""
 
-# Start the web UI in the background
-echo -e "    \033[0;36m→ Starting web interface...\033[0m"
-npm run dev --silent &
-WEB_PID=$!
-
-# Wait a moment for the server to start
-sleep 3
-
-# Try to open in browser
-if command -v xdg-open &> /dev/null; then
-    xdg-open http://localhost:3000
-elif command -v open &> /dev/null; then
-    open http://localhost:3000
-else
-    echo -e "    \033[0;36m→ Open your browser to: \033[1;34mhttp://localhost:3000\033[0m"
+if [ ! -d node_modules ]; then
+    echo -e "    \033[0;36m→ Installing desktop app dependencies (first run only)...\033[0m"
+    npm install --silent
 fi
 
-echo ""
-echo -e "    \033[0;36m→ Press Ctrl+C to stop all services\033[0m"
-wait $WEB_PID
+echo -e "    \033[0;36m→ Launching Neuroclaw...\033[0m"
+exec npm start --silent
 START_SCRIPT
 
     chmod +x start.sh
@@ -477,9 +469,9 @@ show_completion() {
     echo ""
     echo -e "      ${BLUE}•${NC} Double-click the ${PURPLE}Neuroclaw${NC} icon in your applications"
     echo -e "      ${BLUE}•${NC} Run ${CYAN}./start.sh${NC} from the terminal"
-    echo -e "      ${BLUE}•${NC} Use ${CYAN}npm run dev${NC} for development mode"
+    echo -e "      ${BLUE}•${NC} Use ${CYAN}npm run dev${NC} for development mode (opens in the browser instead)"
     echo ""
-    echo -e "    ${GRAY}→ App will open at: ${BLUE}http://localhost:3000${NC}"
+    echo -e "    ${GRAY}→ Opens as its own app window, not a browser tab${NC}"
     echo ""
     echo -e "    ${YELLOW}Note:${NC} First startup may take a moment while components initialize."
     echo ""
