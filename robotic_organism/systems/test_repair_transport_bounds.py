@@ -133,5 +133,33 @@ class TestTransportSystemDoesNotLeak(unittest.TestCase):
             "a route that transitions to delivered this tick must be removed in the same call, not the next one")
 
 
+class TestTransportNetworkReachesLimbs(unittest.TestCase):
+    def test_default_network_connects_every_node_to_the_spine(self):
+        # _create_default_network() added limb_L1/limb_R1/limb_L2/limb_R2 to
+        # self.nodes via add_node() but never called add_channel() to link
+        # them to the spine, so their `connections` list stayed permanently
+        # empty and _find_path_to_node()'s BFS (which only ever walks
+        # `connections`, starting from "spine_0") could never reach them.
+        transport = TransportSystem()
+        for node_id in ("limb_L1", "limb_R1", "limb_L2", "limb_R2"):
+            self.assertTrue(transport.nodes[node_id].connections,
+                f"{node_id} must have at least one channel connecting it to the network")
+
+    def test_route_repair_material_reaches_a_limb_location(self):
+        # All existing coverage in this file reports damage at (0, 0, 0),
+        # which resolves to nearest_node="spine_0" -- always routable even
+        # with the limb nodes fully disconnected, so it never caught this.
+        transport = TransportSystem()
+        damage = transport.report_damage(
+            x=0.05, y=0.1, z=0.0, damage_type="puncture", severity=0.9, timestamp=1000.0)
+        self.assertEqual(damage.nearest_node, "limb_L1",
+            "test setup should actually target a limb node, not the spine")
+
+        result = transport.route_repair_material(damage)
+        self.assertEqual(result.get('status'), 'routing_started',
+            "repair material must be routable to a limb location, not just the spine axis")
+        self.assertEqual(len(transport.repair_routes), 1)
+
+
 if __name__ == '__main__':
     unittest.main()

@@ -154,7 +154,24 @@ class TransportSystem:
         
         for node_id, x, y, z in branches:
             self.add_node(node_id, x=x, y=y, z=z)
-        
+
+        # Connect each branch node to its nearest spine node -- without this,
+        # limb_L1/limb_R1/limb_L2/limb_R2 are added to self.nodes but never
+        # appear in any TransportChannel, so their `connections` list stays
+        # empty forever. _find_path_to_node()'s BFS only ever walks a node's
+        # `connections`, starting from "spine_0", so any damage report whose
+        # nearest_node resolves to one of these isolated limb nodes (i.e.
+        # most damage locations off the spine's x=0 axis) can never find a
+        # route, silently failing repair-material delivery.
+        branch_spine_links = [
+            ("limb_L1", "spine_1"),
+            ("limb_R1", "spine_1"),
+            ("limb_L2", "spine_3"),
+            ("limb_R2", "spine_3"),
+        ]
+        for branch_id, spine_id in branch_spine_links:
+            self.add_channel(f"{branch_id}_ch", branch_id, spine_id)
+
         # Add pumps along spine
         for i in range(3):
             pump_id = f"pump_{i}"
