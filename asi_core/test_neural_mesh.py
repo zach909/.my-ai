@@ -277,13 +277,14 @@ class TestLearningWithValeGating(unittest.TestCase):
         post_act = {1: 0.6}
         
         conn_key = (0, 1)
-        initial = mesh_positive.connections[conn_key].weight_matrix[0][0]
-        
+        initial_positive = mesh_positive.connections[conn_key].weight_matrix[0][0]
+        initial_negative = mesh_negative.connections[conn_key].weight_matrix[0][0]
+
         mesh_positive.apply_hebbian_learning(pre_act, post_act, reward_signal=1.0, dt=0.1)
         mesh_negative.apply_hebbian_learning(pre_act, post_act, reward_signal=-1.0, dt=0.1)
-        
-        delta_positive = mesh_positive.connections[conn_key].weight_matrix[0][0] - initial
-        delta_negative = mesh_negative.connections[conn_key].weight_matrix[0][0] - initial
+
+        delta_positive = mesh_positive.connections[conn_key].weight_matrix[0][0] - initial_positive
+        delta_negative = mesh_negative.connections[conn_key].weight_matrix[0][0] - initial_negative
         
         # Opposite rewards should produce opposite changes
         self.assertGreater(delta_positive, delta_negative)
