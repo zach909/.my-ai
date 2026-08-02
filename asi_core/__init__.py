@@ -85,6 +85,11 @@ from .neural_dsl import (
     NDLError,
 )
 
+from .mistake_tracker import (
+    MistakeTracker,
+    MistakeRecord,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # Neural Mesh
@@ -150,4 +155,7 @@ __all__ = [
     "NeuronDefinition",
     "Connection",
     "NDLError",
+    # Mistake Tracker
+    "MistakeTracker",
+    "MistakeRecord",
 ]

@@ -330,5 +330,41 @@ class TestExpertCreation(unittest.TestCase):
             self.assertFalse(val != val)  # not NaN
 
 
+class TestMistakeTracking(unittest.TestCase):
+    def test_low_reward_cycle_is_recorded_as_a_mistake(self):
+        brain = make_brain()
+        result = brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        self.assertIsNotNone(result.mistake_signature)
+        self.assertFalse(result.mistake_repeated)
+        record = brain.mistakes.get(result.mistake_signature)
+        self.assertEqual(record.occurrences, 1)
+
+    def test_high_reward_cycle_is_not_a_mistake(self):
+        brain = make_brain()
+        result = brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.9)
+        self.assertIsNone(result.mistake_signature)
+        self.assertFalse(result.mistake_repeated)
+
+    def test_repeated_low_reward_input_is_flagged_as_repeated(self):
+        brain = make_brain()
+        r1 = brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        r2 = brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        self.assertFalse(r1.mistake_repeated)
+        self.assertTrue(r2.mistake_repeated)
+        self.assertEqual(r1.mistake_signature, r2.mistake_signature)
+
+    def test_repeated_mistake_still_conserves_vale(self):
+        brain = make_brain()
+        for _ in range(5):
+            brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        self.assertTrue(brain.vale.validate_invariant())
+
+    def test_correction_can_be_logged_via_mistake_tracker(self):
+        brain = make_brain()
+        result = brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        record = brain.mistakes.correct(result.mistake_signature, correction="raised vale on other groups", worked=True)
+        self.assertTrue(record.correction_worked)
+
+
 if __name__ == "__main__":
     unittest.main()
