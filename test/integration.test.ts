@@ -421,6 +421,22 @@ describe('Neuroclaw Integration Tests', () => {
       vi.doUnmock('node:fs');
       vi.resetModules();
     });
+
+    it('should not leave a leftover temp directory behind when no capture tool is available', async () => {
+      // mkdtempSync() runs unconditionally at the top of capture(); with no
+      // capture tool installed (the common case in this sandbox), the
+      // directory it created was never cleaned up on any of the early
+      // "tool unavailable" return paths -- the same unbounded-resource-leak
+      // bug class already fixed in camera.ts/microphone.ts.
+      const os = await import('node:os');
+      const fs = await import('node:fs');
+      const before = new Set(fs.readdirSync(os.tmpdir()));
+      await screenshotsPlugin.capture();
+      const after = fs.readdirSync(os.tmpdir()).filter(
+        (name) => name.startsWith('neuroclaw-ss-') && !before.has(name)
+      );
+      expect(after).toEqual([]);
+    });
   });
 
   describe('End-to-End Flow', () => {
