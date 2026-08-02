@@ -423,6 +423,58 @@ class TestExpertGroupRouting(unittest.TestCase):
         self.assertEqual(mesh.active_expert_names(), ["coding", "language"])
 
 
+class TestExpertGroupCreation(unittest.TestCase):
+    """Test dynamic expert creation (spec Part 4 section 42)."""
+
+    def test_add_expert_group_increases_counts(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=2, n_input=4)
+        group_id, new_ids = mesh.add_expert_group("robotics", 4)
+        self.assertEqual(group_id, 2)
+        self.assertEqual(mesh.n_groups, 3)
+        self.assertEqual(mesh.n_neurons, 20)
+        self.assertEqual(new_ids, [16, 17, 18, 19])
+
+    def test_new_neurons_are_assigned_to_the_new_group(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=2, n_input=4)
+        group_id, new_ids = mesh.add_expert_group("robotics", 4)
+        for nid in new_ids:
+            self.assertEqual(mesh.neurons[nid].group, group_id)
+
+    def test_new_group_is_named(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=2, n_input=4)
+        group_id, _ = mesh.add_expert_group("robotics", 4)
+        self.assertEqual(mesh.get_group_name(group_id), "robotics")
+
+    def test_new_neurons_are_wired_all_to_all(self):
+        mesh = NeuralMesh(n_neurons=8, n_groups=2, n_input=2)
+        _, new_ids = mesh.add_expert_group("robotics", 3)
+        for i in range(mesh.n_neurons):
+            for j in range(mesh.n_neurons):
+                if i != j:
+                    self.assertIn((i, j), mesh.connections)
+
+    def test_mesh_still_activates_after_growth(self):
+        mesh = NeuralMesh(n_neurons=8, n_groups=2, n_input=2, continuous=True)
+        mesh.add_expert_group("robotics", 3)
+        output = mesh.activate([0.5, 0.2])
+        for val in output:
+            self.assertFalse(math.isnan(val) or math.isinf(val))
+
+    def test_invalid_neuron_count_raises(self):
+        mesh = NeuralMesh(n_neurons=8, n_groups=2, n_input=2)
+        with self.assertRaises(ValueError):
+            mesh.add_expert_group("robotics", 0)
+
+    def test_repeated_growth_keeps_ids_and_groups_unique(self):
+        mesh = NeuralMesh(n_neurons=8, n_groups=2, n_input=2)
+        _, first_ids = mesh.add_expert_group("robotics", 2)
+        _, second_ids = mesh.add_expert_group("vision", 2)
+        self.assertEqual(set(first_ids) & set(second_ids), set())
+        self.assertEqual(mesh.n_groups, 4)
+        self.assertEqual(mesh.get_group_name(2), "robotics")
+        self.assertEqual(mesh.get_group_name(3), "vision")
+
+
 class TestStatePersistence(unittest.TestCase):
     """Test state save/load functionality."""
     

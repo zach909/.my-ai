@@ -405,3 +405,30 @@ class UnifiedBrain:
             self.extensions.optimize(name)
             self.extensions.quantize(name)
         return ext
+
+    # -- Expert creation (spec Part 4 section 42) --------------------------
+
+    def create_expert(self, name: str, n_new_neurons: int = 4) -> int:
+        """
+        Grow the mesh with a new, named expert group of freshly
+        initialized neurons wired into the existing mesh ("new neurons are
+        created... the new expert is trained"). ValeSystem is the single
+        source of truth for vale, so the new neurons' real vale stake
+        comes from vale.add_neurons() (funded proportionally out of the
+        existing budget), immediately re-synced onto the mesh, rather than
+        the mesh inventing vale for them itself. Their synapses are
+        registered with the learning system so they participate in every
+        subsequent perceive() cycle. Returns the new expert's group id.
+        """
+        group_id, new_ids = self.mesh.add_expert_group(name, n_new_neurons)
+        self.vale.add_neurons(n_new_neurons, policy="rescale")
+        self._sync_vale_to_mesh()
+
+        new_id_set = set(new_ids)
+        for nid in new_ids:
+            self.states.register_neuron(str(nid))
+        for (source_id, target_id) in self.mesh.connections:
+            if source_id in new_id_set or target_id in new_id_set:
+                self.states.register_synapse(str(source_id), str(target_id))
+
+        return group_id
