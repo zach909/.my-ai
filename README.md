@@ -188,6 +188,8 @@ Microphone plugin.
 
 Voice activation plugin.
 
+kernal plugin.
+
 Notifications plugin.
 
 Account information plugin.
