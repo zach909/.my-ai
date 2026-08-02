@@ -1,5 +1,7 @@
 import http from 'node:http';
+import crypto from 'node:crypto';
 import { AppLauncher } from './app-launcher.js';
+import { EncryptionManager } from './encryption.js';
 const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -178,24 +180,82 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 </script>
 </body>
 </html>`;
+const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 export class WebServer {
     constructor(runner, launcher) {
         this.server = null;
         this.port = 0;
+        // Set only when start() is given a non-localhost host and a password --
+        // see start()'s doc comment for why binding remotely without one is refused.
+        this.passwordHash = null;
+        this.passwordSalt = null;
+        this.encryption = new EncryptionManager();
         this.runner = runner;
         this.launcher = launcher ?? new AppLauncher();
     }
-    async start(port = 3000) {
+    /**
+     * Start the server. `host` defaults to loopback-only, matching every prior
+     * version of this file -- passing anything else exposes the AI's full
+     * capabilities (terminal-adjacent app launching, file/extension writes,
+     * ...) to the local network, so that path requires `password` and gates
+     * every request behind HTTP Basic Auth. Binding remotely with no password
+     * is refused outright rather than silently serving unauthenticated.
+     */
+    async start(port = 3000, host = '127.0.0.1', password) {
         if (this.server)
             throw new Error('Web server already running');
         this.port = port;
+        const isLocal = LOCAL_HOSTS.has(host);
+        if (!isLocal) {
+            if (!password) {
+                throw new Error(`Refusing to bind to ${host}: a password is required for non-localhost access ` +
+                    `(set NEUROCLAW_WEB_PASSWORD). Binding stays loopback-only otherwise.`);
+            }
+            this.passwordSalt = crypto.randomBytes(16);
+            this.passwordHash = await this.encryption.hashPassword(password, this.passwordSalt);
+        }
+        else {
+            this.passwordHash = null;
+            this.passwordSalt = null;
+        }
         await this.runner.start();
         return new Promise((resolve, reject) => {
             this.server = http.createServer((req, res) => this.handleRequest(req, res));
-            // Security: Bind to localhost only to prevent external access to the AI's capabilities
-            this.server.listen(port, '127.0.0.1', () => resolve());
+            this.server.listen(port, host, () => resolve());
             this.server.on('error', (err) => { this.server = null; reject(err); });
         });
+    }
+    /** True once start() has required and validated a remote-access password. */
+    get authRequired() {
+        return this.passwordHash !== null;
+    }
+    /** Constant-time check of an incoming `Authorization: Basic ...` header's password against the configured one. */
+    async isAuthorized(req) {
+        if (!this.authRequired)
+            return true;
+        const header = req.headers.authorization ?? '';
+        const match = /^Basic\s+(\S+)$/i.exec(header);
+        if (!match)
+            return false;
+        let decoded;
+        try {
+            decoded = Buffer.from(match[1], 'base64').toString('utf8');
+        }
+        catch {
+            return false;
+        }
+        const sep = decoded.indexOf(':');
+        const suppliedPassword = sep === -1 ? decoded : decoded.slice(sep + 1);
+        const suppliedHash = await this.encryption.hashPassword(suppliedPassword || ' ', this.passwordSalt).catch(() => null);
+        if (!suppliedHash || suppliedHash.length !== this.passwordHash.length)
+            return false;
+        return crypto.timingSafeEqual(suppliedHash, this.passwordHash);
+    }
+    requireAuth(res) {
+        this.setSecurityHeaders(res);
+        res.setHeader('WWW-Authenticate', 'Basic realm="Neuroclaw", charset="UTF-8"');
+        res.writeHead(401, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Authentication required' }));
     }
     async stop() {
         if (!this.server)
@@ -293,9 +353,16 @@ export class WebServer {
         const pathname = parsedUrl.pathname;
         const method = req.method?.toUpperCase() ?? 'GET';
         if (method === 'OPTIONS') {
+            // No credentials are ever readable from a CORS preflight, so gating
+            // it behind auth would only break legitimate preflighted requests --
+            // the real request right after this is still checked below.
             this.setSecurityHeaders(res);
             res.writeHead(204);
             res.end();
+            return;
+        }
+        if (this.authRequired && !(await this.isAuthorized(req))) {
+            this.requireAuth(res);
             return;
         }
         if (pathname === '/' && method === 'GET') {

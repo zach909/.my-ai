@@ -49,7 +49,11 @@ export async function startWeb(port: number): Promise<WebServer> {
   const { llm, pipeline, thesaurus, pluginRegistry, systemAccess } = await buildCore();
   const runner = new NeuroclawRunner(llm, pipeline, thesaurus, pluginRegistry, systemAccess, systemAccess.getMultiDesktop());
   const web = new WebServer(runner);
-  await web.start(port);
+  // Loopback-only unless NEUROCLAW_WEB_HOST opts into remote access, in
+  // which case NEUROCLAW_WEB_PASSWORD is required -- see WebServer.start()'s
+  // doc comment for why an unauthenticated remote bind is refused outright.
+  const host = process.env.NEUROCLAW_WEB_HOST || '127.0.0.1';
+  await web.start(port, host, process.env.NEUROCLAW_WEB_PASSWORD);
   return web;
 }
 
@@ -68,8 +72,9 @@ if (isEntryPoint()) {
   const [mode, portArg] = process.argv.slice(2);
   if (mode === 'web') {
     const port = Number(portArg) || 7861;
+    const host = process.env.NEUROCLAW_WEB_HOST || '127.0.0.1';
     startWeb(port)
-      .then(() => console.log(`Neuroclaw HTTP backend listening on http://127.0.0.1:${port}`))
+      .then(() => console.log(`Neuroclaw HTTP backend listening on http://${host}:${port}`))
       .catch(err => { console.error('Failed to start web backend:', err); process.exit(1); });
   } else {
     bootstrap()
