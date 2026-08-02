@@ -2584,7 +2584,14 @@ async function testAGIModules() {
   check(withCombine.trace.some(t => t.kind === 'creative'), 'ReasoningEngine: the creative step is recorded in the trace');
   const noCombine = await new ReasoningEngine({ recall: () => [], combine: () => null }).reason('what is quixotic and zorbnak');
   check(!noCombine.creativeCombination, 'ReasoningEngine: no fabricated combination when combine() finds nothing novel');
-  check(withCombine.result.includes('Creative exploration'), 'ReasoningEngine: the creative note surfaces in the result regardless of which approach was actually chosen');
+  // combine() is a training-time discovery mechanism (extension building /
+  // Net Search), not a conversational answer -- on a knowledge graph with
+  // few learned definitions, missing.length >= 2 is true for nearly every
+  // ordinary message, so gluing the note onto every chat-facing result made
+  // solve()/collaborate() routinely reply with "X-Y hybrid: a combination of
+  // X (no definition) and Y (no definition)..." instead of an actual answer.
+  // It stays on the returned object for callers that want it explicitly.
+  check(!withCombine.result.includes('Creative exploration'), "ReasoningEngine: the creative note doesn't leak into the chat-facing result -- callers that want it read creativeCombination directly");
 
   // KnowledgeTransfer (ASI §7): structural cross-domain transfer.
   const { KnowledgeTransfer } = await load('models && skills/core/knowledge-transfer.js');
@@ -2965,10 +2972,13 @@ async function testCreativeCombinationRefinement() {
     // knowledge graph -- not sitting inert at a fixed value forever
     // regardless of whether it ever actually helped.
     const out = await sys.solve('what is quixotic and zorbnak');
-    check(out.result.includes('Creative exploration'), 'A fresh system with unknown terms genuinely falls through to creative combination');
-    const comboMatch = out.result.match(/"([^"]+ hybrid)"/);
-    check(!!comboMatch, "solve()'s result names the creative combination it used");
-    const refinedConfidence = sys.knowledge.neighbors(comboMatch[1], 'combines').map(n => n.relation.confidence);
+    check(!!out.creativeCombination, 'A fresh system with unknown terms genuinely falls through to creative combination');
+    // The combination is structured data on the result (`creativeCombination`)
+    // for callers that want it -- it's a training-time discovery artifact, not
+    // conversational text, so it no longer needs to be regex-scraped out of
+    // out.result (which is the actual chat-facing answer).
+    check(!out.result.includes('Creative exploration'), "solve()'s chat-facing result text doesn't include the creative-combination note");
+    const refinedConfidence = sys.knowledge.neighbors(out.creativeCombination.name, 'combines').map(n => n.relation.confidence);
     check(refinedConfidence.length === 2, 'The combination has both of its "combines" relations in the knowledge graph');
     check(refinedConfidence.every(c => c === (out.verified ? 1 : 0)), "The combination's confidence is refined to match this solve() call's actual verified outcome, not left at a fixed starting value");
   } finally {
