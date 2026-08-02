@@ -44,13 +44,30 @@ export class CalendarPlugin extends BasePlugin {
         const now = Date.now();
         return this.events.filter(e => e.startTime >= now).sort((a, b) => a.startTime - b.startTime).slice(0, count);
     }
-    load() { try {
-        if (existsSync(STORAGE_FILE))
-            this.events = JSON.parse(readFileSync(STORAGE_FILE, "utf-8"));
+    load() {
+        try {
+            if (!existsSync(STORAGE_FILE))
+                return;
+            const raw = JSON.parse(readFileSync(STORAGE_FILE, "utf-8"));
+            // Both this plugin and plugin_calendar.py (the Python sibling) persist
+            // to the exact same STORAGE_FILE path, sharing the same "cal-*" id
+            // format -- but plugin_calendar.py's events use "start"/"end" seconds
+            // fields, not this class's "startTime"/"endTime" milliseconds fields.
+            // Without this normalization, list()/getUpcoming() filter and sort on
+            // `e.startTime`/`e.endTime`, which are `undefined` on every
+            // Python-written record: getUpcoming() silently drops genuinely
+            // upcoming events (undefined >= now is always false), and list()'s
+            // from/to filtering and sort order break the same way.
+            this.events = raw.map((e) => ({
+                ...e,
+                startTime: e.startTime ?? (typeof e.start === "number" ? e.start * 1000 : e.startTime),
+                endTime: e.endTime ?? (typeof e.end === "number" ? e.end * 1000 : e.endTime),
+            }));
+        }
+        catch {
+            this.events = [];
+        }
     }
-    catch {
-        this.events = [];
-    } }
     save() { try {
         if (!existsSync(STORAGE_DIR))
             mkdirSync(STORAGE_DIR, { recursive: true });
