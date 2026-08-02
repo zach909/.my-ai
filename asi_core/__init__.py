@@ -48,6 +48,7 @@ from .hyperdim_thinking import (
     permute,
     cosine_similarity,
     NeuronPhase,
+    MemoryKind,
     HDConfig,
     Message,
     MemoryTrace,
@@ -60,6 +61,7 @@ from .hyperdim_thinking import (
 from .unified_brain import (
     UnifiedBrain,
     CycleResult,
+    Introspection,
 )
 
 __version__ = "0.1.0"
@@ -100,6 +102,7 @@ __all__ = [
     "permute",
     "cosine_similarity",
     "NeuronPhase",
+    "MemoryKind",
     "HDConfig",
     "Message",
     "MemoryTrace",
@@ -110,4 +113,5 @@ __all__ = [
     # Unified Brain
     "UnifiedBrain",
     "CycleResult",
+    "Introspection",
 ]

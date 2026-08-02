@@ -4,6 +4,7 @@ HDThinkingSystem and the neural_states learning system into one pipeline."""
 import unittest
 
 from asi_core.unified_brain import UnifiedBrain, CycleResult
+from asi_core.hyperdim_thinking import MemoryKind
 
 
 def make_brain(**overrides):
@@ -208,6 +209,39 @@ class TestMaintenance(unittest.TestCase):
         brain.maintain()
         after = {nid: list(n.state_vector) for nid, n in brain.mesh.neurons.items()}
         self.assertEqual(before, after)
+
+
+class TestSelfImprovement(unittest.TestCase):
+    def test_repeated_success_pattern_is_promoted_to_a_permanent_skill(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+
+        long_term_traces = [
+            t for t in brain.hd.memory.traces if t.kind == MemoryKind.LONG_TERM.value
+        ]
+        self.assertTrue(any(t.strength >= 1.2 for t in long_term_traces))
+
+        created = brain.self_improve(min_strength=1.2)
+        self.assertTrue(len(created) >= 1)
+        for name in created:
+            self.assertIn(name, brain.skills)
+
+    def test_self_improve_does_not_recreate_already_promoted_skills(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+
+        first = brain.self_improve(min_strength=1.2)
+        second = brain.self_improve(min_strength=1.2)
+        self.assertTrue(len(first) >= 1)
+        self.assertEqual(second, [])
+
+    def test_self_improve_with_no_strong_patterns_creates_nothing(self):
+        brain = make_brain()
+        brain.perceive([0.1, 0.1, 0.1, 0.1])
+        created = brain.self_improve(min_strength=1.2)
+        self.assertEqual(created, [])
 
 
 if __name__ == "__main__":
