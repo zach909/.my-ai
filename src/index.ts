@@ -1093,6 +1093,8 @@ export class NeuroclawSystem {
     contradictions: string[];
     criticIssues: string[];
     trace: ReasoningStep[];
+    /** A combination the reasoner synthesized for terms the knowledge graph had no definition for yet (training-time discovery, ASI §11) -- present only when one was actually used, never fabricated. */
+    creativeCombination?: { name: string; definition: string };
   }> {
     if (!this.initialized) await this.initialize();
     return this.trackCall("solve", async () => this.solveImpl(problem, opts));
@@ -1109,6 +1111,8 @@ export class NeuroclawSystem {
     contradictions: string[];
     criticIssues: string[];
     trace: ReasoningStep[];
+    /** A combination the reasoner synthesized for terms the knowledge graph had no definition for yet (training-time discovery, ASI §11) -- present only when one was actually used, never fabricated. */
+    creativeCombination?: { name: string; definition: string };
   }> {
     // ASI §3/§10/§13/§23: gate solve()'s *real* execution (hive delegation,
     // actual generated actions) through the same AlignmentVeto safety layer
@@ -1367,7 +1371,7 @@ export class NeuroclawSystem {
     const finalResult = solveDecision.requiresConfirmation
       ? `${r.result}\n  [Confirm before acting: ${solveDecision.reasons.join("; ")}]`
       : r.result;
-    return { result: finalResult, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, criticIssues: criticReport.issues, trace: r.trace };
+    return { result: finalResult, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, criticIssues: criticReport.issues, trace: r.trace, creativeCombination: r.creativeCombination };
   }
 
   /**
@@ -1587,14 +1591,19 @@ export class NeuroclawSystem {
     this.hive.spawn({
       id: "creative", role: "creative", specialization: "creativity", capabilities: ["creativity"],
       think: async (prompt) => {
-        // §11: "creativity by combining concepts that have not previously
-        // been connected" -- a real combination of two salient terms from
-        // the prompt, not a generic creative-sounding completion.
-        const terms = uniqueLongTokens(prompt);
-        const combo = terms.length >= 2 ? this.discovery.combine(terms[0], terms[1]) : null;
-        return combo
-          ? `${combo.name}: ${combo.definition}`
-          : this.runner.generate(prompt);
+        // discovery.combine() is a training-time knowledge-graph mechanism
+        // (extension building / Net Search discovery cycles synthesize new
+        // concepts from ones with no definition yet, §11's "combining
+        // concepts that have not previously been connected"). It was
+        // previously this agent's *default* answer whenever the prompt had
+        // 2+ salient terms -- on a fresh knowledge graph (no definitions
+        // learned yet) that's every ordinary conversational message, so
+        // solve()/collaborate() routinely returned "X-Y hybrid: a
+        // combination of X (no definition) and Y (no definition)..." as the
+        // literal chat reply instead of an actual answer. combine() stays
+        // available for training/extension-builder callers that invoke it
+        // directly; live delegation always generates a real response.
+        return this.runner.generate(prompt);
       },
     });
     this.hive.spawn({
@@ -2060,16 +2069,6 @@ function normalizeText(text: string): string {
   return (text || "").toLowerCase().replace(/\s+/g, " ").trim();
 }
 
-/** The most distinctive (longest, de-duplicated) words in a prompt, longest first -- used to pick DiscoveryEngine.combine()'s two source concepts. */
-function uniqueLongTokens(text: string): string[] {
-  const seen = new Set<string>();
-  const words = (text || "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);
-  const unique: string[] = [];
-  for (const w of words) {
-    if (!seen.has(w)) { seen.add(w); unique.push(w); }
-  }
-  return unique.sort((a, b) => b.length - a.length);
-}
 
 // Singleton instance for module-level access
 let system: NeuroclawSystem | null = null;

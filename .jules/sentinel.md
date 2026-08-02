@@ -74,3 +74,8 @@
 **Vulnerability:** The `NotificationsPlugin` in `plugins/plugin_notifications.py` was vulnerable to argument/flag injection when calling `notify-send` because user-controlled inputs (`title`, `body`, `icon`, and `timeout`) were passed directly without validating if they started with options (`-`) or contained invalid formats/ranges.
 **Learning:** Even simple system utility wrappers like `notify-send` can interpret leading hyphens as option flags rather than positional text, and lack of strict runtime type/range casting for integers (like `timeout` and `progress` percentage values) can allow passing flags through numeric inputs.
 **Prevention:** Always validate all string parameters passed to external subprocesses to ensure they do not start with a hyphen, and cast/validate numerical parameters to check they are within safe positive ranges.
+
+## 2026-09-03 - Secure Calendar File and Directory Permissions across Sibling Implementations
+**Vulnerability:** The parallel Python (`plugin_calendar.py`) and TypeScript (`calendar.ts`) calendar plugins stored sensitive calendar event data containing PII with default system permissions, leaving them potentially world- or group-readable.
+**Learning:** For parallel implementations (TS and Python), securing the database file in only one language leaves the user exposed when they switch backends or execute the other runtime. Permissions must be explicitly locked down at creation using platform-appropriate APIs.
+**Prevention:** Always set directory permissions to `0o700` and file permissions to `0o600` on POSIX systems. Use safe file creation flags (`os.open` with mode `0o600` and `os.fdopen` in Python; `mode: 0o600` in Node's `writeFileSync`) to avoid race conditions.
