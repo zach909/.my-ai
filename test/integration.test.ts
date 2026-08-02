@@ -16,6 +16,10 @@ import { EmpathyEngine } from '../models && skills/core/empathy.js';
 import { PluginRegistry } from '../plugin_manager/registry.js';
 import { BrowserPlugin } from '../plugins/browser.js';
 import { LocationPlugin } from '../plugins/location.js';
+import { NotificationsPlugin } from '../plugins/notifications.js';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 describe('Neuroclaw Integration Tests', () => {
   let pipeline: NeuroPipeline;
@@ -288,6 +292,53 @@ describe('Neuroclaw Integration Tests', () => {
       } finally {
         vi.useRealTimers();
       }
+    });
+  });
+
+  describe('Notifications Plugin Command Safety', () => {
+    let notificationsPlugin: NotificationsPlugin;
+    let originalDisplay: string | undefined;
+    const marker = join(tmpdir(), `neuroclaw-notif-injection-test-${Date.now()}`);
+
+    beforeEach(() => {
+      notificationsPlugin = new NotificationsPlugin({
+        id: 'notifications',
+        name: 'Notifications',
+        type: 'api-connection',
+        capabilities: ['notifications'],
+      });
+      originalDisplay = process.env.DISPLAY;
+      process.env.DISPLAY = ':0'; // show() only shells out to notify-send when DISPLAY is set
+      if (existsSync(marker)) rmSync(marker);
+    });
+
+    afterEach(() => {
+      if (originalDisplay === undefined) delete process.env.DISPLAY;
+      else process.env.DISPLAY = originalDisplay;
+      if (existsSync(marker)) rmSync(marker);
+    });
+
+    it('should not execute shell command substitution embedded in a notification title', async () => {
+      // A title/body reaching a shell-interpolated `execSync` call would let
+      // `$(...)` run arbitrary commands; a real notify-send binary isn't
+      // even required for that side effect to fire (the shell evaluates
+      // command substitution during word-splitting, before command lookup).
+      await notificationsPlugin.show(`$(touch ${marker})`, 'body');
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it('should not execute shell command substitution embedded in a notification body', async () => {
+      await notificationsPlugin.show('title', `$(touch ${marker})`);
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it('should still record the notification with the literal, unexecuted title text', async () => {
+      const title = `$(touch ${marker})`;
+      await notificationsPlugin.show(title, 'body');
+      // show() marks it shown:true immediately, so it won't be in listActive();
+      // access the underlying array to confirm the literal text was stored.
+      const stored = (notificationsPlugin as unknown as { notifications: Array<{ title: string }> }).notifications;
+      expect(stored.some(n => n.title === title)).toBe(true);
     });
   });
 
