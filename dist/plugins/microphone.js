@@ -1,7 +1,7 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { spawn } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, mkdtempSync } from "node:fs";
-import { join } from "node:path";
+import { existsSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync } from "node:fs";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 export class MicrophonePlugin extends BasePlugin {
     constructor(definition) {
@@ -62,6 +62,22 @@ export class MicrophonePlugin extends BasePlugin {
             size = buf.length;
             try {
                 unlinkSync(this.recordPath);
+            }
+            catch { }
+        }
+        if (this.recordPath) {
+            // startRecording() puts recordPath inside a dedicated mkdtempSync()
+            // directory it never stores anywhere else -- gated on the same
+            // existsSync(recordPath) check as the read above, cleanup only ran
+            // when a recording tool actually wrote the .wav file. Neither
+            // arecord nor ffmpeg being installed (startRecording()'s fallback
+            // path) still creates the directory, just never the file inside it,
+            // so that (also empty) directory leaked on every single session with
+            // no recording tool available -- the same leak bug class already
+            // fixed in camera.ts's stopStream(), just reachable through a wider
+            // set of paths here.
+            try {
+                rmdirSync(dirname(this.recordPath));
             }
             catch { }
         }
