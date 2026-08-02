@@ -99,6 +99,12 @@ from .action_log import (
     ApprovalStatus,
 )
 
+from .hive_mind import (
+    HiveMind,
+    TrustSystem,
+    ShareRecord,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # Neural Mesh
@@ -174,4 +180,8 @@ __all__ = [
     "ActionLog",
     "ActionRecord",
     "ApprovalStatus",
+    # Hive Mind
+    "HiveMind",
+    "TrustSystem",
+    "ShareRecord",
 ]
