@@ -1,0 +1,211 @@
+"""
+Unified Brain
+
+Wires the previously independent asi_core subsystems into the single
+continuously-operating pipeline described by the project architecture:
+
+    Input -> Dynamic Neural State -> Memory -> Reasoning -> Skills -> Output -> Learning
+
+Before this module existed, neural_mesh.NeuralMesh, vale_system.ValeSystem,
+hyperdim_thinking.HDThinkingSystem and neural_states.StateManager /
+LearningSystem were each fully implemented and individually tested, but
+never called each other:
+
+- NeuralMesh carried its own simplistic, ad-hoc zero-sum vale bookkeeping
+  (redistribute_vale / raise_vale / demote_vale) instead of using the
+  dedicated, invariant-checked ValeSystem.
+- HDThinkingSystem's hyper-dimensional memory and analogy-style reasoning
+  never saw anything the mesh produced.
+- neural_states.LearningSystem's multi-rule plasticity (Hebbian/Oja/BCM/
+  homeostatic) never ran against the mesh's synapses.
+
+UnifiedBrain makes ValeSystem the single source of truth for every
+neuron's vale (the mesh's own vale fields are treated as a read-only
+mirror, refreshed after every vale update), drives HDThinkingSystem's
+memory/reasoning from the mesh's settled output on every cycle, and runs
+the richer neural_states plasticity rules over the mesh's synapses in
+addition to the mesh's own Hebbian update.
+"""
+
+from dataclasses import dataclass, field
+from typing import Callable, Dict, List, Optional
+
+from .neural_mesh import NeuralMesh
+from .vale_system import ValeSystem, ValeConfig
+from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector
+from .neural_states import StateManager, LearningSystem
+
+
+Skill = Callable[[List[float]], List[float]]
+
+
+@dataclass
+class CycleResult:
+    """Everything produced by one full perceive() cycle."""
+    output: List[float]
+    memory_consolidated: int
+    average_vale: float
+    average_surprise: float
+    active_skills: List[str] = field(default_factory=list)
+
+
+class UnifiedBrain:
+    """
+    Single entry point combining the neural mesh, elastic vale system,
+    hyper-dimensional memory/reasoning, and multi-rule learning system
+    into one architecture with persistent internal state.
+    """
+
+    def __init__(
+        self,
+        n_neurons: int = 64,
+        n_dimensions: int = 4,
+        n_input: int = 8,
+        n_groups: int = 4,
+        hd_dimensions: int = 256,
+        seed: Optional[int] = 42,
+    ):
+        self.mesh = NeuralMesh(
+            n_neurons=n_neurons,
+            n_dimensions=n_dimensions,
+            n_input=n_input,
+            n_groups=n_groups,
+            continuous=True,
+            seed=seed,
+        )
+
+        # ValeSystem replaces the mesh's own redistribute_vale bookkeeping
+        # as the single conserving ledger of plasticity budget.
+        self.vale = ValeSystem(ValeConfig(n_neurons=n_neurons), seed=seed)
+
+        hd_neurons = max(2, n_groups)
+        self.hd = HDThinkingSystem(
+            n_neurons=hd_neurons,
+            dimensions=hd_dimensions,
+            n_input=1,
+            n_groups=n_groups,
+            config=HDConfig(dimensions=hd_dimensions),
+            seed=seed,
+        )
+        self._hd_cue_neuron = 0
+
+        self.states = StateManager()
+        self.learning = LearningSystem(self.states)
+        for nid in self.mesh.neurons:
+            self.states.register_neuron(str(nid))
+        for (source_id, target_id) in self.mesh.connections:
+            self.states.register_synapse(str(source_id), str(target_id))
+
+        self.skills: Dict[str, Skill] = {}
+        self._sync_vale_to_mesh()
+
+    # -- Skills / extension points -----------------------------------
+
+    def register_skill(self, name: str, fn: Skill) -> None:
+        """
+        Register a named skill: a callable applied, in registration order,
+        to the reasoned output vector before it is returned. This is the
+        seam through which the Mixture-of-Experts / skill system plugs
+        into the brain without the brain needing to know about it.
+        """
+        self.skills[name] = fn
+
+    def unregister_skill(self, name: str) -> None:
+        self.skills.pop(name, None)
+
+    def _apply_skills(self, output: List[float]) -> List[float]:
+        for fn in self.skills.values():
+            output = fn(output)
+        return output
+
+    # -- Vale <-> Mesh sync -----------------------------------------
+
+    def _sync_vale_to_mesh(self) -> None:
+        """Mirror ValeSystem's ledger onto the mesh's neuron.vale fields,
+        which the mesh's own Hebbian update reads to gate plasticity."""
+        for nid, neuron in self.mesh.neurons.items():
+            if nid < len(self.vale.v):
+                neuron.vale = self.vale.v[nid]
+
+    # -- HD encoding ----------------------------------------------------
+
+    def _vector_to_hd(self, values: List[float]) -> HDVector:
+        dims = self.hd.config.dimensions
+        data = list(values[:dims]) + [0.0] * max(0, dims - len(values))
+        return HDVector(data, HDVector._compute_bounds(dims))
+
+    # -- Core cycle ----------------------------------------------------
+
+    def perceive(self, input_vector: List[float], reward: float = 0.5) -> CycleResult:
+        """Run one full perceive-think-act-learn cycle."""
+
+        # 1. Dynamic neural state: settle the mesh on the new input,
+        #    carrying state forward between calls (continuous mode).
+        raw_output = self.mesh.step_continuous(input_vector)
+        settle_vector = raw_output if raw_output else input_vector
+
+        # 2. Memory: encode the settled state as a hypervector and tick the
+        #    HD thinking system so it can integrate, predict, and
+        #    surprise-gate consolidation into long-term memory.
+        cue = self._vector_to_hd(settle_vector)
+        tick_result = self.hd.tick(inputs={self._hd_cue_neuron: cue}, reward=reward)
+
+        # 3. Reasoning: recall the closest existing memory trace and fold
+        #    its semantic content back into the output as context.
+        traces = self.hd.recall(cue, k=1)
+        if traces and raw_output:
+            recalled_sem = traces[0].value.sem
+            reasoned = [
+                (v + recalled_sem[i % len(recalled_sem)]) / 2.0 if recalled_sem else v
+                for i, v in enumerate(raw_output)
+            ]
+        else:
+            reasoned = list(raw_output)
+
+        # 4. Skills: pluggable expert transforms (Mixture-of-Experts seam).
+        output = self._apply_skills(reasoned)
+
+        # 5. Learning: refresh vale from observed neuron utility, re-sync it
+        #    onto the mesh, run the mesh's vale-gated Hebbian update, and
+        #    run the richer per-synapse plasticity rules.
+        activations = {nid: n.activation for nid, n in self.mesh.neurons.items()}
+        utility = [self.mesh.neurons[i].activation for i in range(len(self.vale.v))]
+        self.vale.step(utility=utility)
+        for nid, neuron in self.mesh.neurons.items():
+            self.vale.record_activity(nid, neuron.activation)
+        self._sync_vale_to_mesh()
+
+        self.mesh.apply_hebbian_learning(activations, activations, reward_signal=reward)
+
+        for nid, neuron in self.mesh.neurons.items():
+            state = self.states.get_neuron_state(str(nid))
+            if state is not None:
+                state.activation = neuron.activation
+        self.learning.apply_learning()
+        self.learning.apply_reinforcement(reward)
+        self.states.update_time(1.0)
+
+        return CycleResult(
+            output=output,
+            memory_consolidated=tick_result.consolidated,
+            average_vale=sum(self.vale.v) / len(self.vale.v),
+            average_surprise=sum(tick_result.surprises.values()) / max(1, len(tick_result.surprises)),
+            active_skills=list(self.skills.keys()),
+        )
+
+    def reason(self, a: List[float], b: List[float], c: List[float]) -> List[float]:
+        """Analogy-style reasoning over three externally supplied vectors:
+        a is to b as c is to the returned vector."""
+        result = self.hd.reason(
+            self._vector_to_hd(a), self._vector_to_hd(b), self._vector_to_hd(c)
+        )
+        return list(result.sem)
+
+    def get_statistics(self) -> Dict:
+        return {
+            "mesh": self.mesh.get_statistics(),
+            "vale": self.vale.statistics(),
+            "hd": self.hd.get_statistics(),
+            "states": self.states.get_statistics(),
+            "skills": list(self.skills.keys()),
+        }

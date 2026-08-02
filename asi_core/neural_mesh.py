@@ -66,9 +66,10 @@ class NeuronState:
     average_activation: float = 0.0
     update_count: int = 0
     
-    def initialize_state(self, dimensions: int):
+    def initialize_state(self, dimensions: int, rng: Optional[random.Random] = None):
         """Initialize state vector with given dimensions."""
-        self.state_vector = [random.gauss(0, 0.1) for _ in range(dimensions)]
+        source = rng or random
+        self.state_vector = [source.gauss(0, 0.1) for _ in range(dimensions)]
         self.input_flag = 0.0
         
     def get_content_state(self) -> List[float]:
@@ -100,10 +101,11 @@ class SynapticConnection:
     eligibility_trace: float = 0.0
     eligibility_decay: float = 0.9
     
-    def initialize_weights(self, dimensions: int, scale: float = 0.1):
+    def initialize_weights(self, dimensions: int, scale: float = 0.1, rng: Optional[random.Random] = None):
         """Initialize weight matrix with small random values."""
+        source = rng or random
         self.weight_matrix = [
-            [random.gauss(0, scale) for _ in range(dimensions)]
+            [source.gauss(0, scale) for _ in range(dimensions)]
             for _ in range(dimensions)
         ]
     
@@ -137,12 +139,14 @@ class NeuralMesh:
         vale_init: float = 0.1,
         divergence_tolerance: float = 0.5,
         sustained_divergence_ticks: int = 3,
-        continuous: bool = False
+        continuous: bool = False,
+        seed: Optional[int] = None
     ):
         # Validate configuration
         assert n_dimensions >= 2, "Need dim 0 for input flag plus >=1 content dim"
         assert 1 <= n_input < n_neurons, "Input neurons must be subset of total"
-        
+
+        self._rng = random.Random(seed) if seed is not None else random
         self.n_neurons = n_neurons
         self.n_dimensions = n_dimensions
         self.n_input = n_input
@@ -195,7 +199,7 @@ class NeuralMesh:
                 group=group,
                 vale=self.vale_total / self.n_neurons  # Equal initial distribution
             )
-            neuron.initialize_state(self.n_dimensions)
+            neuron.initialize_state(self.n_dimensions, rng=self._rng)
             self.neurons[i] = neuron
     
     def _initialize_connections(self):
@@ -210,7 +214,7 @@ class NeuralMesh:
                         target_id=target_id,
                         base_learning_rate=0.01
                     )
-                    conn.initialize_weights(self.n_dimensions, scale)
+                    conn.initialize_weights(self.n_dimensions, scale, rng=self._rng)
                     self.connections[(source_id, target_id)] = conn
     
     def redistribute_vale(self, changes: Dict[int, float]):
