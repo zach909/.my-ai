@@ -6,6 +6,12 @@
  * decision. This page is a thin client over /api/chat-groups/* — all the
  * discussion, trust weighting, and decision logic lives in
  * `models && skills/core/{hive-mind,chat-group}.ts`.
+ *
+ * Optionally locked behind its own password (NEUROCLAW_CHAT_GROUPS_PASSWORD
+ * on the server, independent of the whole-server remote-access password) --
+ * see interface/web-server.ts's chatGroupsLock. The password is kept only
+ * in this component's React state, never localStorage/cookies/disk: it
+ * lives exactly as long as the tab does.
  */
 
 import { createFileRoute } from '@tanstack/react-router'
@@ -15,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Users, Send, Vote, Zap } from 'lucide-react'
+import { Users, Send, Vote, Zap, Lock } from 'lucide-react'
 
 function Chip({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -52,7 +58,72 @@ interface Round {
   complete: boolean
 }
 
+function chatGroupsHeaders(password: string | null): HeadersInit {
+  const headers: Record<string, string> = { 'Content-Type': 'application/json' }
+  if (password) headers['X-Chat-Groups-Password'] = password
+  return headers
+}
+
+/** Shown instead of the normal page while the server reports chat groups as locked and no valid password has been entered yet. */
+function LockScreen({ onUnlock }: { onUnlock: (password: string) => Promise<boolean> }) {
+  const [password, setPassword] = useState('')
+  const [checking, setChecking] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const submit = async () => {
+    if (!password) return
+    setChecking(true)
+    setError(null)
+    const ok = await onUnlock(password)
+    if (!ok) setError('Incorrect password')
+    setChecking(false)
+  }
+
+  return (
+    <div className="flex h-[calc(100vh-120px)] items-center justify-center p-4">
+      <Card className="w-full max-w-sm space-y-3 p-6">
+        <div className="flex items-center gap-2 text-sm font-medium">
+          <Lock size={14} />
+          Chat Groups is locked
+        </div>
+        <p className="text-xs text-muted-foreground">
+          This server requires a password to access chat groups.
+        </p>
+        {error && <p className="text-xs text-destructive">{error}</p>}
+        <div className="flex gap-2">
+          <Label htmlFor="chat-groups-password" className="sr-only">
+            Password
+          </Label>
+          <Input
+            id="chat-groups-password"
+            type="password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter') {
+                e.preventDefault()
+                submit()
+              }
+            }}
+            placeholder="Password"
+            disabled={checking}
+            autoFocus
+            className="flex-1"
+          />
+          <Button onClick={submit} disabled={checking || !password} size="sm">
+            Unlock
+          </Button>
+        </div>
+      </Card>
+    </div>
+  )
+}
+
 function ChatGroupsPage() {
+  // null = still checking server lock status; true/false once known.
+  const [locked, setLocked] = useState<boolean | null>(null)
+  const [password, setPassword] = useState<string | null>(null)
+
   const [agents, setAgents] = useState<HiveAgentSnapshot[]>([])
   const [agentsError, setAgentsError] = useState<string | null>(null)
   const [task, setTask] = useState('')
@@ -62,6 +133,13 @@ function ChatGroupsPage() {
   const endRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
 
+  useEffect(() => {
+    fetch('/api/chat-groups/lock-status')
+      .then((res) => res.json())
+      .then((data) => setLocked(!!data.locked))
+      .catch(() => setLocked(false)) // fail open to "not locked" only for the status check itself -- the real gate is still enforced server-side on every /api/chat-groups/* call
+  }, [])
+
   // Re-focus the input element once loading finishes
   useEffect(() => {
     if (!loading) {
@@ -69,9 +147,14 @@ function ChatGroupsPage() {
     }
   }, [loading])
 
-  const refreshAgents = () => {
-    fetch('/api/chat-groups/agents')
+  const refreshAgents = (pw: string | null) => {
+    fetch('/api/chat-groups/agents', { headers: chatGroupsHeaders(pw) })
       .then(async (res) => {
+        if (res.status === 401) {
+          setLocked(true)
+          setPassword(null)
+          return
+        }
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Failed to load hive agents')
         setAgents(Array.isArray(data.agents) ? data.agents : [])
@@ -81,14 +164,28 @@ function ChatGroupsPage() {
 
   // The hive spawns its default team lazily, on the first hive-based call
   // (collaborate/solve/autonomousTask) — so the roster is often empty here
-  // and only appears once the first task below has been submitted.
+  // and only appears once the first task below has been submitted. Runs
+  // only on the locked -> false transition, not on every password change:
+  // unlock() already applies its own response to `agents` directly, so
+  // re-running this on `password` too would just be a redundant fetch.
   useEffect(() => {
-    refreshAgents()
-  }, [])
+    if (locked === false) refreshAgents(password)
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [locked])
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [rounds])
+
+  const unlock = async (candidate: string): Promise<boolean> => {
+    const res = await fetch('/api/chat-groups/agents', { headers: chatGroupsHeaders(candidate) })
+    if (res.status === 401) return false
+    setPassword(candidate)
+    setLocked(false)
+    const data = await res.json().catch(() => null)
+    if (data && Array.isArray(data.agents)) setAgents(data.agents)
+    return true
+  }
 
   const submitTask = async () => {
     const text = task.trim()
@@ -99,9 +196,14 @@ function ChatGroupsPage() {
     try {
       const res = await fetch('/api/chat-groups/collaborate', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: chatGroupsHeaders(password),
         body: JSON.stringify({ task: text }),
       })
+      if (res.status === 401) {
+        setLocked(true)
+        setPassword(null)
+        throw new Error('Chat groups is locked')
+      }
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Collaboration failed')
       setRounds((prev) => [
@@ -114,13 +216,16 @@ function ChatGroupsPage() {
           complete: !!data.complete,
         },
       ])
-      if (agents.length === 0) refreshAgents()
+      if (agents.length === 0) refreshAgents(password)
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err))
     } finally {
       setLoading(false)
     }
   }
+
+  if (locked === null) return null
+  if (locked) return <LockScreen onUnlock={unlock} />
 
   return (
     <div className="flex h-[calc(100vh-120px)] gap-4 p-4">
