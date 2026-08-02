@@ -32,7 +32,7 @@ from typing import Callable, Dict, List, Optional
 
 from .neural_mesh import NeuralMesh
 from .vale_system import ValeSystem, ValeConfig
-from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector
+from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector, cosine_similarity
 from .neural_states import StateManager, LearningSystem
 
 
@@ -46,7 +46,20 @@ class CycleResult:
     memory_consolidated: int
     average_vale: float
     average_surprise: float
+    recalled_confidence: float = 0.0
     active_skills: List[str] = field(default_factory=list)
+
+
+@dataclass
+class Introspection:
+    """Self-observation snapshot (spec Part 2 section 18)."""
+    most_stable_neurons: List[int]
+    most_flexible_neurons: List[int]
+    removal_candidates: List[int]
+    average_vale: float
+    average_surprise: float
+    memory_size: int
+    active_skills: List[str]
 
 
 class UnifiedBrain:
@@ -153,7 +166,9 @@ class UnifiedBrain:
         # 3. Reasoning: recall the closest existing memory trace and fold
         #    its semantic content back into the output as context.
         traces = self.hd.recall(cue, k=1)
+        recalled_confidence = 0.0
         if traces and raw_output:
+            recalled_confidence = cosine_similarity(cue, traces[0].key)
             recalled_sem = traces[0].value.sem
             reasoned = [
                 (v + recalled_sem[i % len(recalled_sem)]) / 2.0 if recalled_sem else v
@@ -165,14 +180,20 @@ class UnifiedBrain:
         # 4. Skills: pluggable expert transforms (Mixture-of-Experts seam).
         output = self._apply_skills(reasoned)
 
-        # 5. Learning: refresh vale from observed neuron utility, re-sync it
-        #    onto the mesh, run the mesh's vale-gated Hebbian update, and
-        #    run the richer per-synapse plasticity rules.
+        # 5. Learning: derive each neuron's contribution to this cycle's
+        #    outcome from the reward signal (spec Part 2 section 9: vale
+        #    should track "contribution to successful reasoning/outputs",
+        #    not raw activation alone), refresh vale from it, re-sync onto
+        #    the mesh, run the mesh's vale-gated Hebbian update, and run
+        #    the richer per-synapse plasticity rules.
         activations = {nid: n.activation for nid, n in self.mesh.neurons.items()}
-        utility = [self.mesh.neurons[i].activation for i in range(len(self.vale.v))]
-        self.vale.step(utility=utility)
+        signed_reward = (reward - 0.5) * 2.0  # -1 (harmful) .. 0 (neutral) .. +1 (helpful)
+        contributions = [
+            self.mesh.neurons[i].activation * signed_reward for i in range(len(self.vale.v))
+        ]
+        self.vale.step(utility=contributions)
         for nid, neuron in self.mesh.neurons.items():
-            self.vale.record_activity(nid, neuron.activation)
+            self.vale.record_activity(nid, neuron.activation, contribution=neuron.activation * signed_reward)
         self._sync_vale_to_mesh()
 
         self.mesh.apply_hebbian_learning(activations, activations, reward_signal=reward)
@@ -190,6 +211,7 @@ class UnifiedBrain:
             memory_consolidated=tick_result.consolidated,
             average_vale=sum(self.vale.v) / len(self.vale.v),
             average_surprise=sum(tick_result.surprises.values()) / max(1, len(tick_result.surprises)),
+            recalled_confidence=recalled_confidence,
             active_skills=list(self.skills.keys()),
         )
 
@@ -208,4 +230,50 @@ class UnifiedBrain:
             "hd": self.hd.get_statistics(),
             "states": self.states.get_statistics(),
             "skills": list(self.skills.keys()),
+        }
+
+    # -- Self-observation (spec Part 2 section 18) -----------------------
+
+    def introspect(self, top_k: int = 5) -> Introspection:
+        """
+        Inspect the brain's own internal state: which neurons currently
+        carry the most/least importance, which low-vale neurons are
+        candidates for demotion/merging/removal (section 9), and how
+        confident the most recent memory recall was.
+        """
+        ranked = sorted(range(len(self.vale.v)), key=lambda i: self.vale.v[i], reverse=True)
+        # Spec Part 2 section 9: neurons that have lost enough vale become
+        # candidates for retraining, merging, or deletion.
+        removal_candidates = [nid for nid in ranked if self.vale.plasticity(nid) > 0.9]
+        recent_surprise = (
+            self.hd.history[-1]["avg_surprise"] if self.hd.history else 0.0
+        )
+        return Introspection(
+            most_stable_neurons=ranked[:top_k],
+            most_flexible_neurons=list(reversed(ranked[-top_k:])),
+            removal_candidates=removal_candidates[:top_k],
+            average_vale=sum(self.vale.v) / len(self.vale.v),
+            average_surprise=recent_surprise,
+            memory_size=len(self.hd.memory),
+            active_skills=list(self.skills.keys()),
+        )
+
+    # -- Background maintenance (spec Part 2 section 19) ------------------
+
+    def maintain(self) -> Dict:
+        """
+        Low-priority idle-time maintenance: consolidate/prune hyper-
+        dimensional memory and correct any float-drift in the vale ledger.
+        Safe to call between perceive() cycles; does not touch mesh state.
+        """
+        consolidated = self.hd.consolidate()
+        before = len(self.hd.memory)
+        self.hd.memory.decay_and_prune()
+        pruned = before - len(self.hd.memory)
+        self.vale._renormalize()
+        return {
+            "memory_consolidated": consolidated,
+            "memory_pruned": pruned,
+            "memory_size": len(self.hd.memory),
+            "vale_invariant_ok": self.vale.validate_invariant(),
         }
