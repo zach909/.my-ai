@@ -258,6 +258,19 @@ describe('Neuroclaw Integration Tests', () => {
       expect(isPrivateHost('172.16.0.1')).toBe(true);
       expect(isPrivateHost('8.8.8.8')).toBe(false);
     });
+
+    it('should classify the full fe80::/10 IPv6 link-local range as private', async () => {
+      // fe80::/10 only fixes the top 10 bits, so the first hex group's 3rd
+      // digit ranges over 8-b (fe80-febf) -- a startsWith("fe8") check alone
+      // only caught fe80-fe8f, letting fe90::/16 through feb0::/16 (still
+      // genuinely link-local, e.g. fe90::1) reach fetchUrl() unblocked.
+      const isPrivateHost = (browserPlugin as unknown as { isPrivateHost(h: string): boolean }).isPrivateHost.bind(browserPlugin);
+      expect(isPrivateHost('fe80::1')).toBe(true);
+      expect(isPrivateHost('fe90::1')).toBe(true);
+      expect(isPrivateHost('fea0::1')).toBe(true);
+      expect(isPrivateHost('feb0::1')).toBe(true);
+      expect(isPrivateHost('2001:db8::1')).toBe(false); // public, must stay unblocked
+    });
   });
 
   describe('Location Plugin Geocoding', () => {
