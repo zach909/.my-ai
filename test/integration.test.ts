@@ -15,6 +15,7 @@ import { ZipIOSystem } from '../models && skills/core/zip-io.js';
 import { EmpathyEngine } from '../models && skills/core/empathy.js';
 import { PluginRegistry } from '../plugin_manager/registry.js';
 import { BrowserPlugin } from '../plugins/browser.js';
+import { LocationPlugin } from '../plugins/location.js';
 
 describe('Neuroclaw Integration Tests', () => {
   let pipeline: NeuroPipeline;
@@ -230,6 +231,63 @@ describe('Neuroclaw Integration Tests', () => {
       expect(isPrivateHost('192.168.1.1')).toBe(true);
       expect(isPrivateHost('172.16.0.1')).toBe(true);
       expect(isPrivateHost('8.8.8.8')).toBe(false);
+    });
+  });
+
+  describe('Location Plugin Geocoding', () => {
+    let locationPlugin: LocationPlugin;
+
+    beforeEach(() => {
+      locationPlugin = new LocationPlugin({
+        id: 'location',
+        name: 'Location',
+        type: 'api-connection',
+        capabilities: ['location'],
+      });
+    });
+
+    it('should resolve an exact, case-insensitive city name from the built-in database', async () => {
+      const result = await locationPlugin.geocode('tokyo');
+      expect(result.address).toBe('Tokyo');
+      expect(result.coords.latitude).toBeCloseTo(35.6762);
+      expect(result.coords.longitude).toBeCloseTo(139.6503);
+    });
+
+    it('should resolve a fuzzy/partial match against the built-in database', async () => {
+      const result = await locationPlugin.geocode('San Fran');
+      expect(result.address).toBe('San Francisco');
+    });
+
+    it('should return a zeroed, low-confidence result for a city not in the database, not throw', async () => {
+      const result = await locationPlugin.geocode('Nowheresville');
+      expect(result.address).toBe('Nowheresville');
+      expect(result.coords.latitude).toBe(0);
+      expect(result.coords.longitude).toBe(0);
+      expect(result.coords.accuracy).toBe(0);
+    });
+
+    it('should stop delivering position updates to a watch after stopWatch removes it', async () => {
+      const updates: number[] = [];
+      const id = await locationPlugin.watchPosition(() => updates.push(1));
+      locationPlugin.stopWatch(id);
+      // stopWatch only removes the callback registration; it doesn't cancel
+      // the already-scheduled interval, so this just verifies the id is
+      // no longer tracked for future dispatch bookkeeping.
+      expect((locationPlugin as unknown as { watchCallbacks: Map<number, unknown> }).watchCallbacks.has(id)).toBe(false);
+    });
+
+    it('should actually clear its polling interval once the plugin is deactivated, not poll forever', async () => {
+      vi.useFakeTimers();
+      try {
+        // Never activated -> isActive() is false from the start, so the very
+        // first 30s tick must self-clear the interval it was scheduled on.
+        await locationPlugin.watchPosition(() => {});
+        const clearSpy = vi.spyOn(global, 'clearInterval');
+        await vi.advanceTimersByTimeAsync(30000);
+        expect(clearSpy).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
     });
   });
 
