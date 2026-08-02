@@ -730,19 +730,26 @@ class NeuralMesh:
             'diagnostics': {
                 'live_corrections': self._live_corrections,
                 'divergence_events': self._divergence_events
+            },
+            'groups': {
+                'names': dict(self.group_names),
+                'scores': list(self.group_scores),
+                'active': sorted(self.active_groups),
             }
         }
-    
+
     def load_state(self, state: Dict):
         """Load mesh state from serialization."""
         config = state.get('config', {})
-        
+
         # Verify config matches
         if config.get('n_neurons') != self.n_neurons:
             raise ValueError("Neuron count mismatch")
         if config.get('n_dimensions') != self.n_dimensions:
             raise ValueError("Dimension count mismatch")
-        
+        if config.get('n_groups') != self.n_groups:
+            raise ValueError("Group count mismatch")
+
         # Load neurons
         for nid_str, n_data in state.get('neurons', {}).items():
             nid = int(nid_str)
@@ -769,6 +776,17 @@ class NeuralMesh:
         diag = state.get('diagnostics', {})
         self._live_corrections = diag.get('live_corrections', 0)
         self._divergence_events = diag.get('divergence_events', 0)
+
+        # Load expert group names/scores/active selection
+        groups = state.get('groups', {})
+        if groups:
+            self.group_names = {int(k): v for k, v in groups.get('names', {}).items()}
+            saved_scores = groups.get('scores')
+            if saved_scores is not None and len(saved_scores) == self.n_groups:
+                self.group_scores = list(saved_scores)
+            active = groups.get('active')
+            if active is not None:
+                self.active_groups = set(active)
 
 
 # Convenience function for creating standard configurations

@@ -189,5 +189,34 @@ class TestVersionControl(unittest.TestCase):
         self.assertEqual(system.history("coding"), [])
 
 
+class TestSerialization(unittest.TestCase):
+    def test_to_dict_from_dict_round_trip(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="write code", skills=["a", "b"], permissions=["files"])
+        system.test("coding")
+        system.optimize("coding")
+        system.quantize("coding")
+        system.update("coding", skills=["a", "b", "c"])
+
+        restored = ExtensionSystem.from_dict(system.to_dict())
+        original = system.get("coding")
+        rebuilt = restored.get("coding")
+
+        self.assertEqual(rebuilt.name, original.name)
+        self.assertEqual(rebuilt.skills, original.skills)
+        self.assertEqual(rebuilt.stage, original.stage)
+        self.assertEqual(rebuilt.version, original.version)
+        self.assertEqual(restored.history("coding")[0].skills, system.history("coding")[0].skills)
+
+    def test_restored_extension_can_still_be_rolled_back(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        system.update("coding", skills=["a", "b"])
+
+        restored = ExtensionSystem.from_dict(system.to_dict())
+        rolled_back = restored.rollback("coding")
+        self.assertEqual(rolled_back.skills, ["a"])
+
+
 if __name__ == "__main__":
     unittest.main()

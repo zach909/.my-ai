@@ -47,6 +47,18 @@ class TestCircularBuffer(unittest.TestCase):
         buf.push(2)
         self.assertEqual(list(buf), [1, 2])
 
+    def test_load_items_replaces_contents_without_evicting(self):
+        evicted = []
+        buf = CircularBuffer(capacity=3, on_evict=evicted.append)
+        buf.load_items([1, 2, 3])
+        self.assertEqual(buf.items, [1, 2, 3])
+        self.assertEqual(evicted, [])
+
+    def test_load_items_truncates_to_capacity_keeping_most_recent(self):
+        buf = CircularBuffer(capacity=2)
+        buf.load_items([1, 2, 3, 4])
+        self.assertEqual(buf.items, [3, 4])
+
 
 class TestCircularContextSystem(unittest.TestCase):
     def test_input_and_output_buffers_are_independent(self):

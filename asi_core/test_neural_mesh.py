@@ -516,11 +516,36 @@ class TestStatePersistence(unittest.TestCase):
         """Test loading incompatible config raises error."""
         mesh1 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4)
         state = mesh1.save_state()
-        
+
         mesh2 = NeuralMesh(n_neurons=32, n_dimensions=4, n_input=4)
-        
+
         with self.assertRaises(ValueError):
             mesh2.load_state(state)
+
+    def test_group_count_mismatch_raises_error(self):
+        mesh1 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4, n_groups=2)
+        state = mesh1.save_state()
+        mesh2 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4, n_groups=4)
+        with self.assertRaises(ValueError):
+            mesh2.load_state(state)
+
+    def test_save_load_state_preserves_group_names_and_active_groups(self):
+        """Regression test: save_state() used to omit group names/scores/
+        active selection entirely, so load_state() silently reset a
+        restored mesh's expert groups back to unnamed defaults."""
+        mesh1 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4, n_groups=4, auto_route=True, seed=1)
+        mesh1.set_group_name(0, "coding")
+        mesh1.set_group_name(1, "language")
+        mesh1.activate([0.5, 0.2, -0.1, 0.4])
+        state = mesh1.save_state()
+
+        mesh2 = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4, n_groups=4)
+        mesh2.load_state(state)
+
+        self.assertEqual(mesh2.get_group_name(0), "coding")
+        self.assertEqual(mesh2.get_group_name(1), "language")
+        self.assertEqual(mesh2.group_scores, mesh1.group_scores)
+        self.assertEqual(mesh2.active_groups, mesh1.active_groups)
 
 
 class TestStatisticsAndDiagnostics(unittest.TestCase):

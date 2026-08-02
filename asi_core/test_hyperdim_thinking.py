@@ -285,6 +285,29 @@ class TestSystemIntegration(unittest.TestCase):
             for x, y in zip(a_state, b_state):
                 self.assertAlmostEqual(x, y, places=6)
 
+    def test_save_load_state_preserves_memory_trace_kind(self):
+        """Regression test: save_state() used to omit MemoryTrace.kind
+        entirely, so load_state() silently reset every restored trace back
+        to LONG_TERM regardless of whether it was originally EXPERIENCE."""
+        config = HDConfig(dimensions=32, predictor_lr=0.2)
+        system_a = HDThinkingSystem(n_neurons=2, dimensions=32, n_input=1, config=config, seed=7)
+        good_pattern = HDVector.random(32, seed=1)
+        bad_pattern = HDVector.random(32, seed=2)
+
+        for _ in range(150):
+            system_a.tick(inputs={0: good_pattern}, reward=1.0)
+        for _ in range(150):
+            system_a.tick(inputs={0: bad_pattern}, reward=0.0)
+
+        original_kinds = sorted(t.kind for t in system_a.memory.traces)
+        self.assertIn(MemoryKind.EXPERIENCE.value, original_kinds)
+
+        system_b = HDThinkingSystem(n_neurons=2, dimensions=32, n_input=1, config=config, seed=7)
+        system_b.load_state(system_a.save_state())
+        restored_kinds = sorted(t.kind for t in system_b.memory.traces)
+
+        self.assertEqual(original_kinds, restored_kinds)
+
 
 if __name__ == "__main__":
     unittest.main()

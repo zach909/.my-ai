@@ -35,6 +35,11 @@ class CircularBuffer(Generic[T]):
             if self.on_evict is not None:
                 self.on_evict(oldest)
 
+    def load_items(self, items: List[T]) -> None:
+        """Replace the buffer's contents directly (e.g. restoring from a
+        backup), bypassing on_evict — nothing here counts as forgotten."""
+        self._items = list(items[-self.capacity:])
+
     @property
     def items(self) -> List[T]:
         return list(self._items)

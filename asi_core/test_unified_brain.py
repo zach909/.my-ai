@@ -483,5 +483,68 @@ class TestDebugSnapshot(unittest.TestCase):
         self.assertEqual(snap.active_neuron_count, expected)
 
 
+class TestBackupRestore(unittest.TestCase):
+    def _make_and_populate(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(80):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        for _ in range(3):
+            brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        brain.self_improve(min_strength=1.2)
+        brain.create_extension("coding", purpose="write code")
+        return brain
+
+    def test_restore_reproduces_vale(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        restored = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        restored.restore(backup)
+
+        self.assertEqual(restored.vale.v, brain.vale.v)
+        self.assertTrue(restored.vale.validate_invariant())
+
+    def test_restore_reproduces_memory_including_kind(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        restored = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        restored.restore(backup)
+
+        original_kinds = [t.kind for t in brain.hd.memory.traces]
+        restored_kinds = [t.kind for t in restored.hd.memory.traces]
+        self.assertEqual(restored_kinds, original_kinds)
+
+    def test_restore_reproduces_extensions_and_mistakes(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        restored = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        restored.restore(backup)
+
+        self.assertEqual(
+            set(restored.extensions.extensions.keys()), set(brain.extensions.extensions.keys())
+        )
+        self.assertEqual(set(restored.mistakes.records.keys()), set(brain.mistakes.records.keys()))
+
+    def test_restored_brain_still_perceives(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        restored = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        restored.restore(backup)
+
+        result = restored.perceive([0.1, 0.1, 0.1, 0.1])
+        self.assertTrue(len(result.output) > 0)
+
+    def test_restore_into_mismatched_architecture_raises(self):
+        brain = self._make_and_populate()
+        backup = brain.backup()
+
+        mismatched = make_brain(n_neurons=32, n_groups=2, hd_dimensions=32)
+        with self.assertRaises(ValueError):
+            mismatched.restore(backup)
+
+
 if __name__ == "__main__":
     unittest.main()

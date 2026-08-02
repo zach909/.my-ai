@@ -71,5 +71,22 @@ class TestRepetitionQueries(unittest.TestCase):
         self.assertIsNone(tracker.get("nope"))
 
 
+class TestSerialization(unittest.TestCase):
+    def test_to_dict_from_dict_round_trip(self):
+        tracker = MistakeTracker()
+        tracker.record("sig1", what="a", why="b", contributing_systems=["coding"])
+        tracker.record("sig1", what="a2", why="b2")
+        tracker.correct("sig1", correction="fixed it", worked=True)
+
+        restored = MistakeTracker.from_dict(tracker.to_dict())
+        record = restored.get("sig1")
+
+        self.assertEqual(record.what, "a2")
+        self.assertEqual(record.occurrences, 2)
+        self.assertEqual(record.correction, "fixed it")
+        self.assertTrue(record.correction_worked)
+        self.assertEqual(record.contributing_systems, ["coding"])
+
+
 if __name__ == "__main__":
     unittest.main()
