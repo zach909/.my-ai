@@ -67,8 +67,14 @@ export class CapabilitiesRegistry {
         this.register({
             id: 'app-launcher',
             name: 'GUI App Launcher',
+            // Real, working implementation (interface/app-launcher.js, wired to
+            // POST /api/apps/launch in web-server.ts) -- pure Node spawn(), no
+            // external binary dependency, so this was never actually
+            // conditional on anything. Hardcoded `false` here just meant the
+            // AI's own system prompt (getSystemPrompt() below) told it this
+            // capability didn't exist, even though it fully does.
             description: 'Launch graphical applications on the AI workspace. Apps open on AI desktop, not user\'s.',
-            available: false,
+            available: true,
             details: { display: process.env.DISPLAY || ':0', method: 'spawn + wmctrl' },
         });
         this.register({
@@ -81,15 +87,20 @@ export class CapabilitiesRegistry {
         this.register({
             id: 'browser',
             name: 'Web Browser',
+            // plugins/browser.ts is a real, working implementation (fetch-based,
+            // with SSRF/DNS-rebinding protection) -- no external tool needed.
             description: 'Automate browser for web searches, page navigation, and content extraction.',
-            available: false,
+            available: true,
             details: { mode: 'headless or visible on AI workspace' },
         });
         this.register({
             id: 'microphone',
             name: 'Microphone',
+            // plugins/microphone.ts is real and working; it already degrades
+            // gracefully (returns empty audio data) when arecord/ffmpeg are
+            // both missing, so the capability itself doesn't depend on them.
             description: 'Record audio from microphone. Voice activation and command parsing.',
-            available: false,
+            available: true,
             details: { tools: ['arecord', 'ffmpeg'], format: 'wav' },
         });
         this.register({
@@ -109,43 +120,51 @@ export class CapabilitiesRegistry {
         this.register({
             id: 'contacts',
             name: 'Contacts',
+            // plugins/contacts.ts is a real, working local-JSON-file plugin.
             description: 'Store and manage contact information locally.',
-            available: false,
+            available: true,
             details: { storage: 'JSON file', local: true },
         });
         this.register({
             id: 'calendar',
             name: 'Calendar',
+            // plugins/calendar.ts is a real, working local-JSON-file plugin.
             description: 'Store and manage events locally.',
-            available: false,
+            available: true,
             details: { storage: 'JSON file', local: true },
         });
         this.register({
             id: 'email',
             name: 'Email',
+            // plugins/email.ts is a real, working implementation (local storage
+            // plus best-effort sendmail/ssmtp/msmtp delivery when available).
             description: 'Send and receive emails through local storage.',
-            available: false,
+            available: true,
             details: { storage: 'JSON file', local: true },
         });
         this.register({
             id: 'tasks',
             name: 'Tasks',
+            // plugins/tasks.ts is a real, working local-JSON-file plugin.
             description: 'Create and manage task lists with priorities.',
-            available: false,
+            available: true,
             details: { storage: 'JSON file', local: true },
         });
         this.register({
             id: 'encryption',
             name: 'Encryption',
+            // interface/encryption.js (EncryptionManager) is real and working --
+            // pure Node crypto, no external dependency.
             description: 'AES-256-GCM and ChaCha20-Poly1305 encryption for secure data storage.',
-            available: false,
+            available: true,
             details: { algorithms: ['aes-256-gcm', 'chacha20-poly1305'] },
         });
         this.register({
             id: 'diagnostics',
             name: 'System Diagnostics',
+            // plugins/app-diagnostics.ts is a real, working implementation.
             description: 'Monitor CPU, memory, disk, and process information.',
-            available: false,
+            available: true,
             details: { data: ['cpu', 'memory', 'disk', 'processes'] },
         });
     }

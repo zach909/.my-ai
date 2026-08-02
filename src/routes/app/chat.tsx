@@ -155,13 +155,9 @@ function ChatPage() {
                     key={suggestion}
                     onClick={() => handleSendMessage(suggestion)}
                     disabled={loading}
-<<<<<<< HEAD
                     aria-label={`Ask: "${suggestion}"`}
                     title={`Ask: "${suggestion}"`}
-                    className="flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground transition-colors hover:border-primary/50 hover:bg-primary/10 hover:text-foreground focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none disabled:cursor-not-allowed disabled:opacity-50"
-=======
                     className="flex items-center gap-1.5 rounded-full border border-border bg-muted/50 px-3 py-1.5 text-xs text-muted-foreground transition-all duration-150 hover:border-primary/50 hover:bg-primary/10 hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50 active:scale-95 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none"
->>>>>>> ddf6547eb3b3382d81eb0233ed38f410b742e297
                   >
                     <Sparkles size={11} className="shrink-0 text-primary" />
                     {suggestion}
@@ -190,11 +186,8 @@ function ChatPage() {
         <div className="flex gap-2">
           <Label htmlFor="chat-message-input" className="sr-only">Chat message input</Label>
           <Input
-<<<<<<< HEAD
             id="chat-message-input"
-=======
             ref={inputRef}
->>>>>>> ddf6547eb3b3382d81eb0233ed38f410b742e297
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={(e) => {
@@ -212,12 +205,8 @@ function ChatPage() {
             onClick={() => handleSendMessage()}
             disabled={loading || !input.trim()}
             size="sm"
-<<<<<<< HEAD
-            className="gap-2"
-            aria-label="Send message"
-=======
             className="gap-2 active:scale-95 transition-all duration-150"
->>>>>>> ddf6547eb3b3382d81eb0233ed38f410b742e297
+            aria-label="Send message"
             title="Send message (or press Enter)"
           >
             <Send size={16} />
