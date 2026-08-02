@@ -57,6 +57,11 @@ from .hyperdim_thinking import (
     HDThinkingSystem
 )
 
+from .unified_brain import (
+    UnifiedBrain,
+    CycleResult,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # Neural Mesh
@@ -101,5 +106,8 @@ __all__ = [
     "TickResult",
     "MemoryStore",
     "HDNeuron",
-    "HDThinkingSystem"
+    "HDThinkingSystem",
+    # Unified Brain
+    "UnifiedBrain",
+    "CycleResult",
 ]
