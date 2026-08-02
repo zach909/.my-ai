@@ -65,9 +65,6 @@ System plugins for various functionalities (browser, camera, email, etc.).
 #### `/public/`
 Public assets and static files.
 
-#### `/robotic_organism/`
-Robotics simulation with core systems, stages, and subsystems.
-
 #### `/scripts/`
 Build and utility scripts:
 - `build-backend.mjs` - Backend build script
