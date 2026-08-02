@@ -63,6 +63,7 @@ from .unified_brain import (
     CycleResult,
     Introspection,
     ReasoningPath,
+    DebugSnapshot,
 )
 
 from .extension_system import (
@@ -142,6 +143,7 @@ __all__ = [
     "CycleResult",
     "Introspection",
     "ReasoningPath",
+    "DebugSnapshot",
     # Extension System
     "ExtensionSystem",
     "Extension",

@@ -407,5 +407,48 @@ class TestMultiPathReasoning(unittest.TestCase):
                 self.assertLessEqual(p.confidence, 0.0)
 
 
+class TestDebugSnapshot(unittest.TestCase):
+    def test_snapshot_before_any_activity_does_not_error(self):
+        brain = make_brain()
+        snap = brain.debug_snapshot()
+        self.assertEqual(snap.memory_size, 0)
+        self.assertEqual(snap.errors_detected, [])
+        self.assertEqual(snap.extensions_installed, [])
+
+    def test_snapshot_reflects_context_buffers(self):
+        brain = make_brain(context_capacity=10)
+        brain.perceive([0.5, 0.1, 0.2, 0.3])
+        brain.perceive([0.5, 0.1, 0.2, 0.3])
+        snap = brain.debug_snapshot()
+        self.assertEqual(snap.context_input_size, 2)
+        self.assertEqual(snap.context_output_size, 2)
+
+    def test_snapshot_reflects_errors_detected(self):
+        brain = make_brain()
+        brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        brain.perceive([0.5, 0.2, -0.1, 0.4], reward=0.1)
+        snap = brain.debug_snapshot()
+        self.assertEqual(len(snap.errors_detected), 1)
+        self.assertIn("x2", snap.errors_detected[0])
+
+    def test_snapshot_reflects_installed_extensions(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        brain.self_improve(min_strength=1.2)
+        brain.create_extension("coding", purpose="write code")
+        snap = brain.debug_snapshot()
+        self.assertIn("coding", snap.extensions_installed)
+
+    def test_snapshot_active_neuron_count_matches_active_groups(self):
+        brain = make_brain(n_neurons=16, n_groups=2, n_input=4)
+        brain.perceive([0.5, 0.1, 0.2, 0.3])
+        snap = brain.debug_snapshot()
+        expected = sum(
+            1 for n in brain.mesh.neurons.values() if n.group in brain.mesh.active_groups
+        )
+        self.assertEqual(snap.active_neuron_count, expected)
+
+
 if __name__ == "__main__":
     unittest.main()

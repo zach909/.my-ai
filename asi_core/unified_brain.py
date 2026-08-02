@@ -71,6 +71,20 @@ class ReasoningPath:
 
 
 @dataclass
+class DebugSnapshot:
+    """Spec Part 8 section 153 (Debugging System)."""
+    active_neuron_count: int
+    active_experts: List[str]
+    memory_size: int
+    context_input_size: int
+    context_output_size: int
+    predictions_made: int
+    recent_average_surprise: float
+    errors_detected: List[str]
+    extensions_installed: List[str]
+
+
+@dataclass
 class Introspection:
     """Self-observation snapshot (spec Part 2 section 18)."""
     most_stable_neurons: List[int]
@@ -428,6 +442,35 @@ class UnifiedBrain:
             "memory_size": len(self.hd.memory),
             "vale_invariant_ok": self.vale.validate_invariant(),
         }
+
+    # -- Debugging (spec Part 8 section 153) -------------------------------
+
+    def debug_snapshot(self, top_k_errors: int = 5) -> DebugSnapshot:
+        """
+        Section 153 asks for one debugging view covering "active neurons,
+        activated experts, memory used, predictions made, errors
+        detected" — each of those is already tracked by a different
+        subsystem (NeuralMesh, HDThinkingSystem, CircularContextSystem,
+        MistakeTracker); this aggregates them instead of making a caller
+        know which subsystem to query for each.
+        """
+        active_neuron_count = sum(
+            1 for n in self.mesh.neurons.values() if n.group in self.mesh.active_groups
+        )
+        errors = [f"{r.what} (x{r.occurrences})" for r in self.mistakes.most_repeated(top_k_errors)]
+        recent_surprise = self.hd.history[-1]["avg_surprise"] if self.hd.history else 0.0
+
+        return DebugSnapshot(
+            active_neuron_count=active_neuron_count,
+            active_experts=self.mesh.active_expert_names(),
+            memory_size=len(self.hd.memory),
+            context_input_size=len(self.context.input_buffer),
+            context_output_size=len(self.context.output_buffer),
+            predictions_made=self.hd.current_tick,
+            recent_average_surprise=recent_surprise,
+            errors_detected=errors,
+            extensions_installed=list(self.extensions.extensions.keys()),
+        )
 
     # -- Self-improvement loop (spec Part 3 section 36) -------------------
 
