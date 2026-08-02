@@ -8,6 +8,7 @@ from __future__ import annotations
 import os, sys, subprocess, threading, time, json
 from typing import Callable, Dict, List, Optional
 from .plugin_base import Plugin
+from .plugin_terminal import _is_blocked
 
 
 class SelfHealPlugin(Plugin):
@@ -99,6 +100,8 @@ class SelfHealPlugin(Plugin):
                 return False
 
         def restart() -> None:
+            if _is_blocked(restart_cmd):
+                return
             subprocess.Popen(restart_cmd, shell=True,
                              stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
 

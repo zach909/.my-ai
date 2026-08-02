@@ -110,7 +110,11 @@ class EnergySystem:
         self.processing_queue: List[Material] = []
         self.currently_processing: Optional[Material] = None
         self.process_progress: float = 0.0
-        
+        # Energy a completed material yielded but the battery's charge_rate
+        # hasn't had time to actually accept yet -- see update()'s "Charge
+        # from pending_energy" section for why this exists.
+        self.pending_energy: float = 0.0
+
         # Energy storage
         self.battery = EnergyStore(capacity=storage_capacity)
         
@@ -192,23 +196,30 @@ class EnergySystem:
             self.process_progress += dt / self.currently_processing.processing_time
             
             if self.process_progress >= 1.0:
-                # Processing complete - extract energy
+                # Processing complete - extract energy. This lands as a lump
+                # sum on a single tick, but EnergyStore.charge()'s
+                # charge_rate models the battery's real physical intake
+                # limit (joules/second it can actually accept) -- queue
+                # whatever charge_rate can't take this tick into
+                # pending_energy instead of writing it off as waste_heat
+                # immediately. Genuine loss (the battery is full and staying
+                # full) is still counted as waste below, just per-tick
+                # against however much pending_energy is actually stuck,
+                # not against the entire extraction the instant it occurs.
                 energy_extracted = (
-                    self.currently_processing.energy_content * 
-                    self.currently_processing.mass * 
+                    self.currently_processing.energy_content *
+                    self.currently_processing.mass *
                     0.8  # 80% conversion efficiency
                 )
-                stored = self.battery.charge(energy_extracted, dt)
+                self.pending_energy += energy_extracted
                 self.total_energy_processed += energy_extracted
-                self.waste_heat += energy_extracted - stored
-                
+
                 status['processing'] = {
                     'material': self.currently_processing.name,
                     'complete': True,
                     'energy_extracted': energy_extracted,
-                    'energy_stored': stored
                 }
-                
+
                 self.currently_processing = None
                 self.process_progress = 0.0
             else:
@@ -217,7 +228,22 @@ class EnergySystem:
                     'progress': self.process_progress,
                     'complete': False
                 }
-        
+
+        # Charge from pending_energy (this tick's newly-completed material,
+        # plus any carried over from previous ticks that charge_rate hasn't
+        # caught up on yet).
+        if self.pending_energy > 0:
+            stored = self.battery.charge(self.pending_energy, dt)
+            self.pending_energy -= stored
+            if status['processing'] is not None:
+                status['processing']['energy_stored'] = stored
+            # Only the portion that a genuinely full battery can never
+            # accept is real waste heat -- charge_rate merely spreading
+            # delivery across ticks is not loss.
+            if self.battery.capacity - self.battery.current <= 0 and self.pending_energy > 0:
+                self.waste_heat += self.pending_energy
+                self.pending_energy = 0.0
+
         # Distribute power (energy distribution)
         # Sort consumers by priority
         sorted_consumers = sorted(

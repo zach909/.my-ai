@@ -53,11 +53,18 @@ def demo_basic_organism():
         mass=50.0,
         energy_content=400.0  # J/g
     )
-    
-    # Run a few updates to process energy
-    for _ in range(5):
+
+    # Materials take Material.processing_time (organism.py hardcodes 10.0s
+    # for consume_material()) to fully process -- run enough ticks to
+    # actually reach that, not just enough to start it. A handful of ticks
+    # left this section (and every later one reusing the same organism,
+    # all the way through "[8] FINAL STATUS") reporting 0% battery / 0.0 J
+    # consumed / "critical" state for the entire demo, silently
+    # contradicting the very achievement ("Energy acquisition and
+    # distribution") this section exists to show off.
+    for _ in range(105):
         organism.update(dt=0.1)
-    
+
     status = organism.energy_system.get_status()
     print(f"  Battery Level: {status['battery']['level']*100:.1f}%")
     print(f"  Available Energy: {status['battery']['available']:.1f} J")

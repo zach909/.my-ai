@@ -15,6 +15,12 @@ import { ZipIOSystem } from '../models && skills/core/zip-io.js';
 import { EmpathyEngine } from '../models && skills/core/empathy.js';
 import { PluginRegistry } from '../plugin_manager/registry.js';
 import { BrowserPlugin } from '../plugins/browser.js';
+import { LocationPlugin } from '../plugins/location.js';
+import { NotificationsPlugin } from '../plugins/notifications.js';
+import { ScreenshotsPlugin } from '../plugins/screenshots.js';
+import { existsSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 
 describe('Neuroclaw Integration Tests', () => {
   let pipeline: NeuroPipeline;
@@ -161,6 +167,17 @@ describe('Neuroclaw Integration Tests', () => {
       expect(score).toBeGreaterThanOrEqual(0);
       expect(score).toBeLessThanOrEqual(1);
     });
+
+    it('should not double-count punctuation arousal into the keyword-match average', () => {
+      // "happy!" matches exactly one keyword ("happy", arousal 0.7) and
+      // contributes exactly one exclamation mark (arousalFromPunctuation =
+      // min(1, 1*0.2) = 0.2, no caps/questions). arousal blends the two 50/50:
+      // (0.7 + 0.2) / 2 = 0.45. The old code folded arousalFromPunctuation
+      // into totalArousal *before* dividing by matchCount too, double-
+      // counting it and yielding 0.55 instead.
+      const emotion = empathy.analyzeEmotion('happy!');
+      expect(emotion.arousal).toBeCloseTo(0.45, 5);
+    });
   });
 
   // ZipIOSystem's real write path is ingest()/emit() (both Promise<void>,
@@ -203,6 +220,16 @@ describe('Neuroclaw Integration Tests', () => {
       await plugins.bootstrap();
       expect(plugins.dispatch).toBeDefined();
     });
+
+    it('should sanitize a path-traversal pluginId out of createContext().dataDir', () => {
+      // The same bug class fixed in ExtensionStore.dir(): dataDir is meant
+      // for a plugin to persist its own state, so an unsanitized pluginId
+      // containing ".." would let a path.join-style consumer escape ./data
+      // entirely the moment something actually reads/writes through it.
+      const context = plugins.createContext('../../../../tmp/pwned');
+      expect(context.dataDir).not.toContain('..');
+      expect(context.dataDir.startsWith('./data/')).toBe(true);
+    });
   });
 
   describe('Browser Plugin Security', () => {
@@ -230,6 +257,185 @@ describe('Neuroclaw Integration Tests', () => {
       expect(isPrivateHost('192.168.1.1')).toBe(true);
       expect(isPrivateHost('172.16.0.1')).toBe(true);
       expect(isPrivateHost('8.8.8.8')).toBe(false);
+    });
+
+    it('should classify the full fe80::/10 IPv6 link-local range as private', async () => {
+      // fe80::/10 only fixes the top 10 bits, so the first hex group's 3rd
+      // digit ranges over 8-b (fe80-febf) -- a startsWith("fe8") check alone
+      // only caught fe80-fe8f, letting fe90::/16 through feb0::/16 (still
+      // genuinely link-local, e.g. fe90::1) reach fetchUrl() unblocked.
+      const isPrivateHost = (browserPlugin as unknown as { isPrivateHost(h: string): boolean }).isPrivateHost.bind(browserPlugin);
+      expect(isPrivateHost('fe80::1')).toBe(true);
+      expect(isPrivateHost('fe90::1')).toBe(true);
+      expect(isPrivateHost('fea0::1')).toBe(true);
+      expect(isPrivateHost('feb0::1')).toBe(true);
+      expect(isPrivateHost('2001:db8::1')).toBe(false); // public, must stay unblocked
+    });
+  });
+
+  describe('Location Plugin Geocoding', () => {
+    let locationPlugin: LocationPlugin;
+
+    beforeEach(() => {
+      locationPlugin = new LocationPlugin({
+        id: 'location',
+        name: 'Location',
+        type: 'api-connection',
+        capabilities: ['location'],
+      });
+    });
+
+    it('should resolve an exact, case-insensitive city name from the built-in database', async () => {
+      const result = await locationPlugin.geocode('tokyo');
+      expect(result.address).toBe('Tokyo');
+      expect(result.coords.latitude).toBeCloseTo(35.6762);
+      expect(result.coords.longitude).toBeCloseTo(139.6503);
+    });
+
+    it('should resolve a fuzzy/partial match against the built-in database', async () => {
+      const result = await locationPlugin.geocode('San Fran');
+      expect(result.address).toBe('San Francisco');
+    });
+
+    it('should return a zeroed, low-confidence result for a city not in the database, not throw', async () => {
+      const result = await locationPlugin.geocode('Nowheresville');
+      expect(result.address).toBe('Nowheresville');
+      expect(result.coords.latitude).toBe(0);
+      expect(result.coords.longitude).toBe(0);
+      expect(result.coords.accuracy).toBe(0);
+    });
+
+    it('should stop delivering position updates to a watch after stopWatch removes it', async () => {
+      const updates: number[] = [];
+      const id = await locationPlugin.watchPosition(() => updates.push(1));
+      locationPlugin.stopWatch(id);
+      // stopWatch only removes the callback registration; it doesn't cancel
+      // the already-scheduled interval, so this just verifies the id is
+      // no longer tracked for future dispatch bookkeeping.
+      expect((locationPlugin as unknown as { watchCallbacks: Map<number, unknown> }).watchCallbacks.has(id)).toBe(false);
+    });
+
+    it('should actually clear its polling interval once the plugin is deactivated, not poll forever', async () => {
+      vi.useFakeTimers();
+      try {
+        // Never activated -> isActive() is false from the start, so the very
+        // first 30s tick must self-clear the interval it was scheduled on.
+        await locationPlugin.watchPosition(() => {});
+        const clearSpy = vi.spyOn(global, 'clearInterval');
+        await vi.advanceTimersByTimeAsync(30000);
+        expect(clearSpy).toHaveBeenCalled();
+      } finally {
+        vi.useRealTimers();
+      }
+    });
+  });
+
+  describe('Notifications Plugin Command Safety', () => {
+    let notificationsPlugin: NotificationsPlugin;
+    let originalDisplay: string | undefined;
+    const marker = join(tmpdir(), `neuroclaw-notif-injection-test-${Date.now()}`);
+
+    beforeEach(() => {
+      notificationsPlugin = new NotificationsPlugin({
+        id: 'notifications',
+        name: 'Notifications',
+        type: 'api-connection',
+        capabilities: ['notifications'],
+      });
+      originalDisplay = process.env.DISPLAY;
+      process.env.DISPLAY = ':0'; // show() only shells out to notify-send when DISPLAY is set
+      if (existsSync(marker)) rmSync(marker);
+    });
+
+    afterEach(() => {
+      if (originalDisplay === undefined) delete process.env.DISPLAY;
+      else process.env.DISPLAY = originalDisplay;
+      if (existsSync(marker)) rmSync(marker);
+    });
+
+    it('should not execute shell command substitution embedded in a notification title', async () => {
+      // A title/body reaching a shell-interpolated `execSync` call would let
+      // `$(...)` run arbitrary commands; a real notify-send binary isn't
+      // even required for that side effect to fire (the shell evaluates
+      // command substitution during word-splitting, before command lookup).
+      await notificationsPlugin.show(`$(touch ${marker})`, 'body');
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it('should not execute shell command substitution embedded in a notification body', async () => {
+      await notificationsPlugin.show('title', `$(touch ${marker})`);
+      expect(existsSync(marker)).toBe(false);
+    });
+
+    it('should still record the notification with the literal, unexecuted title text', async () => {
+      const title = `$(touch ${marker})`;
+      await notificationsPlugin.show(title, 'body');
+      // show() marks it shown:true immediately, so it won't be in listActive();
+      // access the underlying array to confirm the literal text was stored.
+      const stored = (notificationsPlugin as unknown as { notifications: Array<{ title: string }> }).notifications;
+      expect(stored.some(n => n.title === title)).toBe(true);
+    });
+  });
+
+  describe('Screenshots Plugin Command Safety', () => {
+    let screenshotsPlugin: ScreenshotsPlugin;
+    const marker = join(tmpdir(), `neuroclaw-ss-injection-test-${Date.now()}`);
+
+    beforeEach(() => {
+      screenshotsPlugin = new ScreenshotsPlugin({
+        id: 'screenshots',
+        name: 'Screenshots',
+        type: 'api-connection',
+        capabilities: ['screenshots'],
+      });
+      if (existsSync(marker)) rmSync(marker);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      if (existsSync(marker)) rmSync(marker);
+    });
+
+    it('should not execute shell command substitution embedded in a capture() filename, even when the capture tool exists', async () => {
+      // Force the /usr/bin/import branch (via a full node:fs module mock,
+      // since ESM named exports aren't spy-able in place) so this exercises
+      // the injection-prone line regardless of what's actually installed on
+      // the machine running the test -- shell command substitution in the
+      // old code fired during word-splitting even when `import` itself
+      // didn't exist, so a real binary was never required for the marker
+      // file to appear.
+      vi.doMock('node:fs', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('node:fs')>();
+        return {
+          ...actual,
+          existsSync: (p: string) => (p === '/usr/bin/import' ? true : actual.existsSync(p)),
+        };
+      });
+      vi.resetModules();
+      const { ScreenshotsPlugin: MockedScreenshotsPlugin } = await import('../plugins/screenshots.js');
+      const plugin = new MockedScreenshotsPlugin({
+        id: 'screenshots', name: 'Screenshots', type: 'api-connection', capabilities: ['screenshots'],
+      });
+      await plugin.capture(`screenshot$(touch ${marker}).png`);
+      expect(existsSync(marker)).toBe(false);
+      vi.doUnmock('node:fs');
+      vi.resetModules();
+    });
+
+    it('should not leave a leftover temp directory behind when no capture tool is available', async () => {
+      // mkdtempSync() runs unconditionally at the top of capture(); with no
+      // capture tool installed (the common case in this sandbox), the
+      // directory it created was never cleaned up on any of the early
+      // "tool unavailable" return paths -- the same unbounded-resource-leak
+      // bug class already fixed in camera.ts/microphone.ts.
+      const os = await import('node:os');
+      const fs = await import('node:fs');
+      const before = new Set(fs.readdirSync(os.tmpdir()));
+      await screenshotsPlugin.capture();
+      const after = fs.readdirSync(os.tmpdir()).filter(
+        (name) => name.startsWith('neuroclaw-ss-') && !before.has(name)
+      );
+      expect(after).toEqual([]);
     });
   });
 

@@ -383,38 +383,39 @@ When relevant, mention your clone ID and specialization.
   }
 }
 
-// Export tools object for plugin manager compatibility
+// Export tools object for plugin manager compatibility. Every entry must
+// share one SelfReplicatePlugin instance -- clones live in `this.clones`
+// (instance state), so constructing `new SelfReplicatePlugin()` inside each
+// individual tool call (as this used to do) gave clone() a Map that every
+// other tool's own fresh instance could never see: list_clones() always
+// reported zero clones, get_clone()/send_prompt()/terminate_clone()/
+// clone_status()/set_clone_config() always reported "not found", even
+// immediately after clone() itself returned success.
+const sharedPlugin = new SelfReplicatePlugin();
+
 export const tools = {
   clone: (prompt: string, config?: any, role?: string, specialization?: string) => {
-    const plugin = new SelfReplicatePlugin();
-    return plugin.clone(prompt, config, role, specialization);
+    return sharedPlugin.clone(prompt, config, role, specialization);
   },
   list_clones: (activeOnly?: boolean) => {
-    const plugin = new SelfReplicatePlugin();
-    return plugin.listClones(activeOnly);
+    return sharedPlugin.listClones(activeOnly);
   },
   get_clone: (cloneId: string) => {
-    const plugin = new SelfReplicatePlugin();
-    return plugin.getClone(cloneId);
+    return sharedPlugin.getClone(cloneId);
   },
   send_prompt: (cloneId: string, prompt: string, context?: string) => {
-    const plugin = new SelfReplicatePlugin();
-    return plugin.sendPrompt(cloneId, prompt, context);
+    return sharedPlugin.sendPrompt(cloneId, prompt, context);
   },
   terminate_clone: (cloneId: string, saveLog?: boolean) => {
-    const plugin = new SelfReplicatePlugin();
-    return plugin.terminateClone(cloneId, saveLog);
+    return sharedPlugin.terminateClone(cloneId, saveLog);
   },
   terminate_all: (saveLogs?: boolean) => {
-    const plugin = new SelfReplicatePlugin();
-    return plugin.terminateAll(saveLogs);
+    return sharedPlugin.terminateAll(saveLogs);
   },
   clone_status: (cloneId?: string) => {
-    const plugin = new SelfReplicatePlugin();
-    return plugin.cloneStatus(cloneId);
+    return sharedPlugin.cloneStatus(cloneId);
   },
   set_clone_config: (cloneId: string, updates: any) => {
-    const plugin = new SelfReplicatePlugin();
-    return plugin.setCloneConfig(cloneId, updates);
+    return sharedPlugin.setCloneConfig(cloneId, updates);
   },
 };
