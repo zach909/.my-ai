@@ -17,6 +17,7 @@ import { PluginRegistry } from '../plugin_manager/registry.js';
 import { BrowserPlugin } from '../plugins/browser.js';
 import { LocationPlugin } from '../plugins/location.js';
 import { NotificationsPlugin } from '../plugins/notifications.js';
+import { ScreenshotsPlugin } from '../plugins/screenshots.js';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -339,6 +340,52 @@ describe('Neuroclaw Integration Tests', () => {
       // access the underlying array to confirm the literal text was stored.
       const stored = (notificationsPlugin as unknown as { notifications: Array<{ title: string }> }).notifications;
       expect(stored.some(n => n.title === title)).toBe(true);
+    });
+  });
+
+  describe('Screenshots Plugin Command Safety', () => {
+    let screenshotsPlugin: ScreenshotsPlugin;
+    const marker = join(tmpdir(), `neuroclaw-ss-injection-test-${Date.now()}`);
+
+    beforeEach(() => {
+      screenshotsPlugin = new ScreenshotsPlugin({
+        id: 'screenshots',
+        name: 'Screenshots',
+        type: 'api-connection',
+        capabilities: ['screenshots'],
+      });
+      if (existsSync(marker)) rmSync(marker);
+    });
+
+    afterEach(() => {
+      vi.restoreAllMocks();
+      if (existsSync(marker)) rmSync(marker);
+    });
+
+    it('should not execute shell command substitution embedded in a capture() filename, even when the capture tool exists', async () => {
+      // Force the /usr/bin/import branch (via a full node:fs module mock,
+      // since ESM named exports aren't spy-able in place) so this exercises
+      // the injection-prone line regardless of what's actually installed on
+      // the machine running the test -- shell command substitution in the
+      // old code fired during word-splitting even when `import` itself
+      // didn't exist, so a real binary was never required for the marker
+      // file to appear.
+      vi.doMock('node:fs', async (importOriginal) => {
+        const actual = await importOriginal<typeof import('node:fs')>();
+        return {
+          ...actual,
+          existsSync: (p: string) => (p === '/usr/bin/import' ? true : actual.existsSync(p)),
+        };
+      });
+      vi.resetModules();
+      const { ScreenshotsPlugin: MockedScreenshotsPlugin } = await import('../plugins/screenshots.js');
+      const plugin = new MockedScreenshotsPlugin({
+        id: 'screenshots', name: 'Screenshots', type: 'api-connection', capabilities: ['screenshots'],
+      });
+      await plugin.capture(`screenshot$(touch ${marker}).png`);
+      expect(existsSync(marker)).toBe(false);
+      vi.doUnmock('node:fs');
+      vi.resetModules();
     });
   });
 
