@@ -65,7 +65,15 @@ class NeuronState:
     # Statistics
     average_activation: float = 0.0
     update_count: int = 0
-    
+
+    # Explicit per-neuron input bias set by the Neural Definition Language's
+    # `"name"@connections="target*weight+bias"` override (see neural_dsl.py):
+    # a DSL-declared connection's bias term is additive input this neuron
+    # receives every settle tick, on top of whatever the all-to-all weights
+    # compute, so an explicit override can express "this neuron leans toward
+    # firing/not firing" independent of its incoming weights.
+    dsl_bias: float = 0.0
+
     def initialize_state(self, dimensions: int, rng: Optional[random.Random] = None):
         """Initialize state vector with given dimensions."""
         source = rng or random
@@ -329,11 +337,31 @@ class NeuralMesh:
                         result[target_d] += conn.weight_matrix[target_d][source_d] * source.state_vector[source_d]
         
         # Add bias (stored as connection from a virtual bias neuron)
-        # For simplicity, we add a small constant bias
+        # For simplicity, we add a small constant bias, plus any explicit
+        # DSL-declared bias for this neuron (see NeuronState.dsl_bias).
+        total_bias = 0.01 + neuron.dsl_bias
         for d in range(self.n_dimensions):
-            result[d] += 0.01
-        
+            result[d] += total_bias
+
         return result
+
+    def set_connection_weight(self, source_id: int, target_id: int, weight: float) -> None:
+        """
+        Explicit connection override (Neural Definition Language spec:
+        `"name"@connections="target*weight+bias"`). Uniformly overwrites the
+        source->target weight matrix with `weight`, replacing whatever
+        random/learned matrix was there -- the DSL's explicit connection
+        statement is meant to pin a specific weight, not nudge it.
+        """
+        conn = self.connections.get((source_id, target_id))
+        if conn is None:
+            raise ValueError(f"no such connection: {source_id} -> {target_id}")
+        conn.weight_matrix = [[weight for _ in range(self.n_dimensions)] for _ in range(self.n_dimensions)]
+
+    def add_dsl_bias(self, target_id: int, bias: float) -> None:
+        """Accumulate an explicit DSL-declared bias onto a neuron's input term."""
+        if target_id in self.neurons:
+            self.neurons[target_id].dsl_bias += bias
     
     def activate(self, input_vector: List[float]) -> List[float]:
         """
