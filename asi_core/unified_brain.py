@@ -43,6 +43,21 @@ Skill = Callable[[List[float]], List[float]]
 
 
 @dataclass
+class SkillRecord:
+    """
+    Spec Part 8 section 143 (Skill Storage Format). The callable itself
+    lives in UnifiedBrain.skills; this is the metadata a skill accrues by
+    actually running — activation_count and performance_score aren't
+    something a caller sets, they're measured from the reward of every
+    cycle in which the skill participated.
+    """
+    name: str
+    activation_count: int = 0
+    performance_score: float = 0.0  # EMA of reward across cycles this skill ran in
+    improvement_history: List[float] = field(default_factory=list)
+
+
+@dataclass
 class CycleResult:
     """Everything produced by one full perceive() cycle."""
     output: List[float]
@@ -157,6 +172,7 @@ class UnifiedBrain:
             self.states.register_synapse(str(source_id), str(target_id))
 
         self.skills: Dict[str, Skill] = {}
+        self.skill_records: Dict[str, SkillRecord] = {}
         self._pattern_skills: Dict[int, str] = {}  # id(trace) -> skill name
         self._pattern_counter = 0
         self.extensions = ExtensionSystem()
@@ -191,13 +207,23 @@ class UnifiedBrain:
         into the brain without the brain needing to know about it.
         """
         self.skills[name] = fn
+        self.skill_records.setdefault(name, SkillRecord(name=name))
 
     def unregister_skill(self, name: str) -> None:
+        """Removes the skill from active rotation; its SkillRecord (spec
+        section 143: performance history) is kept for later inspection."""
         self.skills.pop(name, None)
 
-    def _apply_skills(self, output: List[float]) -> List[float]:
-        for fn in self.skills.values():
+    def _apply_skills(self, output: List[float], reward: float) -> List[float]:
+        decay = 0.9
+        for name, fn in self.skills.items():
             output = fn(output)
+            record = self.skill_records.setdefault(name, SkillRecord(name=name))
+            record.activation_count += 1
+            record.performance_score = decay * record.performance_score + (1 - decay) * reward
+            record.improvement_history.append(record.performance_score)
+            if len(record.improvement_history) > 50:
+                record.improvement_history.pop(0)
         return output
 
     # -- Vale <-> Mesh sync -----------------------------------------
@@ -265,7 +291,7 @@ class UnifiedBrain:
             reasoned = list(raw_output)
 
         # 4. Skills: pluggable expert transforms (Mixture-of-Experts seam).
-        output = self._apply_skills(reasoned)
+        output = self._apply_skills(reasoned, reward)
 
         # 5. Learning: derive each neuron's contribution to this cycle's
         #    outcome from the reward signal (spec Part 2 section 9: vale

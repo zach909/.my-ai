@@ -102,6 +102,39 @@ class TestSkills(unittest.TestCase):
         for doubled, original in zip(result_with.output, result_without.output):
             self.assertAlmostEqual(doubled, original * 2, places=9)
 
+    def test_register_skill_creates_a_skill_record(self):
+        brain = make_brain()
+        brain.register_skill("double", lambda v: v)
+        self.assertIn("double", brain.skill_records)
+        self.assertEqual(brain.skill_records["double"].activation_count, 0)
+
+    def test_skill_record_tracks_activation_count_and_performance(self):
+        brain = make_brain()
+        brain.register_skill("double", lambda v: [x * 2 for x in v])
+        for _ in range(3):
+            brain.perceive([0.4, 0.1, 0.2, 0.3], reward=0.9)
+        record = brain.skill_records["double"]
+        self.assertEqual(record.activation_count, 3)
+        self.assertEqual(len(record.improvement_history), 3)
+        self.assertGreater(record.performance_score, 0.0)
+
+    def test_unregister_skill_preserves_its_record(self):
+        brain = make_brain()
+        brain.register_skill("double", lambda v: [x * 2 for x in v])
+        brain.perceive([0.4, 0.1, 0.2, 0.3], reward=0.9)
+        brain.unregister_skill("double")
+        self.assertNotIn("double", brain.skills)
+        self.assertIn("double", brain.skill_records)
+        self.assertEqual(brain.skill_records["double"].activation_count, 1)
+
+    def test_skill_not_run_after_unregister_does_not_gain_activations(self):
+        brain = make_brain()
+        brain.register_skill("double", lambda v: [x * 2 for x in v])
+        brain.perceive([0.4, 0.1, 0.2, 0.3], reward=0.9)
+        brain.unregister_skill("double")
+        brain.perceive([0.4, 0.1, 0.2, 0.3], reward=0.9)
+        self.assertEqual(brain.skill_records["double"].activation_count, 1)
+
 
 class TestDeterminism(unittest.TestCase):
     def test_seeded_construction_is_reproducible(self):
