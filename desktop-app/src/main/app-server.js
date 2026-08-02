@@ -34,9 +34,24 @@ const MIME_TYPES = {
 /**
  * Resolve a request pathname to a real file under `distDir`, trying the
  * TanStack Start prerender's per-route `index.html` files. Never resolves
- * outside `distDir` -- `path.join` + the `startsWith` guard below block
- * `..`-style traversal in a maliciously crafted `req.url`.
+ * outside `distDir`: isWithinDir() below uses path.relative() rather than a
+ * raw resolved.startsWith(distDir) string check -- that check alone is the
+ * classic sibling-directory bypass (a real distDir of ".../dist" is a
+ * *string* prefix of ".../dist-evil", so a resolved path escaping into that
+ * unrelated sibling directory would incorrectly pass). Concretely
+ * exploitable: a pathname of "/..%2f<sibling-dir-name>/secret.txt" isn't
+ * recognized as a ".." segment by the URL parser's own dot-segment
+ * normalization (which only collapses a literal ".." segment, not one
+ * hidden behind an encoded slash), so it survives untouched into this
+ * function's decodeURIComponent() call, which decodes %2f to a real "/"
+ * *after* that normalization already ran -- revealing the traversal only
+ * once it's too late for the URL parser to have caught it.
  */
+function isWithinDir(dir, target) {
+  const rel = path.relative(dir, target);
+  return rel === '' || (!rel.startsWith('..' + path.sep) && rel !== '..' && !path.isAbsolute(rel));
+}
+
 function resolveStaticFile(distDir, pathname) {
   const decoded = decodeURIComponent(pathname);
   const candidates = decoded.endsWith('/')
@@ -45,7 +60,7 @@ function resolveStaticFile(distDir, pathname) {
 
   for (const candidate of candidates) {
     const resolved = path.normalize(candidate);
-    if (!resolved.startsWith(path.normalize(distDir))) continue;
+    if (!isWithinDir(path.normalize(distDir), resolved)) continue;
     if (fs.existsSync(resolved) && fs.statSync(resolved).isFile()) return resolved;
   }
   return null;

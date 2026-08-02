@@ -100,6 +100,8 @@ const mainPath = path.join(__dirname, '..', 'src', 'main', 'main.js');
 delete require.cache[require.resolve(mainPath)];
 require(mainPath);
 
+const { resolveStaticFile } = require(path.join(__dirname, '..', 'src', 'main', 'app-server.js'));
+
 const FAKE_EVENT = { sender: {} }; // stands in for Electron's IpcMainInvokeEvent
 
 async function main() {
@@ -170,6 +172,26 @@ async function main() {
   const spawnResult = await handlers.get('spawn-process')(FAKE_EVENT, 'echo', ['hello-from-spawn']);
   check(spawnResult.success === true && spawnResult.stdout.trim() === 'hello-from-spawn',
     'spawn-process runs the real command/args arguments, not the event object');
+
+  // --- resolveStaticFile: sibling-directory path-traversal guard ---
+  // A raw `resolved.startsWith(distDir)` containment check is a classic
+  // bypass: distDir is a *string* prefix of any sibling directory whose
+  // name also starts with it (e.g. "dist" prefixes "dist-evil"). An
+  // "..%2f<sibling>/..." pathname isn't recognized as a ".." segment by the
+  // URL parser's own dot-segment normalization (it only collapses a literal
+  // ".." segment, not one hidden behind an encoded slash) and survives
+  // untouched into resolveStaticFile()'s decodeURIComponent() call, which
+  // reveals the real ".." only after that normalization already ran.
+  const traversalDistDir = fs.mkdtempSync(path.join(os.tmpdir(), 'app-server-traversal-dist-'));
+  fs.writeFileSync(path.join(traversalDistDir, 'index.html'), 'safe content');
+  const siblingEvilDir = traversalDistDir + '-evil';
+  fs.mkdirSync(siblingEvilDir, { recursive: true });
+  fs.writeFileSync(path.join(siblingEvilDir, 'secret.txt'), 'TOP SECRET outside distDir');
+
+  const traversalUrl = new URL('/..%2f' + path.basename(siblingEvilDir) + '/secret.txt', 'http://internal');
+  const traversalResult = resolveStaticFile(traversalDistDir, traversalUrl.pathname);
+  check(traversalResult === null,
+    'resolveStaticFile refuses to serve a file from a sibling directory that merely shares a name prefix with distDir');
 
   console.log(`\n${_passed} passed, ${_failed} failed`);
   process.exit(_failed === 0 ? 0 : 1);
