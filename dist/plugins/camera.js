@@ -1,6 +1,6 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { execSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
 export class CameraPlugin extends BasePlugin {
@@ -56,8 +56,14 @@ export class CameraPlugin extends BasePlugin {
                 unlinkSync(join(this.streamDir, "frame.jpg"));
             }
             catch { }
+            // unlinkSync() only removes files -- it always throws EISDIR on a
+            // directory, so this never actually cleaned up the mkdtempSync()
+            // directory startStream() created; every start/stop cycle leaked one
+            // permanently, the same "unbounded growth" bug class already fixed
+            // elsewhere this session, just via always-thrown-and-caught errors
+            // instead of an unbounded list.
             try {
-                unlinkSync(this.streamDir);
+                rmdirSync(this.streamDir);
             }
             catch { }
         }

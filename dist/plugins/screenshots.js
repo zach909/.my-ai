@@ -1,6 +1,6 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { execFileSync } from "node:child_process";
-import { existsSync, readFileSync, unlinkSync, mkdtempSync } from "node:fs";
+import { existsSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync } from "node:fs";
 import { join, basename } from "node:path";
 import { tmpdir } from "node:os";
 export class ScreenshotsPlugin extends BasePlugin {
@@ -44,6 +44,17 @@ export class ScreenshotsPlugin extends BasePlugin {
             }
         }
         catch { }
+        finally {
+            // tmpDir is created unconditionally above, but every early-return path
+            // (no capture tool available, the tool failed, outPath was never
+            // written) skipped removing it -- the same "unbounded resource leak"
+            // bug class already fixed in camera.ts/microphone.ts, just via a
+            // directory created on literally every call rather than only some.
+            try {
+                rmdirSync(tmpDir);
+            }
+            catch { }
+        }
         return { data: "", width: 0, height: 0, format: "none", timestamp: Date.now() };
     }
     async captureArea(x, y, w, h) {
@@ -55,10 +66,24 @@ export class ScreenshotsPlugin extends BasePlugin {
             }
             if (existsSync(outPath)) {
                 const buf = readFileSync(outPath);
-                return { data: buf.toString("base64"), width: w, height: h, format: "png", timestamp: Date.now(), path: outPath };
+                const data = buf.toString("base64");
+                // capture() above already unlinks outPath before returning --
+                // this method never did, leaving the actual screenshot image (not
+                // just an empty directory) behind on disk after every single call.
+                try {
+                    unlinkSync(outPath);
+                }
+                catch { }
+                return { data, width: w, height: h, format: "png", timestamp: Date.now(), path: outPath };
             }
         }
         catch { }
+        finally {
+            try {
+                rmdirSync(tmpDir);
+            }
+            catch { }
+        }
         return { data: "", width: 0, height: 0, format: "none", timestamp: Date.now() };
     }
 }
