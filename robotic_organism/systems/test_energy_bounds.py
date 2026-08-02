@@ -77,5 +77,67 @@ class TestArtificialOrganismDoesNotDoubleQueueMaterial(unittest.TestCase):
             "each feeding must be tracked once, not queued for processing twice over")
 
 
+class TestEnergySystemDoesNotWasteExtractedEnergy(unittest.TestCase):
+    def test_completed_material_is_not_mostly_wasted_as_heat(self):
+        # update()'s processing-completion branch extracted a material's
+        # full energy_content*mass*0.8 as a lump sum on a single tick, then
+        # called battery.charge(energy_extracted, dt) exactly once --
+        # EnergyStore.charge()'s charge_rate caps how much a *single call*
+        # can accept (charge_rate * dt), so nearly the entire lump sum was
+        # rejected and immediately written off as waste_heat, destroying
+        # ~99.9% of a material's energy the instant conversion finished,
+        # purely because the charging circuit couldn't accept it all in one
+        # tick -- not because it was ever genuinely unrecoverable.
+        energy = EnergySystem(storage_capacity=10000.0)
+        material = Material(
+            name="glucose_pack", material_type=MaterialType.ORGANIC,
+            energy_content=400.0, mass=50.0, processing_time=10.0,
+        )
+        energy.consume_material(material)
+
+        # Drive processing to completion (10s at dt=0.1 = 100 ticks), then a
+        # couple more so pending_energy has a chance to start trickling in.
+        for _ in range(102):
+            energy.update(dt=0.1)
+
+        expected_extracted = 400.0 * 50.0 * 0.8  # 16000 J
+        self.assertAlmostEqual(energy.total_energy_processed, expected_extracted, places=3,
+            msg="test setup should have actually extracted the material's energy")
+        self.assertLess(energy.waste_heat, expected_extracted * 0.1,
+            "completing a material must not immediately write off nearly all its "
+            "extracted energy as waste_heat just because charge_rate is slower than "
+            "a single tick -- undelivered energy must be retried on later ticks instead")
+        self.assertGreater(energy.pending_energy + energy.battery.current, 0.0,
+            "the extracted energy must still exist somewhere (stored or pending), not vanish")
+
+    def test_pending_energy_eventually_reaches_the_battery(self):
+        energy = EnergySystem(storage_capacity=20000.0)
+        material = Material(
+            name="glucose_pack", material_type=MaterialType.ORGANIC,
+            energy_content=400.0, mass=50.0, processing_time=10.0,
+        )
+        energy.consume_material(material)
+
+        for _ in range(100):
+            energy.update(dt=0.1)
+        self.assertEqual(energy.currently_processing, None,
+            "test setup should have actually completed processing")
+
+        # Keep an active consumer disabled so nothing drains what charges in.
+        for consumer in energy.consumers.values():
+            consumer.active = False
+
+        # Run enough further ticks for charge_rate to deliver the full
+        # extracted amount (charge_rate=100 J/s, efficiency=0.95 -> plenty
+        # of ticks at dt=0.1 to move 16000 J).
+        for _ in range(2000):
+            energy.update(dt=0.1)
+
+        self.assertAlmostEqual(energy.pending_energy, 0.0, places=3,
+            msg="pending_energy must fully drain into the battery given enough ticks")
+        self.assertGreater(energy.battery.current, 15000.0,
+            "nearly all extracted energy must actually reach the battery, not be lost")
+
+
 if __name__ == '__main__':
     unittest.main()
