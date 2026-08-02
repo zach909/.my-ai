@@ -47,6 +47,10 @@ class CircularBuffer(Generic[T]):
     def __len__(self) -> int:
         return len(self._items)
 
+    def size(self) -> int:
+        """Alias for __len__ to match common API expectations."""
+        return len(self._items)
+
     def __iter__(self):
         return iter(self._items)
 
