@@ -1,16 +1,11 @@
 ```
-# Python
+# Python cache files
 __pycache__/
 *.pyc
 *.pyo
 *.pyd
 
-# Logs and temp files
-*.log
-*.tmp
-
-# Environment
-.env
-.env.local
-*.env.*
+# Compiled Python files in specific directories
+**/__pycache__/
+**/*.pyc
 ```
