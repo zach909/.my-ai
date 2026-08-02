@@ -526,6 +526,58 @@ class NeuralMesh:
         """Human-readable names of the currently active expert groups."""
         return [self.get_group_name(g) for g in sorted(self.active_groups)]
 
+    def add_expert_group(self, name: str, n_new_neurons: int) -> Tuple[int, List[int]]:
+        """
+        Spec Part 4 section 42 (Expert Creation): grow the mesh with a
+        brand new, named expert group of freshly initialized neurons,
+        wired all-to-all with every existing neuron (preserving the mesh's
+        own all-to-all invariant) and with each other.
+
+        New neurons start at vale=0.0 as a placeholder. This mesh has no
+        opinion on where their real vale stake should come from — a caller
+        that also owns a ValeSystem (UnifiedBrain does) should call
+        vale.add_neurons() and re-sync immediately afterward, since
+        ValeSystem is the single source of truth for vale.
+
+        Returns (new_group_id, new_neuron_ids).
+        """
+        if n_new_neurons < 1:
+            raise ValueError("n_new_neurons must be >= 1")
+
+        existing_ids = list(self.neurons.keys())
+
+        new_group_id = self.n_groups
+        self.n_groups += 1
+        self.group_scores.append(0.0)
+        self.group_names[new_group_id] = name
+
+        start_id = self.n_neurons
+        new_ids = list(range(start_id, start_id + n_new_neurons))
+        self.n_neurons += n_new_neurons
+
+        for nid in new_ids:
+            neuron = NeuronState(neuron_id=nid, role=NeuronRole.HIDDEN, group=new_group_id, vale=0.0)
+            neuron.initialize_state(self.n_dimensions, rng=self._rng)
+            self.neurons[nid] = neuron
+
+        scale = 1.0 / math.sqrt(self.n_neurons * self.n_dimensions)
+
+        def _wire(source_id: int, target_id: int) -> None:
+            conn = SynapticConnection(source_id=source_id, target_id=target_id, base_learning_rate=0.01)
+            conn.initialize_weights(self.n_dimensions, scale, rng=self._rng)
+            self.connections[(source_id, target_id)] = conn
+
+        for nid in new_ids:
+            for other in existing_ids:
+                _wire(nid, other)
+                _wire(other, nid)
+            for other in new_ids:
+                if other != nid:
+                    _wire(nid, other)
+
+        self.active_groups.add(new_group_id)
+        return new_group_id, new_ids
+
     def _apply_divergence_correction(
         self,
         prev_state: Dict[int, List[float]],

@@ -298,5 +298,37 @@ class TestCircularContext(unittest.TestCase):
         self.assertTrue(len(brain.hd.memory) > 0)
 
 
+class TestExpertCreation(unittest.TestCase):
+    def test_create_expert_grows_mesh_and_vale_together(self):
+        brain = make_brain()
+        n_before = brain.mesh.n_neurons
+        group_id = brain.create_expert("robotics", n_new_neurons=4)
+        self.assertEqual(brain.mesh.n_neurons, n_before + 4)
+        self.assertEqual(len(brain.vale.v), n_before + 4)
+        self.assertEqual(brain.mesh.get_group_name(group_id), "robotics")
+        self.assertTrue(brain.vale.validate_invariant())
+
+    def test_new_expert_neurons_vale_matches_mesh_after_sync(self):
+        brain = make_brain()
+        brain.create_expert("robotics", n_new_neurons=4)
+        for nid, neuron in brain.mesh.neurons.items():
+            self.assertAlmostEqual(neuron.vale, brain.vale.v[nid], places=9)
+
+    def test_new_expert_neurons_are_registered_with_learning_system(self):
+        brain = make_brain()
+        n_neurons_before = brain.mesh.n_neurons
+        brain.create_expert("robotics", n_new_neurons=4)
+        for nid in range(n_neurons_before, n_neurons_before + 4):
+            self.assertIsNotNone(brain.states.get_neuron_state(str(nid)))
+
+    def test_brain_still_perceives_after_expert_creation(self):
+        brain = make_brain()
+        brain.create_expert("robotics", n_new_neurons=4)
+        result = brain.perceive([0.4, 0.1, 0.2, 0.3])
+        self.assertTrue(len(result.output) > 0)
+        for val in result.output:
+            self.assertFalse(val != val)  # not NaN
+
+
 if __name__ == "__main__":
     unittest.main()
