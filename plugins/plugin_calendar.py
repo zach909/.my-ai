@@ -20,6 +20,15 @@ class CalendarPlugin(Plugin):
             "upcoming": self._upcoming,
         }
         self._events: List[dict] = []
+
+        # Secure directory and file permissions on Unix-like platforms
+        cal_dir = os.path.dirname(_CAL_FILE)
+        os.makedirs(cal_dir, exist_ok=True)
+        if os.name == 'posix':
+            os.chmod(cal_dir, 0o700)
+            if os.path.exists(_CAL_FILE):
+                os.chmod(_CAL_FILE, 0o600)
+
         self._load()
 
     def _list(self, from_ts: float = 0, to_ts: float = 0) -> List[dict]:
@@ -64,6 +73,15 @@ class CalendarPlugin(Plugin):
                 self._events = []
 
     def _save(self) -> None:
-        os.makedirs(os.path.dirname(_CAL_FILE), exist_ok=True)
-        with open(_CAL_FILE, "w") as f:
+        cal_dir = os.path.dirname(_CAL_FILE)
+        os.makedirs(cal_dir, exist_ok=True)
+        if os.name == 'posix':
+            os.chmod(cal_dir, 0o700)
+
+        # Securely create and write the calendar file with 0o600 permissions
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(_CAL_FILE, flags, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(self._events, f, indent=2)
+        if os.name == 'posix':
+            os.chmod(_CAL_FILE, 0o600)
