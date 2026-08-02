@@ -4,6 +4,7 @@ Run with: python3 -m unittest plugins.test_plugin_selfheal -v
 (from the repo root, so the `plugins` package resolves).
 """
 import unittest
+from unittest.mock import patch
 
 from plugins.plugin_selfheal import SelfHealPlugin
 
@@ -177,6 +178,22 @@ class TestWatchServerConvenience(unittest.TestCase):
         # so the real urllib check must observe that and report a restart --
         # not optimistically assume the service is up.
         self.assertEqual(results["server:8080"], "restarted")
+
+    @patch("plugins.plugin_selfheal.subprocess.Popen")
+    def test_watch_server_restart_blocks_a_destructive_restart_cmd(self, mock_popen):
+        # restart() shells out via subprocess.Popen(restart_cmd, shell=True) --
+        # the same execution surface plugin_terminal guards with _is_blocked().
+        plugin = SelfHealPlugin()
+        plugin.watch_server(8080, "rm -rf /")
+        plugin._check_now()
+        mock_popen.assert_not_called()
+
+    @patch("plugins.plugin_selfheal.subprocess.Popen")
+    def test_watch_server_restart_still_runs_an_ordinary_cmd(self, mock_popen):
+        plugin = SelfHealPlugin()
+        plugin.watch_server(8080, "systemctl restart myservice")
+        plugin._check_now()
+        mock_popen.assert_called_once()
 
 
 if __name__ == "__main__":
