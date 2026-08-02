@@ -20,3 +20,7 @@
 ## 2026-08-01 - [Input Focus Preservation & Chat Log Accessibility]
 **Learning:** Toggling disabled states on inputs causes browsers to drop active keyboard focus. Restoring focus programmatically via a React ref when async tasks finish prevents user disruption and ensures fluid navigation. Wrapping chat lists in a `role="log"` live region keeps assistive technologies seamlessly informed.
 **Action:** For chat and input-heavy interfaces, pair `role="log"` container regions with a ref-based programmatic focus restoration on input fields once processing states conclude.
+
+## 2026-08-08 - [Focus Restoration & Screen-Reader Labels in Collaborative Workspaces]
+**Learning:** For multi-agent collaboration panels or chat-groups, keeping keyboard focus inside input fields during asynchronous workflows prevents screen-reader context disruption. Providing hidden sr-only labels for inputs and adding explicit ARIA labels on button triggers ensures that assistive technology users can fully navigate the interface.
+**Action:** Always pair focus restoration with explicit input-to-label bindings and high-contrast ARIA properties in text-submit flows.

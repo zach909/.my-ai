@@ -14,6 +14,7 @@ import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
+import { Label } from '@/components/ui/label'
 import { Users, Send, Vote, Zap } from 'lucide-react'
 
 function Chip({ children, className = '' }: { children: ReactNode; className?: string }) {
@@ -59,6 +60,14 @@ function ChatGroupsPage() {
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
   const endRef = useRef<HTMLDivElement>(null)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  // Re-focus the input element once loading finishes
+  useEffect(() => {
+    if (!loading) {
+      inputRef.current?.focus()
+    }
+  }, [loading])
 
   const refreshAgents = () => {
     fetch('/api/chat-groups/agents')
@@ -178,7 +187,12 @@ function ChatGroupsPage() {
         <Card className="mx-0 mt-2 space-y-2 rounded-none border-x-0 border-b-0 p-4">
           {error && <p className="text-xs text-destructive">{error}</p>}
           <div className="flex gap-2">
+            <Label htmlFor="task-input" className="sr-only">
+              Task description
+            </Label>
             <Input
+              id="task-input"
+              ref={inputRef}
               value={task}
               onChange={(e) => setTask(e.target.value)}
               onKeyDown={(e) => {
@@ -189,9 +203,17 @@ function ChatGroupsPage() {
               }}
               placeholder="Describe a task for the hive to collaborate on…"
               disabled={loading}
+              autoFocus
               className="flex-1"
             />
-            <Button onClick={submitTask} disabled={loading || !task.trim()} size="sm" className="gap-2">
+            <Button
+              onClick={submitTask}
+              disabled={loading || !task.trim()}
+              size="sm"
+              className="gap-2 active:scale-95 transition-all duration-150"
+              aria-label="Submit task to hive"
+              title="Submit task to hive"
+            >
               <Send size={16} />
               <span className="hidden sm:inline">Submit</span>
             </Button>
