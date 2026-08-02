@@ -192,6 +192,25 @@ class TestExpertGroupRouting(unittest.TestCase):
         info = brain.introspect()
         self.assertTrue(len(info.active_groups) >= 1)
 
+    def test_expert_names_passed_at_construction_appear_in_results(self):
+        brain = make_brain(
+            n_neurons=24, n_groups=4, n_input=4,
+            expert_names=["coding", "language", "reasoning", "research"],
+        )
+        result = brain.perceive([0.5, 0.2, -0.1, 0.4])
+        for name in result.active_experts:
+            self.assertIn(name, ["coding", "language", "reasoning", "research"])
+        self.assertEqual(len(result.active_experts), len(result.active_groups))
+
+        info = brain.introspect()
+        self.assertEqual(info.active_experts, result.active_experts)
+
+    def test_unnamed_experts_fall_back_to_default_names(self):
+        brain = make_brain(n_neurons=24, n_groups=4, n_input=4)
+        result = brain.perceive([0.5, 0.2, -0.1, 0.4])
+        for name in result.active_experts:
+            self.assertTrue(name.startswith("expert_"))
+
 
 class TestMaintenance(unittest.TestCase):
     def test_maintain_keeps_vale_invariant_healthy(self):

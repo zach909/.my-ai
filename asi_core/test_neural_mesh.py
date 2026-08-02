@@ -401,6 +401,27 @@ class TestExpertGroupRouting(unittest.TestCase):
             seen |= mesh.active_groups
         self.assertEqual(seen, {0, 1, 2, 3})
 
+    def test_groups_have_default_names(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4)
+        self.assertEqual(mesh.get_group_name(0), "expert_0")
+
+    def test_set_group_name(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4)
+        mesh.set_group_name(0, "coding")
+        self.assertEqual(mesh.get_group_name(0), "coding")
+
+    def test_set_group_name_out_of_range_raises(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4)
+        with self.assertRaises(ValueError):
+            mesh.set_group_name(99, "nope")
+
+    def test_active_expert_names_reflects_active_groups(self):
+        mesh = NeuralMesh(n_neurons=16, n_groups=4)
+        mesh.set_group_name(0, "coding")
+        mesh.set_group_name(1, "language")
+        mesh.active_groups = {0, 1}
+        self.assertEqual(mesh.active_expert_names(), ["coding", "language"])
+
 
 class TestStatePersistence(unittest.TestCase):
     """Test state save/load functionality."""
