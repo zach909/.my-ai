@@ -357,6 +357,12 @@ export async function getBot(system?: NeuroclawSystem): Promise<ChatBot> {
   if (!botInstance) {
     botInstance = new ChatBot()
     await botInstance.initialize(system)
+  } else if (system && !botInstance.getStatus().hasSystem) {
+    // The singleton was created by an earlier no-system call (fallback
+    // mode) -- upgrade it now that a real system is available, instead of
+    // silently discarding this argument and staying in fallback mode
+    // forever, which is what happened before this fix.
+    await botInstance.initialize(system)
   }
   return botInstance
 }
