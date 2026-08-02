@@ -524,7 +524,8 @@ export class HyperDimensionalEngine {
                 const offset = i * D;
                 nextStates[offset] = 1.0;
                 for (let d = 0; d < dims; d++) {
-                    const val = clamp(resolvedInput[d] ?? 0, -1, 1);
+                    const inputVal = resolvedInput[d] ?? 0;
+                    const val = inputVal < -1 ? -1 : (inputVal > 1 ? 1 : inputVal);
                     nextStates[offset + d + 1] = val;
                     currentTotalContentEnergy += val * val;
                 }
@@ -543,18 +544,26 @@ export class HyperDimensionalEngine {
                     let dotDiag = 0;
                     let dotShift = 0;
                     // Direct indexing with cached arrays completely avoids subarray allocation overhead
-                    // Unrolled by 4x for cache-friendly fast computation
+                    // Unrolled by 8x for cache-friendly fast computation
                     let j = 0;
-                    const limit = N - 3;
-                    for (; j < limit; j += 4) {
+                    const limit = N - 7;
+                    for (; j < limit; j += 8) {
                         dotDiag += sjRow[j] * connDiag[rowOffset + j]
                             + sjRow[j + 1] * connDiag[rowOffset + j + 1]
                             + sjRow[j + 2] * connDiag[rowOffset + j + 2]
-                            + sjRow[j + 3] * connDiag[rowOffset + j + 3];
+                            + sjRow[j + 3] * connDiag[rowOffset + j + 3]
+                            + sjRow[j + 4] * connDiag[rowOffset + j + 4]
+                            + sjRow[j + 5] * connDiag[rowOffset + j + 5]
+                            + sjRow[j + 6] * connDiag[rowOffset + j + 6]
+                            + sjRow[j + 7] * connDiag[rowOffset + j + 7];
                         dotShift += sjShiftRow[j] * connShift[rowOffset + j]
                             + sjShiftRow[j + 1] * connShift[rowOffset + j + 1]
                             + sjShiftRow[j + 2] * connShift[rowOffset + j + 2]
-                            + sjShiftRow[j + 3] * connShift[rowOffset + j + 3];
+                            + sjShiftRow[j + 3] * connShift[rowOffset + j + 3]
+                            + sjShiftRow[j + 4] * connShift[rowOffset + j + 4]
+                            + sjShiftRow[j + 5] * connShift[rowOffset + j + 5]
+                            + sjShiftRow[j + 6] * connShift[rowOffset + j + 6]
+                            + sjShiftRow[j + 7] * connShift[rowOffset + j + 7];
                     }
                     for (; j < N; j++) {
                         dotDiag += sjRow[j] * connDiag[rowOffset + j];
@@ -808,7 +817,16 @@ export class HyperDimensionalEngine {
         let sum = 0;
         for (let i = 0; i < N; i++) {
             const offset = i * D;
-            for (let d = 1; d < D; d++) {
+            let d = 1;
+            const limit = D - 3;
+            for (; d < limit; d += 4) {
+                const v0 = buffer[offset + d];
+                const v1 = buffer[offset + d + 1];
+                const v2 = buffer[offset + d + 2];
+                const v3 = buffer[offset + d + 3];
+                sum += v0 * v0 + v1 * v1 + v2 * v2 + v3 * v3;
+            }
+            for (; d < D; d++) {
                 const val = buffer[offset + d];
                 sum += val * val;
             }
@@ -852,13 +870,34 @@ export class HyperDimensionalEngine {
         const h = new Float32Array(rank);
         for (let d = 0; d < dims; d++) {
             const v = vec[d] ?? 0;
-            for (let r = 0; r < rank; r++)
-                h[r] += v * this.selfModelA[d * rank + r];
+            const offset = d * rank;
+            let r = 0;
+            const limit = rank - 3;
+            for (; r < limit; r += 4) {
+                h[r] += v * this.selfModelA[offset + r];
+                h[r + 1] += v * this.selfModelA[offset + r + 1];
+                h[r + 2] += v * this.selfModelA[offset + r + 2];
+                h[r + 3] += v * this.selfModelA[offset + r + 3];
+            }
+            for (; r < rank; r++) {
+                h[r] += v * this.selfModelA[offset + r];
+            }
         }
         const out = new Array(dims).fill(0);
         for (let r = 0; r < rank; r++) {
-            for (let d = 0; d < dims; d++)
-                out[d] += h[r] * this.selfModelB[r * dims + d];
+            const hr = h[r];
+            const bOffset = r * dims;
+            let d = 0;
+            const limit = dims - 3;
+            for (; d < limit; d += 4) {
+                out[d] += hr * this.selfModelB[bOffset + d];
+                out[d + 1] += hr * this.selfModelB[bOffset + d + 1];
+                out[d + 2] += hr * this.selfModelB[bOffset + d + 2];
+                out[d + 3] += hr * this.selfModelB[bOffset + d + 3];
+            }
+            for (; d < dims; d++) {
+                out[d] += hr * this.selfModelB[bOffset + d];
+            }
         }
         return out;
     }
@@ -899,8 +938,22 @@ export class HyperDimensionalEngine {
         if (n === 0)
             return 0;
         let sum = 0;
-        for (let i = 0; i < n; i++)
-            sum += Math.abs(a[i] - b[i]);
+        let i = 0;
+        const limit = n - 3;
+        for (; i < limit; i += 4) {
+            const d0 = a[i] - b[i];
+            const d1 = a[i + 1] - b[i + 1];
+            const d2 = a[i + 2] - b[i + 2];
+            const d3 = a[i + 3] - b[i + 3];
+            sum += (d0 < 0 ? -d0 : d0)
+                + (d1 < 0 ? -d1 : d1)
+                + (d2 < 0 ? -d2 : d2)
+                + (d3 < 0 ? -d3 : d3);
+        }
+        for (; i < n; i++) {
+            const diff = a[i] - b[i];
+            sum += diff < 0 ? -diff : diff;
+        }
         return sum / n;
     }
     resolveStateTransitions() {
@@ -943,18 +996,43 @@ export class HyperDimensionalEngine {
             const neuron = activeStates[i];
             const state = neuron.state;
             const energy = neuron.energy;
-            for (let d = 0; d < dims; d++) {
+            let d = 0;
+            const limit = dims - 3;
+            for (; d < limit; d += 4) {
+                output[d] += state[d + 1] * energy;
+                output[d + 1] += state[d + 2] * energy;
+                output[d + 2] += state[d + 3] * energy;
+                output[d + 3] += state[d + 4] * energy;
+            }
+            for (; d < dims; d++) {
                 output[d] += state[d + 1] * energy;
             }
         }
         let sumSq = 0;
-        for (let d = 0; d < dims; d++) {
+        let d = 0;
+        const limitSq = dims - 3;
+        for (; d < limitSq; d += 4) {
+            const v0 = output[d];
+            const v1 = output[d + 1];
+            const v2 = output[d + 2];
+            const v3 = output[d + 3];
+            sumSq += v0 * v0 + v1 * v1 + v2 * v2 + v3 * v3;
+        }
+        for (; d < dims; d++) {
             const val = output[d];
             sumSq += val * val;
         }
         const norm = Math.sqrt(sumSq) || 1;
         const invNorm = 1.0 / norm;
-        for (let d = 0; d < dims; d++) {
+        d = 0;
+        const limitNorm = dims - 3;
+        for (; d < limitNorm; d += 4) {
+            output[d] *= invNorm;
+            output[d + 1] *= invNorm;
+            output[d + 2] *= invNorm;
+            output[d + 3] *= invNorm;
+        }
+        for (; d < dims; d++) {
             output[d] *= invNorm;
         }
         return output;
@@ -985,7 +1063,7 @@ export class HyperDimensionalEngine {
             const rowOffset = (d + 1) * N;
             for (let i = 0; i < N; i++) {
                 const v = this.allStates[rowOffset + i];
-                const idx = Math.min(9, Math.floor(((v + 1) * 0.5) * 10));
+                const idx = Math.min(9, Math.floor((v + 1) * 5));
                 hist[idx]++;
             }
             for (let b = 0; b < buckets; b++) {
