@@ -1,5 +1,6 @@
 import { useState, useCallback } from 'react'
 import { Folder, Terminal, Globe, Mail, Calendar, Phone, Camera, Radio, FileText, Settings, Cpu, Code } from 'lucide-react'
+import { TwistedStripLogo } from '@/components/TwistedStripLogo'
 
 /**
  * AppItem - Represents a launchable application
@@ -305,6 +306,10 @@ interface DesktopProps {
 
 export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
   const { launchApp, launchingApps, error, clearError } = useAppLauncher()
+  // The twisted-strip logo isn't an OS process useAppLauncher can spawn --
+  // it's an in-app 3D viewer, so its icon opens a modal directly instead of
+  // going through launchApp()/POST /api/apps/launch like the rest.
+  const [logoViewerOpen, setLogoViewerOpen] = useState(false)
 
   const handleAppClick = async (app: AppItem) => {
     try {
@@ -370,6 +375,20 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
                   onClick={handleAppClick}
                 />
               ))}
+              <button
+                onClick={() => setLogoViewerOpen(true)}
+                className="group flex flex-col items-center justify-center w-24 h-24 p-2 rounded-lg hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500 transition-all duration-200 cursor-pointer"
+                title="Twisted Strip"
+              >
+                <div className="relative flex items-center justify-center w-14 h-14 rounded-xl bg-gradient-to-br from-white/20 to-white/5 backdrop-blur-sm border border-white/10 shadow-lg group-hover:shadow-xl group-hover:scale-105 transition-all duration-200 overflow-hidden">
+                  <div className="pointer-events-none">
+                    <TwistedStripLogo size={56} />
+                  </div>
+                </div>
+                <span className="mt-2 text-xs font-medium text-white text-center drop-shadow-md line-clamp-2">
+                  Twisted Strip
+                </span>
+              </button>
             </div>
           </section>
 
@@ -408,6 +427,30 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
           </div>
         </div>
       </div>
+
+      {/* Twisted Strip viewer -- opened by clicking its desktop icon */}
+      {logoViewerOpen && (
+        <div
+          className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
+          onClick={() => setLogoViewerOpen(false)}
+        >
+          <div
+            className="relative rounded-2xl border border-white/10 bg-black/40 p-4 shadow-2xl"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <button
+              onClick={() => setLogoViewerOpen(false)}
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-blue-500"
+              aria-label="Close"
+              title="Close"
+            >
+              ×
+            </button>
+            <TwistedStripLogo size={420} />
+            <p className="mt-2 text-center text-xs text-white/50">Drag to rotate · scroll to zoom</p>
+          </div>
+        </div>
+      )}
     </div>
   )
 }
