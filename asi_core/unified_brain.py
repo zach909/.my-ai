@@ -34,6 +34,7 @@ from .neural_mesh import NeuralMesh
 from .vale_system import ValeSystem, ValeConfig
 from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector, MemoryKind, cosine_similarity
 from .neural_states import StateManager, LearningSystem
+from .extension_system import ExtensionSystem, Extension
 
 
 Skill = Callable[[List[float]], List[float]]
@@ -115,6 +116,7 @@ class UnifiedBrain:
         self.skills: Dict[str, Skill] = {}
         self._pattern_skills: Dict[int, str] = {}  # id(trace) -> skill name
         self._pattern_counter = 0
+        self.extensions = ExtensionSystem()
         self._sync_vale_to_mesh()
 
     # -- Skills / extension points -----------------------------------
@@ -328,3 +330,35 @@ class UnifiedBrain:
                 self.unregister_skill(self._pattern_skills.pop(trace_id))
 
         return created
+
+    # -- Extensions (spec Part 3 sections 25-27) ---------------------------
+
+    def create_extension(
+        self,
+        name: str,
+        purpose: str,
+        skills: Optional[List[str]] = None,
+        permissions: Optional[List[str]] = None,
+        documentation: str = "",
+        auto_advance: bool = True,
+    ) -> Extension:
+        """
+        Bundle skills (by default, every skill self_improve() has promoted
+        so far) into a named Extension and, if auto_advance, drive it
+        through the full lifecycle (section 27): test -> optimize ->
+        quantize. If it fails testing, it's left in the FAILED stage rather
+        than silently discarded, so a caller can inspect test_results.
+        """
+        bundled = skills if skills is not None else list(self._pattern_skills.values())
+        ext = self.extensions.create(
+            name,
+            purpose=purpose,
+            skills=bundled,
+            memory_trace_ids=[tid for tid, sname in self._pattern_skills.items() if sname in bundled],
+            permissions=permissions,
+            documentation=documentation,
+        )
+        if auto_advance and self.extensions.test(name):
+            self.extensions.optimize(name)
+            self.extensions.quantize(name)
+        return ext

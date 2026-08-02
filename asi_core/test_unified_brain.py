@@ -244,5 +244,23 @@ class TestSelfImprovement(unittest.TestCase):
         self.assertEqual(created, [])
 
 
+class TestExtensionCreation(unittest.TestCase):
+    def test_create_extension_bundles_promoted_pattern_skills(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        created = brain.self_improve(min_strength=1.2)
+        self.assertTrue(len(created) >= 1)
+
+        ext = brain.create_extension("coding", purpose="write code")
+        self.assertEqual(set(ext.skills), set(created))
+        self.assertEqual(ext.stage.value, "quantized")
+
+    def test_create_extension_with_no_skills_fails_default_test(self):
+        brain = make_brain()
+        ext = brain.create_extension("empty", purpose="nothing bundled")
+        self.assertEqual(ext.stage.value, "failed")
+
+
 if __name__ == "__main__":
     unittest.main()
