@@ -17,9 +17,16 @@
 export class PlanTracker {
     constructor() {
         this.objective = "";
+        /** Why this objective exists (Section 24: "the reason for the objective"). */
+        this.reason = "";
         this.steps = [];
         this.decisions = [];
         this.constraints = [];
+        /** Section 24 goal structure: allowed/forbidden actions, success/failure conditions. */
+        this.allowedActions = [];
+        this.forbiddenActions = [];
+        this.successConditions = [];
+        this.failureConditions = [];
         this.seq = 0;
     }
     setObjective(text) {
@@ -28,12 +35,75 @@ export class PlanTracker {
     getObjective() {
         return this.objective;
     }
+    setReason(text) {
+        this.reason = text;
+    }
+    getReason() {
+        return this.reason;
+    }
     addConstraint(text) {
         if (text && !this.constraints.includes(text))
             this.constraints.push(text);
     }
     getConstraints() {
         return [...this.constraints];
+    }
+    allowAction(name) {
+        if (name && !this.allowedActions.includes(name))
+            this.allowedActions.push(name);
+    }
+    forbidAction(name) {
+        if (name && !this.forbiddenActions.includes(name))
+            this.forbiddenActions.push(name);
+    }
+    getAllowedActions() {
+        return [...this.allowedActions];
+    }
+    getForbiddenActions() {
+        return [...this.forbiddenActions];
+    }
+    /**
+     * Whether an action name is permitted under this goal's constraints.
+     * Forbidden always wins. If an allow-list has been declared at all, it
+     * acts as a whitelist -- anything not on it is denied by default (fail
+     * safe), matching AlignmentVeto's own fail-safe posture elsewhere in
+     * this codebase.
+     */
+    isActionPermitted(name) {
+        if (this.forbiddenActions.includes(name))
+            return false;
+        if (this.allowedActions.length > 0)
+            return this.allowedActions.includes(name);
+        return true;
+    }
+    addSuccessCondition(description, check) {
+        if (description)
+            this.successConditions.push({ description, check });
+    }
+    addFailureCondition(description, check) {
+        if (description)
+            this.failureConditions.push({ description, check });
+    }
+    getSuccessConditions() {
+        return this.successConditions.map(c => c.description);
+    }
+    getFailureConditions() {
+        return this.failureConditions.map(c => c.description);
+    }
+    /**
+     * Evaluate all conditions with a `check` predicate against the given state.
+     * Conditions with no predicate are descriptive-only and never match here --
+     * they document intent but require a human/caller judgement call instead.
+     */
+    evaluateConditions(state = {}) {
+        const matchedSuccess = this.successConditions.filter(c => c.check?.(state)).map(c => c.description);
+        const matchedFailure = this.failureConditions.filter(c => c.check?.(state)).map(c => c.description);
+        return {
+            succeeded: matchedSuccess.length > 0,
+            failed: matchedFailure.length > 0,
+            matchedSuccess,
+            matchedFailure,
+        };
     }
     addDecision(text) {
         if (text)
@@ -161,18 +231,30 @@ export class PlanTracker {
     snapshot() {
         return {
             objective: this.objective,
+            reason: this.reason,
             steps: this.getSteps(),
             decisions: this.getDecisions(),
             constraints: this.getConstraints(),
+            allowedActions: this.getAllowedActions(),
+            forbiddenActions: this.getForbiddenActions(),
+            successConditions: this.getSuccessConditions(),
+            failureConditions: this.getFailureConditions(),
             complete: this.isComplete(),
             achieved: this.isAchieved(),
         };
     }
     summary() {
         const p = this.progress();
-        const lines = [`Objective: ${this.objective || "(none)"}`, `Progress: ${p.completed}/${p.total} done, ${p.failed} failed, ${p.pending} pending`];
+        const lines = [`Objective: ${this.objective || "(none)"}`];
+        if (this.reason)
+            lines.push(`Reason: ${this.reason}`);
+        lines.push(`Progress: ${p.completed}/${p.total} done, ${p.failed} failed, ${p.pending} pending`);
         if (this.constraints.length)
             lines.push(`Constraints: ${this.constraints.join("; ")}`);
+        if (this.allowedActions.length)
+            lines.push(`Allowed actions: ${this.allowedActions.join("; ")}`);
+        if (this.forbiddenActions.length)
+            lines.push(`Forbidden actions: ${this.forbiddenActions.join("; ")}`);
         for (const s of this.steps) {
             lines.push(`  [${statusMark(s.status)}] ${s.description}`);
             for (const alt of s.alternatives)
@@ -187,9 +269,14 @@ export class PlanTracker {
     }
     reset() {
         this.objective = "";
+        this.reason = "";
         this.steps = [];
         this.decisions = [];
         this.constraints = [];
+        this.allowedActions = [];
+        this.forbiddenActions = [];
+        this.successConditions = [];
+        this.failureConditions = [];
         this.seq = 0;
     }
     byId(id) {

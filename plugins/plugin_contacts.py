@@ -14,6 +14,8 @@ class ContactsPlugin(Plugin):
 
     def _setup(self) -> None:
         os.makedirs(_CONTACTS_DIR, exist_ok=True)
+        if os.name == 'posix':
+            os.chmod(_CONTACTS_DIR, 0o700)
         self.tools = {
             "add":    self._add,
             "get":    self._get,
@@ -30,8 +32,15 @@ class ContactsPlugin(Plugin):
              notes: str = "", **extra) -> str:
         data = {"name": name, "email": email, "phone": phone,
                 "notes": notes, **extra}
-        with open(self._path(name), "w") as f:
+        path = self._path(name)
+        # Securely create the contact file with restrictive (0o600) permissions
+        # to prevent unauthorized reading on multi-user systems.
+        flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+        fd = os.open(path, flags, 0o600)
+        with os.fdopen(fd, "w") as f:
             json.dump(data, f, indent=2)
+        if os.name == 'posix':
+            os.chmod(path, 0o600)
         return f"Contact '{name}' saved"
 
     def _get(self, name: str) -> Optional[Dict]:

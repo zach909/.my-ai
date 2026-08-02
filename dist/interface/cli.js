@@ -12,7 +12,7 @@ const CYAN = '\x1b[36m';
 const WHITE = '\x1b[37m';
 const GRAY = '\x1b[90m';
 export class CLI {
-    constructor(llm, pipeline, thesaurus, pluginRegistry, systemAccess, multiDesktop) {
+    constructor(llm, pipeline, thesaurus, pluginRegistry, systemAccess, multiDesktop, capabilities) {
         this.rl = null;
         this.interactiveMode = false;
         this.commandQueue = [];
@@ -25,6 +25,7 @@ export class CLI {
         this.pluginRegistry = pluginRegistry;
         this.systemAccess = systemAccess;
         this.multiDesktop = multiDesktop;
+        this.capabilities = capabilities;
     }
     enqueue(fn) {
         this.commandQueue.push(fn);
@@ -117,6 +118,11 @@ export class CLI {
             if (lower === 'desktop') {
                 this.printStatus();
                 this.printDesktopStatus();
+                this.rl?.prompt();
+                return;
+            }
+            if (lower === 'sysinfo') {
+                this.printSysInfo();
                 this.rl?.prompt();
                 return;
             }
@@ -225,6 +231,7 @@ export class CLI {
         console.log(`    ${this.colorize(GREEN, 'quantize')}        ${this.colorize(GRAY, 'Save model with quantization')}`);
         console.log(`    ${this.colorize(GREEN, 'status')}          ${this.colorize(GRAY, 'Show system status')}`);
         console.log(`    ${this.colorize(GREEN, 'desktop')}         ${this.colorize(GRAY, 'Show desktop & input device status')}`);
+        console.log(`    ${this.colorize(GREEN, 'sysinfo')}         ${this.colorize(GRAY, 'Show this machine\'s personalization profile')}`);
         console.log(`    ${this.colorize(GREEN, 'help')}            ${this.colorize(GRAY, 'Show this help')}`);
         console.log(`    ${this.colorize(GREEN, 'exit')}            ${this.colorize(GRAY, 'Exit')}`);
         console.log('');
@@ -296,6 +303,21 @@ export class CLI {
         }
         console.log(`    ${this.colorize(GREEN, 'Input isolation:')} ${this.multiDesktop.hasXinput() ? this.colorize(GREEN, 'xinput available') : this.colorize(GRAY, 'none')}`);
         console.log(`    ${this.colorize(GREEN, 'AI workspace:')} ${aiWs === 'active' ? this.colorize(GREEN, 'active') : this.colorize(GRAY, 'not initialized')}`);
+        console.log('');
+    }
+    printSysInfo() {
+        const profile = this.capabilities?.getPersonalizationPrompt();
+        if (!profile) {
+            console.log(this.colorize(GRAY, '  No system profile found. Run scripts/install.sh to generate one.'));
+            console.log('');
+            return;
+        }
+        console.log('');
+        console.log(this.colorize(BOLD, '  Personalization profile (from scripts/install.sh):'));
+        console.log('');
+        for (const line of profile.split('\n')) {
+            console.log(`  ${this.colorize(GRAY, line)}`);
+        }
         console.log('');
     }
     async startChat() {

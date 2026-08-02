@@ -337,6 +337,91 @@ export class WebServer {
             }
             return;
         }
+        // POST /api/chat/messages — powers the React app's /app/chat page.
+        // Distinct from /api/chat above (the standalone HTML terminal UI's
+        // endpoint, which calls runner.generate() directly): this one goes
+        // through ChatBot.processMessage(), which also returns agent-suggested
+        // follow-up prompts alongside the reply.
+        if (pathname === '/api/chat/messages' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const message = body?.message;
+                if (!message || typeof message !== 'string') {
+                    this.sendJson(res, { error: 'Missing message field' }, 400);
+                    return;
+                }
+                const { getBot } = await import('../src/server/bot-service.js');
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const bot = await getBot(await getNeuroclawSystem());
+                const response = await bot.processMessage(message);
+                this.sendJson(res, {
+                    message: response.message,
+                    confidence: response.confidence,
+                    reasoning: response.reasoning,
+                    suggestions: response.suggestions,
+                    metadata: response.metadata,
+                    timestamp: Date.now(),
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // GET /api/chat-groups/agents — hive agents available to the default
+        // chat group, for the /app/chat-groups page's roster panel.
+        if (pathname === '/api/chat-groups/agents' && method === 'GET') {
+            try {
+                const { getBot } = await import('../src/server/bot-service.js');
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const bot = await getBot(await getNeuroclawSystem());
+                const system = bot.getSystem();
+                if (!system) {
+                    this.sendJson(res, { error: 'Hive mind unavailable in fallback mode' }, 503);
+                    return;
+                }
+                this.sendJson(res, { agents: system.hive.list().map(a => a.snapshot()) });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
+        // POST /api/chat-groups/collaborate — runs NeuroclawSystem.collaborate(),
+        // which has the hive's chat group discuss a task and vote on a decision.
+        // Powers the /app/chat-groups page.
+        if (pathname === '/api/chat-groups/collaborate' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const task = body?.task;
+                if (!task || typeof task !== 'string') {
+                    this.sendJson(res, { error: 'Missing task field' }, 400);
+                    return;
+                }
+                const { getBot } = await import('../src/server/bot-service.js');
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const bot = await getBot(await getNeuroclawSystem());
+                const system = bot.getSystem();
+                if (!system) {
+                    this.sendJson(res, { error: 'Hive mind unavailable in fallback mode' }, 503);
+                    return;
+                }
+                const result = await system.collaborate(task);
+                this.sendJson(res, {
+                    discussion: result.discussion,
+                    decision: result.decision,
+                    complete: result.complete,
+                    timestamp: Date.now(),
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
         if (pathname === '/api/thorns' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);

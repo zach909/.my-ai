@@ -17,6 +17,9 @@ This directory contains all project documentation organized by category.
 - asi_architecture.md - ASI (Artificial Super Intelligence) architecture
 - asi_architecture_v2.md - Updated ASI architecture v2
 - skill_agent_architecture.py - Skill agent architecture design
+- EXTENSION_SYSTEM.md - Extension System: automatic creation, lifecycle, versioning, dependencies, permissions, storage, compression, quantization, and security for memory/logic/skill/plugin extensions (implementation: `extension_system/`)
+- SHARED_WIKI_SYSTEM.md - Shared Wiki system design (automatic documentation, linking, version history, citations, knowledge graph, search, APIs, storage, testing)
+- PORT_SYSTEM.md - Port System: multi-input/multi-output communication layer connecting users, external software, hardware, plugins, and extensions to the neural core (structure, states, protocols, data formats, translation, routing, scheduling, synchronization, permissions, failure recovery)
 
 ### Deployment & Installation
 - DEPLOYMENT.md - Deployment instructions
@@ -30,6 +33,9 @@ This directory contains all project documentation organized by category.
 - SELF_IMPROVEMENT_PROGRESS.md - Progress on self-improvement features
 - PERFORMANCE_OPTIMIZATION_PLAN.md - Performance optimization strategies
 - DESKTOP_LAUNCHER_IMPLEMENTATION.md - Desktop launcher implementation details
+- EXTENSION_BUILDER_SPEC.md - Extension Builder implementation specification (visual/graph editor, drag-and-drop, search, debugging, quantization, packaging, installation, APIs, file format, testing)
+- NET_SEARCH_SPEC.md - Net Search implementation specification (indexing, semantic search, training, temporary neural networks, ranking, validation, APIs, data structures, testing)
+- CODE_TO_NET_SPEC.md - Code-to-Net compiler implementation specification (compiler pipeline, parsing, intermediate representation, graph generation, optimization, validation, execution, debugging, APIs, testing)
 
 ### Configuration & Guidelines
 - CLAUDE.md - Claude-specific configuration

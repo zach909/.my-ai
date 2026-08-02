@@ -37,18 +37,45 @@ export interface PlanProgress {
 
 export interface PlanSnapshot {
   objective: string;
+  reason: string;
   steps: PlanStep[];
   decisions: string[];
   constraints: string[];
+  allowedActions: string[];
+  forbiddenActions: string[];
+  successConditions: string[];
+  failureConditions: string[];
   complete: boolean;
   achieved: boolean;
 }
 
+/** A declarative success/failure condition: a human-readable description plus
+ * an optional predicate over arbitrary state, so conditions can be both
+ * inspected (the description) and actually evaluated (the check). */
+export interface GoalCondition {
+  description: string;
+  check?: (state: Record<string, unknown>) => boolean;
+}
+
+export interface GoalEvaluation {
+  succeeded: boolean;
+  failed: boolean;
+  matchedSuccess: string[];
+  matchedFailure: string[];
+}
+
 export class PlanTracker {
   private objective = "";
+  /** Why this objective exists (Section 24: "the reason for the objective"). */
+  private reason = "";
   private steps: PlanStep[] = [];
   private decisions: string[] = [];
   private constraints: string[] = [];
+  /** Section 24 goal structure: allowed/forbidden actions, success/failure conditions. */
+  private allowedActions: string[] = [];
+  private forbiddenActions: string[] = [];
+  private successConditions: GoalCondition[] = [];
+  private failureConditions: GoalCondition[] = [];
   private seq = 0;
 
   setObjective(text: string): void {
@@ -58,11 +85,73 @@ export class PlanTracker {
     return this.objective;
   }
 
+  setReason(text: string): void {
+    this.reason = text;
+  }
+  getReason(): string {
+    return this.reason;
+  }
+
   addConstraint(text: string): void {
     if (text && !this.constraints.includes(text)) this.constraints.push(text);
   }
   getConstraints(): string[] {
     return [...this.constraints];
+  }
+
+  allowAction(name: string): void {
+    if (name && !this.allowedActions.includes(name)) this.allowedActions.push(name);
+  }
+  forbidAction(name: string): void {
+    if (name && !this.forbiddenActions.includes(name)) this.forbiddenActions.push(name);
+  }
+  getAllowedActions(): string[] {
+    return [...this.allowedActions];
+  }
+  getForbiddenActions(): string[] {
+    return [...this.forbiddenActions];
+  }
+
+  /**
+   * Whether an action name is permitted under this goal's constraints.
+   * Forbidden always wins. If an allow-list has been declared at all, it
+   * acts as a whitelist -- anything not on it is denied by default (fail
+   * safe), matching AlignmentVeto's own fail-safe posture elsewhere in
+   * this codebase.
+   */
+  isActionPermitted(name: string): boolean {
+    if (this.forbiddenActions.includes(name)) return false;
+    if (this.allowedActions.length > 0) return this.allowedActions.includes(name);
+    return true;
+  }
+
+  addSuccessCondition(description: string, check?: (state: Record<string, unknown>) => boolean): void {
+    if (description) this.successConditions.push({ description, check });
+  }
+  addFailureCondition(description: string, check?: (state: Record<string, unknown>) => boolean): void {
+    if (description) this.failureConditions.push({ description, check });
+  }
+  getSuccessConditions(): string[] {
+    return this.successConditions.map(c => c.description);
+  }
+  getFailureConditions(): string[] {
+    return this.failureConditions.map(c => c.description);
+  }
+
+  /**
+   * Evaluate all conditions with a `check` predicate against the given state.
+   * Conditions with no predicate are descriptive-only and never match here --
+   * they document intent but require a human/caller judgement call instead.
+   */
+  evaluateConditions(state: Record<string, unknown> = {}): GoalEvaluation {
+    const matchedSuccess = this.successConditions.filter(c => c.check?.(state)).map(c => c.description);
+    const matchedFailure = this.failureConditions.filter(c => c.check?.(state)).map(c => c.description);
+    return {
+      succeeded: matchedSuccess.length > 0,
+      failed: matchedFailure.length > 0,
+      matchedSuccess,
+      matchedFailure,
+    };
   }
 
   addDecision(text: string): void {
@@ -191,9 +280,14 @@ export class PlanTracker {
   snapshot(): PlanSnapshot {
     return {
       objective: this.objective,
+      reason: this.reason,
       steps: this.getSteps(),
       decisions: this.getDecisions(),
       constraints: this.getConstraints(),
+      allowedActions: this.getAllowedActions(),
+      forbiddenActions: this.getForbiddenActions(),
+      successConditions: this.getSuccessConditions(),
+      failureConditions: this.getFailureConditions(),
       complete: this.isComplete(),
       achieved: this.isAchieved(),
     };
@@ -201,8 +295,12 @@ export class PlanTracker {
 
   summary(): string {
     const p = this.progress();
-    const lines = [`Objective: ${this.objective || "(none)"}`, `Progress: ${p.completed}/${p.total} done, ${p.failed} failed, ${p.pending} pending`];
+    const lines = [`Objective: ${this.objective || "(none)"}`];
+    if (this.reason) lines.push(`Reason: ${this.reason}`);
+    lines.push(`Progress: ${p.completed}/${p.total} done, ${p.failed} failed, ${p.pending} pending`);
     if (this.constraints.length) lines.push(`Constraints: ${this.constraints.join("; ")}`);
+    if (this.allowedActions.length) lines.push(`Allowed actions: ${this.allowedActions.join("; ")}`);
+    if (this.forbiddenActions.length) lines.push(`Forbidden actions: ${this.forbiddenActions.join("; ")}`);
     for (const s of this.steps) {
       lines.push(`  [${statusMark(s.status)}] ${s.description}`);
       for (const alt of s.alternatives) lines.push(`      alt: ${alt}`);
@@ -216,9 +314,14 @@ export class PlanTracker {
 
   reset(): void {
     this.objective = "";
+    this.reason = "";
     this.steps = [];
     this.decisions = [];
     this.constraints = [];
+    this.allowedActions = [];
+    this.forbiddenActions = [];
+    this.successConditions = [];
+    this.failureConditions = [];
     this.seq = 0;
   }
 

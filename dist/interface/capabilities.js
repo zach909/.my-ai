@@ -1,5 +1,14 @@
 import { execSync } from 'node:child_process';
+import { existsSync, readFileSync } from 'node:fs';
+import { join } from 'node:path';
 import os from 'node:os';
+
+// Resolved against the working directory (the app is always launched from
+// the project root — see interface/web-server.ts's extension dir handling)
+// rather than this module's own location, since this file is copied
+// verbatim into dist/interface/ by scripts/build-backend.mjs and a
+// module-relative path would then point at a dist/config that never exists.
+const SYSTEM_PROFILE_PATH = join(process.cwd(), 'config', 'system-profile.md');
 export class CapabilitiesRegistry {
     capabilities = new Map();
     constructor() {
@@ -184,7 +193,26 @@ export class CapabilitiesRegistry {
         lines.push('- Never access files outside the project without permission.');
         lines.push('- Never steal the user\'s input focus or cursor.');
         lines.push('');
+        const profile = this.getPersonalizationPrompt();
+        if (profile) {
+            lines.push(profile);
+        }
         return lines.join('\n');
+    }
+    /**
+     * The machine-specific profile (hard drive/storage, OS, BIOS/firmware,
+     * drivers) captured by scripts/install.sh at install time. Returns '' if
+     * install.sh hasn't run yet (e.g. running from source without installing).
+     */
+    getPersonalizationPrompt() {
+        if (!existsSync(SYSTEM_PROFILE_PATH))
+            return '';
+        try {
+            return readFileSync(SYSTEM_PROFILE_PATH, 'utf8');
+        }
+        catch {
+            return '';
+        }
     }
     formatForPrompt() {
         const available = this.getAvailable();

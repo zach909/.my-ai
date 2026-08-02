@@ -81,7 +81,7 @@ export class LocationPlugin extends BasePlugin {
         this.watchCallbacks.set(id, callback);
         this.getCurrentPosition().then(callback);
         const interval = setInterval(() => {
-            if (!this.isActive) {
+            if (!this.isActive()) {
                 clearInterval(interval);
                 return;
             }

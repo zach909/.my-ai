@@ -11,6 +11,10 @@
     "lint:js": "eslint src --ext ts,tsx --report-unused-disable-directives",
     "lint:types": "tsc --noEmit",
     "lint": "npm run lint:types && npm run lint:js && npm run lint:css",
+    "test:smoke": "node scripts/build-backend.mjs && node test/smoke.mjs",
+    "test:integration": "vitest run",
+    "test:install": "bash test/install-sh.test.sh",
+    "test": "npm run test:smoke && npm run test:integration && npm run test:install",
     "bench:hyper": "bun benchmarks/hyper_benchmark.ts",
     "bench:mesh": "bun benchmarks/mesh_benchmark.ts",
     "bench:moe": "bun benchmarks/moe_benchmark.ts",
@@ -22,7 +26,8 @@
     "@types/react-dom": "^19.2.3",
     "@types/three": "^0.185.1",
     "typescript": "~6.0.2",
-    "vite": "8.0.14"
+    "vite": "8.2.0",
+    "vitest": "^4.1.10"
   },
   "dependencies": {
     "@blinkdotnew/sdk": "2.7.2",

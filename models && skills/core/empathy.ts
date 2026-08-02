@@ -85,9 +85,12 @@ export class EmpathyEngine {
     const capsRatio = (input.match(/[A-Z]/g) || []).length / Math.max(1, input.length);
 
     const arousalFromPunctuation = Math.min(1, (exclamationCount * 0.2) + (questionCount * 0.1) + (capsRatio * 0.5));
-    totalArousal += arousalFromPunctuation;
 
-    // Normalize and return
+    // Normalize and return. arousal blends the pure keyword-match average
+    // with arousalFromPunctuation 50/50 -- totalArousal must stay
+    // keyword-only here (previously it had arousalFromPunctuation folded in
+    // above too, so punctuation got double-counted: once diluted into the
+    // keyword average by matchCount, and once again in this blend).
     const emotion: EmotionalState = {
       valence: matchCount > 0 ? totalValence / matchCount : 0,
       arousal: matchCount > 0 ? (totalArousal / matchCount + arousalFromPunctuation) / 2 : arousalFromPunctuation,
@@ -174,6 +177,17 @@ export class EmpathyEngine {
    */
   getModelEmotion(): EmotionalState {
     return { ...this.modelEmotionalState };
+  }
+
+  /**
+   * Get the tracked user context (recent inputs, emotional history, alignment).
+   */
+  getUserContext(): UserContext {
+    return {
+      ...this.userContext,
+      recentInputs: [...this.userContext.recentInputs],
+      emotionalHistory: [...this.userContext.emotionalHistory],
+    };
   }
 
   /**

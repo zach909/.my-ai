@@ -20,9 +20,15 @@ import { PlanTracker } from "../models && skills/core/plan-tracker.js";
 import { SelfHealer } from "../models && skills/core/self-healer.js";
 import { ContextCompressor } from "../models && skills/core/context-compressor.js";
 import { IntentRouter } from "../models && skills/core/intent-router.js";
+import { PromptingSkill } from "../models && skills/core/prompting-skill.js";
+import { WorkingMemory } from "../models && skills/core/working-memory.js";
 import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
+import { WorldModel } from "../models && skills/core/world-model.js";
+import { MathEngine, evaluateExpression } from "../models && skills/core/math-engine.js";
+import { Critic } from "../models && skills/core/critic.js";
+import { SkillLibrary } from "../models && skills/core/skill-library.js";
 import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "../models && skills/core/self-model.js";
@@ -66,10 +72,17 @@ export class NeuroclawSystem {
   healer: SelfHealer;
   compressor: ContextCompressor;
   router: IntentRouter;
+  prompting: PromptingSkill;
+  workingMemory: WorkingMemory;
   // AGI / ASI capability layer (integrated in solve()).
   monitor: SelfMonitor;
   mistakes: MistakeTracker;
   knowledge: KnowledgeGraph;
+  worldModel: WorldModel;
+  math: MathEngine;
+  /** Section 23: a genuinely separate system that reviews an answer rather than trusting the process that produced it to judge itself. */
+  critic: Critic;
+  skillLibrary: SkillLibrary;
   reasoner: ReasoningEngine;
   transfer: KnowledgeTransfer;
   selfModel: SelfModel;
@@ -151,6 +164,15 @@ export class NeuroclawSystem {
     // Capability router (Section 6): decides which high-level capability a
     // query activates (recall / summarize / heal / generate).
     this.router = new IntentRouter();
+    // Prompting skill (Section 10): understands/improves prompts and records
+    // the resulting goal onto the shared PlanTracker (Section 24) -- reuses
+    // router/plan/empathy above rather than keeping a parallel private state.
+    this.prompting = new PromptingSkill(this.router, this.plan, this.empathy);
+    // Working memory (Section 3): task-scoped scratch state (inputs, active
+    // reasoning, temporary calculations, intermediate results). Goal/
+    // constraints/plan are never duplicated here -- always read through to
+    // this.plan, the single source of truth Section 24 owns.
+    this.workingMemory = new WorkingMemory(this.plan);
 
     // AGI / ASI capability layer. These are wired together — the reasoner draws
     // available info from memory, avoids known mistakes, delegates subproblems
@@ -159,6 +181,22 @@ export class NeuroclawSystem {
     this.monitor = new SelfMonitor();
     this.mistakes = new MistakeTracker();
     this.knowledge = new KnowledgeGraph();
+    // World model (Section 4): spec-aligned entity/causal/temporal vocabulary
+    // over the same KnowledgeGraph -- not a second, duplicate graph.
+    this.worldModel = new WorldModel(this.knowledge);
+    // Math engine (Section 13): deterministic verification of numeric
+    // reasoning steps, independent of neural prediction.
+    this.math = new MathEngine();
+    // Critic (Section 23): independently reviews a claim rather than trusting
+    // the reasoner's own `verified` flag as the only check -- reuses the same
+    // KnowledgeGraph/MathEngine/MistakeTracker instances above instead of
+    // duplicating their logic.
+    this.critic = new Critic({ knowledge: this.knowledge, math: this.math, mistakes: this.mistakes });
+    // Skill library: search/load skills SkillMakerExtension has already
+    // written to disk (~/.neuroclaw/skills + skills-wiki), so a skill one
+    // instance built is discoverable and loadable by another instead of
+    // being recreated from scratch.
+    this.skillLibrary = new SkillLibrary();
     this.transfer = new KnowledgeTransfer();
     this.selfModel = new SelfModel();
     this.improvement = new SelfImprovement();
@@ -265,6 +303,7 @@ export class NeuroclawSystem {
     register("discovery", "Discovery Engine", "learning", ["knowledge"], ["observation"], ["hypothesis/combination"]);
     register("learner", "Autonomous Learner", "learning", ["knowledge"], ["information"], ["learn decision"]);
     register("reasoner", "Reasoning Engine", "reasoning", ["memory", "mistakes", "hive", "knowledge", "selfModel", "discovery", "predictor"], ["problem"], ["reasoning result"]);
+    register("critic", "Critic", "safety", ["knowledge", "math", "mistakes"], ["claim/candidate answers"], ["verification report"]);
     // The six public action-taking entry points (`trackCall()`'s component ids)
     // sit on top of the subsystems above — real dependency edges, not a
     // fabricated grouping.
@@ -385,8 +424,13 @@ export class NeuroclawSystem {
     }
 
     // Wire dependencies
+<<<<<<< HEAD
     const callHistoryInstance = this.pluginRegistry.getPluginInstance("call-history") as CallHistoryPlugin;
     const phoneCallsInstance = this.pluginRegistry.getPluginInstance("phone-calls") as PhoneCallsPlugin;
+=======
+    const callHistoryInstance = this.pluginRegistry.getPluginInstance("call-history") as CallHistoryPlugin | undefined;
+    const phoneCallsInstance = this.pluginRegistry.getPluginInstance("phone-calls") as PhoneCallsPlugin | undefined;
+>>>>>>> ddf6547eb3b3382d81eb0233ed38f410b742e297
     if (callHistoryInstance && phoneCallsInstance) {
       callHistoryInstance.setSource(phoneCallsInstance);
     }
@@ -1052,6 +1096,7 @@ export class NeuroclawSystem {
     transfers: string[];
     subresults: number;
     contradictions: string[];
+    criticIssues: string[];
     trace: ReasoningStep[];
   }> {
     if (!this.initialized) await this.initialize();
@@ -1067,6 +1112,7 @@ export class NeuroclawSystem {
     transfers: string[];
     subresults: number;
     contradictions: string[];
+    criticIssues: string[];
     trace: ReasoningStep[];
   }> {
     // ASI §3/§10/§13/§23: gate solve()'s *real* execution (hive delegation,
@@ -1090,7 +1136,7 @@ export class NeuroclawSystem {
       return {
         result: `[Withheld] ${solveDecision.reasons.join("; ")}`,
         confidence: 0, verified: false, domain: classifyDomain(problem), approach: "none",
-        transfers: [], subresults: 0, contradictions: [], trace: [],
+        transfers: [], subresults: 0, contradictions: [], criticIssues: [], trace: [],
       };
     }
     // Track which hive agent (if any) handles each subproblem in *this*
@@ -1254,6 +1300,17 @@ export class NeuroclawSystem {
     // evidence the system shouldn't be fully confident — a deserved
     // reduction, not an arbitrary penalty.
     if (contradictions.length > 0) confidence = Math.max(0, confidence - 0.15);
+    // ASI §23: "the AI should not rely on a single process to judge its own
+    // answer" — the reasoner's `verified` flag above is computed by the exact
+    // process that produced the answer (did every subproblem resolve). The
+    // Critic is a genuinely separate system: it independently challenges
+    // every assumption the chosen approach rested on against the supporting
+    // evidence, and re-checks known failure patterns for this task from
+    // scratch, rather than trusting how the reasoner already applied them
+    // internally.
+    const criticReport = await this.critic.review(Critic.fromReasoningResult(r));
+    const unsupportedAssumptions = criticReport.assumptionChallenges.filter(a => !a.supported);
+    if (unsupportedAssumptions.length > 0) confidence = Math.max(0, confidence - 0.1);
     // ASI §5: "which memories are unreliable" — reinforce or demote the
     // specific long-term memories that grounded this reasoning pass (r.available),
     // based on whether the outcome actually verified. A memory that repeatedly
@@ -1315,7 +1372,7 @@ export class NeuroclawSystem {
     const finalResult = solveDecision.requiresConfirmation
       ? `${r.result}\n  [Confirm before acting: ${solveDecision.reasons.join("; ")}]`
       : r.result;
-    return { result: finalResult, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, trace: r.trace };
+    return { result: finalResult, confidence, verified: r.verified, domain, approach: r.chosen, transfers, subresults: r.subresults.length, contradictions, criticIssues: criticReport.issues, trace: r.trace };
   }
 
   /**
@@ -1351,6 +1408,27 @@ export class NeuroclawSystem {
   /** ASI §4: "combine information from multiple memories" — follow a concept's relations outward and return what's reachable. */
   combineKnowledge(concept: string, depth = 2): string[] {
     return this.knowledge.follow(concept, [], depth).map(c => c.definition || c.name);
+  }
+
+  /**
+   * ASI §23: independently review any claim (not just a solve() result) —
+   * known error patterns, calculation checks, assumption challenges,
+   * contradiction search, and optional code tests. Exposed directly so a
+   * caller can critique a candidate answer that never went through solve()
+   * at all (e.g. one produced by a plugin or an external source).
+   */
+  async reviewClaim(input: Parameters<Critic["review"]>[0]) {
+    return this.critic.review(input);
+  }
+
+  /**
+   * ASI §23: "the final answer can be selected after multiple systems
+   * evaluate the result" — independently review several candidate answers to
+   * the same problem (e.g. from different hive agents via `collaborate()`)
+   * and select whichever one best survives scrutiny.
+   */
+  async compareAnswers(candidates: Array<{ id: string } & Parameters<Critic["review"]>[0]>) {
+    return this.critic.compareAnswers(candidates);
   }
 
   /**
@@ -1460,11 +1538,95 @@ export class NeuroclawSystem {
    * subproblem delegation), so they all share one team and trust budget
    * instead of each maintaining its own copy of this bootstrap logic.
    */
+  /**
+   * ASI §22: "different agents can focus on: Mathematics, Coding, Science,
+   * Planning, Creativity, Criticism, Research, Verification." Only three of
+   * these (planning/coding/review) had a real dedicated agent -- a math,
+   * science, or creative subproblem had no capability gate at all (see
+   * domainToCapability() above) and was routed to whichever of the three
+   * generic agents scored highest, none of which actually specializes in it.
+   * Each new agent's mind is a thin adapter over the real system that
+   * specialization already has (MathEngine/DiscoveryEngine/KnowledgeGraph+
+   * LongTermMemory/Critic), not a fourth copy of the same runner.generate()
+   * -- exactly the pluggable-mind mechanism HiveAgentSpec.think already
+   * supports, previously only ever left at its runner.generate() default.
+   */
   private ensureDefaultTeam(): void {
     if (this.hive.list().length > 0) return;
     this.hive.spawn({ id: "planner", role: "planner", specialization: "planning", capabilities: ["planning"] });
     this.hive.spawn({ id: "coder", role: "coder", specialization: "coding", capabilities: ["coding"] });
     this.hive.spawn({ id: "reviewer", role: "reviewer", specialization: "review", capabilities: ["self-heal"] });
+    this.hive.spawn({
+      id: "mathematician", role: "mathematician", specialization: "math", capabilities: ["math"],
+      think: async (prompt) => {
+        // §13: "verify reasoning rather than relying only on neural
+        // predictions" -- when the task actually contains a standalone
+        // arithmetic expression, compute it for real instead of guessing.
+        const candidate = prompt.match(/-?\d+(?:\.\d+)?(?:\s*[-+*/^()]\s*-?\d+(?:\.\d+)?)+/);
+        if (candidate) {
+          try {
+            const value = evaluateExpression(candidate[0]);
+            return `${candidate[0].trim()} = ${value}`;
+          } catch {
+            // Matched text wasn't actually a valid expression -- fall through.
+          }
+        }
+        return this.runner.generate(prompt);
+      },
+    });
+    this.hive.spawn({
+      id: "scientist", role: "scientist", specialization: "science", capabilities: ["science"],
+      think: async (prompt) => {
+        // §11/§12: ground the answer in an active, evidence-tested hypothesis
+        // that actually concerns this prompt, rather than only ever
+        // generating from scratch.
+        const key = prompt.toLowerCase();
+        const relevant = this.discovery.activeHypotheses()
+          .find(h => key.includes(h.cause.toLowerCase()) || key.includes(h.effect.toLowerCase()));
+        const grounded = relevant
+          ? `${prompt}\n(Tested hypothesis: "${relevant.cause}" -> "${relevant.effect}", confidence ${relevant.confidence.toFixed(2)})`
+          : prompt;
+        return this.runner.generate(grounded);
+      },
+    });
+    this.hive.spawn({
+      id: "creative", role: "creative", specialization: "creativity", capabilities: ["creativity"],
+      think: async (prompt) => {
+        // §11: "creativity by combining concepts that have not previously
+        // been connected" -- a real combination of two salient terms from
+        // the prompt, not a generic creative-sounding completion.
+        const terms = uniqueLongTokens(prompt);
+        const combo = terms.length >= 2 ? this.discovery.combine(terms[0], terms[1]) : null;
+        return combo
+          ? `${combo.name}: ${combo.definition}`
+          : this.runner.generate(prompt);
+      },
+    });
+    this.hive.spawn({
+      id: "researcher", role: "researcher", specialization: "research", capabilities: ["research"],
+      think: async (prompt) => {
+        // §4/§12: gather actual grounding evidence from the knowledge graph
+        // and long-term memory before generating, instead of answering blind.
+        const known = this.knowledge.search(prompt, 3).map(h => h.concept.definition || h.concept.name);
+        const recalled = this.memory.retrieve(prompt, { topK: 3 }).map(h => h.item.content);
+        const evidence = Array.from(new Set([...known, ...recalled])).filter(Boolean);
+        const grounded = evidence.length ? `${prompt}\n(Known: ${evidence.join("; ")})` : prompt;
+        return this.runner.generate(grounded);
+      },
+    });
+    this.hive.spawn({
+      id: "verifier", role: "verifier", specialization: "verification", capabilities: ["verification"],
+      think: async (prompt) => {
+        // §23: the verifier's output IS the independent critique, not a
+        // generated answer -- so this participates as a real voice in
+        // collaborate()/discuss() rather than the Critic only ever being
+        // reachable through solve()/reviewClaim().
+        const report = await this.critic.review({ claim: prompt, task: prompt });
+        return report.passed
+          ? `Verified (confidence ${report.confidence.toFixed(2)}): no issues found.`
+          : `Not verified (confidence ${report.confidence.toFixed(2)}): ${report.issues.join("; ")}`;
+      },
+    });
   }
 
   /**
@@ -1886,12 +2048,32 @@ function classifyDomain(text: string): string {
 function domainToCapability(domain: string): string | undefined {
   if (domain === "coding") return "coding";
   if (domain === "planning") return "planning";
+  // ASI §22: math/science/creativity subproblems used to have no capability
+  // gate at all -- classifyDomain() already recognized these domains, but
+  // domainToCapability() silently dropped them, so a math subproblem could
+  // land on any default-team agent regardless of specialization. Gated now
+  // that dedicated math/science/creative agents actually exist (see
+  // ensureDefaultTeam()).
+  if (domain === "math") return "math";
+  if (domain === "science") return "science";
+  if (domain === "creativity") return "creativity";
   return undefined;
 }
 
 /** Case/whitespace-insensitive text key, matching the normalization used across the core modules. */
 function normalizeText(text: string): string {
   return (text || "").toLowerCase().replace(/\s+/g, " ").trim();
+}
+
+/** The most distinctive (longest, de-duplicated) words in a prompt, longest first -- used to pick DiscoveryEngine.combine()'s two source concepts. */
+function uniqueLongTokens(text: string): string[] {
+  const seen = new Set<string>();
+  const words = (text || "").toLowerCase().split(/[^a-z0-9]+/).filter(w => w.length > 3);
+  const unique: string[] = [];
+  for (const w of words) {
+    if (!seen.has(w)) { seen.add(w); unique.push(w); }
+  }
+  return unique.sort((a, b) => b.length - a.length);
 }
 
 // Singleton instance for module-level access

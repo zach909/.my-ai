@@ -14,6 +14,7 @@ The plugin auto-detects which methods are available and chains fallbacks.
 from __future__ import annotations
 import subprocess, shutil, os, json, time, re
 from typing import Dict, List, Optional, Tuple
+from .plugin_terminal import _is_blocked
 
 
 def _run(cmd: list, timeout: int = 5) -> Optional[str]:
@@ -267,6 +268,8 @@ class GnomePlugin:
         return "wmctrl required"
 
     def _launch_on_desktop(self, cmd: str, workspace: int = None) -> str:
+        if _is_blocked(cmd):
+            return "Blocked: destructive command pattern detected"
         if workspace is None:
             workspace = self._ai_ws if self._ai_ws >= 0 else self._add_workspace()
             if self._ai_ws < 0:

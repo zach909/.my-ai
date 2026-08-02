@@ -1,4 +1,8 @@
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
+/** Strips anything but alphanumerics/hyphen/underscore, so the id can never contain a path separator or "..". */
+function sanitizePluginIdForPath(pluginId) {
+    return pluginId.replace(/[^a-zA-Z0-9_-]+/g, "_") || "unknown";
+}
 export class PluginRegistry {
     constructor() {
         this.plugins = new Map();
@@ -51,6 +55,9 @@ export class PluginRegistry {
     }
     getPlugin(pluginId) {
         return this.definitions.get(pluginId);
+    }
+    getPluginInstance(pluginId) {
+        return this.plugins.get(pluginId);
     }
     getSkill(skillId) {
         return this.skills.get(skillId);
@@ -159,7 +166,12 @@ export class PluginRegistry {
         };
         return {
             pluginId,
-            dataDir: `./data/${pluginId}`,
+            // Sanitized rather than interpolated raw: dataDir is meant for plugins
+            // to read/write their own persisted state, and an unsanitized pluginId
+            // containing ".." would let path.join-style consumers escape ./data
+            // entirely (the same class of bug fixed in extension_system/store.ts's
+            // ExtensionStore.dir()) the moment something actually uses this field.
+            dataDir: `./data/${sanitizePluginIdForPath(pluginId)}`,
             config: {},
             logger,
         };

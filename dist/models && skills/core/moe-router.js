@@ -268,36 +268,37 @@ export class MoERouter {
     }
     computeRouterScores(input) {
         const expertCount = this.config.expertCount;
-        // OPTIMIZATION: Use pre-allocated scoresScratch array to avoid GC and allocations.
         const scores = this.scoresScratch;
-        // Optimized router scoring with sequential (row-major) memory access.
-        // Loop order: experts outer, input inner for better cache utilization
         const weights = this.routerWeights;
         const inputLen = input.length;
         const bias = this.routerBias;
-        // Process each expert sequentially for better L1 cache usage
+        // OPTIMIZATION: Initialize scores with expert biases
         for (let exp = 0; exp < expertCount; exp++) {
-            let score = bias[exp];
-            let wIdx = exp;
-            // Unroll by 8x for SIMD-friendly access pattern
-            let i = 0;
-            const limit = inputLen - 7;
-            for (; i < limit; i += 8) {
-                score += input[i] * weights[wIdx]
-                    + input[i + 1] * weights[wIdx + expertCount]
-                    + input[i + 2] * weights[wIdx + 2 * expertCount]
-                    + input[i + 3] * weights[wIdx + 3 * expertCount]
-                    + input[i + 4] * weights[wIdx + 4 * expertCount]
-                    + input[i + 5] * weights[wIdx + 5 * expertCount]
-                    + input[i + 6] * weights[wIdx + 6 * expertCount]
-                    + input[i + 7] * weights[wIdx + 7 * expertCount];
-                wIdx += 8 * expertCount;
+            scores[exp] = bias[exp];
+        }
+        // OPTIMIZATION: Sequential cache-locality outer-input inner-expert loop.
+        // Since weights are stored in (inputDim x expertCount) layout, scanning
+        // expertCount contiguously keeps all memory accesses fully sequential (step size of 1).
+        for (let i = 0; i < inputLen; i++) {
+            const inputVal = input[i];
+            if (inputVal === 0)
+                continue; // Sparsity fast-path
+            const weightOffset = i * expertCount;
+            let exp = 0;
+            const limit = expertCount - 7;
+            for (; exp < limit; exp += 8) {
+                scores[exp] += inputVal * weights[weightOffset + exp];
+                scores[exp + 1] += inputVal * weights[weightOffset + exp + 1];
+                scores[exp + 2] += inputVal * weights[weightOffset + exp + 2];
+                scores[exp + 3] += inputVal * weights[weightOffset + exp + 3];
+                scores[exp + 4] += inputVal * weights[weightOffset + exp + 4];
+                scores[exp + 5] += inputVal * weights[weightOffset + exp + 5];
+                scores[exp + 6] += inputVal * weights[weightOffset + exp + 6];
+                scores[exp + 7] += inputVal * weights[weightOffset + exp + 7];
             }
-            for (; i < inputLen; i++) {
-                score += input[i] * weights[wIdx];
-                wIdx += expertCount;
+            for (; exp < expertCount; exp++) {
+                scores[exp] += inputVal * weights[weightOffset + exp];
             }
-            scores[exp] = score;
         }
         return scores;
     }
@@ -338,6 +339,77 @@ export class MoERouter {
             }
             return [max0, max1];
         }
+        else if (k === 4 && scores.length >= 4) {
+            // OPTIMIZATION: 4-element specialization using inline sorting network
+            // and branchless element-shifting to completely bypass array sorting/allocations.
+            let max0 = 0, max1 = 1, max2 = 2, max3 = 3;
+            if (scores[max1] > scores[max0]) {
+                const t = max0;
+                max0 = max1;
+                max1 = t;
+            }
+            if (scores[max2] > scores[max0]) {
+                const t = max0;
+                max0 = max2;
+                max2 = t;
+            }
+            if (scores[max3] > scores[max0]) {
+                const t = max0;
+                max0 = max3;
+                max3 = t;
+            }
+            if (scores[max2] > scores[max1]) {
+                const t = max1;
+                max1 = max2;
+                max2 = t;
+            }
+            if (scores[max3] > scores[max1]) {
+                const t = max1;
+                max1 = max3;
+                max3 = t;
+            }
+            if (scores[max3] > scores[max2]) {
+                const t = max2;
+                max2 = max3;
+                max3 = t;
+            }
+            let val0 = scores[max0];
+            let val1 = scores[max1];
+            let val2 = scores[max2];
+            let val3 = scores[max3];
+            for (let i = 4; i < scores.length; i++) {
+                const val = scores[i];
+                if (val > val0) {
+                    val3 = val2;
+                    max3 = max2;
+                    val2 = val1;
+                    max2 = max1;
+                    val1 = val0;
+                    max1 = max0;
+                    val0 = val;
+                    max0 = i;
+                }
+                else if (val > val1) {
+                    val3 = val2;
+                    max3 = max2;
+                    val2 = val1;
+                    max2 = max1;
+                    val1 = val;
+                    max1 = i;
+                }
+                else if (val > val2) {
+                    val3 = val2;
+                    max3 = max2;
+                    val2 = val;
+                    max2 = i;
+                }
+                else if (val > val3) {
+                    val3 = val;
+                    max3 = i;
+                }
+            }
+            return [max0, max1, max2, max3];
+        }
         // OPTIMIZATION: Reuse pre-allocated selectScratch buffer to avoid allocations.
         const indices = this.selectScratch;
         for (let i = 0; i < scores.length; i++) {
@@ -363,6 +435,24 @@ export class MoERouter {
             const e1 = Math.exp(v1 - max);
             const sum = e0 + e1;
             return [e0 / sum, e1 / sum];
+        }
+        else if (len === 4) {
+            // OPTIMIZATION: Specialize softmax for len === 4 to bypass loops, array allocations, and divisions.
+            const v0 = values[0], v1 = values[1], v2 = values[2], v3 = values[3];
+            let max = v0;
+            if (v1 > max)
+                max = v1;
+            if (v2 > max)
+                max = v2;
+            if (v3 > max)
+                max = v3;
+            const e0 = Math.exp(v0 - max);
+            const e1 = Math.exp(v1 - max);
+            const e2 = Math.exp(v2 - max);
+            const e3 = Math.exp(v3 - max);
+            const sum = e0 + e1 + e2 + e3;
+            const invSum = sum === 0 ? 1 : 1.0 / sum;
+            return [e0 * invSum, e1 * invSum, e2 * invSum, e3 * invSum];
         }
         // OPTIMIZATION: Single-pass loops over standard arrays without spread operator
         // or nested/higher-order functions, avoiding GC and engine optimization boundaries.

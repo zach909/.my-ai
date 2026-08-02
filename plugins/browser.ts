@@ -274,9 +274,13 @@ export class BrowserPlugin extends BasePlugin {
       if (a === 169 && b === 254) return true; // 169.254.0.0/16 (Link-local)
     }
 
-    // IPv6 private/link-local ranges
+    // IPv6 private/link-local ranges. fe80::/10 covers the first hex group
+    // fe80-febf (only the top 10 bits are fixed, so the group's 3rd hex
+    // digit ranges over 8-b) -- startsWith("fe8") alone only matched fe80-
+    // fe8f, letting fe90::/16 through feb0::/16 (still genuinely link-local,
+    // e.g. fe90::1) reach fetchUrl() as if they were public addresses.
     if (
-      host.startsWith("fe8") ||
+      /^fe[89ab]/i.test(host) ||
       host.startsWith("fc") ||
       host.startsWith("fd")
     ) {

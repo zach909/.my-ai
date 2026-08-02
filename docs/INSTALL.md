@@ -7,7 +7,7 @@
 Run the installer script to set up everything automatically:
 
 ```bash
-./install.sh
+./scripts/install.sh
 ```
 
 This will:
@@ -22,7 +22,7 @@ This will:
 
 1. **Desktop Icon** — Click the Neuroclaw icon in your applications menu
 2. **Terminal** — Run `./start.sh` from the Neuroclaw directory
-3. **npm** — Run `npm run start` or `npm run dev`
+3. **npm** — Run `npm run dev` (development) or `npm run preview` (production)
 
 The app will open automatically at: **http://localhost:3000**
 
@@ -62,8 +62,8 @@ npm run build
 # Development mode (with hot reload)
 npm run dev
 
-# Production mode
-npm run start
+# Production mode (serves the build created in Step 2)
+npm run preview
 ```
 
 ---
@@ -118,8 +118,9 @@ npm install
 ```bash
 # Create a fresh virtual environment
 cd "model && skills manager"
-python3 -m venv .venv
-source .venv/bin/activate  # Linux/macOS
+rm -rf venv
+python3 -m venv venv
+source venv/bin/activate  # Linux/macOS
 pip install -r requirements.txt
 ```
 

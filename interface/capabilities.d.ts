@@ -16,6 +16,7 @@ export declare class CapabilitiesRegistry {
     getUnavailable(): Capability[];
     isAvailable(id: string): boolean;
     getSystemPrompt(): string;
+    getPersonalizationPrompt(): string;
     formatForPrompt(): string;
     private checkGnome;
     private checkXinput;
