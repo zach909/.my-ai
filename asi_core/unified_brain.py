@@ -35,6 +35,7 @@ from .vale_system import ValeSystem, ValeConfig
 from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector, MemoryKind, cosine_similarity
 from .neural_states import StateManager, LearningSystem
 from .extension_system import ExtensionSystem, Extension
+from .circular_context import CircularContextSystem
 
 
 Skill = Callable[[List[float]], List[float]]
@@ -83,6 +84,7 @@ class UnifiedBrain:
         hd_dimensions: int = 256,
         seed: Optional[int] = 42,
         expert_names: Optional[List[str]] = None,
+        context_capacity: int = 32,
     ):
         self.mesh = NeuralMesh(
             n_neurons=n_neurons,
@@ -126,6 +128,16 @@ class UnifiedBrain:
         self._pattern_skills: Dict[int, str] = {}  # id(trace) -> skill name
         self._pattern_counter = 0
         self.extensions = ExtensionSystem()
+
+        # Spec Part 5 sections 66-69 (Circular Context System): instead of
+        # a fixed context window that simply drops old input/output, the
+        # oldest entry is compressed into long-term HD memory on eviction.
+        self.context = CircularContextSystem(
+            capacity=context_capacity,
+            on_input_evict=self._compress_evicted_context,
+            on_output_evict=self._compress_evicted_context,
+        )
+
         self._sync_vale_to_mesh()
 
     # -- Skills / extension points -----------------------------------
@@ -163,10 +175,28 @@ class UnifiedBrain:
         data = list(values[:dims]) + [0.0] * max(0, dims - len(values))
         return HDVector(data, HDVector._compute_bounds(dims))
 
+    # -- Circular context (spec Part 5 sections 66-69) ---------------------
+
+    def _compress_evicted_context(self, values: List[float]) -> None:
+        """
+        Called when the input or output buffer overflows. Rather than
+        letting the oldest entry vanish, fold it into long-term HD memory
+        as its own key/value trace (bundled with any existing similar
+        trace, per MemoryStore.write) — "important information moves into
+        memory" (section 67).
+        """
+        vec = self._vector_to_hd(values)
+        self.hd.memory.write(vec, vec, self.hd.current_tick, kind=MemoryKind.LONG_TERM.value)
+
     # -- Core cycle ----------------------------------------------------
 
     def perceive(self, input_vector: List[float], reward: float = 0.5) -> CycleResult:
         """Run one full perceive-think-act-learn cycle."""
+
+        # 0. Circular context: record this input in the continuous input
+        #    buffer (section 67); the corresponding output is recorded once
+        #    computed, below.
+        self.context.record_input(list(input_vector))
 
         # 1. Dynamic neural state: settle the mesh on the new input,
         #    carrying state forward between calls (continuous mode).
@@ -221,6 +251,8 @@ class UnifiedBrain:
         self.learning.apply_learning()
         self.learning.apply_reinforcement(reward)
         self.states.update_time(1.0)
+
+        self.context.record_output(list(output))
 
         return CycleResult(
             output=output,

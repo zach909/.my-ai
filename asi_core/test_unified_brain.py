@@ -281,5 +281,22 @@ class TestExtensionCreation(unittest.TestCase):
         self.assertEqual(ext.stage.value, "failed")
 
 
+class TestCircularContext(unittest.TestCase):
+    def test_input_and_output_are_recorded_each_cycle(self):
+        brain = make_brain(context_capacity=10)
+        brain.perceive([0.5, 0.1, 0.2, 0.3])
+        self.assertEqual(len(brain.context.input_buffer), 1)
+        self.assertEqual(len(brain.context.output_buffer), 1)
+        self.assertEqual(brain.context.input_buffer.items[0], [0.5, 0.1, 0.2, 0.3])
+
+    def test_buffer_overflow_compresses_into_long_term_memory(self):
+        brain = make_brain(context_capacity=3)
+        self.assertEqual(len(brain.hd.memory), 0)
+        for _ in range(6):
+            brain.perceive([0.5, 0.1, 0.2, 0.3])
+        self.assertEqual(len(brain.context.input_buffer), 3)
+        self.assertTrue(len(brain.hd.memory) > 0)
+
+
 if __name__ == "__main__":
     unittest.main()

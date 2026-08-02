@@ -71,6 +71,20 @@ from .extension_system import (
     ExtensionError,
 )
 
+from .circular_context import (
+    CircularBuffer,
+    CircularContextSystem,
+)
+
+from .neural_dsl import (
+    parse as parse_ndl,
+    to_source as ndl_to_source,
+    describe_extension,
+    NeuronDefinition,
+    Connection,
+    NDLError,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # Neural Mesh
@@ -126,4 +140,14 @@ __all__ = [
     "Extension",
     "ExtensionStage",
     "ExtensionError",
+    # Circular Context System
+    "CircularBuffer",
+    "CircularContextSystem",
+    # Neural Definition Language
+    "parse_ndl",
+    "ndl_to_source",
+    "describe_extension",
+    "NeuronDefinition",
+    "Connection",
+    "NDLError",
 ]
