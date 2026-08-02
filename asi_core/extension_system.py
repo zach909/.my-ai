@@ -145,12 +145,15 @@ class ExtensionSystem:
         ext.stage = ExtensionStage.OPTIMIZED
         return ext
 
-    def quantize(self, name: str) -> Extension:
+    def quantize(self, name: str, quantizer=None) -> Extension:
         """
         Section 27 (Quantization): mark the extension as converted into a
         compressed, no-longer-editable-in-place form. The editable
         Extension object itself remains available (the spec: "The original
         editable version can remain stored separately").
+        
+        If a Quantizer instance is provided, it will be used to perform
+        actual 4-bit quantization on the extension's weights.
         """
         ext = self._get(name)
         if ext.stage != ExtensionStage.OPTIMIZED:
