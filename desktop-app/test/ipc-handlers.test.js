@@ -130,6 +130,19 @@ async function main() {
   check(execResult.success === true && execResult.stdout.trim() === 'hello-from-exec',
     'exec-command runs the real command argument, not the event object');
 
+  // --- exec-command / spawn-process: destructive-command guard ---
+  // exec-command always shells out via child_process.exec(); it's exposed to
+  // the renderer via preload.js's contextBridge with no guard before this
+  // fix, unlike plugins/plugin_terminal.py's equivalent full-shell-access
+  // capability, which _is_blocked()-gates the same class of command.
+  const blockedExecResult = await handlers.get('exec-command')(FAKE_EVENT, 'rm -rf /');
+  check(blockedExecResult.success === false && /Blocked/.test(blockedExecResult.error),
+    'exec-command blocks a destructive rm -rf / before it ever reaches the shell');
+
+  const blockedSpawnResult = await handlers.get('spawn-process')(FAKE_EVENT, 'rm', ['-rf', '/']);
+  check(blockedSpawnResult.success === false && /Blocked/.test(blockedSpawnResult.error),
+    'spawn-process blocks a destructive rm -rf / split across command/args');
+
   // --- select-file (the "silent wrong output" variant: no throw, just
   //     silently discards the caller's real options and falls back to
   //     defaults) ---
