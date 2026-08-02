@@ -2,6 +2,11 @@ import type { PluginDefinition, SkillDefinition } from "./types.js";
 import type { BasePlugin, PluginContext, PluginLogger } from "./sdk.js";
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
 
+/** Strips anything but alphanumerics/hyphen/underscore, so the id can never contain a path separator or "..". */
+function sanitizePluginIdForPath(pluginId: string): string {
+  return pluginId.replace(/[^a-zA-Z0-9_-]+/g, "_") || "unknown";
+}
+
 export class PluginRegistry {
   private plugins: Map<string, BasePlugin> = new Map();
   private definitions: Map<string, PluginDefinition> = new Map();
@@ -183,7 +188,12 @@ export class PluginRegistry {
     };
     return {
       pluginId,
-      dataDir: `./data/${pluginId}`,
+      // Sanitized rather than interpolated raw: dataDir is meant for plugins
+      // to read/write their own persisted state, and an unsanitized pluginId
+      // containing ".." would let path.join-style consumers escape ./data
+      // entirely (the same class of bug fixed in extension_system/store.ts's
+      // ExtensionStore.dir()) the moment something actually uses this field.
+      dataDir: `./data/${sanitizePluginIdForPath(pluginId)}`,
       config: {},
       logger,
     };

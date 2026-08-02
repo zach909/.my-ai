@@ -209,6 +209,16 @@ describe('Neuroclaw Integration Tests', () => {
       await plugins.bootstrap();
       expect(plugins.dispatch).toBeDefined();
     });
+
+    it('should sanitize a path-traversal pluginId out of createContext().dataDir', () => {
+      // The same bug class fixed in ExtensionStore.dir(): dataDir is meant
+      // for a plugin to persist its own state, so an unsanitized pluginId
+      // containing ".." would let a path.join-style consumer escape ./data
+      // entirely the moment something actually reads/writes through it.
+      const context = plugins.createContext('../../../../tmp/pwned');
+      expect(context.dataDir).not.toContain('..');
+      expect(context.dataDir.startsWith('./data/')).toBe(true);
+    });
   });
 
   describe('Browser Plugin Security', () => {
