@@ -1,17 +1,16 @@
+import type { BasePlugin } from "../plugin_manager/sdk.js";
+
 export interface PluginMetadata {
     id: string;
     name: string;
-    version: string;
-    description: string;
-    author: string;
-    category: 'input' | 'output' | 'processing' | 'storage' | 'network' | 'system';
+    type: 'api-connection' | 'skill-expert';
+    capabilities: string[];
     enabled: boolean;
-    permissions: string[];
-    dependencies: string[];
     config: Record<string, any>;
 }
 export interface PluginInstance {
     metadata: PluginMetadata;
+    real: BasePlugin | null;
     initialized: boolean;
     error?: string;
     lastUsed: number;
@@ -29,13 +28,15 @@ export declare class PluginManager {
     constructor(config?: Partial<PluginManagerConfig>);
     private ensureDirectory;
     private initializeCorePlugins;
+    private createContext;
+    private resolveMethod;
     registerPlugin(metadata: PluginMetadata): boolean;
     unregisterPlugin(pluginId: string): boolean;
     enablePlugin(pluginId: string): boolean;
     disablePlugin(pluginId: string): boolean;
-    initializePlugin(pluginId: string): boolean;
+    initializePlugin(pluginId: string): Promise<boolean>;
     getPlugin(pluginId: string): PluginInstance | undefined;
-    listPlugins(category?: string): PluginMetadata[];
+    listPlugins(type?: 'api-connection' | 'skill-expert'): PluginMetadata[];
     getEnabledPlugins(): PluginMetadata[];
     getInitializedPlugins(): PluginMetadata[];
     loadPlugins(): void;
@@ -45,21 +46,15 @@ export declare class PluginManager {
     registerHook(hookName: string, callback: (data: any) => any): void;
     unregisterHook(hookName: string, callback: (data: any) => any): void;
     executeHook(hookName: string, data: any): Promise<any[]>;
-    executePlugin(pluginId: string, action: string, data: any): any;
-    private executeInputPlugin;
-    private executeOutputPlugin;
-    private executeProcessingPlugin;
-    private executeStoragePlugin;
-    private executeNetworkPlugin;
-    private executeSystemPlugin;
+    executePlugin(pluginId: string, action: string, data?: any): Promise<any>;
     getPluginStats(): {
         total: number;
         enabled: number;
         initialized: number;
-        byCategory: Record<string, number>;
+        byType: Record<string, number>;
     };
     searchPlugins(query: string): PluginMetadata[];
     getConfig(): PluginManagerConfig;
     updateConfig(config: Partial<PluginManagerConfig>): void;
-    shutdown(): void;
+    shutdown(): Promise<void>;
 }
