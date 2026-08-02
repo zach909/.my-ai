@@ -56,6 +56,10 @@ class Extension:
     test_results: Dict[str, Any] = field(default_factory=dict)
     quantized: bool = False
     version: int = 1
+    # Populated by ExtensionSystem.quantize() when it was given real
+    # weights to compress (background_quantization.Quantizer's actual
+    # int4 bundle) rather than only flipping the `quantized` flag.
+    quantized_bundle: Optional[Dict[str, Any]] = None
 
     def to_dict(self) -> Dict[str, Any]:
         """Spec Part 9 section 171 (Backup System)."""
@@ -70,6 +74,7 @@ class Extension:
             "test_results": dict(self.test_results),
             "quantized": self.quantized,
             "version": self.version,
+            "quantized_bundle": self.quantized_bundle,
         }
 
     @classmethod
@@ -85,6 +90,7 @@ class Extension:
             test_results=dict(data.get("test_results", {})),
             quantized=data.get("quantized", False),
             version=data.get("version", 1),
+            quantized_bundle=data.get("quantized_bundle"),
         )
 
 
@@ -145,19 +151,37 @@ class ExtensionSystem:
         ext.stage = ExtensionStage.OPTIMIZED
         return ext
 
-    def quantize(self, name: str, quantizer=None) -> Extension:
+    def quantize(self, name: str, weights: Optional[Dict[str, Any]] = None, quantizer=None) -> Extension:
         """
         Section 27 (Quantization): mark the extension as converted into a
         compressed, no-longer-editable-in-place form. The editable
         Extension object itself remains available (the spec: "The original
         editable version can remain stored separately").
-        
-        If a Quantizer instance is provided, it will be used to perform
-        actual 4-bit quantization on the extension's weights.
+
+        If `weights` (a {layer_name: array-like} mapping of the numeric
+        weights backing this extension, e.g. a snapshot of the mesh
+        connections/vale a UnifiedBrain skill was built from) is supplied,
+        this actually runs background_quantization.Quantizer's real int4
+        quantization over them and stores the resulting compressed bundle
+        on `ext.quantized_bundle` -- not just a flag flip. Without weights
+        (e.g. an extension shared in from another agent via HiveMind,
+        which never carries numeric weights across, see hive_mind.py),
+        only the flag/stage transition happens, same as before.
         """
         ext = self._get(name)
         if ext.stage != ExtensionStage.OPTIMIZED:
             raise ExtensionError(f"extension '{name}' must be optimized before quantization")
+
+        if weights:
+            from .background_quantization import Quantizer
+
+            q = quantizer or Quantizer(bits=4)
+            ext.quantized_bundle = q.quantize_extension({
+                "name": ext.name,
+                "weights": weights,
+                "metadata": {"purpose": ext.purpose, "skills": list(ext.skills)},
+            })
+
         ext.quantized = True
         ext.stage = ExtensionStage.QUANTIZED
         return ext
