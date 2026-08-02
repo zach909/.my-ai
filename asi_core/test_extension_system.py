@@ -112,5 +112,82 @@ class TestExtensionQueries(unittest.TestCase):
             system.test("nope")
 
 
+class TestVersionControl(unittest.TestCase):
+    def test_update_bumps_version_and_applies_change(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        ok = system.update("coding", skills=["a", "b"])
+        self.assertTrue(ok)
+        ext = system.get("coding")
+        self.assertEqual(ext.version, 2)
+        self.assertEqual(ext.skills, ["a", "b"])
+
+    def test_failed_update_rolls_back_automatically(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a", "b"])
+        # Update to an empty skill set, which fails the default test.
+        ok = system.update("coding", skills=[])
+        self.assertFalse(ok)
+        ext = system.get("coding")
+        self.assertEqual(ext.version, 1)
+        self.assertEqual(ext.skills, ["a", "b"])
+
+    def test_failed_update_via_custom_test_fn_rolls_back(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        ok = system.update(
+            "coding", skills=["a", "b", "c"], test_fn=lambda ext: len(ext.skills) < 2
+        )
+        self.assertFalse(ok)
+        self.assertEqual(system.get("coding").skills, ["a"])
+
+    def test_manual_rollback_without_argument_undoes_last_update(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        system.update("coding", skills=["a", "b"])
+        system.update("coding", skills=["a", "b", "c"])
+        restored = system.rollback("coding")
+        self.assertEqual(restored.skills, ["a", "b"])
+        self.assertEqual(restored.version, 2)
+
+    def test_rollback_to_specific_version_discards_later_history(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        system.update("coding", skills=["a", "b"])
+        system.update("coding", skills=["a", "b", "c"])
+        restored = system.rollback("coding", to_version=1)
+        self.assertEqual(restored.skills, ["a"])
+        self.assertEqual(restored.version, 1)
+        self.assertEqual(system.history("coding"), [])
+
+    def test_rollback_with_no_history_raises(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        with self.assertRaises(ExtensionError):
+            system.rollback("coding")
+
+    def test_rollback_to_nonexistent_version_raises(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        system.update("coding", skills=["a", "b"])
+        with self.assertRaises(ExtensionError):
+            system.rollback("coding", to_version=99)
+
+    def test_history_accumulates_across_updates(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        system.update("coding", skills=["a", "b"])
+        system.update("coding", skills=["a", "b", "c"])
+        history = system.history("coding")
+        self.assertEqual([h.version for h in history], [1, 2])
+
+    def test_remove_clears_history(self):
+        system = ExtensionSystem()
+        system.create("coding", purpose="x", skills=["a"])
+        system.update("coding", skills=["a", "b"])
+        system.remove("coding")
+        self.assertEqual(system.history("coding"), [])
+
+
 if __name__ == "__main__":
     unittest.main()

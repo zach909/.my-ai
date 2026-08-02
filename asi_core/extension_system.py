@@ -1,17 +1,24 @@
 """
 Extension System
 
-Implements spec Part 3 sections 25-27: an extension is a permanent package
-of knowledge/skills/memory the AI can create for itself, with a defined
-lifecycle (creation -> testing -> optimization -> quantization).
+Implements spec Part 3 sections 25-27 (creation -> testing -> optimization
+-> quantization) and Part 6 sections 98-99 (Version Control / Self-Healing
+Safety): an extension is a permanent, versioned package of
+knowledge/skills/memory the AI can create for itself.
 
 This is the natural next step after UnifiedBrain.self_improve() (Part 3
 section 36): self_improve() promotes a single reinforced memory pattern
 into a standalone skill; ExtensionSystem bundles related skills together
 into one named, versioned, testable unit ("Programming Extension" in the
 spec's example), matching section 26's "Self-Created Extensions" process.
+
+update() implements section 99's safety sequence directly: "create
+backups, test changes, compare performance, roll back if worse" — every
+update() snapshots the current version, applies the change, re-tests, and
+automatically reverts if the test fails.
 """
 
+import copy
 from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any, Callable, Dict, List, Optional
@@ -48,6 +55,7 @@ class Extension:
     stage: ExtensionStage = ExtensionStage.CREATED
     test_results: Dict[str, Any] = field(default_factory=dict)
     quantized: bool = False
+    version: int = 1
 
 
 class ExtensionSystem:
@@ -55,6 +63,7 @@ class ExtensionSystem:
 
     def __init__(self):
         self.extensions: Dict[str, Extension] = {}
+        self._history: Dict[str, List[Extension]] = {}  # past versions, oldest first
 
     def create(
         self,
@@ -138,6 +147,69 @@ class ExtensionSystem:
 
     def remove(self, name: str) -> None:
         self.extensions.pop(name, None)
+        self._history.pop(name, None)
+
+    # -- Version control / self-healing safety (spec Part 6 sections 98-99) --
+
+    def update(
+        self,
+        name: str,
+        skills: Optional[List[str]] = None,
+        permissions: Optional[List[str]] = None,
+        documentation: Optional[str] = None,
+        test_fn: Optional[Callable[[Extension], bool]] = None,
+    ) -> bool:
+        """
+        Modify an existing extension's contents, versioned and
+        safety-checked (section 99): snapshot the current version, apply
+        the change, bump the version, and re-test. If the test fails, the
+        extension is rolled back to the pre-update snapshot automatically
+        and this returns False; otherwise the change stands and this
+        returns True.
+        """
+        ext = self._get(name)
+        self._history.setdefault(name, []).append(copy.deepcopy(ext))
+
+        if skills is not None:
+            ext.skills = list(dict.fromkeys(skills))
+        if permissions is not None:
+            ext.permissions = list(permissions)
+        if documentation is not None:
+            ext.documentation = documentation
+        ext.version += 1
+        ext.stage = ExtensionStage.CREATED
+
+        if self.test(name, test_fn):
+            return True
+        self.rollback(name)
+        return False
+
+    def rollback(self, name: str, to_version: Optional[int] = None) -> Extension:
+        """
+        Restore a previous version (section 98). With no `to_version`,
+        undoes the most recent update(). With `to_version`, restores that
+        specific version and discards every version recorded after it.
+        """
+        history = self._history.get(name)
+        if not history:
+            raise ExtensionError(f"no history to roll back for '{name}'")
+
+        if to_version is None:
+            restored = history.pop()
+        else:
+            matches = [i for i, h in enumerate(history) if h.version == to_version]
+            if not matches:
+                raise ExtensionError(f"no such version {to_version} for '{name}'")
+            idx = matches[-1]
+            restored = history[idx]
+            self._history[name] = history[:idx]
+
+        self.extensions[name] = restored
+        return restored
+
+    def history(self, name: str) -> List[Extension]:
+        """Past versions of an extension, oldest first, most recent last."""
+        return list(self._history.get(name, []))
 
     def _get(self, name: str) -> Extension:
         ext = self.extensions.get(name)
