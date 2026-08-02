@@ -169,6 +169,29 @@ class TestIntrospection(unittest.TestCase):
         self.assertEqual(info.memory_size, 0)
 
 
+class TestExpertGroupRouting(unittest.TestCase):
+    def test_cycle_result_reports_active_groups(self):
+        brain = make_brain(n_neurons=24, n_groups=4, n_input=4)
+        result = brain.perceive([0.5, 0.2, -0.1, 0.4])
+        self.assertTrue(len(result.active_groups) >= 1)
+        for g in result.active_groups:
+            self.assertIn(g, range(4))
+
+    def test_routing_eventually_activates_every_group(self):
+        brain = make_brain(n_neurons=24, n_groups=4, n_input=4)
+        seen = set()
+        for _ in range(20):
+            result = brain.perceive([0.5, 0.2, -0.1, 0.4])
+            seen.update(result.active_groups)
+        self.assertEqual(seen, {0, 1, 2, 3})
+
+    def test_introspect_reports_active_groups(self):
+        brain = make_brain(n_neurons=24, n_groups=4, n_input=4)
+        brain.perceive([0.5, 0.2, -0.1, 0.4])
+        info = brain.introspect()
+        self.assertTrue(len(info.active_groups) >= 1)
+
+
 class TestMaintenance(unittest.TestCase):
     def test_maintain_keeps_vale_invariant_healthy(self):
         brain = make_brain()
