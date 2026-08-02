@@ -28,6 +28,7 @@ export const APP_ROUTES: AppRoute[] = [
   { path: '/app/knowledge', title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.' },
   { path: '/app/evaluation', title: 'Evaluation', description: 'Measure and benchmark ASI module performance against defined criteria.' },
   { path: '/app/experiments', title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols.' },
+  { path: '/app/chat-groups', title: 'Chat Groups', description: 'Hive-mind agents collaborating on a task through a shared chat group.' },
 ]
 
 export interface BotMessage {
@@ -63,6 +64,11 @@ export class ChatBot {
     if (this.system) {
       await this.system.initialize()
     }
+  }
+
+  /** The underlying NeuroclawSystem, if one was supplied — undefined in fallback mode. */
+  getSystem(): NeuroclawSystem | undefined {
+    return this.system
   }
 
   /**
