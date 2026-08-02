@@ -546,5 +546,46 @@ class TestBackupRestore(unittest.TestCase):
             mismatched.restore(backup)
 
 
+class TestActionLogging(unittest.TestCase):
+    def test_create_expert_is_logged_and_unaffected_by_default(self):
+        brain = make_brain()
+        group_id = brain.create_expert("robotics", n_new_neurons=4)
+        self.assertIsInstance(group_id, int)
+        actions = brain.actions.history()
+        self.assertEqual(len(actions), 1)
+        self.assertEqual(actions[0].action, "create_expert:robotics")
+        self.assertEqual(actions[0].result, "success")
+
+    def test_create_extension_is_logged_and_unaffected_by_default(self):
+        brain = make_brain(n_neurons=16, n_groups=2, hd_dimensions=32)
+        for _ in range(150):
+            brain.perceive([0.9, 0.9, 0.9, 0.9], reward=0.95)
+        brain.self_improve(min_strength=1.2)
+        ext = brain.create_extension("coding", purpose="write code")
+        self.assertEqual(ext.name, "coding")
+        actions = brain.actions.history()
+        self.assertEqual(actions[-1].action, "create_extension:coding")
+
+    def test_approval_rule_blocks_create_expert_and_leaves_mesh_unchanged(self):
+        brain = make_brain()
+        brain.actions.require_approval_for(lambda a: a.startswith("create_expert"))
+        n_before = brain.mesh.n_neurons
+
+        with self.assertRaises(PermissionError):
+            brain.create_expert("robotics", n_new_neurons=4)
+
+        self.assertEqual(brain.mesh.n_neurons, n_before)
+        self.assertEqual(brain.actions.history()[0].approval.value, "pending")
+
+    def test_approval_rule_blocks_create_extension_and_leaves_registry_unchanged(self):
+        brain = make_brain()
+        brain.actions.require_approval_for(lambda a: a.startswith("create_extension"))
+
+        with self.assertRaises(PermissionError):
+            brain.create_extension("coding", purpose="write code")
+
+        self.assertIsNone(brain.extensions.get("coding"))
+
+
 if __name__ == "__main__":
     unittest.main()

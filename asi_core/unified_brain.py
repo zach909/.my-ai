@@ -37,6 +37,7 @@ from .neural_states import StateManager, LearningSystem
 from .extension_system import ExtensionSystem, Extension
 from .circular_context import CircularContextSystem
 from .mistake_tracker import MistakeTracker, MistakeRecord
+from .action_log import ActionLog
 
 
 Skill = Callable[[List[float]], List[float]]
@@ -176,6 +177,14 @@ class UnifiedBrain:
         self._pattern_skills: Dict[int, str] = {}  # id(trace) -> skill name
         self._pattern_counter = 0
         self.extensions = ExtensionSystem()
+
+        # Spec Part 9 sections 161-163 / Part 10 section 191 (Action
+        # History / Human Approval / Transparency): structural actions
+        # below (create_expert, create_extension) are logged here. By
+        # default nothing requires approval — a caller opts in via
+        # actions.require_approval_for(...) to gate specific actions
+        # behind approve()/deny() before they're allowed to run.
+        self.actions = ActionLog()
 
         # Spec Part 5 sections 66-69 (Circular Context System): instead of
         # a fixed context window that simply drops old input/output, the
@@ -626,20 +635,31 @@ class UnifiedBrain:
         through the full lifecycle (section 27): test -> optimize ->
         quantize. If it fails testing, it's left in the FAILED stage rather
         than silently discarded, so a caller can inspect test_results.
+
+        Logged as an action (sections 161-163): by default this runs
+        immediately, but if a caller has registered an approval rule
+        matching "create_extension:<name>" via
+        self.actions.require_approval_for(...), this raises
+        PermissionError until the pending action is approved.
         """
-        bundled = skills if skills is not None else list(self._pattern_skills.values())
-        ext = self.extensions.create(
-            name,
-            purpose=purpose,
-            skills=bundled,
-            memory_trace_ids=[tid for tid, sname in self._pattern_skills.items() if sname in bundled],
-            permissions=permissions,
-            documentation=documentation,
-        )
-        if auto_advance and self.extensions.test(name):
-            self.extensions.optimize(name)
-            self.extensions.quantize(name)
-        return ext
+        record = self.actions.request(f"create_extension:{name}", why=purpose, system="extensions")
+
+        def _do() -> Extension:
+            bundled = skills if skills is not None else list(self._pattern_skills.values())
+            ext = self.extensions.create(
+                name,
+                purpose=purpose,
+                skills=bundled,
+                memory_trace_ids=[tid for tid, sname in self._pattern_skills.items() if sname in bundled],
+                permissions=permissions,
+                documentation=documentation,
+            )
+            if auto_advance and self.extensions.test(name):
+                self.extensions.optimize(name)
+                self.extensions.quantize(name)
+            return ext
+
+        return self.actions.perform(record, _do)
 
     # -- Expert creation (spec Part 4 section 42) --------------------------
 
@@ -654,16 +674,29 @@ class UnifiedBrain:
         the mesh inventing vale for them itself. Their synapses are
         registered with the learning system so they participate in every
         subsequent perceive() cycle. Returns the new expert's group id.
+
+        Logged as an action (sections 161-163): by default this runs
+        immediately, but if a caller has registered an approval rule
+        matching "create_expert:<name>" via
+        self.actions.require_approval_for(...), this raises
+        PermissionError until the pending action is approved.
         """
-        group_id, new_ids = self.mesh.add_expert_group(name, n_new_neurons)
-        self.vale.add_neurons(n_new_neurons, policy="rescale")
-        self._sync_vale_to_mesh()
+        record = self.actions.request(
+            f"create_expert:{name}", why=f"grow mesh with {n_new_neurons} new neurons", system="mesh"
+        )
 
-        new_id_set = set(new_ids)
-        for nid in new_ids:
-            self.states.register_neuron(str(nid))
-        for (source_id, target_id) in self.mesh.connections:
-            if source_id in new_id_set or target_id in new_id_set:
-                self.states.register_synapse(str(source_id), str(target_id))
+        def _do() -> int:
+            group_id, new_ids = self.mesh.add_expert_group(name, n_new_neurons)
+            self.vale.add_neurons(n_new_neurons, policy="rescale")
+            self._sync_vale_to_mesh()
 
-        return group_id
+            new_id_set = set(new_ids)
+            for nid in new_ids:
+                self.states.register_neuron(str(nid))
+            for (source_id, target_id) in self.mesh.connections:
+                if source_id in new_id_set or target_id in new_id_set:
+                    self.states.register_synapse(str(source_id), str(target_id))
+
+            return group_id
+
+        return self.actions.perform(record, _do)
