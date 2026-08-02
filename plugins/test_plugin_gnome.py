@@ -145,5 +145,42 @@ class TestRestoreInputReattachesCorrectType(unittest.TestCase):
         self.assertEqual(reattach_calls, [])
 
 
+class TestLaunchOnDesktopBlocksDestructiveCommands(unittest.TestCase):
+    """launch_on_desktop() shells out via `subprocess.Popen(cmd, shell=True)`
+    on a caller-supplied command -- the same execution surface plugin_terminal
+    guards with _is_blocked(), but this call site had no guard at all before
+    this test was written, silently accepting e.g. `rm -rf /` the same as any
+    ordinary launch command."""
+
+    @patch("plugins.plugin_gnome.shutil.which", side_effect=_fake_which)
+    @patch("plugins.plugin_gnome.subprocess.run")
+    @patch("plugins.plugin_gnome.subprocess.Popen")
+    def test_destructive_command_is_blocked_before_popen(self, mock_popen, mock_run, mock_which):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=BEFORE_ISOLATION, stderr="")
+
+        plugin = GnomePlugin()
+        result = plugin.call("launch_on_desktop", "rm -rf /", workspace=0)
+
+        self.assertIn("Blocked", result)
+        mock_popen.assert_not_called()
+
+    @patch("plugins.plugin_gnome.shutil.which", side_effect=_fake_which)
+    @patch("plugins.plugin_gnome.subprocess.run")
+    @patch("plugins.plugin_gnome.subprocess.Popen")
+    def test_ordinary_launch_command_is_not_blocked(self, mock_popen, mock_run, mock_which):
+        mock_run.return_value = subprocess.CompletedProcess(
+            args=[], returncode=0, stdout=BEFORE_ISOLATION, stderr="")
+
+        plugin = GnomePlugin()
+        # Pass an explicit workspace to avoid exercising the unrelated
+        # auto-workspace-detection path, which needs its own tailored
+        # `wmctrl -d`-shaped mock output.
+        result = plugin.call("launch_on_desktop", "firefox", workspace=0)
+
+        self.assertNotIn("Blocked", result)
+        mock_popen.assert_called_once()
+
+
 if __name__ == "__main__":
     unittest.main()
