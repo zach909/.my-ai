@@ -39,10 +39,32 @@ class CameraPlugin(Plugin):
 
         return target
 
+    def _safe_device(self, device: str) -> str:
+        """Validate and resolve target device paths to prevent path traversal and argument injection.
+
+        Enforces that target device paths remain strictly within the /dev directory.
+        """
+        if device.strip().startswith("-"):
+            raise ValueError("Security Error: Potential argument injection detected in device.")
+
+        target = os.path.realpath(os.path.abspath(os.path.expanduser(device)))
+
+        dev_resolved = os.path.realpath("/dev")
+
+        rel_dev = os.path.relpath(target, dev_resolved)
+
+        is_inside_dev = not rel_dev.startswith("..") and not os.path.isabs(rel_dev)
+
+        if not is_inside_dev:
+            raise ValueError("Security Error: Path traversal or unauthorized path detected in device.")
+
+        return target
+
     def _capture(self, path: str = None, device: str = "/dev/video0") -> str:
         if path is None:
             path = f"/tmp/cam_{int(time.time())}.jpg"
         path = self._safe_path(path)
+        device = self._safe_device(device)
         for tool, args in [
             ("fswebcam",  ["-d", device, "--no-banner", path]),
             ("ffmpeg",    ["-f", "v4l2", "-i", device, "-frames:v", "1", "-y", path]),

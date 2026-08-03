@@ -28,3 +28,15 @@
 ## 2026-08-09 - [Toggle Button Accessibility & Live Password Error Alerting]
 **Learning:** Toggle controls (such as an incognito session toggle) must carry stateful `aria-pressed` properties to convey active states to assistive technologies. Additionally, critical validation or lock screen password errors must be accompanied by `role="alert"` so they are immediately announced by screen readers without requiring manual navigation.
 **Action:** Pair `aria-pressed` with `aria-label` and `active:scale-95` on visual toggle buttons, and wrap critical error elements in `role="alert"` regions.
+## 2026-08-15 - [Accessible Toggle Buttons & Tactile Feedback]
+**Learning:** Toggle controls (like an incognito mode button) must explicitly use the `aria-pressed` state and descriptive `aria-label` attributes to ensure assistive technology users can determine their active state. Coupling this with tactile transition animations (`active:scale-95 transition-all duration-150`) delivers an exceptionally delightful, tactile, and highly responsive user experience.
+**Action:** Always provide explicit `aria-pressed` and dynamic `aria-label` definitions for toggle states, combined with tactile visual feedback on click/press.
+## 2026-08-15 - [Interactive State Preservation & Tactile Buttons for App Sub-Modes]
+**Learning:** Multi-state buttons or global sub-modes (such as incognito toggles) must declare their activation state using standard `aria-pressed` properties and be paired with tactile scale-down transforms (`active:scale-95 transition-all`) to mirror high-end interface environments.
+**Action:** Always pair `aria-pressed` with tactile scale transition feedback on sub-mode controls.
+## 2026-08-15 - [Interactive Toggle Button Accessibility & Tactile Feedback]
+**Learning:** Interactive state toggle controls (like an incognito mode button) must explicitly manage screen-reader state using `aria-pressed` and present descriptive `aria-label` elements that reflect whether the mode is active or inactive. Furthermore, pairing these with visual-tactile response transitions (`active:scale-95 transition-all duration-150`) greatly enhances the physical feedback of interacting with critical session states.
+**Action:** When designing toggle inputs or mode switch buttons, always pair `aria-pressed` state tracking with explicit labels and active scale visual transitions.
+## 2026-08-15 - [SVG Canvas Connection Accessibility & Interactive Groups]
+**Learning:** SVG connections / edges are typically non-interactive and hidden from keyboard or screen reader users, causing layout gaps. Wrapping `<path>` and `<text>` elements in a `<g>` element with `role="button"`, `tabIndex={0}`, and `aria-label` lets assistive tech users navigate connections, while combining with Tailwind `group` utilities allows seamless, synchronized visual hover/focus feedback.
+**Action:** When building custom canvases, always make SVG path-and-text connection layers accessible with interactive group wrappers and keyboard event hooks.

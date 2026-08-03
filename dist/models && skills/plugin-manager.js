@@ -1,6 +1,54 @@
 import * as fs from 'fs';
 import * as path from 'path';
 import { homedir } from 'os';
+import { createPluginInstance, pluginExtensions } from '../plugins/index.js';
+
+// Per-plugin table mapping a short "action" name to the real method the
+// underlying plugin instance exposes. Plugins not listed here are resolved
+// generically (see resolveMethod) -- this table only exists for the plugins
+// whose real method names don't already match the action verbs 1:1.
+const ACTION_ALIASES = {
+    camera: { capture: 'captureImage' },
+    microphone: { record: 'startRecording', start: 'startRecording', stop: 'stopRecording' },
+    notifications: { send: 'show' },
+    location: { get: 'getCurrentPosition', current: 'getCurrentPosition' },
+    'file-system': { read: 'readFile', write: 'writeFile', list: 'listDirectory', delete: 'deleteFile' },
+    browser: { fetch: 'fetchUrl', unbookmark: 'removeBookmark' },
+    calendar: { upcoming: 'getUpcoming' },
+    email: { 'mark-read': 'markRead' },
+    messaging: { conversation: 'getConversation', 'mark-read': 'markRead' },
+    'app-diagnostics': { run: 'runDiagnostics', disk: 'checkDisk' },
+    'voice-activation': { start: 'startListening', stop: 'stopListening', transcript: 'processTranscript' },
+    'account-info': { info: 'getInfo', env: 'getEnv' },
+    'call-history': { history: 'getCallHistory', stats: 'getStats' },
+    'phone-calls': { history: 'getHistory', missed: 'getMissed' },
+    robotics: {
+        status: 'getStatus', 'move-joint': 'moveJoint', 'move-cartesian': 'moveCartesian',
+        gripper: 'gripperControl', 'read-sensor': 'readSensor', 'read-all-sensors': 'readAllSensors',
+        trajectory: 'executeTrajectory', 'e-stop': 'emergencyStop',
+    },
+    screenshots: { 'capture-area': 'captureArea' },
+};
+
+/** A stub SkillDefinition for skill-expert plugins (only "coding" needs one to construct). */
+function skillDefinitionFor(def) {
+    return {
+        id: def.id,
+        name: def.name,
+        description: `${def.name} skill`,
+        expertIndex: 0,
+        specialization: def.id,
+        selfAuthored: false,
+    };
+}
+
+/**
+ * PluginManager -- the real bridge between the neural core's action dispatch
+ * and the actual OS-integration plugins in `plugins/*.ts` (the same catalog
+ * `plugin_manager/registry.ts` and `NeuroclawSystem` use). Every plugin here
+ * is a genuine, constructed instance of the real plugin class -- there is no
+ * simulated or placeholder execution path.
+ */
 export class PluginManager {
     config;
     plugins;
@@ -16,10 +64,10 @@ export class PluginManager {
         this.plugins = new Map();
         this.pluginHooks = new Map();
         this.ensureDirectory();
+        this.initializeCorePlugins();
         if (this.config.autoLoad) {
             this.loadPlugins();
         }
-        this.initializeCorePlugins();
     }
     ensureDirectory() {
         if (!fs.existsSync(this.config.pluginsDirectory)) {
@@ -27,165 +75,37 @@ export class PluginManager {
         }
     }
     initializeCorePlugins() {
-        // Define core plugins
-        const corePlugins = [
-            {
-                id: 'camera',
-                name: 'Camera Plugin',
-                version: '1.0.0',
-                description: 'Captures images and video from camera devices',
-                author: 'NeuroClaw',
-                category: 'input',
+        for (const def of Object.values(pluginExtensions)) {
+            this.registerPlugin({
+                id: def.id,
+                name: def.name,
+                type: def.type,
+                capabilities: def.capabilities,
                 enabled: true,
-                permissions: ['camera', 'filesystem'],
-                dependencies: [],
-                config: { resolution: '1080p', fps: 30 }
-            },
-            {
-                id: 'microphone',
-                name: 'Microphone Plugin',
-                version: '1.0.0',
-                description: 'Captures audio from microphone devices',
-                author: 'NeuroClaw',
-                category: 'input',
-                enabled: true,
-                permissions: ['audio', 'microphone'],
-                dependencies: [],
-                config: { sampleRate: 44100, channels: 2 }
-            },
-            {
-                id: 'speaker',
-                name: 'Speaker Plugin',
-                version: '1.0.0',
-                description: 'Outputs audio to speaker devices',
-                author: 'NeuroClaw',
-                category: 'output',
-                enabled: true,
-                permissions: ['audio', 'speaker'],
-                dependencies: [],
-                config: { volume: 0.8 }
-            },
-            {
-                id: 'display',
-                name: 'Display Plugin',
-                version: '1.0.0',
-                description: 'Displays visual output to screen',
-                author: 'NeuroClaw',
-                category: 'output',
-                enabled: true,
-                permissions: ['display', 'window'],
-                dependencies: [],
-                config: { fullscreen: false, resolution: '1920x1080' }
-            },
-            {
-                id: 'terminal',
-                name: 'Terminal Plugin',
-                version: '1.0.0',
-                description: 'Provides terminal/command line access',
-                author: 'NeuroClaw',
-                category: 'system',
-                enabled: true,
-                permissions: ['terminal', 'process'],
-                dependencies: [],
-                config: { shell: '/bin/bash' }
-            },
-            {
-                id: 'filesystem',
-                name: 'Filesystem Plugin',
-                version: '1.0.0',
-                description: 'Provides file system access',
-                author: 'NeuroClaw',
-                category: 'storage',
-                enabled: true,
-                permissions: ['filesystem', 'read', 'write'],
-                dependencies: [],
-                config: { allowedPaths: [homedir()] }
-            },
-            {
-                id: 'network',
-                name: 'Network Plugin',
-                version: '1.0.0',
-                description: 'Provides network communication capabilities',
-                author: 'NeuroClaw',
-                category: 'network',
-                enabled: true,
-                permissions: ['network', 'http', 'websocket'],
-                dependencies: [],
-                config: { maxConnections: 100, timeout: 30000 }
-            },
-            {
-                id: 'clipboard',
-                name: 'Clipboard Plugin',
-                version: '1.0.0',
-                description: 'Provides clipboard access',
-                author: 'NeuroClaw',
-                category: 'input',
-                enabled: true,
-                permissions: ['clipboard'],
-                dependencies: [],
-                config: {}
-            },
-            {
-                id: 'notification',
-                name: 'Notification Plugin',
-                version: '1.0.0',
-                description: 'Sends system notifications',
-                author: 'NeuroClaw',
-                category: 'output',
-                enabled: true,
-                permissions: ['notification'],
-                dependencies: [],
-                config: {}
-            },
-            {
-                id: 'multidesktop',
-                name: 'Multi-Desktop Plugin',
-                version: '1.0.0',
-                description: 'Manages multiple virtual desktops',
-                author: 'NeuroClaw',
-                category: 'system',
-                enabled: true,
-                permissions: ['window', 'desktop'],
-                dependencies: ['display'],
-                config: { maxDesktops: 10 }
-            },
-            {
-                id: 'multimouse',
-                name: 'Multi-Mouse Plugin',
-                version: '1.0.0',
-                description: 'Supports multiple mouse input devices',
-                author: 'NeuroClaw',
-                category: 'input',
-                enabled: true,
-                permissions: ['input', 'mouse'],
-                dependencies: [],
-                config: { maxMice: 4 }
-            },
-            {
-                id: 'multikb',
-                name: 'Multi-Keyboard Plugin',
-                version: '1.0.0',
-                description: 'Supports multiple keyboard input devices',
-                author: 'NeuroClaw',
-                category: 'input',
-                enabled: true,
-                permissions: ['input', 'keyboard'],
-                dependencies: [],
-                config: { maxKeyboards: 4 }
-            }
-        ];
-        for (const plugin of corePlugins) {
-            this.registerPlugin(plugin);
+                config: {},
+            });
         }
     }
     registerPlugin(metadata) {
-        if (this.plugins.size >= this.config.maxPlugins) {
+        if (this.plugins.size >= this.config.maxPlugins && !this.plugins.has(metadata.id)) {
             return false;
+        }
+        let real = null;
+        let error;
+        try {
+            const definition = { id: metadata.id, name: metadata.name, type: metadata.type, capabilities: metadata.capabilities };
+            const skillDef = metadata.type === 'skill-expert' ? skillDefinitionFor(definition) : undefined;
+            real = createPluginInstance(metadata.name, definition, skillDef);
+        }
+        catch (err) {
+            error = err instanceof Error ? err.message : String(err);
         }
         const instance = {
             metadata,
+            real,
             initialized: false,
-            lastUsed: 0
+            lastUsed: 0,
+            error,
         };
         this.plugins.set(metadata.id, instance);
         return true;
@@ -208,34 +128,49 @@ export class PluginManager {
         instance.initialized = false;
         return true;
     }
-    initializePlugin(pluginId) {
+    async initializePlugin(pluginId) {
         const instance = this.plugins.get(pluginId);
-        if (!instance || !instance.metadata.enabled) {
+        if (!instance || !instance.metadata.enabled || !instance.real) {
+            if (instance && !instance.real) {
+                instance.error = instance.error ?? 'Plugin has no working implementation';
+            }
             return false;
         }
-        // Check dependencies
-        for (const dep of instance.metadata.dependencies) {
-            const depInstance = this.plugins.get(dep);
-            if (!depInstance || !depInstance.metadata.enabled || !depInstance.initialized) {
-                instance.error = `Dependency ${dep} not available`;
-                return false;
-            }
+        try {
+            await instance.real.onActivate(this.createContext(pluginId));
+            instance.initialized = true;
+            instance.error = undefined;
+            instance.lastUsed = Date.now();
+            return true;
         }
-        // Initialize plugin (simulated)
-        instance.initialized = true;
-        instance.error = undefined;
-        instance.lastUsed = Date.now();
-        return true;
+        catch (err) {
+            instance.error = err instanceof Error ? err.message : String(err);
+            return false;
+        }
+    }
+    createContext(pluginId) {
+        const dataDir = path.join(this.config.pluginsDirectory, 'data', pluginId.replace(/[^a-zA-Z0-9_-]+/g, '_') || 'unknown');
+        return {
+            pluginId,
+            dataDir,
+            config: this.plugins.get(pluginId)?.metadata.config ?? {},
+            logger: {
+                info: (message, ...args) => console.log(`[${pluginId}] INFO: ${message}`, ...args),
+                warn: (message, ...args) => console.warn(`[${pluginId}] WARN: ${message}`, ...args),
+                error: (message, ...args) => console.error(`[${pluginId}] ERROR: ${message}`, ...args),
+                debug: (message, ...args) => console.debug(`[${pluginId}] DEBUG: ${message}`, ...args),
+            },
+        };
     }
     getPlugin(pluginId) {
         return this.plugins.get(pluginId);
     }
-    listPlugins(category) {
-        const allPlugins = Array.from(this.plugins.values()).map(p => p.metadata);
-        if (category) {
-            return allPlugins.filter(p => p.category === category);
+    listPlugins(type) {
+        const all = Array.from(this.plugins.values()).map(p => p.metadata);
+        if (type) {
+            return all.filter(p => p.type === type);
         }
-        return allPlugins;
+        return all;
     }
     getEnabledPlugins() {
         return Array.from(this.plugins.values())
@@ -257,8 +192,15 @@ export class PluginManager {
                 try {
                     const filePath = path.join(this.config.pluginsDirectory, file);
                     const raw = fs.readFileSync(filePath, 'utf-8');
-                    const metadata = JSON.parse(raw);
-                    this.registerPlugin(metadata);
+                    const saved = JSON.parse(raw);
+                    // Only restore bookkeeping (enabled/config) for a plugin we already
+                    // constructed a real implementation for -- never trust a JSON file
+                    // on disk to invent a plugin identity out of thin air.
+                    const existing = this.plugins.get(saved.id);
+                    if (existing) {
+                        existing.metadata.enabled = saved.enabled ?? existing.metadata.enabled;
+                        existing.metadata.config = saved.config ?? existing.metadata.config;
+                    }
                 }
                 catch (error) {
                     console.error(`Failed to load plugin from ${file}:`, error);
@@ -321,150 +263,67 @@ export class PluginManager {
         }
         return results;
     }
-    executePlugin(pluginId, action, data) {
+    /** Resolve `action` to a real method name on `target`, or null if none exists. */
+    resolveMethod(pluginId, target, action) {
+        const alias = ACTION_ALIASES[pluginId]?.[action];
+        if (alias && typeof target[alias] === 'function')
+            return alias;
+        if (typeof target[action] === 'function')
+            return action;
+        const camel = action.replace(/[-_](.)/g, (_, c) => c.toUpperCase());
+        if (typeof target[camel] === 'function')
+            return camel;
+        return null;
+    }
+    /**
+     * Execute `action` against the real plugin implementation. `data.args`,
+     * if present, is spread as positional arguments to the resolved method;
+     * otherwise `data` itself (minus nothing -- callers pass exactly what the
+     * method needs) is passed as a single argument. Plugins that speak a
+     * structured message protocol instead of discrete methods (multi-input)
+     * are dispatched through `onMessage`.
+     */
+    async executePlugin(pluginId, action, data = {}) {
         const instance = this.plugins.get(pluginId);
-        if (!instance || !instance.initialized) {
+        if (!instance || !instance.initialized || !instance.real) {
             return { error: 'Plugin not initialized' };
         }
         instance.lastUsed = Date.now();
-        // Simulate plugin execution based on category
-        switch (instance.metadata.category) {
-            case 'input':
-                return this.executeInputPlugin(instance, action, data);
-            case 'output':
-                return this.executeOutputPlugin(instance, action, data);
-            case 'processing':
-                return this.executeProcessingPlugin(instance, action, data);
-            case 'storage':
-                return this.executeStoragePlugin(instance, action, data);
-            case 'network':
-                return this.executeNetworkPlugin(instance, action, data);
-            case 'system':
-                return this.executeSystemPlugin(instance, action, data);
-            default:
-                return { error: 'Unknown plugin category' };
+        const target = instance.real;
+        const methodName = this.resolveMethod(pluginId, target, action);
+        try {
+            if (methodName) {
+                const args = Array.isArray(data?.args) ? data.args : (data !== undefined && data !== null ? [data] : []);
+                const result = await target[methodName](...args);
+                return { success: true, data: result };
+            }
+            if (typeof target.onMessage === 'function') {
+                const result = await target.onMessage({ type: action, action, ...(data && typeof data === 'object' ? data : {}) });
+                if (result != null)
+                    return { success: true, data: result };
+            }
+            return { error: `Plugin ${pluginId} has no handler for action '${action}'` };
         }
-    }
-    executeInputPlugin(instance, action, data) {
-        switch (instance.metadata.id) {
-            case 'camera':
-                if (action === 'capture') {
-                    return { success: true, data: 'image_data_placeholder', timestamp: Date.now() };
-                }
-                break;
-            case 'microphone':
-                if (action === 'record') {
-                    return { success: true, data: 'audio_data_placeholder', duration: data.duration || 1000 };
-                }
-                break;
-            case 'clipboard':
-                if (action === 'read') {
-                    return { success: true, data: 'clipboard_content_placeholder' };
-                }
-                if (action === 'write') {
-                    return { success: true };
-                }
-                break;
+        catch (error) {
+            return { error: error instanceof Error ? error.message : String(error) };
         }
-        return { error: 'Unknown action' };
-    }
-    executeOutputPlugin(instance, action, data) {
-        switch (instance.metadata.id) {
-            case 'speaker':
-                if (action === 'play') {
-                    return { success: true, duration: data.duration || 1000 };
-                }
-                break;
-            case 'display':
-                if (action === 'show') {
-                    return { success: true };
-                }
-                break;
-            case 'notification':
-                if (action === 'send') {
-                    return { success: true, title: data.title, body: data.body };
-                }
-                break;
-        }
-        return { error: 'Unknown action' };
-    }
-    executeProcessingPlugin(instance, action, data) {
-        return { success: true, processed: true };
-    }
-    executeStoragePlugin(instance, action, data) {
-        switch (instance.metadata.id) {
-            case 'filesystem':
-                if (action === 'read') {
-                    return { success: true, data: 'file_content_placeholder' };
-                }
-                if (action === 'write') {
-                    return { success: true, bytesWritten: data.length || 0 };
-                }
-                if (action === 'list') {
-                    return { success: true, files: ['file1.txt', 'file2.txt'] };
-                }
-                break;
-        }
-        return { error: 'Unknown action' };
-    }
-    executeNetworkPlugin(instance, action, data) {
-        switch (instance.metadata.id) {
-            case 'network':
-                if (action === 'request') {
-                    return { success: true, status: 200, data: 'response_placeholder' };
-                }
-                if (action === 'connect') {
-                    return { success: true, connected: true };
-                }
-                break;
-        }
-        return { error: 'Unknown action' };
-    }
-    executeSystemPlugin(instance, action, data) {
-        switch (instance.metadata.id) {
-            case 'terminal':
-                if (action === 'execute') {
-                    return { success: true, exitCode: 0, output: 'command_output_placeholder' };
-                }
-                break;
-            case 'multidesktop':
-                if (action === 'switch') {
-                    return { success: true, desktop: data.desktop || 0 };
-                }
-                if (action === 'create') {
-                    return { success: true, desktop: 1 };
-                }
-                break;
-            case 'multimouse':
-                if (action === 'get') {
-                    return { success: true, devices: ['mouse_0', 'mouse_1'] };
-                }
-                break;
-            case 'multikb':
-                if (action === 'get') {
-                    return { success: true, devices: ['keyboard_0', 'keyboard_1'] };
-                }
-                break;
-        }
-        return { error: 'Unknown action' };
     }
     getPluginStats() {
-        const byCategory = {};
+        const byType = {};
         for (const instance of this.plugins.values()) {
-            const cat = instance.metadata.category;
-            byCategory[cat] = (byCategory[cat] || 0) + 1;
+            const t = instance.metadata.type;
+            byType[t] = (byType[t] || 0) + 1;
         }
         return {
             total: this.plugins.size,
             enabled: this.getEnabledPlugins().length,
             initialized: this.getInitializedPlugins().length,
-            byCategory
+            byType,
         };
     }
     searchPlugins(query) {
         const lowerQuery = query.toLowerCase();
         return this.listPlugins().filter(plugin => plugin.name.toLowerCase().includes(lowerQuery) ||
-            plugin.description.toLowerCase().includes(lowerQuery) ||
             plugin.id.toLowerCase().includes(lowerQuery));
     }
     getConfig() {
@@ -473,9 +332,14 @@ export class PluginManager {
     updateConfig(config) {
         this.config = { ...this.config, ...config };
     }
-    shutdown() {
-        // Disable all plugins
-        for (const pluginId of this.plugins.keys()) {
+    async shutdown() {
+        for (const [pluginId, instance] of this.plugins) {
+            if (instance.initialized && instance.real) {
+                try {
+                    await instance.real.onDeactivate();
+                }
+                catch { /* best effort */ }
+            }
             this.disablePlugin(pluginId);
         }
         this.saveAllPlugins();

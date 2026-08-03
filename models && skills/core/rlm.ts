@@ -79,6 +79,8 @@ export class RLMTrainer {
   private qValuesBuffer: Float32Array;
   private prioritiesBuffer: number[];
   private cachedTotalPriority: number = 0;
+  private wPlusResidualBuffer: Float32Array;
+  private bPlusResidualBuffer: Float32Array;
 
   // Section 6: quantization-aware training. The forward pass (both action
   // selection and TD-target computation) reads quantizedWeights/Bias, a
@@ -93,6 +95,8 @@ export class RLMTrainer {
   private quantizedBias: Float32Array;
   private weightResidual: Float32Array;
   private biasResidual: Float32Array;
+  private wPlusResidualBuffer: Float32Array;
+  private bPlusResidualBuffer: Float32Array;
 
   constructor(config: Record<string, any> = {}) {
     this.config = {
@@ -144,7 +148,11 @@ export class RLMTrainer {
     this.biasResidual = new Float32Array(this.policyBias.length);
     this.quantizedWeights = new Float32Array(this.policyWeights);
     this.quantizedBias = new Float32Array(this.policyBias);
+    this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
+    this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
     this.qValuesBuffer = new Float32Array(this.config.actionDim);
+    this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
+    this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
     this.refreshQuantizedForward();
   }
 
@@ -158,25 +166,80 @@ export class RLMTrainer {
   private refreshQuantizedForward(): void {
     if (!this.quantizer) return;
 
-    const wPlusResidual = new Float32Array(this.policyWeights.length);
-    for (let i = 0; i < wPlusResidual.length; i++) {
+    const wPlusResidual = this.wPlusResidualBuffer;
+    const policyWeights = this.policyWeights;
+    const weightResidual = this.weightResidual;
+    const lenW = wPlusResidual.length;
+    for (let i = 0; i < lenW; i++) {
+      wPlusResidual[i] = policyWeights[i] + weightResidual[i];
+    }
+    this.quantizer.quantize(wPlusResidual, undefined, this.quantizedWeights);
+    const quantizedWeights = this.quantizedWeights;
+    for (let i = 0; i < lenW; i++) {
+      weightResidual[i] = wPlusResidual[i] - quantizedWeights[i];
+    }
+
+    const bPlusResidual = this.bPlusResidualBuffer;
+    const policyBias = this.policyBias;
+    const biasResidual = this.biasResidual;
+    const lenB = bPlusResidual.length;
+    for (let i = 0; i < lenB; i++) {
+      bPlusResidual[i] = policyBias[i] + biasResidual[i];
+    }
+    this.quantizer.quantize(bPlusResidual, undefined, this.quantizedBias);
+    const quantizedBias = this.quantizedBias;
+    for (let i = 0; i < lenB; i++) {
+      biasResidual[i] = bPlusResidual[i] - quantizedBias[i];
+    const lenW = wPlusResidual.length;
+    let i = 0;
+    for (; i < lenW - 3; i += 4) {
+      wPlusResidual[i] = this.policyWeights[i] + this.weightResidual[i];
+      wPlusResidual[i + 1] = this.policyWeights[i + 1] + this.weightResidual[i + 1];
+      wPlusResidual[i + 2] = this.policyWeights[i + 2] + this.weightResidual[i + 2];
+      wPlusResidual[i + 3] = this.policyWeights[i + 3] + this.weightResidual[i + 3];
+    }
+    for (; i < lenW; i++) {
       wPlusResidual[i] = this.policyWeights[i] + this.weightResidual[i];
     }
-    const wq = this.quantizer.quantize(wPlusResidual);
-    for (let i = 0; i < wq.length; i++) {
+
+    const wq = this.quantizer.quantize(wPlusResidual, undefined, this.quantizedWeights);
+
+    i = 0;
+    for (; i < lenW - 3; i += 4) {
+      this.weightResidual[i] = wPlusResidual[i] - wq[i];
+      this.weightResidual[i + 1] = wPlusResidual[i + 1] - wq[i + 1];
+      this.weightResidual[i + 2] = wPlusResidual[i + 2] - wq[i + 2];
+      this.weightResidual[i + 3] = wPlusResidual[i + 3] - wq[i + 3];
+    }
+    for (; i < lenW; i++) {
       this.weightResidual[i] = wPlusResidual[i] - wq[i];
     }
-    this.quantizedWeights = wq;
 
-    const bPlusResidual = new Float32Array(this.policyBias.length);
-    for (let i = 0; i < bPlusResidual.length; i++) {
-      bPlusResidual[i] = this.policyBias[i] + this.biasResidual[i];
+    const bPlusResidual = this.bPlusResidualBuffer;
+    const lenB = bPlusResidual.length;
+    let j = 0;
+    for (; j < lenB - 3; j += 4) {
+      bPlusResidual[j] = this.policyBias[j] + this.biasResidual[j];
+      bPlusResidual[j + 1] = this.policyBias[j + 1] + this.biasResidual[j + 1];
+      bPlusResidual[j + 2] = this.policyBias[j + 2] + this.biasResidual[j + 2];
+      bPlusResidual[j + 3] = this.policyBias[j + 3] + this.biasResidual[j + 3];
     }
-    const bq = this.quantizer.quantize(bPlusResidual);
-    for (let i = 0; i < bq.length; i++) {
-      this.biasResidual[i] = bPlusResidual[i] - bq[i];
+    for (; j < lenB; j++) {
+      bPlusResidual[j] = this.policyBias[j] + this.biasResidual[j];
     }
-    this.quantizedBias = bq;
+
+    const bq = this.quantizer.quantize(bPlusResidual, undefined, this.quantizedBias);
+
+    j = 0;
+    for (; j < lenB - 3; j += 4) {
+      this.biasResidual[j] = bPlusResidual[j] - bq[j];
+      this.biasResidual[j + 1] = bPlusResidual[j + 1] - bq[j + 1];
+      this.biasResidual[j + 2] = bPlusResidual[j + 2] - bq[j + 2];
+      this.biasResidual[j + 3] = bPlusResidual[j + 3] - bq[j + 3];
+    }
+    for (; j < lenB; j++) {
+      this.biasResidual[j] = bPlusResidual[j] - bq[j];
+    }
   }
 
   /** Mean absolute quantization residual currently carried for the weight matrix — a drift diagnostic. */
@@ -373,9 +436,18 @@ export class RLMTrainer {
 
   private updatePolicy(state: Float32Array, action: number, tdError: number): void {
     const gradient = tdError * this.config.learningRate;
-    for (let s = 0; s < state.length; s++) {
-      const idx = s * this.config.actionDim + action;
-      this.policyWeights[idx] += gradient * state[s];
+    const actionDim = this.config.actionDim;
+    const len = state.length;
+    let s = 0;
+    const limit = len - 3;
+    for (; s < limit; s += 4) {
+      this.policyWeights[s * actionDim + action] += gradient * state[s];
+      this.policyWeights[(s + 1) * actionDim + action] += gradient * state[s + 1];
+      this.policyWeights[(s + 2) * actionDim + action] += gradient * state[s + 2];
+      this.policyWeights[(s + 3) * actionDim + action] += gradient * state[s + 3];
+    }
+    for (; s < len; s++) {
+      this.policyWeights[s * actionDim + action] += gradient * state[s];
     }
     this.policyBias[action] += gradient;
   }
