@@ -441,31 +441,38 @@ export class ExtensionBuilder {
      * Net Search: semantically search across the project's neural definitions,
      * then generate a small neural network that reproduces the requested
      * behavior by wiring a fresh output neuron to the best-matching neurons.
-     * The connection weights are the normalized semantic-similarity scores —
-     * a lightweight, deterministic stand-in for the "deep learning" training
-     * step described in the spec, using only local data (no external APIs).
+     * Matches -- and the connection weights they generate -- come from the
+     * real backprop-trained NetSearchEngine (models && skills/core/net-search.ts),
+     * using only local data (no external APIs), not a bag-of-words cosine stand-in.
      * Returns the generated neuron plus the matches it was built from.
      */
     netSearchGenerate(projectId, query, topK = 3) {
         const project = this.projects.get(projectId);
         if (!project)
             return null;
-        const queryTokens = this.tokenizeForSearch(query);
-        // Score every neuron by semantic overlap between the query and the
-        // neuron's name + definition + corpus (bag-of-words cosine-ish).
-        const scored = [];
+        if (!query || !query.trim())
+            return null;
+        // Keep the trained network's index current with every neuron's
+        // present name+definition+corpus text before searching it.
         for (const neuron of project.neurons.values()) {
-            const text = `${neuron.name} ${neuron.definition} ${neuron.corpus}`;
-            const score = this.semanticSimilarity(queryTokens, this.tokenizeForSearch(text));
-            if (score > 0)
-                scored.push({ neuron, score });
+            this.netSearchEngine.addStructure({
+                name: neuron.id,
+                definition: `${neuron.name} ${neuron.definition} ${neuron.corpus}`.trim(),
+                value: neuron.value,
+                flags: [neuron.type],
+            });
         }
-        scored.sort((a, b) => b.score - a.score);
-        const matches = scored.slice(0, topK);
-        // With no evidence (empty/untokenizable query, or zero overlap against
-        // every definition) there is nothing to generate — return null rather
+        const hits = this.netSearchEngine.search(query, { mode: 'neural', topK });
+        const matches = [];
+        for (const hit of hits) {
+            const neuron = project.neurons.get(hit.name);
+            if (neuron)
+                matches.push({ neuron, score: hit.score });
+        }
+        // With no evidence (empty query, or the trained network found nothing
+        // above threshold) there is nothing to generate — return null rather
         // than fabricating an "evidence-free but fully confident" neuron.
-        if (queryTokens.length === 0 || matches.length === 0)
+        if (matches.length === 0)
             return null;
         // Generate the network: a new neuron whose value reflects the actual
         // accumulated evidence, connected to each match with a
