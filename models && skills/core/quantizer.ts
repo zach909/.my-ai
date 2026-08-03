@@ -174,30 +174,46 @@ function applyScale(value: number, scaleInfo: QuantizationScale): { level: numbe
 export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
   const totalBits = levels.length * bits;
   const out = new Uint8Array(Math.ceil(totalBits / 8));
-  let bitPos = 0;
+  let accumulator = 0;
+  let bitCount = 0;
+  let bytePos = 0;
+
+  // OPTIMIZATION: Instead of bit-by-bit nesting, we accumulate bits in a 32-bit register
+  // and write them to the output byte-by-byte, drastically reducing branch overhead and loop cycles.
   for (let i = 0; i < levels.length; i++) {
-    const v = levels[i];
-    for (let b = 0; b < bits; b++) {
-      if ((v >> b) & 1) {
-        out[bitPos >> 3] |= 1 << (bitPos & 7);
-      }
-      bitPos++;
+    accumulator |= levels[i] << bitCount;
+    bitCount += bits;
+    while (bitCount >= 8) {
+      out[bytePos++] = accumulator & 0xFF;
+      accumulator >>>= 8;
+      bitCount -= 8;
     }
+  }
+  if (bitCount > 0) {
+    out[bytePos] = accumulator & 0xFF;
   }
   return out;
 }
 
 export function unpackLevels(packed: Uint8Array, count: number, bits: number): Uint32Array {
   const out = new Uint32Array(count);
-  let bitPos = 0;
+  let accumulator = 0;
+  let bitCount = 0;
+  let bytePos = 0;
+  const mask = (1 << bits) - 1;
+
+  // OPTIMIZATION: Extract whole 'bits'-width integers from a register accumulator,
+  // refilling it byte-by-byte from the stream only when needed. This completely bypasses
+  // the slow bit-by-bit reconstruction loop.
   for (let i = 0; i < count; i++) {
-    let v = 0;
-    for (let b = 0; b < bits; b++) {
-      const byte = packed[bitPos >> 3] ?? 0;
-      if ((byte >> (bitPos & 7)) & 1) v |= 1 << b;
-      bitPos++;
+    while (bitCount < bits) {
+      const byte = packed[bytePos++] ?? 0;
+      accumulator |= byte << bitCount;
+      bitCount += 8;
     }
-    out[i] = v;
+    out[i] = accumulator & mask;
+    accumulator >>>= bits;
+    bitCount -= bits;
   }
   return out;
 }
