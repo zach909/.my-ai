@@ -341,6 +341,9 @@ function ChatGroupsPage() {
             size="sm"
             onClick={() => setIncognito((v) => !v)}
             className="gap-1.5 text-xs active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+            className="gap-1.5 text-xs active:scale-95 transition-all duration-150"
+            aria-pressed={incognito}
+            aria-label={incognito ? 'Incognito mode active' : 'Incognito mode inactive'}
             title={incognito ? 'Incognito: this session is not saved' : 'Turn on incognito mode (nothing gets saved)'}
             aria-pressed={incognito}
             aria-label="Toggle incognito mode"
