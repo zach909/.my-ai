@@ -62,7 +62,6 @@ export declare class NeuroclawLLM {
     setPredictorMode(mode: PredictorMode): void;
     getPredictorMode(): PredictorMode;
     trainOnCode(code: string): Promise<void>;
-    connectThesaurus(thesaurus: import("./thesaurus.js").ThesaurusDictionary): void;
     build(): Promise<void>;
     trainOnText(text: string): Promise<void>;
     generate(prompt: string, options?: Partial<GenerateOptions>): Promise<string>;

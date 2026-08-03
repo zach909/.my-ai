@@ -110,17 +110,6 @@ export class NeuroclawLLM {
     getPredictorMode() { return this.predictorMode; }
     /** Trains the separate code predictor (does not touch the prose trainer's statistics). */
     async trainOnCode(code) { await this.codeTrainer.train(code); }
-    connectThesaurus(thesaurus) {
-        this.thornsEngine.connectThesaurus({
-            getSynonyms: (w) => thesaurus.getSynonyms(w),
-            getDefinition: (w) => thesaurus.getDefinition(w),
-            getExamples: (w) => thesaurus.getExamples(w),
-            lookup: (w) => {
-                const e = thesaurus.lookup(w);
-                return e ? { word: e.word, definition: e.definition, synonyms: e.synonyms, examples: e.examples } : undefined;
-            },
-        });
-    }
     async build() {
         if (this.built)
             return;

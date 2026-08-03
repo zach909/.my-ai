@@ -4,13 +4,10 @@
  * Multi-dimensional question analysis with cross-checking and simulation.
  * Used for intent detection, planning, and autonomous reasoning.
  */
-import { ThesaurusDictionary } from '../thesaurus.js';
 export class ThornsEngine {
-    thesaurus;
     questionHistory;
     maxHistoryLength;
     constructor() {
-        this.thesaurus = new ThesaurusDictionary();
         this.questionHistory = [];
         this.maxHistoryLength = 100;
     }
@@ -26,13 +23,6 @@ export class ThornsEngine {
         this._moeRouter = moeRouter;
     }
     /**
-     * Connect THORNS to an external thesaurus dictionary
-     */
-    connectThesaurus(thesaurusDict) {
-        // Override internal thesaurus with external one
-        this._externalThesaurus = thesaurusDict;
-    }
-    /**
      * Main thinking entry point — analyzes input through all THORNS dimensions
      */
     async think(input) {
@@ -42,8 +32,11 @@ export class ThornsEngine {
         questionNode.dimensions = dimensions;
         // H — Hypothesis: generate possible interpretations
         const hypotheses = this.generateHypotheses(input, dimensions);
-        // O — Observation: gather evidence from dictionary/thesaurus
-        const observations = this.gatherObservations(input);
+        // O — Observation: cross-check hypotheses directly against the
+        // dimensions themselves (the thesaurus/dictionary lookup this used to
+        // draw evidence from was training-time material, not a live runtime
+        // dependency, and has been removed).
+        const observations = new Map();
         // R — Reasoning: cross-check hypotheses against observations
         const crossCheck = this.crossCheck(hypotheses, observations, dimensions);
         questionNode.crossCheck = crossCheck;
@@ -175,20 +168,6 @@ export class ThornsEngine {
         return hypotheses;
     }
     /**
-     * Gather observations from dictionary and thesaurus
-     */
-    gatherObservations(input) {
-        const observations = new Map();
-        const words = input.toLowerCase().split(/\W+/).filter(w => w.length > 3);
-        for (const word of words.slice(0, 10)) {
-            const thesaurusData = this.getThesaurusData(word);
-            if (thesaurusData) {
-                observations.set(word, thesaurusData);
-            }
-        }
-        return observations;
-    }
-    /**
      * Cross-check hypotheses against observations
      */
     crossCheck(hypotheses, observations, dimensions) {
@@ -200,15 +179,7 @@ export class ThornsEngine {
         for (const dim of dimensions) {
             if (!dim.answered)
                 continue;
-            // Score based on observation coverage
-            let score = dim.confidence;
-            // Boost score if we have thesaurus data for related words
-            for (const [word, data] of observations) {
-                if (data && (data.X?.length > 0 || data.Y)) {
-                    score += 0.1;
-                }
-            }
-            score = Math.min(1.0, score);
+            const score = Math.min(1.0, dim.confidence);
             dimensionScores.set(dim.id, score);
             totalScore += score;
             scoredCount++;
@@ -377,24 +348,6 @@ export class ThornsEngine {
             parts.push(`Confidence factors: ${crossCheck.agreements.slice(0, 3).join(', ')}`);
         }
         return parts.join('\n  ');
-    }
-    /**
-     * Get thesaurus data for a word
-     */
-    getThesaurusData(word) {
-        try {
-            const entry = this.thesaurus.lookup(word);
-            if (!entry)
-                return null;
-            return {
-                X: entry.synonyms || [],
-                Y: entry.definition || '',
-                Z: entry.examples || [],
-            };
-        }
-        catch {
-            return null;
-        }
     }
     /**
      * Get question history for debugging/analysis

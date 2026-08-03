@@ -5,7 +5,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
-import { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
 import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
@@ -60,7 +59,6 @@ import type { SkillDefinition } from "../plugin_manager/types.js";
 export class NeuroclawSystem {
   llm: NeuroclawLLM;
   pipeline: NeuroPipeline;
-  thesaurus: ThesaurusDictionary;
   pluginRegistry: PluginRegistry;
   veto: AlignmentVeto;
   zipIO: ZipIOSystem;
@@ -140,12 +138,11 @@ export class NeuroclawSystem {
     this.pipeline = new NeuroPipeline({
       zipPersistDir: this.zipPersistDir ? join(this.zipPersistDir, "pipeline") : undefined,
     });
-    this.thesaurus = new ThesaurusDictionary();
     this.pluginRegistry = new PluginRegistry();
     this.veto = new AlignmentVeto();
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     this.empathy = new EmpathyEngine();
-    this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.thesaurus, this.pluginRegistry);
+    this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.pluginRegistry);
     // Hive Mind (Section 13): each agent's mind is the real neural runner, so
     // multi-agent collaboration runs through the same pipeline as a single query.
     this.hive = new HiveMind({ defaultThink: (prompt) => this.runner.generate(prompt) });
@@ -2105,7 +2102,7 @@ async function main() {
     console.log(`Neuroclaw TS backend online at http://${webHost}:${port}`);
   } else if (mode === "cli") {
     console.log("Launching interactive Neuroclaw command-line interface...");
-    const cli = new CLI(system.llm, system.pipeline, system.thesaurus, system.pluginRegistry);
+    const cli = new CLI(system.llm, system.pipeline, system.pluginRegistry);
     await cli.startInteractive();
   } else {
     // Default mode: start on port 3000

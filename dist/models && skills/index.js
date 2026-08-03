@@ -55,12 +55,10 @@ export { PROGRAMMING_SKILLS, getSkillById, getSkillsByCategory, getSkillsByExper
 export { ModelManager } from "./model-manager.js";
 export { PluginManager } from "./plugin-manager.js";
 export { MixtureOfExperts } from "./moe.js";
-export { ThesaurusDictionary, ThesaurusFactory } from "./thesaurus.js";
 export { NeuroclawTrainer } from "./trainer.js";
 export { Tokenizer } from "./tokenizer.js";
 export { Neuron } from "./neuron.js";
 export { SimulationEngine } from "./simulation.js";
-export { lookupDictionary, lookupThesaurus, lookupWord } from "./dictionary.js";
 export { BackgroundQuantizer } from "./core/quantizer.js";
 export { ValueRangeAllocator } from "./core/value-range.js";
 export { MoERouter } from "./core/moe-router.js";
