@@ -25,6 +25,9 @@
 **Learning:** For multi-agent collaboration panels or chat-groups, keeping keyboard focus inside input fields during asynchronous workflows prevents screen-reader context disruption. Providing hidden sr-only labels for inputs and adding explicit ARIA labels on button triggers ensures that assistive technology users can fully navigate the interface.
 **Action:** Always pair focus restoration with explicit input-to-label bindings and high-contrast ARIA properties in text-submit flows.
 
+## 2026-08-15 - [Accessible Toggle Buttons & Tactile Feedback]
+**Learning:** Toggle controls (like an incognito mode button) must explicitly use the `aria-pressed` state and descriptive `aria-label` attributes to ensure assistive technology users can determine their active state. Coupling this with tactile transition animations (`active:scale-95 transition-all duration-150`) delivers an exceptionally delightful, tactile, and highly responsive user experience.
+**Action:** Always provide explicit `aria-pressed` and dynamic `aria-label` definitions for toggle states, combined with tactile visual feedback on click/press.
 ## 2026-08-15 - [Interactive State Preservation & Tactile Buttons for App Sub-Modes]
 **Learning:** Multi-state buttons or global sub-modes (such as incognito toggles) must declare their activation state using standard `aria-pressed` properties and be paired with tactile scale-down transforms (`active:scale-95 transition-all`) to mirror high-end interface environments.
 **Action:** Always pair `aria-pressed` with tactile scale transition feedback on sub-mode controls.
