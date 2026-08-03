@@ -217,8 +217,10 @@ function ChatPage() {
           variant={incognito ? 'default' : 'outline'}
           size="sm"
           onClick={() => setIncognito((v) => !v)}
-          className="gap-1.5 text-xs"
+          className="gap-1.5 text-xs active:scale-95 transition-all duration-150"
           title={incognito ? 'Incognito: this conversation is not saved' : 'Turn on incognito mode (nothing gets saved)'}
+          aria-pressed={incognito}
+          aria-label={incognito ? 'Disable incognito mode' : 'Enable incognito mode'}
         >
           <EyeOff size={12} />
           {incognito ? 'Incognito on' : 'Incognito'}
