@@ -267,9 +267,6 @@ export class BackgroundQuantizer {
             this.calibration.clear();
     }
     dequantizeWith(weights, scaleInfo, out) {
-        const result = out ?? new Float32Array(weights.length);
-        for (let i = 0; i < weights.length; i++) {
-            result[i] = applyScale(weights[i], scaleInfo).dequantized;
         const result = out || new Float32Array(weights.length);
         const { scale, zeroPoint, symmetric, bits } = scaleInfo;
         const len = weights.length;

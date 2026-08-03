@@ -1,4 +1,3 @@
-```
 # Python
 __pycache__/
 *.pyc
@@ -36,4 +35,3 @@ htmlcov/
 # Testing
 .pytest_cache/
 .mypy_cache/
-```

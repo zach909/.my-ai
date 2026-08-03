@@ -51,8 +51,6 @@ export class RLMTrainer {
         this.biasResidual = new Float32Array(this.policyBias.length);
         this.quantizedWeights = new Float32Array(this.policyWeights);
         this.quantizedBias = new Float32Array(this.policyBias);
-        this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
-        this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
         this.qValuesBuffer = new Float32Array(this.config.actionDim);
         this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
         this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
@@ -69,28 +67,6 @@ export class RLMTrainer {
         if (!this.quantizer)
             return;
         const wPlusResidual = this.wPlusResidualBuffer;
-        const policyWeights = this.policyWeights;
-        const weightResidual = this.weightResidual;
-        const lenW = wPlusResidual.length;
-        for (let i = 0; i < lenW; i++) {
-            wPlusResidual[i] = policyWeights[i] + weightResidual[i];
-        }
-        this.quantizer.quantize(wPlusResidual, undefined, this.quantizedWeights);
-        const quantizedWeights = this.quantizedWeights;
-        for (let i = 0; i < lenW; i++) {
-            weightResidual[i] = wPlusResidual[i] - quantizedWeights[i];
-        }
-        const bPlusResidual = this.bPlusResidualBuffer;
-        const policyBias = this.policyBias;
-        const biasResidual = this.biasResidual;
-        const lenB = bPlusResidual.length;
-        for (let i = 0; i < lenB; i++) {
-            bPlusResidual[i] = policyBias[i] + biasResidual[i];
-        }
-        this.quantizer.quantize(bPlusResidual, undefined, this.quantizedBias);
-        const quantizedBias = this.quantizedBias;
-        for (let i = 0; i < lenB; i++) {
-            biasResidual[i] = bPlusResidual[i] - quantizedBias[i];
         const lenW = wPlusResidual.length;
         let i = 0;
         for (; i < lenW - 3; i += 4) {
