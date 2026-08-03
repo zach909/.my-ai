@@ -115,23 +115,36 @@ export function BuilderCanvas({
           const mx = (x1 + x2) / 2;
           const my = (y1 + y2) / 2;
           return (
-            <g key={c.id}>
+            <g
+              key={c.id}
+              role="button"
+              tabIndex={0}
+              aria-label={`Connection from ${a.name} to ${b.name}, weight ${c.weight.toFixed(2)}. Press Enter or Space to delete.`}
+              className="pointer-events-auto cursor-pointer outline-none group"
+              onClick={(e) => {
+                e.stopPropagation();
+                onDeleteConnection(c.id);
+              }}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                  e.preventDefault();
+                  e.stopPropagation();
+                  onDeleteConnection(c.id);
+                }
+              }}
+            >
               <path
                 d={`M ${x1} ${y1} Q ${mx} ${my - 24} ${x2} ${y2}`}
                 fill="none"
                 strokeWidth={1.5}
                 markerEnd="url(#arrow)"
-                className="stroke-muted-foreground/70"
+                className="stroke-muted-foreground/70 transition-all group-hover:stroke-destructive group-focus-visible:stroke-destructive group-hover:stroke-2 group-focus-visible:stroke-2"
               />
               <text
                 x={mx}
                 y={my - 16}
                 textAnchor="middle"
-                className="pointer-events-auto cursor-pointer select-none fill-muted-foreground text-[10px] hover:fill-destructive"
-                onClick={(e) => {
-                  e.stopPropagation();
-                  onDeleteConnection(c.id);
-                }}
+                className="select-none fill-muted-foreground text-[10px] transition-colors group-hover:fill-destructive group-focus-visible:fill-destructive font-medium"
               >
                 w={c.weight.toFixed(2)} ✕
               </text>
