@@ -67,7 +67,6 @@ export interface CodeNetTopology {
     outputLayer: string[];
 }
 export declare class ThornsEngine {
-    private thesaurus;
     private questionHistory;
     private maxHistoryLength;
     constructor();
@@ -75,20 +74,6 @@ export declare class ThornsEngine {
      * Connect THORNS to core subsystems (value allocator, mesh, hyperdimensional engine, RLM, MoE)
      */
     connectCore(valueAllocator: any, mesh: any, hyperEngine: any, rlmTrainer: any, moeRouter: any): void;
-    /**
-     * Connect THORNS to an external thesaurus dictionary
-     */
-    connectThesaurus(thesaurusDict: {
-        getSynonyms: (word: string) => string[];
-        getDefinition: (word: string) => string;
-        getExamples: (word: string) => string[];
-        lookup: (word: string) => {
-            word: string;
-            definition: string;
-            synonyms: string[];
-            examples: string[];
-        } | undefined;
-    }): void;
     /**
      * Main thinking entry point — analyzes input through all THORNS dimensions
      */
@@ -105,10 +90,6 @@ export declare class ThornsEngine {
      * Generate hypotheses about the input meaning
      */
     private generateHypotheses;
-    /**
-     * Gather observations from dictionary and thesaurus
-     */
-    private gatherObservations;
     /**
      * Cross-check hypotheses against observations
      */
@@ -133,14 +114,6 @@ export declare class ThornsEngine {
      * Synthesize final response from all analysis components
      */
     private synthesizeResponse;
-    /**
-     * Get thesaurus data for a word
-     */
-    getThesaurusData(word: string): {
-        X: string[];
-        Y: string;
-        Z: string[];
-    } | null;
     /**
      * Get question history for debugging/analysis
      */
