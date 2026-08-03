@@ -219,19 +219,40 @@ export class BackgroundQuantizer {
    * Asymmetric: min/max scale, zeroPoint offset.
    * Mixed: uses symmetric for layers with large spread, asymmetric otherwise.
    */
-  quantize(weights: Float32Array, bits?: number): Float32Array {
+  quantize(weights: Float32Array, bits?: number, out?: Float32Array): Float32Array {
     const effectiveBits = clampBits(bits ?? this.config.bits);
     let wMin = Infinity;
     let wMax = -Infinity;
-    for (let i = 0; i < weights.length; i++) {
-      if (weights[i] < wMin) wMin = weights[i];
-      if (weights[i] > wMax) wMax = weights[i];
+    const len = weights.length;
+    let i = 0;
+    for (; i < len - 3; i += 4) {
+      const v0 = weights[i];
+      const v1 = weights[i + 1];
+      const v2 = weights[i + 2];
+      const v3 = weights[i + 3];
+      if (v0 < wMin) wMin = v0;
+      if (v0 > wMax) wMax = v0;
+      if (v1 < wMin) wMin = v1;
+      if (v1 > wMax) wMax = v1;
+      if (v2 < wMin) wMin = v2;
+      if (v2 > wMax) wMax = v2;
+      if (v3 < wMin) wMin = v3;
+      if (v3 > wMax) wMax = v3;
+    }
+    for (; i < len; i++) {
+      const v = weights[i];
+      if (v < wMin) wMin = v;
+      if (v > wMax) wMax = v;
     }
     if (wMax === wMin) {
+      if (out) {
+        out.set(weights);
+        return out;
+      }
       return new Float32Array(weights);
     }
     const scaleInfo = deriveScale(wMin, wMax, effectiveBits, this.config.method);
-    return this.dequantizeWith(weights, scaleInfo);
+    return this.dequantizeWith(weights, scaleInfo, out);
   }
 
   /**
@@ -242,13 +263,17 @@ export class BackgroundQuantizer {
    * calibration pass up front and being less exact for out-of-distribution
    * inputs the calibration set didn't cover.
    */
-  quantizeStatic(weights: Float32Array, stats: CalibrationStats, bits?: number): Float32Array {
+  quantizeStatic(weights: Float32Array, stats: CalibrationStats, bits?: number, out?: Float32Array): Float32Array {
     const effectiveBits = clampBits(bits ?? this.config.bits);
     if (stats.count === 0 || stats.max === stats.min) {
+      if (out) {
+        out.set(weights);
+        return out;
+      }
       return new Float32Array(weights);
     }
     const scaleInfo = deriveScale(stats.min, stats.max, effectiveBits, this.config.method);
-    return this.dequantizeWith(weights, scaleInfo);
+    return this.dequantizeWith(weights, scaleInfo, out);
   }
 
   /** Feed calibration samples for a named tensor/layer ahead of quantizeStatic(). */
@@ -270,10 +295,62 @@ export class BackgroundQuantizer {
     else this.calibration.clear();
   }
 
-  private dequantizeWith(weights: Float32Array, scaleInfo: QuantizationScale): Float32Array {
-    const result = new Float32Array(weights.length);
-    for (let i = 0; i < weights.length; i++) {
-      result[i] = applyScale(weights[i], scaleInfo).dequantized;
+  private dequantizeWith(
+    weights: Float32Array,
+    scaleInfo: QuantizationScale,
+    out?: Float32Array,
+  ): Float32Array {
+    const result = out || new Float32Array(weights.length);
+    const { scale, zeroPoint, symmetric, bits } = scaleInfo;
+    const len = weights.length;
+    if (symmetric) {
+      const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
+      const qMin = -qMax;
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const w0 = weights[i];
+        const w1 = weights[i + 1];
+        const w2 = weights[i + 2];
+        const w3 = weights[i + 3];
+
+        const lv0 = Math.max(qMin, Math.min(qMax, Math.round(w0 / scale)));
+        const lv1 = Math.max(qMin, Math.min(qMax, Math.round(w1 / scale)));
+        const lv2 = Math.max(qMin, Math.min(qMax, Math.round(w2 / scale)));
+        const lv3 = Math.max(qMin, Math.min(qMax, Math.round(w3 / scale)));
+
+        result[i] = lv0 * scale;
+        result[i + 1] = lv1 * scale;
+        result[i + 2] = lv2 * scale;
+        result[i + 3] = lv3 * scale;
+      }
+      for (; i < len; i++) {
+        const level = Math.max(qMin, Math.min(qMax, Math.round(weights[i] / scale)));
+        result[i] = level * scale;
+      }
+    } else {
+      const levels = Math.pow(2, bits) - 1;
+      const maxLevel = Math.round(levels);
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const w0 = weights[i];
+        const w1 = weights[i + 1];
+        const w2 = weights[i + 2];
+        const w3 = weights[i + 3];
+
+        const lv0 = Math.max(0, Math.min(maxLevel, Math.round(w0 / scale + zeroPoint)));
+        const lv1 = Math.max(0, Math.min(maxLevel, Math.round(w1 / scale + zeroPoint)));
+        const lv2 = Math.max(0, Math.min(maxLevel, Math.round(w2 / scale + zeroPoint)));
+        const lv3 = Math.max(0, Math.min(maxLevel, Math.round(w3 / scale + zeroPoint)));
+
+        result[i] = (lv0 - zeroPoint) * scale;
+        result[i + 1] = (lv1 - zeroPoint) * scale;
+        result[i + 2] = (lv2 - zeroPoint) * scale;
+        result[i + 3] = (lv3 - zeroPoint) * scale;
+      }
+      for (; i < len; i++) {
+        const level = Math.max(0, Math.min(maxLevel, Math.round(weights[i] / scale + zeroPoint)));
+        result[i] = (level - zeroPoint) * scale;
+      }
     }
     return result;
   }
@@ -294,9 +371,26 @@ export class BackgroundQuantizer {
     } else {
       min = Infinity;
       max = -Infinity;
-      for (let i = 0; i < weights.length; i++) {
-        if (weights[i] < min) min = weights[i];
-        if (weights[i] > max) max = weights[i];
+      const len = weights.length;
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const v0 = weights[i];
+        const v1 = weights[i + 1];
+        const v2 = weights[i + 2];
+        const v3 = weights[i + 3];
+        if (v0 < min) min = v0;
+        if (v0 > max) max = v0;
+        if (v1 < min) min = v1;
+        if (v1 > max) max = v1;
+        if (v2 < min) min = v2;
+        if (v2 > max) max = v2;
+        if (v3 < min) min = v3;
+        if (v3 > max) max = v3;
+      }
+      for (; i < len; i++) {
+        const v = weights[i];
+        if (v < min) min = v;
+        if (v > max) max = v;
       }
       if (min === Infinity) { min = 0; max = 0; }
     }
@@ -304,9 +398,46 @@ export class BackgroundQuantizer {
     const scaleInfo = deriveScale(min, max, effectiveBits, this.config.method);
     const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, effectiveBits) - 1) / 2) : 0;
     const levels = new Uint32Array(weights.length);
-    for (let i = 0; i < weights.length; i++) {
-      const { level } = applyScale(weights[i], scaleInfo);
-      levels[i] = level + offset; // shift symmetric's negative range into unsigned storage
+    const { scale, zeroPoint, symmetric, bits: sBits } = scaleInfo;
+    const len = weights.length;
+    if (symmetric) {
+      const qMax = Math.floor((Math.pow(2, sBits) - 1) / 2);
+      const qMin = -qMax;
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const lv0 = Math.max(qMin, Math.min(qMax, Math.round(weights[i] / scale)));
+        const lv1 = Math.max(qMin, Math.min(qMax, Math.round(weights[i + 1] / scale)));
+        const lv2 = Math.max(qMin, Math.min(qMax, Math.round(weights[i + 2] / scale)));
+        const lv3 = Math.max(qMin, Math.min(qMax, Math.round(weights[i + 3] / scale)));
+
+        levels[i] = lv0 + offset;
+        levels[i + 1] = lv1 + offset;
+        levels[i + 2] = lv2 + offset;
+        levels[i + 3] = lv3 + offset;
+      }
+      for (; i < len; i++) {
+        const level = Math.max(qMin, Math.min(qMax, Math.round(weights[i] / scale)));
+        levels[i] = level + offset;
+      }
+    } else {
+      const levelsCount = Math.pow(2, sBits) - 1;
+      const maxLevel = Math.round(levelsCount);
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const lv0 = Math.max(0, Math.min(maxLevel, Math.round(weights[i] / scale + zeroPoint)));
+        const lv1 = Math.max(0, Math.min(maxLevel, Math.round(weights[i + 1] / scale + zeroPoint)));
+        const lv2 = Math.max(0, Math.min(maxLevel, Math.round(weights[i + 2] / scale + zeroPoint)));
+        const lv3 = Math.max(0, Math.min(maxLevel, Math.round(weights[i + 3] / scale + zeroPoint)));
+
+        levels[i] = lv0 + offset;
+        levels[i + 1] = lv1 + offset;
+        levels[i + 2] = lv2 + offset;
+        levels[i + 3] = lv3 + offset;
+      }
+      for (; i < len; i++) {
+        const level = Math.max(0, Math.min(maxLevel, Math.round(weights[i] / scale + zeroPoint)));
+        levels[i] = level + offset;
+      }
     }
     return {
       packed: packLevels(levels, effectiveBits),
@@ -320,11 +451,30 @@ export class BackgroundQuantizer {
     const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, scaleInfo.bits) - 1) / 2) : 0;
     const levels = unpackLevels(tensor.packed, length, scaleInfo.bits);
     const out = new Float32Array(length);
-    for (let i = 0; i < length; i++) {
-      const level = levels[i] - offset;
-      out[i] = scaleInfo.symmetric
-        ? level * scaleInfo.scale
-        : (level - scaleInfo.zeroPoint) * scaleInfo.scale;
+    const scale = scaleInfo.scale;
+    const zeroPoint = scaleInfo.zeroPoint;
+    if (scaleInfo.symmetric) {
+      let i = 0;
+      for (; i < length - 3; i += 4) {
+        out[i] = (levels[i] - offset) * scale;
+        out[i + 1] = (levels[i + 1] - offset) * scale;
+        out[i + 2] = (levels[i + 2] - offset) * scale;
+        out[i + 3] = (levels[i + 3] - offset) * scale;
+      }
+      for (; i < length; i++) {
+        out[i] = (levels[i] - offset) * scale;
+      }
+    } else {
+      let i = 0;
+      for (; i < length - 3; i += 4) {
+        out[i] = (levels[i] - offset - zeroPoint) * scale;
+        out[i + 1] = (levels[i + 1] - offset - zeroPoint) * scale;
+        out[i + 2] = (levels[i + 2] - offset - zeroPoint) * scale;
+        out[i + 3] = (levels[i + 3] - offset - zeroPoint) * scale;
+      }
+      for (; i < length; i++) {
+        out[i] = (levels[i] - offset - zeroPoint) * scale;
+      }
     }
     return out;
   }
