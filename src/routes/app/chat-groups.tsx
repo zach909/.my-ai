@@ -97,7 +97,7 @@ function LockScreen({ onUnlock }: { onUnlock: (password: string) => Promise<bool
         <p className="text-xs text-muted-foreground">
           This server requires a password to access chat groups.
         </p>
-        {error && <p className="text-xs text-destructive">{error}</p>}
+        {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         <div className="flex gap-2">
           <Label htmlFor="chat-groups-password" className="sr-only">
             Password
@@ -118,7 +118,12 @@ function LockScreen({ onUnlock }: { onUnlock: (password: string) => Promise<bool
             autoFocus
             className="flex-1"
           />
-          <Button onClick={submit} disabled={checking || !password} size="sm">
+          <Button
+            onClick={submit}
+            disabled={checking || !password}
+            size="sm"
+            className="active:scale-95 transition-all duration-150"
+          >
             Unlock
           </Button>
         </div>
@@ -367,12 +372,17 @@ function ChatGroupsPage() {
                 </p>
                 <p className="text-xs text-muted-foreground">{pendingMatch.match.snippet}</p>
                 <div className="flex gap-2">
-                  <Button size="sm" onClick={() => continueThread(pendingMatch.match).then(() => runRound(pendingMatch.text))}>
+                  <Button
+                    size="sm"
+                    className="active:scale-95 transition-all duration-150"
+                    onClick={() => continueThread(pendingMatch.match).then(() => runRound(pendingMatch.text))}
+                  >
                     Continue there
                   </Button>
                   <Button
                     size="sm"
                     variant="outline"
+                    className="active:scale-95 transition-all duration-150"
                     onClick={() => {
                       const text = pendingMatch.text
                       setPendingMatch(null)

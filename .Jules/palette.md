@@ -25,6 +25,9 @@
 **Learning:** For multi-agent collaboration panels or chat-groups, keeping keyboard focus inside input fields during asynchronous workflows prevents screen-reader context disruption. Providing hidden sr-only labels for inputs and adding explicit ARIA labels on button triggers ensures that assistive technology users can fully navigate the interface.
 **Action:** Always pair focus restoration with explicit input-to-label bindings and high-contrast ARIA properties in text-submit flows.
 
+## 2026-08-09 - [Toggle Button Accessibility & Live Password Error Alerting]
+**Learning:** Toggle controls (such as an incognito session toggle) must carry stateful `aria-pressed` properties to convey active states to assistive technologies. Additionally, critical validation or lock screen password errors must be accompanied by `role="alert"` so they are immediately announced by screen readers without requiring manual navigation.
+**Action:** Pair `aria-pressed` with `aria-label` and `active:scale-95` on visual toggle buttons, and wrap critical error elements in `role="alert"` regions.
 ## 2026-08-15 - [Accessible Toggle Buttons & Tactile Feedback]
 **Learning:** Toggle controls (like an incognito mode button) must explicitly use the `aria-pressed` state and descriptive `aria-label` attributes to ensure assistive technology users can determine their active state. Coupling this with tactile transition animations (`active:scale-95 transition-all duration-150`) delivers an exceptionally delightful, tactile, and highly responsive user experience.
 **Action:** Always provide explicit `aria-pressed` and dynamic `aria-label` definitions for toggle states, combined with tactile visual feedback on click/press.
