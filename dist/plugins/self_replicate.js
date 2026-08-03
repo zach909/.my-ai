@@ -10,6 +10,19 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { fileURLToPath } from 'node:url';
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
+function findProjectRoot(startDir) {
+    let dir = startDir;
+    while (true) {
+        if (fs.existsSync(path.join(dir, 'package.json'))) {
+            return dir;
+        }
+        const parent = path.dirname(dir);
+        if (parent === dir) {
+            return startDir;
+        }
+        dir = parent;
+    }
+}
 export class SelfReplicatePlugin {
     constructor() {
         this.name = "self_replicate";
@@ -21,11 +34,19 @@ export class SelfReplicatePlugin {
             role: 'assistant',
             specialization: undefined,
         };
-        const root = path.dirname(path.dirname(__dirname));
+        const root = findProjectRoot(__dirname);
         this.cloneDir = path.join(root, 'clones');
-        // Ensure clone directory exists
+        this.ensureCloneDir();
+    }
+    ensureCloneDir() {
         if (!fs.existsSync(this.cloneDir)) {
-            fs.mkdirSync(this.cloneDir, { recursive: true });
+            fs.mkdirSync(this.cloneDir, { recursive: true, mode: 0o700 });
+        }
+        if (process.platform !== 'win32') {
+            try {
+                fs.chmodSync(this.cloneDir, 0o700);
+            }
+            catch (e) { }
         }
     }
     /**
@@ -232,6 +253,7 @@ When relevant, mention your clone ID and specialization.
     saveCloneState(clone) {
         const stateFile = path.join(this.cloneDir, `${clone.id}.state.json`);
         try {
+            this.ensureCloneDir();
             fs.writeFileSync(stateFile, JSON.stringify({
                 id: clone.id,
                 prompt: clone.prompt,
@@ -239,7 +261,13 @@ When relevant, mention your clone ID and specialization.
                 status: clone.status,
                 created_at: clone.createdAt,
                 last_activity: clone.lastActivity,
-            }, null, 2));
+            }, null, 2), { mode: 0o600 });
+            if (process.platform !== 'win32') {
+                try {
+                    fs.chmodSync(stateFile, 0o600);
+                }
+                catch (e) { }
+            }
         }
         catch (error) {
             clone.outputLog.push({
@@ -255,7 +283,14 @@ When relevant, mention your clone ID and specialization.
     saveCloneLog(clone) {
         const logFile = path.join(this.cloneDir, `${clone.id}.log.json`);
         try {
-            fs.writeFileSync(logFile, JSON.stringify(clone.outputLog, null, 2));
+            this.ensureCloneDir();
+            fs.writeFileSync(logFile, JSON.stringify(clone.outputLog, null, 2), { mode: 0o600 });
+            if (process.platform !== 'win32') {
+                try {
+                    fs.chmodSync(logFile, 0o600);
+                }
+                catch (e) { }
+            }
         }
         catch (error) {
             console.error(`[self_replicate] Failed to save log for ${clone.id}:`, error);

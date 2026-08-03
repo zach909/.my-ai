@@ -47,5 +47,29 @@ class TestCameraSecurity(unittest.TestCase):
         self.assertIn("Security Error", str(ctx.exception))
         self.assertIn("path traversal", str(ctx.exception).lower())
 
+    def test_device_argument_injection(self):
+        # Devices starting with '-' should be blocked
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.call("capture", path="test_image.jpg", device="--exec=touch /tmp/pwned")
+        self.assertIn("Security Error", str(ctx.exception))
+        self.assertIn("argument injection", str(ctx.exception).lower())
+
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.call("capture", path="test_image.jpg", device="-v")
+        self.assertIn("Security Error", str(ctx.exception))
+        self.assertIn("argument injection", str(ctx.exception).lower())
+
+    def test_device_path_traversal(self):
+        # Devices escaping /dev/ should be blocked
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.call("capture", path="test_image.jpg", device="/etc/passwd")
+        self.assertIn("Security Error", str(ctx.exception))
+        self.assertIn("path traversal", str(ctx.exception).lower())
+
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.call("capture", path="test_image.jpg", device="../etc/passwd")
+        self.assertIn("Security Error", str(ctx.exception))
+        self.assertIn("path traversal", str(ctx.exception).lower())
+
 if __name__ == "__main__":
     unittest.main()
