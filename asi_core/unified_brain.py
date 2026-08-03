@@ -656,10 +656,36 @@ class UnifiedBrain:
             )
             if auto_advance and self.extensions.test(name):
                 self.extensions.optimize(name)
-                self.extensions.quantize(name)
+                # Spec: "Extensions get quantized when the extension is
+                # done" -- quantize the *real* numeric weights this
+                # extension is actually built from (the brain's current
+                # vale ledger and mesh connection strengths), not just
+                # flip a flag. See background_quantization.Quantizer.
+                self.extensions.quantize(name, weights=self._extension_weight_snapshot())
             return ext
 
         return self.actions.perform(record, _do)
+
+    def _extension_weight_snapshot(self) -> Dict[str, Any]:
+        """
+        A snapshot of the brain's current learned numeric state, in the
+        plain-nested-list shape background_quantization.Quantizer expects:
+        the vale ledger (one float per neuron) and the mean weight of
+        every mesh connection as an n_neurons x n_neurons matrix. This is
+        what create_extension() hands to ExtensionSystem.quantize() so
+        "quantized" means an extension actually carries a real compressed
+        weight bundle, not merely a stage label.
+        """
+        n = len(self.vale.v)
+        connections: List[List[float]] = [[0.0] * n for _ in range(n)]
+        for (source_id, target_id), conn in self.mesh.connections.items():
+            if source_id < n and target_id < n and conn.weight_matrix:
+                flat = [w for row in conn.weight_matrix for w in row]
+                connections[source_id][target_id] = sum(flat) / len(flat)
+        return {
+            "vale": list(self.vale.v),
+            "connections": connections,
+        }
 
     # -- Expert creation (spec Part 4 section 42) --------------------------
 

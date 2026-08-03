@@ -81,10 +81,21 @@ from .circular_context import (
 
 from .neural_dsl import (
     parse as parse_ndl,
+    parse_program as parse_ndl_program,
     to_source as ndl_to_source,
     describe_extension,
+    execute as execute_ndl,
+    netsearch,
+    netsearch_train,
+    code_to_net,
+    wave_interference,
+    claims_exclusive_input,
+    literal_output,
     NeuronDefinition,
     Connection,
+    NetSearchRequest,
+    Program as NDLProgram,
+    DSLExecutionResult,
     NDLError,
 )
 
@@ -173,10 +184,21 @@ __all__ = [
     "CircularContextSystem",
     # Neural Definition Language
     "parse_ndl",
+    "parse_ndl_program",
     "ndl_to_source",
     "describe_extension",
+    "execute_ndl",
+    "netsearch",
+    "netsearch_train",
+    "code_to_net",
+    "wave_interference",
+    "claims_exclusive_input",
+    "literal_output",
     "NeuronDefinition",
     "Connection",
+    "NetSearchRequest",
+    "NDLProgram",
+    "DSLExecutionResult",
     "NDLError",
     # Mistake Tracker
     "MistakeTracker",

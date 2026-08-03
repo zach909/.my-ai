@@ -475,9 +475,39 @@ class TestExpertGroupCreation(unittest.TestCase):
         self.assertEqual(mesh.get_group_name(3), "vision")
 
 
+class TestDSLConnectionOverride(unittest.TestCase):
+    """set_connection_weight/add_dsl_bias back the Neural Definition
+    Language's `"name"@connections="target*weight+bias"` override (see
+    neural_dsl.execute())."""
+
+    def test_set_connection_weight_overwrites_whole_matrix(self):
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=3, n_input=2, n_groups=2)
+        mesh.set_connection_weight(0, 1, 0.42)
+        conn = mesh.connections[(0, 1)]
+        for row in conn.weight_matrix:
+            for w in row:
+                self.assertAlmostEqual(w, 0.42)
+
+    def test_set_connection_weight_missing_connection_raises(self):
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=3, n_input=2, n_groups=2)
+        with self.assertRaises(ValueError):
+            mesh.set_connection_weight(0, 0, 0.5)
+
+    def test_add_dsl_bias_accumulates_and_feeds_into_input(self):
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=2, n_input=2, n_groups=2, seed=3)
+        target = 5
+        before = mesh.compute_neuron_input(target)
+        mesh.add_dsl_bias(target, 1.0)
+        mesh.add_dsl_bias(target, 0.5)
+        self.assertAlmostEqual(mesh.neurons[target].dsl_bias, 1.5)
+        after = mesh.compute_neuron_input(target)
+        for b, a in zip(before, after):
+            self.assertAlmostEqual(a - b, 1.5)
+
+
 class TestStatePersistence(unittest.TestCase):
     """Test state save/load functionality."""
-    
+
     def test_save_state_structure(self):
         """Test saved state has correct structure."""
         mesh = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4)

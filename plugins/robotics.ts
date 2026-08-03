@@ -46,6 +46,28 @@ export class RoboticsPlugin extends BasePlugin {
     super(definition);
   }
 
+  private validateNum(val: any, name: string, minVal?: number, maxVal?: number, allowUndefined = false): number {
+    if (val === undefined || val === null) {
+      if (allowUndefined) return 0; // return default/safe
+      throw new Error(`Security Error: ${name} cannot be undefined or null.`);
+    }
+
+    const num = Number(val);
+    if (isNaN(num) || !isFinite(num)) {
+      throw new Error(`Security Error: ${name} must be a valid, finite number.`);
+    }
+
+    if (minVal !== undefined && num < minVal) {
+      throw new Error(`Security Error: ${name} is out of bounds (minimum ${minVal}).`);
+    }
+
+    if (maxVal !== undefined && num > maxVal) {
+      throw new Error(`Security Error: ${name} is out of bounds (maximum ${maxVal}).`);
+    }
+
+    return num;
+  }
+
   private connected = false;
   private robotState: RobotState = {
     joints: {
@@ -85,6 +107,11 @@ export class RoboticsPlugin extends BasePlugin {
       return { success: false, error: `Invalid connection type. Must be one of: ${validTypes}` };
     }
 
+    if (config) {
+      if (config.maxVelocity !== undefined) this.validateNum(config.maxVelocity, 'maxVelocity', 0.001);
+      if (config.maxAcceleration !== undefined) this.validateNum(config.maxAcceleration, 'maxAcceleration', 0.001);
+    }
+
     // In simulation mode, we don't need a real endpoint
     if (connectionType === 'simulation') {
       this.connected = true;
@@ -106,8 +133,22 @@ export class RoboticsPlugin extends BasePlugin {
       return { success: false, error: 'Endpoint required for non-simulation connections' };
     }
 
+    if (endpoint.trim().startsWith('-')) {
+      throw new Error('Security Error: Potential argument injection detected in endpoint.');
+    }
+
     try {
       if (connectionType === 'serial') {
+        // Path traversal validation
+        const path = await import('path');
+        if (process.platform !== 'win32' || endpoint.startsWith('/')) {
+          const target = path.resolve(endpoint);
+          const devDir = path.resolve('/dev');
+          if (!target.startsWith(devDir) || target === devDir) {
+            throw new Error('Security Error: Path traversal or unauthorized serial path detected.');
+          }
+        }
+
         // Would use serialport in real implementation
         const fs = await import('fs');
         if (!fs.existsSync(endpoint)) {
@@ -182,8 +223,10 @@ export class RoboticsPlugin extends BasePlugin {
     }
 
     // Validate position limits (typical industrial robot limits)
-    if (position < -Math.PI || position > Math.PI) {
-      return { success: false, error: 'Position out of range (-π to π)' };
+    position = this.validateNum(position, 'position', -Math.PI, Math.PI);
+
+    if (velocity !== undefined) {
+      this.validateNum(velocity, 'velocity', 0.001, this.config.maxVelocity);
     }
 
     const vel = velocity ?? this.config.maxVelocity;
@@ -218,12 +261,16 @@ export class RoboticsPlugin extends BasePlugin {
     
     // Build target pose
     const target: Record<string, number> = {};
-    if (x !== undefined) target.x = x;
-    if (y !== undefined) target.y = y;
-    if (z !== undefined) target.z = z;
-    if (roll !== undefined) target.roll = roll;
-    if (pitch !== undefined) target.pitch = pitch;
-    if (yaw !== undefined) target.yaw = yaw;
+    if (x !== undefined) target.x = this.validateNum(x, 'x');
+    if (y !== undefined) target.y = this.validateNum(y, 'y');
+    if (z !== undefined) target.z = this.validateNum(z, 'z');
+    if (roll !== undefined) target.roll = this.validateNum(roll, 'roll');
+    if (pitch !== undefined) target.pitch = this.validateNum(pitch, 'pitch');
+    if (yaw !== undefined) target.yaw = this.validateNum(yaw, 'yaw');
+
+    if (velocity !== undefined) {
+      this.validateNum(velocity, 'velocity', 0.001, this.config.maxVelocity);
+    }
 
     if (Object.keys(target).length === 0) {
       return { success: false, error: 'No target position specified' };
@@ -255,6 +302,9 @@ export class RoboticsPlugin extends BasePlugin {
     if (!this.connected) {
       return { success: false, error: 'Not connected to a robot' };
     }
+
+    if (position !== undefined) this.validateNum(position, 'position', 0.0, 1.0);
+    if (force !== undefined) this.validateNum(force, 'force', 0.0, 1.0);
 
     if (action === 'open') {
       this.robotState.gripperPosition = 1.0;
@@ -346,11 +396,23 @@ export class RoboticsPlugin extends BasePlugin {
       return { success: false, error: 'No waypoints provided' };
     }
 
+    if (velocity !== undefined) {
+      this.validateNum(velocity, 'velocity', 0.001, this.config.maxVelocity);
+    }
+    this.validateNum(blendRadius, 'blendRadius', 0.0);
+
     // Validate waypoints
     for (let i = 0; i < waypoints.length; i++) {
       if (typeof waypoints[i] !== 'object' || waypoints[i] === null) {
         return { success: false, error: `Waypoint ${i} must be a dictionary` };
       }
+      const wp = waypoints[i];
+      if (wp.x !== undefined) this.validateNum(wp.x, `waypoints[${i}].x`);
+      if (wp.y !== undefined) this.validateNum(wp.y, `waypoints[${i}].y`);
+      if (wp.z !== undefined) this.validateNum(wp.z, `waypoints[${i}].z`);
+      if (wp.roll !== undefined) this.validateNum(wp.roll, `waypoints[${i}].roll`);
+      if (wp.pitch !== undefined) this.validateNum(wp.pitch, `waypoints[${i}].pitch`);
+      if (wp.yaw !== undefined) this.validateNum(wp.yaw, `waypoints[${i}].yaw`);
     }
 
     const vel = velocity ?? this.config.maxVelocity;
@@ -391,6 +453,9 @@ export class RoboticsPlugin extends BasePlugin {
     if (!this.connected) {
       return { success: false, error: 'Not connected to a robot' };
     }
+
+    if (config.maxVelocity !== undefined) this.validateNum(config.maxVelocity, 'maxVelocity', 0.001);
+    if (config.maxAcceleration !== undefined) this.validateNum(config.maxAcceleration, 'maxAcceleration', 0.001);
 
     const allowedKeys = ['maxVelocity', 'maxAcceleration', 'coordinateSystem', 'safetyMode'];
     for (const key of Object.keys(config) as Array<keyof RobotConfiguration>) {
