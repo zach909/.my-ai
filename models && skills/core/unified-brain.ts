@@ -29,10 +29,13 @@ import { NeuronMesh, type MeshConfig, type MeshTopology } from './mesh.js';
 import { HyperDimensionalEngine, type HyperConfig, type HyperNeuron } from './hyperdimensional.js';
 import { QuantumNeuralNet, type QuantumState } from './quantum-net.js';
 import { ZipIOSystem } from './zip-io.js';
+import { pluginExtensions } from '../../plugins/index.js';
+import { PROGRAMMING_SKILLS } from '../programming-skills.js';
 
 export interface UnifiedBrainConfig {
   embeddingDim: number;
   hiddenDim: number;
+  /** Unused for expert count: registerExperts() registers one real, named expert per plugin/skill category instead (see moe.ts/pipeline.ts). Kept only for config-object backward compatibility. */
   numExperts: number;
   meshNodes: number;
   hyperDimensions: number;
@@ -65,6 +68,8 @@ export interface ThinkResult {
   quantumConsensus: number;
   /** MoE expert weighting used this tick, for callers that route generation through experts. */
   expertContributions: Map<string, number>;
+  /** Real plugin/skill ids selected this tick (via expertPluginMap), not anonymous expert indices. */
+  activeExperts: string[];
 }
 
 export interface BrainSnapshot {
@@ -86,6 +91,12 @@ export class UnifiedBrain {
   private stopRequested = false;
   private running = false;
 
+  // MoE expert index -> real plugin/skill id, so routing decisions name an
+  // actual capability (a real plugin, a real programming-skill category)
+  // instead of an anonymous randomly-initialized expert. Mirrors the
+  // registration pattern in pipeline.ts's ensureSubsystems().
+  private expertPluginMap: Map<number, string> = new Map();
+
   constructor(config: Partial<UnifiedBrainConfig> = {}) {
     this.config = { ...DEFAULT_CONFIG, ...config };
 
@@ -100,12 +111,16 @@ export class UnifiedBrain {
     this.vale = new ValueRangeAllocator(valeConfig);
 
     this.moe = new MoERouter({
-      expertCount: this.config.numExperts,
+      // expertCount: 0 -- every expert registered below is a real, named
+      // plugin or programming-skill category (Section 26/2.2), not an
+      // anonymous randomly-initialized expert with nothing behind its index.
+      expertCount: 0,
       topK: 2,
       inputDim: this.config.embeddingDim,
       outputDim: this.config.hiddenDim,
       expertHiddenDim: this.config.hiddenDim,
     } as Partial<MoEConfig>);
+    this.registerExperts();
 
     this.mesh = new NeuronMesh({
       nodeCount: this.config.meshNodes,
@@ -122,6 +137,44 @@ export class UnifiedBrain {
     this.quantum = new QuantumNeuralNet();
 
     this.zipIO = new ZipIOSystem(50000, this.config.persistDir);
+  }
+
+  /**
+   * Register one real MoE expert per plugin (Section 26) and one per
+   * distinct programming-skill category (Section 2.2), so this file's own
+   * MoE routing -- not just pipeline.ts's parallel one -- is traceable back
+   * to an actual capability. One expert per plugin id keeps the weight-
+   * matrix count bounded to the real catalog size; skills are grouped by
+   * expertType (not one-per-skill) for the same reason pipeline.ts groups
+   * them -- 500+ individual skill entries are lookup/metadata records, not
+   * independent computational units worth a full weight matrix each.
+   */
+  private registerExperts(): void {
+    this.expertPluginMap.clear();
+    for (const def of Object.values(pluginExtensions)) {
+      const expertId = this.moe.addExpert({
+        id: def.id,
+        name: def.name,
+        specialization: def.capabilities.join(',') || def.type,
+      });
+      this.expertPluginMap.set(expertId, def.id);
+    }
+
+    const skillExpertTypes = new Set(PROGRAMMING_SKILLS.map(s => s.expertType));
+    for (const expertType of skillExpertTypes) {
+      const id = `skill_${expertType}`;
+      const expertId = this.moe.addExpert({
+        id,
+        name: `${expertType} skills`,
+        specialization: expertType,
+      });
+      this.expertPluginMap.set(expertId, id);
+    }
+  }
+
+  /** Real expert index -> plugin/skill id map, for callers that want to trace a routing decision. */
+  getExpertPluginMap(): Map<number, string> {
+    return new Map(this.expertPluginMap);
   }
 
   setQuantumEnabled(enabled: boolean): void {
@@ -150,6 +203,18 @@ export class UnifiedBrain {
     await this.zipIO.ingest(inputBytes.toString('base64'));
 
     const moeOutput = this.moe.forward(embedding);
+    const activeExperts = moeOutput.decision.expertIndices
+      .map((i) => this.expertPluginMap.get(i))
+      .filter((id): id is string => id !== undefined);
+    // Remap MoERouter's anonymous "expert_N" contribution keys to the real
+    // plugin/skill id behind that index, so applyValueFeedback's zero-sum
+    // value updates reward a real, named capability -- not an opaque index.
+    const expertContributions = new Map<string, number>();
+    for (const [key, weight] of moeOutput.expertContributions) {
+      const idx = Number(key.replace('expert_', ''));
+      const realId = this.expertPluginMap.get(idx);
+      expertContributions.set(realId ?? key, weight);
+    }
 
     const meshInputs = new Map<string, number>();
     for (let i = 0; i < Math.min(moeOutput.output.length, this.config.meshNodes); i++) {
@@ -207,7 +272,8 @@ export class UnifiedBrain {
       noveltyScore: hyperOutput.noveltyScore ?? 0,
       quantumActive,
       quantumConsensus,
-      expertContributions: moeOutput.expertContributions,
+      expertContributions,
+      activeExperts,
     };
   }
 
