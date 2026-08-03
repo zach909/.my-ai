@@ -73,6 +73,10 @@ export class SelfReplicatePlugin {
     if (!fs.existsSync(this.cloneDir)) {
       fs.mkdirSync(this.cloneDir, { recursive: true, mode: 0o700 });
     }
+    if (process.platform !== 'win32' && typeof fs.chmodSync === 'function') {
+      try {
+        fs.chmodSync(this.cloneDir, 0o700);
+      } catch {}
     if (process.platform !== 'win32') {
       try {
         fs.chmodSync(this.cloneDir, 0o700);
@@ -355,6 +359,12 @@ When relevant, mention your clone ID and specialization.
           created_at: clone.createdAt,
           last_activity: clone.lastActivity,
         }, null, 2),
+        { encoding: 'utf8', mode: 0o600 }
+      );
+      if (process.platform !== 'win32' && typeof fs.chmodSync === 'function') {
+        try {
+          fs.chmodSync(stateFile, 0o600);
+        } catch {}
         { mode: 0o600 }
       );
       if (process.platform !== 'win32') {
@@ -377,6 +387,15 @@ When relevant, mention your clone ID and specialization.
   private saveCloneLog(clone: CloneInstance): void {
     const logFile = path.join(this.cloneDir, `${clone.id}.log.json`);
     try {
+      fs.writeFileSync(
+        logFile,
+        JSON.stringify(clone.outputLog, null, 2),
+        { encoding: 'utf8', mode: 0o600 }
+      );
+      if (process.platform !== 'win32' && typeof fs.chmodSync === 'function') {
+        try {
+          fs.chmodSync(logFile, 0o600);
+        } catch {}
       this.ensureCloneDir();
       fs.writeFileSync(logFile, JSON.stringify(clone.outputLog, null, 2), { mode: 0o600 });
       if (process.platform !== 'win32') {
