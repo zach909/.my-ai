@@ -200,6 +200,9 @@ export class BackgroundQuantizer {
                 wMax = v;
         }
         if (wMax === wMin) {
+            const result = out ?? new Float32Array(weights.length);
+            result.set(weights);
+            return result;
             if (out) {
                 out.set(weights);
                 return out;
@@ -220,6 +223,9 @@ export class BackgroundQuantizer {
     quantizeStatic(weights, stats, bits, out) {
         const effectiveBits = clampBits(bits ?? this.config.bits);
         if (stats.count === 0 || stats.max === stats.min) {
+            const result = out ?? new Float32Array(weights.length);
+            result.set(weights);
+            return result;
             if (out) {
                 out.set(weights);
                 return out;
@@ -248,6 +254,9 @@ export class BackgroundQuantizer {
             this.calibration.clear();
     }
     dequantizeWith(weights, scaleInfo, out) {
+        const result = out ?? new Float32Array(weights.length);
+        for (let i = 0; i < weights.length; i++) {
+            result[i] = applyScale(weights[i], scaleInfo).dequantized;
         const result = out || new Float32Array(weights.length);
         const { scale, zeroPoint, symmetric, bits } = scaleInfo;
         const len = weights.length;

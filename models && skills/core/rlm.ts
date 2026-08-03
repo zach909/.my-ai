@@ -79,6 +79,8 @@ export class RLMTrainer {
   private qValuesBuffer: Float32Array;
   private prioritiesBuffer: number[];
   private cachedTotalPriority: number = 0;
+  private wPlusResidualBuffer: Float32Array;
+  private bPlusResidualBuffer: Float32Array;
 
   // Section 6: quantization-aware training. The forward pass (both action
   // selection and TD-target computation) reads quantizedWeights/Bias, a
@@ -149,6 +151,8 @@ export class RLMTrainer {
     this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
     this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
     this.qValuesBuffer = new Float32Array(this.config.actionDim);
+    this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
+    this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
     this.refreshQuantizedForward();
   }
 
@@ -163,6 +167,29 @@ export class RLMTrainer {
     if (!this.quantizer) return;
 
     const wPlusResidual = this.wPlusResidualBuffer;
+    const policyWeights = this.policyWeights;
+    const weightResidual = this.weightResidual;
+    const lenW = wPlusResidual.length;
+    for (let i = 0; i < lenW; i++) {
+      wPlusResidual[i] = policyWeights[i] + weightResidual[i];
+    }
+    this.quantizer.quantize(wPlusResidual, undefined, this.quantizedWeights);
+    const quantizedWeights = this.quantizedWeights;
+    for (let i = 0; i < lenW; i++) {
+      weightResidual[i] = wPlusResidual[i] - quantizedWeights[i];
+    }
+
+    const bPlusResidual = this.bPlusResidualBuffer;
+    const policyBias = this.policyBias;
+    const biasResidual = this.biasResidual;
+    const lenB = bPlusResidual.length;
+    for (let i = 0; i < lenB; i++) {
+      bPlusResidual[i] = policyBias[i] + biasResidual[i];
+    }
+    this.quantizer.quantize(bPlusResidual, undefined, this.quantizedBias);
+    const quantizedBias = this.quantizedBias;
+    for (let i = 0; i < lenB; i++) {
+      biasResidual[i] = bPlusResidual[i] - quantizedBias[i];
     const lenW = wPlusResidual.length;
     let i = 0;
     for (; i < lenW - 3; i += 4) {
@@ -409,9 +436,18 @@ export class RLMTrainer {
 
   private updatePolicy(state: Float32Array, action: number, tdError: number): void {
     const gradient = tdError * this.config.learningRate;
-    for (let s = 0; s < state.length; s++) {
-      const idx = s * this.config.actionDim + action;
-      this.policyWeights[idx] += gradient * state[s];
+    const actionDim = this.config.actionDim;
+    const len = state.length;
+    let s = 0;
+    const limit = len - 3;
+    for (; s < limit; s += 4) {
+      this.policyWeights[s * actionDim + action] += gradient * state[s];
+      this.policyWeights[(s + 1) * actionDim + action] += gradient * state[s + 1];
+      this.policyWeights[(s + 2) * actionDim + action] += gradient * state[s + 2];
+      this.policyWeights[(s + 3) * actionDim + action] += gradient * state[s + 3];
+    }
+    for (; s < len; s++) {
+      this.policyWeights[s * actionDim + action] += gradient * state[s];
     }
     this.policyBias[action] += gradient;
   }
