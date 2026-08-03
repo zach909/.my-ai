@@ -20,6 +20,7 @@ import { SelfHealer } from "../models && skills/core/self-healer.js";
 import { ContextCompressor } from "../models && skills/core/context-compressor.js";
 import { IntentRouter } from "../models && skills/core/intent-router.js";
 import { PromptingSkill } from "../models && skills/core/prompting-skill.js";
+import { PromptLibrary } from "../models && skills/core/prompt-library.js";
 import { WorkingMemory } from "../models && skills/core/working-memory.js";
 import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
@@ -71,6 +72,8 @@ export class NeuroclawSystem {
   compressor: ContextCompressor;
   router: IntentRouter;
   prompting: PromptingSkill;
+  /** Saved, reusable prompt templates -- distinct from both `prompting` (goal decomposition) and MoE skills/experts. */
+  promptLibrary: PromptLibrary;
   workingMemory: WorkingMemory;
   // AGI / ASI capability layer (integrated in solve()).
   monitor: SelfMonitor;
@@ -165,6 +168,7 @@ export class NeuroclawSystem {
     // the resulting goal onto the shared PlanTracker (Section 24) -- reuses
     // router/plan/empathy above rather than keeping a parallel private state.
     this.prompting = new PromptingSkill(this.router, this.plan, this.empathy);
+    this.promptLibrary = new PromptLibrary();
     // Working memory (Section 3): task-scoped scratch state (inputs, active
     // reasoning, temporary calculations, intermediate results). Goal/
     // constraints/plan are never duplicated here -- always read through to
@@ -273,6 +277,20 @@ export class NeuroclawSystem {
     this.architecture = new ArchitectureMapper();
     this.performance = new PerformanceMonitor();
     this.registerArchitecture();
+  }
+
+  /** Save a named, reusable prompt template -- "do this prompt again" without retyping it. */
+  savePrompt(name: string, template: string) {
+    return this.promptLibrary.save(name, template);
+  }
+
+  /** Apply a saved prompt template (substituting {{var}} placeholders), or null if no prompt has that name. */
+  useSavedPrompt(name: string, vars?: Record<string, string>): string | null {
+    return this.promptLibrary.apply(name, vars);
+  }
+
+  listSavedPrompts() {
+    return this.promptLibrary.list();
   }
 
   /**
