@@ -29,6 +29,7 @@ import { WorldModel } from "../models && skills/core/world-model.js";
 import { MathEngine, evaluateExpression } from "../models && skills/core/math-engine.js";
 import { Critic } from "../models && skills/core/critic.js";
 import { SkillLibrary } from "../models && skills/core/skill-library.js";
+import { PluginLibrary } from "../models && skills/core/plugin-library.js";
 import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "../models && skills/core/self-model.js";
@@ -84,6 +85,8 @@ export class NeuroclawSystem {
   /** Section 23: a genuinely separate system that reviews an answer rather than trusting the process that produced it to judge itself. */
   critic: Critic;
   skillLibrary: SkillLibrary;
+  /** Shared plugins wiki -- same local shared-library pattern as skillLibrary/promptLibrary. */
+  pluginLibrary: PluginLibrary;
   reasoner: ReasoningEngine;
   transfer: KnowledgeTransfer;
   selfModel: SelfModel;
@@ -198,6 +201,7 @@ export class NeuroclawSystem {
     // instance built is discoverable and loadable by another instead of
     // being recreated from scratch.
     this.skillLibrary = new SkillLibrary();
+    this.pluginLibrary = new PluginLibrary();
     this.transfer = new KnowledgeTransfer();
     this.selfModel = new SelfModel();
     this.improvement = new SelfImprovement();

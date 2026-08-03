@@ -467,13 +467,46 @@ export class PluginMakerExtension extends BasePlugin {
         writeFileSync(join(pluginDir, `${name}.ts`), pluginContent, 'utf-8');
         const manifestContent = this.generateManifest(name, input, capabilities);
         writeFileSync(join(pluginDir, `${name}.manifest.json`), manifestContent, 'utf-8');
+        // Every self-authored plugin gets a wiki entry alongside it, the same
+        // shared-library pattern SkillMakerExtension already uses for skills
+        // (~/.neuroclaw/skills-wiki) -- PluginLibrary (models && skills/core/
+        // plugin-library.ts) is the read side, so a plugin one instance builds
+        // is discoverable and reusable by another instead of being silently
+        // stuck as an unshared file only this instance knows about.
+        const wikiDir = join(homedir(), '.neuroclaw', 'plugins-wiki');
+        if (!existsSync(wikiDir))
+            mkdirSync(wikiDir, { recursive: true });
+        const wikiContent = this.generateWikiDoc(name, input, capabilities);
+        const wikiPath = join(wikiDir, `${name}.md`);
+        writeFileSync(wikiPath, wikiContent, 'utf-8');
         return {
             type: 'plugin-maker',
             plugin: name,
             path: join(pluginDir, `${name}.ts`),
+            wikiPath,
             description: input,
             content: pluginContent,
         };
+    }
+    generateWikiDoc(name, description, capabilities) {
+        const lines = [];
+        lines.push(`# ${name}`);
+        lines.push('');
+        lines.push(`**Description:** ${description}`);
+        lines.push('');
+        lines.push(`**Generated:** ${new Date().toISOString()}`);
+        lines.push('');
+        lines.push('## Capabilities');
+        lines.push('');
+        if (capabilities.length > 0) {
+            for (const c of capabilities)
+                lines.push(`- ${c}`);
+        }
+        else {
+            lines.push(`- custom`);
+        }
+        lines.push('');
+        return lines.join('\n');
     }
     extractCapabilities(desc) {
         const known = ['search', 'fetch', 'transform', 'analyze', 'compute', 'store', 'notify', 'monitor', 'schedule', 'convert', 'validate', 'encrypt'];
