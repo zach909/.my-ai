@@ -1,6 +1,7 @@
 import { BackgroundQuantizer } from '../models && skills/core/quantizer.js';
 import { NeuroLangInterpreter } from '../models && skills/core/neuro-lang.js';
 import { CodeToNet } from '../models && skills/core/thorns.js';
+import { NetSearchEngine } from '../models && skills/core/net-search.js';
 
 /**
  * Cooperative yield: hands control back to the event loop. Defined locally
@@ -41,6 +42,12 @@ export class ExtensionBuilder {
         });
         this.neuroLang = new NeuroLangInterpreter();
         this.codeToNet = new CodeToNet();
+        // Real, trainable net search (models && skills/core/net-search.ts):
+        // an input layer (tokenized query) into learned query->structure
+        // associations plus hashed embeddings -- soft/bendable, not a hard
+        // string match. Indexed over neuron *definitions* (before they get
+        // compiled), matching the spec.
+        this.netSearchEngine = new NetSearchEngine();
     }
     createProject(name, description) {
         const id = `proj_${Date.now()}_${this.neuronCounter++}`;
@@ -358,12 +365,38 @@ export class ExtensionBuilder {
         const project = this.projects.get(projectId);
         if (!project)
             return false;
-        // Find all netsearch neurons and train them
+        // Index every neuron's own definition -- "searches your definitions
+        // of the neurons before they get compiled" -- not just netsearch-type
+        // ones, so the trained network covers the whole project.
+        this.netSearchEngine.clear();
+        for (const neuron of project.neurons.values()) {
+            const outgoing = [];
+            for (const conn of project.connections.values()) {
+                if (conn.fromId === neuron.id)
+                    outgoing.push(conn.toId);
+            }
+            this.netSearchEngine.addStructure({
+                name: neuron.id,
+                definition: `${neuron.name} ${neuron.definition}`.trim(),
+                value: neuron.value,
+                connections: outgoing,
+                flags: [neuron.type],
+            });
+        }
+        // Real training over `epochs` passes -- each netsearch-type neuron's
+        // corpus lines are genuine (query, target-structure) pairs that
+        // reinforce the learned association table, not a simulated netPath
+        // rename. Soft/bendable: repeated training keeps shifting the same
+        // weights rather than a one-shot hard-coded result.
         let trained = false;
+        const passes = Math.max(1, Math.trunc(epochs) || 1);
         for (const neuron of project.neurons.values()) {
             if (neuron.type === 'netsearch' && neuron.corpus) {
-                // Simulate training by updating the net path
-                neuron.netPath = `${neuron.name}_trained_${Date.now()}`;
+                const pairs = neuron.corpus.split('\n').filter(Boolean).map(line => ({ query: line, name: neuron.id }));
+                for (let e = 0; e < passes; e++) {
+                    this.netSearchEngine.train(pairs, 1 / passes);
+                }
+                neuron.netPath = `${neuron.name}_trained_${passes}ep`;
                 trained = true;
             }
         }
@@ -372,24 +405,37 @@ export class ExtensionBuilder {
         }
         return trained;
     }
+    /**
+     * Net Search: a real, trainable network (NetSearchEngine's neural mode --
+     * hashed embeddings plus the learned associations trainNetSearch() built)
+     * over the project's neuron definitions. Soft/bendable, not a hard
+     * substring match.
+     */
     netSearch(projectId, query) {
         const project = this.projects.get(projectId);
         if (!project)
             return [];
+        const hits = this.netSearchEngine.search(query, { mode: 'neural', topK: 10 });
         const results = [];
-        for (const neuron of project.neurons.values()) {
-            if (neuron.type === 'netsearch' && neuron.corpus) {
-                const corpusLines = neuron.corpus.split('\n');
-                const matches = corpusLines.filter(line => line.toLowerCase().includes(query.toLowerCase()));
-                if (matches.length > 0) {
-                    results.push({
-                        results: matches.slice(0, 5),
-                        confidence: Math.min(1, matches.length / corpusLines.length * 2)
-                    });
-                }
-            }
+        for (const hit of hits) {
+            const neuron = project.neurons.get(hit.name);
+            results.push({
+                results: [neuron ? (neuron.definition || neuron.name) : hit.name],
+                confidence: Math.max(0, Math.min(1, hit.score)),
+            });
         }
         return results;
+    }
+    /**
+     * Reverse search: given an output (a neuron already indexed by
+     * trainNetSearch()), which query tokens most strongly drove matches to
+     * it -- the network runs both directions instead of only query->result.
+     */
+    reverseNetSearch(projectId, neuronId) {
+        const project = this.projects.get(projectId);
+        if (!project)
+            return [];
+        return this.netSearchEngine.reverseSearch(neuronId);
     }
     /**
      * Net Search: semantically search across the project's neural definitions,
