@@ -25,7 +25,13 @@ export class SelfReplicatePlugin {
         this.cloneDir = path.join(root, 'clones');
         // Ensure clone directory exists
         if (!fs.existsSync(this.cloneDir)) {
-            fs.mkdirSync(this.cloneDir, { recursive: true });
+            fs.mkdirSync(this.cloneDir, { recursive: true, mode: 0o700 });
+        }
+        if (process.platform !== 'win32' && typeof fs.chmodSync === 'function') {
+            try {
+                fs.chmodSync(this.cloneDir, 0o700);
+            }
+            catch { }
         }
     }
     /**
@@ -239,7 +245,13 @@ When relevant, mention your clone ID and specialization.
                 status: clone.status,
                 created_at: clone.createdAt,
                 last_activity: clone.lastActivity,
-            }, null, 2));
+            }, null, 2), { encoding: 'utf8', mode: 0o600 });
+            if (process.platform !== 'win32' && typeof fs.chmodSync === 'function') {
+                try {
+                    fs.chmodSync(stateFile, 0o600);
+                }
+                catch { }
+            }
         }
         catch (error) {
             clone.outputLog.push({
@@ -255,7 +267,13 @@ When relevant, mention your clone ID and specialization.
     saveCloneLog(clone) {
         const logFile = path.join(this.cloneDir, `${clone.id}.log.json`);
         try {
-            fs.writeFileSync(logFile, JSON.stringify(clone.outputLog, null, 2));
+            fs.writeFileSync(logFile, JSON.stringify(clone.outputLog, null, 2), { encoding: 'utf8', mode: 0o600 });
+            if (process.platform !== 'win32' && typeof fs.chmodSync === 'function') {
+                try {
+                    fs.chmodSync(logFile, 0o600);
+                }
+                catch { }
+            }
         }
         catch (error) {
             console.error(`[self_replicate] Failed to save log for ${clone.id}:`, error);
