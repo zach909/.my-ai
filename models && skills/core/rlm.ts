@@ -95,6 +95,8 @@ export class RLMTrainer {
   private quantizedBias: Float32Array;
   private weightResidual: Float32Array;
   private biasResidual: Float32Array;
+  private wPlusResidualBuffer: Float32Array;
+  private bPlusResidualBuffer: Float32Array;
 
   constructor(config: Record<string, any> = {}) {
     this.config = {
@@ -146,6 +148,8 @@ export class RLMTrainer {
     this.biasResidual = new Float32Array(this.policyBias.length);
     this.quantizedWeights = new Float32Array(this.policyWeights);
     this.quantizedBias = new Float32Array(this.policyBias);
+    this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
+    this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
     this.qValuesBuffer = new Float32Array(this.config.actionDim);
     this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
     this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
@@ -186,6 +190,55 @@ export class RLMTrainer {
     const quantizedBias = this.quantizedBias;
     for (let i = 0; i < lenB; i++) {
       biasResidual[i] = bPlusResidual[i] - quantizedBias[i];
+    const lenW = wPlusResidual.length;
+    let i = 0;
+    for (; i < lenW - 3; i += 4) {
+      wPlusResidual[i] = this.policyWeights[i] + this.weightResidual[i];
+      wPlusResidual[i + 1] = this.policyWeights[i + 1] + this.weightResidual[i + 1];
+      wPlusResidual[i + 2] = this.policyWeights[i + 2] + this.weightResidual[i + 2];
+      wPlusResidual[i + 3] = this.policyWeights[i + 3] + this.weightResidual[i + 3];
+    }
+    for (; i < lenW; i++) {
+      wPlusResidual[i] = this.policyWeights[i] + this.weightResidual[i];
+    }
+
+    const wq = this.quantizer.quantize(wPlusResidual, undefined, this.quantizedWeights);
+
+    i = 0;
+    for (; i < lenW - 3; i += 4) {
+      this.weightResidual[i] = wPlusResidual[i] - wq[i];
+      this.weightResidual[i + 1] = wPlusResidual[i + 1] - wq[i + 1];
+      this.weightResidual[i + 2] = wPlusResidual[i + 2] - wq[i + 2];
+      this.weightResidual[i + 3] = wPlusResidual[i + 3] - wq[i + 3];
+    }
+    for (; i < lenW; i++) {
+      this.weightResidual[i] = wPlusResidual[i] - wq[i];
+    }
+
+    const bPlusResidual = this.bPlusResidualBuffer;
+    const lenB = bPlusResidual.length;
+    let j = 0;
+    for (; j < lenB - 3; j += 4) {
+      bPlusResidual[j] = this.policyBias[j] + this.biasResidual[j];
+      bPlusResidual[j + 1] = this.policyBias[j + 1] + this.biasResidual[j + 1];
+      bPlusResidual[j + 2] = this.policyBias[j + 2] + this.biasResidual[j + 2];
+      bPlusResidual[j + 3] = this.policyBias[j + 3] + this.biasResidual[j + 3];
+    }
+    for (; j < lenB; j++) {
+      bPlusResidual[j] = this.policyBias[j] + this.biasResidual[j];
+    }
+
+    const bq = this.quantizer.quantize(bPlusResidual, undefined, this.quantizedBias);
+
+    j = 0;
+    for (; j < lenB - 3; j += 4) {
+      this.biasResidual[j] = bPlusResidual[j] - bq[j];
+      this.biasResidual[j + 1] = bPlusResidual[j + 1] - bq[j + 1];
+      this.biasResidual[j + 2] = bPlusResidual[j + 2] - bq[j + 2];
+      this.biasResidual[j + 3] = bPlusResidual[j + 3] - bq[j + 3];
+    }
+    for (; j < lenB; j++) {
+      this.biasResidual[j] = bPlusResidual[j] - bq[j];
     }
   }
 
