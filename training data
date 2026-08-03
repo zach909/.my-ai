@@ -1,0 +1,33 @@
+To find open-access data, step-by-step laboratory procedures, and computational code combined across all disciplines of science, you need platforms tailored for Open Science. These specialized spaces function as bridges between the "wet lab" (physical experiments) and the "dry lab" (computation, web research, and coding). [1, 2, 3] 
+The top databases and open-source ecosystems designed specifically for cross-disciplinary scientific computation, lab execution, and code tracking include the following:
+------------------------------
+## 🔬 Open Lab Procedures & Step-by-Step Execution
+If your goal is to research exactly how to execute an experiment in a physical lab while linking it to data or computational analysis, use these specialized protocol databases:
+
+* 
+* Protocols.io: The premier open-access repository for interactive, step-by-step scientific methods. It hosts living, updatable instructions for physical lab setups, standard operating procedures (SOPs), and computational pipeline workflows. [4, 5, 6, 7, 8] 
+* [Protocol Exchange](https://www.nature.com/protocolexchange/): Sponsored by Nature Portfolio, this is a completely open preprint server and repository for community-contributed laboratory instructions covering all natural sciences. [9] 
+* 
+
+------------------------------
+## 💻 Computational Coding & Open Science Platforms
+If you need a unified database that houses scientific data, computational code (Python/R), and web research documentation simultaneously, these frameworks are built for it: [10, 11] 
+
+* 
+* [OSF (Open Science Framework)](https://osf.io/): A massive open-source project management hub for all sciences. It lets you host structured data, build lab wikis for procedural documentation, and natively integrates with code repositories like GitHub or GitLab. Every public project gets a dedicated DOI (Digital Object Identifier). [12, 13, 14, 15] 
+* [Code Ocean](https://codeocean.com/): A specialized computational platform that uses "Compute Capsules". It bundles scientific code, data dependencies, and the exact software execution environment together, ensuring any scientist can reproduce a web or lab computation instantly. [16, 17, 18, 19] 
+* [Galaxy Project](https://galaxyproject.org/): An open-source, web-based database and platform for data-intensive scientific research. It allows scientists to run highly complex computational analyses and sharing code workflows without needing advanced local hardware. [20] 
+* [Papers with Code](https://paperswithcode.com/): Though highly geared towards AI, it traces computational code, benchmark datasets, and scientific research papers across medical, physical, and computational sciences to show you exactly how a data model was processed.
+* 
+
+------------------------------
+## 📊 All-Science Open Data Repositories
+For raw scientific databases across physics, chemistry, biology, and materials modeling that include the complete computational simulation graphs and data pipelines: [21, 22] 
+
+* 
+* [Materials Cloud](https://www.materialscloud.org/): An open platform for computational materials science that stores the exact simulation pipelines, source codes, and raw data graphs, allowing you to retrace every calculated result.
+* [NASA Open Science Data Repository (OSDR)](https://science.nasa.gov/biological-physical/data/osdr/): A meticulously curated database blending physiological, bioimaging, and environmental scientific data with code analysis pipelines. [21, 23] 
+* 
+
+------------------------------
+What specific branch of science are you researching (e.g., genomics, chemistry, mechanical physics, or climate modeling)? If you can share the specific lab test or computation you are trying to execute, I can pull up the exact repository or code pipeline for it!
