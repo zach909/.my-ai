@@ -88,9 +88,13 @@ export class FileSystemPlugin extends BasePlugin {
   }
 
   override async onMessage(message: unknown): Promise<unknown> {
-    const input = String(message).toLowerCase().trim();
+    // Case-insensitive on the command keyword only -- lowercasing the whole
+    // input previously mangled the extracted path too (`MyDir/MyFile.TXT`
+    // became `mydir/myfile.txt`), breaking every case-sensitive path on a
+    // case-sensitive filesystem.
+    const input = String(message).trim();
     // read <path>
-    const readMatch = input.match(/\bread\s+(\S+)/);
+    const readMatch = input.match(/\bread\s+(\S+)/i);
     if (readMatch?.[1]) {
       try {
         const content = await this.readFile(readMatch[1]);
@@ -98,14 +102,14 @@ export class FileSystemPlugin extends BasePlugin {
       } catch { return `[FileSystem] Cannot read ${readMatch[1]}`; }
     }
     // list <path>
-    const listMatch = input.match(/\blist\s+(\S+)/);
+    const listMatch = input.match(/\blist\s+(\S+)/i);
     if (listMatch?.[1]) {
       const entries = await this.listDirectory(listMatch[1]);
       if (entries.length === 0) return `[FileSystem] Empty or not found: ${listMatch[1]}`;
       return `[FileSystem] ${listMatch[1]}: ${entries.slice(0, 10).map(e => e.name).join(', ')}`;
     }
     // exists <path>
-    const existsMatch = input.match(/\bexists?\s+(\S+)/);
+    const existsMatch = input.match(/\bexists?\s+(\S+)/i);
     if (existsMatch?.[1]) {
       const ok = await this.exists(existsMatch[1]);
       return `[FileSystem] ${existsMatch[1]}: ${ok ? 'exists' : 'not found'}`;
