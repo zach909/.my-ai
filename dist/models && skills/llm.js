@@ -243,8 +243,15 @@ export class NeuroclawLLM {
         const predictor = this.predictorMode === 'code' ? this.codeTrainer : this.trainer;
         const temperature = options.temperature ?? 0.8;
         const maxTokens = options.maxTokens ?? 80;
-        const generated = this.generateTokens(this.context, predictor, maxTokens, temperature);
-        const output = generated.trim().length > 0 ? generated.trim() : thornsOutput.response;
+        let generated = this.generateTokens(this.context, predictor, maxTokens, temperature);
+        // A completely empty decode (e.g. the very first token sampled to
+        // end-of-sequence) gets one retry at a higher temperature -- THORNS'
+        // own templated .response never becomes the visible output, even as
+        // a fallback.
+        if (generated.trim().length === 0) {
+            generated = this.generateTokens(this.context, predictor, maxTokens, Math.min(1.5, temperature + 0.4));
+        }
+        const output = generated.trim();
         // Zero-sum value update: higher-performing experts gain value points
         const perf = thornsOutput.crossCheck.overallConfidence;
         this.brain.applyValueFeedback(perf, thinkResult.expertContributions);
