@@ -119,8 +119,16 @@ export class ThornsEngine {
                     if (lowerInput.includes(kw))
                         matchCount++;
                 }
-                dimension.confidence = Math.min(1.0, matchCount / keywords.length);
-                dimension.answered = dimension.confidence > 0.3;
+                // A single keyword match (e.g. "why" appearing once) is a real
+                // signal that this dimension is genuinely being asked about --
+                // matchCount / keywords.length previously required matching
+                // 2+ of the 5 keywords in a category (>0.3) before counting
+                // as "answered" at all, which an ordinary sentence containing
+                // exactly one question word never does. That made crossCheck()
+                // average over zero scored dimensions and report 0% confidence
+                // on almost every real input.
+                dimension.confidence = matchCount > 0 ? Math.min(1.0, 0.4 + 0.2 * (matchCount - 1)) : 0;
+                dimension.answered = matchCount > 0;
             }
         }
         return dimensions;
