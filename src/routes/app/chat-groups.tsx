@@ -340,7 +340,9 @@ function ChatGroupsPage() {
             variant={incognito ? 'default' : 'outline'}
             size="sm"
             onClick={() => setIncognito((v) => !v)}
-            className="gap-1.5 text-xs"
+            className="gap-1.5 text-xs active:scale-95 transition-all duration-150"
+            aria-pressed={incognito}
+            aria-label={incognito ? 'Incognito mode active' : 'Incognito mode inactive'}
             title={incognito ? 'Incognito: this session is not saved' : 'Turn on incognito mode (nothing gets saved)'}
           >
             <EyeOff size={12} />
