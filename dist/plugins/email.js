@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
 import { homedir } from 'node:os';
 import { join } from 'node:path';
 import { BasePlugin } from "../plugin_manager/sdk.js";
@@ -114,7 +114,7 @@ export class EmailPlugin extends BasePlugin {
     }
     loadFromDisk() {
         try {
-            const data = JSON.parse(require('fs').readFileSync(join(DATA_DIR, 'emails.json'), 'utf-8'));
+            const data = JSON.parse(readFileSync(join(DATA_DIR, 'emails.json'), 'utf-8'));
             this.emails = Array.isArray(data) ? data : [];
         }
         catch {

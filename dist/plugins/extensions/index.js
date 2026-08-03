@@ -652,7 +652,15 @@ export class UniversalLanguageSkill extends BasePlugin {
     }
     normalizeLanguageName(name) {
         const map = { js: 'JavaScript', ts: 'TypeScript', py: 'Python', rb: 'Ruby', rs: 'Rust', cpp: 'C++', cs: 'C#' };
-        return map[name.toLowerCase()] || name.charAt(0).toUpperCase() + name.slice(1);
+        const lower = name.toLowerCase();
+        if (map[lower])
+            return map[lower];
+        // Case-insensitive match against the actual catalog keys (JavaScript,
+        // TypeScript, MATLAB, ...) -- charAt(0).toUpperCase() alone can't
+        // reconstruct internal capitals, so e.g. "javascript" never matched the
+        // catalog's "JavaScript" and silently fell through to "Unknown language".
+        const canonical = Object.keys(LANGUAGE_SKILLS).find(k => k.toLowerCase() === lower);
+        return canonical ?? (name.charAt(0).toUpperCase() + name.slice(1));
     }
     async onHealthCheck() {
         for (const [lang, nodeIds] of this.languageNeurons)
