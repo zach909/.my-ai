@@ -164,7 +164,7 @@ export class BackgroundQuantizer {
      * Asymmetric: min/max scale, zeroPoint offset.
      * Mixed: uses symmetric for layers with large spread, asymmetric otherwise.
      */
-    quantize(weights, bits) {
+    quantize(weights, bits, out) {
         const effectiveBits = clampBits(bits ?? this.config.bits);
         let wMin = Infinity;
         let wMax = -Infinity;
@@ -175,10 +175,12 @@ export class BackgroundQuantizer {
                 wMax = weights[i];
         }
         if (wMax === wMin) {
-            return new Float32Array(weights);
+            const result = out ?? new Float32Array(weights.length);
+            result.set(weights);
+            return result;
         }
         const scaleInfo = deriveScale(wMin, wMax, effectiveBits, this.config.method);
-        return this.dequantizeWith(weights, scaleInfo);
+        return this.dequantizeWith(weights, scaleInfo, out);
     }
     /**
      * Static-mode counterpart to quantize(): reuses a scale/zero-point
@@ -188,13 +190,15 @@ export class BackgroundQuantizer {
      * calibration pass up front and being less exact for out-of-distribution
      * inputs the calibration set didn't cover.
      */
-    quantizeStatic(weights, stats, bits) {
+    quantizeStatic(weights, stats, bits, out) {
         const effectiveBits = clampBits(bits ?? this.config.bits);
         if (stats.count === 0 || stats.max === stats.min) {
-            return new Float32Array(weights);
+            const result = out ?? new Float32Array(weights.length);
+            result.set(weights);
+            return result;
         }
         const scaleInfo = deriveScale(stats.min, stats.max, effectiveBits, this.config.method);
-        return this.dequantizeWith(weights, scaleInfo);
+        return this.dequantizeWith(weights, scaleInfo, out);
     }
     /** Feed calibration samples for a named tensor/layer ahead of quantizeStatic(). */
     calibrate(layerKey, samples) {
@@ -214,8 +218,8 @@ export class BackgroundQuantizer {
         else
             this.calibration.clear();
     }
-    dequantizeWith(weights, scaleInfo) {
-        const result = new Float32Array(weights.length);
+    dequantizeWith(weights, scaleInfo, out) {
+        const result = out ?? new Float32Array(weights.length);
         for (let i = 0; i < weights.length; i++) {
             result[i] = applyScale(weights[i], scaleInfo).dequantized;
         }
