@@ -109,6 +109,8 @@ export declare class ExtensionBuilder {
         neuron: NeuronData;
         matches: { id: string; name: string; score: number }[];
     } | null;
+    /** Given a neuron already indexed by trainNetSearch(), which query tokens most strongly drove matches to it. */
+    reverseNetSearch(projectId: string, neuronId: string): { token: string; weight: number }[];
     tokenizeForSearch(text: string): string[];
     semanticSimilarity(a: string[], b: string[]): number;
     importCodeToNet(projectId: string, name: string, binaryCode: Uint8Array): NeuronData | null;

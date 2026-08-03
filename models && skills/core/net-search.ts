@@ -101,6 +101,22 @@ export class NetSearchEngine {
     }
   }
 
+  /**
+   * Reverse search: given an output (a structure name already in the index),
+   * return the query tokens most strongly associated with producing it --
+   * the inverse of neuralSearch()'s query->structure direction. Reads the
+   * same learned `assoc` table train() builds, just inverted.
+   */
+  reverseSearch(name: string, topK = 5): Array<{ token: string; weight: number }> {
+    const out: Array<{ token: string; weight: number }> = [];
+    for (const [token, row] of this.assoc) {
+      const w = row.get(name);
+      if (w !== undefined && w > 0) out.push({ token, weight: w });
+    }
+    out.sort((a, b) => b.weight - a.weight);
+    return out.slice(0, topK);
+  }
+
   /** Dispatch a search by mode (default: semantic). */
   search(query: string, opts: NetSearchOptions = {}): SearchResult[] {
     const mode = opts.mode ?? "semantic";
