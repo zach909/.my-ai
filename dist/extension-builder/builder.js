@@ -102,6 +102,53 @@ export class ExtensionBuilder {
         project.updatedAt = Date.now();
         return neuron;
     }
+    /**
+     * Import a UnifiedBrain snapshot (models && skills/core/unified-brain.ts's
+     * save()) as the project's real neuron baseline -- the live mesh's actual
+     * nodes/connections/bias and its zero-sum value distribution, not the
+     * synthetic random layers NeuroclawLLM.build() used to fabricate.
+     * `snapshot` is plain data (no class instances), so this file -- loaded
+     * directly in the browser with no build step -- never has to import
+     * UnifiedBrain itself.
+     */
+    importFromBrainSnapshot(projectId, snapshot) {
+        const project = this.projects.get(projectId);
+        if (!project || !snapshot?.mesh)
+            return null;
+        const meshIdToNeuronId = new Map();
+        for (const node of snapshot.mesh.nodes) {
+            const neuron = this.addNeuron(projectId, `mesh_${node.id}`, node.activation, { x: (node.id % 20) * 40, y: node.layer * 120 });
+            if (neuron) {
+                neuron.definition = `bias=${node.bias.toFixed(4)}`;
+                meshIdToNeuronId.set(node.id, neuron.id);
+            }
+        }
+        let connectionsImported = 0;
+        for (const [fromMeshId, toMeshId, weight] of snapshot.mesh.edges) {
+            const fromId = meshIdToNeuronId.get(fromMeshId);
+            const toId = meshIdToNeuronId.get(toMeshId);
+            if (fromId && toId && this.connectNeurons(projectId, fromId, toId, weight)) {
+                connectionsImported++;
+            }
+        }
+        // Fold the live zero-sum value distribution onto each imported
+        // neuron's vale field (matching UnifiedBrain's "neuron_<meshId>" id
+        // convention), instead of every neuron defaulting to a flat 0.5.
+        const totalPoints = snapshot.valeDistribution?.totalPoints ?? 0;
+        if (totalPoints > 0) {
+            for (const alloc of snapshot.valeDistribution.neuronAllocations) {
+                const meshId = Number(String(alloc.id).replace('neuron_', ''));
+                const builderId = meshIdToNeuronId.get(meshId);
+                if (builderId === undefined)
+                    continue;
+                const neuron = project.neurons.get(builderId);
+                if (neuron)
+                    neuron.vale = Math.min(1, Math.max(0, alloc.valuePoints / totalPoints));
+            }
+        }
+        project.updatedAt = Date.now();
+        return { neuronsImported: meshIdToNeuronId.size, connectionsImported };
+    }
     addCodeNet(projectId, name, code, position) {
         const project = this.projects.get(projectId);
         if (!project)

@@ -110,72 +110,36 @@ export class NeuroclawLLM {
     getPredictorMode() { return this.predictorMode; }
     /** Trains the separate code predictor (does not touch the prose trainer's statistics). */
     async trainOnCode(code) { await this.codeTrainer.train(code); }
-    async build() {
+    /**
+     * Builds the extension-builder project that backs this model. Its neuron
+     * baseline is real, not synthetic filler:
+     *  - if `code` is supplied (the foreground case -- e.g. code the user
+     *    just gave you), that code becomes the model via CodeToNet
+     *    (importCodeToNet), same as the manual "code net" builder action.
+     *  - otherwise the baseline is imported directly from UnifiedBrain's own
+     *    live mesh/vale snapshot (importFromBrainSnapshot) -- the actual
+     *    connected model, not a randomly-wired stand-in.
+     */
+    async build(code) {
         if (this.built)
             return;
         const project = this.builder.createProject("NeuroClaw LLM", "Full-stack neural language model");
         this.projectId = project.id;
-        const inputLayer = this.builder.addLayer(this.projectId, "Embedding Input", "input");
-        const inputNeurons = [];
-        for (let i = 0; i < this.config.embeddingDim; i++) {
-            const n = this.builder.addNeuron(this.projectId, `embed_${i}`, 0, { x: i * 20, y: 0 });
-            if (n)
-                inputNeurons.push(n.id);
+        let neuronIds;
+        if (typeof code === "string" && code.length > 0) {
+            const bytes = Buffer.from(code, "utf-8");
+            const n = this.builder.importCodeToNet(this.projectId, "user-code", bytes);
+            neuronIds = n ? [n.id] : [];
         }
-        if (inputLayer)
-            inputLayer.neurons = inputNeurons;
-        const hiddenLayer = this.builder.addLayer(this.projectId, "MoE Hidden", "hidden");
-        const hiddenNeurons = [];
-        for (let i = 0; i < this.config.hiddenDim; i++) {
-            const n = this.builder.addNeuron(this.projectId, `hidden_${i}`, 1, { x: i * 20, y: 200 });
-            if (n)
-                hiddenNeurons.push(n.id);
+        else {
+            const snapshot = this.brain.save();
+            const imported = this.builder.importFromBrainSnapshot(this.projectId, snapshot);
+            neuronIds = imported ? Array.from(project.neurons.keys()) : [];
         }
-        if (hiddenLayer)
-            hiddenLayer.neurons = hiddenNeurons;
-        const vocabSize = Math.min(this.tokenizer.getVocabSize(), this.config.hiddenDim);
-        const outputLayer = this.builder.addLayer(this.projectId, "Vocab Output", "output");
-        const outputNeurons = [];
-        for (let i = 0; i < vocabSize; i++) {
-            const n = this.builder.addNeuron(this.projectId, `vocab_${i}`, 2, { x: i * 20, y: 400 });
-            if (n)
-                outputNeurons.push(n.id);
-        }
-        if (outputLayer)
-            outputLayer.neurons = outputNeurons;
-        for (let i = 0; i < inputNeurons.length; i++) {
-            for (let j = 0; j < hiddenNeurons.length; j++) {
-                if (Math.random() < 0.3) {
-                    const w = (Math.random() - 0.5) * Math.sqrt(2.0 / this.config.embeddingDim);
-                    const from = inputNeurons[i];
-                    const to = hiddenNeurons[j];
-                    if (from && to)
-                        this.builder.connectNeurons(this.projectId, from, to, w);
-                }
-            }
-        }
-        for (let i = 0; i < hiddenNeurons.length; i++) {
-            for (let j = 0; j < outputNeurons.length; j++) {
-                if (Math.random() < 0.3) {
-                    const w = (Math.random() - 0.5) * Math.sqrt(2.0 / this.config.hiddenDim);
-                    const from = hiddenNeurons[i];
-                    const to = outputNeurons[j];
-                    if (from && to)
-                        this.builder.connectNeurons(this.projectId, from, to, w);
-                }
-            }
-        }
-        for (const nid of inputNeurons)
-            this.builder.dragLabel(this.projectId, nid, "embedding");
-        for (const nid of hiddenNeurons)
-            this.builder.dragLabel(this.projectId, nid, "expert-hidden");
-        for (const nid of outputNeurons)
-            this.builder.dragLabel(this.projectId, nid, "vocab-logit");
         this.builder.addAPIOutputLayer(this.projectId, {
             endpoints: [], port: 8080, host: "localhost", authRequired: false
         });
-        const allNeuronIds = [...inputNeurons, ...hiddenNeurons, ...outputNeurons];
-        const neuronStates = allNeuronIds.map((id) => ({
+        const neuronStates = neuronIds.map((id) => ({
             id, name: "", value: 0, learningRate: 0,
             states: new Map(), connections: new Map(),
             expertGroup: null, active: true
@@ -185,6 +149,11 @@ export class NeuroclawLLM {
         await this.trainer.train();
         this.trained = true;
         this.built = true;
+    }
+    /** Explicit foreground code-first build: the given code becomes the model's actual baseline, not background filler. */
+    async buildFromCode(code) {
+        this.built = false;
+        await this.build(code);
     }
     async trainOnText(text) {
         await this.trainer.train(text);

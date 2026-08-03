@@ -62,7 +62,8 @@ export declare class NeuroclawLLM {
     setPredictorMode(mode: PredictorMode): void;
     getPredictorMode(): PredictorMode;
     trainOnCode(code: string): Promise<void>;
-    build(): Promise<void>;
+    build(code?: string): Promise<void>;
+    buildFromCode(code: string): Promise<void>;
     trainOnText(text: string): Promise<void>;
     generate(prompt: string, options?: Partial<GenerateOptions>): Promise<string>;
     private generateTokens;

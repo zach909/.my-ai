@@ -1,3 +1,4 @@
+import type { BrainSnapshot } from "../models && skills/core/unified-brain.js";
 export interface NeuronData {
     id: string;
     name: string;
@@ -74,6 +75,11 @@ export declare class ExtensionBuilder {
         x: number;
         y: number;
     }): NeuronData | null;
+    /** Real neuron/connection/vale baseline imported from a live UnifiedBrain snapshot -- see unified-brain.ts's save(). */
+    importFromBrainSnapshot(projectId: string, snapshot: BrainSnapshot): {
+        neuronsImported: number;
+        connectionsImported: number;
+    } | null;
     addCodeNet(projectId: string, name: string, code: string, position?: {
         x: number;
         y: number;
