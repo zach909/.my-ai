@@ -2,6 +2,7 @@ import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync } fr
 import { join } from "node:path";
 import { homedir } from "node:os";
 import { ExtensionBuilder } from "../extension-builder/builder.js";
+import { ExtensionManager } from "../extension_system/manager.js";
 import { BackgroundQuantizer } from "./core/quantizer.js";
 import { ValueRangeAllocator } from "./core/value-range.js";
 import { MoERouter } from "./core/moe-router.js";
@@ -45,6 +46,13 @@ export class NeuroclawLLM {
         if (!existsSync(this.selfExtensionsDir)) {
             mkdirSync(this.selfExtensionsDir, { recursive: true });
         }
+        // The versioned, dependency-aware, permissioned extension registry
+        // (extension_system/) is the durable record of record for every
+        // self-created extension -- a separate rootDir from selfExtensionsDir
+        // so its own <id>/<version>/manifest.json+payload.bin layout never
+        // collides with the flat model.json/index.jsonl files above.
+        this.extensionManager = new ExtensionManager({ rootDir: join(this.selfExtensionsDir, "registry") });
+        this.extensionManager.load();
         this.trainer = new NeuroclawTrainer(this.tokenizer.getVocabSize(), this.tokenizer.getCharToId(), this.tokenizer.getIdToChar(), { hiddenDim: this.config.hiddenDim });
         this.quantizer = new BackgroundQuantizer({
             enabled: true, bits: 4, method: "mixed",
@@ -368,6 +376,25 @@ export class NeuroclawLLM {
             if (quantized)
                 writeFileSync(join(extDir, "model.q4.json"), quantized, "utf-8");
             appendFileSync(join(this.selfExtensionsDir, "index.jsonl"), JSON.stringify({ id: extId, prompt: prompt.slice(0, 100), time: Date.now() }) + "\n", "utf-8");
+            // Register the same payload with the real extension registry so it
+            // is versioned, permission-gated, and content-hash verifiable --
+            // best-effort: a registry failure must never break self-extension
+            // creation, which the MoE routing above already depends on.
+            try {
+                const record = await this.extensionManager.autoCreate({
+                    id: extId,
+                    name: `Memory: ${prompt.slice(0, 30)}`,
+                    kind: "memory",
+                    description: `Self-authored memory extension learned from: ${prompt.slice(0, 100)}`,
+                    payload: Buffer.from(saved, "utf-8"),
+                    createdBy: "self-extension",
+                    sources: [prompt.slice(0, 100)],
+                });
+                await this.extensionManager.activate(record.manifest.id, record.manifest.version);
+            }
+            catch (err) {
+                console.error(`Failed to register self-extension ${extId} with ExtensionManager:`, err);
+            }
         }
         const extProj = this.builder.getProject(extProject.id);
         if (extProj) {
@@ -491,6 +518,7 @@ export class NeuroclawLLM {
         this.valueAllocator.demoteNeuron(failureId);
     }
     getBuilder() { return this.builder; }
+    getExtensionManager() { return this.extensionManager; }
     getTokenizer() { return this.tokenizer; }
     getTrainer() { return this.trainer; }
     getMoERouter() { return this.moeRouter; }
