@@ -293,12 +293,15 @@ function DesktopIcon({ app, isLaunching, onClick }: DesktopIconProps) {
       key={app.id}
       onClick={() => onClick(app)}
       disabled={isLaunching}
+      aria-label={`Launch ${app.name}`}
+      aria-busy={isLaunching}
       className={`
         group flex flex-col items-center justify-center
         w-24 h-24 p-2 rounded-lg
         hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500
         active:scale-95 transition-all duration-150
         ${isLaunching ? "opacity-50 cursor-wait" : "cursor-pointer"}
+        ${isLaunching ? 'opacity-50 cursor-wait' : 'cursor-pointer'}
       `}
       title={app.name}
       aria-label={`Launch ${app.name}`}
@@ -391,6 +394,7 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
 
       {/* Error Toast */}
       {error && (
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50" role="alert" aria-live="assertive">
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50">
           <div
             role="alert"
@@ -402,6 +406,20 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
               className="hover:bg-red-600 rounded p-1 active:scale-90 transition-all duration-150 focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-white"
               aria-label="Close error message"
               title="Close error message"
+            <span>{error}</span>
+            <button
+              onClick={clearError}
+              className="hover:bg-red-600 rounded p-1 transition-all duration-150 active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-red-500"
+        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50" role="alert">
+          <div className="bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
+            <span>{error}</span>
+            <button
+              onClick={clearError}
+              aria-label="Close error message"
+              className="hover:bg-red-600 rounded p-1 active:scale-90 transition-all duration-150"
+              className="hover:bg-red-600 rounded p-1 active:scale-90 transition-all duration-150 cursor-pointer"
+              aria-label="Close error notification"
+              title="Close error notification"
             >
               ×
             </button>
@@ -428,6 +446,8 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
               ))}
               <button
                 onClick={() => setLogoViewerOpen(true)}
+                aria-label="Open Twisted Strip 3D logo viewer"
+                aria-label="Open Twisted Strip interactive 3D viewer"
                 className="group flex flex-col items-center justify-center w-24 h-24 p-2 rounded-lg hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500 active:scale-95 transition-all duration-150 cursor-pointer"
                 title="Twisted Strip"
                 aria-label="View Twisted Strip 3D model"
@@ -497,7 +517,11 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
               onClick={() => setLogoViewerOpen(false)}
               className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 focus:outline-none focus:ring-2 focus:ring-blue-500 active:scale-90 transition-all duration-150"
               aria-label="Close"
+              aria-label="Close Twisted Strip 3D logo viewer"
               title="Close"
+              className="absolute -top-3 -right-3 flex h-8 w-8 items-center justify-center rounded-full bg-white/10 text-white hover:bg-white/20 active:scale-90 transition-all duration-150 focus:outline-none focus:ring-2 focus:ring-blue-500 cursor-pointer"
+              aria-label="Close 3D viewer"
+              title="Close 3D viewer"
             >
               ×
             </button>
