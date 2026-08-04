@@ -111,14 +111,26 @@ export class AppLauncher extends EventEmitter {
         this.moveWindowById(app.windowId, workspace);
     }
     moveWindowById(windowId, workspace) {
+        if (typeof windowId !== 'string' || !/^[a-fA-F0-9xX]+$/.test(windowId)) {
+            this.emit('error', { message: `Invalid windowId format` });
+            return;
+        }
+        const wsInt = parseInt(workspace, 10);
+        if (isNaN(wsInt) || wsInt < 0 || wsInt > 100000) {
+            this.emit('error', { message: `Invalid workspace index` });
+            return;
+        }
         try {
-            execSync(`wmctrl -i -r ${windowId} -t ${workspace}`, { timeout: 2000 });
+            execSync(`wmctrl -i -r ${windowId} -t ${wsInt}`, { timeout: 2000 });
         }
         catch (e) {
-            this.emit('error', { message: `Failed to move window ${windowId} to workspace ${workspace}: ${e}` });
+            this.emit('error', { message: `Failed to move window ${windowId} to workspace ${wsInt}: ${e}` });
         }
     }
     bringToCurrentWorkspace(appIdOrWindowId) {
+        if (typeof appIdOrWindowId !== 'string' || !/^[a-fA-F0-9xX_]+$/.test(appIdOrWindowId)) {
+            return;
+        }
         try {
             execSync(`wmctrl -i -R ${appIdOrWindowId}`, { timeout: 2000 });
         }

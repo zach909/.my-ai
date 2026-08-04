@@ -221,6 +221,13 @@ class GnomePlugin:
         return 0
 
     def _switch_workspace(self, index: int) -> str:
+        try:
+            index = int(index)
+            if index < 0 or index > 100000:
+                raise ValueError("Invalid workspace index")
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
         # Method 1: GNOME Shell JS eval (fastest)
         r = _gdbus_eval(f"global.workspace_manager.get_workspace_by_index({index}).activate(global.get_current_time())")
         if r:
@@ -247,6 +254,13 @@ class GnomePlugin:
         return n
 
     def _remove_workspace(self, index: int) -> str:
+        try:
+            index = int(index)
+            if index < 0 or index > 100000:
+                raise ValueError("Invalid workspace index")
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
         n = self._num_workspaces()
         if n <= 1:
             return "ERROR: Cannot remove last workspace"
@@ -262,6 +276,15 @@ class GnomePlugin:
         return f"Removed workspace {index}"
 
     def _move_window(self, window_id: str, workspace: int) -> str:
+        if not isinstance(window_id, str) or not re.match(r"^[a-fA-F0-9xX]+$", window_id):
+            raise ValueError("Security Error: Invalid window ID format")
+        try:
+            workspace = int(workspace)
+            if workspace < 0 or workspace > 100000:
+                raise ValueError("Invalid workspace index")
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
         if shutil.which("wmctrl"):
             _run(["wmctrl", "-ir", window_id, "-t", str(workspace)])
             return f"Moved window {window_id} to workspace {workspace}"
@@ -270,7 +293,14 @@ class GnomePlugin:
     def _launch_on_desktop(self, cmd: str, workspace: int = None) -> str:
         if _is_blocked(cmd):
             return "Blocked: destructive command pattern detected"
-        if workspace is None:
+        if workspace is not None:
+            try:
+                workspace = int(workspace)
+                if workspace < 0 or workspace > 100000:
+                    raise ValueError("Invalid workspace index")
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+        else:
             workspace = self._ai_ws if self._ai_ws >= 0 else self._add_workspace()
             if self._ai_ws < 0:
                 self._ai_ws = workspace
