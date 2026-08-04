@@ -40,13 +40,22 @@ function createRng(seed: number): () => number {
   };
 }
 
+// ─── Constants ─────────────────────────────────────────────────────────────
+
+const NEURON_INIT_RANGE = 0.2; // Initial state range: [-0.1, 0.1]
+const WEIGHT_INIT_SCALE = 2.0; // Weight initialization scale factor
+const BIAS_SCALE = 0.01; // Bias scaling factor per connection
+const INPUT_DECAY_RATE = 0.95; // Input flag decay per tick
+const INPUT_FLAG_THRESHOLD = 0.01; // Threshold below which input flag is zeroed
+const SETTLED_TICKS_REQUIRED = 3; // Consecutive settled ticks before marking as settled
+
 // ─── Neuron & Connection Initialization ─────────────────────────────────────
 
 function createNeuron(id: string, dims: number, vale: number, rng: () => number): Neuron {
   const state: number[] = [];
   for (let d = 0; d < dims; d++) {
     // Initialize small random values centered at 0
-    state.push((rng() - 0.5) * 0.2);
+    state.push((rng() - 0.5) * NEURON_INIT_RANGE);
   }
   return { id, state, vale, inputFlag: 0 };
 }
@@ -57,7 +66,7 @@ function createConnectionWeights(dims: number, rng: () => number): ConnectionWei
     const rowWeights: number[] = [];
     for (let col = 0; col < dims; col++) {
       // Small random weights, scaled by 1/dims for stability
-      rowWeights.push((rng() - 0.5) * (2.0 / dims));
+      rowWeights.push((rng() - 0.5) * (WEIGHT_INIT_SCALE / dims));
     }
     weights.push(rowWeights);
   }
@@ -69,22 +78,43 @@ function createConnectionWeights(dims: number, rng: () => number): ConnectionWei
 /**
  * Ensure total vale across all neurons exactly equals totalVale.
  * Distributes the delta proportionally so ratios are preserved.
+ * Zero-trust: never throws, always maintains system stability.
  */
 function normalizeVale(neurons: Neuron[], totalVale: number): void {
-  const current = neurons.reduce((s, n) => s + n.vale, 0);
-  if (current === 0 || current === totalVale) return;
+  try {
+    if (!Array.isArray(neurons) || neurons.length === 0 || !totalVale || totalVale <= 0) {
+      return;
+    }
 
-  const scale = totalVale / current;
-  neurons.forEach((n) => {
-    n.vale = Math.max(1, Math.round(n.vale * scale));
-  });
+    const current = neurons.reduce((s, n) => s + (n?.vale ?? 0), 0);
+    if (current === 0 || current === totalVale) return;
 
-  // Fix rounding errors — add/subtract from largest-vale neuron
-  const newTotal = neurons.reduce((s, n) => s + n.vale, 0);
-  const delta = totalVale - newTotal;
-  if (delta !== 0) {
-    const sorted = [...neurons].sort((a, b) => b.vale - a.vale);
-    sorted[0].vale += delta;
+    const scale = totalVale / current;
+    neurons.forEach((n) => {
+      if (n && typeof n.vale === 'number') {
+        n.vale = Math.max(1, Math.round(n.vale * scale));
+      }
+    });
+
+    // Fix rounding errors — add/subtract from largest-vale neuron
+    const newTotal = neurons.reduce((s, n) => s + (n?.vale ?? 0), 0);
+    const delta = totalVale - newTotal;
+    if (delta !== 0 && neurons.length > 0) {
+      const validNeurons = neurons.filter((n): n is Neuron => !!n && typeof n.vale === 'number');
+      if (validNeurons.length > 0) {
+        const sorted = [...validNeurons].sort((a, b) => b.vale - a.vale);
+        sorted[0].vale += delta;
+        // Ensure we don't violate minimum vale constraint
+        if (sorted[0].vale < 1) {
+          sorted[0].vale = 1;
+          // If still not matching, distribute remaining delta to others
+          normalizeVale(validNeurons, totalVale);
+        }
+      }
+    }
+  } catch (error) {
+    // Zero-trust: silently continue with current state
+    console.warn('normalizeVale failed, continuing with current state:', error);
   }
 }
 
@@ -127,7 +157,7 @@ function tick(
       }
       // Bias: once per neuron (after summing all incoming products), not per-connection.
       // Using a learned bias: small constant scaled by number of inputs.
-      const bias = (n - 1) * 0.01;
+      const bias = (n - 1) * BIAS_SCALE;
       targetState[d] = sigmoid(sum - bias);
     }
 
@@ -288,8 +318,8 @@ export class ElasticMesh {
 
     // External input persistence: slowly decay input flag
     for (const neuron of this.neurons) {
-      neuron.inputFlag *= 0.95;
-      if (neuron.inputFlag < 0.01) neuron.inputFlag = 0;
+      neuron.inputFlag *= INPUT_DECAY_RATE;
+      if (neuron.inputFlag < INPUT_FLAG_THRESHOLD) neuron.inputFlag = 0;
     }
 
     // Compute one tick
@@ -306,7 +336,7 @@ export class ElasticMesh {
     // Settlement check: sustained low delta across consecutive ticks
     if (maxDelta < this.config.settlementThreshold) {
       this.settledTicks++;
-      if (this.settledTicks >= 3) {
+      if (this.settledTicks >= SETTLED_TICKS_REQUIRED) {
         this.isSettled = true;
         return false;
       }
@@ -367,70 +397,117 @@ export class ElasticMesh {
   /**
    * Move vale from one neuron to another. Total vale is conserved.
    * Called when knowledge is verified (rise in vale) or deprecated (vale decay).
+   * Zero-trust: never throws, returns success status instead.
    *
    * @param fromId - neuron losing vale (becomes more plastic)
    * @param toId - neuron gaining vale (becomes more stable)
    * @param amount - amount of vale to transfer
+   * @returns true if transfer succeeded, false otherwise
    */
-  transferVale(fromId: string, toId: string, amount: number): void {
-    const from = this.neurons.find((n) => n.id === fromId);
-    const to = this.neurons.find((n) => n.id === toId);
-    if (!from || !to) return;
+  transferVale(fromId: string, toId: string, amount: number): boolean {
+    try {
+      if (!fromId || !toId || typeof amount !== 'number' || amount <= 0) {
+        return false;
+      }
+      
+      const from = this.neurons.find((n) => n?.id === fromId);
+      const to = this.neurons.find((n) => n?.id === toId);
+      
+      if (!from || !to) {
+        return false;
+      }
 
-    const actual = Math.min(amount, from.vale - 1);
-    if (actual <= 0) return;
+      const actual = Math.min(amount, from.vale - 1);
+      if (actual <= 0) return false;
 
-    from.vale -= actual;
-    to.vale += actual;
+      from.vale -= actual;
+      to.vale += actual;
+      return true;
+    } catch (error) {
+      console.warn('transferVale failed:', error);
+      return false;
+    }
   }
 
   /**
    * Adjust a neuron's vale by delta. The zero-sum constraint is maintained
    * by proportionally redistributing the opposite delta across all other neurons.
+   * Zero-trust: never throws, returns success status.
+   * 
+   * @param neuronId - neuron to adjust
+   * @param delta - amount to adjust (positive or negative)
+   * @returns true if adjustment succeeded, false otherwise
    */
-  adjustVale(neuronId: string, delta: number): void {
-    const target = this.neurons.find((n) => n.id === neuronId);
-    if (!target) return;
+  adjustVale(neuronId: string, delta: number): boolean {
+    try {
+      if (!neuronId || typeof delta !== 'number') {
+        return false;
+      }
+      
+      const target = this.neurons.find((n) => n?.id === neuronId);
+      if (!target) {
+        return false;
+      }
 
-    // Can't go below 1
-    const actual = Math.max(delta, 1 - target.vale);
-    if (actual === 0) return;
+      // Can't go below 1
+      const actual = Math.max(delta, 1 - target.vale);
+      if (actual === 0) return true; // No-op, but not an error
 
-    target.vale += actual;
+      target.vale += actual;
 
-    // Redistribute the opposite across all other neurons proportionally
-    const others = this.neurons.filter((n) => n.id !== neuronId);
-    const otherTotal = others.reduce((s, n) => s + n.vale, 0);
-    if (otherTotal === 0) {
+      // Redistribute the opposite across all other neurons proportionally
+      const others = this.neurons.filter((n) => n.id !== neuronId && n?.vale);
+      const otherTotal = others.reduce((s, n) => s + (n?.vale ?? 0), 0);
+      if (otherTotal === 0 || others.length === 0) {
+        normalizeVale(this.neurons, this.config.totalVale);
+        return true;
+      }
+
+      const redistribute = -actual;
+      for (const n of others) {
+        const share = Math.round(redistribute * ((n?.vale ?? 0) / otherTotal));
+        n.vale = Math.max(1, (n?.vale ?? 0) + share);
+      }
+
       normalizeVale(this.neurons, this.config.totalVale);
-      return;
+      return true;
+    } catch (error) {
+      console.warn('adjustVale failed:', error);
+      return false;
     }
-
-    const redistribute = -actual;
-    for (const n of others) {
-      const share = Math.round(redistribute * (n.vale / otherTotal));
-      n.vale = Math.max(1, n.vale + share);
-    }
-
-    normalizeVale(this.neurons, this.config.totalVale);
   }
 
   /**
    * Queue a vale adjustment to be applied on the next tick (during propagation,
    * to avoid mid-tick structural changes).
+   * Zero-trust: validates inputs before queuing.
    */
-  queueValeAdjustment(neuronId: string, delta: number): void {
-    const existing = this.pendingValeAdjustments.get(neuronId) ?? 0;
-    this.pendingValeAdjustments.set(neuronId, existing + delta);
+  queueValeAdjustment(neuronId: string, delta: number): boolean {
+    try {
+      if (!neuronId || typeof delta !== 'number') {
+        return false;
+      }
+      
+      const existing = this.pendingValeAdjustments.get(neuronId) ?? 0;
+      this.pendingValeAdjustments.set(neuronId, existing + delta);
+      return true;
+    } catch (error) {
+      console.warn('queueValeAdjustment failed:', error);
+      return false;
+    }
   }
 
   private applyValeAdjustments(): void {
-    if (this.pendingValeAdjustments.size === 0) return;
+    try {
+      if (this.pendingValeAdjustments.size === 0) return;
 
-    for (const [id, delta] of this.pendingValeAdjustments) {
-      this.adjustVale(id, delta);
+      for (const [id, delta] of this.pendingValeAdjustments) {
+        this.adjustVale(id, delta);
+      }
+      this.pendingValeAdjustments.clear();
+    } catch (error) {
+      console.warn('applyValeAdjustments failed:', error);
     }
-    this.pendingValeAdjustments.clear();
   }
 
   // ─── NeuroLang: Label Neurons ─────────────────────────────────────────
@@ -439,12 +516,30 @@ export class ElasticMesh {
    * Give a neuron a human-readable label and optional definition contract.
    * The definition is a string describing the expected output when this neuron
    * alone receives input (used for contract-based training).
+   * Zero-trust: validates inputs and never throws.
    */
-  labelNeuron(id: string, label: string, definition?: string): void {
-    const neuron = this.neurons.find((n) => n.id === id);
-    if (!neuron) return;
-    neuron.label = label;
-    if (definition) neuron.definition = definition;
+  labelNeuron(id: string, label: string, definition?: string): boolean {
+    try {
+      if (!id || typeof label !== 'string' || label.length === 0) {
+        console.warn('[MeshEngine] labelNeuron: invalid id or label');
+        return false;
+      }
+      
+      const neuron = this.neurons.find((n) => n?.id === id);
+      if (!neuron) {
+        console.warn(`[MeshEngine] labelNeuron: neuron ${id} not found`);
+        return false;
+      }
+      
+      neuron.label = label;
+      if (definition && typeof definition === 'string') {
+        neuron.definition = definition;
+      }
+      return true;
+    } catch (error) {
+      console.error('[MeshEngine] labelNeuron failed:', error);
+      return false;
+    }
   }
 
   // ─── Learning: Adjust Connection Weights ──────────────────────────────
@@ -453,38 +548,58 @@ export class ElasticMesh {
    * Simple Hebbian update: "neurons that fire together, wire together."
    * Strengthens connections between co-active neurons, weakened by vale
    * (stable neurons change less).
+   * Zero-trust: isolates errors per connection, continues processing others.
    *
    * @param learningRate - how strongly to reinforce co-activation patterns
    */
   learnHebbian(learningRate = 0.01): void {
-    const n = this.neurons.length;
-    const dims = this.config.dimensions;
+    try {
+      const n = this.neurons.length;
+      const dims = this.config.dimensions;
 
-    for (let i = 0; i < n; i++) {
-      for (let j = 0; j < n; j++) {
-        if (i === j) continue;
+      for (let i = 0; i < n; i++) {
+        for (let j = 0; j < n; j++) {
+          if (i === j) continue;
 
-        const src = this.neurons[i];
-        const tgt = this.neurons[j];
-        const srcMag = Math.sqrt(src.state.reduce((s, v) => s + v * v, 0));
-        const tgtMag = Math.sqrt(tgt.state.reduce((s, v) => s + v * v, 0));
+          try {
+            const src = this.neurons[i];
+            const tgt = this.neurons[j];
+            
+            if (!src || !tgt) continue;
 
-        // Co-activation strength
-        const coactivation = srcMag * tgtMag;
+            const srcMag = Math.sqrt(src.state.reduce((s, v) => s + (isFinite(v) ? v * v : 0), 0));
+            const tgtMag = Math.sqrt(tgt.state.reduce((s, v) => s + (isFinite(v) ? v * v : 0), 0));
 
-        // Vale-adjusted learning: high-vale neurons resist weight changes
-        const valeFactor = 1 / (1 + (src.vale + tgt.vale) / 100);
-        const lr = learningRate * valeFactor;
+            // Co-activation strength
+            const coactivation = srcMag * tgtMag;
 
-        const w = this.connections[j][i].weights;
-        for (let row = 0; row < dims; row++) {
-          for (let col = 0; col < dims; col++) {
-            w[row][col] += lr * coactivation * src.state[col] * tgt.state[row];
-            // Soft clipping to prevent runaway weights
-            w[row][col] = Math.tanh(w[row][col]);
+            // Vale-adjusted learning: high-vale neurons resist weight changes
+            const valeFactor = 1 / (1 + (src.vale + tgt.vale) / 100);
+            const lr = learningRate * valeFactor;
+
+            const w = this.connections[j][i].weights;
+            for (let row = 0; row < dims; row++) {
+              for (let col = 0; col < dims; col++) {
+                const delta = lr * coactivation * src.state[col] * tgt.state[row];
+                w[row][col] += delta;
+                // Soft clipping to prevent runaway weights
+                w[row][col] = Math.tanh(w[row][col]);
+                
+                // Ensure no NaN/Infinity propagation
+                if (!isFinite(w[row][col])) {
+                  w[row][col] = 0;
+                }
+              }
+            }
+          } catch (connError) {
+            // Isolate individual connection errors, continue with others
+            console.warn(`[MeshEngine] Hebbian update failed for connection ${i}->${j}:`, connError);
           }
         }
       }
+    } catch (error) {
+      console.error('[MeshEngine] learnHebbian critical failure:', error);
+      // System continues running even if learning fails completely
     }
   }
 }
