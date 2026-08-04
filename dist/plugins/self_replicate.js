@@ -47,11 +47,6 @@ export class SelfReplicatePlugin {
                 fs.chmodSync(this.cloneDir, 0o700);
             }
             catch { }
-        if (process.platform !== 'win32') {
-            try {
-                fs.chmodSync(this.cloneDir, 0o700);
-            }
-            catch (e) { }
         }
     }
     /**
@@ -272,12 +267,6 @@ When relevant, mention your clone ID and specialization.
                     fs.chmodSync(stateFile, 0o600);
                 }
                 catch { }
-            }, null, 2), { mode: 0o600 });
-            if (process.platform !== 'win32') {
-                try {
-                    fs.chmodSync(stateFile, 0o600);
-                }
-                catch (e) { }
             }
         }
         catch (error) {
@@ -300,13 +289,6 @@ When relevant, mention your clone ID and specialization.
                     fs.chmodSync(logFile, 0o600);
                 }
                 catch { }
-            this.ensureCloneDir();
-            fs.writeFileSync(logFile, JSON.stringify(clone.outputLog, null, 2), { mode: 0o600 });
-            if (process.platform !== 'win32') {
-                try {
-                    fs.chmodSync(logFile, 0o600);
-                }
-                catch (e) { }
             }
         }
         catch (error) {

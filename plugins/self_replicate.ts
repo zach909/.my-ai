@@ -77,10 +77,6 @@ export class SelfReplicatePlugin {
       try {
         fs.chmodSync(this.cloneDir, 0o700);
       } catch {}
-    if (process.platform !== 'win32') {
-      try {
-        fs.chmodSync(this.cloneDir, 0o700);
-      } catch (e) {}
     }
   }
 
@@ -365,12 +361,6 @@ When relevant, mention your clone ID and specialization.
         try {
           fs.chmodSync(stateFile, 0o600);
         } catch {}
-        { mode: 0o600 }
-      );
-      if (process.platform !== 'win32') {
-        try {
-          fs.chmodSync(stateFile, 0o600);
-        } catch (e) {}
       }
     } catch (error) {
       clone.outputLog.push({
@@ -396,12 +386,6 @@ When relevant, mention your clone ID and specialization.
         try {
           fs.chmodSync(logFile, 0o600);
         } catch {}
-      this.ensureCloneDir();
-      fs.writeFileSync(logFile, JSON.stringify(clone.outputLog, null, 2), { mode: 0o600 });
-      if (process.platform !== 'win32') {
-        try {
-          fs.chmodSync(logFile, 0o600);
-        } catch (e) {}
       }
     } catch (error) {
       console.error(`[self_replicate] Failed to save log for ${clone.id}:`, error);

@@ -1,6 +1,10 @@
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
 import { MoERouter } from "./core/moe-router.js";
+import { NeuronMesh } from "./core/mesh.js";
+import { HyperDimensionalEngine } from "./core/hyperdimensional.js";
+import { ValueRangeAllocator } from "./core/value-range.js";
+import { UnifiedBrain, type BrainSnapshot } from "./core/unified-brain.js";
 import { NeuroPipeline } from "./core/pipeline.js";
 import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
@@ -15,6 +19,8 @@ export interface LLMConfig {
     thinkSteps: number;
     valuePoints: number;
     contextLength: number;
+    /** Off by default -- toggle via setQuantumEnabled(). */
+    quantumEnabled?: boolean;
     /** Directory where self-authored extensions are persisted. */
     selfExtensionsDir?: string;
 }
@@ -24,16 +30,16 @@ export interface GenerateOptions {
     /** Relevant prior conversation turns to ground the response in (Section 7). */
     memoryContext: string[];
 }
+export type PredictorMode = "word" | "code";
 export declare class NeuroclawLLM {
     private config;
     private builder;
     private tokenizer;
     private trainer;
+    private codeTrainer;
+    private predictorMode;
     private quantizer;
-    private valueAllocator;
-    private moeRouter;
-    private mesh;
-    private hyperEngine;
+    private brain;
     private rlmTrainer;
     private thornsEngine;
     private projectId;
@@ -45,12 +51,30 @@ export declare class NeuroclawLLM {
     private extensionManager;
     private generationCount;
     private pipeline;
+    private autonomousStopRequested;
     constructor(config?: Partial<LLMConfig>);
-    connectThesaurus(thesaurus: import("./thesaurus.js").ThesaurusDictionary): void;
-    build(): Promise<void>;
+    get valueAllocator(): ValueRangeAllocator;
+    get moeRouter(): MoERouter;
+    get mesh(): NeuronMesh;
+    get hyperEngine(): HyperDimensionalEngine;
+    setQuantumEnabled(enabled: boolean): void;
+    isQuantumEnabled(): boolean;
+    setPredictorMode(mode: PredictorMode): void;
+    getPredictorMode(): PredictorMode;
+    trainOnCode(code: string): Promise<void>;
+    build(code?: string): Promise<void>;
+    buildFromCode(code: string): Promise<void>;
     trainOnText(text: string): Promise<void>;
     generate(prompt: string, options?: Partial<GenerateOptions>): Promise<string>;
-    private buildTextResponse;
+    private generateTokens;
+    runAutonomous(
+        nextPrompt: () => Promise<string | null | undefined>,
+        onOutput: (output: string) => void | Promise<void>,
+        shouldStop?: () => boolean,
+        idleDelayMs?: number,
+    ): Promise<void>;
+    requestAutonomousStop(): void;
+    saveAndStop(): Promise<BrainSnapshot>;
     private createSelfExtension;
     thinkAbout(prompt: string): Promise<import("./core/thorns.js").ThornsOutput>;
     loadModel(model: {
