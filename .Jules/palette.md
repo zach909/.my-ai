@@ -40,3 +40,7 @@
 ## 2026-08-15 - [SVG Canvas Connection Accessibility & Interactive Groups]
 **Learning:** SVG connections / edges are typically non-interactive and hidden from keyboard or screen reader users, causing layout gaps. Wrapping `<path>` and `<text>` elements in a `<g>` element with `role="button"`, `tabIndex={0}`, and `aria-label` lets assistive tech users navigate connections, while combining with Tailwind `group` utilities allows seamless, synchronized visual hover/focus feedback.
 **Action:** When building custom canvases, always make SVG path-and-text connection layers accessible with interactive group wrappers and keyboard event hooks.
+
+## 2026-08-20 - [Desktop Icon Accessibility & Visual Tactility]
+**Learning:** Desktop icons and launcher buttons lack inherent screen reader accessibility if they use complex layouts. They must carry explicit descriptive `aria-label` attributes to ensure high screen reader visibility, and should be paired with tactile click transitions (`active:scale-95 transition-all duration-150`) to enrich responsiveness and visual feedback. Error toast popups also benefit heavily from a `role="alert"` wrapper for immediate announcement.
+**Action:** Always pair `aria-label` with tactile click scale animations on app launchers or visual triggers, and wrap dynamic toast errors in a `role="alert"` region.
