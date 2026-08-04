@@ -222,6 +222,12 @@ class GnomePlugin:
 
     def _switch_workspace(self, index: int) -> str:
         try:
+            index = int(index)
+            if index < 0 or index > 100000:
+                raise ValueError("Invalid workspace index")
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
             idx = int(index)
             if idx < 0 or idx > 1000:
                 raise ValueError()
@@ -255,6 +261,12 @@ class GnomePlugin:
 
     def _remove_workspace(self, index: int) -> str:
         try:
+            index = int(index)
+            if index < 0 or index > 100000:
+                raise ValueError("Invalid workspace index")
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
             idx = int(index)
             if idx < 0 or idx > 1000:
                 raise ValueError()
@@ -276,6 +288,15 @@ class GnomePlugin:
         return f"Removed workspace {index}"
 
     def _move_window(self, window_id: str, workspace: int) -> str:
+        if not isinstance(window_id, str) or not re.match(r"^[a-fA-F0-9xX]+$", window_id):
+            raise ValueError("Security Error: Invalid window ID format")
+        try:
+            workspace = int(workspace)
+            if workspace < 0 or workspace > 100000:
+                raise ValueError("Invalid workspace index")
+        except (TypeError, ValueError) as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
         window_id_str = str(window_id)
         if not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id_str):
             return "ERROR: Invalid window ID format"
@@ -295,6 +316,12 @@ class GnomePlugin:
             return "Blocked: destructive command pattern detected"
         if workspace is not None:
             try:
+                workspace = int(workspace)
+                if workspace < 0 or workspace > 100000:
+                    raise ValueError("Invalid workspace index")
+            except (TypeError, ValueError) as e:
+                raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+        else:
                 idx = int(workspace)
                 if idx < 0 or idx > 1000:
                     raise ValueError()

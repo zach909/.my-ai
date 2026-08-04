@@ -304,6 +304,12 @@ export class MultiDesktopManager {
    * backing the given desktop session.
    */
   moveWindowToDesktop(windowId: string, desktopId: string): void {
+    if (!/^[a-fA-F0-9xX]+$/.test(windowId)) {
+      throw new Error('Security Error: Invalid windowId format');
+    }
+    if (desktopId !== 'user' && desktopId !== 'ai') {
+      throw new Error('Security Error: Invalid desktopId');
+    }
     if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(windowId)) return;
     const index = desktopId === 'ai' ? this.aiGnomeWorkspaceIndex : 0;
     if (!this.gnomeAvailable || index < 0) return;

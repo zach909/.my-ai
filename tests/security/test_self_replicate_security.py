@@ -24,6 +24,8 @@ class TestSelfReplicateSecurity(unittest.TestCase):
     def test_directory_and_file_permissions(self):
         # Initialize plugin, which calls _setup() and creates the clones directory
         plugin = SelfReplicatePlugin()
+
+        # Verify the directory clones is created within our temp root
         # Override the clone directory to point to our temp folder
         plugin._clone_dir = self.temp_clone_dir
 
@@ -51,6 +53,9 @@ class TestSelfReplicateSecurity(unittest.TestCase):
             self.assertEqual(dir_permissions, 0o700, f"Expected 0o700 permissions, got {oct(dir_permissions)}")
 
         # Call clone to trigger creation of directory and save state
+        res = plugin.call("clone", prompt="Secure AI test clone")
+        self.assertTrue(res["success"])
+        clone_id = res["clone_id"]
         result = plugin.call(
             "clone",
             prompt="Test secure cloning prompt",
