@@ -341,7 +341,7 @@ export class PluginManager {
         const currentIds = new Set(this.plugins.keys());
         // Check for updates to existing plugins
         for (const [pluginId, instance] of this.plugins) {
-            const def = pluginExtensions.find(d => d.id === pluginId);
+            const def = Object.values(pluginExtensions).find(d => d.id === pluginId);
             if (def && instance.metadata) {
                 let updated = false;
                 if (def.capabilities?.length !== instance.metadata.capabilities?.length) {
