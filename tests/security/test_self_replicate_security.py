@@ -22,6 +22,8 @@ class TestSelfReplicateSecurity(unittest.TestCase):
         self.test_dir.cleanup()
 
     def test_directory_and_file_permissions(self):
+        # Initialize plugin
+        plugin = SelfReplicatePlugin()
         # Initialize plugin, which calls _setup() and creates the clones directory
         plugin = SelfReplicatePlugin()
 
@@ -52,6 +54,7 @@ class TestSelfReplicateSecurity(unittest.TestCase):
             # Expecting exactly 0o700 (owner read, write, execute only)
             self.assertEqual(dir_permissions, 0o700, f"Expected 0o700 permissions, got {oct(dir_permissions)}")
 
+        # Verify the state file is created and has correct permissions
         # Call clone to trigger creation of directory and save state
         res = plugin.call("clone", prompt="Secure AI test clone")
         self.assertTrue(res["success"])
@@ -76,6 +79,7 @@ class TestSelfReplicateSecurity(unittest.TestCase):
             # Expecting exactly 0o600 (owner read & write only)
             self.assertEqual(file_permissions, 0o600, f"Expected 0o600 permissions, got {oct(file_permissions)}")
 
+        # Terminate clone to trigger log file creation
         # Terminate clone and save log
         terminate_result = plugin.call("terminate_clone", clone_id=clone_id, save_log=True)
         self.assertTrue(terminate_result["success"])

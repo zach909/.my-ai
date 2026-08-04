@@ -355,6 +355,31 @@ When relevant, mention your clone ID and specialization.
                     os.chmod(self._clone_dir, 0o700)
                 except Exception:
                     pass
+                flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                fd = os.open(state_file, flags, 0o600)
+                with os.fdopen(fd, 'w') as f:
+                    json.dump({
+                        "id": clone.id,
+                        "prompt": clone.prompt,
+                        "config": clone.config,
+                        "status": clone.status,
+                        "created_at": clone.created_at,
+                        "last_activity": clone.last_activity,
+                    }, f, indent=2)
+                try:
+                    os.chmod(state_file, 0o600)
+                except Exception:
+                    pass
+            else:
+                with open(state_file, 'w') as f:
+                    json.dump({
+                        "id": clone.id,
+                        "prompt": clone.prompt,
+                        "config": clone.config,
+                        "status": clone.status,
+                        "created_at": clone.created_at,
+                        "last_activity": clone.last_activity,
+                    }, f, indent=2)
 
             flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
             fd = os.open(state_file, flags, 0o600)

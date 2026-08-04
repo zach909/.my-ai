@@ -261,6 +261,10 @@ export class MultiDesktopManager {
      * backing the given desktop session.
      */
     moveWindowToDesktop(windowId, desktopId) {
+        // Validate windowId to prevent shell/command injection or argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId)) {
+            return;
+        }
         if (!/^[a-fA-F0-9xX]+$/.test(windowId)) {
             throw new Error('Security Error: Invalid windowId format');
         }

@@ -111,6 +111,8 @@ export class AppLauncher extends EventEmitter {
         this.moveWindowById(app.windowId, workspace);
     }
     moveWindowById(windowId, workspace) {
+        // Validate inputs to prevent shell/command/argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId) || !/^\d+$/.test(workspace)) {
         if (typeof windowId !== 'string' || !/^[a-fA-F0-9xX]+$/.test(windowId)) {
             this.emit('error', { message: `Invalid windowId format` });
             return;
@@ -130,6 +132,8 @@ export class AppLauncher extends EventEmitter {
         }
     }
     bringToCurrentWorkspace(appIdOrWindowId) {
+        // Validate inputs to prevent shell/command/argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(appIdOrWindowId)) {
         if (typeof appIdOrWindowId !== 'string' || !/^[a-fA-F0-9xX_]+$/.test(appIdOrWindowId)) {
         if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(String(appIdOrWindowId))) {
             return;
