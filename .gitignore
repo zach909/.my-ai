@@ -3,3 +3,6 @@ The provided input shows a malformed file path '"models' in the modified files l
 Since there are no valid file changes indicating build artifacts, dependencies, temporary files, or other items that should be ignored, and the current .gitignore is empty with no relevant rules to preserve, no modifications to the .gitignore are needed.
 
 (empty - no output)
+# Build artifacts
+public/plugins-docs/
+public/skills-reports/
