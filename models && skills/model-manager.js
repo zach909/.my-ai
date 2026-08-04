@@ -396,4 +396,63 @@ export class ModelManager {
         this.saveAllModels();
         this.clearCache();
     }
+    /**
+     * Auto-update model metadata and check for new models.
+     * Synchronizes with the model registry and updates quantization settings.
+     */
+    async autoUpdateModels() {
+        const updates = [];
+        // Check for any models that need metadata updates
+        for (const [modelId, modelData] of this.models) {
+            // Update tags if needed
+            if (modelData.metadata && !modelData.metadata.tags) {
+                modelData.metadata.tags = [];
+                updates.push({ modelId, type: 'metadata_updated' });
+            }
+            // Check if quantization settings are current
+            if (this.config.defaultQuantizationBits && 
+                modelData.metadata.format === 'quantized' &&
+                modelData.metadata.quantizationBits !== this.config.defaultQuantizationBits) {
+                updates.push({ modelId, type: 'quantization_mismatch', suggestedBits: this.config.defaultQuantizationBits });
+            }
+        }
+        // Scan directory for new model files
+        if (fs.existsSync(this.config.modelsDirectory)) {
+            const files = fs.readdirSync(this.config.modelsDirectory);
+            for (const file of files.filter(f => f.endsWith('.json'))) {
+                const modelId = file.replace('.json', '');
+                if (!this.models.has(modelId)) {
+                    // New model file found, load it
+                    const loaded = this.loadModel(modelId);
+                    if (loaded) {
+                        updates.push({ modelId, type: 'new_model_loaded' });
+                    }
+                }
+            }
+        }
+        return updates;
+    }
+    /**
+     * Update a specific model's configuration or weights.
+     */
+    updateModel(modelId, updates) {
+        const modelData = this.models.get(modelId);
+        if (!modelData) {
+            return false;
+        }
+        // Apply metadata updates
+        if (updates.metadata) {
+            modelData.metadata = { ...modelData.metadata, ...updates.metadata };
+        }
+        // Apply weight updates
+        if (updates.weights) {
+            modelData.weights = { ...modelData.weights, ...updates.weights };
+        }
+        // Apply config updates
+        if (updates.config) {
+            modelData.config = { ...modelData.config, ...updates.config };
+        }
+        modelData.metadata.updatedAt = Date.now();
+        return true;
+    }
 }

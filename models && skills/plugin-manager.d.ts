@@ -56,5 +56,6 @@ export declare class PluginManager {
     searchPlugins(query: string): PluginMetadata[];
     getConfig(): PluginManagerConfig;
     updateConfig(config: Partial<PluginManagerConfig>): void;
+    autoUpdatePlugins(): Promise<Array<{ pluginId: string; type: string }>>;
     shutdown(): Promise<void>;
 }
