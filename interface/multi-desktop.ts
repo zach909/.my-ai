@@ -304,6 +304,12 @@ export class MultiDesktopManager {
    * backing the given desktop session.
    */
   moveWindowToDesktop(windowId: string, desktopId: string): void {
+    if (typeof windowId !== 'string' || windowId.trim().startsWith('-') || !/^[a-zA-Z0-9xX]+$/.test(windowId.trim())) {
+      throw new Error('Security Error: Invalid or malicious windowId detected.');
+    }
+    if (typeof desktopId !== 'string' || !/^[a-zA-Z0-9_]+$/.test(desktopId)) {
+      throw new Error('Security Error: Invalid desktopId.');
+    }
     // Validate windowId to prevent shell/command injection or argument injection
     if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId)) {
       return;
@@ -326,6 +332,9 @@ export class MultiDesktopManager {
    */
   launchOnDesktop(command: string, desktopId: string = 'ai'): void {
     if (isBlockedCommand(command)) return;
+    if (typeof desktopId !== 'string' || !/^[a-zA-Z0-9_]+$/.test(desktopId)) {
+      throw new Error('Security Error: Invalid desktopId.');
+    }
     const cur = this.currentDesktop;
     this.switchToDesktop(desktopId);
     try {

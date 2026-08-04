@@ -256,7 +256,27 @@ class GnomePlugin:
                         return int(line.split()[0])
         return 0
 
+    def _validate_workspace_index(self, index: int) -> int:
+        try:
+            val = int(index)
+        except (ValueError, TypeError):
+            raise ValueError("Security Error: workspace index must be an integer.")
+        if val < 0 or val > 1000:
+            raise ValueError("Security Error: workspace index must be a non-negative integer within range.")
+        return val
+
+    def _validate_window_id(self, window_id: str) -> str:
+        if not isinstance(window_id, str):
+            raise ValueError("Security Error: window_id must be a string.")
+        cleaned = window_id.strip()
+        if cleaned.startswith("-"):
+            raise ValueError("Security Error: Potential argument injection detected in window_id.")
+        if not re.match(r"^[a-zA-Z0-9xX]+$", cleaned):
+            raise ValueError("Security Error: Invalid characters in window_id.")
+        return cleaned
+
     def _switch_workspace(self, index: int) -> str:
+        index = self._validate_workspace_index(index)
         index = _safe_workspace(index)
         try:
             index = int(index)
@@ -298,6 +318,7 @@ class GnomePlugin:
         return n
 
     def _remove_workspace(self, index: int) -> str:
+        index = self._validate_workspace_index(index)
         index = _safe_workspace(index)
         try:
             index = int(index)
@@ -327,6 +348,8 @@ class GnomePlugin:
         return f"Removed workspace {index}"
 
     def _move_window(self, window_id: str, workspace: int) -> str:
+        window_id = self._validate_window_id(window_id)
+        workspace = self._validate_workspace_index(workspace)
         window_id = _safe_window_id(window_id)
         workspace = _safe_workspace(workspace)
         if not isinstance(window_id, str) or not re.match(r"^[a-fA-F0-9xX]+$", window_id):
@@ -356,6 +379,7 @@ class GnomePlugin:
         if _is_blocked(cmd):
             return "Blocked: destructive command pattern detected"
         if workspace is not None:
+            workspace = self._validate_workspace_index(workspace)
             workspace = _safe_workspace(workspace)
         else:
             try:

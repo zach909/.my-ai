@@ -111,6 +111,12 @@ export class AppLauncher extends EventEmitter {
         this.moveWindowById(app.windowId, workspace);
     }
     moveWindowById(windowId, workspace) {
+        if (typeof windowId !== 'string' || windowId.trim().startsWith('-') || !/^[a-zA-Z0-9xX]+$/.test(windowId.trim())) {
+            throw new Error('Security Error: Invalid or malicious windowId detected.');
+        }
+        const wsInt = parseInt(workspace, 10);
+        if (isNaN(wsInt) || wsInt < 0 || wsInt > 1000) {
+            throw new Error('Security Error: Invalid workspace.');
         // Validate inputs to prevent shell/command/argument injection
         if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId) || !/^\d+$/.test(workspace)) {
         if (typeof windowId !== 'string' || !/^[a-fA-F0-9xX]+$/.test(windowId)) {
@@ -132,6 +138,8 @@ export class AppLauncher extends EventEmitter {
         }
     }
     bringToCurrentWorkspace(appIdOrWindowId) {
+        if (typeof appIdOrWindowId !== 'string' || appIdOrWindowId.trim().startsWith('-') || !/^[a-zA-Z0-9xX_]+$/.test(appIdOrWindowId.trim())) {
+            throw new Error('Security Error: Invalid or malicious appIdOrWindowId detected.');
         // Validate inputs to prevent shell/command/argument injection
         if (!/^[a-zA-Z0-9_xX-]+$/.test(appIdOrWindowId)) {
         if (typeof appIdOrWindowId !== 'string' || !/^[a-fA-F0-9xX_]+$/.test(appIdOrWindowId)) {
