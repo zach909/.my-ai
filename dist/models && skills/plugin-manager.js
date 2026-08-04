@@ -332,6 +332,49 @@ export class PluginManager {
     updateConfig(config) {
         this.config = { ...this.config, ...config };
     }
+    /**
+     * Auto-update plugin metadata from the source registry.
+     * Checks for updated capabilities, names, or new plugins.
+     */
+    async autoUpdatePlugins() {
+        const updates = [];
+        const currentIds = new Set(this.plugins.keys());
+        // Check for updates to existing plugins
+        for (const [pluginId, instance] of this.plugins) {
+            const def = Object.values(pluginExtensions).find(d => d.id === pluginId);
+            if (def && instance.metadata) {
+                let updated = false;
+                if (def.capabilities?.length !== instance.metadata.capabilities?.length) {
+                    instance.metadata.capabilities = [...(def.capabilities || [])];
+                    updated = true;
+                }
+                if (def.name !== instance.metadata.name) {
+                    instance.metadata.name = def.name;
+                    updated = true;
+                }
+                if (updated) {
+                    updates.push({ pluginId, type: 'metadata_updated' });
+                }
+            }
+        }
+        // Register any new plugins from the registry that aren't loaded yet
+        for (const def of Object.values(pluginExtensions)) {
+            if (!currentIds.has(def.id)) {
+                const registered = this.registerPlugin({
+                    id: def.id,
+                    name: def.name,
+                    type: def.type,
+                    capabilities: def.capabilities,
+                    enabled: true,
+                    config: {},
+                });
+                if (registered) {
+                    updates.push({ pluginId: def.id, type: 'new_plugin_registered' });
+                }
+            }
+        }
+        return updates;
+    }
     async shutdown() {
         for (const [pluginId, instance] of this.plugins) {
             if (instance.initialized && instance.real) {
