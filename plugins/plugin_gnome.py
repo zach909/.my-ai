@@ -13,7 +13,7 @@ The plugin auto-detects which methods are available and chains fallbacks.
 
 from __future__ import annotations
 import subprocess, shutil, os, json, time, re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from .plugin_terminal import _is_blocked
 
 
@@ -23,6 +23,42 @@ def _run(cmd: list, timeout: int = 5) -> Optional[str]:
         return r.stdout.strip() if r.returncode == 0 else None
     except Exception:
         return None
+
+
+def _safe_workspace(workspace: Any) -> int:
+    try:
+        if isinstance(workspace, bool):
+            raise ValueError()
+        val = int(workspace)
+        if val < 0 or val > 1000:
+            raise ValueError()
+        return val
+    except (TypeError, ValueError):
+        raise ValueError("Security Error: Invalid workspace index.")
+
+
+def _safe_window_id(window_id: str) -> str:
+    if not isinstance(window_id, str):
+        raise ValueError("Security Error: window_id must be a string.")
+    if not window_id:
+        raise ValueError("Security Error: window_id cannot be empty.")
+    if window_id.startswith("-"):
+        raise ValueError("Security Error: Potential argument injection detected in window_id.")
+    if not re.match(r"^(0x)?[a-fA-F0-9]+$", window_id) and not re.match(r"^\d+$", window_id):
+        raise ValueError("Security Error: Invalid window_id format.")
+    return window_id
+
+
+def _safe_workspace_name(name: str) -> str:
+    if not isinstance(name, str):
+        raise ValueError("Security Error: workspace name must be a string.")
+    if len(name) > 100:
+        raise ValueError("Security Error: workspace name is too long.")
+    if name.startswith("-"):
+        raise ValueError("Security Error: Potential argument injection in workspace name.")
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise ValueError("Security Error: workspace name contains invalid characters.")
+    return name
 
 
 def _gdbus(method: str, *args) -> Optional[str]:
@@ -221,6 +257,7 @@ class GnomePlugin:
         return 0
 
     def _switch_workspace(self, index: int) -> str:
+        index = _safe_workspace(index)
         try:
             index = int(index)
             if index < 0 or index > 100000:
@@ -252,6 +289,7 @@ class GnomePlugin:
         n = self._num_workspaces()
         self._set_num_workspaces(n + 1)
         if name:
+            name = _safe_workspace_name(name)
             names = self._workspace_names()
             while len(names) < n + 1:
                 names.append(f"Desktop {len(names) + 1}")
@@ -260,6 +298,7 @@ class GnomePlugin:
         return n
 
     def _remove_workspace(self, index: int) -> str:
+        index = _safe_workspace(index)
         try:
             index = int(index)
             if index < 0 or index > 100000:
@@ -288,6 +327,8 @@ class GnomePlugin:
         return f"Removed workspace {index}"
 
     def _move_window(self, window_id: str, workspace: int) -> str:
+        window_id = _safe_window_id(window_id)
+        workspace = _safe_workspace(workspace)
         if not isinstance(window_id, str) or not re.match(r"^[a-fA-F0-9xX]+$", window_id):
             raise ValueError("Security Error: Invalid window ID format")
         try:
@@ -315,6 +356,8 @@ class GnomePlugin:
         if _is_blocked(cmd):
             return "Blocked: destructive command pattern detected"
         if workspace is not None:
+            workspace = _safe_workspace(workspace)
+        else:
             try:
                 workspace = int(workspace)
                 if workspace < 0 or workspace > 100000:

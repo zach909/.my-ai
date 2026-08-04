@@ -10,9 +10,9 @@ class TestSelfReplicateSecurity(unittest.TestCase):
     def setUp(self):
         # Create a temporary directory to host the clones directory
         self.test_dir = tempfile.TemporaryDirectory()
+        self.temp_root_dir = self.test_dir.name
         self.original_clone_dir = plugins.plugin_self_replicate._ROOT
         # Point the plugin's clones dir path to a custom temp folder
-        self.temp_root_dir = self.test_dir.name
         plugins.plugin_self_replicate._ROOT = self.temp_root_dir
         self.temp_clone_dir = os.path.join(self.temp_root_dir, "clones")
 
@@ -26,6 +26,9 @@ class TestSelfReplicateSecurity(unittest.TestCase):
         plugin = SelfReplicatePlugin()
         # Initialize plugin, which calls _setup() and creates the clones directory
         plugin = SelfReplicatePlugin()
+        plugin._clone_dir = self.temp_clone_dir
+
+        # Verify the clones directory is created within our temp root
 
         # Verify the directory clones is created within our temp root
         # Override the clone directory to point to our temp folder
@@ -53,6 +56,11 @@ class TestSelfReplicateSecurity(unittest.TestCase):
             dir_permissions = stat.S_IMODE(dir_stat.st_mode)
             # Expecting exactly 0o700 (owner read, write, execute only)
             self.assertEqual(dir_permissions, 0o700, f"Expected 0o700 permissions, got {oct(dir_permissions)}")
+
+        # Call clone to trigger creation of clone state file
+        res = plugin.call("clone", prompt="Test secure cloning prompt", role="assistant", specialization="security")
+        self.assertTrue(res["success"])
+        clone_id = res["clone_id"]
 
         # Verify the state file is created and has correct permissions
         # Call clone to trigger creation of directory and save state
