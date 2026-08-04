@@ -264,11 +264,6 @@ export class BackgroundQuantizer {
       const result = out ?? new Float32Array(weights.length);
       result.set(weights);
       return result;
-      if (out) {
-        out.set(weights);
-        return out;
-      }
-      return new Float32Array(weights);
     }
     const scaleInfo = deriveScale(wMin, wMax, effectiveBits, this.config.method);
     return this.dequantizeWith(weights, scaleInfo, out);
@@ -288,11 +283,6 @@ export class BackgroundQuantizer {
       const result = out ?? new Float32Array(weights.length);
       result.set(weights);
       return result;
-      if (out) {
-        out.set(weights);
-        return out;
-      }
-      return new Float32Array(weights);
     }
     const scaleInfo = deriveScale(stats.min, stats.max, effectiveBits, this.config.method);
     return this.dequantizeWith(weights, scaleInfo, out);
