@@ -14,6 +14,7 @@ class TestSelfReplicateSecurity(unittest.TestCase):
         # Point the plugin's clones dir path to a custom temp folder
         self.temp_root_dir = self.test_dir.name
         plugins.plugin_self_replicate._ROOT = self.temp_root_dir
+        self.temp_clone_dir = os.path.join(self.temp_root_dir, "clones")
 
     def tearDown(self):
         # Restore original path
@@ -22,21 +23,6 @@ class TestSelfReplicateSecurity(unittest.TestCase):
 
     def test_directory_and_file_permissions(self):
         # Initialize plugin, which calls _setup() and creates the clones directory
-        plugin = SelfReplicatePlugin()
-        # Verify the directory clones is created within our temp root
-        temp_clone_dir = os.path.join(self.temp_root_dir, "clones")
-        self.assertTrue(os.path.exists(temp_clone_dir))
-
-        # Check directory permissions (on Unix-like platforms)
-        if os.name == 'posix':
-            dir_stat = os.stat(temp_clone_dir)
-        self.temp_clone_dir = os.path.join(self.test_dir.name, "clones")
-
-    def tearDown(self):
-        self.test_dir.cleanup()
-
-    def test_directory_and_file_permissions(self):
-        # Initialize plugin
         plugin = SelfReplicatePlugin()
 
         # Override the clone directory to point to our temp folder
@@ -47,34 +33,20 @@ class TestSelfReplicateSecurity(unittest.TestCase):
         self.assertTrue(res["success"])
         clone_id = res["clone_id"]
 
-        # Verify the clones directory was created
+        # Verify the clones directory was created within our temp root
         self.assertTrue(os.path.exists(self.temp_clone_dir))
 
-        # Check directory permissions (on POSIX systems)
+        # Check directory permissions (on Unix-like/POSIX platforms)
         if os.name == 'posix':
             dir_stat = os.stat(self.temp_clone_dir)
             dir_permissions = stat.S_IMODE(dir_stat.st_mode)
             # Expecting exactly 0o700 (owner read, write, execute only)
             self.assertEqual(dir_permissions, 0o700, f"Expected 0o700 permissions, got {oct(dir_permissions)}")
 
-        # Call clone on the plugin to create a clone
-        result = plugin.call(
-            "clone",
-            prompt="Test secure cloning prompt",
-            role="assistant",
-            specialization="security"
-        )
-        self.assertTrue(result["success"])
-        clone_id = result["clone_id"]
-
-        state_file_path = os.path.join(temp_clone_dir, f"{clone_id}.state.json")
-        self.assertTrue(os.path.exists(state_file_path))
-
-        # Check state file permissions (on Unix-like platforms)
-        # Check state file permissions (on POSIX systems)
         state_file_path = os.path.join(self.temp_clone_dir, f"{clone_id}.state.json")
         self.assertTrue(os.path.exists(state_file_path))
 
+        # Check state file permissions (on POSIX systems)
         if os.name == 'posix':
             file_stat = os.stat(state_file_path)
             file_permissions = stat.S_IMODE(file_stat.st_mode)
@@ -85,26 +57,15 @@ class TestSelfReplicateSecurity(unittest.TestCase):
         terminate_result = plugin.call("terminate_clone", clone_id, save_log=True)
         self.assertTrue(terminate_result["success"])
 
-        log_file_path = os.path.join(temp_clone_dir, f"{clone_id}.log.json")
-        self.assertTrue(os.path.exists(log_file_path))
-
-        # Check log file permissions (on Unix-like platforms)
-        if os.name == 'posix':
-            file_stat = os.stat(log_file_path)
-            file_permissions = stat.S_IMODE(file_stat.st_mode)
-            # Expecting exactly 0o600 (owner read & write only)
-            self.assertEqual(file_permissions, 0o600, f"Expected 0o600 permissions, got {oct(file_permissions)}")
-        # Terminate clone and save log
-        plugin.call("terminate_clone", clone_id=clone_id, save_log=True)
         log_file_path = os.path.join(self.temp_clone_dir, f"{clone_id}.log.json")
         self.assertTrue(os.path.exists(log_file_path))
 
         # Check log file permissions (on POSIX systems)
         if os.name == 'posix':
-            log_stat = os.stat(log_file_path)
-            log_permissions = stat.S_IMODE(log_stat.st_mode)
+            file_stat = os.stat(log_file_path)
+            file_permissions = stat.S_IMODE(file_stat.st_mode)
             # Expecting exactly 0o600 (owner read & write only)
-            self.assertEqual(log_permissions, 0o600, f"Expected 0o600 permissions, got {oct(log_permissions)}")
+            self.assertEqual(file_permissions, 0o600, f"Expected 0o600 permissions, got {oct(file_permissions)}")
 
 if __name__ == "__main__":
     unittest.main()
