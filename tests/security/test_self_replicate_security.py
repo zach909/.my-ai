@@ -26,6 +26,11 @@ class TestSelfReplicateSecurity(unittest.TestCase):
         plugin = SelfReplicatePlugin()
         # Initialize plugin, which calls _setup() and creates the clones directory
         plugin = SelfReplicatePlugin()
+
+        # Verify the directory clones is created within our temp root
+        self.assertTrue(os.path.exists(self.temp_clone_dir))
+
+        # Check directory permissions (on Unix-like platforms)
         plugin._clone_dir = self.temp_clone_dir
 
         # Verify the clones directory is created within our temp root
