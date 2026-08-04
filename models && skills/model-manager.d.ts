@@ -77,5 +77,7 @@ export declare class ModelManager {
     clearCache(): void;
     getConfig(): ModelManagerConfig;
     updateConfig(config: Partial<ModelManagerConfig>): void;
+    autoUpdateModels(): Promise<Array<{ modelId?: string; type: string; suggestedBits?: number }>>;
+    updateModel(modelId: string, updates: { metadata?: Partial<ModelMetadata>; weights?: Record<string, Float32Array>; config?: Record<string, any> }): boolean;
     shutdown(): void;
 }
