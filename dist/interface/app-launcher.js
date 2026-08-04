@@ -111,6 +111,13 @@ export class AppLauncher extends EventEmitter {
         this.moveWindowById(app.windowId, workspace);
     }
     moveWindowById(windowId, workspace) {
+        if (typeof windowId !== 'string' || windowId.trim().startsWith('-') || !/^[a-zA-Z0-9xX]+$/.test(windowId.trim())) {
+            throw new Error('Security Error: Invalid or malicious windowId detected.');
+        }
+        const wsInt = parseInt(workspace, 10);
+        if (isNaN(wsInt) || wsInt < 0 || wsInt > 1000) {
+            throw new Error('Security Error: Invalid workspace.');
+        }
         try {
             execSync(`wmctrl -i -r ${windowId} -t ${workspace}`, { timeout: 2000 });
         }
@@ -119,6 +126,9 @@ export class AppLauncher extends EventEmitter {
         }
     }
     bringToCurrentWorkspace(appIdOrWindowId) {
+        if (typeof appIdOrWindowId !== 'string' || appIdOrWindowId.trim().startsWith('-') || !/^[a-zA-Z0-9xX_]+$/.test(appIdOrWindowId.trim())) {
+            throw new Error('Security Error: Invalid or malicious appIdOrWindowId detected.');
+        }
         try {
             execSync(`wmctrl -i -R ${appIdOrWindowId}`, { timeout: 2000 });
         }

@@ -220,7 +220,27 @@ class GnomePlugin:
                         return int(line.split()[0])
         return 0
 
+    def _validate_workspace_index(self, index: int) -> int:
+        try:
+            val = int(index)
+        except (ValueError, TypeError):
+            raise ValueError("Security Error: workspace index must be an integer.")
+        if val < 0 or val > 1000:
+            raise ValueError("Security Error: workspace index must be a non-negative integer within range.")
+        return val
+
+    def _validate_window_id(self, window_id: str) -> str:
+        if not isinstance(window_id, str):
+            raise ValueError("Security Error: window_id must be a string.")
+        cleaned = window_id.strip()
+        if cleaned.startswith("-"):
+            raise ValueError("Security Error: Potential argument injection detected in window_id.")
+        if not re.match(r"^[a-zA-Z0-9xX]+$", cleaned):
+            raise ValueError("Security Error: Invalid characters in window_id.")
+        return cleaned
+
     def _switch_workspace(self, index: int) -> str:
+        index = self._validate_workspace_index(index)
         # Method 1: GNOME Shell JS eval (fastest)
         r = _gdbus_eval(f"global.workspace_manager.get_workspace_by_index({index}).activate(global.get_current_time())")
         if r:
@@ -247,6 +267,7 @@ class GnomePlugin:
         return n
 
     def _remove_workspace(self, index: int) -> str:
+        index = self._validate_workspace_index(index)
         n = self._num_workspaces()
         if n <= 1:
             return "ERROR: Cannot remove last workspace"
@@ -262,6 +283,8 @@ class GnomePlugin:
         return f"Removed workspace {index}"
 
     def _move_window(self, window_id: str, workspace: int) -> str:
+        window_id = self._validate_window_id(window_id)
+        workspace = self._validate_workspace_index(workspace)
         if shutil.which("wmctrl"):
             _run(["wmctrl", "-ir", window_id, "-t", str(workspace)])
             return f"Moved window {window_id} to workspace {workspace}"
@@ -270,6 +293,8 @@ class GnomePlugin:
     def _launch_on_desktop(self, cmd: str, workspace: int = None) -> str:
         if _is_blocked(cmd):
             return "Blocked: destructive command pattern detected"
+        if workspace is not None:
+            workspace = self._validate_workspace_index(workspace)
         if workspace is None:
             workspace = self._ai_ws if self._ai_ws >= 0 else self._add_workspace()
             if self._ai_ws < 0:
