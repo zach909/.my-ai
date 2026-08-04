@@ -46,6 +46,9 @@
 **Learning:** SVG connections / edges are typically non-interactive and hidden from keyboard or screen reader users, causing layout gaps. Wrapping `<path>` and `<text>` elements in a `<g>` element with `role="button"`, `tabIndex={0}`, and `aria-label` lets assistive tech users navigate connections, while combining with Tailwind `group` utilities allows seamless, synchronized visual hover/focus feedback.
 **Action:** When building custom canvases, always make SVG path-and-text connection layers accessible with interactive group wrappers and keyboard event hooks.
 
+## 2026-08-20 - [Desktop Icon Accessibility & Visual Tactility]
+**Learning:** Desktop icons and launcher buttons lack inherent screen reader accessibility if they use complex layouts. They must carry explicit descriptive `aria-label` attributes to ensure high screen reader visibility, and should be paired with tactile click transitions (`active:scale-95 transition-all duration-150`) to enrich responsiveness and visual feedback. Error toast popups also benefit heavily from a `role="alert"` wrapper for immediate announcement.
+**Action:** Always pair `aria-label` with tactile click scale animations on app launchers or visual triggers, and wrap dynamic toast errors in a `role="alert"` region.
 ## 2026-08-20 - [Tactile Feedback & Accessibility on Desktop Launcher Panels]
 **Learning:** App launcher panels and custom modal triggers (such as desktop grids) need descriptive `aria-label` properties, and their status alerts must be wrapped in `role="alert"` regions to immediately inform assistive technology. To ensure high-quality micro-interactions, pair them with tactile visual click animations (`active:scale-95` or `active:scale-90` with fast 150ms transitions).
 **Action:** Wrap notification banners in `role="alert"`, provide descriptive `aria-label` on launcher buttons, and apply tactile scale transitions (`active:scale-* transition-all duration-150`).
