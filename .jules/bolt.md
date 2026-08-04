@@ -70,3 +70,7 @@
 ## 2026-07-28 - BackgroundQuantizer Inlining and Buffer Reuse
 **Learning:** In highly frequent neural network background quantization runs, substantial runtime overhead and GC pressure are caused by calling helper functions (`applyScale()`) that allocate new short-lived objects (`{ level, dequantized }`) in deep iteration loops. Inlining the mathematical equations directly, unrolling the loops 4x, and introducing support for pre-allocated target output buffers (`out`) eliminates heap allocations and function call stack boundaries completely.
 **Action:** Always inline small mathematical helpers and avoid creating short-lived objects inside hot iteration loops. Allow functions to accept optional pre-allocated output buffers to achieve zero-allocation forward/quantization passes.
+
+## 2026-08-04 - MoE Router Blending Truncation correctness
+**Learning:** In Mixture of Experts (MoE) routing, assuming expert outputs are padded with zeros beyond `expertHiddenDim` and truncating the blending/combination loops to `Math.min(outputDim, expertHiddenDim)` is mathematically and architecturally incorrect. Standard MoE expert layers typically project to the full dense `outputDim`, and truncating elements discards valid values.
+**Action:** Avoid truncating blending/combination steps across projection boundaries; always run standard loops fully up to the dense output dimension to ensure numerical correctness.
