@@ -5,7 +5,6 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
-import { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
 import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
@@ -21,6 +20,7 @@ import { SelfHealer } from "../models && skills/core/self-healer.js";
 import { ContextCompressor } from "../models && skills/core/context-compressor.js";
 import { IntentRouter } from "../models && skills/core/intent-router.js";
 import { PromptingSkill } from "../models && skills/core/prompting-skill.js";
+import { PromptLibrary } from "../models && skills/core/prompt-library.js";
 import { WorkingMemory } from "../models && skills/core/working-memory.js";
 import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
@@ -29,6 +29,7 @@ import { WorldModel } from "../models && skills/core/world-model.js";
 import { MathEngine, evaluateExpression } from "../models && skills/core/math-engine.js";
 import { Critic } from "../models && skills/core/critic.js";
 import { SkillLibrary } from "../models && skills/core/skill-library.js";
+import { PluginLibrary } from "../models && skills/core/plugin-library.js";
 import { ReasoningEngine, ReasoningStep } from "../models && skills/core/reasoning-engine.js";
 import { KnowledgeTransfer } from "../models && skills/core/knowledge-transfer.js";
 import { SelfModel } from "../models && skills/core/self-model.js";
@@ -60,7 +61,6 @@ import type { SkillDefinition } from "../plugin_manager/types.js";
 export class NeuroclawSystem {
   llm: NeuroclawLLM;
   pipeline: NeuroPipeline;
-  thesaurus: ThesaurusDictionary;
   pluginRegistry: PluginRegistry;
   veto: AlignmentVeto;
   zipIO: ZipIOSystem;
@@ -73,6 +73,8 @@ export class NeuroclawSystem {
   compressor: ContextCompressor;
   router: IntentRouter;
   prompting: PromptingSkill;
+  /** Saved, reusable prompt templates -- distinct from both `prompting` (goal decomposition) and MoE skills/experts. */
+  promptLibrary: PromptLibrary;
   workingMemory: WorkingMemory;
   // AGI / ASI capability layer (integrated in solve()).
   monitor: SelfMonitor;
@@ -83,6 +85,8 @@ export class NeuroclawSystem {
   /** Section 23: a genuinely separate system that reviews an answer rather than trusting the process that produced it to judge itself. */
   critic: Critic;
   skillLibrary: SkillLibrary;
+  /** Shared plugins wiki -- same local shared-library pattern as skillLibrary/promptLibrary. */
+  pluginLibrary: PluginLibrary;
   reasoner: ReasoningEngine;
   transfer: KnowledgeTransfer;
   selfModel: SelfModel;
@@ -140,12 +144,11 @@ export class NeuroclawSystem {
     this.pipeline = new NeuroPipeline({
       zipPersistDir: this.zipPersistDir ? join(this.zipPersistDir, "pipeline") : undefined,
     });
-    this.thesaurus = new ThesaurusDictionary();
     this.pluginRegistry = new PluginRegistry();
     this.veto = new AlignmentVeto();
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     this.empathy = new EmpathyEngine();
-    this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.thesaurus, this.pluginRegistry);
+    this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.pluginRegistry);
     // Hive Mind (Section 13): each agent's mind is the real neural runner, so
     // multi-agent collaboration runs through the same pipeline as a single query.
     this.hive = new HiveMind({ defaultThink: (prompt) => this.runner.generate(prompt) });
@@ -168,6 +171,7 @@ export class NeuroclawSystem {
     // the resulting goal onto the shared PlanTracker (Section 24) -- reuses
     // router/plan/empathy above rather than keeping a parallel private state.
     this.prompting = new PromptingSkill(this.router, this.plan, this.empathy);
+    this.promptLibrary = new PromptLibrary();
     // Working memory (Section 3): task-scoped scratch state (inputs, active
     // reasoning, temporary calculations, intermediate results). Goal/
     // constraints/plan are never duplicated here -- always read through to
@@ -197,6 +201,7 @@ export class NeuroclawSystem {
     // instance built is discoverable and loadable by another instead of
     // being recreated from scratch.
     this.skillLibrary = new SkillLibrary();
+    this.pluginLibrary = new PluginLibrary();
     this.transfer = new KnowledgeTransfer();
     this.selfModel = new SelfModel();
     this.improvement = new SelfImprovement();
@@ -276,6 +281,20 @@ export class NeuroclawSystem {
     this.architecture = new ArchitectureMapper();
     this.performance = new PerformanceMonitor();
     this.registerArchitecture();
+  }
+
+  /** Save a named, reusable prompt template -- "do this prompt again" without retyping it. */
+  savePrompt(name: string, template: string) {
+    return this.promptLibrary.save(name, template);
+  }
+
+  /** Apply a saved prompt template (substituting {{var}} placeholders), or null if no prompt has that name. */
+  useSavedPrompt(name: string, vars?: Record<string, string>): string | null {
+    return this.promptLibrary.apply(name, vars);
+  }
+
+  listSavedPrompts() {
+    return this.promptLibrary.list();
   }
 
   /**
@@ -2105,7 +2124,7 @@ async function main() {
     console.log(`Neuroclaw TS backend online at http://${webHost}:${port}`);
   } else if (mode === "cli") {
     console.log("Launching interactive Neuroclaw command-line interface...");
-    const cli = new CLI(system.llm, system.pipeline, system.thesaurus, system.pluginRegistry);
+    const cli = new CLI(system.llm, system.pipeline, system.pluginRegistry);
     await cli.startInteractive();
   } else {
     // Default mode: start on port 3000

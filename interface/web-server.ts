@@ -387,11 +387,10 @@ export class WebServer {
       // req.headers.host is a raw, attacker-controlled string with no
       // validation from Node's HTTP parser -- a malformed value (a space,
       // a non-numeric port, ...) makes new URL() throw TypeError: Invalid
-      // URL. This runs before every route's own try/catch (including the
-      // /api/dict fix below), as the raw http.createServer callback with
-      // no .catch() and no process-wide unhandledRejection handler, so an
-      // uncaught throw here crashed the entire backend on one request,
-      // regardless of path or method.
+      // URL. This runs before every route's own try/catch, as the raw
+      // http.createServer callback with no .catch() and no process-wide
+      // unhandledRejection handler, so an uncaught throw here crashed the
+      // entire backend on one request, regardless of path or method.
       parsedUrl = new URL(req.url ?? '/', `http://${req.headers.host ?? 'localhost'}`);
     } catch {
       this.sendJson(res, { error: 'Invalid request' }, 400);
@@ -662,33 +661,6 @@ export class WebServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.sendJson(res, { error: msg }, 500);
-      }
-      return;
-    }
-
-    // GET /api/dict/:word — thesaurus/dictionary lookup
-    const dictMatch = pathname.match(/^\/api\/dict\/(.+)$/);
-    if (dictMatch && method === 'GET') {
-      try {
-        const word = decodeURIComponent(dictMatch[1]);
-        const thesaurus = this.runner.getThesaurus();
-        const def = thesaurus.getDefinition(word);
-        const syns = thesaurus.getSynonyms(word);
-        const examples = thesaurus.getExamples(word);
-        if (!def && syns.length === 0) {
-          this.sendJson(res, { error: `"${word}" not in dictionary` }, 404);
-        } else {
-          this.sendJson(res, { word, Y: def ?? '', X: syns, Z: examples });
-        }
-      } catch (err) {
-        // decodeURIComponent throws URIError on malformed percent-encoding
-        // (e.g. a trailing lone "%"); unlike every sibling handler in this
-        // file, this route had no try/catch, so that throw propagated out
-        // of the async handleRequest() as an unhandled rejection and
-        // crashed the whole process (Node's default since v15) -- a single
-        // unauthenticated GET took down the entire backend.
-        const msg = err instanceof Error ? err.message : String(err);
-        this.sendJson(res, { error: msg }, 400);
       }
       return;
     }

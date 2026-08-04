@@ -1,3 +1,4 @@
+import { execSync } from "node:child_process";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { MultiDesktopManager } from "../interface/multi-desktop.js";
 export class MultiInputPlugin extends BasePlugin {
@@ -146,7 +147,7 @@ export class MultiInputPlugin extends BasePlugin {
             if (dev && dev.masterId !== undefined) {
                 try {
                     const cmd = `xinput click ${dev.masterId} ${btnArg}`;
-                    require("child_process").execSync(cmd, { timeout: 2000 });
+                    execSync(cmd, { timeout: 2000 });
                 }
                 catch { }
             }
@@ -158,7 +159,7 @@ export class MultiInputPlugin extends BasePlugin {
             if (dev) {
                 try {
                     const cmd = `DISPLAY=:0 xdotool mousemove ${Math.round(x)} ${Math.round(y)}`;
-                    require("child_process").execSync(cmd, { timeout: 2000 });
+                    execSync(cmd, { timeout: 2000 });
                 }
                 catch { }
             }
@@ -169,7 +170,7 @@ export class MultiInputPlugin extends BasePlugin {
             try {
                 const safe = key.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase();
                 const cmd = `DISPLAY=:0 xdotool key ${safe === " " ? "space" : safe}`;
-                require("child_process").execSync(cmd, { timeout: 2000 });
+                execSync(cmd, { timeout: 2000 });
             }
             catch { }
         }
