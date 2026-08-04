@@ -118,6 +118,8 @@ export class AppLauncher extends EventEmitter {
         const wsInt = parseInt(workspace, 10);
         if (isNaN(wsInt) || wsInt < 0 || wsInt > 100000) {
             this.emit('error', { message: `Invalid workspace index` });
+        if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(String(windowId)) || !/^\d+$/.test(String(workspace))) {
+            this.emit('error', { message: `Invalid arguments for moving window: windowId=${windowId}, workspace=${workspace}` });
             return;
         }
         try {
@@ -129,6 +131,7 @@ export class AppLauncher extends EventEmitter {
     }
     bringToCurrentWorkspace(appIdOrWindowId) {
         if (typeof appIdOrWindowId !== 'string' || !/^[a-fA-F0-9xX_]+$/.test(appIdOrWindowId)) {
+        if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(String(appIdOrWindowId))) {
             return;
         }
         try {
