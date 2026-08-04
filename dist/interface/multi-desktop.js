@@ -261,6 +261,10 @@ export class MultiDesktopManager {
      * backing the given desktop session.
      */
     moveWindowToDesktop(windowId, desktopId) {
+        // Validate windowId to prevent shell/command injection or argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId)) {
+            return;
+        }
         const index = desktopId === 'ai' ? this.aiGnomeWorkspaceIndex : 0;
         if (!this.gnomeAvailable || index < 0)
             return;

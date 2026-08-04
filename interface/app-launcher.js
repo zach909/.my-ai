@@ -111,6 +111,10 @@ export class AppLauncher extends EventEmitter {
         this.moveWindowById(app.windowId, workspace);
     }
     moveWindowById(windowId, workspace) {
+        // Validate inputs to prevent shell/command/argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId) || !/^\d+$/.test(workspace)) {
+            return;
+        }
         try {
             execSync(`wmctrl -i -r ${windowId} -t ${workspace}`, { timeout: 2000 });
         }
@@ -119,6 +123,10 @@ export class AppLauncher extends EventEmitter {
         }
     }
     bringToCurrentWorkspace(appIdOrWindowId) {
+        // Validate inputs to prevent shell/command/argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(appIdOrWindowId)) {
+            return;
+        }
         try {
             execSync(`wmctrl -i -R ${appIdOrWindowId}`, { timeout: 2000 });
         }

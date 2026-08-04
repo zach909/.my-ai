@@ -304,6 +304,10 @@ export class MultiDesktopManager {
    * backing the given desktop session.
    */
   moveWindowToDesktop(windowId: string, desktopId: string): void {
+    // Validate windowId to prevent shell/command injection or argument injection
+    if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId)) {
+      return;
+    }
     const index = desktopId === 'ai' ? this.aiGnomeWorkspaceIndex : 0;
     if (!this.gnomeAvailable || index < 0) return;
     try { execSync(`wmctrl -i -r ${windowId} -t ${index} 2>/dev/null`, { timeout: 3000 }); } catch { /* best effort */ }
