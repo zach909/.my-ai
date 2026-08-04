@@ -63,6 +63,7 @@ export declare class SkillsManager {
         timestamp: number;
     }): void;
     reset(): void;
+    autoUpdateSkills(): Array<{ skillId?: string; type: string }>;
     getConfig(): SkillsManagerConfig;
     updateConfig(config: Partial<SkillsManagerConfig>): void;
 }

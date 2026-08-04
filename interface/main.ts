@@ -3,7 +3,6 @@ import { realpathSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
-import { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
 import { SystemAccess } from "./system-access.js";
 import { CapabilitiesRegistry } from "./capabilities.js";
@@ -21,7 +20,6 @@ import { WebServer } from "./web-server.js";
 async function buildCore() {
   const llm = new NeuroclawLLM();
   const pipeline = new NeuroPipeline();
-  const thesaurus = new ThesaurusDictionary();
   const pluginRegistry = new PluginRegistry();
   // Populate the plugin/skill catalog so the app launches with its real
   // registry (the `plugins` command and status counts) instead of an empty one.
@@ -31,12 +29,12 @@ async function buildCore() {
   // machine's storage/OS/BIOS/driver profile for personalization -- see
   // CapabilitiesRegistry.getPersonalizationPrompt().
   const capabilities = new CapabilitiesRegistry();
-  return { llm, pipeline, thesaurus, pluginRegistry, systemAccess, capabilities };
+  return { llm, pipeline, pluginRegistry, systemAccess, capabilities };
 }
 
 export async function bootstrap(): Promise<CLI> {
-  const { llm, pipeline, thesaurus, pluginRegistry, systemAccess, capabilities } = await buildCore();
-  return new CLI(llm, pipeline, thesaurus, pluginRegistry, systemAccess, systemAccess.getMultiDesktop(), capabilities);
+  const { llm, pipeline, pluginRegistry, systemAccess, capabilities } = await buildCore();
+  return new CLI(llm, pipeline, pluginRegistry, systemAccess, systemAccess.getMultiDesktop(), capabilities);
 }
 
 /**
@@ -46,8 +44,8 @@ export async function bootstrap(): Promise<CLI> {
  * to its own canned responses.
  */
 export async function startWeb(port: number): Promise<WebServer> {
-  const { llm, pipeline, thesaurus, pluginRegistry, systemAccess } = await buildCore();
-  const runner = new NeuroclawRunner(llm, pipeline, thesaurus, pluginRegistry, systemAccess, systemAccess.getMultiDesktop());
+  const { llm, pipeline, pluginRegistry, systemAccess } = await buildCore();
+  const runner = new NeuroclawRunner(llm, pipeline, pluginRegistry, systemAccess, systemAccess.getMultiDesktop());
   const web = new WebServer(runner);
   // Loopback-only unless NEUROCLAW_WEB_HOST opts into remote access, in
   // which case NEUROCLAW_WEB_PASSWORD is required -- see WebServer.start()'s

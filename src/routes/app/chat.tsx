@@ -217,8 +217,10 @@ function ChatPage() {
           variant={incognito ? 'default' : 'outline'}
           size="sm"
           onClick={() => setIncognito((v) => !v)}
-          className="gap-1.5 text-xs"
+          className="gap-1.5 text-xs active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           title={incognito ? 'Incognito: this conversation is not saved' : 'Turn on incognito mode (nothing gets saved)'}
+          aria-pressed={incognito}
+          aria-label={incognito ? 'Disable incognito mode' : 'Enable incognito mode'}
         >
           <EyeOff size={12} />
           {incognito ? 'Incognito on' : 'Incognito'}
@@ -240,12 +242,17 @@ function ChatPage() {
               </p>
               <p className="text-xs text-muted-foreground">{pendingMatch.match.snippet}</p>
               <div className="flex gap-2">
-                <Button size="sm" onClick={() => continueThread(pendingMatch.match).then(() => sendMessage(pendingMatch.text))}>
+                <Button
+                  size="sm"
+                  className="active:scale-95 transition-all duration-150"
+                  onClick={() => continueThread(pendingMatch.match).then(() => sendMessage(pendingMatch.text))}
+                >
                   Continue there
                 </Button>
                 <Button
                   size="sm"
                   variant="outline"
+                  className="active:scale-95 transition-all duration-150"
                   onClick={() => {
                     const text = pendingMatch.text
                     setPendingMatch(null)

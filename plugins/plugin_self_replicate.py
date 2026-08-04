@@ -70,6 +70,12 @@ class SelfReplicatePlugin(Plugin):
         }
         self._clone_dir = os.path.join(_ROOT, "clones")
         os.makedirs(self._clone_dir, exist_ok=True)
+        if os.name == 'posix':
+            os.chmod(self._clone_dir, 0o700)
+            try:
+                os.chmod(self._clone_dir, 0o700)
+            except Exception:
+                pass
 
     def _generate_clone_id(self) -> str:
         return f"clone_{uuid.uuid4().hex[:8]}"
@@ -340,10 +346,50 @@ When relevant, mention your clone ID and specialization.
         }
 
     def _save_clone_state(self, clone: CloneInstance) -> None:
-        """Save clone state to disk."""
+        """Save clone state to disk with secure permissions."""
         state_file = os.path.join(self._clone_dir, f"{clone.id}.state.json")
         try:
-            with open(state_file, 'w') as f:
+            os.makedirs(self._clone_dir, exist_ok=True)
+            if os.name == 'posix':
+                try:
+                    os.chmod(self._clone_dir, 0o700)
+                except Exception:
+                    pass
+
+            # Prepare state data
+            data = {
+                "id": clone.id,
+                "prompt": clone.prompt,
+                "config": clone.config,
+                "status": clone.status,
+                "created_at": clone.created_at,
+                "last_activity": clone.last_activity,
+            }
+
+            if os.name == 'posix':
+                flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                fd = os.open(state_file, flags, 0o600)
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(data, f, indent=2)
+                try:
+                    os.chmod(state_file, 0o600)
+                except Exception:
+                    pass
+            else:
+                with open(state_file, 'w') as f:
+                    json.dump(data, f, indent=2)
+                    json.dump({
+                        "id": clone.id,
+                        "prompt": clone.prompt,
+                        "config": clone.config,
+                        "status": clone.status,
+                        "created_at": clone.created_at,
+                        "last_activity": clone.last_activity,
+                    }, f, indent=2)
+
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            fd = os.open(state_file, flags, 0o600)
+            with os.fdopen(fd, 'w') as f:
                 json.dump({
                     "id": clone.id,
                     "prompt": clone.prompt,
@@ -352,6 +398,8 @@ When relevant, mention your clone ID and specialization.
                     "created_at": clone.created_at,
                     "last_activity": clone.last_activity,
                 }, f, indent=2)
+            if os.name == 'posix':
+                os.chmod(state_file, 0o600)
         except Exception as e:
             clone.output_log.append({
                 "timestamp": time.time(),
@@ -360,11 +408,34 @@ When relevant, mention your clone ID and specialization.
             })
 
     def _save_clone_log(self, clone: CloneInstance) -> None:
-        """Save clone's interaction log to disk."""
+        """Save clone's interaction log to disk with secure permissions."""
         log_file = os.path.join(self._clone_dir, f"{clone.id}.log.json")
         try:
-            with open(log_file, 'w') as f:
+            os.makedirs(self._clone_dir, exist_ok=True)
+            if os.name == 'posix':
+                try:
+                    os.chmod(self._clone_dir, 0o700)
+                except Exception:
+                    pass
+
+            if os.name == 'posix':
+                flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+                fd = os.open(log_file, flags, 0o600)
+                with os.fdopen(fd, 'w') as f:
+                    json.dump(clone.output_log, f, indent=2)
+                try:
+                    os.chmod(log_file, 0o600)
+                except Exception:
+                    pass
+            else:
+                with open(log_file, 'w') as f:
+                    json.dump(clone.output_log, f, indent=2)
+            flags = os.O_WRONLY | os.O_CREAT | os.O_TRUNC
+            fd = os.open(log_file, flags, 0o600)
+            with os.fdopen(fd, 'w') as f:
                 json.dump(clone.output_log, f, indent=2)
+            if os.name == 'posix':
+                os.chmod(log_file, 0o600)
         except Exception as e:
             print(f"[self_replicate] Failed to save log for {clone.id}: {e}")
 

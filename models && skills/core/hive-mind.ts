@@ -169,10 +169,20 @@ export class HiveAgent {
   readonly capabilities: Set<string>;
   /** Value/reliability, managed zero-sum by the owning HiveMind. */
   trust = 0;
+  /**
+   * Real admin privileges: set on agents created via summon()/summonSubHive(),
+   * bypassing the default-deny capability gate entirely (can() always true).
+   * Unrestricted by design -- see summon() below.
+   */
+  isAdmin = false;
+  /** The agent (or sub-hive coordinator) id that summoned this agent, if any. */
+  summonedBy: string | null = null;
 
   private state = new Map<string, unknown>();
   private think: AgentThinkFn;
   private board: SharedBlackboard;
+  /** Owning hive, attached by HiveMind.spawn() -- lets any agent summon further agents/sub-hives of its own. */
+  private hive: HiveMind | null = null;
 
   constructor(spec: HiveAgentSpec, board: SharedBlackboard, think: AgentThinkFn) {
     this.id = spec.id;
@@ -183,9 +193,37 @@ export class HiveAgent {
     this.think = spec.think ?? think;
   }
 
-  /** Permission check — default-deny. */
+  /** Called by HiveMind.spawn() so this agent can summon new agents/sub-hives into its own hive. */
+  _attachHive(hive: HiveMind): void {
+    this.hive = hive;
+  }
+
+  /** Permission check — default-deny, except admin agents (summoned ones) bypass it entirely. */
   can(capability: string): boolean {
-    return this.capabilities.has(capability);
+    return this.isAdmin || this.capabilities.has(capability);
+  }
+
+  /**
+   * Any chat/AI can summon a brand-new AI: a real agent in the same hive,
+   * granted admin privileges (unrestricted -- can() always true for it), with
+   * a live channel back to the summoner via the shared blackboard so the two
+   * can actually talk to each other.
+   */
+  summon(spec: { id?: string; role: string; specialization: string; capabilities?: string[]; think?: AgentThinkFn }): HiveAgent {
+    if (!this.hive) throw new Error(`Agent ${this.id} has no owning hive to summon into`);
+    return this.hive.summon(this.id, spec);
+  }
+
+  /**
+   * Summon an entire sub-hive-mind: a nested HiveMind of its own, with a
+   * coordinator agent (also admin-privileged) the summoner can talk to
+   * immediately. That coordinator -- and every agent it in turn summons --
+   * can call summon()/summonSubHive() again, unbounded: sub-sub-sub-...
+   * hive minds, exactly as specified. No depth or count limit is enforced.
+   */
+  summonSubHive(name?: string): HiveMind {
+    if (!this.hive) throw new Error(`Agent ${this.id} has no owning hive to summon a sub-hive from`);
+    return this.hive.summonSubHive(this.id, name);
   }
 
   /** Private working memory (never visible to other agents). */
@@ -229,13 +267,21 @@ export class HiveMind {
   readonly blackboard = new SharedBlackboard();
   /** Default mind for agents with no explicit think-fn (e.g. runner.generate). */
   defaultThink: AgentThinkFn;
+  /** The hive that summoned this one into existence via summonSubHive(), if any. */
+  readonly parent: HiveMind | null;
+  /** How many summonSubHive() levels deep this hive is (0 for a top-level hive). */
+  readonly depth: number;
 
   private agents = new Map<string, HiveAgent>();
   private readonly totalTrust: number;
+  /** Sub-hives summoned from this one, keyed by a unique summon key -- the fractal "hive mind inside a hive mind" structure. */
+  private subHives = new Map<string, HiveMind>();
 
-  constructor(opts?: { totalTrust?: number; defaultThink?: AgentThinkFn }) {
+  constructor(opts?: { totalTrust?: number; defaultThink?: AgentThinkFn; parent?: HiveMind }) {
     this.totalTrust = opts?.totalTrust ?? 100;
     this.defaultThink = opts?.defaultThink ?? ((prompt, agent) => `[${agent.role}] ${prompt}`);
+    this.parent = opts?.parent ?? null;
+    this.depth = this.parent ? this.parent.depth + 1 : 0;
   }
 
   /**
@@ -245,6 +291,7 @@ export class HiveMind {
   spawn(spec: HiveAgentSpec): HiveAgent {
     if (this.agents.has(spec.id)) throw new Error(`Agent already exists: ${spec.id}`);
     const agent = new HiveAgent(spec, this.blackboard, this.defaultThink);
+    agent._attachHive(this);
     const n = this.agents.size + 1;
     const newShare = this.totalTrust / n;
     // Scale existing members down proportionally to make room for the newcomer.
@@ -253,6 +300,49 @@ export class HiveMind {
     agent.trust = newShare;
     this.agents.set(agent.id, agent);
     return agent;
+  }
+
+  /**
+   * Any agent can summon a brand-new AI into this same hive: a real agent
+   * granted admin privileges (unrestricted -- bypasses the default-deny
+   * capability gate), with a live channel back to the summoner recorded on
+   * the shared blackboard so the two can actually talk to each other.
+   * Unrestricted by design: no limit on how many times this can be called.
+   */
+  summon(summonerId: string, spec: { id?: string; role: string; specialization: string; capabilities?: string[]; think?: AgentThinkFn }): HiveAgent {
+    const id = spec.id ?? `${summonerId}.summon.${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 7)}`;
+    const agent = this.spawn({ id, role: spec.role, specialization: spec.specialization, capabilities: spec.capabilities, think: spec.think });
+    agent.isAdmin = true;
+    agent.summonedBy = summonerId;
+    this.blackboard.write(summonerId, `summoned:${id}`, { by: summonerId, role: spec.role, specialization: spec.specialization }, "public");
+    return agent;
+  }
+
+  /**
+   * Summon an entire sub-hive-mind for `summonerId`: a nested HiveMind of its
+   * own, complete with an admin-privileged coordinator agent the summoner can
+   * talk to immediately. That coordinator -- and anything it in turn
+   * summons -- can call summon()/summonSubHive() again, recursively and
+   * without limit: sub-sub-sub-...-hive minds, exactly as specified.
+   */
+  summonSubHive(summonerId: string, name?: string): HiveMind {
+    const sub = new HiveMind({ totalTrust: this.totalTrust, defaultThink: this.defaultThink, parent: this });
+    const coordinator = sub.spawn({
+      id: `${summonerId}.hive${sub.depth}.coordinator`,
+      role: "coordinator",
+      specialization: name ?? "general",
+    });
+    coordinator.isAdmin = true;
+    coordinator.summonedBy = summonerId;
+    const key = `${summonerId}:${name ?? "hive"}:${Date.now().toString(36)}.${Math.random().toString(36).slice(2, 7)}`;
+    this.subHives.set(key, sub);
+    this.blackboard.write(summonerId, `summoned-subhive:${key}`, { by: summonerId, depth: sub.depth, name: name ?? "general" }, "public");
+    return sub;
+  }
+
+  /** Every sub-hive summoned directly from this one (not further-nested grandchildren). */
+  listSubHives(): HiveMind[] {
+    return Array.from(this.subHives.values());
   }
 
   remove(id: string): boolean {

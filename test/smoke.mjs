@@ -800,15 +800,13 @@ async function testContinuousOutputLoop() {
   const { NeuroclawRunner } = await load('interface/runner.js');
   const { NeuroclawLLM } = await load('models && skills/llm.js');
   const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
-  const { ThesaurusDictionary } = await load('models && skills/thesaurus.js');
   const { PluginRegistry } = await load('plugin_manager/registry.js');
 
   const mkRunner = () => {
     const llm = new NeuroclawLLM();
     const pipeline = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 12, hyperDimensions: 12 });
-    const thesaurus = new ThesaurusDictionary();
     const pluginRegistry = new PluginRegistry();
-    return new NeuroclawRunner(llm, pipeline, thesaurus, pluginRegistry);
+    return new NeuroclawRunner(llm, pipeline, pluginRegistry);
   };
 
   // Section 4.1(a): new input can be injected while output is mid-stream
@@ -1125,30 +1123,28 @@ async function testWebBackend() {
     check(withHistory.status === 200 && withHistoryJson.response.includes('[Grounded in 1 related memory]') && withHistoryJson.response.includes('8080'),
       'Web backend POST /api/chat wires client-supplied history into memoryContext grounding instead of discarding it');
 
-    // GET /api/dict/:word had no try/catch, unlike every sibling handler --
-    // decodeURIComponent() throws URIError on malformed percent-encoding
-    // (a trailing lone "%"), and since handleRequest() is the raw
-    // http.createServer callback with no .catch() and no process-wide
-    // unhandledRejection handler anywhere, that throw crashed the entire
-    // backend process on a single unauthenticated GET. Verify it now
-    // degrades to a clean 400 and the server survives to answer the next
-    // request.
-    const malformed = await get('/api/dict/%25%');
-    check(malformed.status === 400, 'Web backend /api/dict/:word returns 400 on malformed percent-encoding instead of crashing the process');
+    // GET /api/chat-history/threads/:id calls decodeURIComponent() on a raw
+    // path segment, which throws URIError on malformed percent-encoding (a
+    // trailing lone "%"); since handleRequest() is the raw http.createServer
+    // callback with no .catch() and no process-wide unhandledRejection
+    // handler anywhere, an unguarded throw there would crash the entire
+    // backend process on a single unauthenticated GET. Verify it degrades to
+    // a clean 400 and the server survives to answer the next request.
+    const malformed = await get('/api/chat-history/threads/%25%');
+    check(malformed.status === 400, 'Web backend /api/chat-history/threads/:id returns 400 on malformed percent-encoding instead of crashing the process');
     const stillAlive = await get('/api/status');
     check(stillAlive.status === 200 && JSON.parse(stillAlive.body).running === true,
-      'Web backend is still running and responsive after a malformed /api/dict/:word request');
+      'Web backend is still running and responsive after a malformed /api/chat-history/threads/:id request');
 
     // handleRequest()'s very first line built `new URL(req.url, "http://" +
     // req.headers.host)` with no guard at all -- req.headers.host is a raw,
     // attacker-controlled string Node's HTTP parser never validates, so a
     // malformed value (e.g. a non-numeric port) makes `new URL()` throw
-    // TypeError: Invalid URL. This runs before every route's own try/catch
-    // (including the /api/dict fix just above), so it crashed the entire
-    // backend on a single request regardless of path or method -- a
-    // distinct, unguarded instance of the same crash class one layer
-    // higher up. A same-origin fetch() can't set Host (forbidden header),
-    // but any local script/proxy/curl invocation can.
+    // TypeError: Invalid URL. This runs before every route's own try/catch,
+    // so it crashed the entire backend on a single request regardless of
+    // path or method -- a distinct, unguarded instance of the same crash
+    // class one layer higher up. A same-origin fetch() can't set Host
+    // (forbidden header), but any local script/proxy/curl invocation can.
     const badHost = await new Promise((resolve, reject) => {
       const req = http.request({ host: '127.0.0.1', port, path: '/', method: 'GET', headers: { Host: 'localhost:abc' } }, res => {
         let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
@@ -2114,7 +2110,7 @@ async function testNeuriLangCliWiring() {
   console.log = console.info = console.warn = () => {};
   const sys = new NeuroclawSystem();
   await sys.initialize();
-  const cli = new CLI(sys.llm, sys.pipeline, sys.thesaurus, sys.pluginRegistry);
+  const cli = new CLI(sys.llm, sys.pipeline, sys.pluginRegistry);
 
   const lines = [];
   console.log = (...args) => { lines.push(args.map(String).join(' ')); };
@@ -2158,7 +2154,7 @@ async function testNetSearchGenerateCliWiring() {
   const seeded = builder.addNeuron(projectId, 'paymentProcessor', 0.6);
   seeded.definition = 'processes credit card payments and billing';
 
-  const cli = new CLI(sys.llm, sys.pipeline, sys.thesaurus, sys.pluginRegistry);
+  const cli = new CLI(sys.llm, sys.pipeline, sys.pluginRegistry);
   const lines = [];
   console.log = (...args) => { lines.push(args.map(String).join(' ')); };
   try {
