@@ -267,6 +267,18 @@ export class MultiDesktopManager {
         if (typeof desktopId !== 'string' || !/^[a-zA-Z0-9_]+$/.test(desktopId)) {
             throw new Error('Security Error: Invalid desktopId.');
         }
+        // Validate windowId to prevent shell/command injection or argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId)) {
+            return;
+        }
+        if (!/^[a-fA-F0-9xX]+$/.test(windowId)) {
+            throw new Error('Security Error: Invalid windowId format');
+        }
+        if (desktopId !== 'user' && desktopId !== 'ai') {
+            throw new Error('Security Error: Invalid desktopId');
+        }
+        if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(windowId))
+            return;
         const index = desktopId === 'ai' ? this.aiGnomeWorkspaceIndex : 0;
         if (!this.gnomeAvailable || index < 0)
             return;
@@ -299,6 +311,8 @@ export class MultiDesktopManager {
             this.switchToDesktop(cur);
     }
     switchRealGnomeWorkspace(index) {
+        if (!Number.isInteger(index) || index < 0 || index > 1000)
+            return;
         try {
             execSync(`gdbus call --session --dest org.gnome.Shell --object-path /org/gnome/Shell --method org.gnome.Shell.Eval "global.workspace_manager.get_workspace_by_index(${index}).activate(global.get_current_time())" 2>/dev/null`, { timeout: 5000, encoding: 'utf8' });
         }
