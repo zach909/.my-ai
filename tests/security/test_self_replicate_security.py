@@ -31,6 +31,19 @@ class TestSelfReplicateSecurity(unittest.TestCase):
         self.assertTrue(os.path.exists(self.temp_clone_dir))
 
         # Check directory permissions (on Unix-like platforms)
+
+        # Override the clone directory to point to our temp folder
+        plugin._clone_dir = self.temp_clone_dir
+
+        # Call clone to trigger creation of directory and save state
+        res = plugin.call("clone", prompt="Secure AI test clone")
+        self.assertTrue(res["success"])
+        clone_id = res["clone_id"]
+
+        # Verify the clones directory was created within our temp root
+        self.assertTrue(os.path.exists(self.temp_clone_dir))
+
+        # Check directory permissions (on Unix-like/POSIX platforms)
         if os.name == 'posix':
             dir_stat = os.stat(self.temp_clone_dir)
             dir_permissions = stat.S_IMODE(dir_stat.st_mode)
@@ -51,6 +64,7 @@ class TestSelfReplicateSecurity(unittest.TestCase):
         state_file_path = os.path.join(self.temp_clone_dir, f"{clone_id}.state.json")
         self.assertTrue(os.path.exists(state_file_path))
 
+        # Check state file permissions (on POSIX systems)
         if os.name == 'posix':
             file_stat = os.stat(state_file_path)
             file_permissions = stat.S_IMODE(file_stat.st_mode)
@@ -70,6 +84,10 @@ class TestSelfReplicateSecurity(unittest.TestCase):
             log_permissions = stat.S_IMODE(log_stat.st_mode)
             # Expecting exactly 0o600 (owner read & write only)
             self.assertEqual(log_permissions, 0o600, f"Expected 0o600 permissions, got {oct(log_permissions)}")
+            file_stat = os.stat(log_file_path)
+            file_permissions = stat.S_IMODE(file_stat.st_mode)
+            # Expecting exactly 0o600 (owner read & write only)
+            self.assertEqual(file_permissions, 0o600, f"Expected 0o600 permissions, got {oct(file_permissions)}")
 
 if __name__ == "__main__":
     unittest.main()

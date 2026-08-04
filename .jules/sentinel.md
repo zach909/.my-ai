@@ -54,7 +54,7 @@
 
 ## 2026-08-28 - Secure Credential File Permissions in Python EmailPlugin
 **Vulnerability:** The Python-based `EmailPlugin` stored plain-text email passwords on disk using default file creation APIs, making the credentials potentially world-readable depending on the host's system `umask`.
-**Learning:** Standard Python `open` calls follow the default `umask` (often `0o022`), creating files with group/world-readable permissions (e.g., `0o644`). For sensitive files containing plain-text keys, tokens, or credentials, this introduces local privilege escalation and credential leakage risks.
+**Learning:** Standard Python `open` calls follow the default `umask` (often `0o022`), creating files with group/world-readable permissions (e.g., `0o644`). For sensitive files containing plain-text keys, tokens, or credentials, this introduces local privilege escalation and leakage of credential leakage.
 **Prevention:** Always create sensitive credential files with highly restrictive permissions (`0o600` or owner-only read/write) by using `os.open` with a mode argument and calling `os.chmod` to ensure that any pre-existing wider permissions are corrected.
 
 ## 2026-08-29 - Argument Injection and Local Path Traversal in Python ScreenshotPlugin
@@ -101,3 +101,7 @@
 **Vulnerability:** Redundant write loops and incorrect sequence of folder vs file generation caused potential permission flaws and file initialization errors. Directory creation (`os.makedirs`) was occurring *after* attempting to securely open and write clone states via `os.open`, leading to initial write failures, which were then shadowed by subsequent fallback write loops.
 **Learning:** Hardening directory and file permissions is only as robust as the sequence of operations. Writing files using raw file descriptor open flags (`os.O_CREAT` with `0o600`) requires that the parent directory already exists. Fallback or redundant write segments can mask directory-creation race conditions or hide initial permission failures.
 **Prevention:** Always create and secure the parent directory (e.g. `0o700`) *before* attempting secure file creation using `os.open` / `os.fdopen` with `0o600` flags. Keep the implementation streamlined and avoid duplicate or redundant write loops that bypass secure file descriptor logic.
+## 2026-09-05 - Argument Injection and Eval Injection in GNOME Stack
+**Vulnerability:** The GNOME workspace and window management stack was vulnerable to command and argument injections through `windowId` and `workspace`/`index` parameters. Malicious inputs could inject arbitrary flags/arguments to the system `wmctrl` utility or execute arbitrary JavaScript payload inside the GNOME Shell via the Eval interface.
+**Learning:** Relying on type signatures (e.g. `number` or `int` parameters) is not sufficient when parameters are deserialized from untrusted API/tool inputs or passed via broad type coercion, and lax regexes (like permitting a leading hyphen) can leave command arguments exposed to injection.
+**Prevention:** Enforce a strict whitelist regex `/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/` for window and application identifiers to disallow leading hyphens, and robustly check/cast workspace parameters to bounded safe integers before using them in shell commands or JS string formatting.
