@@ -122,6 +122,13 @@ function applyScale(value, scaleInfo) {
  * whereas pack() is for persisting/transmitting the reduced-width form.
  */
 export function packLevels(levels, bits) {
+    // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
+    // Directly set the Uint8Array using typed array copy, bypassing bitwise packing logic.
+    if (bits === 8) {
+        const out = new Uint8Array(levels.length);
+        out.set(levels);
+        return out;
+    }
     const totalBits = levels.length * bits;
     const out = new Uint8Array(Math.ceil(totalBits / 8));
     let accumulator = 0;
@@ -144,6 +151,14 @@ export function packLevels(levels, bits) {
     return out;
 }
 export function unpackLevels(packed, count, bits) {
+    // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
+    // Directly set the Uint32Array using typed array copy, bypassing bitwise unpacking logic.
+    // We use subarray(0, count) to be safe if the packed source buffer is larger than count.
+    if (bits === 8) {
+        const out = new Uint32Array(count);
+        out.set(packed.subarray(0, count));
+        return out;
+    }
     const out = new Uint32Array(count);
     let accumulator = 0;
     let bitCount = 0;
