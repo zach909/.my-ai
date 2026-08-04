@@ -1,1 +1,4 @@
-Nothing needs to be added to .gitignore since the only modified file is an HTML file, which is a source/config file and should not be ignored.
+```
+# Build artifacts
+dist/
+```
