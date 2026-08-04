@@ -42,6 +42,9 @@ export class MoERouter {
   private iteration: number = 0;
   private scoresScratch: number[];
   private selectScratch: Int32Array;
+  // OPTIMIZATION: Keep a pre-allocated pool of scratch Float32Arrays for expert outputs
+  // to avoid garbage collection and memory allocation overhead on every route() call.
+  private expertOutputsScratch: Float32Array[] = [];
 
   constructor(config: Partial<MoEConfig> & Record<string, any> = {}) {
     this.config = {
@@ -60,6 +63,13 @@ export class MoERouter {
     this.routerBias = new Float32Array(this.config.expertCount);
     this.scoresScratch = new Array<number>(this.config.expertCount);
     this.selectScratch = new Int32Array(this.config.expertCount);
+
+    // Initialize the expert output scratch pool to topK elements of outputDim size.
+    this.expertOutputsScratch = Array.from(
+      { length: this.config.topK },
+      () => new Float32Array(this.config.outputDim)
+    );
+
     this.initializeExpertWeights();
     this.initializeExperts();
   }
@@ -98,14 +108,19 @@ export class MoERouter {
     }
     const routerWeights = this.softmax(topScores);
 
+    // Ensure our expertOutputsScratch array pool is sufficiently sized for numK (top-K)
+    while (this.expertOutputsScratch.length < numK) {
+      this.expertOutputsScratch.push(new Float32Array(this.config.outputDim));
+    }
+
     const expertOutputs: Float32Array[] = [];
     for (let i = 0; i < numK; i++) {
       const expertIdx = topKIndices[i];
       const expert = this.experts.get(expertIdx)!;
-      const output = new Float32Array(this.config.outputDim);
 
-      // Initialize with bias, then accumulate the expert's matrix-vector
-      // product using row-major (sequential) memory access.
+      // Grab a pre-allocated Float32Array scratch buffer instead of allocating a new one
+      const output = this.expertOutputsScratch[i];
+      output.fill(0);
       output.set(expert.bias);
 
       const weights = expert.weights;

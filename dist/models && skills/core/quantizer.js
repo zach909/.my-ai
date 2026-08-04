@@ -122,6 +122,13 @@ function applyScale(value, scaleInfo) {
  * whereas pack() is for persisting/transmitting the reduced-width form.
  */
 export function packLevels(levels, bits) {
+    // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
+    // Directly set the Uint8Array using typed array copy, bypassing bitwise packing logic.
+    if (bits === 8) {
+        const out = new Uint8Array(levels.length);
+        out.set(levels);
+        return out;
+    }
     const totalBits = levels.length * bits;
     const out = new Uint8Array(Math.ceil(totalBits / 8));
     let accumulator = 0;
@@ -144,6 +151,14 @@ export function packLevels(levels, bits) {
     return out;
 }
 export function unpackLevels(packed, count, bits) {
+    // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
+    // Directly set the Uint32Array using typed array copy, bypassing bitwise unpacking logic.
+    // We use subarray(0, count) to be safe if the packed source buffer is larger than count.
+    if (bits === 8) {
+        const out = new Uint32Array(count);
+        out.set(packed.subarray(0, count));
+        return out;
+    }
     const out = new Uint32Array(count);
     let accumulator = 0;
     let bitCount = 0;
@@ -216,11 +231,6 @@ export class BackgroundQuantizer {
             const result = out ?? new Float32Array(weights.length);
             result.set(weights);
             return result;
-            if (out) {
-                out.set(weights);
-                return out;
-            }
-            return new Float32Array(weights);
         }
         const scaleInfo = deriveScale(wMin, wMax, effectiveBits, this.config.method);
         return this.dequantizeWith(weights, scaleInfo, out);
@@ -239,11 +249,6 @@ export class BackgroundQuantizer {
             const result = out ?? new Float32Array(weights.length);
             result.set(weights);
             return result;
-            if (out) {
-                out.set(weights);
-                return out;
-            }
-            return new Float32Array(weights);
         }
         const scaleInfo = deriveScale(stats.min, stats.max, effectiveBits, this.config.method);
         return this.dequantizeWith(weights, scaleInfo, out);
@@ -270,6 +275,11 @@ export class BackgroundQuantizer {
         const result = out || new Float32Array(weights.length);
         const { scale, zeroPoint, symmetric, bits } = scaleInfo;
         const len = weights.length;
+        // OPTIMIZATION: Pre-computing the inverse scale (1.0 / scale) replaces slow floating-point division
+        // with much faster multiplication inside the high-frequency loops.
+        // Additionally, function calls to Math.min/Math.max are replaced with inline branchless ternary expressions
+        // to bypass the call stack and reduce branching overhead.
+        const invScale = 1.0 / scale;
         if (symmetric) {
             const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
             const qMin = -qMax;
@@ -279,17 +289,22 @@ export class BackgroundQuantizer {
                 const w1 = weights[i + 1];
                 const w2 = weights[i + 2];
                 const w3 = weights[i + 3];
-                const lv0 = Math.max(qMin, Math.min(qMax, Math.round(w0 / scale)));
-                const lv1 = Math.max(qMin, Math.min(qMax, Math.round(w1 / scale)));
-                const lv2 = Math.max(qMin, Math.min(qMax, Math.round(w2 / scale)));
-                const lv3 = Math.max(qMin, Math.min(qMax, Math.round(w3 / scale)));
+                const r0 = Math.round(w0 * invScale);
+                const r1 = Math.round(w1 * invScale);
+                const r2 = Math.round(w2 * invScale);
+                const r3 = Math.round(w3 * invScale);
+                const lv0 = r0 < qMin ? qMin : (r0 > qMax ? qMax : r0);
+                const lv1 = r1 < qMin ? qMin : (r1 > qMax ? qMax : r1);
+                const lv2 = r2 < qMin ? qMin : (r2 > qMax ? qMax : r2);
+                const lv3 = r3 < qMin ? qMin : (r3 > qMax ? qMax : r3);
                 result[i] = lv0 * scale;
                 result[i + 1] = lv1 * scale;
                 result[i + 2] = lv2 * scale;
                 result[i + 3] = lv3 * scale;
             }
             for (; i < len; i++) {
-                const level = Math.max(qMin, Math.min(qMax, Math.round(weights[i] / scale)));
+                const r = Math.round(weights[i] * invScale);
+                const level = r < qMin ? qMin : (r > qMax ? qMax : r);
                 result[i] = level * scale;
             }
         }
@@ -302,17 +317,22 @@ export class BackgroundQuantizer {
                 const w1 = weights[i + 1];
                 const w2 = weights[i + 2];
                 const w3 = weights[i + 3];
-                const lv0 = Math.max(0, Math.min(maxLevel, Math.round(w0 / scale + zeroPoint)));
-                const lv1 = Math.max(0, Math.min(maxLevel, Math.round(w1 / scale + zeroPoint)));
-                const lv2 = Math.max(0, Math.min(maxLevel, Math.round(w2 / scale + zeroPoint)));
-                const lv3 = Math.max(0, Math.min(maxLevel, Math.round(w3 / scale + zeroPoint)));
+                const r0 = Math.round(w0 * invScale + zeroPoint);
+                const r1 = Math.round(w1 * invScale + zeroPoint);
+                const r2 = Math.round(w2 * invScale + zeroPoint);
+                const r3 = Math.round(w3 * invScale + zeroPoint);
+                const lv0 = r0 < 0 ? 0 : (r0 > maxLevel ? maxLevel : r0);
+                const lv1 = r1 < 0 ? 0 : (r1 > maxLevel ? maxLevel : r1);
+                const lv2 = r2 < 0 ? 0 : (r2 > maxLevel ? maxLevel : r2);
+                const lv3 = r3 < 0 ? 0 : (r3 > maxLevel ? maxLevel : r3);
                 result[i] = (lv0 - zeroPoint) * scale;
                 result[i + 1] = (lv1 - zeroPoint) * scale;
                 result[i + 2] = (lv2 - zeroPoint) * scale;
                 result[i + 3] = (lv3 - zeroPoint) * scale;
             }
             for (; i < len; i++) {
-                const level = Math.max(0, Math.min(maxLevel, Math.round(weights[i] / scale + zeroPoint)));
+                const r = Math.round(weights[i] * invScale + zeroPoint);
+                const level = r < 0 ? 0 : (r > maxLevel ? maxLevel : r);
                 result[i] = (level - zeroPoint) * scale;
             }
         }
@@ -379,22 +399,32 @@ export class BackgroundQuantizer {
         const levels = new Uint32Array(weights.length);
         const { scale, zeroPoint, symmetric, bits: sBits } = scaleInfo;
         const len = weights.length;
+        // OPTIMIZATION: Pre-computing the inverse scale (1.0 / scale) replaces slow floating-point division
+        // with much faster multiplication inside the high-frequency loops.
+        // Additionally, function calls to Math.min/Math.max are replaced with inline branchless ternary expressions
+        // to bypass the call stack and reduce branching overhead.
+        const invScale = 1.0 / scale;
         if (symmetric) {
             const qMax = Math.floor((Math.pow(2, sBits) - 1) / 2);
             const qMin = -qMax;
             let i = 0;
             for (; i < len - 3; i += 4) {
-                const lv0 = Math.max(qMin, Math.min(qMax, Math.round(weights[i] / scale)));
-                const lv1 = Math.max(qMin, Math.min(qMax, Math.round(weights[i + 1] / scale)));
-                const lv2 = Math.max(qMin, Math.min(qMax, Math.round(weights[i + 2] / scale)));
-                const lv3 = Math.max(qMin, Math.min(qMax, Math.round(weights[i + 3] / scale)));
+                const r0 = Math.round(weights[i] * invScale);
+                const r1 = Math.round(weights[i + 1] * invScale);
+                const r2 = Math.round(weights[i + 2] * invScale);
+                const r3 = Math.round(weights[i + 3] * invScale);
+                const lv0 = r0 < qMin ? qMin : (r0 > qMax ? qMax : r0);
+                const lv1 = r1 < qMin ? qMin : (r1 > qMax ? qMax : r1);
+                const lv2 = r2 < qMin ? qMin : (r2 > qMax ? qMax : r2);
+                const lv3 = r3 < qMin ? qMin : (r3 > qMax ? qMax : r3);
                 levels[i] = lv0 + offset;
                 levels[i + 1] = lv1 + offset;
                 levels[i + 2] = lv2 + offset;
                 levels[i + 3] = lv3 + offset;
             }
             for (; i < len; i++) {
-                const level = Math.max(qMin, Math.min(qMax, Math.round(weights[i] / scale)));
+                const r = Math.round(weights[i] * invScale);
+                const level = r < qMin ? qMin : (r > qMax ? qMax : r);
                 levels[i] = level + offset;
             }
         }
@@ -403,17 +433,22 @@ export class BackgroundQuantizer {
             const maxLevel = Math.round(levelsCount);
             let i = 0;
             for (; i < len - 3; i += 4) {
-                const lv0 = Math.max(0, Math.min(maxLevel, Math.round(weights[i] / scale + zeroPoint)));
-                const lv1 = Math.max(0, Math.min(maxLevel, Math.round(weights[i + 1] / scale + zeroPoint)));
-                const lv2 = Math.max(0, Math.min(maxLevel, Math.round(weights[i + 2] / scale + zeroPoint)));
-                const lv3 = Math.max(0, Math.min(maxLevel, Math.round(weights[i + 3] / scale + zeroPoint)));
+                const r0 = Math.round(weights[i] * invScale + zeroPoint);
+                const r1 = Math.round(weights[i + 1] * invScale + zeroPoint);
+                const r2 = Math.round(weights[i + 2] * invScale + zeroPoint);
+                const r3 = Math.round(weights[i + 3] * invScale + zeroPoint);
+                const lv0 = r0 < 0 ? 0 : (r0 > maxLevel ? maxLevel : r0);
+                const lv1 = r1 < 0 ? 0 : (r1 > maxLevel ? maxLevel : r1);
+                const lv2 = r2 < 0 ? 0 : (r2 > maxLevel ? maxLevel : r2);
+                const lv3 = r3 < 0 ? 0 : (r3 > maxLevel ? maxLevel : r3);
                 levels[i] = lv0 + offset;
                 levels[i + 1] = lv1 + offset;
                 levels[i + 2] = lv2 + offset;
                 levels[i + 3] = lv3 + offset;
             }
             for (; i < len; i++) {
-                const level = Math.max(0, Math.min(maxLevel, Math.round(weights[i] / scale + zeroPoint)));
+                const r = Math.round(weights[i] * invScale + zeroPoint);
+                const level = r < 0 ? 0 : (r > maxLevel ? maxLevel : r);
                 levels[i] = level + offset;
             }
         }
