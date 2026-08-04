@@ -47,7 +47,8 @@ python3 -c "from asi_core import UnifiedBrain; brain = UnifiedBrain(); print(bra
 ├── public/                # Public assets
 ├── scripts/               # Build and utility scripts
 ├── src/                   # Source code
-└── remote public wiki public skills public pulgins pubilk prompts/                  # Architecture wiki
+├── remote public wiki public skills public pulgins pubilk prompts/ 
+└── wiki                 # Architecture wiki
 
 ```
 
