@@ -347,3 +347,56 @@ describe('quantization-config normalization', () => {
     expect(cfg.mixedPrecisionPolicy?.rules[0].bits).toBe(16);
   });
 });
+
+describe('Memory-Optimized Quantization Out-Buffer & RLMTrainer (Bolt)', () => {
+  test('BackgroundQuantizer.quantize supports optional out-buffer parameter', () => {
+    const q = makeQuantizer({ bits: 8, method: 'symmetric' });
+    const weights = new Float32Array([-1.0, -0.5, 0.0, 0.5, 1.0]);
+    const outBuffer = new Float32Array(weights.length);
+
+    const returned = q.quantize(weights, undefined, outBuffer);
+
+    expect(returned).toBe(outBuffer); // Ensure it wrote in-place to the supplied buffer
+    expect(outBuffer[0]).toBeCloseTo(-1.0, 2);
+    expect(outBuffer[4]).toBeCloseTo(1.0, 2);
+  });
+
+  test('BackgroundQuantizer.quantizeStatic supports optional out-buffer parameter', () => {
+    const q = makeQuantizer({ bits: 8, method: 'asymmetric' });
+    const stats = { min: -1.0, max: 1.0, absMax: 1.0, mean: 0.0, count: 5 };
+    const weights = new Float32Array([-0.8, 0.0, 0.8]);
+    const outBuffer = new Float32Array(weights.length);
+
+    const returned = q.quantizeStatic(weights, stats, undefined, outBuffer);
+
+    expect(returned).toBe(outBuffer); // Ensure it wrote in-place to the supplied buffer
+    expect(outBuffer[0]).toBeCloseTo(-0.8, 2);
+  });
+
+  test('RLMTrainer utilizes pre-allocated scratch buffers and executes training correctly', async () => {
+    const { RLMTrainer } = await import('../../models && skills/core/rlm.js');
+    const trainer = new RLMTrainer({
+      stateDim: 8,
+      actionDim: 3,
+      quantizationEnabled: true,
+      replayBufferSize: 10,
+    });
+
+    const state = new Float32Array(8).fill(0.5);
+    const nextState = new Float32Array(8).fill(0.1);
+
+    trainer.addExperience({
+      state,
+      action: 1,
+      reward: 1.5,
+      nextState,
+      done: false,
+      priority: 1.0,
+      timestamp: Date.now()
+    });
+
+    const res = await trainer.train();
+    expect(res.loss).toBeDefined();
+    expect(res.stepsTrained).toBe(1);
+  });
+});

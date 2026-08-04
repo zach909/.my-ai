@@ -12,7 +12,7 @@ const CYAN = '\x1b[36m';
 const WHITE = '\x1b[37m';
 const GRAY = '\x1b[90m';
 export class CLI {
-    constructor(llm, pipeline, thesaurus, pluginRegistry, systemAccess, multiDesktop, capabilities) {
+    constructor(llm, pipeline, pluginRegistry, systemAccess, multiDesktop, capabilities) {
         this.rl = null;
         this.interactiveMode = false;
         this.commandQueue = [];
@@ -21,7 +21,6 @@ export class CLI {
         this.neuriBlockLines = [];
         this.llm = llm;
         this.pipeline = pipeline;
-        this.thesaurus = thesaurus;
         this.pluginRegistry = pluginRegistry;
         this.systemAccess = systemAccess;
         this.multiDesktop = multiDesktop;
@@ -155,12 +154,6 @@ export class CLI {
                 this.rl?.prompt();
                 return;
             }
-            if (lower.startsWith('dict ') || lower.startsWith('lookup ')) {
-                const word = trimmed.includes(' ') ? trimmed.slice(trimmed.indexOf(' ') + 1) : '';
-                this.handleDict(word);
-                this.rl?.prompt();
-                return;
-            }
             // Async commands: queue so they run sequentially (prevents race when stdin is piped)
             if (lower === 'chat' || lower === 'start') {
                 this.enqueue(() => this.startChat());
@@ -224,7 +217,6 @@ export class CLI {
         console.log(`    ${this.colorize(GREEN, 'search')} ${this.colorize(YELLOW, '<query>')}  ${this.colorize(GRAY, 'Search neurons by name/label')}`);
         console.log(`    ${this.colorize(GREEN, 'nsearch')} ${this.colorize(YELLOW, '<query>')} ${this.colorize(GRAY, 'Net Search: semantic match + generate a network')}`);
         console.log(`    ${this.colorize(GREEN, 'neuri')} ${this.colorize(YELLOW, '<code>')}    ${this.colorize(GRAY, 'Run NeuriLang neuron definition')}`);
-        console.log(`    ${this.colorize(GREEN, 'dict')} ${this.colorize(YELLOW, '<word>')}     ${this.colorize(GRAY, 'Look up word in dictionary (Y/X/Z)')}`);
         console.log(`    ${this.colorize(GREEN, 'build')} ${this.colorize(YELLOW, '<name>')}    ${this.colorize(GRAY, 'Create a new extension project')}`);
         console.log(`    ${this.colorize(GREEN, 'plugins')}         ${this.colorize(GRAY, 'List all plugins and skills')}`);
         console.log(`    ${this.colorize(GREEN, 'save')}            ${this.colorize(GRAY, 'Save model (full precision)')}`);
@@ -522,28 +514,6 @@ export class CLI {
             for (const line of parsed.printOutputs)
                 console.log(`    ${line}`);
         }
-        console.log('');
-    }
-    handleDict(word) {
-        if (!word) {
-            console.log(this.colorize(GRAY, '  Usage: dict <word>'));
-            return;
-        }
-        const def = this.thesaurus.getDefinition(word);
-        const syns = this.thesaurus.getSynonyms(word);
-        const examples = this.thesaurus.getExamples(word);
-        if (!def && syns.length === 0) {
-            console.log(this.colorize(GRAY, `  "${word}" not in dictionary`));
-            return;
-        }
-        console.log('');
-        console.log(this.colorize(BOLD, `  ${word}:`));
-        if (def)
-            console.log(`    ${this.colorize(YELLOW, 'Y')} (definition): ${def}`);
-        if (syns.length > 0)
-            console.log(`    ${this.colorize(GREEN, 'X')} (synonyms):   ${syns.join(', ')}`);
-        if (examples.length > 0)
-            console.log(`    ${this.colorize(CYAN, 'Z')} (examples):   ${examples.slice(0, 2).join(' | ')}`);
         console.log('');
     }
     handleBuild(name) {

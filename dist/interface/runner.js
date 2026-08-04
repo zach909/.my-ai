@@ -3,7 +3,7 @@ import { EncryptionManager } from './encryption.js';
 import { SystemAccess } from './system-access.js';
 import { embedText } from "../models && skills/core/neuro-lang.js";
 export class NeuroclawRunner extends EventEmitter {
-    constructor(llm, pipeline, thesaurus, pluginRegistry, systemAccess, multiDesktopManager) {
+    constructor(llm, pipeline, pluginRegistry, systemAccess, multiDesktopManager) {
         super();
         this.running = false;
         this.startTime = null;
@@ -20,7 +20,6 @@ export class NeuroclawRunner extends EventEmitter {
         this.continuousEmbeddingDim = 768;
         this.llm = llm;
         this.pipeline = pipeline;
-        this.thesaurus = thesaurus;
         this.pluginRegistry = pluginRegistry;
         this.encryptionManager = new EncryptionManager();
         this.systemAccess = systemAccess ?? new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
@@ -152,6 +151,5 @@ export class NeuroclawRunner extends EventEmitter {
     getMultiDesktopManager() { return this.multiDesktopManager; }
     getLLM() { return this.llm; }
     getPipeline() { return this.pipeline; }
-    getThesaurus() { return this.thesaurus; }
     getPluginRegistry() { return this.pluginRegistry; }
 }

@@ -1,6 +1,7 @@
 import { BackgroundQuantizer } from '../models && skills/core/quantizer.js';
 import { NeuroLangInterpreter } from '../models && skills/core/neuro-lang.js';
 import { CodeToNet } from '../models && skills/core/thorns.js';
+import { NetSearchEngine } from '../models && skills/core/net-search.js';
 
 /**
  * Cooperative yield: hands control back to the event loop. Defined locally
@@ -41,6 +42,12 @@ export class ExtensionBuilder {
         });
         this.neuroLang = new NeuroLangInterpreter();
         this.codeToNet = new CodeToNet();
+        // Real, trainable net search (models && skills/core/net-search.ts):
+        // an input layer (tokenized query) into learned query->structure
+        // associations plus hashed embeddings -- soft/bendable, not a hard
+        // string match. Indexed over neuron *definitions* (before they get
+        // compiled), matching the spec.
+        this.netSearchEngine = new NetSearchEngine();
     }
     createProject(name, description) {
         const id = `proj_${Date.now()}_${this.neuronCounter++}`;
@@ -101,6 +108,53 @@ export class ExtensionBuilder {
         project.neurons.set(id, neuron);
         project.updatedAt = Date.now();
         return neuron;
+    }
+    /**
+     * Import a UnifiedBrain snapshot (models && skills/core/unified-brain.ts's
+     * save()) as the project's real neuron baseline -- the live mesh's actual
+     * nodes/connections/bias and its zero-sum value distribution, not the
+     * synthetic random layers NeuroclawLLM.build() used to fabricate.
+     * `snapshot` is plain data (no class instances), so this file -- loaded
+     * directly in the browser with no build step -- never has to import
+     * UnifiedBrain itself.
+     */
+    importFromBrainSnapshot(projectId, snapshot) {
+        const project = this.projects.get(projectId);
+        if (!project || !snapshot?.mesh)
+            return null;
+        const meshIdToNeuronId = new Map();
+        for (const node of snapshot.mesh.nodes) {
+            const neuron = this.addNeuron(projectId, `mesh_${node.id}`, node.activation, { x: (node.id % 20) * 40, y: node.layer * 120 });
+            if (neuron) {
+                neuron.definition = `bias=${node.bias.toFixed(4)}`;
+                meshIdToNeuronId.set(node.id, neuron.id);
+            }
+        }
+        let connectionsImported = 0;
+        for (const [fromMeshId, toMeshId, weight] of snapshot.mesh.edges) {
+            const fromId = meshIdToNeuronId.get(fromMeshId);
+            const toId = meshIdToNeuronId.get(toMeshId);
+            if (fromId && toId && this.connectNeurons(projectId, fromId, toId, weight)) {
+                connectionsImported++;
+            }
+        }
+        // Fold the live zero-sum value distribution onto each imported
+        // neuron's vale field (matching UnifiedBrain's "neuron_<meshId>" id
+        // convention), instead of every neuron defaulting to a flat 0.5.
+        const totalPoints = snapshot.valeDistribution?.totalPoints ?? 0;
+        if (totalPoints > 0) {
+            for (const alloc of snapshot.valeDistribution.neuronAllocations) {
+                const meshId = Number(String(alloc.id).replace('neuron_', ''));
+                const builderId = meshIdToNeuronId.get(meshId);
+                if (builderId === undefined)
+                    continue;
+                const neuron = project.neurons.get(builderId);
+                if (neuron)
+                    neuron.vale = Math.min(1, Math.max(0, alloc.valuePoints / totalPoints));
+            }
+        }
+        project.updatedAt = Date.now();
+        return { neuronsImported: meshIdToNeuronId.size, connectionsImported };
     }
     addCodeNet(projectId, name, code, position) {
         const project = this.projects.get(projectId);
@@ -311,12 +365,38 @@ export class ExtensionBuilder {
         const project = this.projects.get(projectId);
         if (!project)
             return false;
-        // Find all netsearch neurons and train them
+        // Index every neuron's own definition -- "searches your definitions
+        // of the neurons before they get compiled" -- not just netsearch-type
+        // ones, so the trained network covers the whole project.
+        this.netSearchEngine.clear();
+        for (const neuron of project.neurons.values()) {
+            const outgoing = [];
+            for (const conn of project.connections.values()) {
+                if (conn.fromId === neuron.id)
+                    outgoing.push(conn.toId);
+            }
+            this.netSearchEngine.addStructure({
+                name: neuron.id,
+                definition: `${neuron.name} ${neuron.definition}`.trim(),
+                value: neuron.value,
+                connections: outgoing,
+                flags: [neuron.type],
+            });
+        }
+        // Real training over `epochs` passes -- each netsearch-type neuron's
+        // corpus lines are genuine (query, target-structure) pairs that
+        // reinforce the learned association table, not a simulated netPath
+        // rename. Soft/bendable: repeated training keeps shifting the same
+        // weights rather than a one-shot hard-coded result.
         let trained = false;
+        const passes = Math.max(1, Math.trunc(epochs) || 1);
         for (const neuron of project.neurons.values()) {
             if (neuron.type === 'netsearch' && neuron.corpus) {
-                // Simulate training by updating the net path
-                neuron.netPath = `${neuron.name}_trained_${Date.now()}`;
+                const pairs = neuron.corpus.split('\n').filter(Boolean).map(line => ({ query: line, name: neuron.id }));
+                for (let e = 0; e < passes; e++) {
+                    this.netSearchEngine.train(pairs, 1 / passes);
+                }
+                neuron.netPath = `${neuron.name}_trained_${passes}ep`;
                 trained = true;
             }
         }
@@ -325,54 +405,74 @@ export class ExtensionBuilder {
         }
         return trained;
     }
+    /**
+     * Net Search: a real, trainable network (NetSearchEngine's neural mode --
+     * hashed embeddings plus the learned associations trainNetSearch() built)
+     * over the project's neuron definitions. Soft/bendable, not a hard
+     * substring match.
+     */
     netSearch(projectId, query) {
         const project = this.projects.get(projectId);
         if (!project)
             return [];
+        const hits = this.netSearchEngine.search(query, { mode: 'neural', topK: 10 });
         const results = [];
-        for (const neuron of project.neurons.values()) {
-            if (neuron.type === 'netsearch' && neuron.corpus) {
-                const corpusLines = neuron.corpus.split('\n');
-                const matches = corpusLines.filter(line => line.toLowerCase().includes(query.toLowerCase()));
-                if (matches.length > 0) {
-                    results.push({
-                        results: matches.slice(0, 5),
-                        confidence: Math.min(1, matches.length / corpusLines.length * 2)
-                    });
-                }
-            }
+        for (const hit of hits) {
+            const neuron = project.neurons.get(hit.name);
+            results.push({
+                results: [neuron ? (neuron.definition || neuron.name) : hit.name],
+                confidence: Math.max(0, Math.min(1, hit.score)),
+            });
         }
         return results;
+    }
+    /**
+     * Reverse search: given an output (a neuron already indexed by
+     * trainNetSearch()), which query tokens most strongly drove matches to
+     * it -- the network runs both directions instead of only query->result.
+     */
+    reverseNetSearch(projectId, neuronId) {
+        const project = this.projects.get(projectId);
+        if (!project)
+            return [];
+        return this.netSearchEngine.reverseSearch(neuronId);
     }
     /**
      * Net Search: semantically search across the project's neural definitions,
      * then generate a small neural network that reproduces the requested
      * behavior by wiring a fresh output neuron to the best-matching neurons.
-     * The connection weights are the normalized semantic-similarity scores —
-     * a lightweight, deterministic stand-in for the "deep learning" training
-     * step described in the spec, using only local data (no external APIs).
+     * Matches -- and the connection weights they generate -- come from the
+     * real backprop-trained NetSearchEngine (models && skills/core/net-search.ts),
+     * using only local data (no external APIs), not a bag-of-words cosine stand-in.
      * Returns the generated neuron plus the matches it was built from.
      */
     netSearchGenerate(projectId, query, topK = 3) {
         const project = this.projects.get(projectId);
         if (!project)
             return null;
-        const queryTokens = this.tokenizeForSearch(query);
-        // Score every neuron by semantic overlap between the query and the
-        // neuron's name + definition + corpus (bag-of-words cosine-ish).
-        const scored = [];
+        if (!query || !query.trim())
+            return null;
+        // Keep the trained network's index current with every neuron's
+        // present name+definition+corpus text before searching it.
         for (const neuron of project.neurons.values()) {
-            const text = `${neuron.name} ${neuron.definition} ${neuron.corpus}`;
-            const score = this.semanticSimilarity(queryTokens, this.tokenizeForSearch(text));
-            if (score > 0)
-                scored.push({ neuron, score });
+            this.netSearchEngine.addStructure({
+                name: neuron.id,
+                definition: `${neuron.name} ${neuron.definition} ${neuron.corpus}`.trim(),
+                value: neuron.value,
+                flags: [neuron.type],
+            });
         }
-        scored.sort((a, b) => b.score - a.score);
-        const matches = scored.slice(0, topK);
-        // With no evidence (empty/untokenizable query, or zero overlap against
-        // every definition) there is nothing to generate — return null rather
+        const hits = this.netSearchEngine.search(query, { mode: 'neural', topK });
+        const matches = [];
+        for (const hit of hits) {
+            const neuron = project.neurons.get(hit.name);
+            if (neuron)
+                matches.push({ neuron, score: hit.score });
+        }
+        // With no evidence (empty query, or the trained network found nothing
+        // above threshold) there is nothing to generate — return null rather
         // than fabricating an "evidence-free but fully confident" neuron.
-        if (queryTokens.length === 0 || matches.length === 0)
+        if (matches.length === 0)
             return null;
         // Generate the network: a new neuron whose value reflects the actual
         // accumulated evidence, connected to each match with a

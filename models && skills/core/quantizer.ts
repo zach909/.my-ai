@@ -172,32 +172,65 @@ function applyScale(value: number, scaleInfo: QuantizationScale): { level: numbe
  * whereas pack() is for persisting/transmitting the reduced-width form.
  */
 export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
+  // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
+  // Directly set the Uint8Array using typed array copy, bypassing bitwise packing logic.
+  if (bits === 8) {
+    const out = new Uint8Array(levels.length);
+    out.set(levels);
+    return out;
+  }
+
   const totalBits = levels.length * bits;
   const out = new Uint8Array(Math.ceil(totalBits / 8));
-  let bitPos = 0;
+  let accumulator = 0;
+  let bitCount = 0;
+  let bytePos = 0;
+
+  // OPTIMIZATION: Instead of bit-by-bit nesting, we accumulate bits in a 32-bit register
+  // and write them to the output byte-by-byte, drastically reducing branch overhead and loop cycles.
   for (let i = 0; i < levels.length; i++) {
-    const v = levels[i];
-    for (let b = 0; b < bits; b++) {
-      if ((v >> b) & 1) {
-        out[bitPos >> 3] |= 1 << (bitPos & 7);
-      }
-      bitPos++;
+    accumulator |= levels[i] << bitCount;
+    bitCount += bits;
+    while (bitCount >= 8) {
+      out[bytePos++] = accumulator & 0xFF;
+      accumulator >>>= 8;
+      bitCount -= 8;
     }
+  }
+  if (bitCount > 0) {
+    out[bytePos] = accumulator & 0xFF;
   }
   return out;
 }
 
 export function unpackLevels(packed: Uint8Array, count: number, bits: number): Uint32Array {
+  // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
+  // Directly set the Uint32Array using typed array copy, bypassing bitwise unpacking logic.
+  // We use subarray(0, count) to be safe if the packed source buffer is larger than count.
+  if (bits === 8) {
+    const out = new Uint32Array(count);
+    out.set(packed.subarray(0, count));
+    return out;
+  }
+
   const out = new Uint32Array(count);
-  let bitPos = 0;
+  let accumulator = 0;
+  let bitCount = 0;
+  let bytePos = 0;
+  const mask = (1 << bits) - 1;
+
+  // OPTIMIZATION: Extract whole 'bits'-width integers from a register accumulator,
+  // refilling it byte-by-byte from the stream only when needed. This completely bypasses
+  // the slow bit-by-bit reconstruction loop.
   for (let i = 0; i < count; i++) {
-    let v = 0;
-    for (let b = 0; b < bits; b++) {
-      const byte = packed[bitPos >> 3] ?? 0;
-      if ((byte >> (bitPos & 7)) & 1) v |= 1 << b;
-      bitPos++;
+    while (bitCount < bits) {
+      const byte = packed[bytePos++] ?? 0;
+      accumulator |= byte << bitCount;
+      bitCount += 8;
     }
-    out[i] = v;
+    out[i] = accumulator & mask;
+    accumulator >>>= bits;
+    bitCount -= bits;
   }
   return out;
 }
@@ -219,19 +252,38 @@ export class BackgroundQuantizer {
    * Asymmetric: min/max scale, zeroPoint offset.
    * Mixed: uses symmetric for layers with large spread, asymmetric otherwise.
    */
-  quantize(weights: Float32Array, bits?: number): Float32Array {
+  quantize(weights: Float32Array, bits?: number, out?: Float32Array): Float32Array {
     const effectiveBits = clampBits(bits ?? this.config.bits);
     let wMin = Infinity;
     let wMax = -Infinity;
-    for (let i = 0; i < weights.length; i++) {
-      if (weights[i] < wMin) wMin = weights[i];
-      if (weights[i] > wMax) wMax = weights[i];
+    const len = weights.length;
+    let i = 0;
+    for (; i < len - 3; i += 4) {
+      const v0 = weights[i];
+      const v1 = weights[i + 1];
+      const v2 = weights[i + 2];
+      const v3 = weights[i + 3];
+      if (v0 < wMin) wMin = v0;
+      if (v0 > wMax) wMax = v0;
+      if (v1 < wMin) wMin = v1;
+      if (v1 > wMax) wMax = v1;
+      if (v2 < wMin) wMin = v2;
+      if (v2 > wMax) wMax = v2;
+      if (v3 < wMin) wMin = v3;
+      if (v3 > wMax) wMax = v3;
+    }
+    for (; i < len; i++) {
+      const v = weights[i];
+      if (v < wMin) wMin = v;
+      if (v > wMax) wMax = v;
     }
     if (wMax === wMin) {
-      return new Float32Array(weights);
+      const result = out ?? new Float32Array(weights.length);
+      result.set(weights);
+      return result;
     }
     const scaleInfo = deriveScale(wMin, wMax, effectiveBits, this.config.method);
-    return this.dequantizeWith(weights, scaleInfo);
+    return this.dequantizeWith(weights, scaleInfo, out);
   }
 
   /**
@@ -242,13 +294,15 @@ export class BackgroundQuantizer {
    * calibration pass up front and being less exact for out-of-distribution
    * inputs the calibration set didn't cover.
    */
-  quantizeStatic(weights: Float32Array, stats: CalibrationStats, bits?: number): Float32Array {
+  quantizeStatic(weights: Float32Array, stats: CalibrationStats, bits?: number, out?: Float32Array): Float32Array {
     const effectiveBits = clampBits(bits ?? this.config.bits);
     if (stats.count === 0 || stats.max === stats.min) {
-      return new Float32Array(weights);
+      const result = out ?? new Float32Array(weights.length);
+      result.set(weights);
+      return result;
     }
     const scaleInfo = deriveScale(stats.min, stats.max, effectiveBits, this.config.method);
-    return this.dequantizeWith(weights, scaleInfo);
+    return this.dequantizeWith(weights, scaleInfo, out);
   }
 
   /** Feed calibration samples for a named tensor/layer ahead of quantizeStatic(). */
@@ -270,10 +324,79 @@ export class BackgroundQuantizer {
     else this.calibration.clear();
   }
 
-  private dequantizeWith(weights: Float32Array, scaleInfo: QuantizationScale): Float32Array {
-    const result = new Float32Array(weights.length);
-    for (let i = 0; i < weights.length; i++) {
-      result[i] = applyScale(weights[i], scaleInfo).dequantized;
+  private dequantizeWith(
+    weights: Float32Array,
+    scaleInfo: QuantizationScale,
+    out?: Float32Array,
+  ): Float32Array {
+    const result = out || new Float32Array(weights.length);
+    const { scale, zeroPoint, symmetric, bits } = scaleInfo;
+    const len = weights.length;
+    // OPTIMIZATION: Pre-computing the inverse scale (1.0 / scale) replaces slow floating-point division
+    // with much faster multiplication inside the high-frequency loops.
+    // Additionally, function calls to Math.min/Math.max are replaced with inline branchless ternary expressions
+    // to bypass the call stack and reduce branching overhead.
+    const invScale = 1.0 / scale;
+    if (symmetric) {
+      const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
+      const qMin = -qMax;
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const w0 = weights[i];
+        const w1 = weights[i + 1];
+        const w2 = weights[i + 2];
+        const w3 = weights[i + 3];
+
+        const r0 = Math.round(w0 * invScale);
+        const r1 = Math.round(w1 * invScale);
+        const r2 = Math.round(w2 * invScale);
+        const r3 = Math.round(w3 * invScale);
+
+        const lv0 = r0 < qMin ? qMin : (r0 > qMax ? qMax : r0);
+        const lv1 = r1 < qMin ? qMin : (r1 > qMax ? qMax : r1);
+        const lv2 = r2 < qMin ? qMin : (r2 > qMax ? qMax : r2);
+        const lv3 = r3 < qMin ? qMin : (r3 > qMax ? qMax : r3);
+
+        result[i] = lv0 * scale;
+        result[i + 1] = lv1 * scale;
+        result[i + 2] = lv2 * scale;
+        result[i + 3] = lv3 * scale;
+      }
+      for (; i < len; i++) {
+        const r = Math.round(weights[i] * invScale);
+        const level = r < qMin ? qMin : (r > qMax ? qMax : r);
+        result[i] = level * scale;
+      }
+    } else {
+      const levels = Math.pow(2, bits) - 1;
+      const maxLevel = Math.round(levels);
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const w0 = weights[i];
+        const w1 = weights[i + 1];
+        const w2 = weights[i + 2];
+        const w3 = weights[i + 3];
+
+        const r0 = Math.round(w0 * invScale + zeroPoint);
+        const r1 = Math.round(w1 * invScale + zeroPoint);
+        const r2 = Math.round(w2 * invScale + zeroPoint);
+        const r3 = Math.round(w3 * invScale + zeroPoint);
+
+        const lv0 = r0 < 0 ? 0 : (r0 > maxLevel ? maxLevel : r0);
+        const lv1 = r1 < 0 ? 0 : (r1 > maxLevel ? maxLevel : r1);
+        const lv2 = r2 < 0 ? 0 : (r2 > maxLevel ? maxLevel : r2);
+        const lv3 = r3 < 0 ? 0 : (r3 > maxLevel ? maxLevel : r3);
+
+        result[i] = (lv0 - zeroPoint) * scale;
+        result[i + 1] = (lv1 - zeroPoint) * scale;
+        result[i + 2] = (lv2 - zeroPoint) * scale;
+        result[i + 3] = (lv3 - zeroPoint) * scale;
+      }
+      for (; i < len; i++) {
+        const r = Math.round(weights[i] * invScale + zeroPoint);
+        const level = r < 0 ? 0 : (r > maxLevel ? maxLevel : r);
+        result[i] = (level - zeroPoint) * scale;
+      }
     }
     return result;
   }
@@ -294,9 +417,26 @@ export class BackgroundQuantizer {
     } else {
       min = Infinity;
       max = -Infinity;
-      for (let i = 0; i < weights.length; i++) {
-        if (weights[i] < min) min = weights[i];
-        if (weights[i] > max) max = weights[i];
+      const len = weights.length;
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const v0 = weights[i];
+        const v1 = weights[i + 1];
+        const v2 = weights[i + 2];
+        const v3 = weights[i + 3];
+        if (v0 < min) min = v0;
+        if (v0 > max) max = v0;
+        if (v1 < min) min = v1;
+        if (v1 > max) max = v1;
+        if (v2 < min) min = v2;
+        if (v2 > max) max = v2;
+        if (v3 < min) min = v3;
+        if (v3 > max) max = v3;
+      }
+      for (; i < len; i++) {
+        const v = weights[i];
+        if (v < min) min = v;
+        if (v > max) max = v;
       }
       if (min === Infinity) { min = 0; max = 0; }
     }
@@ -304,9 +444,63 @@ export class BackgroundQuantizer {
     const scaleInfo = deriveScale(min, max, effectiveBits, this.config.method);
     const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, effectiveBits) - 1) / 2) : 0;
     const levels = new Uint32Array(weights.length);
-    for (let i = 0; i < weights.length; i++) {
-      const { level } = applyScale(weights[i], scaleInfo);
-      levels[i] = level + offset; // shift symmetric's negative range into unsigned storage
+    const { scale, zeroPoint, symmetric, bits: sBits } = scaleInfo;
+    const len = weights.length;
+    // OPTIMIZATION: Pre-computing the inverse scale (1.0 / scale) replaces slow floating-point division
+    // with much faster multiplication inside the high-frequency loops.
+    // Additionally, function calls to Math.min/Math.max are replaced with inline branchless ternary expressions
+    // to bypass the call stack and reduce branching overhead.
+    const invScale = 1.0 / scale;
+    if (symmetric) {
+      const qMax = Math.floor((Math.pow(2, sBits) - 1) / 2);
+      const qMin = -qMax;
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const r0 = Math.round(weights[i] * invScale);
+        const r1 = Math.round(weights[i + 1] * invScale);
+        const r2 = Math.round(weights[i + 2] * invScale);
+        const r3 = Math.round(weights[i + 3] * invScale);
+
+        const lv0 = r0 < qMin ? qMin : (r0 > qMax ? qMax : r0);
+        const lv1 = r1 < qMin ? qMin : (r1 > qMax ? qMax : r1);
+        const lv2 = r2 < qMin ? qMin : (r2 > qMax ? qMax : r2);
+        const lv3 = r3 < qMin ? qMin : (r3 > qMax ? qMax : r3);
+
+        levels[i] = lv0 + offset;
+        levels[i + 1] = lv1 + offset;
+        levels[i + 2] = lv2 + offset;
+        levels[i + 3] = lv3 + offset;
+      }
+      for (; i < len; i++) {
+        const r = Math.round(weights[i] * invScale);
+        const level = r < qMin ? qMin : (r > qMax ? qMax : r);
+        levels[i] = level + offset;
+      }
+    } else {
+      const levelsCount = Math.pow(2, sBits) - 1;
+      const maxLevel = Math.round(levelsCount);
+      let i = 0;
+      for (; i < len - 3; i += 4) {
+        const r0 = Math.round(weights[i] * invScale + zeroPoint);
+        const r1 = Math.round(weights[i + 1] * invScale + zeroPoint);
+        const r2 = Math.round(weights[i + 2] * invScale + zeroPoint);
+        const r3 = Math.round(weights[i + 3] * invScale + zeroPoint);
+
+        const lv0 = r0 < 0 ? 0 : (r0 > maxLevel ? maxLevel : r0);
+        const lv1 = r1 < 0 ? 0 : (r1 > maxLevel ? maxLevel : r1);
+        const lv2 = r2 < 0 ? 0 : (r2 > maxLevel ? maxLevel : r2);
+        const lv3 = r3 < 0 ? 0 : (r3 > maxLevel ? maxLevel : r3);
+
+        levels[i] = lv0 + offset;
+        levels[i + 1] = lv1 + offset;
+        levels[i + 2] = lv2 + offset;
+        levels[i + 3] = lv3 + offset;
+      }
+      for (; i < len; i++) {
+        const r = Math.round(weights[i] * invScale + zeroPoint);
+        const level = r < 0 ? 0 : (r > maxLevel ? maxLevel : r);
+        levels[i] = level + offset;
+      }
     }
     return {
       packed: packLevels(levels, effectiveBits),
@@ -320,11 +514,30 @@ export class BackgroundQuantizer {
     const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, scaleInfo.bits) - 1) / 2) : 0;
     const levels = unpackLevels(tensor.packed, length, scaleInfo.bits);
     const out = new Float32Array(length);
-    for (let i = 0; i < length; i++) {
-      const level = levels[i] - offset;
-      out[i] = scaleInfo.symmetric
-        ? level * scaleInfo.scale
-        : (level - scaleInfo.zeroPoint) * scaleInfo.scale;
+    const scale = scaleInfo.scale;
+    const zeroPoint = scaleInfo.zeroPoint;
+    if (scaleInfo.symmetric) {
+      let i = 0;
+      for (; i < length - 3; i += 4) {
+        out[i] = (levels[i] - offset) * scale;
+        out[i + 1] = (levels[i + 1] - offset) * scale;
+        out[i + 2] = (levels[i + 2] - offset) * scale;
+        out[i + 3] = (levels[i + 3] - offset) * scale;
+      }
+      for (; i < length; i++) {
+        out[i] = (levels[i] - offset) * scale;
+      }
+    } else {
+      let i = 0;
+      for (; i < length - 3; i += 4) {
+        out[i] = (levels[i] - offset - zeroPoint) * scale;
+        out[i + 1] = (levels[i + 1] - offset - zeroPoint) * scale;
+        out[i + 2] = (levels[i + 2] - offset - zeroPoint) * scale;
+        out[i + 3] = (levels[i + 3] - offset - zeroPoint) * scale;
+      }
+      for (; i < length; i++) {
+        out[i] = (levels[i] - offset - zeroPoint) * scale;
+      }
     }
     return out;
   }

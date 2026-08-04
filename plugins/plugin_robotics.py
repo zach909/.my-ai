@@ -28,6 +28,29 @@ class RoboticsPlugin(Plugin):
     name = "robotics"
     description = "Control robotic systems, read sensors, and execute movements."
     
+    def _validate_num(self, val: Any, name: str, min_val: Optional[float] = None, max_val: Optional[float] = None, allow_none: bool = False) -> Optional[float]:
+        if val is None:
+            if allow_none:
+                return None
+            raise ValueError(f"Security Error: {name} cannot be None.")
+
+        try:
+            f_val = float(val)
+        except (ValueError, TypeError):
+            raise ValueError(f"Security Error: {name} must be a valid number.")
+
+        import math
+        if math.isnan(f_val) or math.isinf(f_val):
+            raise ValueError(f"Security Error: {name} cannot be NaN or infinity.")
+
+        if min_val is not None and f_val < min_val:
+            raise ValueError(f"Security Error: {name} is out of bounds (minimum {min_val}).")
+
+        if max_val is not None and f_val > max_val:
+            raise ValueError(f"Security Error: {name} is out of bounds (maximum {max_val}).")
+
+        return f_val
+
     def _setup(self) -> None:
         self.tools = {
             "connect": self._connect,
@@ -80,6 +103,12 @@ class RoboticsPlugin(Plugin):
         if connection_type not in valid_types:
             return {"success": False, "error": f"Invalid connection type. Must be one of: {valid_types}"}
         
+        # Validate connection config if provided
+        if config:
+            for key, val in config.items():
+                if key in ["max_velocity", "max_acceleration"]:
+                    self._validate_num(val, key, min_val=0.001)
+
         # In simulation mode, we don't need a real endpoint
         if connection_type == "simulation":
             self._connected = True
@@ -99,6 +128,22 @@ class RoboticsPlugin(Plugin):
         if not endpoint:
             return {"success": False, "error": "Endpoint required for non-simulation connections"}
         
+        if endpoint.strip().startswith("-"):
+            raise ValueError("Security Error: Potential argument injection detected in endpoint.")
+
+        if connection_type == "serial":
+            # Check for path traversal / local file disclosure
+            if os.name == "posix" or endpoint.startswith("/"):
+                target = os.path.realpath(os.path.abspath(os.path.expanduser(endpoint)))
+                dev_dir = os.path.realpath("/dev")
+                try:
+                    common = os.path.commonpath([dev_dir, target])
+                except ValueError:
+                    raise ValueError("Security Error: Invalid serial path.")
+
+                if common != dev_dir or target == dev_dir:
+                    raise ValueError("Security Error: Path traversal or unauthorized serial path detected.")
+
         # Attempt connection based on type
         try:
             if connection_type == "serial":
@@ -186,8 +231,10 @@ class RoboticsPlugin(Plugin):
             return {"success": False, "error": f"Unknown joint: {joint_id}"}
         
         # Validate position limits (typical industrial robot limits)
-        if not (-3.14 <= position <= 3.14):
-            return {"success": False, "error": "Position out of range (-π to π)"}
+        position = self._validate_num(position, "position", -3.14, 3.14)
+
+        if velocity is not None:
+            velocity = self._validate_num(velocity, "velocity", min_val=0.001, max_val=self._config["max_velocity"])
         
         vel = velocity or self._config["max_velocity"]
         
@@ -221,21 +268,30 @@ class RoboticsPlugin(Plugin):
         if not self._connected:
             return {"success": False, "error": "Not connected to a robot"}
         
-        # Build target pose
+        # Build target pose with validation
         target = {}
         if x is not None:
+            x = self._validate_num(x, "x")
             target["x"] = x
         if y is not None:
+            y = self._validate_num(y, "y")
             target["y"] = y
         if z is not None:
+            z = self._validate_num(z, "z")
             target["z"] = z
         if roll is not None:
+            roll = self._validate_num(roll, "roll")
             target["roll"] = roll
         if pitch is not None:
+            pitch = self._validate_num(pitch, "pitch")
             target["pitch"] = pitch
         if yaw is not None:
+            yaw = self._validate_num(yaw, "yaw")
             target["yaw"] = yaw
         
+        if velocity is not None:
+            velocity = self._validate_num(velocity, "velocity", min_val=0.001, max_val=self._config["max_velocity"])
+
         if not target:
             return {"success": False, "error": "No target position specified"}
         
@@ -273,6 +329,11 @@ class RoboticsPlugin(Plugin):
         if not self._connected:
             return {"success": False, "error": "Not connected to a robot"}
         
+        if position is not None:
+            position = self._validate_num(position, "position", 0.0, 1.0)
+        if force is not None:
+            force = self._validate_num(force, "force", 0.0, 1.0)
+
         if action == "open":
             self._robot_state["gripper_position"] = 1.0
             return {"success": True, "message": "Gripper opened", "position": 1.0}
@@ -372,10 +433,17 @@ class RoboticsPlugin(Plugin):
         if not waypoints or len(waypoints) == 0:
             return {"success": False, "error": "No waypoints provided"}
         
+        if velocity is not None:
+            velocity = self._validate_num(velocity, "velocity", min_val=0.001, max_val=self._config["max_velocity"])
+        blend_radius = self._validate_num(blend_radius, "blend_radius", min_val=0.0)
+
         # Validate waypoints
         for i, wp in enumerate(waypoints):
             if not isinstance(wp, dict):
                 return {"success": False, "error": f"Waypoint {i} must be a dictionary"}
+            for key in ["x", "y", "z", "roll", "pitch", "yaw"]:
+                if key in wp:
+                    wp[key] = self._validate_num(wp[key], f"waypoints[{i}][{key}]")
         
         vel = velocity or self._config["max_velocity"]
         self._robot_state["status"] = "executing_trajectory"
@@ -432,6 +500,10 @@ class RoboticsPlugin(Plugin):
         if not self._connected:
             return {"success": False, "error": "Not connected to a robot"}
         
+        for key, value in kwargs.items():
+            if key in ["max_velocity", "max_acceleration"]:
+                self._validate_num(value, key, min_val=0.001)
+
         allowed_keys = ["max_velocity", "max_acceleration", "coordinate_system", "safety_mode"]
         for key, value in kwargs.items():
             if key in allowed_keys:

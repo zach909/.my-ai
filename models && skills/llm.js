@@ -4,10 +4,7 @@ import { homedir } from "node:os";
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
 import { BackgroundQuantizer } from "./core/quantizer.js";
-import { ValueRangeAllocator } from "./core/value-range.js";
-import { MoERouter } from "./core/moe-router.js";
-import { NeuronMesh } from "./core/mesh.js";
-import { HyperDimensionalEngine } from "./core/hyperdimensional.js";
+import { UnifiedBrain } from "./core/unified-brain.js";
 import { RLMTrainer } from "./core/rlm.js";
 import { ThornsEngine } from "./core/thorns.js";
 import { NeuroPipeline } from "./core/pipeline.js";
@@ -24,10 +21,9 @@ export class NeuroclawLLM {
     tokenizer;
     trainer;
     quantizer;
-    valueAllocator;
-    moeRouter;
-    mesh;
-    hyperEngine;
+    brain;
+    codeTrainer;
+    predictorMode = "word";
     rlmTrainer;
     thornsEngine;
     projectId = "";
@@ -38,6 +34,7 @@ export class NeuroclawLLM {
     selfExtensionsDir;
     generationCount = 0;
     pipeline = null;
+    autonomousStopRequested = false;
     constructor(config = {}) {
         this.config = { ...DEFAULT_LLM_CONFIG, ...config };
         this.builder = new ExtensionBuilder();
@@ -54,29 +51,33 @@ export class NeuroclawLLM {
         this.extensionManager = new ExtensionManager({ rootDir: join(this.selfExtensionsDir, "registry") });
         this.extensionManager.load();
         this.trainer = new NeuroclawTrainer(this.tokenizer.getVocabSize(), this.tokenizer.getCharToId(), this.tokenizer.getIdToChar(), { hiddenDim: this.config.hiddenDim });
+        // A second, independently-trained predictor over the same char
+        // vocabulary -- kept separate from `trainer` so training on code
+        // (trainOnCode) never dilutes the prose n-gram statistics, and vice
+        // versa. Selected at generation time via predictorMode.
+        this.codeTrainer = new NeuroclawTrainer(this.tokenizer.getVocabSize(), this.tokenizer.getCharToId(), this.tokenizer.getIdToChar(), { hiddenDim: this.config.hiddenDim });
         this.quantizer = new BackgroundQuantizer({
             enabled: true, bits: 4, method: "mixed",
             calibrationSamples: 128, excludeLayers: []
         });
-        this.valueAllocator = new ValueRangeAllocator({
-            enabled: true, totalPoints: this.config.valuePoints,
-            minLearningRate: 0.0001, maxLearningRate: 0.01,
-            redistributionInterval: 100, decayFactor: 0.01
-        });
-        this.moeRouter = new MoERouter({
-            numExperts: this.config.numExperts, topK: 2,
-            inputDim: this.config.embeddingDim, outputDim: this.config.hiddenDim,
-            expertHiddenDim: this.config.hiddenDim, loadBalancingLoss: 0.01
-        });
-        this.mesh = new NeuronMesh({
-            nodeCount: this.config.meshNodes, initialConnectionWeight: 0.01,
-            propagationSteps: 5, convergenceThreshold: 0.001,
-            dampingFactor: 0.85, activationFn: "tanh"
-        });
-        this.hyperEngine = new HyperDimensionalEngine({
-            dimensions: this.config.hyperDimensions, ballStates: this.config.ballStates,
-            neuronCount: this.config.hyperNeurons, stateTransitionThreshold: 0.3,
-            noveltyDecay: 0.01, historyLength: 1000
+        // UnifiedBrain is the single module that *is* the model: value
+        // system, MoE, the nonlinear all-connected mesh, hyperdimensional
+        // thinking, the (toggleable) quantum net, and zip-loop binary I/O.
+        // Everything below that used to construct its own separate
+        // ValueRangeAllocator/MoERouter/NeuronMesh/HyperDimensionalEngine now
+        // reads them from this one instance via the getters below, instead
+        // of being a fourth disconnected copy of the same subsystems.
+        this.brain = new UnifiedBrain({
+            embeddingDim: this.config.embeddingDim,
+            hiddenDim: this.config.hiddenDim,
+            numExperts: this.config.numExperts,
+            meshNodes: this.config.meshNodes,
+            hyperDimensions: this.config.hyperDimensions,
+            hyperNeurons: this.config.hyperNeurons,
+            ballStates: this.config.ballStates,
+            valuePoints: this.config.valuePoints,
+            quantumEnabled: this.config.quantumEnabled ?? false,
+            persistDir: this.config.selfExtensionsDir ? join(this.config.selfExtensionsDir, "brain") : undefined,
         });
         this.thornsEngine = new ThornsEngine();
         this.rlmTrainer = new RLMTrainer({
@@ -93,83 +94,52 @@ export class NeuroclawLLM {
             hyperDimensions: this.config.hyperDimensions,
         });
     }
-    connectThesaurus(thesaurus) {
-        this.thornsEngine.connectThesaurus({
-            getSynonyms: (w) => thesaurus.getSynonyms(w),
-            getDefinition: (w) => thesaurus.getDefinition(w),
-            getExamples: (w) => thesaurus.getExamples(w),
-            lookup: (w) => {
-                const e = thesaurus.lookup(w);
-                return e ? { word: e.word, definition: e.definition, synonyms: e.synonyms, examples: e.examples } : undefined;
-            },
-        });
-    }
-    async build() {
+    /** Zero-sum elastic value budget -- delegates to UnifiedBrain, the single source of truth. */
+    get valueAllocator() { return this.brain.getVale(); }
+    /** Mixture of Experts router -- delegates to UnifiedBrain. */
+    get moeRouter() { return this.brain.getMoE(); }
+    /** Nonlinear, all-connected neuron mesh -- delegates to UnifiedBrain. */
+    get mesh() { return this.brain.getMesh(); }
+    /** Hyperdimensional thinking engine -- delegates to UnifiedBrain. */
+    get hyperEngine() { return this.brain.getHyper(); }
+    /** Toggle the (off-by-default) quantum interference stage of UnifiedBrain.think(). */
+    setQuantumEnabled(enabled) { this.brain.setQuantumEnabled(enabled); }
+    isQuantumEnabled() { return this.brain.isQuantumEnabled(); }
+    /** Selects which predictor generate() samples from: the prose model or the code model. */
+    setPredictorMode(mode) { this.predictorMode = mode === "code" ? "code" : "word"; }
+    getPredictorMode() { return this.predictorMode; }
+    /** Trains the separate code predictor (does not touch the prose trainer's statistics). */
+    async trainOnCode(code) { await this.codeTrainer.train(code); }
+    /**
+     * Builds the extension-builder project that backs this model. Its neuron
+     * baseline is real, not synthetic filler:
+     *  - if `code` is supplied (the foreground case -- e.g. code the user
+     *    just gave you), that code becomes the model via CodeToNet
+     *    (importCodeToNet), same as the manual "code net" builder action.
+     *  - otherwise the baseline is imported directly from UnifiedBrain's own
+     *    live mesh/vale snapshot (importFromBrainSnapshot) -- the actual
+     *    connected model, not a randomly-wired stand-in.
+     */
+    async build(code) {
         if (this.built)
             return;
         const project = this.builder.createProject("NeuroClaw LLM", "Full-stack neural language model");
         this.projectId = project.id;
-        const inputLayer = this.builder.addLayer(this.projectId, "Embedding Input", "input");
-        const inputNeurons = [];
-        for (let i = 0; i < this.config.embeddingDim; i++) {
-            const n = this.builder.addNeuron(this.projectId, `embed_${i}`, 0, { x: i * 20, y: 0 });
-            if (n)
-                inputNeurons.push(n.id);
+        let neuronIds;
+        if (typeof code === "string" && code.length > 0) {
+            const bytes = Buffer.from(code, "utf-8");
+            const n = this.builder.importCodeToNet(this.projectId, "user-code", bytes);
+            neuronIds = n ? [n.id] : [];
         }
-        if (inputLayer)
-            inputLayer.neurons = inputNeurons;
-        const hiddenLayer = this.builder.addLayer(this.projectId, "MoE Hidden", "hidden");
-        const hiddenNeurons = [];
-        for (let i = 0; i < this.config.hiddenDim; i++) {
-            const n = this.builder.addNeuron(this.projectId, `hidden_${i}`, 1, { x: i * 20, y: 200 });
-            if (n)
-                hiddenNeurons.push(n.id);
+        else {
+            const snapshot = this.brain.save();
+            const imported = this.builder.importFromBrainSnapshot(this.projectId, snapshot);
+            neuronIds = imported ? Array.from(project.neurons.keys()) : [];
         }
-        if (hiddenLayer)
-            hiddenLayer.neurons = hiddenNeurons;
-        const vocabSize = Math.min(this.tokenizer.getVocabSize(), this.config.hiddenDim);
-        const outputLayer = this.builder.addLayer(this.projectId, "Vocab Output", "output");
-        const outputNeurons = [];
-        for (let i = 0; i < vocabSize; i++) {
-            const n = this.builder.addNeuron(this.projectId, `vocab_${i}`, 2, { x: i * 20, y: 400 });
-            if (n)
-                outputNeurons.push(n.id);
-        }
-        if (outputLayer)
-            outputLayer.neurons = outputNeurons;
-        for (let i = 0; i < inputNeurons.length; i++) {
-            for (let j = 0; j < hiddenNeurons.length; j++) {
-                if (Math.random() < 0.3) {
-                    const w = (Math.random() - 0.5) * Math.sqrt(2.0 / this.config.embeddingDim);
-                    const from = inputNeurons[i];
-                    const to = hiddenNeurons[j];
-                    if (from && to)
-                        this.builder.connectNeurons(this.projectId, from, to, w);
-                }
-            }
-        }
-        for (let i = 0; i < hiddenNeurons.length; i++) {
-            for (let j = 0; j < outputNeurons.length; j++) {
-                if (Math.random() < 0.3) {
-                    const w = (Math.random() - 0.5) * Math.sqrt(2.0 / this.config.hiddenDim);
-                    const from = hiddenNeurons[i];
-                    const to = outputNeurons[j];
-                    if (from && to)
-                        this.builder.connectNeurons(this.projectId, from, to, w);
-                }
-            }
-        }
-        for (const nid of inputNeurons)
-            this.builder.dragLabel(this.projectId, nid, "embedding");
-        for (const nid of hiddenNeurons)
-            this.builder.dragLabel(this.projectId, nid, "expert-hidden");
-        for (const nid of outputNeurons)
-            this.builder.dragLabel(this.projectId, nid, "vocab-logit");
         this.builder.addAPIOutputLayer(this.projectId, {
             endpoints: [], port: 8080, host: "localhost", authRequired: false
         });
-        const allNeuronIds = [...inputNeurons, ...hiddenNeurons, ...outputNeurons];
-        const neuronStates = allNeuronIds.map((id) => ({
+        const neuronStates = neuronIds.map((id) => ({
             id, name: "", value: 0, learningRate: 0,
             states: new Map(), connections: new Map(),
             expertGroup: null, active: true
@@ -180,6 +150,11 @@ export class NeuroclawLLM {
         this.trained = true;
         this.built = true;
     }
+    /** Explicit foreground code-first build: the given code becomes the model's actual baseline, not background filler. */
+    async buildFromCode(code) {
+        this.built = false;
+        await this.build(code);
+    }
     async trainOnText(text) {
         await this.trainer.train(text);
         this.trained = true;
@@ -188,7 +163,9 @@ export class NeuroclawLLM {
         if (!this.built)
             await this.build();
         this.context = (this.context + ' ' + prompt).slice(-this.config.contextLength);
-        // Step 1: THORNS — intent detection, cross-check, simulation, plan
+        // Step 1: THORNS — intent detection, cross-check, simulation, plan.
+        // These signals now feed expert routing/RLM reward only -- they no
+        // longer get spliced into the visible response text (see below).
         const thornsOutput = await this.thornsEngine.think(prompt);
         if (thornsOutput.intent.confidence > 0.3) {
             this.moeRouter.addExpert({
@@ -205,37 +182,37 @@ export class NeuroclawLLM {
         const embedding = new Float32Array(this.config.embeddingDim);
         for (let i = 0; i < this.config.embeddingDim; i++)
             embedding[i] = rawEmb[i] ?? 0;
-        // Step 3: MoE — route input through mixture of experts
-        const moeOutput = this.moeRouter.forward(embedding);
-        // Step 4: Mesh — propagate signals across all-connected neuron mesh
-        const meshInputs = new Map();
-        for (let i = 0; i < Math.min(moeOutput.output.length, this.config.meshNodes); i++) {
-            meshInputs.set(`neuron_${i}`, moeOutput.output[i] ?? 0);
-        }
-        const meshResult = this.mesh.propagate(meshInputs);
-        // Step 5: Hyper-dimensional — multi-ball state update, novelty detection
-        const meshArray = [];
-        for (const [, v] of meshResult.finalStates) {
-            if (meshArray.length < this.config.hyperDimensions)
-                meshArray.push(v);
-        }
-        while (meshArray.length < this.config.hyperDimensions)
-            meshArray.push(0);
-        const hyperOutput = this.hyperEngine.process(meshArray);
+        // Steps 3-5: one real forward pass through UnifiedBrain -- MoE routing,
+        // the nonlinear all-connected mesh, hyperdimensional processing, and
+        // (if enabled) quantum interference -- replacing three separately
+        // constructed, disconnected copies of the same subsystems.
+        const thinkResult = await this.brain.think(Buffer.from(prompt, 'utf-8'), embedding);
         // Step 6: RLM — think through possibilities, avoid repeated actions
         const stateVec = new Float32Array(this.config.hiddenDim);
-        for (let i = 0; i < Math.min(moeOutput.output.length, this.config.hiddenDim); i++) {
-            stateVec[i] = moeOutput.output[i] ?? 0;
+        for (let i = 0; i < Math.min(thinkResult.hiddenState.length, this.config.hiddenDim); i++) {
+            stateVec[i] = thinkResult.hiddenState[i] ?? 0;
         }
         const rlmDecision = this.rlmTrainer.selectAction(stateVec);
-        // Build structured text output from all 6 subsystem signals + THORNS + thesaurus
-        const output = this.buildTextResponse(prompt, thornsOutput, hyperOutput, rlmDecision, moeOutput);
+        // Step 7: real generation -- autoregressively sample from the
+        // predictor's own probability distribution (previously computed but
+        // never called: NeuroclawTrainer.predict() + sampleFromProbs()) over
+        // the selected vocabulary (word or code, per predictorMode), instead
+        // of a hand-written template wrapped around the subsystem signals.
+        const predictor = this.predictorMode === 'code' ? this.codeTrainer : this.trainer;
+        const temperature = options.temperature ?? 0.8;
+        const maxTokens = options.maxTokens ?? 80;
+        let generated = this.generateTokens(this.context, predictor, maxTokens, temperature);
+        // A completely empty decode (e.g. the very first token sampled to
+        // end-of-sequence) gets one retry at a higher temperature -- THORNS'
+        // own templated .response never becomes the visible output, even as
+        // a fallback.
+        if (generated.trim().length === 0) {
+            generated = this.generateTokens(this.context, predictor, maxTokens, Math.min(1.5, temperature + 0.4));
+        }
+        const output = generated.trim();
         // Zero-sum value update: higher-performing experts gain value points
         const perf = thornsOutput.crossCheck.overallConfidence;
-        for (const [expertId, weight] of moeOutput.expertContributions) {
-            this.valueAllocator.updateNeuronValue(expertId, perf * weight);
-        }
-        this.valueAllocator.applyDecay();
+        this.brain.applyValueFeedback(perf, thinkResult.expertContributions);
         // RLM experience replay
         this.rlmTrainer.addExperience({
             state: stateVec, action: rlmDecision.action,
@@ -244,15 +221,13 @@ export class NeuroclawLLM {
             priority: perf, timestamp: Date.now(),
         });
         this.rlmTrainer.train();
-        // THORNS iterative review loop: plan → review → continue/done
-        // If confidence is below threshold, run a second pass and take the better result
+        // THORNS iterative review: if confidence is low, take a second read
+        // on the prompt and let it inform the *next* RLM training signal --
+        // it's feedback for learning, not more text stapled onto the answer.
         const reviewThreshold = 0.5;
-        let finalOutput = output;
         if (thornsOutput.crossCheck.overallConfidence < reviewThreshold || thornsOutput.intent.intent === 'query') {
             const reviewOutput = await this.thornsEngine.think(`review: ${prompt}`);
             if (reviewOutput.crossCheck.overallConfidence > thornsOutput.crossCheck.overallConfidence) {
-                const revisedPlan = reviewOutput.actionPlan.join(' → ');
-                finalOutput = `${output}\n  [Review→${reviewOutput.simulation.bestAction}] ${revisedPlan}`;
                 this.rlmTrainer.addExperience({
                     state: stateVec, action: rlmDecision.action,
                     reward: reviewOutput.crossCheck.overallConfidence,
@@ -263,6 +238,10 @@ export class NeuroclawLLM {
                 });
             }
         }
+        // Confidence lives underneath the response, on its own line -- never
+        // interleaved into the generated text itself.
+        const confidencePct = (perf * 100).toFixed(0);
+        let finalOutput = `${output}\n\nConfidence: ${confidencePct}%`;
         // Every 5 generations create a memory extension (saved without → installed with quantization)
         this.generationCount++;
         if (this.generationCount % 5 === 0)
@@ -273,72 +252,51 @@ export class NeuroclawLLM {
         // stored extension keeps the clean, memory-free output.
         if (Array.isArray(options.memoryContext) && options.memoryContext.length > 0) {
             const grounding = options.memoryContext.map((m) => `  • ${String(m).slice(0, 120)}`).join('\n');
-            finalOutput = `${finalOutput}\n  [Grounded in ${options.memoryContext.length} related memory]\n${grounding}`;
+            finalOutput = `${finalOutput}\n\n[Grounded in ${options.memoryContext.length} related memory]\n${grounding}`;
         }
         return finalOutput;
     }
-    buildTextResponse(prompt, thorns, hyper, rlm, moe) {
-        const intent = thorns.intent.intent;
-        const confidence = (thorns.crossCheck.overallConfidence * 100).toFixed(0);
-        const plan = thorns.actionPlan.join(' → ');
-        const isNovel = hyper.noveltyScore > 0.4;
-        const novelTag = isNovel ? '[novel]' : '[familiar]';
-        // L = THORNS/dictionary lookup: get X (synonyms), Y (definition), Z (examples) per keyword
-        const keywords = prompt.toLowerCase().split(/\W+/).filter(w => w.length > 3);
-        const contextParts = [];
-        for (const word of keywords.slice(0, 4)) {
-            const t = this.thornsEngine.getThesaurusData(word);
-            if (t) {
-                if (t.Y)
-                    contextParts.push(`${word}: ${t.Y.slice(0, 60)}`);
-                else if (t.X.length > 0)
-                    contextParts.push(`${word} ≈ ${t.X.slice(0, 2).join(', ')}`);
-            }
+    /** Real autoregressive decode: samples one character at a time from `predictor`'s own distribution. */
+    generateTokens(seedContext, predictor, maxTokens, temperature) {
+        let context = seedContext;
+        let generated = '';
+        const eos = this.tokenizer.getSpecialTokens().eos;
+        for (let i = 0; i < maxTokens; i++) {
+            const probs = predictor.predict(context.slice(-8));
+            const nextId = this.sampleFromProbs(probs, temperature);
+            if (nextId === eos)
+                break;
+            const ch = this.tokenizer.tokenIdToChar(nextId);
+            generated += ch;
+            context += ch;
         }
-        const contextLine = contextParts.length > 0
-            ? `\n  Dictionary: ${contextParts.slice(0, 3).join(' | ')}`
-            : '';
-        // Top expert selected by MoE
-        const topExpert = Array.from(moe.expertContributions.entries())
-            .sort((a, b) => b[1] - a[1])[0];
-        const expertNote = topExpert ? ` via ${topExpert[0]}` : '';
-        // Thinking steps logged by RLM (avoids repeating same actions)
-        const thinkNote = rlm.thinkingSteps.length > 0
-            ? ` (${rlm.thinkingSteps.length} think steps)`
-            : '';
-        switch (intent) {
-            case 'command':
-                return `[Execute${expertNote}${thinkNote}] ${plan}${contextLine}\n  ${novelTag} confidence:${confidence}%`;
-            case 'creation':
-                return `[Build${expertNote}${thinkNote}] ${plan}${contextLine}\n  ${novelTag} confidence:${confidence}%`;
-            case 'analysis':
-                return `[Analysis${expertNote}${thinkNote}] ${plan}${contextLine}\n  ${novelTag} confidence:${confidence}%`;
-            case 'exploration':
-                return `[Explore${expertNote}${thinkNote}] ${plan}${contextLine}\n  ${novelTag} confidence:${confidence}%`;
-            case 'query': {
-                // Build a conversational answer using dictionary definitions + synonyms
-                const words = prompt.toLowerCase().split(/\W+/).filter(w => w.length > 3);
-                const answerParts = [];
-                for (const w of words.slice(0, 5)) {
-                    const t = this.thornsEngine.getThesaurusData(w);
-                    if (t?.Y)
-                        answerParts.push(`${w} means: ${t.Y}`);
-                    else if (t && t.X.length > 0)
-                        answerParts.push(`${w} (also: ${t.X.slice(0, 3).join(', ')})`);
-                }
-                // When the dictionary yields no definitions we fall back to the
-                // THORNS response, which already carries its own Plan/novelty/
-                // confidence footer — returning it verbatim avoids emitting a
-                // second, duplicate "Plan:" line.
-                if (answerParts.length === 0) {
-                    return thorns.response;
-                }
-                const answer = answerParts.join('. ');
-                return `${answer}${contextLine}\n  Plan: ${plan} | ${novelTag} confidence:${confidence}%`;
+        return generated;
+    }
+    /**
+     * Keeps running -- pulls the next prompt, generates, hands the result to
+     * onOutput -- until stopped. This is the "not autonomous" gap closed:
+     * previously every entry point was one request in, one response out,
+     * with nothing that kept going on its own.
+     */
+    async runAutonomous(nextPrompt, onOutput, shouldStop = () => false, idleDelayMs = 25) {
+        this.autonomousStopRequested = false;
+        while (!this.autonomousStopRequested && !shouldStop()) {
+            const prompt = await nextPrompt();
+            if (prompt === null || prompt === undefined) {
+                await new Promise((resolve) => setTimeout(resolve, idleDelayMs));
+                continue;
             }
-            default:
-                return `${thorns.response}${contextLine}\n  ${novelTag} confidence:${confidence}%`;
+            const output = await this.generate(prompt);
+            await onOutput(output);
         }
+    }
+    requestAutonomousStop() { this.autonomousStopRequested = true; }
+    /** The model's own way of persisting its live neuron state and turning the autonomous loop off. */
+    async saveAndStop() {
+        const snapshot = this.brain.save();
+        this.requestAutonomousStop();
+        this.brain.requestStop();
+        return snapshot;
     }
     async createSelfExtension(prompt, output) {
         const extId = `self_ext_${this.generationCount}`;

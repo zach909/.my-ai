@@ -1,7 +1,6 @@
 import * as readline from 'node:readline';
 import type { NeuroclawLLM } from "../models && skills/llm.js";
 import type { NeuroPipeline } from "../models && skills/core/pipeline.js";
-import type { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import type { PluginRegistry } from "../plugin_manager/registry.js";
 import type { SystemAccess } from "./system-access.js";
 import type { MultiDesktopManager } from "./multi-desktop.js";
@@ -23,7 +22,6 @@ const GRAY = '\x1b[90m';
 export class CLI {
   private llm: NeuroclawLLM;
   private pipeline: NeuroPipeline;
-  private thesaurus: ThesaurusDictionary;
   private pluginRegistry: PluginRegistry;
   private systemAccess?: SystemAccess;
   private multiDesktop?: MultiDesktopManager;
@@ -38,7 +36,6 @@ export class CLI {
   constructor(
     llm: NeuroclawLLM,
     pipeline: NeuroPipeline,
-    thesaurus: ThesaurusDictionary,
     pluginRegistry: PluginRegistry,
     systemAccess?: SystemAccess,
     multiDesktop?: MultiDesktopManager,
@@ -46,7 +43,6 @@ export class CLI {
   ) {
     this.llm = llm;
     this.pipeline = pipeline;
-    this.thesaurus = thesaurus;
     this.pluginRegistry = pluginRegistry;
     this.systemAccess = systemAccess;
     this.multiDesktop = multiDesktop;
@@ -141,10 +137,6 @@ export class CLI {
       if (lower.startsWith('search ')) { this.handleSearch(trimmed.slice(7)); this.rl?.prompt(); return; }
       if (lower.startsWith('nsearch ')) { this.handleNetSearchGenerate(trimmed.slice(8)); this.rl?.prompt(); return; }
       if (lower.startsWith('build ')) { this.handleBuild(trimmed.slice(6)); this.rl?.prompt(); return; }
-      if (lower.startsWith('dict ') || lower.startsWith('lookup ')) {
-        const word = trimmed.includes(' ') ? trimmed.slice(trimmed.indexOf(' ') + 1) : '';
-        this.handleDict(word); this.rl?.prompt(); return;
-      }
       // Async commands: queue so they run sequentially (prevents race when stdin is piped)
       if (lower === 'chat' || lower === 'start') { this.enqueue(() => this.startChat()); return; }
       if (lower === 'save') { this.enqueue(() => this.handleSave()); return; }
@@ -187,7 +179,6 @@ export class CLI {
     console.log(`    ${this.colorize(GREEN, 'search')} ${this.colorize(YELLOW, '<query>')}  ${this.colorize(GRAY, 'Search neurons by name/label')}`);
     console.log(`    ${this.colorize(GREEN, 'nsearch')} ${this.colorize(YELLOW, '<query>')} ${this.colorize(GRAY, 'Net Search: semantic match + generate a network')}`);
     console.log(`    ${this.colorize(GREEN, 'neuri')} ${this.colorize(YELLOW, '<code>')}    ${this.colorize(GRAY, 'Run NeuriLang neuron definition')}`);
-    console.log(`    ${this.colorize(GREEN, 'dict')} ${this.colorize(YELLOW, '<word>')}     ${this.colorize(GRAY, 'Look up word in dictionary (Y/X/Z)')}`);
     console.log(`    ${this.colorize(GREEN, 'build')} ${this.colorize(YELLOW, '<name>')}    ${this.colorize(GRAY, 'Create a new extension project')}`);
     console.log(`    ${this.colorize(GREEN, 'plugins')}         ${this.colorize(GRAY, 'List all plugins and skills')}`);
     console.log(`    ${this.colorize(GREEN, 'save')}            ${this.colorize(GRAY, 'Save model (full precision)')}`);
@@ -472,22 +463,6 @@ export class CLI {
     console.log('');
   }
 
-  private handleDict(word: string): void {
-    if (!word) { console.log(this.colorize(GRAY, '  Usage: dict <word>')); return; }
-    const def = this.thesaurus.getDefinition(word);
-    const syns = this.thesaurus.getSynonyms(word);
-    const examples = this.thesaurus.getExamples(word);
-    if (!def && syns.length === 0) {
-      console.log(this.colorize(GRAY, `  "${word}" not in dictionary`));
-      return;
-    }
-    console.log('');
-    console.log(this.colorize(BOLD, `  ${word}:`));
-    if (def) console.log(`    ${this.colorize(YELLOW, 'Y')} (definition): ${def}`);
-    if (syns.length > 0) console.log(`    ${this.colorize(GREEN, 'X')} (synonyms):   ${syns.join(', ')}`);
-    if (examples.length > 0) console.log(`    ${this.colorize(CYAN, 'Z')} (examples):   ${examples.slice(0, 2).join(' | ')}`);
-    console.log('');
-  }
 
   private handleBuild(name: string): void {
     if (!name) { console.log(this.colorize(GRAY, '  Usage: build <extension-name>')); return; }

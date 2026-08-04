@@ -111,14 +111,41 @@ export class AppLauncher extends EventEmitter {
         this.moveWindowById(app.windowId, workspace);
     }
     moveWindowById(windowId, workspace) {
+        if (typeof windowId !== 'string' || windowId.trim().startsWith('-') || !/^[a-zA-Z0-9xX]+$/.test(windowId.trim())) {
+            throw new Error('Security Error: Invalid or malicious windowId detected.');
+        }
+        const wsInt = parseInt(workspace, 10);
+        if (isNaN(wsInt) || wsInt < 0 || wsInt > 1000) {
+            throw new Error('Security Error: Invalid workspace.');
+        // Validate inputs to prevent shell/command/argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(windowId) || !/^\d+$/.test(workspace)) {
+        if (typeof windowId !== 'string' || !/^[a-fA-F0-9xX]+$/.test(windowId)) {
+            this.emit('error', { message: `Invalid windowId format` });
+            return;
+        }
+        const wsInt = parseInt(workspace, 10);
+        if (isNaN(wsInt) || wsInt < 0 || wsInt > 100000) {
+            this.emit('error', { message: `Invalid workspace index` });
+        if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(String(windowId)) || !/^\d+$/.test(String(workspace))) {
+            this.emit('error', { message: `Invalid arguments for moving window: windowId=${windowId}, workspace=${workspace}` });
+            return;
+        }
         try {
-            execSync(`wmctrl -i -r ${windowId} -t ${workspace}`, { timeout: 2000 });
+            execSync(`wmctrl -i -r ${windowId} -t ${wsInt}`, { timeout: 2000 });
         }
         catch (e) {
-            this.emit('error', { message: `Failed to move window ${windowId} to workspace ${workspace}: ${e}` });
+            this.emit('error', { message: `Failed to move window ${windowId} to workspace ${wsInt}: ${e}` });
         }
     }
     bringToCurrentWorkspace(appIdOrWindowId) {
+        if (typeof appIdOrWindowId !== 'string' || appIdOrWindowId.trim().startsWith('-') || !/^[a-zA-Z0-9xX_]+$/.test(appIdOrWindowId.trim())) {
+            throw new Error('Security Error: Invalid or malicious appIdOrWindowId detected.');
+        // Validate inputs to prevent shell/command/argument injection
+        if (!/^[a-zA-Z0-9_xX-]+$/.test(appIdOrWindowId)) {
+        if (typeof appIdOrWindowId !== 'string' || !/^[a-fA-F0-9xX_]+$/.test(appIdOrWindowId)) {
+        if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(String(appIdOrWindowId))) {
+            return;
+        }
         try {
             execSync(`wmctrl -i -R ${appIdOrWindowId}`, { timeout: 2000 });
         }

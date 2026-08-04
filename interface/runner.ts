@@ -4,14 +4,12 @@ import { SystemAccess } from './system-access.js';
 import { MultiDesktopManager } from './multi-desktop.js';
 import type { NeuroclawLLM } from "../models && skills/llm.js";
 import type { NeuroPipeline, PipelineResult } from "../models && skills/core/pipeline.js";
-import type { ThesaurusDictionary } from "../models && skills/thesaurus.js";
 import type { PluginRegistry } from "../plugin_manager/registry.js";
 import { embedText } from "../models && skills/core/neuro-lang.js";
 
 export class NeuroclawRunner extends EventEmitter {
   private llm: NeuroclawLLM;
   private pipeline: NeuroPipeline;
-  private thesaurus: ThesaurusDictionary;
   private pluginRegistry: PluginRegistry;
   private encryptionManager: EncryptionManager;
   private systemAccess: SystemAccess;
@@ -34,7 +32,6 @@ export class NeuroclawRunner extends EventEmitter {
   constructor(
     llm: NeuroclawLLM,
     pipeline: NeuroPipeline,
-    thesaurus: ThesaurusDictionary,
     pluginRegistry: PluginRegistry,
     systemAccess?: SystemAccess,
     multiDesktopManager?: MultiDesktopManager,
@@ -42,7 +39,6 @@ export class NeuroclawRunner extends EventEmitter {
     super();
     this.llm = llm;
     this.pipeline = pipeline;
-    this.thesaurus = thesaurus;
     this.pluginRegistry = pluginRegistry;
     this.encryptionManager = new EncryptionManager();
     this.systemAccess = systemAccess ?? new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
@@ -183,6 +179,5 @@ export class NeuroclawRunner extends EventEmitter {
   getMultiDesktopManager(): MultiDesktopManager { return this.multiDesktopManager; }
   getLLM(): NeuroclawLLM { return this.llm; }
   getPipeline(): NeuroPipeline { return this.pipeline; }
-  getThesaurus(): ThesaurusDictionary { return this.thesaurus; }
   getPluginRegistry(): PluginRegistry { return this.pluginRegistry; }
 }

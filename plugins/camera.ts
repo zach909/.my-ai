@@ -44,7 +44,15 @@ export class CameraPlugin extends BasePlugin {
           };
         }
       }
-    } catch { }
+    } catch { } finally {
+      // mkdtempSync() above runs on every call regardless of outcome (no
+      // camera tool found, the tool failed, outPath never written) -- same
+      // unbounded resource leak already fixed in screenshots.ts/
+      // microphone.ts, just via a directory this method alone never cleaned
+      // up on any path.
+      try { unlinkSync(outPath); } catch { }
+      try { rmdirSync(tmpDir); } catch { }
+    }
 
     return {
       imageData: "",
