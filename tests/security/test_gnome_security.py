@@ -1,10 +1,8 @@
 import unittest
 import re
 import os
-import unittest
 from unittest.mock import patch
 from plugins.plugin_gnome import GnomePlugin, _safe_workspace, _safe_window_id, _safe_workspace_name
-from plugins.plugin_gnome import GnomePlugin
 
 class TestGnomeSecurity(unittest.TestCase):
     def setUp(self):
@@ -87,6 +85,7 @@ class TestGnomeSecurity(unittest.TestCase):
             self.plugin.call("launch_on_desktop", "ls", workspace="invalid")
         with self.assertRaises(ValueError):
             self.plugin.call("launch_on_desktop", "ls", workspace=-1)
+
     def test_safe_workspace_validation(self):
         # Valid cases
         self.assertEqual(_safe_workspace(0), 0)
@@ -188,6 +187,7 @@ class TestGnomeSecurity(unittest.TestCase):
         with self.assertRaises(ValueError) as ctx:
             self.plugin.call("launch_on_desktop", "firefox", workspace="invalid")
         self.assertIn("Security Error", str(ctx.exception))
+
     def test_switch_workspace_invalid_index(self):
         # Negative index should raise ValueError
         with self.assertRaises(ValueError) as ctx:
@@ -235,8 +235,6 @@ class TestGnomeSecurity(unittest.TestCase):
 
     def test_valid_params_do_not_raise_security_error(self):
         # Valid parameters should be processed normally without raising ValueError
-        # (Though they might fail due to system-level commands like wmctrl missing,
-        # they shouldn't trigger the security block's ValueError).
         try:
             self.plugin._switch_workspace(1)
         except ValueError as e:
@@ -250,10 +248,11 @@ class TestGnomeSecurity(unittest.TestCase):
             self.fail(f"Valid window ID format and workspace index raised ValueError: {e}")
         except Exception:
             pass
+
     def test_window_id_validity(self):
         # Valid window IDs
         res = self.plugin.call("move_window", "0x03400003", 2)
-        # Should not raise any validation error on window id format (will return "wmctrl required" if not available, which is fine)
+        # Should not raise any validation error on window id format
         self.assertNotIn("Invalid window ID format", res)
 
         res2 = self.plugin.call("move_window", "window-123_abc", 0)
