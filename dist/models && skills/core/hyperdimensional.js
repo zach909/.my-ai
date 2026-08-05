@@ -981,8 +981,19 @@ export class HyperDimensionalEngine {
     }
     computeStateEnergy(state) {
         let energy = 0;
-        for (let d = 1; d < state.length; d++) {
-            energy += state[d] * state[d];
+        const len = state.length;
+        let d = 1;
+        const limit = len - 3;
+        for (; d < limit; d += 4) {
+            const v0 = state[d];
+            const v1 = state[d + 1];
+            const v2 = state[d + 2];
+            const v3 = state[d + 3];
+            energy += v0 * v0 + v1 * v1 + v2 * v2 + v3 * v3;
+        }
+        for (; d < len; d++) {
+            const val = state[d];
+            energy += val * val;
         }
         return energy / this.config.dimensions;
     }
@@ -1061,7 +1072,27 @@ export class HyperDimensionalEngine {
         for (let d = 0; d < dims; d++) {
             hist.fill(0);
             const rowOffset = (d + 1) * N;
-            for (let i = 0; i < N; i++) {
+            let i = 0;
+            const limit = N - 7;
+            for (; i < limit; i += 8) {
+                const v0 = this.allStates[rowOffset + i];
+                const v1 = this.allStates[rowOffset + i + 1];
+                const v2 = this.allStates[rowOffset + i + 2];
+                const v3 = this.allStates[rowOffset + i + 3];
+                const v4 = this.allStates[rowOffset + i + 4];
+                const v5 = this.allStates[rowOffset + i + 5];
+                const v6 = this.allStates[rowOffset + i + 6];
+                const v7 = this.allStates[rowOffset + i + 7];
+                hist[Math.min(9, Math.floor((v0 + 1) * 5))]++;
+                hist[Math.min(9, Math.floor((v1 + 1) * 5))]++;
+                hist[Math.min(9, Math.floor((v2 + 1) * 5))]++;
+                hist[Math.min(9, Math.floor((v3 + 1) * 5))]++;
+                hist[Math.min(9, Math.floor((v4 + 1) * 5))]++;
+                hist[Math.min(9, Math.floor((v5 + 1) * 5))]++;
+                hist[Math.min(9, Math.floor((v6 + 1) * 5))]++;
+                hist[Math.min(9, Math.floor((v7 + 1) * 5))]++;
+            }
+            for (; i < N; i++) {
                 const v = this.allStates[rowOffset + i];
                 const idx = Math.min(9, Math.floor((v + 1) * 5));
                 hist[idx]++;
@@ -1108,7 +1139,24 @@ export class HyperDimensionalEngine {
     }
     hashVector(vector) {
         let hash = 0;
-        for (let i = 0; i < vector.length; i++) {
+        const len = vector.length;
+        let i = 0;
+        const limit = len - 3;
+        for (; i < limit; i += 4) {
+            const v0 = Math.round(vector[i] * 10000);
+            const v1 = Math.round(vector[i + 1] * 10000);
+            const v2 = Math.round(vector[i + 2] * 10000);
+            const v3 = Math.round(vector[i + 3] * 10000);
+            hash = ((hash << 5) - hash) + v0;
+            hash = hash & hash;
+            hash = ((hash << 5) - hash) + v1;
+            hash = hash & hash;
+            hash = ((hash << 5) - hash) + v2;
+            hash = hash & hash;
+            hash = ((hash << 5) - hash) + v3;
+            hash = hash & hash;
+        }
+        for (; i < len; i++) {
             const val = Math.round(vector[i] * 10000);
             hash = ((hash << 5) - hash) + val;
             hash = hash & hash;
