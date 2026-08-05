@@ -1,6 +1,6 @@
 # Skills
 
-Skills are expert modules added to the Mixture of Experts (MoE) system in Prometheus Elastic Core. They provide specialized capabilities for specific domains and tasks.
+Skills are expert modules added to the Mixture of Experts (MoE) system in NeuroClaw. They provide specialized capabilities for specific domains and tasks.
 
 ## Overview
 
@@ -253,4 +253,4 @@ Optimize:
 
 ---
 
-*Skills are the specialized experts that make Prometheus Elastic Core capable across diverse domains.*
+*Skills are the specialized experts that make NeuroClaw capable across diverse domains.*

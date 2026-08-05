@@ -1,5 +1,5 @@
 /**
- * Prometheus Elastic Core - Infinite Zip I/O Loop
+ * NeuroClaw - Infinite Zip I/O Loop
  *
  * Implements Section 1.10: Zip I/O Loop (Context & Output)
  * "The AI takes inputs as zips and emits outputs as zips, both running as loops.

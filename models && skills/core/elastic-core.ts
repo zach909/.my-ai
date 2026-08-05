@@ -81,7 +81,7 @@ export interface ElasticCoreUpdateSummary {
 }
 
 /**
- * Experimental transformer-core replacement for Prometheus Elastic Core.
+ * Experimental transformer-core replacement for NeuroClaw.
  *
  * This block intentionally keeps the surrounding transformer infrastructure
  * reusable: callers pass normal token/embedding vectors in and receive a normal

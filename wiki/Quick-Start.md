@@ -1,6 +1,6 @@
 # Quick Start Guide
 
-Get up and running with Prometheus Elastic Core / NeuroLang AI in minutes.
+Get up and running with NeuroClaw / NeuroLang AI in minutes.
 
 ## System Requirements
 

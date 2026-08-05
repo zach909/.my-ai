@@ -2,11 +2,11 @@
 
 ## Overview
 
-Neuroclaw is a complete AI system running locally on macOS, Windows, and Linux. It combines neural networks, machine learning, quantization, and extension systems to create an autonomous AI that learns new capabilities and maintains user alignment.
+Neuroclaw is a complete AI agent running locally on macOS, Windows, and Linux. It is powered by OneBrain, the neural mesh engine underneath it — quantization, machine learning, and all-to-all neuron computation happen there. The agent itself is composed of skills, each produced by the Extension Builder and registered as a routable MoE expert, and together these layers let Neuroclaw learn new capabilities and maintain user alignment without external APIs.
 
 ## Core Architecture
 
-### 1. Neural Mesh Engine (Prometheus Elastic Core)
+### 1. Neural Mesh Engine (OneBrain)
 
 **Location:** `src/features/mesh/mesh-engine.ts`
 

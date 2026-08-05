@@ -1,5 +1,5 @@
 /**
- * Prometheus Elastic Core — Core Type Definitions
+ * NeuroClaw — Core Type Definitions
  *
  * Every type in the mesh engine. Neurons hold multi-dimensional state vectors
  * (each component is a "multiple"). Connections are small weight blocks letting

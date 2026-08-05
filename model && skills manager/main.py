@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Prometheus Elastic Core — unified entry point.
+"""NeuroClaw — unified entry point.
 
 This connects the pieces of the system. (It replaces an earlier stand-alone,
 torch-less NeuroLang interpreter that duplicated neurolang.py — the real,

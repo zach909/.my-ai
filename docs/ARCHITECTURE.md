@@ -1,8 +1,8 @@
-# Prometheus Elastic Core / NeuroLang AI System Architecture
+# NeuroClaw / NeuroLang AI System Architecture
 
 ## Overview
 
-Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs entirely on your machine (Mac, Windows, or Linux). Your data stays encrypted end-to-end, always. The system is designed to be autonomous, with infinite context through all-to-all neuron connectivity, and capable of learning without forgetting through elastic value budgets.
+NeuroClaw is a private, local AI system that runs entirely on your machine (Mac, Windows, or Linux). Your data stays encrypted end-to-end, always. The system is designed to be autonomous, with infinite context through all-to-all neuron connectivity, and capable of learning without forgetting through elastic value budgets.
 
 **Project Location**: `home/zach/.my-ai`  
 **Skills Repository**: `https://github.com/zach909/.my-ai/tree/skills`  
@@ -1449,7 +1449,7 @@ Found while resolving a real GitHub-reported merge conflict on an open PR (`merg
 
 Confirmed via `git show origin/main:"model && skills manager/README.md"` that this was already present on `main` — not something this session's own changes introduced. The duplication:
 
-- **Two full top-level headers** (`# Prometheus Elastic Core — mesh AI (model & skills manager)` and `# Prometheus Elastic Core — mesh AI`), each with its own near-duplicate "retirement note" blockquote and intro paragraph. Kept the more complete/detailed of the two, which is a strict superset of the other's content.
+- **Two full top-level headers** (`# NeuroClaw — mesh AI (model & skills manager)` and `# NeuroClaw — mesh AI`), each with its own near-duplicate "retirement note" blockquote and intro paragraph. Kept the more complete/detailed of the two, which is a strict superset of the other's content.
 - **Duplicate `Layout` file-tree entries**: `mesh.py`, `model.py`, and `elastic_mesh.py` each listed twice inside the `tinygpt/` subtree with different comments, and `chat.py`/`core.py`/`test_core.py`/`test_elastic_mesh.py` each listed twice at the top level. Merged to one entry per path, keeping the more descriptive comment each time.
 - **Two contradictory claims about the same flag**: one paragraph said the elastic-mesh block "is a separate, importable component... not a `pretrain.py` flag," while another (and the `Layout` section's own `pretrain.py` entry) correctly said `--use-elastic-mesh` *is* a real, documented flag that's currently inert. Verified directly against `pretrain.py`: `ap.add_argument("--use-elastic-mesh", ...)` exists, and the code itself prints `"WARNING: --use-elastic-mesh currently has no effect..."` — the second claim is the accurate one; the first (a stale duplicate) was removed.
 - **A genuinely broken sentence**, not just a repeat: "Each `.pt` checkpoint stores the full `ModelConfig`, so `chat.py` and `finetune.py` reconstruct the exact mesh architecture automatically... `finetune.py` reconstruct the exact architecture (mesh, MoE, or elastic-mesh configuration) automatically..." — the second half's missing subject ("chat.py and") and mismatched verb conjugation ("reconstruct" without "s") is the unmistakable signature of a merge that concatenated two versions of the same sentence instead of choosing one. Merged into a single grammatical sentence combining both halves' real information.

@@ -1,6 +1,6 @@
-# Prometheus Elastic Core / NeuroLang AI Wiki
+# NeuroClaw / NeuroLang AI Wiki
 
-Welcome to the comprehensive wiki for the Prometheus Elastic Core (NeuroClaw) AI system.
+Welcome to the comprehensive wiki for NeuroClaw. NeuroClaw is the agent; it's powered by **OneBrain**, the neural mesh engine underneath it. The agent itself is made of skills — each one trained and packaged by the [[Builder|Extension Builder]] and registered into OneBrain as a routable [[MoE]] expert.
 
 ## Table of Contents
 

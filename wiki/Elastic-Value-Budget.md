@@ -1,6 +1,6 @@
 # Elastic Value Budget
 
-The Elastic Value Budget is a zero-sum neuron value allocation system that enables Prometheus Elastic Core to learn without forgetting.
+The Elastic Value Budget is a zero-sum neuron value allocation system that enables NeuroClaw to learn without forgetting.
 
 ## Overview
 
@@ -221,4 +221,4 @@ Solution: Reduce update frequency, increase thresholds
 
 ---
 
-*The Elastic Value Budget is key to Prometheus Elastic Core's ability to continuously learn while preserving important knowledge.*
+*The Elastic Value Budget is key to NeuroClaw's ability to continuously learn while preserving important knowledge.*

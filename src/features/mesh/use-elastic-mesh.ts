@@ -1,5 +1,5 @@
 /**
- * Prometheus Elastic Core — useElasticMesh hook
+ * NeuroClaw — useElasticMesh hook
  *
  * Manages the ElasticMesh instance lifecycle: creation, propagation loop,
  * stats polling, input injection, and learning. Uses requestAnimationFrame

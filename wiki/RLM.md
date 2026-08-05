@@ -1,6 +1,6 @@
 # RLM (Reinforcement Learning Module)
 
-RLM is how Prometheus Elastic Core evaluates multiple possible reasoning steps before committing to one, and remembers what it has already tried so it stops repeating itself — the design notes' "Reinforcement Learning" background system.
+RLM is how NeuroClaw evaluates multiple possible reasoning steps before committing to one, and remembers what it has already tried so it stops repeating itself — the design notes' "Reinforcement Learning" background system.
 
 ## Overview
 

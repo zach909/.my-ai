@@ -1,4 +1,4 @@
-# Prometheus Elastic Core — mesh AI
+# NeuroClaw — mesh AI
 
 > **Note:** the decoder-only GPT transformer described below has been **retired**.
 > The model is now the **all-to-all neuron mesh** (`tinygpt/mesh.py`, §1), which
