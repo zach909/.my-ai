@@ -260,28 +260,28 @@ class TestGnomeSecurity(unittest.TestCase):
         self.assertNotIn("Invalid window ID format", res2)
 
         # Invalid window IDs (argument injection, characters like ';')
-        res3 = self.plugin.call("move_window", "-v", 2)
-        self.assertIn("Invalid window ID format", res3)
+        with self.assertRaises(ValueError):
+            self.plugin.call("move_window", "-v", 2)
 
-        res4 = self.plugin.call("move_window", "0x1234; rm -rf /", 2)
-        self.assertIn("Invalid window ID format", res4)
+        with self.assertRaises(ValueError):
+            self.plugin.call("move_window", "0x1234; rm -rf /", 2)
 
     def test_workspace_index_validity(self):
         # Invalid workspaces (out-of-bounds, invalid string, or injection-like format)
-        res1 = self.plugin.call("switch_workspace", -1)
-        self.assertIn("Invalid workspace index", res1)
+        with self.assertRaises(ValueError):
+            self.plugin.call("switch_workspace", -1)
 
-        res2 = self.plugin.call("switch_workspace", 1001)
-        self.assertIn("Invalid workspace index", res2)
+        with self.assertRaises(ValueError):
+            self.plugin.call("switch_workspace", 1001)
 
-        res3 = self.plugin.call("switch_workspace", "invalid_idx")
-        self.assertIn("Invalid workspace index", res3)
+        with self.assertRaises(ValueError):
+            self.plugin.call("switch_workspace", "invalid_idx")
 
-        res4 = self.plugin.call("remove_workspace", -5)
-        self.assertIn("Invalid workspace index", res4)
+        with self.assertRaises(ValueError):
+            self.plugin.call("remove_workspace", -5)
 
-        res5 = self.plugin.call("remove_workspace", "5; console.log(1)")
-        self.assertIn("Invalid workspace index", res5)
+        with self.assertRaises(ValueError):
+            self.plugin.call("remove_workspace", "5; console.log(1)")
 
     def test_launch_on_desktop_blocked_and_invalid_workspace(self):
         # Destructive command
@@ -289,8 +289,8 @@ class TestGnomeSecurity(unittest.TestCase):
         self.assertIn("Blocked", res)
 
         # Invalid workspace index during launch
-        res2 = self.plugin.call("launch_on_desktop", "firefox", workspace="invalid")
-        self.assertIn("Invalid workspace index", res2)
+        with self.assertRaises(ValueError):
+            self.plugin.call("launch_on_desktop", "firefox", workspace="invalid")
 
 if __name__ == "__main__":
     unittest.main()
