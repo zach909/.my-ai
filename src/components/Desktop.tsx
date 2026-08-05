@@ -393,6 +393,11 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
       {/* Error Toast */}
       {error && (
         <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50" role="alert" aria-live="assertive">
+          <div className="bg-red-600 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
+            <span>{error}</span>
+            <button
+              onClick={clearError}
+              className="hover:bg-red-700 rounded p-1 active:scale-90 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white cursor-pointer"
           <div className="bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
             <span>{error}</span>
             <button
