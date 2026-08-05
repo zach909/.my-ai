@@ -582,6 +582,26 @@ export class WebServer {
             });
             return;
         }
+        // GET /api/chat-history/threads — every thread, lightweight summaries
+        // only (id/title/source/updatedAt), for a history sidebar/page.
+        if (pathname === '/api/chat-history/threads' && method === 'GET') {
+            const sourceParam = parsedUrl.searchParams.get('source');
+            const source = sourceParam === 'chat' || sourceParam === 'chat-group' ? sourceParam : undefined;
+            const threads = this.chatHistory.listThreads()
+                .filter(t => !source || t.source === source)
+                .sort((a, b) => b.updatedAt - a.updatedAt)
+                .map(t => ({ id: t.id, title: t.title, source: t.source, updatedAt: t.updatedAt, createdAt: t.createdAt }));
+            this.sendJson(res, { threads });
+            return;
+        }
+        // GET /api/chat-history/groups — every auto-organized chat group with its
+        // member threads resolved to summaries. Groups are filed automatically
+        // by ChatOrganizer on every /api/chat-history/save; there is no manual
+        // "create group" step anywhere in this API on purpose.
+        if (pathname === '/api/chat-history/groups' && method === 'GET') {
+            this.sendJson(res, { groups: this.chatHistory.listGroupsWithThreads() });
+            return;
+        }
         // GET /api/chat-history/threads/:id — full message history for "continue there".
         const threadMatch = pathname.match(/^\/api\/chat-history\/threads\/([^/]+)$/);
         if (threadMatch && method === 'GET') {

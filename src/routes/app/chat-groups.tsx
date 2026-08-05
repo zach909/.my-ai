@@ -193,6 +193,16 @@ function ChatGroupsPage() {
     endRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [rounds])
 
+  // Arriving from the Chat History page (?thread=<id>) hydrates that round
+  // history immediately instead of starting a fresh session.
+  useEffect(() => {
+    const threadParam = new URLSearchParams(window.location.search).get('thread')
+    if (threadParam) {
+      continueThread({ threadId: threadParam, title: '', score: 1, snippet: '', updatedAt: Date.now() })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   const unlock = async (candidate: string): Promise<boolean> => {
     const res = await fetch('/api/chat-groups/agents', { headers: chatGroupsHeaders(candidate) })
     if (res.status === 401) return false
