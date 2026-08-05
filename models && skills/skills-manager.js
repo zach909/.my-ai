@@ -269,6 +269,44 @@ export class SkillsManager {
         this.activeSkills.clear();
         this.initializeSkillStats();
     }
+    /**
+     * Auto-update skills from the source catalog.
+     * Refreshes skill definitions, usage stats, and embeddings.
+     */
+    autoUpdateSkills() {
+        const updates = [];
+        // Re-initialize stats for any new skills added to PROGRAMMING_SKILLS
+        for (const skill of PROGRAMMING_SKILLS) {
+            if (!this.skillUsageStats.has(skill.id)) {
+                this.skillUsageStats.set(skill.id, {
+                    skillId: skill.id,
+                    skillName: skill.name,
+                    usageCount: 0,
+                    lastUsed: 0,
+                    averageActivation: 0,
+                    successRate: 1.0
+                });
+                updates.push({ skillId: skill.id, type: 'new_skill_added' });
+            } else {
+                // Update skill name if it changed
+                const stats = this.skillUsageStats.get(skill.id);
+                if (stats && stats.skillName !== skill.name) {
+                    stats.skillName = skill.name;
+                    updates.push({ skillId: skill.id, type: 'skill_name_updated' });
+                }
+            }
+        }
+        // Regenerate embeddings for all skills to reflect any changes
+        for (const skill of PROGRAMMING_SKILLS) {
+            this.generateSkillEmbedding(skill);
+        }
+        // Re-register skills as experts if MoE router is connected
+        if (this.moeRouter) {
+            this.registerSkillsAsExperts();
+            updates.push({ type: 'experts_reregistered' });
+        }
+        return updates;
+    }
     getConfig() {
         return { ...this.config };
     }

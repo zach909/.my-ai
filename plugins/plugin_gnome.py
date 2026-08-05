@@ -13,7 +13,7 @@ The plugin auto-detects which methods are available and chains fallbacks.
 
 from __future__ import annotations
 import subprocess, shutil, os, json, time, re
-from typing import Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 from .plugin_terminal import _is_blocked
 
 
@@ -23,6 +23,43 @@ def _run(cmd: list, timeout: int = 5) -> Optional[str]:
         return r.stdout.strip() if r.returncode == 0 else None
     except Exception:
         return None
+
+
+def _safe_workspace(workspace: Any) -> int:
+    try:
+        if isinstance(workspace, bool):
+            raise ValueError()
+        val = int(workspace)
+        if val < 0 or val > 1000:
+            raise ValueError()
+        return val
+    except (TypeError, ValueError):
+        raise ValueError("Security Error: Invalid workspace index.")
+
+
+def _safe_window_id(window_id: str) -> str:
+    if not isinstance(window_id, str):
+        raise ValueError("Security Error: window_id must be a string.")
+    if not window_id:
+        raise ValueError("Security Error: window_id cannot be empty.")
+    if window_id.startswith("-"):
+        raise ValueError("Security Error: Potential argument injection detected in window_id.")
+    if not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id):
+    if not re.match(r"^(0x)?[a-fA-F0-9_]+$", window_id) and not re.match(r"^\d+$", window_id) and not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id):
+        raise ValueError("Security Error: Invalid window_id format.")
+    return window_id
+
+
+def _safe_workspace_name(name: str) -> str:
+    if not isinstance(name, str):
+        raise ValueError("Security Error: workspace name must be a string.")
+    if len(name) > 100:
+        raise ValueError("Security Error: workspace name is too long.")
+    if name.startswith("-"):
+        raise ValueError("Security Error: Potential argument injection in workspace name.")
+    if any(ord(c) < 32 or ord(c) == 127 for c in name):
+        raise ValueError("Security Error: workspace name contains invalid characters.")
+    return name
 
 
 def _gdbus(method: str, *args) -> Optional[str]:
@@ -220,7 +257,36 @@ class GnomePlugin:
                         return int(line.split()[0])
         return 0
 
+    def _validate_workspace_index(self, index: int) -> int:
+        try:
+            if isinstance(index, bool):
+                raise ValueError()
+            val = int(index)
+        except (ValueError, TypeError):
+            raise ValueError("Security Error: workspace index must be an integer.")
+        if val < 0 or val > 1000:
+            raise ValueError("Security Error: workspace index must be a non-negative integer within range.")
+        return val
+
+    def _validate_window_id(self, window_id: str) -> str:
+        if not isinstance(window_id, str):
+            raise ValueError("Security Error: window_id must be a string.")
+        cleaned = window_id.strip()
+        if cleaned.startswith("-"):
+            raise ValueError("Security Error: Potential argument injection detected in window_id.")
+        if not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", cleaned):
+            raise ValueError("Security Error: Invalid characters in window_id.")
+        return cleaned
+
     def _switch_workspace(self, index: int) -> str:
+        index = self._validate_workspace_index(index)
+        index = _safe_workspace(index)
+        try:
+            index = self._validate_workspace_index(index)
+            index = _safe_workspace(index)
+        except ValueError as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
         # Method 1: GNOME Shell JS eval (fastest)
         r = _gdbus_eval(f"global.workspace_manager.get_workspace_by_index({index}).activate(global.get_current_time())")
         if r:
@@ -236,6 +302,8 @@ class GnomePlugin:
         return "ERROR: No method available to switch workspace"
 
     def _add_workspace(self, name: Optional[str] = None) -> int:
+        if name:
+            name = _safe_workspace_name(name)
         n = self._num_workspaces()
         self._set_num_workspaces(n + 1)
         if name:
@@ -247,6 +315,14 @@ class GnomePlugin:
         return n
 
     def _remove_workspace(self, index: int) -> str:
+        index = self._validate_workspace_index(index)
+        index = _safe_workspace(index)
+        try:
+            index = self._validate_workspace_index(index)
+            index = _safe_workspace(index)
+        except ValueError as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
         n = self._num_workspaces()
         if n <= 1:
             return "ERROR: Cannot remove last workspace"
@@ -262,15 +338,44 @@ class GnomePlugin:
         return f"Removed workspace {index}"
 
     def _move_window(self, window_id: str, workspace: int) -> str:
+        window_id = self._validate_window_id(window_id)
+        workspace = self._validate_workspace_index(workspace)
+        window_id = _safe_window_id(window_id)
+        workspace = _safe_workspace(workspace)
         if shutil.which("wmctrl"):
             _run(["wmctrl", "-ir", window_id, "-t", str(workspace)])
             return f"Moved window {window_id} to workspace {workspace}"
+        try:
+            window_id = self._validate_window_id(window_id)
+            window_id = _safe_window_id(window_id)
+        except ValueError as e:
+            raise ValueError(f"Security Error: Invalid window ID format: {e}") from e
+
+        try:
+            workspace = self._validate_workspace_index(workspace)
+            workspace = _safe_workspace(workspace)
+        except ValueError as e:
+            raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+
+        window_id_str = str(window_id)
+        if shutil.which("wmctrl"):
+            _run(["wmctrl", "-ir", window_id_str, "-t", str(workspace)])
+            return f"Moved window {window_id_str} to workspace {workspace}"
         return "wmctrl required"
 
     def _launch_on_desktop(self, cmd: str, workspace: int = None) -> str:
         if _is_blocked(cmd):
             return "Blocked: destructive command pattern detected"
+        if workspace is not None:
+            workspace = self._validate_workspace_index(workspace)
+            workspace = _safe_workspace(workspace)
         if workspace is None:
+            try:
+                workspace = self._validate_workspace_index(workspace)
+                workspace = _safe_workspace(workspace)
+            except ValueError as e:
+                raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
+        else:
             workspace = self._ai_ws if self._ai_ws >= 0 else self._add_workspace()
             if self._ai_ws < 0:
                 self._ai_ws = workspace

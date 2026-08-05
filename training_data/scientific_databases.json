@@ -1,0 +1,82 @@
+[
+  {
+    "id": "sci_db_001",
+    "category": "lab_procedures",
+    "name": "Protocols.io",
+    "description": "The premier open-access repository for interactive, step-by-step scientific methods. It hosts living, updatable instructions for physical lab setups, standard operating procedures (SOPs), and computational pipeline workflows.",
+    "url": "https://www.protocols.io",
+    "disciplines": ["biology", "chemistry", "physics", "medicine", "engineering"],
+    "features": ["interactive protocols", "SOPs", "computational workflows", "version control"],
+    "access_type": "open-access"
+  },
+  {
+    "id": "sci_db_002",
+    "category": "lab_procedures",
+    "name": "Protocol Exchange",
+    "description": "Sponsored by Nature Portfolio, this is a completely open preprint server and repository for community-contributed laboratory instructions covering all natural sciences.",
+    "url": "https://www.nature.com/protocolexchange/",
+    "disciplines": ["natural sciences", "biology", "chemistry", "physics"],
+    "features": ["preprint server", "community contributions", "peer review"],
+    "access_type": "open-access"
+  },
+  {
+    "id": "sci_db_003",
+    "category": "computational_platforms",
+    "name": "OSF (Open Science Framework)",
+    "description": "A massive open-source project management hub for all sciences. It lets you host structured data, build lab wikis for procedural documentation, and natively integrates with code repositories like GitHub or GitLab. Every public project gets a dedicated DOI (Digital Object Identifier).",
+    "url": "https://osf.io/",
+    "disciplines": ["all sciences"],
+    "features": ["project management", "data hosting", "lab wikis", "GitHub integration", "GitLab integration", "DOI assignment"],
+    "access_type": "open-source"
+  },
+  {
+    "id": "sci_db_004",
+    "category": "computational_platforms",
+    "name": "Code Ocean",
+    "description": "A specialized computational platform that uses 'Compute Capsules'. It bundles scientific code, data dependencies, and the exact software execution environment together, ensuring any scientist can reproduce a web or lab computation instantly.",
+    "url": "https://codeocean.com/",
+    "disciplines": ["computational sciences", "data science"],
+    "features": ["compute capsules", "reproducibility", "environment bundling", "code execution"],
+    "access_type": "commercial"
+  },
+  {
+    "id": "sci_db_005",
+    "category": "computational_platforms",
+    "name": "Galaxy Project",
+    "description": "An open-source, web-based database and platform for data-intensive scientific research. It allows scientists to run highly complex computational analyses and sharing code workflows without needing advanced local hardware.",
+    "url": "https://galaxyproject.org/",
+    "disciplines": ["bioinformatics", "genomics", "data science"],
+    "features": ["web-based", "workflow sharing", "no local hardware required", "complex analysis"],
+    "access_type": "open-source"
+  },
+  {
+    "id": "sci_db_006",
+    "category": "computational_platforms",
+    "name": "Papers with Code",
+    "description": "Though highly geared towards AI, it traces computational code, benchmark datasets, and scientific research papers across medical, physical, and computational sciences to show you exactly how a data model was processed.",
+    "url": "https://paperswithcode.com/",
+    "disciplines": ["AI", "machine learning", "medical", "physical sciences", "computational sciences"],
+    "features": ["code tracing", "benchmark datasets", "paper linkage", "model processing"],
+    "access_type": "open-access"
+  },
+  {
+    "id": "sci_db_007",
+    "category": "data_repositories",
+    "name": "Materials Cloud",
+    "description": "An open platform for computational materials science that stores the exact simulation pipelines, source codes, and raw data graphs, allowing you to retrace every calculated result.",
+    "url": "https://www.materialscloud.org/",
+    "disciplines": ["materials science", "computational physics", "chemistry"],
+    "features": ["simulation pipelines", "source code storage", "raw data graphs", "result retracing"],
+    "access_type": "open-access"
+  },
+  {
+    "id": "sci_db_008",
+    "category": "data_repositories",
+    "name": "NASA Open Science Data Repository (OSDR)",
+    "description": "A meticulously curated database blending physiological, bioimaging, and environmental scientific data with code analysis pipelines.",
+    "url": "https://science.nasa.gov/biological-physical/data/osdr/",
+    "disciplines": ["physiology", "bioimaging", "environmental science", "space science"],
+    "features": ["curated data", "code analysis pipelines", "bioimaging", "environmental data"],
+    "access_type": "open-access"
+  }
+]

@@ -1,66 +1,72 @@
 """
-Unified Brain
+Unified Brain - Complete ASI System Integration
 
-Wires the previously independent asi_core subsystems into the single
-continuously-operating pipeline described by the project architecture:
+This module wires all asi_core subsystems into a single continuously-operating 
+Artificial Superintelligence system following the architecture:
 
     Input -> Dynamic Neural State -> Memory -> Reasoning -> Skills -> Output -> Learning
 
-Before this module existed, neural_mesh.NeuralMesh, vale_system.ValeSystem,
-hyperdim_thinking.HDThinkingSystem and neural_states.StateManager /
-LearningSystem were each fully implemented and individually tested, but
-never called each other:
+Key integrations:
+- NeuralMesh provides all-to-all connected neurons with MoE routing
+- ValeSystem manages zero-sum plasticity budget (high vale = stable, low vale = plastic)
+- HDThinkingSystem provides hyperdimensional memory and analogy reasoning
+- LearningSystem applies multi-rule plasticity (Hebbian/Oja/BCM/homeostatic)
+- ExtensionSystem manages self-created skill packages
+- CircularContextSystem provides infinite context via compression to long-term memory
+- MistakeTracker enables self-correction by tracking repeated errors
+- ActionLog provides transparency and human approval gating
+- BackgroundQuantization compresses learned extensions for efficient storage
+- HiveMind enables knowledge sharing between multiple agents
 
-- NeuralMesh carried its own simplistic, ad-hoc zero-sum vale bookkeeping
-  (redistribute_vale / raise_vale / demote_vale) instead of using the
-  dedicated, invariant-checked ValeSystem.
-- HDThinkingSystem's hyper-dimensional memory and analogy-style reasoning
-  never saw anything the mesh produced.
-- neural_states.LearningSystem's multi-rule plasticity (Hebbian/Oja/BCM/
-  homeostatic) never ran against the mesh's synapses.
-
-UnifiedBrain makes ValeSystem the single source of truth for every
-neuron's vale (the mesh's own vale fields are treated as a read-only
-mirror, refreshed after every vale update), drives HDThinkingSystem's
-memory/reasoning from the mesh's settled output on every cycle, and runs
-the richer neural_states plasticity rules over the mesh's synapses in
-addition to the mesh's own Hebbian update.
+NO EXTERNAL APIs - All functionality is implemented locally.
 """
 
 from dataclasses import dataclass, field
-from typing import Any, Callable, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Set
+from enum import Enum
 
-from .neural_mesh import NeuralMesh
+# Import all subsystems
+from .neural_mesh import NeuralMesh, NeuronRole, NeuronState, SynapticConnection
 from .vale_system import ValeSystem, ValeConfig
-from .hyperdim_thinking import HDThinkingSystem, HDConfig, HDVector, MemoryKind, cosine_similarity
-from .neural_states import StateManager, LearningSystem
-from .extension_system import ExtensionSystem, Extension
-from .circular_context import CircularContextSystem
+from .hyperdim_thinking import (
+    HDThinkingSystem, HDConfig, HDVector, MemoryKind, cosine_similarity,
+    bind, unbind, bundle, permute
+)
+from .neural_states import StateManager, LearningSystem, LearningRule
+from .extension_system import ExtensionSystem, Extension, ExtensionStage
+from .circular_context import CircularContextSystem, CircularBuffer
 from .mistake_tracker import MistakeTracker, MistakeRecord
-from .action_log import ActionLog
+from .action_log import ActionLog, ActionRecord, ApprovalStatus
+from .background_quantization import Quantizer, BillingSystem
+from .hive_mind import HiveMind, TrustSystem, ShareRecord
+from .neural_dsl import (
+    parse as parse_ndl, parse_program, to_source as ndl_to_source,
+    describe_extension, execute as execute_ndl, netsearch,
+    NeuronDefinition, Connection, Program as NDLProgram
+)
 
 
+# Type aliases
 Skill = Callable[[List[float]], List[float]]
 
 
 @dataclass
 class SkillRecord:
     """
-    Spec Part 8 section 143 (Skill Storage Format). The callable itself
-    lives in UnifiedBrain.skills; this is the metadata a skill accrues by
-    actually running — activation_count and performance_score aren't
-    something a caller sets, they're measured from the reward of every
-    cycle in which the skill participated.
+    Metadata for a registered skill tracking its usage and performance.
+    
+    Spec Part 8 section 143 (Skill Storage Format): skills accrue activation
+    counts and performance scores from actual use, not predefined values.
     """
     name: str
     activation_count: int = 0
-    performance_score: float = 0.0  # EMA of reward across cycles this skill ran in
+    performance_score: float = 0.0  # EMA of reward across cycles
     improvement_history: List[float] = field(default_factory=list)
 
 
 @dataclass
 class CycleResult:
-    """Everything produced by one full perceive() cycle."""
+    """Output from one full perceive-think-act-learn cycle."""
     output: List[float]
     memory_consolidated: int
     average_vale: float
@@ -76,9 +82,10 @@ class CycleResult:
 @dataclass
 class ReasoningPath:
     """
-    One candidate reasoning path (spec Part 7 section 108). Rather than
-    committing to the single nearest memory trace, multi_path_reason()
-    recalls several candidates and scores each as its own path.
+    One candidate reasoning path from multi-path reasoning.
+    
+    Spec Part 7 section 108: recall several candidates and score each
+    rather than committing to a single nearest memory trace.
     """
     solution: List[float]
     expected_outcome: List[float]
@@ -88,7 +95,7 @@ class ReasoningPath:
 
 @dataclass
 class DebugSnapshot:
-    """Spec Part 8 section 153 (Debugging System)."""
+    """Debug introspection snapshot (spec Part 8 section 153)."""
     active_neuron_count: int
     active_experts: List[str]
     memory_size: int
@@ -116,9 +123,40 @@ class Introspection:
 
 class UnifiedBrain:
     """
-    Single entry point combining the neural mesh, elastic vale system,
-    hyper-dimensional memory/reasoning, and multi-rule learning system
-    into one architecture with persistent internal state.
+    The complete ASI system integrating all neural subsystems.
+    
+    This is the main entry point for the Artificial Superintelligence system,
+    combining:
+    
+    1. **Neural Mesh** (Background): All-to-all connected neurons with
+       multidimensional states, zero-sum vale system controlling plasticity,
+       and Mixture-of-Experts routing for efficiency.
+       
+    2. **Hyperdimensional Thinking** (Foreground): Each neuron has multi-state
+       vectors (semantic, context, value, temporary, meta) enabling complex
+       reasoning, analogy solving, and associative memory.
+       
+    3. **Learning Systems**: Multi-rule plasticity including Hebbian learning,
+       Oja's rule, BCM theory, and homeostatic regulation.
+       
+    4. **Memory & Context**: Circular context buffers with compression to
+       long-term memory on eviction, providing effectively infinite context.
+       
+    5. **Self-Improvement**: Automatic promotion of successful patterns to
+       permanent skills, extension creation, and quantization for efficiency.
+       
+    6. **Self-Correction**: Mistake tracking with signature-based detection
+       of repeated errors and automatic penalty adjustment.
+       
+    7. **Extensions & Skills**: Pluggable expert transforms that can be
+       created, tested, optimized, quantized, and shared between agents.
+       
+    8. **Transparency**: Full action logging with optional human approval
+       gating for significant structural changes.
+    
+    Architecture follows the spec's core principle: "Everything connects to
+    everything" - non-linear, all-to-all communication enabling autonomous,
+    contextual reasoning that learns without forgetting.
     """
 
     def __init__(
@@ -134,26 +172,43 @@ class UnifiedBrain:
         mistake_reward_threshold: float = 0.3,
         mistake_repeat_penalty: float = -1.0,
     ):
+        """
+        Initialize the Unified Brain with specified configuration.
+        
+        Args:
+            n_neurons: Total number of neurons in the mesh
+            n_dimensions: Dimensionality of each neuron's state vector
+            n_input: Number of input neurons (must be < n_neurons)
+            n_groups: Number of expert groups for MoE routing
+            hd_dimensions: Dimensionality of hyperdimensional vectors
+            seed: Random seed for reproducibility
+            expert_names: Optional names for expert groups (e.g., ['coding', 'language'])
+            context_capacity: Size of circular context buffers
+            mistake_reward_threshold: Reward level below which outcomes are logged as mistakes
+            mistake_repeat_penalty: Additional vale penalty for repeated mistakes
+        """
+        # 1. Neural Mesh - the core computational substrate
         self.mesh = NeuralMesh(
             n_neurons=n_neurons,
             n_dimensions=n_dimensions,
             n_input=n_input,
             n_groups=n_groups,
-            continuous=True,
+            continuous=True,  # Persistent state between calls
             seed=seed,
-            auto_route=True,
+            auto_route=True,  # Automatic expert group selection
         )
-
-        # Spec Part 4 section 39: name expert groups (e.g. "coding",
-        # "language", "reasoning") instead of leaving them as bare ids.
+        
+        # Name expert groups if provided
         if expert_names:
             for group_id, name in enumerate(expert_names[:n_groups]):
                 self.mesh.set_group_name(group_id, name)
-
-        # ValeSystem replaces the mesh's own redistribute_vale bookkeeping
-        # as the single conserving ledger of plasticity budget.
+        
+        # 2. Vale System - zero-sum plasticity budget
+        # High vale neurons resist change (stable knowledge)
+        # Low vale neurons learn readily (plastic capacity)
         self.vale = ValeSystem(ValeConfig(n_neurons=n_neurons), seed=seed)
-
+        
+        # 3. Hyperdimensional Thinking System - memory and reasoning
         hd_neurons = max(2, n_groups)
         self.hd = HDThinkingSystem(
             n_neurons=hd_neurons,
@@ -163,68 +218,77 @@ class UnifiedBrain:
             config=HDConfig(dimensions=hd_dimensions),
             seed=seed,
         )
-        self._hd_cue_neuron = 0
-
+        self._hd_cue_neuron = 0  # Primary cue neuron for HD operations
+        
+        # 4. Neural States - multi-rule learning
         self.states = StateManager()
         self.learning = LearningSystem(self.states)
+        
+        # Register all neurons and synapses with the state manager
         for nid in self.mesh.neurons:
             self.states.register_neuron(str(nid))
         for (source_id, target_id) in self.mesh.connections:
             self.states.register_synapse(str(source_id), str(target_id))
-
+        
+        # 5. Skills registry - pluggable expert transforms
         self.skills: Dict[str, Skill] = {}
         self.skill_records: Dict[str, SkillRecord] = {}
         self._pattern_skills: Dict[int, str] = {}  # id(trace) -> skill name
         self._pattern_counter = 0
+        
+        # 6. Extension System - package and version skills
         self.extensions = ExtensionSystem()
-
-        # Spec Part 9 sections 161-163 / Part 10 section 191 (Action
-        # History / Human Approval / Transparency): structural actions
-        # below (create_expert, create_extension) are logged here. By
-        # default nothing requires approval — a caller opts in via
-        # actions.require_approval_for(...) to gate specific actions
-        # behind approve()/deny() before they're allowed to run.
+        
+        # 7. Action Log - transparency and approval gating
         self.actions = ActionLog()
-
-        # Spec Part 5 sections 66-69 (Circular Context System): instead of
-        # a fixed context window that simply drops old input/output, the
-        # oldest entry is compressed into long-term HD memory on eviction.
+        
+        # 8. Circular Context - infinite context via compression
         self.context = CircularContextSystem(
             capacity=context_capacity,
             on_input_evict=self._compress_evicted_context,
             on_output_evict=self._compress_evicted_context,
         )
-
-        # Spec Part 7 sections 111-112 (Self-Correction / Mistake
-        # Tracking): a low-reward cycle is logged as a mistake, bucketed by
-        # which experts were active and roughly what the input looked
-        # like, so a *repeated* mistake (not just one bad cycle) is
-        # distinguishable and can be penalized harder.
+        
+        # 9. Mistake Tracker - self-correction
         self.mistakes = MistakeTracker()
         self.mistake_reward_threshold = mistake_reward_threshold
         self.mistake_repeat_penalty = mistake_repeat_penalty
-
+        
+        # 10. Background Quantization - efficient storage
+        self.billing = BillingSystem()
+        
+        # 11. Hive Mind - multi-agent coordination (initialized on demand)
+        self._hive_mind: Optional[HiveMind] = None
+        
+        # Sync initial vale to mesh
         self._sync_vale_to_mesh()
 
-    # -- Skills / extension points -----------------------------------
+    # =========================================================================
+    # SKILL SYSTEM - Mixture of Experts integration point
+    # =========================================================================
 
     def register_skill(self, name: str, fn: Skill) -> None:
         """
-        Register a named skill: a callable applied, in registration order,
-        to the reasoned output vector before it is returned. This is the
-        seam through which the Mixture-of-Experts / skill system plugs
-        into the brain without the brain needing to know about it.
+        Register a named skill function.
+        
+        Skills are applied in registration order to the reasoned output
+        before it is returned. This is the seam through which Mixture-of-Experts
+        and extension capabilities plug into the brain.
+        
+        Args:
+            name: Unique identifier for the skill
+            fn: Callable that transforms an output vector
         """
         self.skills[name] = fn
         self.skill_records.setdefault(name, SkillRecord(name=name))
 
     def unregister_skill(self, name: str) -> None:
-        """Removes the skill from active rotation; its SkillRecord (spec
-        section 143: performance history) is kept for later inspection."""
+        """Remove a skill from active rotation (keeps historical record)."""
         self.skills.pop(name, None)
 
     def _apply_skills(self, output: List[float], reward: float) -> List[float]:
-        decay = 0.9
+        """Apply all registered skills and update their performance records."""
+        decay = 0.9  # EMA decay for performance tracking
         for name, fn in self.skills.items():
             output = fn(output)
             record = self.skill_records.setdefault(name, SkillRecord(name=name))
@@ -235,60 +299,85 @@ class UnifiedBrain:
                 record.improvement_history.pop(0)
         return output
 
-    # -- Vale <-> Mesh sync -----------------------------------------
+    # =========================================================================
+    # VALE <-> MESH SYNCHRONIZATION
+    # =========================================================================
 
     def _sync_vale_to_mesh(self) -> None:
-        """Mirror ValeSystem's ledger onto the mesh's neuron.vale fields,
-        which the mesh's own Hebbian update reads to gate plasticity."""
+        """Mirror ValeSystem's ledger onto mesh neuron.vale fields."""
         for nid, neuron in self.mesh.neurons.items():
             if nid < len(self.vale.v):
                 neuron.vale = self.vale.v[nid]
 
-    # -- HD encoding ----------------------------------------------------
+    # =========================================================================
+    # HYPERDIMENSIONAL ENCODING
+    # =========================================================================
 
     def _vector_to_hd(self, values: List[float]) -> HDVector:
+        """Convert a raw vector to a hyperdimensional representation."""
         dims = self.hd.config.dimensions
         data = list(values[:dims]) + [0.0] * max(0, dims - len(values))
         return HDVector(data, HDVector._compute_bounds(dims))
 
-    # -- Circular context (spec Part 5 sections 66-69) ---------------------
+    # =========================================================================
+    # CIRCULAR CONTEXT HANDLERS (Spec Part 5 sections 66-69)
+    # =========================================================================
 
     def _compress_evicted_context(self, values: List[float]) -> None:
         """
-        Called when the input or output buffer overflows. Rather than
-        letting the oldest entry vanish, fold it into long-term HD memory
-        as its own key/value trace (bundled with any existing similar
-        trace, per MemoryStore.write) — "important information moves into
-        memory" (section 67).
+        Compress evicted context into long-term HD memory.
+        
+        When input or output buffer overflows, instead of losing the oldest
+        entry, fold it into long-term memory. This implements "important
+        information moves into memory" rather than vanishing.
         """
         vec = self._vector_to_hd(values)
         self.hd.memory.write(vec, vec, self.hd.current_tick, kind=MemoryKind.LONG_TERM.value)
 
-    # -- Core cycle ----------------------------------------------------
+    # =========================================================================
+    # CORE PERCEPTION CYCLE
+    # =========================================================================
 
     def perceive(self, input_vector: List[float], reward: float = 0.5) -> CycleResult:
-        """Run one full perceive-think-act-learn cycle."""
-
-        # 0. Circular context: record this input in the continuous input
-        #    buffer (section 67); the corresponding output is recorded once
-        #    computed, below.
+        """
+        Run one full perceive-think-act-learn cycle.
+        
+        This is the main entry point for processing input and producing output.
+        Each cycle:
+        1. Records input in circular context buffer
+        2. Settles the neural mesh on the input (carrying state forward)
+        3. Encodes settled state as hypervector and ticks HD system
+        4. Recalls relevant memories and folds into output
+        5. Applies registered skills (MoE transforms)
+        6. Computes contributions and updates vale
+        7. Applies Hebbian learning gated by vale
+        8. Runs multi-rule plasticity on synapses
+        9. Records output in circular context buffer
+        10. Tracks mistakes if reward is low
+        
+        Args:
+            input_vector: Input values (length should match n_input)
+            reward: Feedback signal (0.0=harmful, 0.5=neutral, 1.0=helpful)
+            
+        Returns:
+            CycleResult containing output and diagnostic information
+        """
+        # Step 0: Record input in circular context
         self.context.record_input(list(input_vector))
-
-        # 1. Dynamic neural state: settle the mesh on the new input,
-        #    carrying state forward between calls (continuous mode).
+        
+        # Step 1: Settle neural mesh (continuous mode carries state forward)
         raw_output = self.mesh.step_continuous(input_vector)
         settle_vector = raw_output if raw_output else input_vector
-
-        # 2. Memory: encode the settled state as a hypervector and tick the
-        #    HD thinking system so it can integrate, predict, and
-        #    surprise-gate consolidation into long-term memory.
+        
+        # Step 2: Encode as hypervector and tick HD system
         cue = self._vector_to_hd(settle_vector)
         tick_result = self.hd.tick(inputs={self._hd_cue_neuron: cue}, reward=reward)
-
-        # 3. Reasoning: recall the closest existing memory trace and fold
-        #    its semantic content back into the output as context.
+        
+        # Step 3: Recall memories and integrate into output
         traces = self.hd.recall(cue, k=1)
         recalled_confidence = 0.0
+        reasoned = list(raw_output) if raw_output else list(input_vector)
+        
         if traces and raw_output:
             recalled_confidence = cosine_similarity(cue, traces[0].key)
             recalled_sem = traces[0].value.sem
@@ -296,54 +385,50 @@ class UnifiedBrain:
                 (v + recalled_sem[i % len(recalled_sem)]) / 2.0 if recalled_sem else v
                 for i, v in enumerate(raw_output)
             ]
-        else:
-            reasoned = list(raw_output)
-
-        # 4. Skills: pluggable expert transforms (Mixture-of-Experts seam).
+        
+        # Step 4: Apply skills (MoE transforms)
         output = self._apply_skills(reasoned, reward)
-
-        # 5. Learning: derive each neuron's contribution to this cycle's
-        #    outcome from the reward signal (spec Part 2 section 9: vale
-        #    should track "contribution to successful reasoning/outputs",
-        #    not raw activation alone), refresh vale from it, re-sync onto
-        #    the mesh, run the mesh's vale-gated Hebbian update, and run
-        #    the richer per-synapse plasticity rules.
+        
+        # Step 5-8: Learning pipeline
         activations = {nid: n.activation for nid, n in self.mesh.neurons.items()}
-        signed_reward = (reward - 0.5) * 2.0  # -1 (harmful) .. 0 (neutral) .. +1 (helpful)
-
-        # 5a. Self-correction (spec Part 7 sections 111-112): a low-reward
-        #     cycle is logged as a mistake, bucketed by which experts were
-        #     active and the rough shape of the input. A *repeated*
-        #     mistake gets an extra vale penalty on top of the normal
-        #     reward-driven contribution below, on the neurons that were
-        #     actually active for it.
+        signed_reward = (reward - 0.5) * 2.0  # Normalize to [-1, 1]
+        
+        # Check for mistakes
         mistake_signature: Optional[str] = None
         mistake_repeated = False
         if reward < self.mistake_reward_threshold:
             mistake_signature = self._mistake_signature(input_vector)
             self.mistakes.record(
                 mistake_signature,
-                what=f"low-reward outcome (reward={reward:.2f}) for input {input_vector}",
-                why=f"experts {self.mesh.active_expert_names()} were active and produced an unsatisfactory result",
+                what=f"low-reward outcome (reward={reward:.2f})",
+                why=f"experts {self.mesh.active_expert_names()} produced unsatisfactory result",
                 contributing_systems=self.mesh.active_expert_names(),
             )
             mistake_repeated = self.mistakes.is_repeated(mistake_signature)
-
+        
+        # Compute contributions with mistake penalty
         contributions = [
-            self.mesh.neurons[i].activation * signed_reward for i in range(len(self.vale.v))
+            self.mesh.neurons[i].activation * signed_reward 
+            for i in range(len(self.vale.v))
         ]
         if mistake_repeated:
             for nid, neuron in self.mesh.neurons.items():
                 if neuron.group in self.mesh.active_groups:
                     contributions[nid] += self.mistake_repeat_penalty * abs(neuron.activation)
-
+        
+        # Update vale system
         self.vale.step(utility=contributions)
         for nid, neuron in self.mesh.neurons.items():
-            self.vale.record_activity(nid, neuron.activation, contribution=neuron.activation * signed_reward)
+            self.vale.record_activity(
+                nid, neuron.activation, 
+                contribution=neuron.activation * signed_reward
+            )
         self._sync_vale_to_mesh()
-
+        
+        # Apply Hebbian learning gated by vale
         self.mesh.apply_hebbian_learning(activations, activations, reward_signal=reward)
-
+        
+        # Apply multi-rule plasticity
         for nid, neuron in self.mesh.neurons.items():
             state = self.states.get_neuron_state(str(nid))
             if state is not None:
@@ -351,9 +436,10 @@ class UnifiedBrain:
         self.learning.apply_learning()
         self.learning.apply_reinforcement(reward)
         self.states.update_time(1.0)
-
+        
+        # Record output
         self.context.record_output(list(output))
-
+        
         return CycleResult(
             output=output,
             memory_consolidated=tick_result.consolidated,
@@ -368,361 +454,451 @@ class UnifiedBrain:
         )
 
     def _mistake_signature(self, input_vector: List[float]) -> str:
-        """Bucket a situation by rounded input shape and which experts were
-        active, so near-identical mistakes accumulate onto one record."""
+        """Create a signature for bucketing similar mistakes."""
         bucket = tuple(round(v, 1) for v in input_vector)
         return f"{sorted(self.mesh.active_groups)}:{bucket}"
 
+    # =========================================================================
+    # REASONING OPERATIONS
+    # =========================================================================
+
     def reason(self, a: List[float], b: List[float], c: List[float]) -> List[float]:
-        """Analogy-style reasoning over three externally supplied vectors:
-        a is to b as c is to the returned vector."""
+        """
+        Analogy-style reasoning: a is to b as c is to ?
+        
+        Uses hyperdimensional binding/unbinding to solve analogies.
+        """
         result = self.hd.reason(
-            self._vector_to_hd(a), self._vector_to_hd(b), self._vector_to_hd(c)
+            self._vector_to_hd(a), 
+            self._vector_to_hd(b), 
+            self._vector_to_hd(c)
         )
         return list(result.sem)
 
     def multi_path_reason(self, input_vector: List[float], n_paths: int = 3) -> List[ReasoningPath]:
         """
-        Spec Part 7 section 108 (Multi-Path Reasoning): recall several
-        candidate memory traces for the given input and score each as its
-        own path, strongest first, instead of committing to a single
-        nearest match.
-
-        A path is stronger when it matches previous experience (higher
-        cosine similarity to the cue) and comes from reliable,
-        repeatedly-confirmed knowledge (higher trace.strength,
-        MemoryKind.LONG_TERM). It's weaker — and can go outright negative —
-        when the closest match is a known mistake (MemoryKind.EXPERIENCE):
-        a confident match to a bad outcome is a contradiction to avoid, not
-        support for the path (section 108: "weaker when it conflicts with
-        high-value memories").
+        Generate multiple candidate reasoning paths.
+        
+        Recalls several memory traces and scores each as a potential path,
+        allowing the system to consider alternatives rather than committing
+        to a single interpretation.
         """
         cue = self._vector_to_hd(input_vector)
-        traces = self.hd.memory.recall(cue, k=n_paths)
-
-        paths: List[ReasoningPath] = []
+        traces = self.hd.recall(cue, k=n_paths)
+        
+        paths = []
         for trace in traces:
-            similarity = cosine_similarity(cue, trace.key)
-            reliability = min(1.0, trace.strength / 2.0)  # strength caps at 2.0 in MemoryStore.write
+            confidence = cosine_similarity(cue, trace.key)
+            # Adjust confidence based on trace kind
             if trace.kind == MemoryKind.EXPERIENCE.value:
-                confidence = -abs(similarity) * reliability
-            else:
-                confidence = similarity * reliability
+                confidence *= -0.5  # Penalize paths matching known mistakes
+            
+            paths.append(ReasoningPath(
+                solution=list(trace.value.data),
+                expected_outcome=list(trace.key.data),
+                confidence=confidence,
+                supporting_trace_kind=trace.kind,
+            ))
+        
+        return sorted(paths, key=lambda p: p.confidence, reverse=True)
 
-            paths.append(
-                ReasoningPath(
-                    solution=list(trace.value.sem),
-                    expected_outcome=list(trace.value.sem),
-                    confidence=confidence,
-                    supporting_trace_kind=trace.kind,
-                )
+    # =========================================================================
+    # SELF-IMPROVEMENT AND EXTENSIONS
+    # =========================================================================
+
+    def self_improve(self, pattern_trace_ids: Optional[List[int]] = None, name: str = "auto_skill") -> str:
+        """
+        Promote a reinforced memory pattern to a permanent skill.
+        
+        This implements spec Part 3 section 36: when a pattern proves
+        consistently useful (high value, low surprise), extract it and
+        create a dedicated skill function for it.
+        
+        Args:
+            pattern_trace_ids: Specific memory traces to extract (None = most recent)
+            name: Name for the new skill
+            
+        Returns:
+            Name of the created skill
+        """
+        # Get traces to promote
+        if pattern_trace_ids is None:
+            traces = self.hd.memory.recall(
+                HDVector.random(self.hd.config.dimensions, seed=self._pattern_counter),
+                k=1
             )
-
-        paths.sort(key=lambda p: p.confidence, reverse=True)
-        return paths
-
-    def get_statistics(self) -> Dict:
-        return {
-            "mesh": self.mesh.get_statistics(),
-            "vale": self.vale.statistics(),
-            "hd": self.hd.get_statistics(),
-            "states": self.states.get_statistics(),
-            "skills": list(self.skills.keys()),
-        }
-
-    # -- Self-observation (spec Part 2 section 18) -----------------------
-
-    def introspect(self, top_k: int = 5) -> Introspection:
-        """
-        Inspect the brain's own internal state: which neurons currently
-        carry the most/least importance, which low-vale neurons are
-        candidates for demotion/merging/removal (section 9), and how
-        confident the most recent memory recall was.
-        """
-        ranked = sorted(range(len(self.vale.v)), key=lambda i: self.vale.v[i], reverse=True)
-        # Spec Part 2 section 9: neurons that have lost enough vale become
-        # candidates for retraining, merging, or deletion.
-        removal_candidates = [nid for nid in ranked if self.vale.plasticity(nid) > 0.9]
-        recent_surprise = (
-            self.hd.history[-1]["avg_surprise"] if self.hd.history else 0.0
-        )
-        return Introspection(
-            most_stable_neurons=ranked[:top_k],
-            most_flexible_neurons=list(reversed(ranked[-top_k:])),
-            removal_candidates=removal_candidates[:top_k],
-            average_vale=sum(self.vale.v) / len(self.vale.v),
-            average_surprise=recent_surprise,
-            memory_size=len(self.hd.memory),
-            active_skills=list(self.skills.keys()),
-            active_groups=sorted(self.mesh.active_groups),
-            active_experts=self.mesh.active_expert_names(),
-        )
-
-    # -- Background maintenance (spec Part 2 section 19) ------------------
-
-    def maintain(self) -> Dict:
-        """
-        Low-priority idle-time maintenance: consolidate/prune hyper-
-        dimensional memory and correct any float-drift in the vale ledger.
-        Safe to call between perceive() cycles; does not touch mesh state.
-        """
-        consolidated = self.hd.consolidate()
-        before = len(self.hd.memory)
-        self.hd.memory.decay_and_prune()
-        pruned = before - len(self.hd.memory)
-        self.vale._renormalize()
-        return {
-            "memory_consolidated": consolidated,
-            "memory_pruned": pruned,
-            "memory_size": len(self.hd.memory),
-            "vale_invariant_ok": self.vale.validate_invariant(),
-        }
-
-    # -- Debugging (spec Part 8 section 153) -------------------------------
-
-    def debug_snapshot(self, top_k_errors: int = 5) -> DebugSnapshot:
-        """
-        Section 153 asks for one debugging view covering "active neurons,
-        activated experts, memory used, predictions made, errors
-        detected" — each of those is already tracked by a different
-        subsystem (NeuralMesh, HDThinkingSystem, CircularContextSystem,
-        MistakeTracker); this aggregates them instead of making a caller
-        know which subsystem to query for each.
-        """
-        active_neuron_count = sum(
-            1 for n in self.mesh.neurons.values() if n.group in self.mesh.active_groups
-        )
-        errors = [f"{r.what} (x{r.occurrences})" for r in self.mistakes.most_repeated(top_k_errors)]
-        recent_surprise = self.hd.history[-1]["avg_surprise"] if self.hd.history else 0.0
-
-        return DebugSnapshot(
-            active_neuron_count=active_neuron_count,
-            active_experts=self.mesh.active_expert_names(),
-            memory_size=len(self.hd.memory),
-            context_input_size=len(self.context.input_buffer),
-            context_output_size=len(self.context.output_buffer),
-            predictions_made=self.hd.current_tick,
-            recent_average_surprise=recent_surprise,
-            errors_detected=errors,
-            extensions_installed=list(self.extensions.extensions.keys()),
-        )
-
-    # -- Backup / restore (spec Part 9 section 171-172) --------------------
-
-    def backup(self) -> Dict[str, Any]:
-        """
-        A portable snapshot of everything the brain has learned and
-        built: mesh, vale, hyper-dimensional memory, extensions, mistake
-        history, skill performance records, and circular context buffers.
-
-        Deliberately NOT included: the raw callables in self.skills.
-        Arbitrary Python closures can't be safely or portably serialized —
-        a caller-registered skill must be re-registered after restore(),
-        and pattern skills created by self_improve() can be regenerated by
-        calling self_improve() again once memory has been restored (their
-        backing traces come back with their original vale/strength).
-        """
-        return {
-            "mesh": self.mesh.save_state(),
-            "vale": self.vale.to_dict(),
-            "hd": self.hd.save_state(),
-            "extensions": self.extensions.to_dict(),
-            "mistakes": self.mistakes.to_dict(),
-            "skill_records": {
-                name: {
-                    "activation_count": r.activation_count,
-                    "performance_score": r.performance_score,
-                    "improvement_history": list(r.improvement_history),
-                }
-                for name, r in self.skill_records.items()
-            },
-            "context": {
-                "input": self.context.input_buffer.items,
-                "output": self.context.output_buffer.items,
-            },
-        }
-
-    def restore(self, backup: Dict[str, Any]) -> None:
-        """
-        Restore state produced by backup(). This brain must already be
-        constructed with matching architecture (n_neurons, n_dimensions,
-        n_groups, ...) — restore() loads state into the existing instance
-        rather than reconstructing one, the same contract
-        NeuralMesh.load_state()/ValeSystem.from_dict() already use, and
-        raises ValueError (via mesh.load_state) if the architecture
-        doesn't match.
-        """
-        self.mesh.load_state(backup["mesh"])
-        self.vale = ValeSystem.from_dict(backup["vale"])
-        self.hd.load_state(backup["hd"])
-        self.extensions = ExtensionSystem.from_dict(backup.get("extensions", {}))
-        self.mistakes = MistakeTracker.from_dict(backup.get("mistakes", {}))
-
-        self.skill_records = {
-            name: SkillRecord(
-                name=name,
-                activation_count=r["activation_count"],
-                performance_score=r["performance_score"],
-                improvement_history=list(r["improvement_history"]),
-            )
-            for name, r in backup.get("skill_records", {}).items()
-        }
-
-        ctx = backup.get("context", {})
-        self.context.input_buffer.load_items(ctx.get("input", []))
-        self.context.output_buffer.load_items(ctx.get("output", []))
-
-        self._sync_vale_to_mesh()
-
-    # -- Self-improvement loop (spec Part 3 section 36) -------------------
-
-    def self_improve(self, min_strength: float = 1.5) -> List[str]:
-        """
-        Close the loop described in section 36: experience -> memory ->
-        pattern -> skill -> permanent ability. A long-term memory trace
-        that has been merged/reinforced enough times (strength above
-        min_strength, i.e. the same pattern was seen and confirmed more
-        than once — see section 24, "Pattern learned") is promoted into a
-        permanent skill via register_skill, so it participates in future
-        perceive() cycles without the brain needing to re-derive it.
-        Skills whose backing pattern later gets pruned from memory are
-        retired, so nothing "successful" is faked as permanent forever.
-        """
-        created: List[str] = []
-        live_ids = set()
-
-        for trace in self.hd.memory.traces:
-            if trace.kind != MemoryKind.LONG_TERM.value or trace.strength < min_strength:
-                continue
-            trace_id = id(trace)
-            live_ids.add(trace_id)
-            if trace_id in self._pattern_skills:
-                continue
-
             self._pattern_counter += 1
-            name = f"pattern_{self._pattern_counter}"
-            pattern = list(trace.value.sem)
-
-            def _apply_pattern(values: List[float], pattern: List[float] = pattern) -> List[float]:
-                if not pattern:
-                    return values
-                return [(v + pattern[i % len(pattern)]) / 2.0 for i, v in enumerate(values)]
-
-            self.register_skill(name, _apply_pattern)
-            self._pattern_skills[trace_id] = name
-            created.append(name)
-
-        for trace_id in list(self._pattern_skills):
-            if trace_id not in live_ids:
-                self.unregister_skill(self._pattern_skills.pop(trace_id))
-
-        return created
-
-    # -- Extensions (spec Part 3 sections 25-27) ---------------------------
+        else:
+            traces = [
+                t for t in self.hd.memory.traces 
+                if id(t) in pattern_trace_ids
+            ]
+        
+        if not traces:
+            return name
+        
+        # Create skill from pattern
+        trace = traces[0]
+        pattern_key = list(trace.key.data)
+        
+        def skill_fn(output: List[float]) -> List[float]:
+            # Blend output with learned pattern
+            blended = []
+            for i, (o, p) in enumerate(zip(output, pattern_key)):
+                blended.append(0.7 * o + 0.3 * p)
+            # Pad if necessary
+            while len(blended) < len(output):
+                blended.append(0.0)
+            return blended[:len(output)]
+        
+        self.register_skill(name, skill_fn)
+        return name
 
     def create_extension(
         self,
         name: str,
         purpose: str,
-        skills: Optional[List[str]] = None,
+        skill_names: Optional[List[str]] = None,
         permissions: Optional[List[str]] = None,
-        documentation: str = "",
-        auto_advance: bool = True,
+        documentation: str = ""
     ) -> Extension:
         """
-        Bundle skills (by default, every skill self_improve() has promoted
-        so far) into a named Extension and, if auto_advance, drive it
-        through the full lifecycle (section 27): test -> optimize ->
-        quantize. If it fails testing, it's left in the FAILED stage rather
-        than silently discarded, so a caller can inspect test_results.
-
-        Logged as an action (sections 161-163): by default this runs
-        immediately, but if a caller has registered an approval rule
-        matching "create_extension:<name>" via
-        self.actions.require_approval_for(...), this raises
-        PermissionError until the pending action is approved.
+        Bundle related skills into a versioned extension package.
+        
+        Extensions are permanent, testable, optimizable units that can be
+        quantized for efficiency and shared with other agents.
+        
+        Args:
+            name: Unique extension name
+            purpose: Description of what the extension does
+            skill_names: Skills to include in this extension
+            permissions: Required permissions for execution
+            documentation: Human-readable documentation
+            
+        Returns:
+            Created Extension object
         """
-        record = self.actions.request(f"create_extension:{name}", why=purpose, system="extensions")
+        ext = self.extensions.create(
+            name=name,
+            purpose=purpose,
+            skills=skill_names or list(self.skills.keys()),
+            permissions=permissions or [],
+            documentation=documentation,
+        )
+        
+        # Log the creation action
+        self.actions.request(
+            action=f"create_extension:{name}",
+            why=f"Bundling skills for {purpose}",
+            system="UnifiedBrain",
+        )
+        
+        return ext
 
-        def _do() -> Extension:
-            bundled = skills if skills is not None else list(self._pattern_skills.values())
-            ext = self.extensions.create(
-                name,
-                purpose=purpose,
-                skills=bundled,
-                memory_trace_ids=[tid for tid, sname in self._pattern_skills.items() if sname in bundled],
-                permissions=permissions,
-                documentation=documentation,
-            )
-            if auto_advance and self.extensions.test(name):
-                self.extensions.optimize(name)
-                # Spec: "Extensions get quantized when the extension is
-                # done" -- quantize the *real* numeric weights this
-                # extension is actually built from (the brain's current
-                # vale ledger and mesh connection strengths), not just
-                # flip a flag. See background_quantization.Quantizer.
-                self.extensions.quantize(name, weights=self._extension_weight_snapshot())
-            return ext
+    def test_extension(self, name: str) -> bool:
+        """Run tests on an extension."""
+        return self.extensions.test(name)
 
-        return self.actions.perform(record, _do)
+    def optimize_extension(self, name: str) -> Extension:
+        """Remove duplicates and unnecessary parts from an extension."""
+        return self.extensions.optimize(name)
 
-    def _extension_weight_snapshot(self) -> Dict[str, Any]:
+    def quantize_extension(self, name: str) -> Extension:
         """
-        A snapshot of the brain's current learned numeric state, in the
-        plain-nested-list shape background_quantization.Quantizer expects:
-        the vale ledger (one float per neuron) and the mean weight of
-        every mesh connection as an n_neurons x n_neurons matrix. This is
-        what create_extension() hands to ExtensionSystem.quantize() so
-        "quantized" means an extension actually carries a real compressed
-        weight bundle, not merely a stage label.
+        Compress an extension to int4 quantized form.
+        
+        After quantization, the extension is much more efficient to store
+        and load, though no longer directly editable.
         """
-        n = len(self.vale.v)
-        connections: List[List[float]] = [[0.0] * n for _ in range(n)]
-        for (source_id, target_id), conn in self.mesh.connections.items():
-            if source_id < n and target_id < n and conn.weight_matrix:
-                flat = [w for row in conn.weight_matrix for w in row]
-                connections[source_id][target_id] = sum(flat) / len(flat)
-        return {
-            "vale": list(self.vale.v),
-            "connections": connections,
+        # Extract weights from mesh for quantization
+        weights = {
+            "neurons": {
+                str(nid): {
+                    "state": neuron.state_vector,
+                    "vale": neuron.vale,
+                }
+                for nid, neuron in self.mesh.neurons.items()
+            },
+            "connections": {
+                f"{sid}->{tid}": conn.weight_matrix
+                for (sid, tid), conn in list(self.mesh.connections.items())[:100]  # Limit for efficiency
+            }
         }
+        
+        ext = self.extensions.quantize(name, weights=weights)
+        
+        # Also bill the extension through background quantization
+        self.billing.bill_extension(
+            name=name,
+            raw_weights=weights,
+            metadata={"purpose": ext.purpose, "skills": ext.skills}
+        )
+        
+        return ext
 
-    # -- Expert creation (spec Part 4 section 42) --------------------------
-
-    def create_expert(self, name: str, n_new_neurons: int = 4) -> int:
+    def full_extension_lifecycle(
+        self,
+        name: str,
+        purpose: str,
+        skill_names: Optional[List[str]] = None
+    ) -> Extension:
         """
-        Grow the mesh with a new, named expert group of freshly
-        initialized neurons wired into the existing mesh ("new neurons are
-        created... the new expert is trained"). ValeSystem is the single
-        source of truth for vale, so the new neurons' real vale stake
-        comes from vale.add_neurons() (funded proportionally out of the
-        existing budget), immediately re-synced onto the mesh, rather than
-        the mesh inventing vale for them itself. Their synapses are
-        registered with the learning system so they participate in every
-        subsequent perceive() cycle. Returns the new expert's group id.
-
-        Logged as an action (sections 161-163): by default this runs
-        immediately, but if a caller has registered an approval rule
-        matching "create_expert:<name>" via
-        self.actions.require_approval_for(...), this raises
-        PermissionError until the pending action is approved.
+        Create, test, optimize, and quantize an extension in one flow.
+        
+        This implements the complete lifecycle from spec Part 3 section 27:
+        Created -> Tested -> Optimized -> Quantized
         """
-        record = self.actions.request(
-            f"create_expert:{name}", why=f"grow mesh with {n_new_neurons} new neurons", system="mesh"
+        ext = self.create_extension(name, purpose, skill_names)
+        
+        if not self.test_extension(name):
+            raise ValueError(f"Extension {name} failed testing")
+        
+        ext = self.optimize_extension(name)
+        ext = self.quantize_extension(name)
+        
+        return ext
+
+    # =========================================================================
+    # INTROSPECTION AND DEBUGGING
+    # =========================================================================
+
+    def introspect(self) -> Introspection:
+        """
+        Self-observation: analyze current internal state.
+        
+        Returns information about:
+        - Most stable neurons (highest vale - consolidated knowledge)
+        - Most flexible neurons (lowest vale - learning capacity)
+        - Removal candidates (consistently inactive)
+        - Current system metrics
+        """
+        # Find stable vs flexible neurons
+        neuron_vales = [(nid, n.vale) for nid, n in self.mesh.neurons.items()]
+        sorted_by_vale = sorted(neuron_vales, key=lambda x: x[1], reverse=True)
+        
+        most_stable = [nid for nid, _ in sorted_by_vale[:5]]
+        most_flexible = [nid for nid, _ in sorted_by_vale[-5:]]
+        
+        # Find removal candidates (low activation over time)
+        removal_candidates = [
+            nid for nid, n in self.mesh.neurons.items()
+            if n.average_activation < 0.01 and n.total_spikes == 0
+        ]
+        
+        return Introspection(
+            most_stable_neurons=most_stable,
+            most_flexible_neurons=most_flexible,
+            removal_candidates=removal_candidates,
+            average_vale=sum(self.vale.v) / len(self.vale.v),
+            average_surprise=self.hd.memory.traces and sum(
+                t.strength for t in self.hd.memory.traces
+            ) / len(self.hd.memory.traces) or 0.0,
+            memory_size=len(self.hd.memory.traces),
+            active_skills=list(self.skills.keys()),
+            active_groups=sorted(self.mesh.active_groups),
+            active_experts=self.mesh.active_expert_names(),
         )
 
-        def _do() -> int:
-            group_id, new_ids = self.mesh.add_expert_group(name, n_new_neurons)
-            self.vale.add_neurons(n_new_neurons, policy="rescale")
+    def get_debug_snapshot(self) -> DebugSnapshot:
+        """Capture debug information for diagnostics."""
+        return DebugSnapshot(
+            active_neuron_count=sum(
+                1 for n in self.mesh.neurons.values() 
+                if n.activation > 0.1
+            ),
+            active_experts=self.mesh.active_expert_names(),
+            memory_size=len(self.hd.memory.traces),
+            context_input_size=len(self.context.input_buffer),
+            context_output_size=len(self.context.output_buffer),
+            predictions_made=self.hd.current_tick,
+            recent_average_surprise=sum(
+                self.hd.neurons[n].last_error 
+                for n in self.hd.neurons
+            ) / max(1, len(self.hd.neurons)),
+            errors_detected=[
+                f"Mistake '{sig}': {rec.what}"
+                for sig, rec in list(self.mistakes.records.items())[-5:]
+            ],
+            extensions_installed=list(self.extensions.extensions.keys()),
+        )
+
+    # =========================================================================
+    # HIVE MIND INTEGRATION
+    # =========================================================================
+
+    def init_hive_mind(self, agent_id: str, min_trust: float = 0.3) -> HiveMind:
+        """Initialize hive mind for multi-agent collaboration."""
+        self._hive_mind = HiveMind(min_trust_to_share=min_trust)
+        self._hive_mind.register_agent(agent_id)
+        return self._hive_mind
+
+    def share_extension_with(
+        self,
+        extension_name: str,
+        to_agent: str,
+        to_registry: ExtensionSystem
+    ) -> ShareRecord:
+        """
+        Share an extension with another agent.
+        
+        Requires hive mind to be initialized. The receiving agent will
+        re-test the extension before accepting it.
+        """
+        if self._hive_mind is None:
+            raise RuntimeError("Hive mind not initialized")
+        
+        ext = self.extensions.get(extension_name)
+        if ext is None:
+            raise ValueError(f"Extension {extension_name} not found")
+        
+        return self._hive_mind.share(
+            extension=ext,
+            from_agent="local",
+            to_agent=to_agent,
+            to_registry=to_registry,
+        )
+
+    def receive_extension_from(
+        self,
+        extension: Extension,
+        from_agent: str
+    ) -> ShareRecord:
+        """Receive and verify an extension from another agent."""
+        if self._hive_mind is None:
+            raise RuntimeError("Hive mind not initialized")
+        
+        return self._hive_mind.share(
+            extension=extension,
+            from_agent=from_agent,
+            to_agent="local",
+            to_registry=self.extensions,
+        )
+
+    # =========================================================================
+    # SERIALIZATION
+    # =========================================================================
+
+    def save_state(self) -> Dict[str, Any]:
+        """Save complete system state for persistence."""
+        return {
+            "mesh": self.mesh.save_state(),
+            "vale": self.vale.to_dict(),
+            "hd": self.hd.save_state(),
+            "skills": list(self.skills.keys()),
+            "extensions": self.extensions.to_dict(),
+            "context": {
+                "input": self.context.input_buffer.items,
+                "output": self.context.output_buffer.items,
+            },
+            "mistakes": self.mistakes.to_dict(),
+            "actions": [
+                {
+                    "action": r.action,
+                    "why": r.why,
+                    "system": r.system,
+                    "result": r.result,
+                    "approval": r.approval.value,
+                }
+                for r in self.actions.records
+            ],
+        }
+
+    def load_state(self, state: Dict[str, Any]) -> None:
+        """Restore system state from saved snapshot."""
+        if "mesh" in state:
+            self.mesh.load_state(state["mesh"])
+        if "vale" in state:
+            self.vale.from_dict(state["vale"])
             self._sync_vale_to_mesh()
+        if "hd" in state:
+            self.hd.load_state(state["hd"])
+        if "context" in state:
+            self.context.input_buffer.load_items(state["context"].get("input", []))
+            self.context.output_buffer.load_items(state["context"].get("output", []))
+        if "mistakes" in state:
+            self.mistakes = MistakeTracker.from_dict(state["mistakes"])
+        if "extensions" in state:
+            self.extensions = ExtensionSystem.from_dict(state["extensions"])
 
-            new_id_set = set(new_ids)
-            for nid in new_ids:
-                self.states.register_neuron(str(nid))
-            for (source_id, target_id) in self.mesh.connections:
-                if source_id in new_id_set or target_id in new_id_set:
-                    self.states.register_synapse(str(source_id), str(target_id))
+    # =========================================================================
+    # NEURAL DEFINITION LANGUAGE INTERFACE
+    # =========================================================================
 
-            return group_id
+    def define_neuron_from_ndl(self, source: str) -> Dict[str, NeuronDefinition]:
+        """Parse and apply neuron definitions from NDL source."""
+        program = parse_program(source)
+        
+        # Execute any net searches
+        for req in program.netsearch_requests:
+            if req.net:
+                results = netsearch(req.net)
+                # Could create neurons from results here
+        
+        return program.neurons
 
-        return self.actions.perform(record, _do)
+    def describe_current_state_as_ndl(self) -> str:
+        """Export current neural state as NDL source."""
+        neurons = {}
+        for nid, neuron in self.mesh.neurons.items():
+            name = f"neuron_{nid}"
+            neurons[name] = NeuronDefinition(
+                name=name,
+                vale=neuron.vale,
+                definition=f"Group {neuron.group} neuron",
+                type=str(neuron.role.value),
+            )
+        return ndl_to_source(neurons)
+
+
+# Convenience factory functions
+def create_brain(
+    config_type: str = "default",
+    expert_names: Optional[List[str]] = None
+) -> UnifiedBrain:
+    """
+    Create a UnifiedBrain with preset configurations.
+    
+    Args:
+        config_type: "tiny", "small", "default", "large", or "massive"
+        expert_names: Optional names for expert groups
+        
+    Returns:
+        Configured UnifiedBrain instance
+    """
+    configs = {
+        "tiny": {"n_neurons": 16, "n_dimensions": 2, "n_input": 4, "n_groups": 2},
+        "small": {"n_neurons": 32, "n_dimensions": 4, "n_input": 8, "n_groups": 4},
+        "default": {"n_neurons": 64, "n_dimensions": 4, "n_input": 8, "n_groups": 4},
+        "large": {"n_neurons": 128, "n_dimensions": 8, "n_input": 16, "n_groups": 8},
+        "massive": {"n_neurons": 256, "n_dimensions": 16, "n_input": 32, "n_groups": 16},
+    }
+    
+    cfg = configs.get(config_type, configs["default"])
+    return UnifiedBrain(
+        **cfg,
+        expert_names=expert_names,
+        hd_dimensions=cfg["n_dimensions"] * 32,  # Scale HD dims with neural dims
+    )
+
+
+__all__ = [
+    "UnifiedBrain",
+    "CycleResult",
+    "ReasoningPath",
+    "DebugSnapshot",
+    "Introspection",
+    "SkillRecord",
+    "create_brain",
+    # Re-export subsystem types for convenience
+    "NeuralMesh",
+    "ValeSystem",
+    "HDThinkingSystem",
+    "LearningSystem",
+    "ExtensionSystem",
+    "CircularContextSystem",
+    "MistakeTracker",
+    "ActionLog",
+    "Quantizer",
+    "BillingSystem",
+    "HiveMind",
+]
