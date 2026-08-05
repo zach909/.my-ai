@@ -25,7 +25,10 @@
     "plugin_manager/**/*.ts",
     "plugins/**/*.ts",
     "extension-builder/**/*.ts",
-    "extension_system/**/*.ts"
+    "extension_system/**/*.ts",
+    "src/index.ts",
+    "src/lib/error-log.ts",
+    "src/server/bot-service.ts"
   ],
-  "exclude": ["node_modules", "dist", "**/*.d.ts", "src", "model && skills manager"]
+  "exclude": ["node_modules", "dist", "**/*.d.ts", "src/routes", "src/components", "src/features", "src/hooks", "src/lib/utils.ts", "model && skills manager"]
 }

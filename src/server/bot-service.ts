@@ -7,8 +7,8 @@
  * system instance is supplied.
  */
 
-import type { NeuroclawSystem } from '../index'
-import { logError, getRecentErrors, type LoggedError } from '../lib/error-log'
+import type { NeuroclawSystem } from '../index.js'
+import { logError, getRecentErrors, type LoggedError } from '../lib/error-log.js'
 
 /** A route the bot knows about and can reference/point users to. */
 export interface AppRoute {

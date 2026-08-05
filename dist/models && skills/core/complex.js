@@ -1,43 +1,7 @@
-// Section 13: complex numbers as a genuine division algebra (Hurwitz size 2).
-// Phase-and-amplitude together is exactly one complex number, so the quantum
-// interference layer stores/combines its state as complex values rather than a
-// pair of disconnected real scalars driven by ad-hoc trigonometry.
-//
-// A complex number a + b·i with i² = -1. Every nonzero element has a unique
-// inverse (it is a division algebra), which is what makes interference,
-// rotation, and normalization behave correctly.
-export const complex = (re, im = 0) => ({ re, im });
-/** Polar form: magnitude·e^{iθ} = magnitude·(cosθ + i·sinθ). */
-export const fromPolar = (magnitude, phase) => ({
-    re: magnitude * Math.cos(phase),
-    im: magnitude * Math.sin(phase),
-});
-export const add = (a, b) => ({ re: a.re + b.re, im: a.im + b.im });
-export const sub = (a, b) => ({ re: a.re - b.re, im: a.im - b.im });
-/** (a+bi)(c+di) = (ac - bd) + (ad + bc)i — the i² = -1 rule. */
-export const mul = (a, b) => ({
-    re: a.re * b.re - a.im * b.im,
-    im: a.re * b.im + a.im * b.re,
-});
-export const scale = (a, k) => ({ re: a.re * k, im: a.im * k });
-/** Complex conjugate a - bi. */
-export const conj = (a) => ({ re: a.re, im: -a.im });
-/** Magnitude |a+bi| = sqrt(a² + b²). */
-export const abs = (a) => Math.hypot(a.re, a.im);
-/** Squared magnitude (Born-rule probability weight, no sqrt). */
-export const absSq = (a) => a.re * a.re + a.im * a.im;
-/** Argument (phase angle) in (-π, π]. */
-export const arg = (a) => Math.atan2(a.im, a.re);
-/**
- * Multiplicative inverse 1/z = conj(z)/|z|². Defined for every nonzero z —
- * the division-algebra guarantee. Throws on zero.
- */
-export const inv = (a) => {
-    const d = absSq(a);
-    if (d === 0)
-        throw new Error('complex inverse of zero');
-    return { re: a.re / d, im: -a.im / d };
-};
-export const div = (a, b) => mul(a, inv(b));
-/** The imaginary unit i, with i·i = -1. */
-export const I = { re: 0, im: 1 };
+// Re-exported from onebrain.ts — OneBrain is now a single-file engine.
+// This file is kept only so existing import paths ('./complex.js') keep
+// working, under their original names (add/sub/mul/scale/div were renamed
+// complexAdd/complexSub/complexMul/complexScale/complexDiv inside onebrain.ts
+// to avoid colliding with dual.ts's identically-named functions there).
+export { complexAdd as add, complexSub as sub, complexMul as mul, complexScale as scale, complexDiv as div, } from './onebrain.js';
+export * from './onebrain.js';
