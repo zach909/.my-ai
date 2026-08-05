@@ -80,6 +80,16 @@ function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
+  // Arriving from the Chat History page (?thread=<id>) hydrates that thread
+  // immediately instead of starting a fresh conversation.
+  useEffect(() => {
+    const threadParam = new URLSearchParams(window.location.search).get('thread')
+    if (threadParam) {
+      continueThread({ threadId: threadParam, title: '', score: 1, snippet: '', updatedAt: Date.now() })
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Re-focus the input element once loading finishes
   useEffect(() => {
     if (!loading) {

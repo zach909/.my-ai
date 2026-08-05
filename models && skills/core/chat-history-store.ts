@@ -19,6 +19,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, readdirSync, unlink
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
+import { ChatOrganizer, type ChatGroupRecord } from "./chat-organizer.js";
 
 export type ChatSource = "chat" | "chat-group";
 
@@ -62,9 +63,11 @@ function tokenOverlap(a: string[], b: string[]): number {
 
 export class ChatHistoryStore {
   private readonly rootDir: string;
+  private readonly organizer: ChatOrganizer;
 
-  constructor(rootDir?: string) {
+  constructor(rootDir?: string, organizer?: ChatOrganizer) {
     this.rootDir = rootDir ?? join(homedir(), ".neuroclaw", "chat-history");
+    this.organizer = organizer ?? new ChatOrganizer();
   }
 
   private assertSafeId(id: string): void {
@@ -110,10 +113,16 @@ export class ChatHistoryStore {
     const p = this.path(id);
     if (!existsSync(p)) return false;
     unlinkSync(p);
+    this.organizer.removeThread(id);
     return true;
   }
 
-  /** Append a message, creating a new thread if `threadId` is omitted or unknown. Returns the updated thread. */
+  /**
+   * Append a message, creating a new thread if `threadId` is omitted or
+   * unknown. Returns the updated thread. Every save automatically files the
+   * thread into a topic group via ChatOrganizer -- callers never have to
+   * organize a chat themselves.
+   */
   appendMessage(message: ChatMessage, source: ChatSource, threadId?: string): ChatThread {
     this.ensureDir();
     const existing = threadId ? this.loadThread(threadId) : null;
@@ -129,7 +138,36 @@ export class ChatHistoryStore {
     thread.messages.push(message);
     thread.updatedAt = now;
     writeFileSync(this.path(thread.id), JSON.stringify(thread), "utf8");
+    this.organizer.assign(thread);
     return thread;
+  }
+
+  /** Every persisted group, most recently active first. */
+  listGroups(): ChatGroupRecord[] {
+    return this.organizer.listGroups();
+  }
+
+  /** The group a given thread was automatically filed into, if any. */
+  groupForThread(threadId: string): ChatGroupRecord | undefined {
+    return this.organizer.getGroupForThread(threadId);
+  }
+
+  /**
+   * Every group with its member threads resolved to lightweight summaries
+   * (id/title/source/updatedAt), for a history sidebar/page -- the full
+   * message bodies stay behind loadThread()/threads/:id so this stays cheap
+   * even with a lot of history.
+   */
+  listGroupsWithThreads(): Array<ChatGroupRecord & { threads: Array<{ id: string; title: string; source: ChatSource; updatedAt: number }> }> {
+    const threadsById = new Map(this.listThreads().map((t) => [t.id, t]));
+    return this.listGroups().map((group) => ({
+      ...group,
+      threads: group.threadIds
+        .map((id) => threadsById.get(id))
+        .filter((t): t is ChatThread => !!t)
+        .sort((a, b) => b.updatedAt - a.updatedAt)
+        .map((t) => ({ id: t.id, title: t.title, source: t.source, updatedAt: t.updatedAt })),
+    }));
   }
 
   /**

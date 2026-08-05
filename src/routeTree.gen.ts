@@ -18,6 +18,7 @@ import { Route as AppPlanningRouteImport } from './routes/app/planning'
 import { Route as AppKnowledgeRouteImport } from './routes/app/knowledge'
 import { Route as AppExperimentsRouteImport } from './routes/app/experiments'
 import { Route as AppEvaluationRouteImport } from './routes/app/evaluation'
+import { Route as AppChatHistoryRouteImport } from './routes/app/chat-history'
 import { Route as AppChatGroupsRouteImport } from './routes/app/chat-groups'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppArchitectureRouteImport } from './routes/app/architecture'
@@ -67,6 +68,11 @@ const AppEvaluationRoute = AppEvaluationRouteImport.update({
   path: '/evaluation',
   getParentRoute: () => AppRoute,
 } as any)
+const AppChatHistoryRoute = AppChatHistoryRouteImport.update({
+  id: '/chat-history',
+  path: '/chat-history',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppChatGroupsRoute = AppChatGroupsRouteImport.update({
   id: '/chat-groups',
   path: '/chat-groups',
@@ -91,6 +97,7 @@ export interface FileRoutesByFullPath {
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
+  '/app/chat-history': typeof AppChatHistoryRoute
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
@@ -104,6 +111,7 @@ export interface FileRoutesByTo {
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
+  '/app/chat-history': typeof AppChatHistoryRoute
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
@@ -119,6 +127,7 @@ export interface FileRoutesById {
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
+  '/app/chat-history': typeof AppChatHistoryRoute
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
@@ -135,6 +144,7 @@ export interface FileRouteTypes {
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
+    | '/app/chat-history'
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
@@ -148,6 +158,7 @@ export interface FileRouteTypes {
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
+    | '/app/chat-history'
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
@@ -162,6 +173,7 @@ export interface FileRouteTypes {
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
+    | '/app/chat-history'
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
@@ -241,6 +253,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppEvaluationRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/chat-history': {
+      id: '/app/chat-history'
+      path: '/chat-history'
+      fullPath: '/app/chat-history'
+      preLoaderRoute: typeof AppChatHistoryRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/chat-groups': {
       id: '/app/chat-groups'
       path: '/chat-groups'
@@ -269,6 +288,7 @@ interface AppRouteChildren {
   AppArchitectureRoute: typeof AppArchitectureRoute
   AppChatRoute: typeof AppChatRoute
   AppChatGroupsRoute: typeof AppChatGroupsRoute
+  AppChatHistoryRoute: typeof AppChatHistoryRoute
   AppEvaluationRoute: typeof AppEvaluationRoute
   AppExperimentsRoute: typeof AppExperimentsRoute
   AppKnowledgeRoute: typeof AppKnowledgeRoute
@@ -280,6 +300,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppArchitectureRoute: AppArchitectureRoute,
   AppChatRoute: AppChatRoute,
   AppChatGroupsRoute: AppChatGroupsRoute,
+  AppChatHistoryRoute: AppChatHistoryRoute,
   AppEvaluationRoute: AppEvaluationRoute,
   AppExperimentsRoute: AppExperimentsRoute,
   AppKnowledgeRoute: AppKnowledgeRoute,
