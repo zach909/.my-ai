@@ -398,8 +398,13 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
             <button
               onClick={clearError}
               className="hover:bg-red-700 rounded p-1 active:scale-90 transition-all duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white cursor-pointer"
+          <div className="bg-red-500 text-white px-4 py-2 rounded-lg shadow-lg flex items-center gap-2">
+            <span>{error}</span>
+            <button
+              onClick={clearError}
               aria-label="Close error notification"
               title="Close error notification"
+              className="hover:bg-red-600 rounded p-1 active:scale-90 transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
             >
               ×
             </button>

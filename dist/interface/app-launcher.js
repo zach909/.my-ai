@@ -114,6 +114,8 @@ export class AppLauncher extends EventEmitter {
         // Validate inputs to prevent shell/command/argument injection
         if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(String(windowId)) || !/^\d+$/.test(String(workspace))) {
             this.emit('error', { message: `Invalid arguments for moving window: windowId=${windowId}, workspace=${workspace}` });
+        if (typeof windowId !== 'string' || !/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(windowId)) {
+            this.emit('error', { message: `Invalid windowId format` });
             return;
         }
         const wsInt = parseInt(workspace, 10);
@@ -132,6 +134,7 @@ export class AppLauncher extends EventEmitter {
         // Validate inputs to prevent shell/command/argument injection
         if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(String(appIdOrWindowId))) {
             this.emit('error', { message: `Invalid arguments for bringing window: appIdOrWindowId=${appIdOrWindowId}` });
+        if (typeof appIdOrWindowId !== 'string' || !/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(appIdOrWindowId)) {
             return;
         }
         try {
