@@ -10,6 +10,7 @@
 import { execFileSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { join } from 'node:path';
+import { createConnection } from 'node:net';
 
 const ROOT = process.cwd();
 const BACKEND_PORT = 7861;
@@ -24,9 +25,52 @@ const backend = spawn('node', ['dist/interface/main.js', 'web', String(BACKEND_P
   cwd: ROOT,
   stdio: 'inherit',
 });
+let backendExited = false;
 backend.on('exit', (code) => {
+  backendExited = true;
   if (code !== null && code !== 0) console.error(`[dev] backend exited with code ${code}`);
 });
+
+/**
+ * Poll until something accepts a TCP connection on `port`, or bail as soon
+ * as the backend process itself exits. Vite starts proxying /api/* the
+ * moment it comes up; spawning it in parallel with the backend (as before)
+ * raced Node's module-load time against Vite's own startup, so cold starts
+ * intermittently opened the browser onto a stream of ECONNREFUSED proxy
+ * errors until the backend happened to catch up. Waiting here instead means
+ * Vite never starts until the backend is actually reachable.
+ */
+function waitForPort(port, timeoutMs = 20000) {
+  return new Promise((resolve, reject) => {
+    const deadline = Date.now() + timeoutMs;
+    (function attempt() {
+      if (backendExited) {
+        reject(new Error('backend exited before it started listening'));
+        return;
+      }
+      const socket = createConnection(port, '127.0.0.1');
+      socket.once('connect', () => {
+        socket.end();
+        resolve();
+      });
+      socket.once('error', () => {
+        socket.destroy();
+        if (Date.now() > deadline) {
+          reject(new Error(`backend did not start listening on port ${port} within ${timeoutMs}ms`));
+        } else {
+          setTimeout(attempt, 150);
+        }
+      });
+    })();
+  });
+}
+
+try {
+  await waitForPort(BACKEND_PORT);
+  console.log(`[dev] backend is ready on port ${BACKEND_PORT}`);
+} catch (err) {
+  console.error(`[dev] ${err.message} — starting Vite anyway; /api/* calls will fail until the backend is up.`);
+}
 
 const vite = spawn('npx', ['vite'], { cwd: ROOT, stdio: 'inherit' });
 
