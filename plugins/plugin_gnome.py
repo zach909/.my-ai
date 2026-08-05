@@ -44,7 +44,7 @@ def _safe_window_id(window_id: str) -> str:
         raise ValueError("Security Error: window_id cannot be empty.")
     if window_id.startswith("-"):
         raise ValueError("Security Error: Potential argument injection detected in window_id.")
-    if not re.match(r"^(0x)?[a-fA-F0-9]+$", window_id) and not re.match(r"^\d+$", window_id):
+    if not re.match(r"^(0x)?[a-fA-F0-9_]+$", window_id) and not re.match(r"^\d+$", window_id) and not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id):
         raise ValueError("Security Error: Invalid window_id format.")
     return window_id
 
@@ -258,6 +258,8 @@ class GnomePlugin:
 
     def _validate_workspace_index(self, index: int) -> int:
         try:
+            if isinstance(index, bool):
+                raise ValueError()
             val = int(index)
         except (ValueError, TypeError):
             raise ValueError("Security Error: workspace index must be an integer.")
@@ -271,26 +273,17 @@ class GnomePlugin:
         cleaned = window_id.strip()
         if cleaned.startswith("-"):
             raise ValueError("Security Error: Potential argument injection detected in window_id.")
-        if not re.match(r"^[a-zA-Z0-9xX]+$", cleaned):
+        if not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", cleaned):
             raise ValueError("Security Error: Invalid characters in window_id.")
         return cleaned
 
     def _switch_workspace(self, index: int) -> str:
-        index = self._validate_workspace_index(index)
-        index = _safe_workspace(index)
         try:
-            index = int(index)
-            if index < 0 or index > 100000:
-                raise ValueError("Invalid workspace index")
-        except (TypeError, ValueError) as e:
+            index = self._validate_workspace_index(index)
+            index = _safe_workspace(index)
+        except ValueError as e:
             raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
 
-            idx = int(index)
-            if idx < 0 or idx > 1000:
-                raise ValueError()
-        except (ValueError, TypeError):
-            return "ERROR: Invalid workspace index"
-        index = idx
         # Method 1: GNOME Shell JS eval (fastest)
         r = _gdbus_eval(f"global.workspace_manager.get_workspace_by_index({index}).activate(global.get_current_time())")
         if r:
@@ -306,10 +299,11 @@ class GnomePlugin:
         return "ERROR: No method available to switch workspace"
 
     def _add_workspace(self, name: Optional[str] = None) -> int:
+        if name:
+            name = _safe_workspace_name(name)
         n = self._num_workspaces()
         self._set_num_workspaces(n + 1)
         if name:
-            name = _safe_workspace_name(name)
             names = self._workspace_names()
             while len(names) < n + 1:
                 names.append(f"Desktop {len(names) + 1}")
@@ -318,21 +312,12 @@ class GnomePlugin:
         return n
 
     def _remove_workspace(self, index: int) -> str:
-        index = self._validate_workspace_index(index)
-        index = _safe_workspace(index)
         try:
-            index = int(index)
-            if index < 0 or index > 100000:
-                raise ValueError("Invalid workspace index")
-        except (TypeError, ValueError) as e:
+            index = self._validate_workspace_index(index)
+            index = _safe_workspace(index)
+        except ValueError as e:
             raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
 
-            idx = int(index)
-            if idx < 0 or idx > 1000:
-                raise ValueError()
-        except (ValueError, TypeError):
-            return "ERROR: Invalid workspace index"
-        index = idx
         n = self._num_workspaces()
         if n <= 1:
             return "ERROR: Cannot remove last workspace"
@@ -348,54 +333,34 @@ class GnomePlugin:
         return f"Removed workspace {index}"
 
     def _move_window(self, window_id: str, workspace: int) -> str:
-        window_id = self._validate_window_id(window_id)
-        workspace = self._validate_workspace_index(workspace)
-        window_id = _safe_window_id(window_id)
-        workspace = _safe_workspace(workspace)
-        if not isinstance(window_id, str) or not re.match(r"^[a-fA-F0-9xX]+$", window_id):
-            raise ValueError("Security Error: Invalid window ID format")
         try:
-            workspace = int(workspace)
-            if workspace < 0 or workspace > 100000:
-                raise ValueError("Invalid workspace index")
-        except (TypeError, ValueError) as e:
+            window_id = self._validate_window_id(window_id)
+            window_id = _safe_window_id(window_id)
+        except ValueError as e:
+            raise ValueError(f"Security Error: Invalid window ID format: {e}") from e
+
+        try:
+            workspace = self._validate_workspace_index(workspace)
+            workspace = _safe_workspace(workspace)
+        except ValueError as e:
             raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
 
         window_id_str = str(window_id)
-        if not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id_str):
-            return "ERROR: Invalid window ID format"
-        try:
-            workspace_idx = int(workspace)
-            if workspace_idx < 0 or workspace_idx > 1000:
-                raise ValueError()
-        except (ValueError, TypeError):
-            return "ERROR: Invalid workspace index"
         if shutil.which("wmctrl"):
-            _run(["wmctrl", "-ir", window_id_str, "-t", str(workspace_idx)])
-            return f"Moved window {window_id_str} to workspace {workspace_idx}"
+            _run(["wmctrl", "-ir", window_id_str, "-t", str(workspace)])
+            return f"Moved window {window_id_str} to workspace {workspace}"
         return "wmctrl required"
 
     def _launch_on_desktop(self, cmd: str, workspace: int = None) -> str:
         if _is_blocked(cmd):
             return "Blocked: destructive command pattern detected"
         if workspace is not None:
-            workspace = self._validate_workspace_index(workspace)
-            workspace = _safe_workspace(workspace)
-        else:
             try:
-                workspace = int(workspace)
-                if workspace < 0 or workspace > 100000:
-                    raise ValueError("Invalid workspace index")
-            except (TypeError, ValueError) as e:
+                workspace = self._validate_workspace_index(workspace)
+                workspace = _safe_workspace(workspace)
+            except ValueError as e:
                 raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
         else:
-                idx = int(workspace)
-                if idx < 0 or idx > 1000:
-                    raise ValueError()
-            except (ValueError, TypeError):
-                return "ERROR: Invalid workspace index"
-            workspace = idx
-        if workspace is None:
             workspace = self._ai_ws if self._ai_ws >= 0 else self._add_workspace()
             if self._ai_ws < 0:
                 self._ai_ws = workspace
