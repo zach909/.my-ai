@@ -8,17 +8,21 @@
 // foreground, and tears the backend down when Vite exits (Ctrl+C or crash).
 
 import { execFileSync, spawn } from 'node:child_process';
-import { existsSync } from 'node:fs';
-import { join } from 'node:path';
 import { createConnection } from 'node:net';
 
 const ROOT = process.cwd();
 const BACKEND_PORT = 7861;
 
-if (!existsSync(join(ROOT, 'dist', 'interface', 'main.js'))) {
-  console.log('[dev] backend not built — running scripts/build-backend.mjs...');
-  execFileSync('node', ['scripts/build-backend.mjs'], { cwd: ROOT, stdio: 'inherit' });
-}
+// Always rebuild, not just when dist/interface/main.js is missing. It used
+// to only build once "if missing" -- fine the very first time, but on every
+// later `npm run dev` it silently ran whatever was already in dist/, even
+// if that was a stale build from before the latest backend source changes
+// (a merge, a pull, a fix). Since the backend fails ENTIRELY closed on a
+// stale/broken build (nothing to fall back to but ECONNREFUSED forever),
+// and a full rebuild only takes a few seconds, always rebuilding is the
+// only way to guarantee dev never silently runs old backend code.
+console.log('[dev] building backend...');
+execFileSync('node', ['scripts/build-backend.mjs'], { cwd: ROOT, stdio: 'inherit' });
 
 console.log(`[dev] starting backend on port ${BACKEND_PORT}...`);
 const backend = spawn('node', ['dist/interface/main.js', 'web', String(BACKEND_PORT)], {
