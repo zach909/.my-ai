@@ -293,8 +293,8 @@ function DesktopIcon({ app, isLaunching, onClick }: DesktopIconProps) {
       key={app.id}
       onClick={() => onClick(app)}
       disabled={isLaunching}
-      aria-label={`Launch ${app.name}`}
       aria-busy={isLaunching}
+      aria-label={`Launch ${app.name}`}
       className={`
         group flex flex-col items-center justify-center
         w-24 h-24 p-2 rounded-lg
@@ -402,6 +402,9 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
             <span>{error}</span>
             <button
               onClick={clearError}
+              className="hover:bg-red-600 rounded p-1 transition-all duration-150 active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white focus-visible:ring-offset-2 focus-visible:ring-offset-red-500 cursor-pointer"
+              aria-label="Close error message"
+              title="Close error message"
               aria-label="Close error notification"
               title="Close error notification"
               className="hover:bg-red-600 rounded p-1 active:scale-90 transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-white"
@@ -431,6 +434,9 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
               ))}
               <button
                 onClick={() => setLogoViewerOpen(true)}
+                aria-label="Open Twisted Strip interactive 3D viewer"
+                className="group flex flex-col items-center justify-center w-24 h-24 p-2 rounded-lg hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500 active:scale-95 transition-all duration-150 cursor-pointer"
+                title="Twisted Strip"
                 className="group flex flex-col items-center justify-center w-24 h-24 p-2 rounded-lg hover:bg-white/10 focus:outline-none focus:ring-2 focus:ring-blue-500 active:scale-95 transition-all duration-150 cursor-pointer"
                 title="Twisted Strip"
                 aria-label="Open Twisted Strip interactive 3D viewer"
