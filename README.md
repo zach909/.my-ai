@@ -1,4 +1,6 @@
-# .my-ai - Artificial Superintelligence System
+# NeuroClaw - Artificial Superintelligence System
+
+NeuroClaw is a comprehensive, local-first AI agent. It's powered by **OneBrain**, the neural mesh engine underneath — the all-to-all neuron computation, quantization, and mixture-of-experts routing described throughout this repo all live there. NeuroClaw the agent is itself made of skills: each capability is trained and packaged by the Extension Builder, then registered into OneBrain as a routable MoE expert.
 
 A comprehensive AI/ASI system with modular architecture implementing neural mesh computing, mixture of experts, hyperdimensional thinking, and self-improvement capabilities.
 

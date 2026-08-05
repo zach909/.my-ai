@@ -1,4 +1,4 @@
-// Dependency-free smoke suite for the NeuroLang / Prometheus Elastic Core
+// Dependency-free smoke suite for the NeuroLang / NeuroClaw
 // TypeScript stack. Run with `npm test` (which builds first). Imports the
 // compiled output in dist/ via file URLs so the spaces and `&&` in the
 // "models && skills" directory name don't break ESM specifier resolution.

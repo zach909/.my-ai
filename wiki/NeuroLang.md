@@ -1,6 +1,6 @@
 # NeuroLang Reference
 
-NeuroLang is a custom neuron definition language used by Prometheus Elastic Core for long context processing and network specification.
+NeuroLang is a custom neuron definition language used by NeuroClaw for long context processing and network specification.
 
 ## Overview
 
@@ -136,4 +136,4 @@ NeuroLang integrates with:
 
 ---
 
-*NeuroLang is the foundation of the Prometheus Elastic Core's neural network definition and processing system.*
+*NeuroLang is the foundation of the NeuroClaw's neural network definition and processing system.*

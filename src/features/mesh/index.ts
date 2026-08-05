@@ -1,5 +1,5 @@
 /**
- * Prometheus Elastic Core — Mesh Feature
+ * NeuroClaw — Mesh Feature
  *
  * Barrel export for the core neural mesh engine.
  */

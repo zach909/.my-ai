@@ -2,7 +2,7 @@
 
 ## System Summary
 
-Prometheus Elastic Core (NeuroClaw) is a private, local AI system that runs entirely on your machine (Mac, Windows, or Linux). The system features autonomous operation with infinite context through all-to-all neuron connectivity.
+NeuroClaw is a private, local AI system that runs entirely on your machine (Mac, Windows, or Linux). It is powered by **OneBrain**, the neural mesh engine that does the actual computation — all-to-all neuron connectivity, quantization, MoE routing — described throughout this wiki. NeuroClaw the agent is composed of skills, each trained and packaged by the [[Builder|Extension Builder]] and registered into OneBrain as a routable [[MoE]] expert.
 
 **Key Principle**: NO EXTERNAL APIs - all processing happens locally.
 

@@ -1,8 +1,8 @@
-# Prometheus Elastic Core Self-Improvement Implementation Plan
+# NeuroClaw Self-Improvement Implementation Plan
 
 ## Executive Summary
 
-This document maps the 306-step self-improvement framework to the actual Neuroclaw/Prometheus Elastic Core codebase. The system already implements many foundational components for recursive self-improvement. This plan identifies what exists, what needs enhancement, and provides an actionable implementation roadmap.
+This document maps the 306-step self-improvement framework to the actual NeuroClaw codebase. The system already implements many foundational components for recursive self-improvement. This plan identifies what exists, what needs enhancement, and provides an actionable implementation roadmap.
 
 ---
 
@@ -1145,6 +1145,6 @@ Track these metrics throughout improvement cycles:
 
 ## CONCLUSION
 
-The Neuroclaw/Prometheus Elastic Core system already has substantial infrastructure for recursive self-improvement. This plan provides a roadmap to systematically implement all 306 steps while maintaining safety and verifiability. The key insight is that many components already exist and need enhancement rather than replacement.
+The NeuroClaw system already has substantial infrastructure for recursive self-improvement. This plan provides a roadmap to systematically implement all 306 steps while maintaining safety and verifiability. The key insight is that many components already exist and need enhancement rather than replacement.
 
 The recursive improvement loop (Phase 20) is the culmination - once implemented, the system can continuously improve itself within safe bounds, creating a virtuous cycle of capability enhancement.

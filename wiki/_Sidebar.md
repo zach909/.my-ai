@@ -1,4 +1,4 @@
-# Prometheus Elastic Core Wiki
+# NeuroClaw Wiki
 
 ## Navigation
 

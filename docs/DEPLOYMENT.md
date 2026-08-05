@@ -1,4 +1,4 @@
-# Prometheus Elastic Core — Deployment Guide
+# NeuroClaw — Deployment Guide
 
 Complete guide to deploying the mesh AI system on RTX 5070 hardware with code execution, multi-desktop support, and large-scale training.
 
@@ -270,7 +270,7 @@ For always-on deployment:
 # Systemd service example
 sudo tee /etc/systemd/system/mesh-core.service > /dev/null <<EOF
 [Unit]
-Description=Prometheus Elastic Core
+Description=NeuroClaw
 After=network.target
 
 [Service]
@@ -344,4 +344,4 @@ This is an experimental system. It learns from your corpus, not from a pre-train
 - **Your corpus matters**: Quality/size of corpus dominates model quality
 - **No magic**: Like any LLM, it can hallucinate, contradict, or fail unexpectedly
 
-Good luck, and enjoy exploring the Prometheus Elastic Core on your RTX 5070!
+Good luck, and enjoy exploring the NeuroClaw on your RTX 5070!

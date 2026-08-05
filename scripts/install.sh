@@ -1,5 +1,5 @@
 #!/bin/bash
-# Neuroclaw — Prometheus Elastic Core Installer
+# NeuroClaw — OneBrain Installer
 # Modern one-click installer with desktop integration
 
 set -e
@@ -23,7 +23,7 @@ NC='\033[0m'         # No Color
 echo ""
 echo -e "    ${BLUE}╔═══════════════════════════════════════════╗${NC}"
 echo -e "    ${BLUE}║${NC}       ${PURPLE}🧠 Neuroclaw AI${NC} ${BLUE}║${NC}"
-echo -e "    ${BLUE}║${NC}  ${CYAN}Prometheus Elastic Core Installer${NC}  ${BLUE}║${NC}"
+echo -e "    ${BLUE}║${NC}  ${CYAN}NeuroClaw Installer${NC}  ${BLUE}║${NC}"
 echo -e "    ${BLUE}╚═══════════════════════════════════════════╝${NC}"
 echo ""
 echo -e "    ${GRAY}Next-generation local AI mesh system${NC}"
@@ -282,7 +282,7 @@ SVG_ICON
 Version=1.0
 Type=Application
 Name=Neuroclaw AI
-Comment=Prometheus Elastic Core - Next-Gen Local AI Mesh
+Comment=NeuroClaw - Next-Gen Local AI Mesh
 Exec=bash -c "cd $INSTALL_DIR && ./start.sh"
 Icon=$HOME/.local/share/icons/neuroclaw.svg
 Terminal=false
@@ -428,7 +428,7 @@ create_start_script() {
     
     cat > start.sh << 'START_SCRIPT'
 #!/bin/bash
-# Neuroclaw — Prometheus Elastic Core Launcher
+# NeuroClaw — OneBrain Launcher
 #
 # Opens the real desktop-app/ Electron shell (a native app window that owns
 # the backend + UI directly) rather than a browser tab -- clicking the

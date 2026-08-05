@@ -1,6 +1,6 @@
 # Plugins
 
-Plugins are API connections to external services and system features in Prometheus Elastic Core. They provide the AI with access to hardware, applications, and external data sources.
+Plugins are API connections to external services and system features in NeuroClaw. They provide the AI with access to hardware, applications, and external data sources.
 
 ## Overview
 
@@ -260,4 +260,4 @@ Debug:
 
 ---
 
-*Plugins extend Prometheus Elastic Core's capabilities by connecting to system features and external services.*
+*Plugins extend NeuroClaw's capabilities by connecting to system features and external services.*

@@ -2,7 +2,7 @@
 
 ## Summary
 
-This document tracks the implementation of the 306-step self-improvement framework for the Prometheus Elastic Core AI system.
+This document tracks the implementation of the 306-step self-improvement framework for the NeuroClaw AI system.
 
 **Status**: Phase 1-4 partially complete (approximately 75/306 steps implemented)
 
