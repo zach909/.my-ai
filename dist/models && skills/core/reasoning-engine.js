@@ -169,7 +169,25 @@ export class ReasoningEngine {
             failed = subresults.filter(s => !s.result || /\[(error|unsolved|base):/i.test(s.result));
         }
         // Combine into a result.
-        const analogyNote = chosen === "analogy" && available.length ? `\nGrounded in: ${available.slice(0, 2).join(" | ")}` : "";
+        //
+        // Whenever real content was actually recalled (available.length > 0)
+        // for the simple single-question case, prefer it as the answer itself
+        // instead of solveSubproblem()'s raw generated text -- regardless of
+        // which strategy scored highest. `chosen` picks how the subproblems get
+        // solved/tracked/scored (and still gates the "Grounded in:"/"Transferred
+        // method:" footnotes below, unchanged), but it isn't a reliable signal
+        // for whether grounded content exists: "transfer" or "decompose" can
+        // easily outscore "analogy" (e.g. a highly-similar past problem pushes
+        // transfer's score past analogy's flat 1.2) even when available.length
+        // is nonzero, and in every one of those cases the raw generated text is
+        // still just the untrained filler LLM's own output (see
+        // NeuroclawTrainer's placeholder corpus) -- real, relevant recalled
+        // knowledge belongs in the answer whenever it exists, not only on the
+        // one approach whose score happened to win this time.
+        const groundedAnswer = available.length > 0 ? available[0] : null;
+        const analogyNote = chosen === "analogy" && available.length
+            ? (available.length > 1 ? `\nAlso relevant: ${available.slice(1, 3).join(" | ")}` : "")
+            : "";
         const transferNote = chosen === "transfer" && opts.transferHints && opts.transferHints.length > 0
             ? `\nTransferred method${opts.transferHints.length > 1 ? "s" : ""}: ${opts.transferHints.map(h => `"${h.method}" (from ${h.domain})`).join(" + ")}`
             : "";
@@ -198,7 +216,7 @@ export class ReasoningEngine {
             && subresults[0].subproblem === `analyze: ${problem.trim()}`
             && subresults[1].subproblem === `solve: ${problem.trim()}`;
         const body = isSyntheticFallback
-            ? subresults[1].result
+            ? (groundedAnswer ?? subresults[1].result)
             : subresults.map(s => `- ${s.subproblem}: ${s.result}`).join("\n");
         const result = body + analogyNote + transferNote;
         // 11. Verify the final result.

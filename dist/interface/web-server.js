@@ -774,6 +774,45 @@ export class WebServer {
             });
             return;
         }
+        // POST /api/extension/register — persist a project built in the *visual*
+        // /builder editor (src/features/builder/use-builder.ts's client-side
+        // ExtensionBuilder, entirely separate from /api/extension/build above)
+        // and, unlike that JSON-in-JSON-out flow, actually wire its defined
+        // neurons into this process's live NeuroclawSystem memory so a later
+        // chat message can recall them (ReasoningEngine's "analogy" approach —
+        // see reasoning-engine.ts) instead of the editor's Save/Install buttons
+        // being a complete dead end: previously they only reported a byte count
+        // and threw the built project away, wired to neither disk nor chat.
+        if (pathname === '/api/extension/register' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const name = (body?.name ?? '').trim() || `extension_${Date.now()}`;
+                const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
+                const path = await import('node:path');
+                const { promises: fs } = await import('node:fs');
+                const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+                await fs.mkdir(dir, { recursive: true });
+                const safe = name.replace(/[^a-zA-Z0-9_-]+/g, '_');
+                const filename = `${safe}_${Date.now()}.ext.json`;
+                await fs.writeFile(path.join(dir, filename), JSON.stringify({ name, neurons }, null, 2), 'utf8');
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                let remembered = 0;
+                for (const n of neurons) {
+                    const def = (n.definition ?? '').trim();
+                    if (!def || !n.name)
+                        continue;
+                    system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
+                    remembered++;
+                }
+                this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { error: msg }, 500);
+            }
+            return;
+        }
         // POST /api/extension/build — build a real extension from NeuroLang and save it
         if (pathname === '/api/extension/build' && method === 'POST') {
             try {

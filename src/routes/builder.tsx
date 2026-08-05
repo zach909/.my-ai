@@ -95,9 +95,40 @@ function BuilderPage() {
     )
   }
 
-  const handleSave = () => {
+  // Persists the project to disk and, for any neuron with a real
+  // @definishon, registers it into the live NeuroclawSystem's memory so a
+  // later chat message can actually recall it (see ReasoningEngine's
+  // "analogy" approach) — b.save()/b.install() below only ever produced an
+  // in-browser JSON string with nowhere to go; this is what makes what you
+  // build here show up in /app/chat instead of being thrown away.
+  const registerWithSystem = async () => {
+    try {
+      const res = await fetch('/api/extension/register', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          name: b.projectName,
+          neurons: b.neurons.map((n) => ({ name: n.name, value: n.value, definition: n.definition })),
+        }),
+      })
+      if (!res.ok) return null
+      return (await res.json()) as { remembered: number }
+    } catch {
+      return null
+    }
+  }
+
+  const handleSave = async () => {
     const saved = b.save()
-    setStatusMsg(saved ? `Saved un-quantized (${saved.length.toLocaleString()} bytes, editable)` : 'Save failed')
+    if (!saved) {
+      setStatusMsg('Save failed')
+      return
+    }
+    const reg = await registerWithSystem()
+    setStatusMsg(
+      `Saved un-quantized (${saved.length.toLocaleString()} bytes, editable)`
+      + (reg ? ` — ${reg.remembered} definition(s) now recallable in chat` : ''),
+    )
   }
 
   const handleInstall = async () => {
@@ -106,7 +137,11 @@ function BuilderPage() {
       setStatusMsg('Install failed')
       return
     }
-    setStatusMsg(`Installed with 8-bit quantization (${out.length.toLocaleString()} bytes deployed)`)
+    const reg = await registerWithSystem()
+    setStatusMsg(
+      `Installed with 8-bit quantization (${out.length.toLocaleString()} bytes deployed)`
+      + (reg ? ` — ${reg.remembered} definition(s) now recallable in chat` : ''),
+    )
   }
 
   const handleParse = async () => {
