@@ -87,7 +87,6 @@ function ChatPage() {
     if (threadParam) {
       continueThread({ threadId: threadParam, title: '', score: 1, snippet: '', updatedAt: Date.now() })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   // Re-focus the input element once loading finishes
