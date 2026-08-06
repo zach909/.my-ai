@@ -86,6 +86,10 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
     <Card className="space-y-2 p-4">
       <button
         onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded px-1 -mx-1 py-0.5 active:scale-95 transition-all duration-150"
+        aria-expanded={open}
+        aria-label={open ? `Collapse ${group.name} topic group` : `Expand ${group.name} topic group`}
+        title={open ? 'Collapse' : 'Expand'}
         className="flex w-full items-center justify-between gap-2 text-left rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-95 transition-all duration-150 py-0.5"
         aria-expanded={open}
         aria-label={open ? `Collapse ${group.name}` : `Expand ${group.name}`}
@@ -104,6 +108,7 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
             ({group.threads.length})
           </span>
         </div>
+        <div className="flex items-center gap-1.5 shrink-0">
         <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
           <span>{timeAgo(group.updatedAt)}</span>
           <ChevronDown
@@ -119,6 +124,7 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
           <ChevronDown
             size={14}
             className={`text-muted-foreground transition-transform duration-200 ${
+              open ? 'rotate-180' : ''
               open ? 'rotate-180' : 'rotate-0'
             }`}
           />
