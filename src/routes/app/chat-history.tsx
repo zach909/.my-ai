@@ -19,7 +19,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
-import { Folder, MessageSquare, Users, RefreshCw } from 'lucide-react'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
@@ -86,17 +86,34 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
     <Card className="space-y-2 p-4">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className="flex w-full items-center justify-between gap-2 text-left rounded-md p-1 -m-1 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none active:scale-[0.98] transition-all duration-150 cursor-pointer"
         aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} group, containing ${group.threads.length} chat${group.threads.length !== 1 ? 's' : ''}`}
+        className="flex w-full items-center justify-between gap-2 text-left rounded-md p-1 -m-1 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-all duration-200 active:scale-95 cursor-pointer"
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} topic group`}
       >
-        <div className="flex items-center gap-2 text-sm font-medium">
-          <Folder size={14} className="text-primary" />
-          {group.name}
-          <span className="text-[11px] font-normal text-muted-foreground">
-            ({group.threads.length} chat{group.threads.length !== 1 ? 's' : ''})
+        <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
+          <Folder size={14} className="shrink-0 text-primary" />
+          <span className="truncate">{group.name}</span>
+          <span className="shrink-0 text-[11px] font-normal text-muted-foreground">
+            ({group.threads.length})
           </span>
         </div>
-        <span className="text-[11px] text-muted-foreground">{timeAgo(group.updatedAt)}</span>
+        <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+          <span>{timeAgo(group.updatedAt)}</span>
+          <ChevronDown
+            size={14}
+            className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+        <div className="flex items-center gap-2">
+          <span className="text-[11px] text-muted-foreground">{timeAgo(group.updatedAt)}</span>
+          <ChevronDown
+            size={14}
+            className={`text-muted-foreground transition-transform duration-200 ${
+              open ? 'rotate-180' : 'rotate-0'
+            }`}
+          />
+        </div>
       </button>
       {open && (
         <div className="space-y-1.5 pt-1">
