@@ -2895,6 +2895,19 @@ export class HyperDimensionalEngine {
       }
     }
 
+    // BOLT OPTIMIZATION: Filter driven and non-driven indices up-front
+    // This completely eliminates the nested branch checks `if (isDriven[i]) continue;` inside the hot loops.
+    const drivenIndices: number[] = [];
+    const nonDrivenIndices: number[] = [];
+    for (let i = 0; i < N; i++) {
+      if (isDriven[i]) {
+        drivenIndices.push(i);
+      } else {
+        nonDrivenIndices.push(i);
+      }
+    }
+    const nonDrivenCount = nonDrivenIndices.length;
+
     const vs = new Float32Array(N);
     const hasV = new Uint8Array(N);
     const priorStates = new Array<Float32Array>(N);
@@ -2922,8 +2935,8 @@ export class HyperDimensionalEngine {
       let currentTotalContentEnergy = 0;
 
       // Handle driven neurons first (isolated pass)
-      for (let i = 0; i < N; i++) {
-        if (!isDriven[i]) continue;
+      for (let idx = 0; idx < drivenIndices.length; idx++) {
+        const i = drivenIndices[idx];
         const offset = i * D;
         nextStates[offset] = 1.0;
         for (let d = 0; d < dims; d++) {
@@ -2941,8 +2954,8 @@ export class HyperDimensionalEngine {
         const sjShiftRow = stateViews[srcD];
         const dn = d * N;
 
-        for (let i = 0; i < N; i++) {
-          if (isDriven[i]) continue;
+        for (let idx = 0; idx < nonDrivenCount; idx++) {
+          const i = nonDrivenIndices[idx];
 
           const biasOffset = i * D;
           const rowOffset = i * DN + dn;
@@ -3544,19 +3557,31 @@ export class HyperDimensionalEngine {
         const v5 = this.allStates[rowOffset + i + 5];
         const v6 = this.allStates[rowOffset + i + 6];
         const v7 = this.allStates[rowOffset + i + 7];
-        hist[Math.min(9, Math.floor((v0 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v1 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v2 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v3 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v4 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v5 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v6 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v7 + 1) * 5))]++;
+
+        // BOLT OPTIMIZATION: Replace expensive Math.min and Math.floor calls in hot loops
+        // with inline branchless ternaries and extremely fast bitwise OR `| 0` truncation.
+        const idx0 = ((v0 + 1) * 5) | 0;
+        const idx1 = ((v1 + 1) * 5) | 0;
+        const idx2 = ((v2 + 1) * 5) | 0;
+        const idx3 = ((v3 + 1) * 5) | 0;
+        const idx4 = ((v4 + 1) * 5) | 0;
+        const idx5 = ((v5 + 1) * 5) | 0;
+        const idx6 = ((v6 + 1) * 5) | 0;
+        const idx7 = ((v7 + 1) * 5) | 0;
+
+        hist[idx0 > 9 ? 9 : (idx0 < 0 ? 0 : idx0)]++;
+        hist[idx1 > 9 ? 9 : (idx1 < 0 ? 0 : idx1)]++;
+        hist[idx2 > 9 ? 9 : (idx2 < 0 ? 0 : idx2)]++;
+        hist[idx3 > 9 ? 9 : (idx3 < 0 ? 0 : idx3)]++;
+        hist[idx4 > 9 ? 9 : (idx4 < 0 ? 0 : idx4)]++;
+        hist[idx5 > 9 ? 9 : (idx5 < 0 ? 0 : idx5)]++;
+        hist[idx6 > 9 ? 9 : (idx6 < 0 ? 0 : idx6)]++;
+        hist[idx7 > 9 ? 9 : (idx7 < 0 ? 0 : idx7)]++;
       }
       for (; i < N; i++) {
         const v = this.allStates[rowOffset + i];
-        const idx = Math.min(9, Math.floor((v + 1) * 5));
-        hist[idx]++;
+        const idx = ((v + 1) * 5) | 0;
+        hist[idx > 9 ? 9 : (idx < 0 ? 0 : idx)]++;
       }
       for (let b = 0; b < buckets; b++) {
         const p = hist[b] / N;
