@@ -44,7 +44,6 @@ def _safe_window_id(window_id: str) -> str:
         raise ValueError("Security Error: window_id cannot be empty.")
     if window_id.startswith("-"):
         raise ValueError("Security Error: Potential argument injection detected in window_id.")
-    if not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id):
     if not re.match(r"^(0x)?[a-fA-F0-9_]+$", window_id) and not re.match(r"^\d+$", window_id) and not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id):
         raise ValueError("Security Error: Invalid window_id format.")
     return window_id
@@ -279,8 +278,6 @@ class GnomePlugin:
         return cleaned
 
     def _switch_workspace(self, index: int) -> str:
-        index = self._validate_workspace_index(index)
-        index = _safe_workspace(index)
         try:
             index = self._validate_workspace_index(index)
             index = _safe_workspace(index)
@@ -315,8 +312,6 @@ class GnomePlugin:
         return n
 
     def _remove_workspace(self, index: int) -> str:
-        index = self._validate_workspace_index(index)
-        index = _safe_workspace(index)
         try:
             index = self._validate_workspace_index(index)
             index = _safe_workspace(index)
@@ -338,13 +333,6 @@ class GnomePlugin:
         return f"Removed workspace {index}"
 
     def _move_window(self, window_id: str, workspace: int) -> str:
-        window_id = self._validate_window_id(window_id)
-        workspace = self._validate_workspace_index(workspace)
-        window_id = _safe_window_id(window_id)
-        workspace = _safe_workspace(workspace)
-        if shutil.which("wmctrl"):
-            _run(["wmctrl", "-ir", window_id, "-t", str(workspace)])
-            return f"Moved window {window_id} to workspace {workspace}"
         try:
             window_id = self._validate_window_id(window_id)
             window_id = _safe_window_id(window_id)
@@ -357,19 +345,15 @@ class GnomePlugin:
         except ValueError as e:
             raise ValueError(f"Security Error: Invalid workspace index: {e}") from e
 
-        window_id_str = str(window_id)
         if shutil.which("wmctrl"):
-            _run(["wmctrl", "-ir", window_id_str, "-t", str(workspace)])
-            return f"Moved window {window_id_str} to workspace {workspace}"
+            _run(["wmctrl", "-ir", window_id, "-t", str(workspace)])
+            return f"Moved window {window_id} to workspace {workspace}"
         return "wmctrl required"
 
     def _launch_on_desktop(self, cmd: str, workspace: int = None) -> str:
         if _is_blocked(cmd):
             return "Blocked: destructive command pattern detected"
         if workspace is not None:
-            workspace = self._validate_workspace_index(workspace)
-            workspace = _safe_workspace(workspace)
-        if workspace is None:
             try:
                 workspace = self._validate_workspace_index(workspace)
                 workspace = _safe_workspace(workspace)
