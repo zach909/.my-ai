@@ -2375,6 +2375,9 @@ export class HyperDimensionalEngine {
   private preSettleStatesBuffer: Float32Array;
   private preSettleEnergiesBuffer: Float32Array;
   private defaultDrivenIds: Set<number>;
+  private selfModelHScratch: Float32Array;
+  private selfModelErrorScratch: Float32Array;
+  private selfModelDHScratch: Float32Array;
 
   constructor(config: Record<string, any> = {}) {
     this.config = {
@@ -2420,6 +2423,9 @@ export class HyperDimensionalEngine {
     const dims = this.config.dimensions;
     this.selfModelA = new Float32Array(dims * rank);
     this.selfModelB = new Float32Array(rank * dims);
+    this.selfModelHScratch = new Float32Array(rank);
+    this.selfModelErrorScratch = new Float32Array(dims);
+    this.selfModelDHScratch = new Float32Array(rank);
     const scale = Math.sqrt(1 / Math.max(1, dims));
     for (let i = 0; i < this.selfModelA.length; i++) this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
     for (let i = 0; i < this.selfModelB.length; i++) this.selfModelB[i] = (Math.random() * 2 - 1) * scale;
@@ -3318,7 +3324,8 @@ export class HyperDimensionalEngine {
   private selfModelPredict(vec: number[]): number[] {
     const dims = this.config.dimensions;
     const rank = this.config.selfModelRank;
-    const h = new Float32Array(rank);
+    const h = this.selfModelHScratch;
+    h.fill(0);
     for (let d = 0; d < dims; d++) {
       const v = vec[d] ?? 0;
       const offset = d * rank;
@@ -3358,31 +3365,66 @@ export class HyperDimensionalEngine {
     const rank = this.config.selfModelRank;
     const lr = 0.01;
 
-    const h = new Float32Array(rank);
-    for (let d = 0; d < dims; d++) {
-      const v = prevVec[d] ?? 0;
-      for (let r = 0; r < rank; r++) h[r] += v * this.selfModelA[d * rank + r];
-    }
+    // OPTIMIZATION: Reuse pre-computed h projection from selfModelPredict to avoid
+    // O(dimensions * rank) redundant recalculations and Float32Array allocations.
+    const h = this.selfModelHScratch;
 
-    const error = new Float32Array(dims);
+    const error = this.selfModelErrorScratch;
+    error.fill(0);
     for (let d = 0; d < dims; d++) error[d] = (actual[d] ?? 0) - (predicted[d] ?? 0);
 
-    const dh = new Float32Array(rank);
+    const dh = this.selfModelDHScratch;
+    dh.fill(0);
     for (let r = 0; r < rank; r++) {
       let acc = 0;
-      for (let d = 0; d < dims; d++) acc += error[d] * this.selfModelB[r * dims + d];
+      const bOffset = r * dims;
+      let d = 0;
+      const limit = dims - 3;
+      // OPTIMIZATION: 4x loop unrolling to reduce branch overhead.
+      for (; d < limit; d += 4) {
+        acc += error[d] * this.selfModelB[bOffset + d]
+             + error[d + 1] * this.selfModelB[bOffset + d + 1]
+             + error[d + 2] * this.selfModelB[bOffset + d + 2]
+             + error[d + 3] * this.selfModelB[bOffset + d + 3];
+      }
+      for (; d < dims; d++) {
+        acc += error[d] * this.selfModelB[bOffset + d];
+      }
       dh[r] = acc;
     }
 
     for (let r = 0; r < rank; r++) {
-      for (let d = 0; d < dims; d++) {
-        this.selfModelB[r * dims + d] += lr * error[d] * h[r];
+      const hr = h[r];
+      const lrHr = lr * hr;
+      const bOffset = r * dims;
+      let d = 0;
+      const limit = dims - 3;
+      // OPTIMIZATION: 4x loop unrolling and factored multiplier out of inner loop.
+      for (; d < limit; d += 4) {
+        this.selfModelB[bOffset + d] += lrHr * error[d];
+        this.selfModelB[bOffset + d + 1] += lrHr * error[d + 1];
+        this.selfModelB[bOffset + d + 2] += lrHr * error[d + 2];
+        this.selfModelB[bOffset + d + 3] += lrHr * error[d + 3];
+      }
+      for (; d < dims; d++) {
+        this.selfModelB[bOffset + d] += lrHr * error[d];
       }
     }
     for (let d = 0; d < dims; d++) {
       const v = prevVec[d] ?? 0;
-      for (let r = 0; r < rank; r++) {
-        this.selfModelA[d * rank + r] += lr * dh[r] * v;
+      const lrV = lr * v;
+      const offset = d * rank;
+      let r = 0;
+      const limit = rank - 3;
+      // OPTIMIZATION: 4x loop unrolling and factored multiplier out of inner loop.
+      for (; r < limit; r += 4) {
+        this.selfModelA[offset + r] += lrV * dh[r];
+        this.selfModelA[offset + r + 1] += lrV * dh[r + 1];
+        this.selfModelA[offset + r + 2] += lrV * dh[r + 2];
+        this.selfModelA[offset + r + 3] += lrV * dh[r + 3];
+      }
+      for (; r < rank; r++) {
+        this.selfModelA[offset + r] += lrV * dh[r];
       }
     }
   }
