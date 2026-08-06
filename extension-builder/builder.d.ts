@@ -1,4 +1,8 @@
 import type { BrainSnapshot } from "../models && skills/core/unified-brain.js";
+export interface ScriptExample {
+    userSays: string;
+    response: string;
+}
 export interface NeuronData {
     id: string;
     name: string;
@@ -16,6 +20,8 @@ export interface NeuronData {
     endpoint: string;
     method: string;
     external: string[];
+    /** "Scripting": (user says X -> should respond Y) training examples -- see ExtensionBuilder.addScript()/train(). */
+    scripts: ScriptExample[];
     trainedWeights?: Float32Array;
     trained?: boolean;
 }
@@ -25,6 +31,17 @@ export interface ConnectionData {
     toId: string;
     weight: number;
     bias: number;
+    /** "Permanent" (true) vs "starting place" (false/undefined) -- see ExtensionBuilder.connectNeurons(). */
+    locked?: boolean;
+}
+export interface TrainingResult {
+    converged: boolean;
+    definitionsConverged: boolean;
+    scriptsConverged: boolean;
+    epochs: number;
+    satisfied: string[];
+    conflicts: { a: string; b: string; correlation: number }[];
+    trainedNeurons: string[];
 }
 export interface LayerData {
     id: string;
@@ -49,6 +66,9 @@ export interface ProjectData {
     dims: number;
     createdAt: number;
     updatedAt: number;
+    lastTraining?: TrainingResult;
+    /** Internal O(1) index of "fromId|toId" pairs currently locked -- see connectNeurons(). */
+    lockedPairs?: Set<string>;
 }
 export interface APIOutputConfig {
     endpoints: {
@@ -93,10 +113,24 @@ export declare class ExtensionBuilder {
         y: number;
     }): NeuronData | null;
     addLayer(projectId: string, name: string, type: 'input' | 'hidden' | 'output'): LayerData | null;
-    connectNeurons(projectId: string, fromId: string, toId: string, weight: number, bias?: number): boolean;
+    /** `locked: true` makes this connection "permanent" -- refused if a locked connection already exists between the same pair. */
+    connectNeurons(projectId: string, fromId: string, toId: string, weight: number, bias?: number, locked?: boolean): boolean;
+    /** Refuses (returns false) if the connection is locked ("permanent"). */
     disconnectNeurons(projectId: string, connectionId: string): boolean;
+    /** Toggle a connection between "permanent" (locked) and "starting place" (unlocked). */
+    setConnectionLocked(projectId: string, connectionId: string, locked: boolean): boolean;
     deleteNeuron(projectId: string, neuronId: string): boolean;
     dragLabel(projectId: string, neuronId: string, label: string): boolean;
+    /** "Scripting": attach a (user says X -> should respond Y) training example to a neuron. */
+    addScript(projectId: string, neuronId: string, userSays: string, response: string): boolean;
+    removeScript(projectId: string, neuronId: string, index: number): boolean;
+    /**
+     * The real training sequence: connections -> @definishon + every
+     * script trained together via HyperDimensionalEngine.trainDefinitions()
+     * until convergence or `epochs` runs out. Not a script -- a genuine
+     * training pass; see the method's own doc comment in builder.js.
+     */
+    train(projectId: string, opts?: { epochs?: number }): TrainingResult | null;
     moveNeuron(projectId: string, neuronId: string, x: number, y: number): boolean;
     searchNeurons(projectId: string, query: string): NeuronData[];
     typeModelOutput(projectId: string, neuronId: string, inputValue: number): string;
@@ -115,6 +149,7 @@ export declare class ExtensionBuilder {
     semanticSimilarity(a: string[], b: string[]): number;
     importCodeToNet(projectId: string, name: string, binaryCode: Uint8Array): NeuronData | null;
     saveWithoutQuantization(projectId: string): string | null;
+    /** Does NOT train -- call train() yourself first if you want the definitions/scripts trained before deploying. */
     installWithQuantization(projectId: string, options: {
         bits: number;
     }): Promise<string | null>;

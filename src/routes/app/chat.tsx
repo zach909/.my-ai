@@ -75,6 +75,39 @@ function ChatPage() {
   const [pendingMatch, setPendingMatch] = useState<{ match: ChatMatch; text: string } | null>(null)
   const messagesEndRef = useRef<HTMLDivElement>(null)
   const inputRef = useRef<HTMLInputElement>(null)
+  // Section 4.1: the continuous output loop (interface/runner.ts) runs for
+  // the whole life of the backend process, independent of any single
+  // request/response -- it never actually stops. Polling its real state
+  // here is what makes that observable at all: previously nothing anywhere
+  // in the app ever called GET /api/continuous/status (the endpoint itself
+  // didn't exist), so the loop ran invisibly and every chat turn looked
+  // exactly like a normal one-shot request/response with no sign the
+  // system was still doing anything once a reply arrived.
+  const [continuousStatus, setContinuousStatus] = useState<{
+    running: boolean
+    tickCount: number
+    pendingInputCount: number
+    contextItemsHeld?: { input: number; output: number }
+  } | null>(null)
+
+  useEffect(() => {
+    let cancelled = false
+    const poll = async () => {
+      try {
+        const res = await fetch('/api/continuous/status')
+        if (res.ok && !cancelled) setContinuousStatus(await res.json())
+      } catch {
+        // Backend unreachable this tick -- leave the last known status up
+        // rather than flashing an error for a purely informational poll.
+      }
+    }
+    poll()
+    const id = setInterval(poll, 3000)
+    return () => {
+      cancelled = true
+      clearInterval(id)
+    }
+  }, [])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -360,6 +393,15 @@ function ChatPage() {
           {messages.length} message{messages.length !== 1 ? 's' : ''} in chat
           {incognito && ' · incognito, nothing is saved'}
         </p>
+        {continuousStatus?.running && (
+          <p className="text-muted-foreground/70 py-0.5 text-[11px]" title="Section 4.1's continuous output loop — real state, polled from the running backend, not simulated">
+            🔄 Zipping — tick #{continuousStatus.tickCount}
+            {continuousStatus.pendingInputCount > 0 && ` · ${continuousStatus.pendingInputCount} more queued, not yet processed`}
+            {continuousStatus.contextItemsHeld && (
+              ` · ${continuousStatus.contextItemsHeld.input + continuousStatus.contextItemsHeld.output} item(s) held in the zip loop, not shown above`
+            )}
+          </p>
+        )}
       </Card>
     </div>
   )
