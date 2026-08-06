@@ -200,7 +200,6 @@ function ChatGroupsPage() {
     if (threadParam) {
       continueThread({ threadId: threadParam, title: '', score: 1, snippet: '', updatedAt: Date.now() })
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const unlock = async (candidate: string): Promise<boolean> => {
