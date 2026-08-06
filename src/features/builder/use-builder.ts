@@ -15,9 +15,10 @@ import type {
   ConnectionData,
   LabelData,
   APIOutputConfig,
+  TrainingResult,
 } from '../../../extension-builder/builder.js';
 
-export type { NeuronData, ConnectionData, LabelData };
+export type { NeuronData, ConnectionData, LabelData, TrainingResult };
 
 export interface BuilderApi {
   /** The live engine, for anything not wrapped below. */
@@ -31,9 +32,17 @@ export interface BuilderApi {
   addNeuron: (name: string, value: number, position?: { x: number; y: number }) => NeuronData | null;
   deleteNeuron: (neuronId: string) => void;
   moveNeuron: (neuronId: string, x: number, y: number) => void;
-  connect: (fromId: string, toId: string, weight?: number, bias?: number) => boolean;
+  connect: (fromId: string, toId: string, weight?: number, bias?: number, locked?: boolean) => boolean;
   disconnect: (connectionId: string) => void;
+  /** Toggle a connection between "permanent" (locked) and "starting place" (unlocked). */
+  setConnectionLocked: (connectionId: string, locked: boolean) => boolean;
   dragLabel: (neuronId: string, label: string) => boolean;
+  /** "Scripting": attach a (user says X -> should respond Y) training example to a neuron. */
+  addScript: (neuronId: string, userSays: string, response: string) => boolean;
+  removeScript: (neuronId: string, index: number) => boolean;
+  /** The real training sequence -- connections, then @definishon + every script, trained together until convergence. */
+  train: (epochs?: number) => TrainingResult | null;
+  lastTraining: TrainingResult | undefined;
   search: (query: string) => NeuronData[];
   simulate: (neuronId: string, inputValue: number) => string;
   addApiOutputLayer: (config: APIOutputConfig) => boolean;
@@ -78,6 +87,7 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       },
     };
   }, [engine, project, projectId, version]);
+  const lastTraining = useMemo(() => { void version; return project.lastTraining; }, [project, version]);
 
   return {
     engine,
@@ -100,8 +110,8 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       engine.moveNeuron(projectId, neuronId, x, y);
       bump();
     },
-    connect: (fromId, toId, weight = 0.5, bias = 0) => {
-      const ok = engine.connectNeurons(projectId, fromId, toId, weight, bias);
+    connect: (fromId, toId, weight = 0.5, bias = 0, locked = false) => {
+      const ok = engine.connectNeurons(projectId, fromId, toId, weight, bias, locked);
       bump();
       return ok;
     },
@@ -109,11 +119,32 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       engine.disconnectNeurons(projectId, connectionId);
       bump();
     },
+    setConnectionLocked: (connectionId, locked) => {
+      const ok = engine.setConnectionLocked(projectId, connectionId, locked);
+      bump();
+      return ok;
+    },
     dragLabel: (neuronId, label) => {
       const ok = engine.dragLabel(projectId, neuronId, label);
       bump();
       return ok;
     },
+    addScript: (neuronId, userSays, response) => {
+      const ok = engine.addScript(projectId, neuronId, userSays, response);
+      bump();
+      return ok;
+    },
+    removeScript: (neuronId, index) => {
+      const ok = engine.removeScript(projectId, neuronId, index);
+      bump();
+      return ok;
+    },
+    train: (epochs) => {
+      const result = engine.train(projectId, epochs ? { epochs } : undefined);
+      bump();
+      return result;
+    },
+    lastTraining,
     search: (query) => engine.searchNeurons(projectId, query),
     simulate: (neuronId, inputValue) => engine.typeModelOutput(projectId, neuronId, inputValue),
     addApiOutputLayer: (config) => {

@@ -47,6 +47,9 @@ function BuilderPage() {
   const [netSearchQuery, setNetSearchQuery] = useState('')
   const [netSearchResults, setNetSearchResults] = useState<Array<{ results: string[]; confidence: number }>>([])
   const [codeName, setCodeName] = useState('')
+  const [scriptUserSays, setScriptUserSays] = useState('')
+  const [scriptResponse, setScriptResponse] = useState('')
+  const [training, setTraining] = useState(false)
 
   const selected = b.neurons.find((n) => n.id === selectedId) ?? null
 
@@ -108,13 +111,53 @@ function BuilderPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: b.projectName,
-          neurons: b.neurons.map((n) => ({ name: n.name, value: n.value, definition: n.definition })),
+          neurons: b.neurons.map((n) => ({ name: n.name, value: n.value, definition: n.definition, scripts: n.scripts })),
         }),
       })
       if (!res.ok) return null
       return (await res.json()) as { remembered: number }
     } catch {
       return null
+    }
+  }
+
+  // "Scripting": attach a (user says X -> should respond Y) training
+  // example to the selected neuron. Not a canned reply -- handleTrain()
+  // above genuinely trains the neuron's readout toward `response` when
+  // driven by an embedding of `userSays`, the same mechanism a
+  // @definishon uses.
+  const handleAddScript = () => {
+    if (!selected || !scriptUserSays.trim() || !scriptResponse.trim()) return
+    b.addScript(selected.id, scriptUserSays, scriptResponse)
+    setScriptUserSays('')
+    setScriptResponse('')
+  }
+
+  // The real training sequence (spec: "connections then makes all
+  // definishons true then does the scripting -- a loop till all is true...
+  // NOT a script, a training sequence"): connections are already live as
+  // soon as they're drawn; this step is what actually runs every
+  // @definishon and every script (see handleAddScript below) through
+  // HyperDimensionalEngine.trainDefinitions() until it converges or the
+  // epoch budget runs out. Deliberately separate from Save/Install (not
+  // run automatically by either) -- see extension-builder/builder.js's
+  // installWithQuantization() doc comment for why an implicit trigger
+  // caused real problems.
+  const handleTrain = async () => {
+    setTraining(true)
+    try {
+      const result = b.train()
+      if (!result) {
+        setStatusMsg('Train failed')
+        return
+      }
+      setStatusMsg(
+        result.converged
+          ? `Trained: converged in ${result.epochs} epoch(s) — ${result.trainedNeurons.length} neuron(s) now true: ${result.trainedNeurons.join(', ') || '(none had a @definishon or script)'}`
+          : `Trained: did not fully converge after ${result.epochs} epoch(s) — ${result.trainedNeurons.length}/${b.neurons.filter((n) => n.definition || n.scripts.length > 0).length} trainable neuron(s) true so far${result.conflicts.length ? `; ${result.conflicts.length} conflicting definition(s)` : ''}. Try Train again.`,
+      )
+    } finally {
+      setTraining(false)
     }
   }
 
@@ -439,13 +482,21 @@ function BuilderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-1.5">
-              <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleApiLayer}>
+              <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleApiLayer} disabled={training}>
                 Add API output layer
               </Button>
-              <Button size="sm" variant="secondary" className="h-7 w-full text-xs" onClick={handleSave}>
+              <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleTrain} disabled={training}>
+                {training ? 'Training…' : 'Train'}
+              </Button>
+              {b.lastTraining && (
+                <p className={`text-[11px] ${b.lastTraining.converged ? 'text-emerald-500' : 'text-muted-foreground'}`}>
+                  {b.lastTraining.converged ? '✓ converged' : '⋯ not yet converged'} — {b.lastTraining.trainedNeurons.length} true
+                </p>
+              )}
+              <Button size="sm" variant="secondary" className="h-7 w-full text-xs" onClick={handleSave} disabled={training}>
                 Save (no quantization)
               </Button>
-              <Button size="sm" className="h-7 w-full text-xs" onClick={handleInstall}>
+              <Button size="sm" className="h-7 w-full text-xs" onClick={handleInstall} disabled={training}>
                 Install (quantize 8-bit)
               </Button>
             </CardContent>
@@ -529,6 +580,47 @@ function BuilderPage() {
                     {simResult && (
                       <p className="mt-1.5 rounded bg-muted px-2 py-1 font-mono text-[11px]">{simResult}</p>
                     )}
+                  </div>
+                  <div className="border-t border-border pt-2">
+                    <span className="mb-1 block text-muted-foreground">
+                      Scripting — train a response ({selected.scripts.length} example{selected.scripts.length !== 1 ? 's' : ''})
+                    </span>
+                    {selected.scripts.map((s, i) => (
+                      <div key={i} className="mb-1 flex items-start justify-between gap-1 rounded bg-muted px-2 py-1 text-[11px]">
+                        <span className="min-w-0 flex-1">
+                          <span className="text-muted-foreground">user says </span>“{s.userSays}”
+                          <span className="text-muted-foreground"> → </span>“{s.response}”
+                        </span>
+                        <button
+                          onClick={() => b.removeScript(selected.id, i)}
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
+                          aria-label={`Remove script "${s.userSays}"`}
+                          title="Remove"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <Label htmlFor="script-user-says" className="sr-only">User says</Label>
+                    <Input
+                      id="script-user-says"
+                      value={scriptUserSays}
+                      onChange={(e) => setScriptUserSays(e.target.value)}
+                      placeholder="user says…"
+                      className="mb-1 h-7 text-xs"
+                    />
+                    <Label htmlFor="script-response" className="sr-only">Trained response</Label>
+                    <Input
+                      id="script-response"
+                      value={scriptResponse}
+                      onChange={(e) => setScriptResponse(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddScript()}
+                      placeholder="…respond with"
+                      className="mb-1 h-7 text-xs"
+                    />
+                    <Button size="sm" variant="secondary" className="h-7 w-full text-xs" onClick={handleAddScript}>
+                      Add script
+                    </Button>
                   </div>
                   <Button
                     size="sm"

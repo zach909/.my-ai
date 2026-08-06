@@ -258,6 +258,12 @@ export class WebServer {
       await this.chatGroupsLock.set(process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD);
     }
     await this.runner.start();
+    // Section 4.1: the continuous output loop should genuinely never stop
+    // for the actual live web backend -- see runner.ts's start() for why
+    // that's started explicitly here rather than unconditionally inside
+    // start() itself (every short-lived NeuroclawRunner instance calls
+    // start() too, and most never call stop()).
+    this.runner.startContinuous();
     return new Promise<void>((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       this.server.listen(port, host, () => resolve());
@@ -451,6 +457,18 @@ export class WebServer {
           rlmExploration: (status.llm.rlmExplorationRate * 100).toFixed(1) + '%',
         },
       });
+      return;
+    }
+
+    // GET /api/continuous/status — Section 4.1's continuous output loop
+    // (startContinuous()/injectInput(), now actually running -- see
+    // runner.ts's start()) genuinely never terminates; this reports its
+    // real, current state (tick count, queued input, zip-io context held)
+    // instead of the loop running invisibly with no way for a client to
+    // ever observe "there is more, this isn't the whole context" versus
+    // "the queue is actually empty right now."
+    if (pathname === '/api/continuous/status' && method === 'GET') {
+      this.sendJson(res, this.runner.getContinuousStatus());
       return;
     }
 
@@ -810,7 +828,13 @@ export class WebServer {
     if (pathname === '/api/extension/register' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as
-          { name?: string; neurons?: Array<{ name?: string; value?: number; definition?: string }> } | null;
+          {
+            name?: string;
+            neurons?: Array<{
+              name?: string; value?: number; definition?: string;
+              scripts?: Array<{ userSays?: string; response?: string }>;
+            }>;
+          } | null;
         const name = (body?.name ?? '').trim() || `extension_${Date.now()}`;
         const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
 
@@ -826,10 +850,25 @@ export class WebServer {
         const system = await getNeuroclawSystem();
         let remembered = 0;
         for (const n of neurons) {
+          if (!n.name) continue;
           const def = (n.definition ?? '').trim();
-          if (!def || !n.name) continue;
-          system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
-          remembered++;
+          if (def) {
+            system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
+            remembered++;
+          }
+          // Scripts are equally real recallable knowledge -- "when asked X,
+          // the trained response is Y" is exactly what train()'s
+          // trainDefinitions() pass shapes the mesh toward; recall() should
+          // be able to surface it the same way a @definishon can.
+          for (const s of n.scripts ?? []) {
+            const userSays = (s.userSays ?? '').trim();
+            const response = (s.response ?? '').trim();
+            if (!userSays || !response) continue;
+            system.memory.remember(`When asked "${userSays}", ${n.name} responds: ${response}`, {
+              importance: 0.7, tags: ['extension', name, 'script'],
+            });
+            remembered++;
+          }
         }
 
         this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered });

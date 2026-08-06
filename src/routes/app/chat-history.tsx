@@ -82,30 +82,10 @@ function ThreadRow({ thread }: { thread: ThreadSummary }) {
 
 function GroupCard({ group }: { group: GroupWithThreads }) {
   const [open, setOpen] = useState(true)
-  const labelText = open ? `Collapse ${group.name} group` : `Expand ${group.name} group`
   return (
     <Card className="space-y-2 p-4">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 text-left rounded-md focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none p-1 -m-1 active:scale-[0.98] transition-all duration-150"
-        aria-expanded={open}
-        aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} chat history folder`}
-        title={`${open ? 'Collapse' : 'Expand'} ${group.name}`}
-        className="flex w-full items-center justify-between gap-2 text-left rounded-md focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none active:scale-95 transition-all duration-150 p-1"
-        aria-expanded={open}
-        aria-label={labelText}
-        title={labelText}
-        className="flex w-full items-center justify-between gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded px-1 -mx-1 py-0.5 active:scale-95 transition-all duration-150"
-        aria-expanded={open}
-        aria-label={open ? `Collapse ${group.name} topic group` : `Expand ${group.name} topic group`}
-        title={open ? 'Collapse' : 'Expand'}
-        className="flex w-full items-center justify-between gap-2 text-left rounded-md focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-95 transition-all duration-150 py-0.5"
-        aria-expanded={open}
-        aria-label={open ? `Collapse ${group.name}` : `Expand ${group.name}`}
-        title={open ? "Collapse group" : "Expand group"}
-        className="flex w-full items-center justify-between gap-2 text-left rounded-md p-1 -m-1 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none active:scale-[0.98] transition-all duration-150 cursor-pointer"
-        aria-expanded={open}
-        aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} group, containing ${group.threads.length} chat${group.threads.length !== 1 ? 's' : ''}`}
         className="flex w-full items-center justify-between gap-2 text-left rounded-md p-1 -m-1 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-all duration-200 active:scale-95 cursor-pointer"
         aria-expanded={open}
         aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} topic group`}
@@ -117,30 +97,11 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
             ({group.threads.length})
           </span>
         </div>
-        <div className="flex items-center gap-1.5 ml-auto">
-        <div className="flex items-center gap-1.5 shrink-0">
-          <span className="text-[11px] text-muted-foreground">{timeAgo(group.updatedAt)}</span>
-          <ChevronDown
-            size={14}
-            className={`text-muted-foreground transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-        <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
-          <span>{timeAgo(group.updatedAt)}</span>
-          <ChevronDown
-            size={14}
-            className={`transition-transform duration-200 ${open ? 'rotate-180' : 'rotate-0'}`}
-        <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
           <span>{timeAgo(group.updatedAt)}</span>
           <ChevronDown
             size={14}
             className={`transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
-        <div className="flex items-center gap-2">
-          <span className="text-[11px] text-muted-foreground">{timeAgo(group.updatedAt)}</span>
-          <ChevronDown
-            size={14}
-            className={`text-muted-foreground transition-transform duration-200 ${
-              open ? 'rotate-180' : ''
-              open ? 'rotate-180' : 'rotate-0'
-            }`}
           />
         </div>
       </button>
