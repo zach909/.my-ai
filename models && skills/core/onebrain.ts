@@ -2375,6 +2375,9 @@ export class HyperDimensionalEngine {
   private preSettleStatesBuffer: Float32Array;
   private preSettleEnergiesBuffer: Float32Array;
   private defaultDrivenIds: Set<number>;
+  private selfModelHScratch: Float32Array;
+  private selfModelErrorScratch: Float32Array;
+  private selfModelDHScratch: Float32Array;
 
   constructor(config: Record<string, any> = {}) {
     this.config = {
@@ -2420,6 +2423,9 @@ export class HyperDimensionalEngine {
     const dims = this.config.dimensions;
     this.selfModelA = new Float32Array(dims * rank);
     this.selfModelB = new Float32Array(rank * dims);
+    this.selfModelHScratch = new Float32Array(rank);
+    this.selfModelErrorScratch = new Float32Array(dims);
+    this.selfModelDHScratch = new Float32Array(rank);
     const scale = Math.sqrt(1 / Math.max(1, dims));
     for (let i = 0; i < this.selfModelA.length; i++) this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
     for (let i = 0; i < this.selfModelB.length; i++) this.selfModelB[i] = (Math.random() * 2 - 1) * scale;
@@ -2895,6 +2901,19 @@ export class HyperDimensionalEngine {
       }
     }
 
+    // BOLT OPTIMIZATION: Filter driven and non-driven indices up-front
+    // This completely eliminates the nested branch checks `if (isDriven[i]) continue;` inside the hot loops.
+    const drivenIndices: number[] = [];
+    const nonDrivenIndices: number[] = [];
+    for (let i = 0; i < N; i++) {
+      if (isDriven[i]) {
+        drivenIndices.push(i);
+      } else {
+        nonDrivenIndices.push(i);
+      }
+    }
+    const nonDrivenCount = nonDrivenIndices.length;
+
     const vs = new Float32Array(N);
     const hasV = new Uint8Array(N);
     const priorStates = new Array<Float32Array>(N);
@@ -2922,8 +2941,8 @@ export class HyperDimensionalEngine {
       let currentTotalContentEnergy = 0;
 
       // Handle driven neurons first (isolated pass)
-      for (let i = 0; i < N; i++) {
-        if (!isDriven[i]) continue;
+      for (let idx = 0; idx < drivenIndices.length; idx++) {
+        const i = drivenIndices[idx];
         const offset = i * D;
         nextStates[offset] = 1.0;
         for (let d = 0; d < dims; d++) {
@@ -2941,8 +2960,8 @@ export class HyperDimensionalEngine {
         const sjShiftRow = stateViews[srcD];
         const dn = d * N;
 
-        for (let i = 0; i < N; i++) {
-          if (isDriven[i]) continue;
+        for (let idx = 0; idx < nonDrivenCount; idx++) {
+          const i = nonDrivenIndices[idx];
 
           const biasOffset = i * D;
           const rowOffset = i * DN + dn;
@@ -3318,7 +3337,8 @@ export class HyperDimensionalEngine {
   private selfModelPredict(vec: number[]): number[] {
     const dims = this.config.dimensions;
     const rank = this.config.selfModelRank;
-    const h = new Float32Array(rank);
+    const h = this.selfModelHScratch;
+    h.fill(0);
     for (let d = 0; d < dims; d++) {
       const v = vec[d] ?? 0;
       const offset = d * rank;
@@ -3358,31 +3378,66 @@ export class HyperDimensionalEngine {
     const rank = this.config.selfModelRank;
     const lr = 0.01;
 
-    const h = new Float32Array(rank);
-    for (let d = 0; d < dims; d++) {
-      const v = prevVec[d] ?? 0;
-      for (let r = 0; r < rank; r++) h[r] += v * this.selfModelA[d * rank + r];
-    }
+    // OPTIMIZATION: Reuse pre-computed h projection from selfModelPredict to avoid
+    // O(dimensions * rank) redundant recalculations and Float32Array allocations.
+    const h = this.selfModelHScratch;
 
-    const error = new Float32Array(dims);
+    const error = this.selfModelErrorScratch;
+    error.fill(0);
     for (let d = 0; d < dims; d++) error[d] = (actual[d] ?? 0) - (predicted[d] ?? 0);
 
-    const dh = new Float32Array(rank);
+    const dh = this.selfModelDHScratch;
+    dh.fill(0);
     for (let r = 0; r < rank; r++) {
       let acc = 0;
-      for (let d = 0; d < dims; d++) acc += error[d] * this.selfModelB[r * dims + d];
+      const bOffset = r * dims;
+      let d = 0;
+      const limit = dims - 3;
+      // OPTIMIZATION: 4x loop unrolling to reduce branch overhead.
+      for (; d < limit; d += 4) {
+        acc += error[d] * this.selfModelB[bOffset + d]
+             + error[d + 1] * this.selfModelB[bOffset + d + 1]
+             + error[d + 2] * this.selfModelB[bOffset + d + 2]
+             + error[d + 3] * this.selfModelB[bOffset + d + 3];
+      }
+      for (; d < dims; d++) {
+        acc += error[d] * this.selfModelB[bOffset + d];
+      }
       dh[r] = acc;
     }
 
     for (let r = 0; r < rank; r++) {
-      for (let d = 0; d < dims; d++) {
-        this.selfModelB[r * dims + d] += lr * error[d] * h[r];
+      const hr = h[r];
+      const lrHr = lr * hr;
+      const bOffset = r * dims;
+      let d = 0;
+      const limit = dims - 3;
+      // OPTIMIZATION: 4x loop unrolling and factored multiplier out of inner loop.
+      for (; d < limit; d += 4) {
+        this.selfModelB[bOffset + d] += lrHr * error[d];
+        this.selfModelB[bOffset + d + 1] += lrHr * error[d + 1];
+        this.selfModelB[bOffset + d + 2] += lrHr * error[d + 2];
+        this.selfModelB[bOffset + d + 3] += lrHr * error[d + 3];
+      }
+      for (; d < dims; d++) {
+        this.selfModelB[bOffset + d] += lrHr * error[d];
       }
     }
     for (let d = 0; d < dims; d++) {
       const v = prevVec[d] ?? 0;
-      for (let r = 0; r < rank; r++) {
-        this.selfModelA[d * rank + r] += lr * dh[r] * v;
+      const lrV = lr * v;
+      const offset = d * rank;
+      let r = 0;
+      const limit = rank - 3;
+      // OPTIMIZATION: 4x loop unrolling and factored multiplier out of inner loop.
+      for (; r < limit; r += 4) {
+        this.selfModelA[offset + r] += lrV * dh[r];
+        this.selfModelA[offset + r + 1] += lrV * dh[r + 1];
+        this.selfModelA[offset + r + 2] += lrV * dh[r + 2];
+        this.selfModelA[offset + r + 3] += lrV * dh[r + 3];
+      }
+      for (; r < rank; r++) {
+        this.selfModelA[offset + r] += lrV * dh[r];
       }
     }
   }
@@ -3544,19 +3599,31 @@ export class HyperDimensionalEngine {
         const v5 = this.allStates[rowOffset + i + 5];
         const v6 = this.allStates[rowOffset + i + 6];
         const v7 = this.allStates[rowOffset + i + 7];
-        hist[Math.min(9, Math.floor((v0 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v1 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v2 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v3 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v4 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v5 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v6 + 1) * 5))]++;
-        hist[Math.min(9, Math.floor((v7 + 1) * 5))]++;
+
+        // BOLT OPTIMIZATION: Replace expensive Math.min and Math.floor calls in hot loops
+        // with inline branchless ternaries and extremely fast bitwise OR `| 0` truncation.
+        const idx0 = ((v0 + 1) * 5) | 0;
+        const idx1 = ((v1 + 1) * 5) | 0;
+        const idx2 = ((v2 + 1) * 5) | 0;
+        const idx3 = ((v3 + 1) * 5) | 0;
+        const idx4 = ((v4 + 1) * 5) | 0;
+        const idx5 = ((v5 + 1) * 5) | 0;
+        const idx6 = ((v6 + 1) * 5) | 0;
+        const idx7 = ((v7 + 1) * 5) | 0;
+
+        hist[idx0 > 9 ? 9 : (idx0 < 0 ? 0 : idx0)]++;
+        hist[idx1 > 9 ? 9 : (idx1 < 0 ? 0 : idx1)]++;
+        hist[idx2 > 9 ? 9 : (idx2 < 0 ? 0 : idx2)]++;
+        hist[idx3 > 9 ? 9 : (idx3 < 0 ? 0 : idx3)]++;
+        hist[idx4 > 9 ? 9 : (idx4 < 0 ? 0 : idx4)]++;
+        hist[idx5 > 9 ? 9 : (idx5 < 0 ? 0 : idx5)]++;
+        hist[idx6 > 9 ? 9 : (idx6 < 0 ? 0 : idx6)]++;
+        hist[idx7 > 9 ? 9 : (idx7 < 0 ? 0 : idx7)]++;
       }
       for (; i < N; i++) {
         const v = this.allStates[rowOffset + i];
-        const idx = Math.min(9, Math.floor((v + 1) * 5));
-        hist[idx]++;
+        const idx = ((v + 1) * 5) | 0;
+        hist[idx > 9 ? 9 : (idx < 0 ? 0 : idx)]++;
       }
       for (let b = 0; b < buckets; b++) {
         const p = hist[b] / N;

@@ -57,3 +57,10 @@
 ## 2026-08-22 - [Duplicate Attributes and Syntax Robustness on Interactive Elements]
 **Learning:** Interactive components must remain free of duplicate properties like `aria-label`, `className`, or nested JSX layout fragments when resolving bad merge conflicts. Duplicate properties can cause TSX parser and compilation crashes, completely blocking the frontend UI from rendering and failing automated integration tests.
 **Action:** Verify that all interactive launcher buttons, custom triggers, and error banners have single, well-defined properties, and ensure error messages are rendered dynamically in clean `role="alert"` blocks.
+
+## 2026-09-02 - [Interactive Accordion & Folder Toggles Accessibility & Polish]
+**Learning:** Collapsible accordion or folder triggers (such as `GroupCard` topic lists) should be accessible, keyboard-navigable elements with dynamic `aria-expanded` and stateful `aria-label` or `title` attributes indicating their action. Adding tactile click feedback (`active:scale-95 transition-all`) and rotating visual indicators (like a `ChevronDown` transitioning `rotate-180`) provides an outstandingly responsive, accessible experience.
+**Action:** Always pair `aria-expanded` accordion triggers with rotating indicator icons, active scale animations, clear focus rings, and stateful explanatory labels.
+## 2026-09-02 - [Collapsible Interactive Groups & Tactile Chevron Feedback]
+**Learning:** Collapsible lists, folders, or accordion triggers (such as `GroupCard` in `src/routes/app/chat-history.tsx`) must incorporate interactive, semantic elements with dynamic `aria-label` properties reflecting current state (e.g., "Expand" or "Collapse"), accessible keyboard rings (`focus-visible:ring-2`), tactile scale-down animations (`active:scale-95 transition-all`), and smoothly rotating graphic indicators (like a `ChevronDown` transitioning `rotate-180`) to supply multi-sensory confirmation of action feedback.
+**Action:** Always pair `aria-pressed`/`aria-expanded` and rotating indicators with tactile transforms and keyboard focus ring indicators on collapsible layout components.
