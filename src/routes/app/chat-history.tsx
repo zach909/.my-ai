@@ -19,7 +19,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
-import { Folder, MessageSquare, Users, RefreshCw } from 'lucide-react'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
@@ -82,12 +82,15 @@ function ThreadRow({ thread }: { thread: ThreadSummary }) {
 
 function GroupCard({ group }: { group: GroupWithThreads }) {
   const [open, setOpen] = useState(true)
+  const labelText = open ? `Collapse ${group.name} group` : `Expand ${group.name} group`
   return (
     <Card className="space-y-2 p-4">
       <button
         onClick={() => setOpen((v) => !v)}
-        className="flex w-full items-center justify-between gap-2 text-left"
+        className="flex w-full items-center justify-between gap-2 text-left rounded-md focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none active:scale-95 transition-all duration-150 p-1"
         aria-expanded={open}
+        aria-label={labelText}
+        title={labelText}
       >
         <div className="flex items-center gap-2 text-sm font-medium">
           <Folder size={14} className="text-primary" />
@@ -96,7 +99,13 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
             ({group.threads.length} chat{group.threads.length !== 1 ? 's' : ''})
           </span>
         </div>
-        <span className="text-[11px] text-muted-foreground">{timeAgo(group.updatedAt)}</span>
+        <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[11px] text-muted-foreground">{timeAgo(group.updatedAt)}</span>
+          <ChevronDown
+            size={14}
+            className={`text-muted-foreground transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
+          />
+        </div>
       </button>
       {open && (
         <div className="space-y-1.5 pt-1">
