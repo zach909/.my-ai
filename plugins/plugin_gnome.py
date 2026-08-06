@@ -44,7 +44,6 @@ def _safe_window_id(window_id: str) -> str:
         raise ValueError("Security Error: window_id cannot be empty.")
     if window_id.startswith("-"):
         raise ValueError("Security Error: Potential argument injection detected in window_id.")
-    if not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id):
     if not re.match(r"^(0x)?[a-fA-F0-9_]+$", window_id) and not re.match(r"^\d+$", window_id) and not re.match(r"^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$", window_id):
         raise ValueError("Security Error: Invalid window_id format.")
     return window_id
@@ -367,9 +366,6 @@ class GnomePlugin:
         if _is_blocked(cmd):
             return "Blocked: destructive command pattern detected"
         if workspace is not None:
-            workspace = self._validate_workspace_index(workspace)
-            workspace = _safe_workspace(workspace)
-        if workspace is None:
             try:
                 workspace = self._validate_workspace_index(workspace)
                 workspace = _safe_workspace(workspace)
