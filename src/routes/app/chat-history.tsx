@@ -82,6 +82,7 @@ function ThreadRow({ thread }: { thread: ThreadSummary }) {
 
 function GroupCard({ group }: { group: GroupWithThreads }) {
   const [open, setOpen] = useState(true)
+  const labelText = open ? `Collapse ${group.name} group` : `Expand ${group.name} group`
   return (
     <Card className="space-y-2 p-4">
       <button
@@ -90,6 +91,10 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
         aria-expanded={open}
         aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} chat history folder`}
         title={`${open ? 'Collapse' : 'Expand'} ${group.name}`}
+        className="flex w-full items-center justify-between gap-2 text-left rounded-md focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none active:scale-95 transition-all duration-150 p-1"
+        aria-expanded={open}
+        aria-label={labelText}
+        title={labelText}
         className="flex w-full items-center justify-between gap-2 text-left focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 rounded px-1 -mx-1 py-0.5 active:scale-95 transition-all duration-150"
         aria-expanded={open}
         aria-label={open ? `Collapse ${group.name} topic group` : `Expand ${group.name} topic group`}
@@ -114,6 +119,10 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
         </div>
         <div className="flex items-center gap-1.5 ml-auto">
         <div className="flex items-center gap-1.5 shrink-0">
+          <span className="text-[11px] text-muted-foreground">{timeAgo(group.updatedAt)}</span>
+          <ChevronDown
+            size={14}
+            className={`text-muted-foreground transition-transform duration-200 ${open ? 'rotate-180' : ''}`}
         <div className="flex items-center gap-1 text-[11px] text-muted-foreground">
           <span>{timeAgo(group.updatedAt)}</span>
           <ChevronDown
