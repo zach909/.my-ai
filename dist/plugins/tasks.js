@@ -1,14 +1,30 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { existsSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
-const STORAGE = join(homedir(), ".neuroclaw", "tasks.json");
+const STORAGE_DIR = join(homedir(), ".neuroclaw");
+const STORAGE = join(STORAGE_DIR, "tasks.json");
 export class TasksPlugin extends BasePlugin {
     constructor(definition) {
         super(definition);
         this.tasks = [];
     }
-    async onActivate(context) { await super.onActivate(context); this.load(); }
+    async onActivate(context) {
+        await super.onActivate(context);
+        try {
+            if (!existsSync(STORAGE_DIR)) {
+                mkdirSync(STORAGE_DIR, { recursive: true, mode: 0o700 });
+            }
+            if (process.platform !== "win32" && typeof chmodSync === "function") {
+                chmodSync(STORAGE_DIR, 0o700);
+                if (existsSync(STORAGE)) {
+                    chmodSync(STORAGE, 0o600);
+                }
+            }
+        }
+        catch { }
+        this.load();
+    }
     async create(title, opts) {
         const task = {
             id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
@@ -52,8 +68,22 @@ export class TasksPlugin extends BasePlugin {
     catch {
         this.tasks = [];
     } }
-    save() { try {
-        writeFileSync(STORAGE, JSON.stringify(this.tasks, null, 2), "utf-8");
+    save() {
+        try {
+            if (!existsSync(STORAGE_DIR)) {
+                mkdirSync(STORAGE_DIR, { recursive: true, mode: 0o700 });
+            }
+            if (process.platform !== "win32" && typeof chmodSync === "function") {
+                chmodSync(STORAGE_DIR, 0o700);
+            }
+            writeFileSync(STORAGE, JSON.stringify(this.tasks, null, 2), {
+                encoding: "utf-8",
+                mode: 0o600,
+            });
+            if (process.platform !== "win32" && typeof chmodSync === "function") {
+                chmodSync(STORAGE, 0o600);
+            }
+        }
+        catch { }
     }
-    catch { } }
 }

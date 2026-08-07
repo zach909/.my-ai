@@ -1,6 +1,6 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { existsSync, readFileSync, writeFileSync, mkdirSync } from "node:fs";
+import { existsSync, readFileSync, writeFileSync, mkdirSync, chmodSync } from "node:fs";
 import { join } from "node:path";
 import { homedir } from "node:os";
 
@@ -15,14 +15,29 @@ export interface Task {
   tags: string[];
 }
 
-const STORAGE = join(homedir(), ".neuroclaw", "tasks.json");
+const STORAGE_DIR = join(homedir(), ".neuroclaw");
+const STORAGE = join(STORAGE_DIR, "tasks.json");
 
 export class TasksPlugin extends BasePlugin {
   private tasks: Task[] = [];
 
   constructor(definition: PluginDefinition) { super(definition); }
 
-  async onActivate(context: any): Promise<void> { await super.onActivate(context); this.load(); }
+  async onActivate(context: any): Promise<void> {
+    await super.onActivate(context);
+    try {
+      if (!existsSync(STORAGE_DIR)) {
+        mkdirSync(STORAGE_DIR, { recursive: true, mode: 0o700 });
+      }
+      if (process.platform !== "win32" && typeof chmodSync === "function") {
+        chmodSync(STORAGE_DIR, 0o700);
+        if (existsSync(STORAGE)) {
+          chmodSync(STORAGE, 0o600);
+        }
+      }
+    } catch { }
+    this.load();
+  }
 
   async create(title: string, opts?: Partial<Omit<Task, "id" | "createdAt">>): Promise<Task> {
     const task: Task = {
@@ -54,5 +69,21 @@ export class TasksPlugin extends BasePlugin {
   }
 
   private load(): void { try { if (existsSync(STORAGE)) this.tasks = JSON.parse(readFileSync(STORAGE, "utf-8")); } catch { this.tasks = []; } }
-  private save(): void { try { writeFileSync(STORAGE, JSON.stringify(this.tasks, null, 2), "utf-8"); } catch { } }
+  private save(): void {
+    try {
+      if (!existsSync(STORAGE_DIR)) {
+        mkdirSync(STORAGE_DIR, { recursive: true, mode: 0o700 });
+      }
+      if (process.platform !== "win32" && typeof chmodSync === "function") {
+        chmodSync(STORAGE_DIR, 0o700);
+      }
+      writeFileSync(STORAGE, JSON.stringify(this.tasks, null, 2), {
+        encoding: "utf-8",
+        mode: 0o600,
+      });
+      if (process.platform !== "win32" && typeof chmodSync === "function") {
+        chmodSync(STORAGE, 0o600);
+      }
+    } catch { }
+  }
 }
