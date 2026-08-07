@@ -19,6 +19,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
@@ -174,9 +175,20 @@ function ChatHistoryPage() {
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
-        <p className="text-sm text-muted-foreground">
-          No saved chats yet — anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
-        </p>
+        <Card className="flex flex-col items-center justify-center border-dashed border-2 border-muted-foreground/20 p-8 text-center bg-card max-w-md mx-auto my-8">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare size={24} />
+          </div>
+          <h2 className="text-md font-semibold text-foreground mb-1 animate-fade-in">No chats yet</h2>
+          <p className="text-xs text-muted-foreground max-w-xs mb-6">
+            Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+          </p>
+          <Button asChild className="active:scale-95 transition-all duration-150">
+            <Link to="/app/chat">
+              Start a conversation
+            </Link>
+          </Button>
+        </Card>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
