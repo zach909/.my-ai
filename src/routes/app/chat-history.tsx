@@ -19,7 +19,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
-import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
@@ -174,9 +175,38 @@ function ChatHistoryPage() {
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
-        <p className="text-sm text-muted-foreground">
-          No saved chats yet — anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
-        </p>
+        <Card className="flex flex-col items-center justify-center border-dashed border-2 border-border p-8 text-center bg-card max-w-md mx-auto my-6 rounded-xl shadow-xs">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare className="h-6 w-6" />
+          </div>
+          <h3 className="text-sm font-semibold text-foreground">No saved chats yet</h3>
+          <p className="mt-2 text-xs text-muted-foreground leading-relaxed max-w-xs">
+            Conversations you start in AI Chat or Chat Groups (outside incognito mode) will automatically be organized here by topic.
+          </p>
+          <div className="mt-5 flex flex-wrap gap-2.5 justify-center">
+            <Button
+              asChild
+              size="sm"
+              className="gap-1.5 active:scale-95 transition-all duration-150 shadow-xs"
+            >
+              <Link to="/app/chat">
+                <Sparkles className="h-3.5 w-3.5" />
+                Start a New Chat
+              </Link>
+            </Button>
+            <Button
+              asChild
+              variant="outline"
+              size="sm"
+              className="gap-1.5 active:scale-95 transition-all duration-150"
+            >
+              <Link to="/app/chat-groups">
+                <Users className="h-3.5 w-3.5" />
+                Collaborate in Hive
+              </Link>
+            </Button>
+          </div>
+        </Card>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

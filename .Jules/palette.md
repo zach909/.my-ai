@@ -1,3 +1,7 @@
+## 2026-09-10 - [Interactive Empty States & Responsive Redirection CTAs]
+**Learning:** Replacing static, passive plain-text empty states with beautifully designed, structured interactive Card components—utilizing dashed borders, clear decorative center icons, explicit descriptive text, and high-contrast, accessible `<Button>` elements wrapping framework-native routing links—immensely improves application onboarding, provides instant user direction, and enriches the product onboarding experience with tactile hover and active-click transforms (`active:scale-95`).
+**Action:** Always avoid raw text-only empty states; instead, design interactive empty-state cards containing actionable, styled button triggers paired with tactile transitions to guide the user.
+
 ## 2026-07-04 - [Accessibility & Feedback Loop Improvements]
 **Learning:** Adding ARIA live regions and disabling inputs during async operations creates a much more robust and accessible feedback loop, especially in a terminal-like interface where the user might otherwise double-submit or miss AI responses.
 **Action:** Always include `role="log"`, `aria-live="polite"`, and `aria-atomic="false"` for chat-like containers, and ensure inputs are disabled during processing with a `finally` block to restore state and focus.
