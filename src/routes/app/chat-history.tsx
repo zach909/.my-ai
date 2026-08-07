@@ -19,6 +19,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
@@ -174,9 +175,23 @@ function ChatHistoryPage() {
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
-        <p className="text-sm text-muted-foreground">
-          No saved chats yet — anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
-        </p>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center bg-card/40">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare className="h-6 w-6" />
+          </div>
+          <h3 className="text-base font-semibold text-foreground mb-1">No saved chats yet</h3>
+          <p className="max-w-md text-xs text-muted-foreground mb-6">
+            Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Button asChild size="sm" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat">Start AI Chat</Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat-groups">Go to Chat Groups</Link>
+            </Button>
+          </div>
+        </div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
