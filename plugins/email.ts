@@ -1,5 +1,5 @@
 import { execSync } from 'node:child_process';
-import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
+import { existsSync, writeFileSync, mkdirSync, readFileSync, chmodSync } from 'node:fs';
 import { homedir, hostname } from 'node:os';
 import { join } from 'node:path';
 import type { PluginDefinition } from "../plugin_manager/types.js";
@@ -23,8 +23,35 @@ export class EmailPlugin extends BasePlugin {
 
   constructor(definition: PluginDefinition) {
     super(definition);
-    if (!existsSync(DATA_DIR)) mkdirSync(DATA_DIR, { recursive: true });
+    try {
+      if (!existsSync(DATA_DIR)) {
+        mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+      }
+      if (process.platform !== "win32" && typeof chmodSync === "function") {
+        chmodSync(DATA_DIR, 0o700);
+        const storageFile = join(DATA_DIR, 'emails.json');
+        if (existsSync(storageFile)) {
+          chmodSync(storageFile, 0o600);
+        }
+      }
+    } catch { }
     this.loadFromDisk();
+  }
+
+  async onActivate(context: any): Promise<void> {
+    await super.onActivate(context);
+    try {
+      if (!existsSync(DATA_DIR)) {
+        mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+      }
+      if (process.platform !== "win32" && typeof chmodSync === "function") {
+        chmodSync(DATA_DIR, 0o700);
+        const storageFile = join(DATA_DIR, 'emails.json');
+        if (existsSync(storageFile)) {
+          chmodSync(storageFile, 0o600);
+        }
+      }
+    } catch { }
   }
 
   async send(from: string, to: string[], subject: string, body: string): Promise<Email> {
@@ -145,7 +172,20 @@ export class EmailPlugin extends BasePlugin {
 
   private saveToDisk(): void {
     try {
-      writeFileSync(join(DATA_DIR, 'emails.json'), JSON.stringify(this.emails), 'utf-8');
+      if (!existsSync(DATA_DIR)) {
+        mkdirSync(DATA_DIR, { recursive: true, mode: 0o700 });
+      }
+      if (process.platform !== "win32" && typeof chmodSync === "function") {
+        chmodSync(DATA_DIR, 0o700);
+      }
+      const storageFile = join(DATA_DIR, 'emails.json');
+      writeFileSync(storageFile, JSON.stringify(this.emails), {
+        encoding: 'utf-8',
+        mode: 0o600,
+      });
+      if (process.platform !== "win32" && typeof chmodSync === "function") {
+        chmodSync(storageFile, 0o600);
+      }
     } catch { /* non-fatal */ }
   }
 }
