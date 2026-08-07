@@ -64,3 +64,7 @@
 ## 2026-09-02 - [Collapsible Interactive Groups & Tactile Chevron Feedback]
 **Learning:** Collapsible lists, folders, or accordion triggers (such as `GroupCard` in `src/routes/app/chat-history.tsx`) must incorporate interactive, semantic elements with dynamic `aria-label` properties reflecting current state (e.g., "Expand" or "Collapse"), accessible keyboard rings (`focus-visible:ring-2`), tactile scale-down animations (`active:scale-95 transition-all`), and smoothly rotating graphic indicators (like a `ChevronDown` transitioning `rotate-180`) to supply multi-sensory confirmation of action feedback.
 **Action:** Always pair `aria-pressed`/`aria-expanded` and rotating indicators with tactile transforms and keyboard focus ring indicators on collapsible layout components.
+
+## 2026-09-05 - [Consistent Button Focus Rings & Semantic Component Migration]
+**Learning:** Replacing raw HTML `<button>` elements with themed, styled, design-system-compliant `<Button>` components preserves keyboard-visible focus rings and ensures consistent focus indicators across the application without duplicating style definitions. Additionally, ensuring proper sizing of icons (using the `size-` utility on Lucide SVGs) prevents broken layouts and visual sizing mismatches.
+**Action:** Prefer the global UI library's `<Button>` and associate Lucide SVGs with `size-` classes for optimal alignment.

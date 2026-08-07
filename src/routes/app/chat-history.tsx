@@ -19,6 +19,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
+import { Button } from '@/components/ui/button'
 import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
@@ -159,16 +160,18 @@ function ChatHistoryPage() {
             {totalChats} chat{totalChats !== 1 ? 's' : ''} across {groups.length} auto-organized group{groups.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <button
+        <Button
           onClick={load}
           disabled={loading}
-          aria-label="Refresh"
-          title="Refresh"
-          className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground disabled:opacity-50 active:scale-95"
+          variant="outline"
+          size="sm"
+          aria-label="Refresh chat history"
+          title="Refresh chat history"
+          className="text-muted-foreground hover:text-foreground active:scale-95"
         >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          <RefreshCw className={loading ? 'size-3.5 animate-spin' : 'size-3.5'} />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {error && <p className="text-xs text-destructive">{error}</p>}
