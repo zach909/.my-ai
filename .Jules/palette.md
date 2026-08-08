@@ -61,6 +61,11 @@
 ## 2026-09-02 - [Interactive Accordion & Folder Toggles Accessibility & Polish]
 **Learning:** Collapsible accordion or folder triggers (such as `GroupCard` topic lists) should be accessible, keyboard-navigable elements with dynamic `aria-expanded` and stateful `aria-label` or `title` attributes indicating their action. Adding tactile click feedback (`active:scale-95 transition-all`) and rotating visual indicators (like a `ChevronDown` transitioning `rotate-180`) provides an outstandingly responsive, accessible experience.
 **Action:** Always pair `aria-expanded` accordion triggers with rotating indicator icons, active scale animations, clear focus rings, and stateful explanatory labels.
+
 ## 2026-09-02 - [Collapsible Interactive Groups & Tactile Chevron Feedback]
 **Learning:** Collapsible lists, folders, or accordion triggers (such as `GroupCard` in `src/routes/app/chat-history.tsx`) must incorporate interactive, semantic elements with dynamic `aria-label` properties reflecting current state (e.g., "Expand" or "Collapse"), accessible keyboard rings (`focus-visible:ring-2`), tactile scale-down animations (`active:scale-95 transition-all`), and smoothly rotating graphic indicators (like a `ChevronDown` transitioning `rotate-180`) to supply multi-sensory confirmation of action feedback.
 **Action:** Always pair `aria-pressed`/`aria-expanded` and rotating indicators with tactile transforms and keyboard focus ring indicators on collapsible layout components.
+
+## 2026-09-05 - [Interactive Empty State Redesigns & High-Contrast Navigation Triggers]
+**Learning:** Replacing flat, non-actionable empty state text descriptions with interactive, beautifully structured card wrappers drastically enhances user orientation and experience. Providing a styled dashed border, central decorative icons, explicit descriptive assistance, and high-contrast, tactile navigation triggers (`active:scale-95 transition-all`) wraps complex onboarding with clear user direction and interactive delight.
+**Action:** When a screen or list reports a zero state, always implement structured, visual empty-state cards containing clear supportive text and responsive action-oriented routing triggers.
