@@ -166,6 +166,9 @@ function ChatHistoryPage() {
           disabled={loading}
           variant="outline"
           size="sm"
+          aria-label="Refresh chat history"
+          title="Refresh chat history"
+          className="gap-1.5 text-xs text-muted-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           aria-label="Refresh Chat History"
           title="Refresh Chat History"
           className="flex items-center gap-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground active:scale-95"
@@ -178,6 +181,12 @@ function ChatHistoryPage() {
       {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
+        <Card className="flex flex-col items-center justify-center border-dashed border-2 border-muted-foreground/25 p-8 text-center bg-card max-w-xl mx-auto rounded-xl">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare size={24} className="animate-pulse" />
+          </div>
+          <h2 className="text-base font-semibold tracking-tight text-foreground">No saved chats yet</h2>
+          <p className="mt-2 text-sm text-muted-foreground max-w-sm">
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center bg-card shadow-xs">
           <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
             <Sparkles className="h-6 w-6" />
@@ -189,6 +198,8 @@ function ChatHistoryPage() {
           <div className="mt-6 flex flex-wrap gap-3 justify-center">
             <Button asChild size="sm" className="active:scale-95 transition-all duration-150">
               <Link to="/app/chat">
+                <Sparkles size={14} className="mr-1.5" />
+                Start AI Chat
                 Start an AI Chat
         <Card className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center bg-card">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
@@ -220,6 +231,8 @@ function ChatHistoryPage() {
             </Button>
             <Button asChild variant="outline" size="sm" className="active:scale-95 transition-all duration-150">
               <Link to="/app/chat-groups">
+                <Users size={14} className="mr-1.5" />
+                Join Chat Group
                 Collaborate with Hive
               </Link>
                 <Users size={13} className="mr-1" />
