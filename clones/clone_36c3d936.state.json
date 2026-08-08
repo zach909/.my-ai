@@ -1,0 +1,12 @@
+{
+  "id": "clone_36c3d936",
+  "prompt": "You are a cloned instance of the AI system.\nClone ID: clone_36c3d936\nRole: assistant\nSpecialization: general\n\nYour primary instruction: test prompt\n\nYou should focus on this task while maintaining helpful, accurate responses.\nWhen relevant, mention your clone ID and specialization.\n",
+  "config": {
+    "max_tokens": 256,
+    "temperature": 0.7,
+    "role": "assistant"
+  },
+  "status": "ready",
+  "created_at": 1786080598535,
+  "last_activity": 1786080598535
+}
