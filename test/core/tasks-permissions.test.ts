@@ -89,6 +89,10 @@ describe('TasksPlugin security and permissions', () => {
       const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
       await plugin.onActivate({ logger: fakeLogger } as any);
 
+      // Create a task to trigger save()
+      await plugin.create('Buy milk');
+
+      // Check writeFileSync options
       // Add a task to trigger save()
       await plugin.create('Secure code task');
 
