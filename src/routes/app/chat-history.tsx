@@ -181,6 +181,20 @@ function ChatHistoryPage() {
       {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
+        <Card className="flex flex-col items-center justify-center border-dashed border-2 border-muted-foreground/20 p-8 text-center bg-card max-w-md mx-auto my-8">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare size={24} />
+          </div>
+          <h2 className="text-md font-semibold text-foreground mb-1 animate-fade-in">No chats yet</h2>
+          <p className="text-xs text-muted-foreground max-w-xs mb-6">
+            Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+          </p>
+          <Button asChild className="active:scale-95 transition-all duration-150">
+            <Link to="/app/chat">
+              Start a conversation
+            </Link>
+          </Button>
+        </Card>
         <Card className="flex flex-col items-center justify-center border-dashed border-2 border-muted-foreground/25 p-8 text-center bg-card max-w-xl mx-auto rounded-xl">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
             <MessageSquare size={24} className="animate-pulse" />

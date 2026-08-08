@@ -1,3 +1,7 @@
+## 2026-09-10 - [Interactive Onboarding Empty States & Warm UX Redirection]
+**Learning:** Replacing passive, static textual empty states with beautifully styled, interactive dashed-border card templates—incorporating centralized decorative icons, high-contrast helper copy, and robust accessible `<Button asChild>` CTA links—dramatically improves onboarding visual delight, accessibility navigation, and intuitive user redirection.
+**Action:** Redesign plain zero-state descriptions into structured, interactive focus cards with prominent action triggers referencing clear next-step user routes.
+
 ## 2026-07-04 - [Accessibility & Feedback Loop Improvements]
 **Learning:** Adding ARIA live regions and disabling inputs during async operations creates a much more robust and accessible feedback loop, especially in a terminal-like interface where the user might otherwise double-submit or miss AI responses.
 **Action:** Always include `role="log"`, `aria-live="polite"`, and `aria-atomic="false"` for chat-like containers, and ensure inputs are disabled during processing with a `finally` block to restore state and focus.
