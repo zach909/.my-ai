@@ -29,9 +29,6 @@ export class EmailPlugin extends BasePlugin {
       }
       if (process.platform !== "win32" && typeof chmodSync === "function") {
         chmodSync(DATA_DIR, 0o700);
-        const storageFile = join(DATA_DIR, 'emails.json');
-        if (existsSync(storageFile)) {
-          chmodSync(storageFile, 0o600);
         const emailsFile = join(DATA_DIR, 'emails.json');
         if (existsSync(emailsFile)) {
           chmodSync(emailsFile, 0o600);
@@ -49,9 +46,6 @@ export class EmailPlugin extends BasePlugin {
       }
       if (process.platform !== "win32" && typeof chmodSync === "function") {
         chmodSync(DATA_DIR, 0o700);
-        const storageFile = join(DATA_DIR, 'emails.json');
-        if (existsSync(storageFile)) {
-          chmodSync(storageFile, 0o600);
         const emailsFile = join(DATA_DIR, 'emails.json');
         if (existsSync(emailsFile)) {
           chmodSync(emailsFile, 0o600);
@@ -184,15 +178,12 @@ export class EmailPlugin extends BasePlugin {
       if (process.platform !== "win32" && typeof chmodSync === "function") {
         chmodSync(DATA_DIR, 0o700);
       }
-      const storageFile = join(DATA_DIR, 'emails.json');
-      writeFileSync(storageFile, JSON.stringify(this.emails), {
       const emailsFile = join(DATA_DIR, 'emails.json');
       writeFileSync(emailsFile, JSON.stringify(this.emails), {
         encoding: 'utf-8',
         mode: 0o600,
       });
       if (process.platform !== "win32" && typeof chmodSync === "function") {
-        chmodSync(storageFile, 0o600);
         chmodSync(emailsFile, 0o600);
       }
     } catch { /* non-fatal */ }
