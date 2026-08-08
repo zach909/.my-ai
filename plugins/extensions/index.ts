@@ -9,6 +9,29 @@ import { CodingExtension } from "./coding.js";
 import { ExtensionBuilder } from "../../extension-builder/builder.js";
 import { MixtureOfExperts } from "../../models && skills/moe.js";
 
+// Helper functions for parameter validation and sanitization
+function isSafePath(path: string): boolean {
+  // Safe path must be non-empty and only contain alphanumeric, dots, slashes, dashes, or underscores.
+  // This prevents any spaces, backslashes, and shell metacharacters like ampersands, semicolons, quotes, etc.
+  return typeof path === 'string' && path.length > 0 && /^[a-zA-Z0-9./_-]+$/.test(path);
+}
+
+function isSafeTime(time: string): boolean {
+  // Safe time must consist only of digits, colons, or periods.
+  return typeof time === 'string' && time.length > 0 && /^[0-9.:]+$/.test(time);
+}
+
+function isSafeFmt(fmt: string): boolean {
+  // Safe format must be alphanumeric.
+  return typeof fmt === 'string' && fmt.length > 0 && /^[a-zA-Z0-9]+$/.test(fmt);
+}
+
+function sanitizeText(text: string): string {
+  // Sanitize text for image/video drawing by removing dangerous shell characters:
+  // single/double quotes, backticks, dollar signs, parentheses, braces, brackets, ampersands, semicolons, backslashes, redirects.
+  return text.replace(/["'$`()&;|<>\\{}[\]#]/g, '');
+}
+
 // Language skill neuron templates for 200+ languages
 const LANGUAGE_SKILLS: Record<string, string[]> = {
   'ABAP': ['perceive', 'parse', 'execute'],
@@ -48,16 +71,24 @@ export class ImageExtension extends BasePlugin {
     if (input.startsWith('resize ') || input.startsWith('scale ')) {
       const p = input.split(/\s+/);
       const path = p[1], w = parseInt(p[2] ?? '256'), h = parseInt(p[3] ?? w.toString());
-      return path ? this.resizeImage(path, w, h) : { error: 'no path' };
+      if (!path) return { error: 'no path' };
+      if (!isSafePath(path)) return { error: 'Unsafe path pattern detected' };
+      if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) return { error: 'invalid dimensions' };
+      return this.resizeImage(path, w, h);
     }
     if (input.startsWith('convert ') || input.startsWith('format ')) {
       const p = input.split(/\s+/);
       const src = p[1], fmt = p[2] ?? 'png';
-      return src ? this.convertFormat(src, fmt) : { error: 'no path' };
+      if (!src) return { error: 'no path' };
+      if (!isSafePath(src)) return { error: 'Unsafe path pattern detected' };
+      if (!isSafeFmt(fmt)) return { error: 'Unsafe format pattern detected' };
+      return this.convertFormat(src, fmt);
     }
     if (input.startsWith('info ') || input.startsWith('analyze ')) {
       const path = input.split(/\s+/)[1];
-      return path ? this.imageInfo(path) : { error: 'no path' };
+      if (!path) return { error: 'no path' };
+      if (!isSafePath(path)) return { error: 'Unsafe path pattern detected' };
+      return this.imageInfo(path);
     }
     return { type: 'image', message: 'generate <desc>, resize <file> <w> <h>, convert <file> <fmt>, info <file>' };
   }
@@ -65,13 +96,17 @@ export class ImageExtension extends BasePlugin {
   private async generateImage(prompt: string): Promise<unknown> {
     const m = prompt.match(/size\s*(\d+)x(\d+)/i);
     const w = m ? parseInt(m[1]) : 256, h = m ? parseInt(m[2]) : 256;
+    if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) {
+      return { type: 'image', error: 'invalid size' };
+    }
     const outPath = join(tmpdir(), `neuroclaw_img_${Date.now()}.png`);
     const text = prompt.replace(/size\s*\d+x\d+/i, '').trim();
-    const labelArgs = text ? ['-gravity', 'center', '-pointsize', '18', '-fill', 'white', '-annotate', '+0+0', text] : [];
+    const cleanText = sanitizeText(text);
+    const labelArgs = cleanText ? ['-gravity', 'center', '-pointsize', '18', '-fill', 'white', '-annotate', '+0+0', cleanText] : [];
 
     for (const cmd of [
       `convert -size ${w}x${h} xc:"#282838" ${labelArgs.map(a => `"${a}"`).join(' ')} "${outPath}"`,
-      `ffmpeg -f lavfi -i color=c=#282838:s=${w}x${h}:d=1 -vf "drawtext=text='${text.replace(/'/g, `'\\''`)}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=(h-text_h)/2" "${outPath}" -y 2>/dev/null`,
+      `ffmpeg -f lavfi -i color=c=#282838:s=${w}x${h}:d=1 -vf "drawtext=text='${cleanText.replace(/'/g, `'\\''`)}':fontcolor=white:fontsize=18:x=(w-text_w)/2:y=(h-text_h)/2" "${outPath}" -y 2>/dev/null`,
     ]) {
       try { execSync(cmd, { timeout: 10000 }); if (existsSync(outPath)) return { type: 'image', path: outPath, width: w, height: h, prompt }; }
       catch { continue; }
@@ -80,6 +115,8 @@ export class ImageExtension extends BasePlugin {
   }
 
   private async resizeImage(path: string, w: number, h: number): Promise<unknown> {
+    if (!isSafePath(path)) return { type: 'image', error: 'Unsafe path pattern detected' };
+    if (isNaN(w) || isNaN(h) || w <= 0 || h <= 0) return { type: 'image', error: 'invalid dimensions' };
     const out = path.replace(/(\.[\w]+)?$/, `_${w}x${h}$1`);
     for (const cmd of [`convert "${path}" -resize ${w}x${h}! "${out}"`, `ffmpeg -i "${path}" -vf scale=${w}:${h} "${out}" -y 2>/dev/null`]) {
       try { execSync(cmd, { timeout: 10000 }); return { type: 'image', path: out, width: w, height: h }; }
@@ -89,7 +126,9 @@ export class ImageExtension extends BasePlugin {
   }
 
   private async convertFormat(path: string, fmt: string): Promise<unknown> {
-    const out = path.replace(/\.\[^.]+$/, `.${fmt}`);
+    if (!isSafePath(path)) return { type: 'image', error: 'Unsafe path pattern detected' };
+    if (!isSafeFmt(fmt)) return { type: 'image', error: 'Unsafe format pattern detected' };
+    const out = path.replace(/\.[^.]+$/, `.${fmt}`);
     for (const cmd of [`convert "${path}" "${out}"`, `ffmpeg -i "${path}" "${out}" -y 2>/dev/null`]) {
       try { execSync(cmd, { timeout: 10000 }); return { type: 'image', path: out, format: fmt }; }
       catch { continue; }
@@ -98,6 +137,7 @@ export class ImageExtension extends BasePlugin {
   }
 
   private async imageInfo(path: string): Promise<unknown> {
+    if (!isSafePath(path)) return { type: 'image', error: 'Unsafe path pattern detected' };
     try {
       const info = execSync(`identify "${path}" 2>/dev/null || ffprobe -v error -show_entries stream=width,height,codec_name "${path}" 2>/dev/null`, { timeout: 5000, encoding: 'utf8' });
       return { type: 'image', path, info: info.trim() };
@@ -114,34 +154,48 @@ export class VideoExtension extends BasePlugin {
       return this.generateVideo(input.replace(/^generate\s+/i, ''));
     if (input.startsWith('trim ')) {
       const p = input.split(/\s+/);
-      return this.trimVideo(p[1], p[2] ?? '0', p[3] ?? '5');
+      const path = p[1], start = p[2] ?? '0', duration = p[3] ?? '5';
+      if (!path) return { error: 'no path' };
+      if (!isSafePath(path)) return { error: 'Unsafe path pattern detected' };
+      if (!isSafeTime(start) || !isSafeTime(duration)) return { error: 'invalid timestamp/duration' };
+      return this.trimVideo(path, start, duration);
     }
     if (input.startsWith('concat ') || input.startsWith('join ')) {
       const p = input.split(/\s+/);
-      return this.concatVideos(p.slice(1));
+      const paths = p.slice(1);
+      if (paths.length === 0) return { error: 'no paths' };
+      for (const pt of paths) {
+        if (!isSafePath(pt)) return { error: 'Unsafe path pattern detected' };
+      }
+      return this.concatVideos(paths);
     }
     if (input.startsWith('extract-audio ')) {
       const path = input.split(/\s+/)[1];
-      return path ? this.extractAudio(path) : { error: 'no path' };
+      if (!path) return { error: 'no path' };
+      if (!isSafePath(path)) return { error: 'Unsafe path pattern detected' };
+      return this.extractAudio(path);
     }
     if (input.startsWith('info ') || input.startsWith('analyze ')) {
       const path = input.split(/\s+/)[1];
-      return path ? this.videoInfo(path) : { error: 'no path' };
+      if (!path) return { error: 'no path' };
+      if (!isSafePath(path)) return { error: 'Unsafe path pattern detected' };
+      return this.videoInfo(path);
     }
     return { type: 'video', message: 'generate <desc>, trim <file> <start> <dur>, concat <f1> <f2>..., extract-audio <file>, info <file>' };
   }
 
   private async generateVideo(desc: string): Promise<unknown> {
     const outPath = join(tmpdir(), `neuroclaw_vid_${Date.now()}.mp4`);
-    const text = desc.replace(/size\s*\d+x\d+/i, '').trim().replace(/'/g, `'\\''`);
+    const text = desc.replace(/size\s*\d+x\d+/i, '').trim();
+    const cleanText = sanitizeText(text);
 
     try {
-      execSync(`ffmpeg -f lavfi -i color=c=#282838:s=320x240:d=3 -vf "drawtext=text='${text}':fontcolor=white:fontsize=16:x=(w-text_w)/2:y=(h-text_h)/2" "${outPath}" -y 2>/dev/null`, { timeout: 15000 });
+      execSync(`ffmpeg -f lavfi -i color=c=#282838:s=320x240:d=3 -vf "drawtext=text='${cleanText.replace(/'/g, `'\\''`)}':fontcolor=white:fontsize=16:x=(w-text_w)/2:y=(h-text_h)/2" "${outPath}" -y 2>/dev/null`, { timeout: 15000 });
       if (existsSync(outPath)) return { type: 'video', path: outPath, description: desc };
     } catch { /* fall through */ }
 
     try {
-      execSync(`convert -size 320x240 xc:"#282838" -gravity center -pointsize 16 -fill white -annotate +0+0 "${text.replace(/"/g, '\\"')}" /tmp/_vc_${Date.now()}.png && ffmpeg -framerate 1 -i /tmp/_vc_*.png "${outPath}" -y 2>/dev/null`, { timeout: 15000 });
+      execSync(`convert -size 320x240 xc:"#282838" -gravity center -pointsize 16 -fill white -annotate +0+0 "${cleanText}" /tmp/_vc_${Date.now()}.png && ffmpeg -framerate 1 -i /tmp/_vc_*.png "${outPath}" -y 2>/dev/null`, { timeout: 15000 });
       if (existsSync(outPath)) return { type: 'video', path: outPath, description: desc };
     } catch { /* fall through */ }
 
@@ -149,6 +203,8 @@ export class VideoExtension extends BasePlugin {
   }
 
   private async trimVideo(path: string, start: string, duration: string): Promise<unknown> {
+    if (!isSafePath(path)) return { type: 'video', error: 'Unsafe path pattern detected' };
+    if (!isSafeTime(start) || !isSafeTime(duration)) return { type: 'video', error: 'invalid timestamp/duration' };
     const out = path.replace(/(\.[\w]+)?$/, `_trim_${start}_${duration}$1`);
     try {
       execSync(`ffmpeg -i "${path}" -ss ${start} -t ${duration} -c copy "${out}" -y 2>/dev/null`, { timeout: 30000 });
@@ -158,6 +214,9 @@ export class VideoExtension extends BasePlugin {
 
   private async concatVideos(paths: string[]): Promise<unknown> {
     if (paths.length < 2) return { type: 'video', error: 'Need at least 2 files' };
+    for (const pt of paths) {
+      if (!isSafePath(pt)) return { type: 'video', error: 'Unsafe path pattern detected' };
+    }
     const listPath = join(tmpdir(), `concat_${Date.now()}.txt`);
     writeFileSync(listPath, paths.map(p => `file '${p}'`).join('\n'));
     const out = join(tmpdir(), `concat_${Date.now()}.mp4`);
@@ -168,6 +227,7 @@ export class VideoExtension extends BasePlugin {
   }
 
   private async extractAudio(path: string): Promise<unknown> {
+    if (!isSafePath(path)) return { type: 'video', error: 'Unsafe path pattern detected' };
     const out = path.replace(/(\.[\w]+)?$/, '_audio.mp3');
     try {
       execSync(`ffmpeg -i "${path}" -q:a 0 -map a "${out}" -y 2>/dev/null`, { timeout: 30000 });
@@ -176,6 +236,7 @@ export class VideoExtension extends BasePlugin {
   }
 
   private async videoInfo(path: string): Promise<unknown> {
+    if (!isSafePath(path)) return { type: 'video', error: 'Unsafe path pattern detected' };
     try {
       const info = execSync(`ffprobe -v error -show_entries format=duration,size,bit_rate:stream=codec_name,width,height,r_frame_rate "${path}" 2>/dev/null`, { timeout: 5000, encoding: 'utf8' });
       return { type: 'video', path, info: info.trim() };
