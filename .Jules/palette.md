@@ -1,3 +1,6 @@
+## 2026-09-10 - [Interactive Empty States & Responsive Redirection CTAs]
+**Learning:** Replacing static, passive plain-text empty states with beautifully designed, structured interactive Card components—utilizing dashed borders, clear decorative center icons, explicit descriptive text, and high-contrast, accessible `<Button>` elements wrapping framework-native routing links—immensely improves application onboarding, provides instant user direction, and enriches the product onboarding experience with tactile hover and active-click transforms (`active:scale-95`).
+**Action:** Always avoid raw text-only empty states; instead, design interactive empty-state cards containing actionable, styled button triggers paired with tactile transitions to guide the user.
 ## 2026-09-10 - [Interactive Onboarding Empty States & Warm UX Redirection]
 **Learning:** Replacing passive, static textual empty states with beautifully styled, interactive dashed-border card templates—incorporating centralized decorative icons, high-contrast helper copy, and robust accessible `<Button asChild>` CTA links—dramatically improves onboarding visual delight, accessibility navigation, and intuitive user redirection.
 **Action:** Redesign plain zero-state descriptions into structured, interactive focus cards with prominent action triggers referencing clear next-step user routes.
