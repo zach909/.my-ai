@@ -2357,18 +2357,31 @@ export class HyperDimensionalEngine {
         const connDiag = this.connDiag;
         const connShift = this.connShift;
         const bias = this.bias;
+        // BOLT OPTIMIZATION: Pre-calculate driven content energy contribution and clamped input vector once.
+        // Since input values are invariant during the entire settling run, we completely eliminate
+        // redundant loops, array access, and Math.max/Math.min/clamping checks inside the propagation loop.
+        let drivenEnergyContribution = 0;
+        const clampedInput = new Float32Array(dims);
+        for (let d = 0; d < dims; d++) {
+            const inputVal = resolvedInput[d] ?? 0;
+            const val = inputVal < -1 ? -1 : (inputVal > 1 ? 1 : inputVal);
+            clampedInput[d] = val;
+            drivenEnergyContribution += val * val;
+        }
+        const totalDrivenEnergyContribution = drivenIndices.length * drivenEnergyContribution;
         for (; iterations < this.config.propagationSteps; iterations++) {
-            let currentTotalContentEnergy = 0;
-            // Handle driven neurons first (isolated pass)
+            // Initialize content energy with the pre-calculated constant driven energy contribution.
+            let currentTotalContentEnergy = totalDrivenEnergyContribution;
+            // Fill driven neurons state vectors into nextStates.
+            // Keeping this inside the propagation loop is critical to ensure both state buffers
+            // remain synchronized without corruption, while using pre-calculated clamped values
+            // avoids any redundant evaluation overhead.
             for (let idx = 0; idx < drivenIndices.length; idx++) {
                 const i = drivenIndices[idx];
                 const offset = i * D;
-                nextStates[offset] = 1.0;
+                nextStates[offset] = 1.0; // Mark as externally driven
                 for (let d = 0; d < dims; d++) {
-                    const inputVal = resolvedInput[d] ?? 0;
-                    const val = inputVal < -1 ? -1 : (inputVal > 1 ? 1 : inputVal);
-                    nextStates[offset + d + 1] = val;
-                    currentTotalContentEnergy += val * val;
+                    nextStates[offset + d + 1] = clampedInput[d];
                 }
             }
             // Handle non-driven neurons using loop-swapping to hoist dimension/state/weight views
