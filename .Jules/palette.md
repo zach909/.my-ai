@@ -64,3 +64,7 @@
 ## 2026-09-02 - [Collapsible Interactive Groups & Tactile Chevron Feedback]
 **Learning:** Collapsible lists, folders, or accordion triggers (such as `GroupCard` in `src/routes/app/chat-history.tsx`) must incorporate interactive, semantic elements with dynamic `aria-label` properties reflecting current state (e.g., "Expand" or "Collapse"), accessible keyboard rings (`focus-visible:ring-2`), tactile scale-down animations (`active:scale-95 transition-all`), and smoothly rotating graphic indicators (like a `ChevronDown` transitioning `rotate-180`) to supply multi-sensory confirmation of action feedback.
 **Action:** Always pair `aria-pressed`/`aria-expanded` and rotating indicators with tactile transforms and keyboard focus ring indicators on collapsible layout components.
+
+## 2026-09-10 - [Accessible Collapsed Sidebar Navigation Items]
+**Learning:** Collapsed navigation layouts often strip visible text labels from interactive controls to show only icons. While tooltip wrappers provide visual assistance, they do not automatically supply the accessible names required by screen readers. For icon-only links and buttons, developers must explicitly provide an `aria-label` matching the navigation item's logical target.
+**Action:** Always declare explicit `aria-label` attributes on icon-only interactive components, especially inside collapsed sidebars and status bars.
