@@ -136,6 +136,10 @@
 **Learning:** Broken syntax can silently disable or bypass critical security controls. When writing sanitization and validation wrappers, ensure default or optional parameter branches (`None` checks) are logically separated from user-supplied index parameters to avoid dead code paths and validation crashes.
 **Prevention:** Always parse and run full unit/integration test suites on modified system plugins to ensure that all logical paths (both explicit values and default fallbacks) are fully covered and function without regressions or permission bypasses.
 
+## 2026-09-08 - Inconsistent Email Storage Permissions in TypeScript EmailPlugin
+**Vulnerability:** The TypeScript `EmailPlugin` stored sensitive personal email messages (PII) on disk using default system permissions. This left the user's personal emails vulnerable to local privilege escalation or unauthorized local reading by other system accounts.
+**Learning:** Sibling plugins (e.g. Contacts, Tasks, Notifications, Calendar) were previously hardened to restrict storage permissions, but parallel or sibling files in the codebase can easily miss security updates during logical segmentation or translation across TS/Python.
+**Prevention:** Always restrict data directory creation to `0o700` and sensitive files to `0o600` on POSIX systems immediately during initialization (`onActivate` / constructor) and save operations. Keep security baselines synchronized across all user-data-persisting plugins.
 ## 2026-09-08 - Insecure Storage File Permissions in TasksPlugin
 **Vulnerability:** The TypeScript `TasksPlugin` stored user task lists on disk with default permissions under the `~/.neuroclaw` home directory. On multi-user POSIX systems, this could make sensitive personal plans and credentials world- or group-readable, introducing local privilege escalation and PII data leakage risks.
 **Learning:** Storage plugins often contain sensitive developer and user data. When securing storage directories and files, permission hardening must be applied uniformly across all sibling data-persisting plugins to prevent local access exploits.

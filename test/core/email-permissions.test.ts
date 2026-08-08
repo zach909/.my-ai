@@ -85,6 +85,8 @@ describe('EmailPlugin security and permissions', () => {
       const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
       await plugin.onActivate({ logger: fakeLogger } as any);
 
+      // Trigger a saveToDisk() by calling send()
+      await plugin.send('sender@example.com', ['receiver@example.com'], 'Test Subject', 'Body text');
       // Trigger a save via send()
       // Note: we also mock node:child_process to let trySendmail execute safely
       vi.doMock('node:child_process', () => ({
@@ -109,4 +111,5 @@ describe('EmailPlugin security and permissions', () => {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
+});
 });
