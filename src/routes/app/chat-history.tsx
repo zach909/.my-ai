@@ -178,6 +178,18 @@ function ChatHistoryPage() {
       {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center bg-card shadow-xs">
+          <div className="mx-auto flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <Sparkles className="h-6 w-6" />
+          </div>
+          <h3 className="mt-4 text-sm font-semibold">No saved chats yet</h3>
+          <p className="mt-2 max-w-sm text-xs text-muted-foreground">
+            Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3 justify-center">
+            <Button asChild size="sm" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat">
+                Start an AI Chat
         <Card className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center bg-card">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
             <MessageSquare size={24} aria-hidden="true" />
@@ -208,6 +220,8 @@ function ChatHistoryPage() {
             </Button>
             <Button asChild variant="outline" size="sm" className="active:scale-95 transition-all duration-150">
               <Link to="/app/chat-groups">
+                Collaborate with Hive
+              </Link>
                 <Users size={13} className="mr-1" />
                 Collaborate with Hive
               </Link>
