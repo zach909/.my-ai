@@ -162,6 +162,13 @@ function ChatHistoryPage() {
           </p>
         </div>
         <Button
+          variant="outline"
+          size="sm"
+          onClick={load}
+          disabled={loading}
+          aria-label="Refresh chat history"
+          title="Refresh chat history"
+          className="active:scale-95 transition-all duration-150 gap-1.5"
           onClick={load}
           disabled={loading}
           variant="outline"
@@ -181,6 +188,25 @@ function ChatHistoryPage() {
       {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
+        <Card className="flex flex-col items-center justify-center border-2 border-dashed border-muted p-8 text-center max-w-xl mx-auto rounded-xl">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare size={24} />
+          </div>
+          <h3 className="text-sm font-semibold mb-1">No chats saved yet</h3>
+          <p className="text-xs text-muted-foreground max-w-sm mb-5 leading-relaxed">
+            Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically categorized by topic using raw tokens.
+          </p>
+          <div className="flex flex-wrap items-center justify-center gap-3">
+            <Button asChild variant="default" size="sm" className="active:scale-95 transition-all duration-150 gap-1.5">
+              <Link to="/app/chat">
+                <Sparkles size={13} />
+                Start AI Chat
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="active:scale-95 transition-all duration-150 gap-1.5">
+              <Link to="/app/chat-groups">
+                <Users size={13} />
+                Try Chat Groups
         <Card className="flex flex-col items-center justify-center border-dashed border-2 border-border p-8 text-center bg-card max-w-md mx-auto my-6 rounded-xl shadow-xs">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
             <MessageSquare className="h-6 w-6" />
