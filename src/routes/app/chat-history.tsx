@@ -21,6 +21,7 @@ import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles } from 'lucide-react'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
@@ -190,6 +191,19 @@ function ChatHistoryPage() {
               <Link to="/app/chat">
                 <Sparkles size={13} className="mr-1" />
                 Start AI Chat
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center bg-card shadow-xs">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare size={24} />
+          </div>
+          <h3 className="text-sm font-semibold text-foreground mb-1">No saved chats yet</h3>
+          <p className="text-xs text-muted-foreground max-w-sm mb-6 leading-relaxed">
+            Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+          </p>
+          <div className="flex flex-wrap gap-2 justify-center">
+            <Button asChild size="sm" className="active:scale-95 transition-all duration-150 shadow-xs">
+              <Link to="/app/chat">
+                <Sparkles size={14} className="mr-1.5" />
+                Start Chatting
               </Link>
             </Button>
             <Button asChild variant="outline" size="sm" className="active:scale-95 transition-all duration-150">
@@ -200,6 +214,28 @@ function ChatHistoryPage() {
             </Button>
           </div>
         </Card>
+                <Users size={14} className="mr-1.5" />
+                Collaborate with Hive
+              </Link>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center max-w-md mx-auto my-6 space-y-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <MessageSquare className="h-6 w-6" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-semibold text-foreground text-sm">No saved chats yet</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-center gap-2 pt-2">
+            <Button asChild size="sm" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat">Start AI Chat</Link>
+            </Button>
+            <Button asChild size="sm" variant="outline" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat-groups">Collaborate with Hive</Link>
+            </Button>
+          </div>
+        </div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
