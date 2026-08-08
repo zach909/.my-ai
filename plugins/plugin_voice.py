@@ -29,6 +29,15 @@ class VoiceActivationPlugin(Plugin):
         return True
 
     def _set_wake_word(self, word: str) -> None:
+        if not word or not isinstance(word, str):
+            raise ValueError("Security Error: Wake word must be a non-empty string.")
+        if len(word) > 64:
+            raise ValueError("Security Error: Wake word exceeds maximum length of 64 characters.")
+        if word.startswith("-"):
+            raise ValueError("Security Error: Wake word cannot start with a hyphen to prevent argument injection.")
+        import re
+        if not re.match(r"^[a-zA-Z0-9_-]+$", word):
+            raise ValueError("Security Error: Wake word contains invalid characters. Only alphanumeric, hyphens, and underscores are allowed.")
         self._wake_word = word
 
     def _process_text(self, text: str) -> Optional[dict]:

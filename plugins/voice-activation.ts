@@ -22,7 +22,22 @@ export class VoiceActivationPlugin extends BasePlugin {
     super(definition);
   }
 
-  setWakeWord(word: string): void { this.wakeWord = word; }
+  setWakeWord(word: string): void {
+    if (!word || typeof word !== "string") {
+      throw new Error("Security Error: Wake word must be a non-empty string.");
+    }
+    if (word.length > 64) {
+      throw new Error("Security Error: Wake word exceeds maximum length of 64 characters.");
+    }
+    if (word.startsWith("-")) {
+      throw new Error("Security Error: Wake word cannot start with a hyphen to prevent argument injection.");
+    }
+    const safeRegex = /^[a-zA-Z0-9_-]+$/;
+    if (!safeRegex.test(word)) {
+      throw new Error("Security Error: Wake word contains invalid characters. Only alphanumeric, hyphens, and underscores are allowed.");
+    }
+    this.wakeWord = word;
+  }
   getWakeWord(): string { return this.wakeWord; }
 
   async startListening(): Promise<boolean> {
