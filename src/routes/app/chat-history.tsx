@@ -19,7 +19,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
-import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
@@ -159,24 +160,46 @@ function ChatHistoryPage() {
             {totalChats} chat{totalChats !== 1 ? 's' : ''} across {groups.length} auto-organized group{groups.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <button
+        <Button
           onClick={load}
           disabled={loading}
-          aria-label="Refresh"
-          title="Refresh"
-          className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground disabled:opacity-50 active:scale-95"
+          variant="outline"
+          size="sm"
+          aria-label="Refresh chat history"
+          title="Refresh chat history"
+          className="gap-1.5 text-xs text-muted-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
         >
           <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
           Refresh
-        </button>
+        </Button>
       </div>
 
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
-        <p className="text-sm text-muted-foreground">
-          No saved chats yet — anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
-        </p>
+        <Card className="flex flex-col items-center justify-center border-dashed border-2 border-muted-foreground/25 p-8 text-center bg-card max-w-xl mx-auto rounded-xl">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare size={24} className="animate-pulse" />
+          </div>
+          <h2 className="text-base font-semibold tracking-tight text-foreground">No saved chats yet</h2>
+          <p className="mt-2 text-sm text-muted-foreground max-w-sm">
+            Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+          </p>
+          <div className="mt-6 flex flex-wrap gap-3 justify-center">
+            <Button asChild size="sm" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat">
+                <Sparkles size={14} className="mr-1.5" />
+                Start AI Chat
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat-groups">
+                <Users size={14} className="mr-1.5" />
+                Join Chat Group
+              </Link>
+            </Button>
+          </div>
+        </Card>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
