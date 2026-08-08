@@ -70,6 +70,9 @@ describe('TasksPlugin security and permissions', () => {
       expect(dirChmod).toBeDefined();
 
       // Verify chmodSync was called for file with 0o600
+      const dirChmod = chmodCalls.find(c => (c.path.endsWith('.neuroclaw') || c.path.includes('.neuroclaw')) && c.mode === 0o700);
+      expect(dirChmod).toBeDefined();
+
       const fileChmod = chmodCalls.find(c => c.path.endsWith('tasks.json') && c.mode === 0o600);
       expect(fileChmod).toBeDefined();
     } finally {
@@ -90,6 +93,8 @@ describe('TasksPlugin security and permissions', () => {
       await plugin.create('Secure code task');
 
       // Check writeFileSync options
+      await plugin.create('Secure Task', { priority: 'high' });
+
       const lastWrite = writeCalls[writeCalls.length - 1];
       expect(lastWrite).toBeDefined();
       expect(lastWrite.options).toBeDefined();

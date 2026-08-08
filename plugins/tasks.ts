@@ -69,6 +69,16 @@ export class TasksPlugin extends BasePlugin {
   }
 
   private load(): void { try { if (existsSync(STORAGE)) this.tasks = JSON.parse(readFileSync(STORAGE, "utf-8")); } catch { this.tasks = []; } }
+  private load(): void {
+    try {
+      if (existsSync(STORAGE)) {
+        this.tasks = JSON.parse(readFileSync(STORAGE, "utf-8"));
+      }
+    } catch {
+      this.tasks = [];
+    }
+  }
+
   private save(): void {
     try {
       if (!existsSync(STORAGE_DIR)) {
