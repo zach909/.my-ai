@@ -68,6 +68,7 @@ export class TasksPlugin extends BasePlugin {
     this.tasks.splice(idx, 1); this.save(); return true;
   }
 
+  private load(): void { try { if (existsSync(STORAGE)) this.tasks = JSON.parse(readFileSync(STORAGE, "utf-8")); } catch { this.tasks = []; } }
   private load(): void {
     try {
       if (existsSync(STORAGE)) {

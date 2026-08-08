@@ -71,6 +71,9 @@ export class TasksPlugin extends BasePlugin {
             this.tasks = [];
         }
     }
+    catch {
+        this.tasks = [];
+    } }
     save() {
         try {
             if (!existsSync(STORAGE_DIR)) {
