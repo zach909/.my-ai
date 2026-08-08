@@ -20,6 +20,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles } from 'lucide-react'
 import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
@@ -175,6 +176,26 @@ function ChatHistoryPage() {
       {error && <p className="text-xs text-destructive">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center bg-card shadow-xs">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4">
+            <MessageSquare size={24} />
+          </div>
+          <h3 className="text-sm font-semibold text-foreground mb-1">No saved chats yet</h3>
+          <p className="text-xs text-muted-foreground max-w-sm mb-6 leading-relaxed">
+            Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+          </p>
+          <div className="flex flex-wrap gap-2 justify-center">
+            <Button asChild size="sm" className="active:scale-95 transition-all duration-150 shadow-xs">
+              <Link to="/app/chat">
+                <Sparkles size={14} className="mr-1.5" />
+                Start Chatting
+              </Link>
+            </Button>
+            <Button asChild variant="outline" size="sm" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat-groups">
+                <Users size={14} className="mr-1.5" />
+                Collaborate with Hive
+              </Link>
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center max-w-md mx-auto my-6 space-y-4">
           <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
             <MessageSquare className="h-6 w-6" />
