@@ -1206,6 +1206,37 @@ async function testWebBackend() {
     check(goodBits.status === 200 && goodBitsJson.ok === true && goodBitsJson.bits === 8,
       'Web backend POST /api/extension/build still accepts a valid numeric bits value');
 
+    // POST /api/extension/train-pytorch -- the optional real-gradient-descent
+    // training backend (extension-builder/pytorch_trainer.py, spawned as a
+    // Python subprocess). Runs end-to-end against whatever Python/torch
+    // environment this machine actually has: if torch isn't installed the
+    // route must still return 200 with ok:false and a clear error (never a
+    // 500, never a hang) -- that IS the optional-dependency contract, not a
+    // failure of the test. If torch is installed, it must actually converge
+    // on a trivially learnable single definition.
+    const pytorchTrain = await post('/api/extension/train-pytorch', {
+      neurons: [{ name: 'alpha', definition: 'a test neuron', scripts: [] }],
+      epochs: 500,
+    });
+    const pytorchJson = JSON.parse(pytorchTrain.body);
+    check(pytorchTrain.status === 200, 'Web backend POST /api/extension/train-pytorch always responds 200, never crashes the process, regardless of whether Python/torch is installed');
+    check(typeof pytorchJson.ok === 'boolean' && pytorchJson.backend === 'pytorch',
+      'Web backend POST /api/extension/train-pytorch response is shaped as a real backend result (ok/backend fields present)');
+    if (pytorchJson.ok) {
+      check(pytorchJson.converged === true && pytorchJson.trainedNeurons?.includes('alpha'),
+        'Web backend POST /api/extension/train-pytorch genuinely trains and converges a single trivial definition when torch is available');
+    } else {
+      check(typeof pytorchJson.error === 'string' && pytorchJson.error.length > 0,
+        'Web backend POST /api/extension/train-pytorch reports a clear, non-empty error instead of failing silently when torch is unavailable');
+    }
+
+    // Empty/no-op input (no neurons with a definition or script) must be a
+    // fast, trivially-converged no-op -- not a spawn at all.
+    const pytorchEmpty = await post('/api/extension/train-pytorch', { neurons: [] });
+    const pytorchEmptyJson = JSON.parse(pytorchEmpty.body);
+    check(pytorchEmpty.status === 200 && pytorchEmptyJson.ok === true && pytorchEmptyJson.converged === true,
+      'Web backend POST /api/extension/train-pytorch short-circuits to a trivial converged result when there is nothing to train, without spawning python3');
+
     // AppLauncher.launch() called spawn(command, args, {shell: true}), so a
     // shell metacharacter (`;`, `&&`, backticks, ...) inside an *args* entry
     // ran as an additional, unintended command rather than literal argv
