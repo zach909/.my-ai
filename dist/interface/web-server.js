@@ -3,6 +3,117 @@ import crypto from 'node:crypto';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
+/**
+ * Keeps exactly one `extension-builder/pytorch_trainer.py` subprocess alive
+ * for the life of the server instead of spawning (and re-importing torch
+ * in) a fresh one per request. `import torch` alone costs ~2s and a cold
+ * python3+numpy+torch startup runs 4-25s depending on disk cache state --
+ * dominating every single training call if paid per-request. Paying it once
+ * here turns every call after the first into single-digit milliseconds
+ * (the actual gradient descent), confirmed by timing the same spec run
+ * three times through one persistent process vs. three fresh spawns.
+ *
+ * Protocol: one JSON object per line in on stdin, one JSON object per line
+ * back on stdout, in request order -- see pytorch_trainer.py's own header
+ * comment. Requests are queued and answered strictly FIFO (matches the
+ * script's own single-threaded, line-at-a-time loop), so concurrent calls
+ * to send() are safe: each just waits its turn in `pending`.
+ */
+class PyTorchTrainerWorker {
+    constructor() {
+        this.child = null;
+        this.pending = [];
+        this.stdoutBuf = '';
+        this.stderrBuf = '';
+        // Serializes concurrent ensureSpawned() calls -- without this, two
+        // requests racing in before the first spawn resolves would each see
+        // `this.child === null` and spawn a second orphaned python3 process.
+        this.spawning = null;
+    }
+    ensureSpawned(scriptPath) {
+        if (this.child)
+            return Promise.resolve(this.child);
+        if (!this.spawning) {
+            this.spawning = this.doSpawn(scriptPath).finally(() => { this.spawning = null; });
+        }
+        return this.spawning;
+    }
+    async doSpawn(scriptPath) {
+        let child;
+        try {
+            // Deferred import, not a top-level one: keeps `node:child_process`
+            // (and the subprocess it can spawn) out of any code path that
+            // doesn't actually use this optional backend.
+            const { spawn } = await import('node:child_process');
+            child = spawn('python3', [scriptPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+        }
+        catch (err) {
+            return { error: `could not launch python3: ${err instanceof Error ? err.message : String(err)}` };
+        }
+        child.stdout.on('data', (d) => this.onStdout(d));
+        child.stderr.on('data', (d) => { this.stderrBuf += d; });
+        const onDown = (detail) => {
+            // The process is gone (crashed, killed, or python3/torch missing) --
+            // fail every request still waiting on it and drop the reference so
+            // the next call respawns fresh instead of writing into a dead pipe.
+            const err = { ok: false, error: detail };
+            const waiting = this.pending;
+            this.pending = [];
+            this.child = null;
+            for (const p of waiting)
+                p.resolve(err);
+        };
+        child.on('error', (err) => onDown(`python3 not available: ${err.message}`));
+        child.on('exit', (code, signal) => {
+            if (this.pending.length > 0) {
+                onDown(this.stderrBuf.trim() || `pytorch_trainer.py exited (code=${code}, signal=${signal})`);
+            }
+            else {
+                this.child = null;
+            }
+        });
+        this.child = child;
+        return child;
+    }
+    onStdout(chunk) {
+        this.stdoutBuf += chunk;
+        let nl;
+        while ((nl = this.stdoutBuf.indexOf('\n')) !== -1) {
+            const line = this.stdoutBuf.slice(0, nl).trim();
+            this.stdoutBuf = this.stdoutBuf.slice(nl + 1);
+            if (!line)
+                continue;
+            const next = this.pending.shift();
+            if (!next)
+                continue; // stray output with nothing waiting on it
+            try {
+                next.resolve(JSON.parse(line));
+            }
+            catch {
+                next.resolve({ ok: false, error: `could not parse pytorch_trainer.py output: ${line}` });
+            }
+        }
+    }
+    async send(scriptPath, spec) {
+        const child = await this.ensureSpawned(scriptPath);
+        if (!('stdin' in child))
+            return { ok: false, error: child.error };
+        return new Promise((resolve) => {
+            this.pending.push({ resolve });
+            child.stdin.write(JSON.stringify(spec) + '\n');
+        });
+    }
+    /** Called from WebServer.stop() so a stopped server doesn't leave an orphaned python3 process behind. */
+    shutdown() {
+        this.child?.stdin.end();
+        this.child?.kill();
+        this.child = null;
+        const err = { ok: false, error: 'server is shutting down' };
+        for (const p of this.pending)
+            p.resolve(err);
+        this.pending = [];
+    }
+}
 const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -222,6 +333,10 @@ export class WebServer {
         // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
         this.chatGroupsLock = new PasswordLock();
         this.chatHistory = new ChatHistoryStore();
+        // Lazily spawned on first POST /api/extension/train-pytorch call, then
+        // reused for the life of this server -- see PyTorchTrainerWorker's own
+        // doc comment for why (torch import cost dominates a per-request spawn).
+        this.pytorchWorker = new PyTorchTrainerWorker();
         this.runner = runner;
         this.launcher = launcher ?? new AppLauncher();
     }
@@ -309,6 +424,7 @@ export class WebServer {
     async stop() {
         if (!this.server)
             throw new Error('Server not running');
+        this.pytorchWorker.shutdown();
         return new Promise((resolve) => {
             this.server?.close(() => { this.server = null; resolve(); });
         });
@@ -914,41 +1030,11 @@ export class WebServer {
                     samples,
                 };
                 const path = await import('node:path');
-                const { spawn } = await import('node:child_process');
                 const scriptPath = path.resolve(process.cwd(), 'extension-builder', 'pytorch_trainer.py');
-                const pytorchResult = await new Promise((resolve) => {
-                    let child;
-                    try {
-                        child = spawn('python3', [scriptPath], { stdio: ['pipe', 'pipe', 'pipe'] });
-                    }
-                    catch (err) {
-                        resolve({ ok: false, error: `could not launch python3: ${err instanceof Error ? err.message : String(err)}` });
-                        return;
-                    }
-                    let stdout = '';
-                    let stderr = '';
-                    child.stdout.on('data', (d) => { stdout += d; });
-                    child.stderr.on('data', (d) => { stderr += d; });
-                    child.on('error', (err) => {
-                        // ENOENT here means "no python3 on this machine" -- exactly the
-                        // optional-dependency case, not a bug.
-                        resolve({ ok: false, error: `python3 not available: ${err.message}` });
-                    });
-                    child.on('close', (code) => {
-                        if (code !== 0 && !stdout.trim()) {
-                            resolve({ ok: false, error: stderr.trim() || `pytorch_trainer.py exited with code ${code}` });
-                            return;
-                        }
-                        try {
-                            resolve(JSON.parse(stdout.trim()));
-                        }
-                        catch {
-                            resolve({ ok: false, error: `could not parse pytorch_trainer.py output: ${stderr.trim() || stdout.trim()}` });
-                        }
-                    });
-                    child.stdin.write(JSON.stringify(spec));
-                    child.stdin.end();
-                });
+                // Reuses one already-warm subprocess (torch already imported) across
+                // requests instead of spawning + re-importing torch every call --
+                // see PyTorchTrainerWorker's doc comment.
+                const pytorchResult = await this.pytorchWorker.send(scriptPath, spec);
                 if (pytorchResult.ok === false) {
                     this.sendJson(res, { ok: false, backend: 'pytorch', error: pytorchResult.error });
                     return;

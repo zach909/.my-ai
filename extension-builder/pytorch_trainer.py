@@ -1,9 +1,21 @@
 #!/usr/bin/env python3
 """PyTorch training backend for the Extension Builder.
 
-Reads a training spec as JSON on stdin, trains a real set of learnable
-parameters with torch.autograd + torch.optim (genuine gradient descent, not
-a JS hand-rolled delta rule), and writes the result as JSON on stdout.
+Runs as a long-lived worker: torch is imported exactly once at process
+startup, then the process reads one training spec as a JSON line from
+stdin, trains a real set of learnable parameters with torch.autograd +
+torch.optim (genuine gradient descent, not a JS hand-rolled delta rule),
+and writes the result as a JSON line on stdout -- then loops, waiting for
+the next line, until stdin closes.
+
+This matters because `import torch` alone costs ~2s (a large C++
+extension), and cold-starting python3 + numpy + torch from scratch runs
+4-25s depending on disk cache state. Paying that cost once per *server
+process* instead of once per *training request* (interface/web-server.ts
+keeps exactly one of these alive for the life of the server, queuing
+requests through its stdin/stdout) turns each subsequent training call
+into a handful of milliseconds -- the actual gradient descent -- instead
+of being dominated by import overhead.
 
 Mirrors NeuroLangRuntime.materialize()'s definition/script training
 contract on the JS side (see models && skills/core/neuro-lang.ts's
@@ -15,8 +27,17 @@ sample's MSE loss drops below `tolerance` or `epochs` runs out. The caller
 embedText() TypeScript already uses, so this script only ever sees plain
 numeric vectors -- no duplicated embedding logic to drift out of sync.
 
-Usage: python3 pytorch_trainer.py < spec.json > result.json
-Input:
+Usage (persistent worker -- what web-server.ts actually does):
+  proc = spawn('python3', ['pytorch_trainer.py'])
+  proc.stdin.write(JSON.stringify(spec) + '\n')  # once per training call
+  # ... read one JSON line back from proc.stdout per call, in order ...
+
+Usage (one-shot, e.g. manual testing): still works exactly as before --
+a single line in, a single line out, then EOF closes the loop and the
+process exits cleanly.
+  python3 pytorch_trainer.py <<< '{"dims": 16, ...}'
+
+Input (one JSON object per line):
   {
     "dims": 16,
     "numReadouts": 3,
@@ -25,7 +46,7 @@ Input:
     "tolerance": 0.001,
     "samples": [{"readout": 0, "input": [...], "target": [...]}, ...]
   }
-Output:
+Output (one JSON object per line, in the same order as requests):
   {
     "ok": true,
     "backend": "pytorch",
@@ -39,23 +60,21 @@ Output:
 import sys
 import json
 
+try:
+    import torch
+    _IMPORT_ERROR = None
+except ImportError as e:
+    torch = None
+    _IMPORT_ERROR = str(e)
 
-def main() -> int:
-    try:
-        spec = json.load(sys.stdin)
-    except Exception as e:
-        print(json.dumps({"ok": False, "error": f"invalid JSON on stdin: {e}"}))
-        return 1
 
-    try:
-        import torch
-    except ImportError:
-        print(json.dumps({
+def train_one(spec: dict) -> dict:
+    if torch is None:
+        return {
             "ok": False,
             "error": "PyTorch is not installed in this Python environment. "
-                     "Install it with: pip install torch",
-        }))
-        return 1
+                     f"Install it with: pip install torch ({_IMPORT_ERROR})",
+        }
 
     dims = int(spec.get("dims", 16))
     num_readouts = int(spec.get("numReadouts", 0))
@@ -65,11 +84,10 @@ def main() -> int:
     samples = spec.get("samples", [])
 
     if num_readouts == 0 or not samples:
-        print(json.dumps({
+        return {
             "ok": True, "backend": "pytorch", "torchVersion": torch.__version__,
             "epochsRun": 0, "converged": True, "sampleLosses": [], "sampleConverged": [],
-        }))
-        return 0
+        }
 
     torch.manual_seed(0)  # deterministic runs -- same spec, same result, every time
     # One learnable (weight, bias) pair per (readout neuron, dimension) --
@@ -105,7 +123,7 @@ def main() -> int:
             break
 
     sample_converged = [l < tolerance for l in sample_losses]
-    result = {
+    return {
         "ok": True,
         "backend": "pytorch",
         "torchVersion": torch.__version__,
@@ -114,7 +132,27 @@ def main() -> int:
         "sampleLosses": sample_losses,
         "sampleConverged": sample_converged,
     }
-    print(json.dumps(result))
+
+
+def main() -> int:
+    # Line-delimited JSON in a loop, not a single json.load(sys.stdin): the
+    # whole point of this process staying alive is to serve many training
+    # calls without re-importing torch, so it must keep reading requests
+    # until its stdin is closed rather than exiting after the first one.
+    for line in sys.stdin:
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            spec = json.loads(line)
+        except Exception as e:
+            print(json.dumps({"ok": False, "error": f"invalid JSON on stdin: {e}"}), flush=True)
+            continue
+        try:
+            result = train_one(spec)
+        except Exception as e:
+            result = {"ok": False, "error": f"training failed: {e}"}
+        print(json.dumps(result), flush=True)
     return 0
 
 

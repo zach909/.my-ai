@@ -1237,6 +1237,29 @@ async function testWebBackend() {
     check(pytorchEmpty.status === 200 && pytorchEmptyJson.ok === true && pytorchEmptyJson.converged === true,
       'Web backend POST /api/extension/train-pytorch short-circuits to a trivial converged result when there is nothing to train, without spawning python3');
 
+    // The whole point of PyTorchTrainerWorker (interface/web-server.ts) is
+    // reusing one already-warm subprocess -- `import torch` alone costs
+    // ~2s, and a cold python3+numpy+torch spawn runs 4-25s -- instead of
+    // paying that on every request. `pytorchTrain` above already forced a
+    // spawn (or a confirmed "torch unavailable"); if it succeeded, a
+    // second real training call through the same server instance must
+    // come back fast, proving the process was actually reused rather than
+    // re-spawned. If torch isn't available here, this is a no-op check
+    // (nothing to time).
+    if (pytorchJson.ok) {
+      const t0 = Date.now();
+      const pytorchWarm = await post('/api/extension/train-pytorch', {
+        neurons: [{ name: 'beta', definition: 'a second test neuron', scripts: [] }],
+        epochs: 500,
+      });
+      const warmMs = Date.now() - t0;
+      const pytorchWarmJson = JSON.parse(pytorchWarm.body);
+      check(pytorchWarm.status === 200 && pytorchWarmJson.ok === true && pytorchWarmJson.converged === true,
+        'Web backend POST /api/extension/train-pytorch: a second, independent training call also converges correctly on the reused worker');
+      check(warmMs < 2000,
+        `Web backend POST /api/extension/train-pytorch reuses its subprocess instead of re-spawning python3 per request (2nd call took ${warmMs}ms, well under a cold torch-import spawn's 4-25s)`);
+    }
+
     // AppLauncher.launch() called spawn(command, args, {shell: true}), so a
     // shell metacharacter (`;`, `&&`, backticks, ...) inside an *args* entry
     // ran as an additional, unintended command rather than literal argv
