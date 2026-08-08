@@ -50,6 +50,7 @@ function BuilderPage() {
   const [scriptUserSays, setScriptUserSays] = useState('')
   const [scriptResponse, setScriptResponse] = useState('')
   const [training, setTraining] = useState(false)
+  const [trainingPyTorch, setTrainingPyTorch] = useState(false)
 
   const selected = b.neurons.find((n) => n.id === selectedId) ?? null
 
@@ -158,6 +159,31 @@ function BuilderPage() {
       )
     } finally {
       setTraining(false)
+    }
+  }
+
+  // ALTERNATIVE backend to handleTrain() above: real torch.autograd/torch.optim
+  // gradient descent, run server-side (see use-builder.ts's trainWithPyTorch()
+  // and interface/web-server.ts's POST /api/extension/train-pytorch) against
+  // the PyTorch copy vendored under extension-builder/PyTorch. Strictly
+  // optional -- if this machine has no Python/torch, the request still comes
+  // back {ok:false, error} instead of throwing, and the regular Train button
+  // above is completely unaffected either way.
+  const handleTrainPyTorch = async () => {
+    setTrainingPyTorch(true)
+    try {
+      const result = await b.trainWithPyTorch()
+      if (!result.ok) {
+        setStatusMsg(`PyTorch training unavailable: ${result.error}`)
+        return
+      }
+      setStatusMsg(
+        result.converged
+          ? `PyTorch trained: converged in ${result.epochs} epoch(s) (torch ${result.torchVersion ?? '?'}) — ${result.trainedNeurons.length} neuron(s) now true: ${result.trainedNeurons.join(', ') || '(none had a @definishon or script)'}`
+          : `PyTorch trained: did not fully converge after ${result.epochs} epoch(s) — ${result.trainedNeurons.length} trainable neuron(s) true so far. Try again.`,
+      )
+    } finally {
+      setTrainingPyTorch(false)
     }
   }
 
@@ -487,6 +513,16 @@ function BuilderPage() {
               </Button>
               <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleTrain} disabled={training}>
                 {training ? 'Training…' : 'Train'}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-xs"
+                onClick={handleTrainPyTorch}
+                disabled={trainingPyTorch}
+                title="Optional: trains via a real PyTorch subprocess instead of the built-in JS engine. Falls back cleanly if this server has no Python/torch installed."
+              >
+                {trainingPyTorch ? 'Training (PyTorch)…' : 'Train (PyTorch)'}
               </Button>
               {b.lastTraining && (
                 <p className={`text-[11px] ${b.lastTraining.converged ? 'text-emerald-500' : 'text-muted-foreground'}`}>

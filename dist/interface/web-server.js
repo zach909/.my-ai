@@ -846,6 +846,142 @@ export class WebServer {
             }
             return;
         }
+        // POST /api/extension/train-pytorch — an ALTERNATIVE training backend to
+        // ExtensionBuilder.train()'s hand-rolled JS delta rule
+        // (HyperDimensionalEngine.trainDefinitions() in
+        // "models && skills/core/onebrain.ts"): this one does genuine
+        // torch.autograd/torch.optim gradient descent via a Python subprocess
+        // (extension-builder/pytorch_trainer.py), against the PyTorch source
+        // vendored under extension-builder/PyTorch for local reference/build.
+        //
+        // Deliberately NOT wired into extension-builder/builder.js: that file is
+        // loaded directly in the browser (see its own header comment) with no
+        // build step, so it cannot spawn a subprocess -- only server code can.
+        //
+        // Deliberately OPTIONAL, never a hard requirement: nothing here adds
+        // `torch` to any manifest, and the app's install/build/existing JS
+        // training path work identically whether or not a Python/torch
+        // environment happens to exist on this machine. If python3 or the torch
+        // import is missing, this endpoint reports that plainly (still 200, with
+        // ok:false) instead of throwing -- the UI is expected to fall back to
+        // the regular Train button, never to block on this being present.
+        if (pathname === '/api/extension/train-pytorch' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
+                const dims = 16; // matches builder.js train()'s fixed dims
+                const { embedText } = await import('../models && skills/core/neuro-lang.js');
+                // Same fixed, concept-agnostic "recall your definition" drive vector
+                // materialize() uses for every @definishon contract (see
+                // definitionTrigger() in neuro-lang.ts) -- not exported, so mirrored
+                // here rather than adding an export just for this one caller.
+                const definitionTrigger = new Array(dims).fill(0.7);
+                const samples = [];
+                const readoutNames = [];
+                for (const n of neurons) {
+                    if (!n.name)
+                        continue;
+                    const def = (n.definition ?? '').trim();
+                    const scripts = (n.scripts ?? []).filter(s => (s.userSays ?? '').trim() && (s.response ?? '').trim());
+                    if (!def && scripts.length === 0)
+                        continue;
+                    const readout = readoutNames.length;
+                    readoutNames.push(n.name);
+                    if (def) {
+                        samples.push({ readout, input: definitionTrigger, target: embedText(def, dims) });
+                    }
+                    for (const s of scripts) {
+                        samples.push({
+                            readout,
+                            input: embedText(s.userSays.trim(), dims),
+                            target: embedText(s.response.trim(), dims),
+                        });
+                    }
+                }
+                if (samples.length === 0) {
+                    this.sendJson(res, {
+                        ok: true, backend: 'pytorch', converged: true, epochs: 0,
+                        satisfied: [], conflicts: [], trainedNeurons: [],
+                    });
+                    return;
+                }
+                const spec = {
+                    dims,
+                    numReadouts: readoutNames.length,
+                    epochs: body?.epochs ?? 1000,
+                    learningRate: body?.learningRate ?? 0.05,
+                    tolerance: body?.tolerance ?? 1e-3,
+                    samples,
+                };
+                const path = await import('node:path');
+                const { spawn } = await import('node:child_process');
+                const scriptPath = path.resolve(process.cwd(), 'extension-builder', 'pytorch_trainer.py');
+                const pytorchResult = await new Promise((resolve) => {
+                    let child;
+                    try {
+                        child = spawn('python3', [scriptPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+                    }
+                    catch (err) {
+                        resolve({ ok: false, error: `could not launch python3: ${err instanceof Error ? err.message : String(err)}` });
+                        return;
+                    }
+                    let stdout = '';
+                    let stderr = '';
+                    child.stdout.on('data', (d) => { stdout += d; });
+                    child.stderr.on('data', (d) => { stderr += d; });
+                    child.on('error', (err) => {
+                        // ENOENT here means "no python3 on this machine" -- exactly the
+                        // optional-dependency case, not a bug.
+                        resolve({ ok: false, error: `python3 not available: ${err.message}` });
+                    });
+                    child.on('close', (code) => {
+                        if (code !== 0 && !stdout.trim()) {
+                            resolve({ ok: false, error: stderr.trim() || `pytorch_trainer.py exited with code ${code}` });
+                            return;
+                        }
+                        try {
+                            resolve(JSON.parse(stdout.trim()));
+                        }
+                        catch {
+                            resolve({ ok: false, error: `could not parse pytorch_trainer.py output: ${stderr.trim() || stdout.trim()}` });
+                        }
+                    });
+                    child.stdin.write(JSON.stringify(spec));
+                    child.stdin.end();
+                });
+                if (pytorchResult.ok === false) {
+                    this.sendJson(res, { ok: false, backend: 'pytorch', error: pytorchResult.error });
+                    return;
+                }
+                // Group per-sample convergence back up to per-neuron, the same
+                // "definition AND every script" all-or-nothing rule builder.js's
+                // train() applies.
+                const satisfiedReadouts = new Set();
+                const failedReadouts = new Set();
+                samples.forEach((s, i) => {
+                    if (pytorchResult.sampleConverged[i])
+                        satisfiedReadouts.add(s.readout);
+                    else
+                        failedReadouts.add(s.readout);
+                });
+                const trainedNeurons = readoutNames.filter((_, i) => satisfiedReadouts.has(i) && !failedReadouts.has(i));
+                this.sendJson(res, {
+                    ok: true,
+                    backend: 'pytorch',
+                    torchVersion: pytorchResult.torchVersion,
+                    converged: pytorchResult.converged,
+                    epochs: pytorchResult.epochsRun,
+                    satisfied: trainedNeurons,
+                    conflicts: [], // per-dimension independent readouts can't collide the way shared-mesh weights can
+                    trainedNeurons,
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { ok: false, backend: 'pytorch', error: msg }, 500);
+            }
+            return;
+        }
         // POST /api/extension/build — build a real extension from NeuroLang and save it
         if (pathname === '/api/extension/build' && method === 'POST') {
             try {

@@ -42,6 +42,16 @@ export interface BuilderApi {
   removeScript: (neuronId: string, index: number) => boolean;
   /** The real training sequence -- connections, then @definishon + every script, trained together until convergence. */
   train: (epochs?: number) => TrainingResult | null;
+  /**
+   * ALTERNATIVE training backend: real torch.autograd/torch.optim gradient
+   * descent, run server-side (POST /api/extension/train-pytorch) since
+   * builder.js runs in the browser and can't spawn the Python subprocess
+   * itself. Strictly optional -- if the server's Python/torch environment
+   * isn't available, resolves to `{ ok: false, error }` instead of the
+   * usual TrainingResult; the regular `train()` above always still works
+   * with zero Python/torch present anywhere.
+   */
+  trainWithPyTorch: (epochs?: number) => Promise<(TrainingResult & { ok: true; backend: 'pytorch'; torchVersion?: string }) | { ok: false; error: string }>;
   lastTraining: TrainingResult | undefined;
   search: (query: string) => NeuronData[];
   simulate: (neuronId: string, inputValue: number) => string;
@@ -143,6 +153,38 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       const result = engine.train(projectId, epochs ? { epochs } : undefined);
       bump();
       return result;
+    },
+    trainWithPyTorch: async (epochs) => {
+      const neuronsPayload = Array.from(project.neurons.values()).map((n) => ({
+        name: n.name,
+        definition: n.definition,
+        scripts: n.scripts,
+      }));
+      try {
+        const res = await fetch('/api/extension/train-pytorch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ neurons: neuronsPayload, epochs }),
+        });
+        const json = await res.json();
+        if (json.ok) {
+          const result: TrainingResult = {
+            converged: json.converged,
+            definitionsConverged: json.converged,
+            scriptsConverged: json.converged,
+            epochs: json.epochs,
+            satisfied: json.satisfied,
+            conflicts: json.conflicts,
+            trainedNeurons: json.trainedNeurons,
+          };
+          project.lastTraining = result;
+          bump();
+          return { ...result, ok: true, backend: 'pytorch', torchVersion: json.torchVersion };
+        }
+        return { ok: false, error: json.error ?? 'PyTorch training failed for an unknown reason' };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
     },
     lastTraining,
     search: (query) => engine.searchNeurons(projectId, query),
