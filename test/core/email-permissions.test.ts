@@ -112,4 +112,3 @@ describe('EmailPlugin security and permissions', () => {
     }
   });
 });
-});
