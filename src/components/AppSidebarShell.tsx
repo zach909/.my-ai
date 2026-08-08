@@ -58,6 +58,7 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
       inactiveProps={{
         className: 'text-muted-foreground hover:bg-accent hover:text-foreground',
       }}
+      aria-label={item.label}
       className={cn(
         'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.97]',
         collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full'
