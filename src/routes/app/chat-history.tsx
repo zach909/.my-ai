@@ -162,6 +162,8 @@ function ChatHistoryPage() {
           </p>
         </div>
         <Button
+          onClick={load}
+          disabled={loading}
           variant="outline"
           size="sm"
           onClick={load}
@@ -175,12 +177,13 @@ function ChatHistoryPage() {
           size="sm"
           aria-label="Refresh chat history"
           title="Refresh chat history"
+          className="text-muted-foreground hover:text-foreground active:scale-95"
           className="gap-1.5 text-xs text-muted-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
           aria-label="Refresh Chat History"
           title="Refresh Chat History"
           className="flex items-center gap-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground active:scale-95"
         >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          <RefreshCw className={loading ? 'size-3.5 animate-spin' : 'size-3.5'} />
           Refresh
         </Button>
       </div>
