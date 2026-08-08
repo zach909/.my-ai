@@ -1,6 +1,6 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-describe('TasksPlugin security and permissions', () => {
+describe('NotificationsPlugin security and permissions', () => {
   const mkdirCalls: any[] = [];
   const chmodCalls: any[] = [];
   const writeCalls: any[] = [];
@@ -22,7 +22,7 @@ describe('TasksPlugin security and permissions', () => {
       return {
         ...actual,
         existsSync: (path: string) => {
-          if (path.endsWith('tasks.json')) {
+          if (path.endsWith('notifications.json')) {
             return existingFileExists;
           }
           return false;
@@ -30,6 +30,7 @@ describe('TasksPlugin security and permissions', () => {
         readFileSync: () => '[]',
         mkdirSync: (path: string, options?: any) => {
           mkdirCalls.push({ path, options });
+          return path;
         },
         chmodSync: (path: string, mode: number) => {
           chmodCalls.push({ path, mode });
@@ -40,10 +41,10 @@ describe('TasksPlugin security and permissions', () => {
       };
     });
 
-    const { TasksPlugin } = await import('../../plugins/tasks');
-    const plugin = new TasksPlugin({
-      id: 'tasks',
-      name: 'Tasks',
+    const { NotificationsPlugin } = await import('../../plugins/notifications');
+    const plugin = new NotificationsPlugin({
+      id: 'notifications',
+      name: 'Notifications',
       type: 'api-connection',
       capabilities: [],
     } as any);
@@ -51,7 +52,6 @@ describe('TasksPlugin security and permissions', () => {
   }
 
   it('restricts directory permissions to 0o700 and file to 0o600 on activation', async () => {
-    // Force process.platform to not be win32 to test chmod paths
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 
@@ -60,27 +60,21 @@ describe('TasksPlugin security and permissions', () => {
       const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
       await plugin.onActivate({ logger: fakeLogger } as any);
 
-      // Verify that directory was created or permissions checked
-      const dirMkdir = mkdirCalls.find(c => c.path.endsWith('.neuroclaw') || c.path.includes('.neuroclaw'));
+      const dirMkdir = mkdirCalls.find(c => c.path.endsWith('.neuroclaw/notifications') || c.path.includes('notifications'));
       expect(dirMkdir).toBeDefined();
       expect(dirMkdir.options).toEqual({ recursive: true, mode: 0o700 });
 
-      // Verify chmodSync was called for directory with 0o700
-      const dirChmod = chmodCalls.find(c => (c.path.endsWith('.neuroclaw') || c.path.includes('.neuroclaw')) && c.mode === 0o700);
+      const dirChmod = chmodCalls.find(c => (c.path.endsWith('.neuroclaw/notifications') || c.path.includes('notifications')) && c.mode === 0o700);
       expect(dirChmod).toBeDefined();
 
-      // Verify chmodSync was called for file with 0o600
-      const dirChmod = chmodCalls.find(c => (c.path.endsWith('.neuroclaw') || c.path.includes('.neuroclaw')) && c.mode === 0o700);
-      expect(dirChmod).toBeDefined();
-
-      const fileChmod = chmodCalls.find(c => c.path.endsWith('tasks.json') && c.mode === 0o600);
+      const fileChmod = chmodCalls.find(c => c.path.endsWith('notifications.json') && c.mode === 0o600);
       expect(fileChmod).toBeDefined();
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
 
-  it('enforces secure mode 0o600 on writeFileSync during save()', async () => {
+  it('enforces secure mode 0o600 on writeFileSync during saveToStorage()', async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 
@@ -89,23 +83,15 @@ describe('TasksPlugin security and permissions', () => {
       const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
       await plugin.onActivate({ logger: fakeLogger } as any);
 
-      // Create a task to trigger save()
-      await plugin.create('Buy milk');
-
-      // Check writeFileSync options
-      // Add a task to trigger save()
-      await plugin.create('Secure code task');
-
-      // Check writeFileSync options
-      await plugin.create('Secure Task', { priority: 'high' });
+      // Trigger show to saveToStorage()
+      await plugin.show('Alert', 'This is a test notification');
 
       const lastWrite = writeCalls[writeCalls.length - 1];
       expect(lastWrite).toBeDefined();
       expect(lastWrite.options).toBeDefined();
       expect(lastWrite.options.mode).toBe(0o600);
 
-      // Verify chmodSync was called on the file
-      const fileChmod = chmodCalls.find(c => c.path.endsWith('tasks.json') && c.mode === 0o600);
+      const fileChmod = chmodCalls.find(c => c.path.endsWith('notifications.json') && c.mode === 0o600);
       expect(fileChmod).toBeDefined();
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });

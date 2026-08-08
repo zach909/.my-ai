@@ -4,6 +4,7 @@ import { join } from "node:path";
 import { homedir } from "node:os";
 const STORAGE_DIR = join(homedir(), ".neuroclaw");
 const STORAGE_FILE = join(STORAGE_DIR, "tasks.json");
+const STORAGE = join(STORAGE_DIR, "tasks.json");
 export class TasksPlugin extends BasePlugin {
     constructor(definition) {
         super(definition);
@@ -19,6 +20,8 @@ export class TasksPlugin extends BasePlugin {
                 chmodSync(STORAGE_DIR, 0o700);
                 if (existsSync(STORAGE_FILE)) {
                     chmodSync(STORAGE_FILE, 0o600);
+                if (existsSync(STORAGE)) {
+                    chmodSync(STORAGE, 0o600);
                 }
             }
         }
@@ -64,6 +67,15 @@ export class TasksPlugin extends BasePlugin {
     load() { try {
         if (existsSync(STORAGE_FILE))
             this.tasks = JSON.parse(readFileSync(STORAGE_FILE, "utf-8"));
+    load() {
+        try {
+            if (existsSync(STORAGE)) {
+                this.tasks = JSON.parse(readFileSync(STORAGE, "utf-8"));
+            }
+        }
+        catch {
+            this.tasks = [];
+        }
     }
     catch {
         this.tasks = [];
@@ -77,11 +89,13 @@ export class TasksPlugin extends BasePlugin {
                 chmodSync(STORAGE_DIR, 0o700);
             }
             writeFileSync(STORAGE_FILE, JSON.stringify(this.tasks, null, 2), {
+            writeFileSync(STORAGE, JSON.stringify(this.tasks, null, 2), {
                 encoding: "utf-8",
                 mode: 0o600,
             });
             if (process.platform !== "win32" && typeof chmodSync === "function") {
                 chmodSync(STORAGE_FILE, 0o600);
+                chmodSync(STORAGE, 0o600);
             }
         }
         catch { }

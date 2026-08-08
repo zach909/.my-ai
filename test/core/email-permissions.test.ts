@@ -1,6 +1,6 @@
 import { vi, describe, it, expect, beforeEach, afterEach } from 'vitest';
 
-describe('TasksPlugin security and permissions', () => {
+describe('EmailPlugin security and permissions', () => {
   const mkdirCalls: any[] = [];
   const chmodCalls: any[] = [];
   const writeCalls: any[] = [];
@@ -22,7 +22,7 @@ describe('TasksPlugin security and permissions', () => {
       return {
         ...actual,
         existsSync: (path: string) => {
-          if (path.endsWith('tasks.json')) {
+          if (path.endsWith('emails.json')) {
             return existingFileExists;
           }
           return false;
@@ -40,10 +40,10 @@ describe('TasksPlugin security and permissions', () => {
       };
     });
 
-    const { TasksPlugin } = await import('../../plugins/tasks');
-    const plugin = new TasksPlugin({
-      id: 'tasks',
-      name: 'Tasks',
+    const { EmailPlugin } = await import('../../plugins/email');
+    const plugin = new EmailPlugin({
+      id: 'email',
+      name: 'Email',
       type: 'api-connection',
       capabilities: [],
     } as any);
@@ -51,7 +51,6 @@ describe('TasksPlugin security and permissions', () => {
   }
 
   it('restricts directory permissions to 0o700 and file to 0o600 on activation', async () => {
-    // Force process.platform to not be win32 to test chmod paths
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 
@@ -61,26 +60,23 @@ describe('TasksPlugin security and permissions', () => {
       await plugin.onActivate({ logger: fakeLogger } as any);
 
       // Verify that directory was created or permissions checked
-      const dirMkdir = mkdirCalls.find(c => c.path.endsWith('.neuroclaw') || c.path.includes('.neuroclaw'));
+      const dirMkdir = mkdirCalls.find(c => c.path.endsWith('.neuroclaw/email') || c.path.includes('email'));
       expect(dirMkdir).toBeDefined();
       expect(dirMkdir.options).toEqual({ recursive: true, mode: 0o700 });
 
       // Verify chmodSync was called for directory with 0o700
-      const dirChmod = chmodCalls.find(c => (c.path.endsWith('.neuroclaw') || c.path.includes('.neuroclaw')) && c.mode === 0o700);
+      const dirChmod = chmodCalls.find(c => (c.path.endsWith('.neuroclaw/email') || c.path.includes('email')) && c.mode === 0o700);
       expect(dirChmod).toBeDefined();
 
       // Verify chmodSync was called for file with 0o600
-      const dirChmod = chmodCalls.find(c => (c.path.endsWith('.neuroclaw') || c.path.includes('.neuroclaw')) && c.mode === 0o700);
-      expect(dirChmod).toBeDefined();
-
-      const fileChmod = chmodCalls.find(c => c.path.endsWith('tasks.json') && c.mode === 0o600);
+      const fileChmod = chmodCalls.find(c => c.path.endsWith('emails.json') && c.mode === 0o600);
       expect(fileChmod).toBeDefined();
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
 
-  it('enforces secure mode 0o600 on writeFileSync during save()', async () => {
+  it('enforces secure mode 0o600 on writeFileSync during saveToDisk()', async () => {
     const originalPlatform = process.platform;
     Object.defineProperty(process, 'platform', { value: 'linux', configurable: true });
 
@@ -89,26 +85,31 @@ describe('TasksPlugin security and permissions', () => {
       const fakeLogger = { info: () => {}, warn: () => {}, error: () => {}, debug: () => {} };
       await plugin.onActivate({ logger: fakeLogger } as any);
 
-      // Create a task to trigger save()
-      await plugin.create('Buy milk');
+      // Trigger a saveToDisk() by calling send()
+      await plugin.send('sender@example.com', ['receiver@example.com'], 'Test Subject', 'Body text');
+      // Trigger a save via send()
+      // Note: we also mock node:child_process to let trySendmail execute safely
+      vi.doMock('node:child_process', () => ({
+        execSync: (command: string, options?: any) => {
+          if (command.startsWith('which ')) return '';
+          return '';
+        },
+      }));
+
+      await plugin.send('me@example.com', ['you@example.com'], 'subject', 'body');
 
       // Check writeFileSync options
-      // Add a task to trigger save()
-      await plugin.create('Secure code task');
-
-      // Check writeFileSync options
-      await plugin.create('Secure Task', { priority: 'high' });
-
       const lastWrite = writeCalls[writeCalls.length - 1];
       expect(lastWrite).toBeDefined();
       expect(lastWrite.options).toBeDefined();
       expect(lastWrite.options.mode).toBe(0o600);
 
       // Verify chmodSync was called on the file
-      const fileChmod = chmodCalls.find(c => c.path.endsWith('tasks.json') && c.mode === 0o600);
+      const fileChmod = chmodCalls.find(c => c.path.endsWith('emails.json') && c.mode === 0o600);
       expect(fileChmod).toBeDefined();
     } finally {
       Object.defineProperty(process, 'platform', { value: originalPlatform, configurable: true });
     }
   });
+});
 });
