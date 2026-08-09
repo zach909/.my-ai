@@ -1121,6 +1121,68 @@ async function testBootstrap() {
   check(lines.some(l => l.includes('System access:') && l.includes('terminal:') && l.includes('file:')), 'printStatus() now surfaces real SystemAccess.getSystemInfo() (OS/terminal/file config), not just multi-desktop state');
 }
 
+// WebServer.loadSavedExtensions(): "integrate it into the runner" -- a
+// trained Extension Builder network must survive a server restart, not
+// just live in memory for the one process that happened to POST
+// /api/extension/register. Write a synthetic saved extension to disk
+// BEFORE the server ever boots, then confirm a fresh WebServer instance
+// picks it up on its own during start() -- no register() call in this
+// test at all.
+async function testExtensionAutoLoadOnBoot() {
+  const path = await import('node:path');
+  const { promises: fs } = await import('node:fs');
+  const http = await import('node:http');
+  const { startWeb } = await load('interface/main.js');
+
+  const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+  await fs.mkdir(dir, { recursive: true });
+  const marker = `autoload_probe_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const filePath = path.join(dir, `${marker}.ext.json`);
+  const question = `What does the boot-load probe token ${marker} decode to?`;
+  await fs.writeFile(filePath, JSON.stringify({
+    project: { name: marker },
+    // A scripted (userSays -> response) pair, queried with the EXACT same
+    // phrasing below -- the same pattern that reliably recalled the
+    // Coding Skills network's answers earlier this session. This
+    // container's extension-builder/extensions/ has accumulated many
+    // hundreds of memories across past sessions' test runs, so recall is
+    // similarity-based, not exact-match; an exact-phrase query against a
+    // long, highly distinctive random token is what keeps this reliable
+    // regardless of how many other memories are competing with it.
+    neurons: [{ name: marker, definition: '', scripts: [{ userSays: question, response: marker }] }],
+  }, null, 2), 'utf8');
+
+  const port = 7990 + Math.floor(Math.random() * 9);
+  const web = await startWeb(port);
+  try {
+    const get = (p) => new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: p }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      }).on('error', reject);
+    });
+    const post = (p, obj) => new Promise((resolve, reject) => {
+      const payload = JSON.stringify(obj);
+      const req = http.request({ host: '127.0.0.1', port, path: p, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', reject); req.write(payload); req.end();
+    });
+
+    const status = await get('/api/status');
+    const statusJson = JSON.parse(status.body);
+    check(statusJson.loadedExtensions && statusJson.loadedExtensions.files >= 1 && statusJson.loadedExtensions.remembered >= 1,
+      `GET /api/status reports at least one saved extension loaded at boot, without any /api/extension/register call this run (loadedExtensions=${JSON.stringify(statusJson.loadedExtensions)})`);
+
+    const chat = await post('/api/chat/messages', { message: question });
+    const chatJson = JSON.parse(chat.body);
+    check(chat.status === 200 && typeof chatJson.message === 'string' && chatJson.message.includes(marker),
+      `The boot-loaded extension's content is genuinely recallable through live chat -- the runner actually has it, not just a status-endpoint count (reply: ${JSON.stringify(chatJson.message)})`);
+  } finally {
+    await web.stop();
+    await fs.unlink(filePath).catch(() => {});
+  }
+}
+
 async function testWebBackend() {
   const http = await import('node:http');
   const { startWeb } = await load('interface/main.js');
@@ -4371,6 +4433,7 @@ async function main() {
     ['NeuroclawTrainer elastic-core training path also yields to event loop (Section 26)', testElasticCoreTrainingYields],
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
+    ['Extension auto-load on boot (integrated into the runner)', testExtensionAutoLoadOnBoot],
     ['Web backend (server.py bridge)', testWebBackend],
     ['pytorch_trainer.py eval op + initW/initB continuation', testPyTorchTrainerOpsAndContinuation],
     ['Extension catalog fully active', testExtensionCatalogFullyActive],

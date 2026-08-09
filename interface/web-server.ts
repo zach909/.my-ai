@@ -342,6 +342,10 @@ export class WebServer {
   // reused for the life of this server -- see PyTorchTrainerWorker's own
   // doc comment for why (torch import cost dominates a per-request spawn).
   private readonly pytorchWorker = new PyTorchTrainerWorker();
+  // Set once by loadSavedExtensions() during start() -- surfaced via
+  // GET /api/status so "did the runner actually pick up my trained
+  // network on this boot" is observable, not just assumed.
+  private loadedExtensions: { files: number; remembered: number } = { files: 0, remembered: 0 };
 
   constructor(runner: NeuroclawRunner, launcher?: AppLauncher) {
     this.runner = runner;
@@ -379,6 +383,12 @@ export class WebServer {
     // start() itself (every short-lived NeuroclawRunner instance calls
     // start() too, and most never call stop()).
     this.runner.startContinuous();
+    // Same reasoning, same placement: loading every saved extension is
+    // real work (parsing N files, remembering M neurons) that only makes
+    // sense to pay once per actual live server process, not once per
+    // short-lived NeuroclawRunner test instance -- see loadSavedExtensions()'s
+    // own doc comment for what this actually does and why it belongs here.
+    this.loadedExtensions = await this.loadSavedExtensions();
     return new Promise<void>((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       this.server.listen(port, host, () => resolve());
@@ -565,6 +575,80 @@ export class WebServer {
     };
   }
 
+  /**
+   * "Integrate it into the runner of the model": every real Extension
+   * Builder deliverable this session (Main Network, Coding Skills
+   * Network, the merged network, ...) only ever became part of the live
+   * agent when POST /api/extension/register happened to be called during
+   * that one server process's lifetime -- system.memory.remember() has
+   * no persistence of its own, so a trained network was invisible to the
+   * agent again the moment the server restarted, with nothing to reload
+   * it. This is the fix: on every real server boot, read every
+   * previously saved extension file (extension-builder/extensions/*.ext.json
+   * -- the exact artifacts train(), trainWithPyTorch(), Save, and
+   * Install already write) and remember() each one's definitions/scripts
+   * into the live NeuroclawSystem, the same way register() does for one
+   * extension at a time. A trained network is now a permanent property
+   * of the runner, not a one-session fluke of whoever happened to click
+   * a button.
+   *
+   * Deliberately best-effort: a missing directory, an unreadable file, or
+   * malformed JSON in one saved extension must never stop the server from
+   * finishing its boot sequence -- skip that one file and keep going.
+   */
+  private async loadSavedExtensions(): Promise<{ files: number; remembered: number }> {
+    try {
+      const path = await import('node:path');
+      const { promises: fs } = await import('node:fs');
+      const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+      let entries: string[];
+      try {
+        entries = (await fs.readdir(dir)).filter(f => f.endsWith('.ext.json'));
+      } catch {
+        return { files: 0, remembered: 0 }; // no extensions directory yet -- nothing to load, not an error
+      }
+      if (entries.length === 0) return { files: 0, remembered: 0 };
+
+      const { getNeuroclawSystem } = await import('../src/index.js');
+      const system = await getNeuroclawSystem();
+
+      let filesLoaded = 0;
+      let remembered = 0;
+      for (const filename of entries) {
+        let data: { project?: { name?: string }; name?: string; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
+        try {
+          data = JSON.parse(await fs.readFile(path.join(dir, filename), 'utf8'));
+        } catch {
+          continue; // malformed/unreadable -- skip this one file, don't fail the boot
+        }
+        const extName = data.project?.name ?? data.name ?? filename;
+        const neurons = Array.isArray(data.neurons) ? data.neurons : [];
+        if (neurons.length === 0) continue;
+        filesLoaded++;
+        for (const n of neurons) {
+          if (!n.name) continue;
+          const def = (n.definition ?? '').trim();
+          if (def) {
+            system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', extName] });
+            remembered++;
+          }
+          for (const s of n.scripts ?? []) {
+            const userSays = (s.userSays ?? '').trim();
+            const response = (s.response ?? '').trim();
+            if (!userSays || !response) continue;
+            system.memory.remember(`When asked "${userSays}", ${n.name} responds: ${response}`, {
+              importance: 0.7, tags: ['extension', extName, 'script'],
+            });
+            remembered++;
+          }
+        }
+      }
+      return { files: filesLoaded, remembered };
+    } catch {
+      return { files: 0, remembered: 0 }; // never let a boot-time extension-load failure take the whole server down
+    }
+  }
+
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     let parsedUrl: URL;
     try {
@@ -622,6 +706,11 @@ export class WebServer {
         running: status.running,
         uptime: Math.floor(status.uptime),
         subsystems: status.subsystems,
+        // How many previously saved Extension Builder networks (Main
+        // Network, Coding Skills Network, a merge, ...) this boot picked
+        // up and remembered into the live agent -- see
+        // loadSavedExtensions()'s own doc comment.
+        loadedExtensions: this.loadedExtensions,
         llm: {
           neurons: status.llm.neuronCount,
           connections: status.llm.connectionCount,
