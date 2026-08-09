@@ -38,7 +38,15 @@ export class NotificationsPlugin extends BasePlugin {
     this.loadFromStorage();
   }
 
+  private validateStr(val: unknown): void {
+    if (typeof val !== "string") {
+      throw new Error("Security Error: Input must be a string.");
+    }
+  }
+
   async show(title: string, body: string): Promise<string> {
+    this.validateStr(title);
+    this.validateStr(body);
     const id = this.generateId();
     this.notifications.push({ id, title, body, shown: true });
     this.saveToStorage();
@@ -49,13 +57,17 @@ export class NotificationsPlugin extends BasePlugin {
         // execFileSync (no shell) so title/body reach notify-send as literal
         // argv entries -- string-interpolating into execSync's shell command
         // would let `$(...)`/backticks in a title execute arbitrary commands.
-        execFileSync("notify-send", [title, body], { timeout: 3000, stdio: "ignore" });
+        // Prepend "--" to explicitly separate options from positional arguments,
+        // neutralizing potential argument/flag injection without restricting hyphenated inputs.
+        execFileSync("notify-send", ["--", title, body], { timeout: 3000, stdio: "ignore" });
       } catch { }
     }
     return id;
   }
 
   async schedule(title: string, body: string, delayMs: number): Promise<string> {
+    this.validateStr(title);
+    this.validateStr(body);
     const id = this.generateId();
     const scheduledAt = Date.now() + delayMs;
     this.notifications.push({ id, title, body, scheduledAt, shown: false });
