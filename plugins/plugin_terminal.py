@@ -21,6 +21,10 @@ from .plugin_base import Plugin
 _FORK_BOMB = re.compile(r":\(\)\{\s*[:\s|&]+\};:")
 _DANGEROUS_SIMPLE = re.compile(r"\bmkfs|\bshutdown|\breboot|\bhalt|\bpoweroff", re.I)
 _DD_RAW_DISK = re.compile(r"\bdd\b.*\bof=/dev/(sd[a-z]|nvme|mmcblk)", re.I)
+_SENSITIVE_ENV_PATTERN = re.compile(
+    r"key|secret|password|token|auth|pass|credential|cert|cookie|jwt|hash|salt|ssh|database|db_|session|bearer|sig|private",
+    re.I
+)
 
 # `rm -rf /` was previously matched literally, so trivial variants slipped
 # through: trailing content after the slash (`rm -rf /*`, `rm -rf //`),
@@ -94,5 +98,12 @@ class TerminalPlugin(Plugin):
 
     def _env(self, var: str = None) -> dict:
         if var:
+            if _SENSITIVE_ENV_PATTERN.search(var):
+                raise ValueError(f"Security Error: Access to sensitive environment variable is blocked: {var}")
             return {var: os.environ.get(var)}
-        return dict(os.environ)
+
+        safe_env = {}
+        for k, v in os.environ.items():
+            if not _SENSITIVE_ENV_PATTERN.search(k):
+                safe_env[k] = v
+        return safe_env
