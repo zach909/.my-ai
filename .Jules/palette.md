@@ -1,10 +1,14 @@
 ## 2026-09-10 - [Interactive Roadmaps & Goal Decomposition CTAs in Empty States]
 **Learning:** Providing high-quality, structured empty states with distinct decorative center-aligned icons (like the Goal tracker), descriptive user direction, and high-contrast, tactile call-to-action button links dramatically improves application onboarding, SPA feel, and user redirection.
 **Action:** Replace static blank pages or static raw text views with an interactive card featuring a dashed border, Lucide icon, and styled CTA button with focus rings and hover transitions.
+## 2026-09-12 - [Interactive Strategic Onboarding Cards & High-Contrast Navigation Links]
+**Learning:** Redesigning basic static text empty states (such as the planning placeholder inside `src/routes/app/planning.tsx`) into interactive, structured empty-state cards—incorporating a clean dashed-border wrapper, contextual central decorative icons with hover transforms, explicit supportive descriptions, and high-contrast, accessible `<Button>` components (`asChild`) wrapping TanStack Router `<Link>` triggers with tactile hover-feedback and active micro-interactions (`active:scale-95 transition-all`)—substantially enhances application onboarding, visual delight, and user direction.
+**Action:** When a screen or list reports a zero state, always implement structured, visual empty-state cards containing clear supportive text and responsive action-oriented routing triggers.
 
 ## 2026-09-10 - [Interactive Empty States & Responsive Redirection CTAs]
 **Learning:** Replacing static, passive plain-text empty states with beautifully designed, structured interactive Card components—utilizing dashed borders, clear decorative center icons, explicit descriptive text, and high-contrast, accessible `<Button>` elements wrapping framework-native routing links—immensely improves application onboarding, provides instant user direction, and enriches the product onboarding experience with tactile hover and active-click transforms (`active:scale-95`).
 **Action:** Always avoid raw text-only empty states; instead, design interactive empty-state cards containing actionable, styled button triggers paired with tactile transitions to guide the user.
+
 ## 2026-09-10 - [Interactive Onboarding Empty States & Warm UX Redirection]
 **Learning:** Replacing passive, static textual empty states with beautifully styled, interactive dashed-border card templates—incorporating centralized decorative icons, high-contrast helper copy, and robust accessible `<Button asChild>` CTA links—dramatically improves onboarding visual delight, accessibility navigation, and intuitive user redirection.
 **Action:** Redesign plain zero-state descriptions into structured, interactive focus cards with prominent action triggers referencing clear next-step user routes.
@@ -55,7 +59,7 @@
 
 ## 2026-08-15 - [SVG Canvas Connection Accessibility & Interactive Groups]
 **Learning:** SVG connections / edges are typically non-interactive and hidden from keyboard or screen reader users, causing layout gaps. Wrapping `<path>` and `<text>` elements in a `<g>` element with `role="button"`, `tabIndex={0}`, and `aria-label` lets assistive tech users navigate connections, while combining with Tailwind `group` utilities allows seamless, synchronized visual hover/focus feedback.
-**Action:** When building custom canvases, always make SVG path-and-text connection layers accessible with interactive group wrappers and keyboard event hooks.
+**Action:** When building custom canvases, always make SVG path-and-text connection layer accessible with interactive group wrappers and keyboard event hooks.
 
 ## 2026-08-20 - [Desktop Icon Accessibility & Visual Tactility]
 **Learning:** Desktop icons and launcher buttons lack inherent screen reader accessibility if they use complex layouts. They must carry explicit descriptive `aria-label` attributes to ensure high screen reader visibility, and should be paired with tactile click transitions (`active:scale-95 transition-all duration-150`) to enrich responsiveness and visual feedback. Error toast popups also benefit heavily from a `role="alert"` wrapper for immediate announcement.
@@ -80,21 +84,27 @@
 ## 2026-09-05 - [Consistent Button Focus Rings & Semantic Component Migration]
 **Learning:** Replacing raw HTML `<button>` elements with themed, styled, design-system-compliant `<Button>` components preserves keyboard-visible focus rings and ensures consistent focus indicators across the application without duplicating style definitions. Additionally, ensuring proper sizing of icons (using the `size-` utility on Lucide SVGs) prevents broken layouts and visual sizing mismatches.
 **Action:** Prefer the global UI library's `<Button>` and associate Lucide SVGs with `size-` classes for optimal alignment.
+
 ## 2026-09-03 - [Actionable Empty States & Standardized Buttons]
-**Learning:** Redesigning static text empty states (such as zero-chats indicators) into beautifully designed, interactive, and structured empty-state cards—with a clear central decorative icon, descriptive guidance, and prominent design system compliant buttons—significantly improves onboarding and visual delight. In addition, replacing raw button elements with the design system `<Button>` ensures standard focus rings and keyboard accessibility.
+**Learning:** Redesigning basic static text empty states (such as zero-chats indicators) into beautifully designed, interactive, and structured empty-state cards—with a clear central decorative icon, descriptive guidance, and prominent design system compliant buttons—significantly improves onboarding and visual delight. In addition, replacing raw button elements with the design system `<Button>` ensures standard focus rings and keyboard accessibility.
 **Action:** Always replace plain static text empty states with interactive empty-state cards containing clear call-to-actions, and utilize the design system's customized buttons for consistent interactive behaviors.
+
 ## 2026-09-10 - [Interactive Empty States and Styled CTA Buttons]
 **Learning:** Replacing raw HTML paragraphs or static placeholder texts with visually structured, decorative cards with a dashed border, contextual icons, high-contrast `<Button>` components (`asChild`), and active micro-interactions (`active:scale-95 transition-all`) significantly improves empty state aesthetics, assistive readability, and dashboard user direction.
 **Action:** When designing empty dashboard views, always build interactive, structured CTA panels using styled components and tactile transitions.
+
 ## 2026-09-05 - [Interactive Empty State Redesigns & High-Contrast Navigation Triggers]
 **Learning:** Replacing flat, non-actionable empty state text descriptions with interactive, beautifully structured card wrappers drastically enhances user orientation and experience. Providing a styled dashed border, central decorative icons, explicit descriptive assistance, and high-contrast, tactile navigation triggers (`active:scale-95 transition-all`) wraps complex onboarding with clear user direction and interactive delight.
 **Action:** When a screen or list reports a zero state, always implement structured, visual empty-state cards containing clear supportive text and responsive action-oriented routing triggers.
+
 ## 2026-09-10 - [Accessible Collapsed Sidebar Navigation Items]
 **Learning:** Collapsed navigation layouts often strip visible text labels from interactive controls to show only icons. While tooltip wrappers provide visual assistance, they do not automatically supply the accessible names required by screen readers. For icon-only links and buttons, developers must explicitly provide an `aria-label` matching the navigation item's logical target.
 **Action:** Always declare explicit `aria-label` attributes on icon-only interactive components, especially inside collapsed sidebars and status bars.
+
 ## 2026-09-08 - [Interactive Onboarding & Clear Next-Steps in Static Empty States]
 **Learning:** Static page placeholders or empty dashboards (such as the Experiments panel) leave users without immediate direction or visual engagement. Replacing raw text placeholders with highly-interactive empty-state modules containing clean styled-border containers, custom responsive decorative icons, explicit descriptions, and high-contrast `<Button>` triggers mapping directly to key creative routes with tactile animations (`active:scale-95`) greatly elevates on-boarding delight, accessibility context, and design consistency.
 **Action:** When designing feature placeholders or lists with zero results, construct interactive empty state cards with structured guidance, decorative SVG/Lucide icons, and explicit click actions.
+
 ## 2026-09-10 - [Interactive Empty State Card & High-Contrast CTA Triggers]
 **Learning:** Static basic text empty states (such as zero-chats indicator) must be refactored into structured, visual-tactile onboarding empty state cards. Utilizing a central contextual decorative icon wrapper, distinct supportive descriptions, and high-contrast `<Button>` elements (wrapping TanStack Router `<Link>` using `asChild` composition) equipped with tactical active micro-interactions (`active:scale-95`) provides exceptional visual delight and accessible direction.
 **Action:** Always replace basic static plain text empty states with structured empty state card dashboards containing actionable triggers, tactile scale down animation transforms, and accessible descriptive elements.
