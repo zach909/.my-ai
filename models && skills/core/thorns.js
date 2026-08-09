@@ -409,6 +409,37 @@ export class CodeToNet {
         };
     }
     /**
+     * Reverse of importCode(): walks a topology's network -- literally
+     * following its edges from inputLayer to outputLayer, one connection
+     * at a time, not just replaying the neurons array in insertion order
+     * -- and concatenates each visited neuron's stored `bytecode` segment
+     * back into the original byte sequence. Lossless: importCode() keeps
+     * every source segment verbatim on its neuron (never a lossy encoding
+     * like a hash or embedding), so walking the chain back reconstructs
+     * the input exactly, byte-for-byte.
+     */
+    exportCode(topology) {
+        if (!topology.neurons.length)
+            return [];
+        const byId = new Map(topology.neurons.map(n => [n.id, n]));
+        // Adjacency built from the topology's own edges, not assumed
+        // array order -- a genuine graph traversal ("reverse the
+        // network") rather than a shortcut over the neurons list.
+        const nextOf = new Map(topology.connections.map(([from, to]) => [from, to]));
+        const bytes = [];
+        let currentId = topology.inputLayer[0];
+        const visited = new Set();
+        while (currentId !== undefined && !visited.has(currentId)) {
+            visited.add(currentId);
+            const neuron = byId.get(currentId);
+            if (!neuron)
+                break;
+            bytes.push(...neuron.bytecode);
+            currentId = nextOf.get(currentId);
+        }
+        return bytes;
+    }
+    /**
      * Get topology as serializable object
      */
     getTopology() {

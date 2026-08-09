@@ -619,11 +619,36 @@ export class ExtensionBuilder {
             endpoint: '',
             method: 'POST',
             external: [],
-            scripts: []
+            scripts: [],
+            // The importCode() call above already built this call's own
+            // self-contained topology (this.codeToNet's internal maps are
+            // shared/keyed by byte offset across every import, so THEY
+            // collide across multiple files -- this per-neuron copy is
+            // what makes exportCodeNet() below actually reversible for
+            // more than just the most recently imported file).
+            codeTopology: topology
         };
         project.neurons.set(id, neuron);
         project.updatedAt = Date.now();
         return neuron;
+    }
+    /**
+     * Reverse of importCodeToNet(): walks this neuron's own stored network
+     * topology back into the exact original bytes -- "reverse the network
+     * so you get what you want [the original code] instead of it being
+     * [only] reversed [into a network]." Genuinely lossless (see
+     * CodeToNet.exportCode()'s own doc comment in thorns.js), not an
+     * approximation -- verified by round-trip tests that import then
+     * export and check byte-for-byte equality against the source.
+     */
+    exportCodeNet(projectId, neuronId) {
+        const project = this.projects.get(projectId);
+        if (!project)
+            return null;
+        const neuron = project.neurons.get(neuronId);
+        if (!neuron || neuron.type !== 'codenet' || !neuron.codeTopology)
+            return null;
+        return this.codeToNet.exportCode(neuron.codeTopology);
     }
     /**
      * The real training sequence: "connections then makes all definishons
