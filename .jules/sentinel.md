@@ -161,6 +161,10 @@
 **Learning:** Returning broad/unfiltered access to system environment variables to dynamic agent tools/plugins introduces high risks of PII and credential exposure.
 **Prevention:** Implement a strict regular expression filter to block individual lookups of sensitive keys (raising a `Security Error` exception) and completely omit matching keys when returning the full list of environment variables.
 
+## 2026-09-09 - Argument Injection via Unvalidated Option Parameters in System Notifications
+**Vulnerability:** The TypeScript `NotificationsPlugin` passed user-controlled notification titles and bodies to `notify-send` via `execFileSync`. Although shell/command injection was prevented by running the command directly without a shell, raw strings starting with hyphens (`-`) could still be parsed as flags/options by `notify-send`, leading to potential argument injection risks.
+**Learning:** Hardening against argument injection by strictly rejecting strings that start with hyphens (as done in the Python sibling plugin) can cause severe usability regressions, such as breaking bullet points or negative numbers in notification texts.
+**Prevention:** Rather than using restrictive input validation that blocks standard characters, leverage standard command-line argument delimiters like `--` (end-of-options separator) to explicitly separate options from user-supplied positional arguments when invoking external utilities.
 ## 2026-09-09 - Path Traversal File Write in UniversalLanguageSkill
 **Vulnerability:** The `UniversalLanguageSkill.createLanguageSkill` method accepted arbitrary user-controlled language strings as parameters. These were normalized but could contain relative paths (like `../../`), absolute paths, or special characters, allowing directory traversal and arbitrary `.neuri` file creation/overwrite across the filesystem.
 **Learning:** Even internal helper methods that export generated models or configurations to local disk must have strict type, boundary, and path validations to prevent path traversal vectors.
