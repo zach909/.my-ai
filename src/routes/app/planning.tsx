@@ -1,5 +1,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
+import { Card } from '@/components/ui/card'
+import { Goal, Sparkles } from 'lucide-react'
 import { Goal, Plus } from 'lucide-react'
 import { Card } from '@/components/ui/card'
 import { Goal, Sparkles, ArrowRight } from 'lucide-react'
@@ -56,6 +58,20 @@ function PlanningPage() {
         </p>
       </div>
 
+      <Card className="flex flex-col items-center justify-center border-2 border-dashed border-muted-foreground/20 rounded-xl p-12 text-center max-w-2xl mx-auto mt-8 bg-card/50 backdrop-blur-xs">
+        <div className="rounded-full bg-primary/10 p-4 mb-4 transition-transform hover:scale-110 duration-200">
+          <Goal className="h-8 w-8 text-primary" />
+        </div>
+        <h2 className="text-lg font-semibold tracking-tight">No Active Planning Hierarchies</h2>
+        <p className="text-sm text-muted-foreground max-w-sm mt-2 mb-6">
+          To orchestrate high-level goal decomposition and task dependencies, you first need to design your agent's strategic layout.
+        </p>
+        <Button asChild className="gap-2 active:scale-95 transition-all duration-150">
+          <Link to="/app/chat">
+            <Sparkles className="h-4 w-4" />
+            Discuss Strategy in AI Chat
+          </Link>
+        </Button>
       <div className="flex flex-col items-center justify-center min-h-[350px] p-8 border-2 border-dashed border-muted rounded-xl bg-muted/20 text-center animate-fade-in">
         <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4 transition-transform hover:scale-110 duration-200">
           <Goal className="h-6 w-6" />
