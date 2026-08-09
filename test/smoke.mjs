@@ -2086,6 +2086,75 @@ async function testNetSearchEngine() {
   check(hit.length > 0 && hit[0].name === 'router', 'NeuroLang netSearch finds the relevant neuron by definition');
 }
 
+// extension-builder/pytorch_trainer.py's "eval" op and initW/initB
+// continuation -- added for train-coding-skills.mjs's round loop and
+// merge-networks.mjs's post-merge fine-tune, neither of which go through
+// the HTTP endpoint (POST /api/extension/train-pytorch, covered
+// separately in testWebBackend above) since they're one-time build
+// scripts, not live requests. Optional-dependency degradation applies the
+// same way here: if python3/torch isn't on this machine, every check
+// below is skipped rather than failing the whole suite.
+async function testPyTorchTrainerOpsAndContinuation() {
+  const { spawnSync } = await import('node:child_process');
+  const scriptPath = new URL('../extension-builder/pytorch_trainer.py', import.meta.url).pathname;
+
+  function callTrainer(spec) {
+    const res = spawnSync('python3', [scriptPath], { input: JSON.stringify(spec) + '\n', encoding: 'utf8', timeout: 30000 });
+    if (res.error || res.status !== 0 && !res.stdout?.trim()) return null;
+    try { return JSON.parse(res.stdout.trim().split('\n').pop()); } catch { return null; }
+  }
+
+  const probe = callTrainer({ op: 'train', dims: 2, numReadouts: 1, epochs: 5, samples: [{ readout: 0, input: [0.1, 0.1], target: [0.2, 0.2] }] });
+  if (!probe || probe.ok !== true) {
+    console.log('  (skip) PyTorch not available in this environment -- testPyTorchTrainerOpsAndContinuation');
+    return;
+  }
+
+  // "train" now returns the trained W/b, not just convergence stats --
+  // the whole basis for merge-networks.mjs averaging two real models.
+  check(Array.isArray(probe.W) && probe.W.length === 1 && probe.W[0].length === 2, 'pytorch_trainer.py "train" returns trained W shaped [numReadouts][dims], not just loss stats');
+  check(Array.isArray(probe.b) && probe.b.length === 1, 'pytorch_trainer.py "train" returns trained b alongside W');
+
+  // initW/initB: continuing from an already-good starting point should
+  // converge in fewer (or equal) epochs than starting cold from zeros --
+  // a real fine-tune, not silently ignored.
+  const cold = callTrainer({ op: 'train', dims: 2, numReadouts: 1, epochs: 200, samples: [{ readout: 0, input: [0.3, 0.7], target: [0.5, -0.5] }] });
+  const warm = callTrainer({
+    op: 'train', dims: 2, numReadouts: 1, epochs: 200,
+    samples: [{ readout: 0, input: [0.3, 0.7], target: [0.5, -0.5] }],
+    initW: cold.W, initB: cold.b,
+  });
+  check(warm.ok === true && warm.epochsRun <= cold.epochsRun, 'pytorch_trainer.py continues training from initW/initB instead of restarting cold (converges in <= the epochs a fresh run needed)');
+
+  // A shape mismatch between initW/initB and numReadouts/dims must be
+  // rejected, not silently reshaped or truncated.
+  const badShape = callTrainer({
+    op: 'train', dims: 2, numReadouts: 1, epochs: 10,
+    samples: [{ readout: 0, input: [0.1, 0.1], target: [0.1, 0.1] }],
+    initW: [[1, 2, 3]], initB: [[1, 2, 3]],
+  });
+  check(badShape && badShape.ok === false, 'pytorch_trainer.py rejects initW/initB whose shape does not match numReadouts/dims instead of silently misusing it');
+
+  // "eval": a pure forward pass against already-trained weights -- no
+  // optimizer, no weight mutation, genuine held-out measurement.
+  const evalSame = callTrainer({
+    op: 'eval', dims: 2, tolerance: 1e-2,
+    samples: [{ readout: 0, input: [0.3, 0.7], target: [0.5, -0.5] }],
+    W: warm.W, b: warm.b,
+  });
+  check(evalSame.ok === true && evalSame.accuracy === 1, 'pytorch_trainer.py "eval" reports full accuracy when re-scored against the exact sample it was just trained on');
+
+  const evalDifferent = callTrainer({
+    op: 'eval', dims: 2, tolerance: 1e-6, // near-zero tolerance -- an untrained-on target essentially never lands this close by chance
+    samples: [{ readout: 0, input: [0.9, 0.1], target: [-0.9, 0.9] }],
+    W: warm.W, b: warm.b,
+  });
+  check(evalDifferent.ok === true && evalDifferent.accuracy === 0, 'pytorch_trainer.py "eval" honestly reports low accuracy on an unrelated held-out sample, not inflated by re-testing the training sample');
+
+  const evalMissingWeights = callTrainer({ op: 'eval', dims: 2, samples: [{ readout: 0, input: [0.1, 0.1], target: [0.1, 0.1] }] });
+  check(evalMissingWeights && evalMissingWeights.ok === false, 'pytorch_trainer.py "eval" requires W/b and fails clearly instead of crashing when they are missing');
+}
+
 async function testCodeToNet() {
   const { CodeToNetCompiler, CodeNet } = await load('models && skills/core/code-to-net.js');
   const c = new CodeToNetCompiler();
@@ -4200,6 +4269,7 @@ async function main() {
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
     ['Web backend (server.py bridge)', testWebBackend],
+    ['pytorch_trainer.py eval op + initW/initB continuation', testPyTorchTrainerOpsAndContinuation],
     ['Extension catalog fully active', testExtensionCatalogFullyActive],
     ['Chrome Apps', testChromeApps],
     ['EmailPlugin command injection fix', testEmailPluginCommandInjection],
