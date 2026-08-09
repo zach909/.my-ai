@@ -1,3 +1,7 @@
+## 2026-09-10 - [Interactive Roadmaps & Goal Decomposition CTAs in Empty States]
+**Learning:** Providing high-quality, structured empty states with distinct decorative center-aligned icons (like the Goal tracker), descriptive user direction, and high-contrast, tactile call-to-action button links dramatically improves application onboarding, SPA feel, and user redirection.
+**Action:** Replace static blank pages or static raw text views with an interactive card featuring a dashed border, Lucide icon, and styled CTA button with focus rings and hover transitions.
+
 ## 2026-09-10 - [Interactive Empty States & Responsive Redirection CTAs]
 **Learning:** Replacing static, passive plain-text empty states with beautifully designed, structured interactive Card components—utilizing dashed borders, clear decorative center icons, explicit descriptive text, and high-contrast, accessible `<Button>` elements wrapping framework-native routing links—immensely improves application onboarding, provides instant user direction, and enriches the product onboarding experience with tactile hover and active-click transforms (`active:scale-95`).
 **Action:** Always avoid raw text-only empty states; instead, design interactive empty-state cards containing actionable, styled button triggers paired with tactile transitions to guide the user.
