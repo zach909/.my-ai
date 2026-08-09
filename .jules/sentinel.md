@@ -161,6 +161,10 @@
 **Learning:** Returning broad/unfiltered access to system environment variables to dynamic agent tools/plugins introduces high risks of PII and credential exposure.
 **Prevention:** Implement a strict regular expression filter to block individual lookups of sensitive keys (raising a `Security Error` exception) and completely omit matching keys when returning the full list of environment variables.
 
+## 2026-09-09 - Inconsistent Environment Validation in TerminalPlugin
+**Vulnerability:** The Python `TerminalPlugin._env` tool exposed all system environment variables, allowing attackers or AI agents to retrieve sensitive credentials (keys, tokens, passwords) and bypass the strict filters previously added to the TypeScript `AccountInfoPlugin.getEnv`.
+**Learning:** Hardening one environment-retrieval plugin is insufficient if parallel system plugins or utility tools (like terminal-based env tools) still expose raw environment variables.
+**Prevention:** Consistently apply sensitive environment variable regex filtering across all environment-fetching endpoints and plugins in the codebase.
 ## 2026-09-09 - Argument Injection via Unvalidated Option Parameters in System Notifications
 **Vulnerability:** The TypeScript `NotificationsPlugin` passed user-controlled notification titles and bodies to `notify-send` via `execFileSync`. Although shell/command injection was prevented by running the command directly without a shell, raw strings starting with hyphens (`-`) could still be parsed as flags/options by `notify-send`, leading to potential argument injection risks.
 **Learning:** Hardening against argument injection by strictly rejecting strings that start with hyphens (as done in the Python sibling plugin) can cause severe usability regressions, such as breaking bullet points or negative numbers in notification texts.
