@@ -43,6 +43,11 @@ Welcome to the comprehensive wiki for NeuroClaw. NeuroClaw is the agent; it's po
 - [[Pipeline Flow|Pipeline]] - Data flow through the system
 - [[Chrome Apps|Chrome-Apps]] - Service connections via Chrome applications
 
+### Self-Improvement & Legal
+- [[Self-Improvement|Self-Improvement]] - `npm run server`'s autonomous training loop, direct peer-to-peer sync, and startup diagnostics — read this before running it
+- [[Privacy Policy|Privacy-Policy]] - Exactly what data leaves your machine, and when
+- [[Terms|Terms]] - Terms of use, including the autonomous behavior above
+
 ---
 
 ## Quick Links

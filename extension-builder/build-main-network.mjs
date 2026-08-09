@@ -54,6 +54,13 @@ const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
 const DIMS = 16; // matches builder.js train()'s fixed dims / the train-pytorch endpoint
 
+// Overridable via env vars so scripts/self-improve.mjs can try mutated
+// hyperparameters without editing this file -- defaults match the values
+// this script always used before these existed.
+const EPOCHS = Number(process.env.SELF_IMPROVE_EPOCHS) || 1500;
+const LEARNING_RATE = Number(process.env.SELF_IMPROVE_LR) || 0.05;
+const TOLERANCE = Number(process.env.SELF_IMPROVE_TOLERANCE) || 1e-3;
+
 const { ExtensionBuilder } = await import(path.join(ROOT, 'dist', 'extension-builder', 'builder.js'));
 const { embedText } = await import(path.join(ROOT, 'dist', 'models && skills', 'core', 'neuro-lang.js'));
 
@@ -180,9 +187,9 @@ function trainCmudictBatch(sample) {
     const spec = {
       dims: DIMS,
       numReadouts: sample.length,
-      epochs: 1500,
-      learningRate: 0.05,
-      tolerance: 1e-3,
+      epochs: EPOCHS,
+      learningRate: LEARNING_RATE,
+      tolerance: TOLERANCE,
       samples,
     };
     child.stdin.write(JSON.stringify(spec) + '\n');
