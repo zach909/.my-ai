@@ -728,6 +728,10 @@ export class UniversalLanguageSkill extends BasePlugin {
     }
     createLanguageSkill(lang, code) {
         const name = this.normalizeLanguageName(lang);
+        const safeNameRegex = /^[a-zA-Z0-9+#_ -]+$/;
+        if (!safeNameRegex.test(name) || name.includes('..') || name.includes('/') || name.includes('\\')) {
+            throw new Error("Security Error: Invalid language name. Directory traversal or unsafe characters detected.");
+        }
         const project = this.builder.createProject(`${name}_skill`, `Auto-generated skill for ${name}`);
         const ops = LANGUAGE_SKILLS[name] || ['perceive', 'parse', 'execute'];
         for (const op of ops)

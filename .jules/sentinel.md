@@ -160,3 +160,8 @@
 **Vulnerability:** The `AccountInfoPlugin.getEnv` method allowed fetching any environment variable (either individually or all at once) without any validation or filtering. Environment variables are a primary repository for highly sensitive secrets (AWS keys, database passwords, session tokens, OpenAI keys, etc.), which could be leaked via AI agent dispatch or dashboard queries.
 **Learning:** Returning broad/unfiltered access to system environment variables to dynamic agent tools/plugins introduces high risks of PII and credential exposure.
 **Prevention:** Implement a strict regular expression filter to block individual lookups of sensitive keys (raising a `Security Error` exception) and completely omit matching keys when returning the full list of environment variables.
+
+## 2026-09-09 - Path Traversal File Write in UniversalLanguageSkill
+**Vulnerability:** The `UniversalLanguageSkill.createLanguageSkill` method accepted arbitrary user-controlled language strings as parameters. These were normalized but could contain relative paths (like `../../`), absolute paths, or special characters, allowing directory traversal and arbitrary `.neuri` file creation/overwrite across the filesystem.
+**Learning:** Even internal helper methods that export generated models or configurations to local disk must have strict type, boundary, and path validations to prevent path traversal vectors.
+**Prevention:** Strictly validate any user-supplied language identifiers or config names before interpolating them into filenames. Enforce precise whitelist regex boundaries such as `/^[a-zA-Z0-9+#_ -]+$/` and block directory traversal characters (`..`, `/`, `\`) or leading hyphens.
