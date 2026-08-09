@@ -133,7 +133,8 @@ export declare class ExtensionBuilder {
      * until convergence or `epochs` runs out. Not a script -- a genuine
      * training pass; see the method's own doc comment in builder.js.
      */
-    train(projectId: string, opts?: { epochs?: number }): TrainingResult | null;
+    /** method: 'delta' (default) is the analytic tanh-derivative delta rule; 'random' is genuine random-search/evolution-strategy updates -- see HyperDimensionalEngine.trainDefinitionsRandomSearch(). */
+    train(projectId: string, opts?: { epochs?: number; method?: 'delta' | 'random' }): TrainingResult | null;
     moveNeuron(projectId: string, neuronId: string, x: number, y: number): boolean;
     searchNeurons(projectId: string, query: string): NeuronData[];
     typeModelOutput(projectId: string, neuronId: string, inputValue: number): string;

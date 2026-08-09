@@ -686,7 +686,13 @@ export class NeuroLangRuntime {
 
   materialize(
     neurons: Map<string, NeuriNeuron>,
-    opts: { epochs?: number; learningRate?: number; weightPenalty?: number; tolerance?: number } = {}
+    opts: {
+      epochs?: number; learningRate?: number; weightPenalty?: number; tolerance?: number;
+      /** 'delta' (default): the analytic tanh-derivative delta rule. 'random':
+       *  random-search/evolution-strategy updates -- see
+       *  HyperDimensionalEngine.trainDefinitionsRandomSearch()'s doc comment. */
+      method?: 'delta' | 'random';
+    } = {}
   ): LiveMaterializeResult {
     const dims = this.engine.getDimensions();
     const capacity = this.engine.getNeuronCount();
@@ -746,7 +752,9 @@ export class NeuroLangRuntime {
       readoutNeuronId: nameToId.get(name)!,
       target: embedText(neuron.definition, dims),
     }));
-    const result = this.engine.trainDefinitions(definitions, opts);
+    const result = opts.method === 'random'
+      ? this.engine.trainDefinitionsRandomSearch(definitions, opts)
+      : this.engine.trainDefinitions(definitions, opts);
 
     const idToName = new Map(Array.from(nameToId.entries()).map(([n, i]) => [i, n]));
     const satisfied = result.satisfied

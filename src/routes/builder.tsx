@@ -50,6 +50,7 @@ function BuilderPage() {
   const [scriptUserSays, setScriptUserSays] = useState('')
   const [scriptResponse, setScriptResponse] = useState('')
   const [training, setTraining] = useState(false)
+  const [trainMethod, setTrainMethod] = useState<'delta' | 'random'>('delta')
   const [trainingPyTorch, setTrainingPyTorch] = useState(false)
   const [generatingSkills, setGeneratingSkills] = useState(false)
   const [merging, setMerging] = useState(false)
@@ -161,15 +162,16 @@ function BuilderPage() {
   const handleTrain = async () => {
     setTraining(true)
     try {
-      const result = b.train()
+      const result = b.train(undefined, trainMethod)
       if (!result) {
         setStatusMsg('Train failed')
         return
       }
+      const methodLabel = trainMethod === 'random' ? ' via random search' : ''
       setStatusMsg(
         result.converged
-          ? `Trained: converged in ${result.epochs} epoch(s) — ${result.trainedNeurons.length} neuron(s) now true: ${result.trainedNeurons.join(', ') || '(none had a @definishon or script)'}`
-          : `Trained: did not fully converge after ${result.epochs} epoch(s) — ${result.trainedNeurons.length}/${b.neurons.filter((n) => n.definition || n.scripts.length > 0).length} trainable neuron(s) true so far${result.conflicts.length ? `; ${result.conflicts.length} conflicting definition(s)` : ''}. Try Train again.`,
+          ? `Trained${methodLabel}: converged in ${result.epochs} epoch(s) — ${result.trainedNeurons.length} neuron(s) now true: ${result.trainedNeurons.join(', ') || '(none had a @definishon or script)'}`
+          : `Trained${methodLabel}: did not fully converge after ${result.epochs} epoch(s) — ${result.trainedNeurons.length}/${b.neurons.filter((n) => n.definition || n.scripts.length > 0).length} trainable neuron(s) true so far${result.conflicts.length ? `; ${result.conflicts.length} conflicting definition(s)` : ''}. Try Train again.`,
       )
     } finally {
       setTraining(false)
@@ -568,8 +570,21 @@ function BuilderPage() {
               <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleApiLayer} disabled={training}>
                 Add API output layer
               </Button>
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span>Method:</span>
+                <select
+                  value={trainMethod}
+                  onChange={(e) => setTrainMethod(e.target.value as 'delta' | 'random')}
+                  className="h-6 flex-1 rounded-md border border-input bg-transparent px-1.5 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  aria-label="Training method"
+                  title="delta: the analytic tanh-derivative gradient, computed directly (fewer epochs). random: each weight/bias is randomly nudged, keeping the nudge only if it genuinely improved the result -- a real, different algorithm, not gradient descent, so it typically needs more epochs to converge."
+                >
+                  <option value="delta">delta rule (gradient)</option>
+                  <option value="random">random search</option>
+                </select>
+              </div>
               <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleTrain} disabled={training}>
-                {training ? 'Training…' : 'Train'}
+                {training ? `Training${trainMethod === 'random' ? ' (random search)' : ''}…` : `Train${trainMethod === 'random' ? ' (random search)' : ''}`}
               </Button>
               <Button
                 size="sm"
