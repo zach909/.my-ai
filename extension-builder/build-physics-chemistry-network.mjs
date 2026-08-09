@@ -32,6 +32,16 @@ const { embedText } = await import(path.join(ROOT, 'dist', 'models && skills', '
 
 const DEFINITION_TRIGGER = new Array(DIMS).fill(0.7);
 
+// Overridable via env vars so an external caller (e.g. the autonomous
+// self-improvement loop in scripts/self-improve.mjs) can try different
+// hyperparameters against this same curriculum without editing this file
+// -- defaults match the values this script always used before these
+// existed, so a plain `node build-physics-chemistry-network.mjs` behaves
+// exactly as it did before.
+const EPOCHS = Number(process.env.SELF_IMPROVE_EPOCHS) || 1500;
+const LEARNING_RATE = Number(process.env.SELF_IMPROVE_LR) || 0.05;
+const TOLERANCE = Number(process.env.SELF_IMPROVE_TOLERANCE) || 1e-3;
+
 function log(...args) { console.log('[build-physics-chemistry-network]', ...args); }
 
 // ── Curriculum: quantum mechanics, atomic theory, the mole, relativity ─────
@@ -167,7 +177,7 @@ function trainCurriculumBatch() {
       input: DEFINITION_TRIGGER,
       target: embedText(definition, DIMS),
     }));
-    const spec = { dims: DIMS, numReadouts: CURRICULUM.length, epochs: 1500, learningRate: 0.05, tolerance: 1e-3, samples };
+    const spec = { dims: DIMS, numReadouts: CURRICULUM.length, epochs: EPOCHS, learningRate: LEARNING_RATE, tolerance: TOLERANCE, samples };
     child.stdin.write(JSON.stringify(spec) + '\n');
     child.stdin.end();
   });

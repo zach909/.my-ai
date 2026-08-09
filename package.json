@@ -7,6 +7,7 @@
   "scripts": {
     "dev": "node scripts/dev.mjs",
     "dev:frontend-only": "vite",
+    "server": "node scripts/server.mjs",
     "build": "vite build && node scripts/finalize-static-build.mjs",
     "preview": "vite preview",
     "lint:css": "stylelint \"src/**/*.css\" --fix --quiet",
