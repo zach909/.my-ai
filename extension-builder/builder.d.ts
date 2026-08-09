@@ -1,4 +1,5 @@
 import type { BrainSnapshot } from "../models && skills/core/unified-brain.js";
+import type { CodeNetTopology } from "../models && skills/core/thorns.js";
 export interface ScriptExample {
     userSays: string;
     response: string;
@@ -24,6 +25,8 @@ export interface NeuronData {
     scripts: ScriptExample[];
     trainedWeights?: Float32Array;
     trained?: boolean;
+    /** codenet neurons only: the self-contained byte-chain network importCodeToNet() built -- see exportCodeNet(). */
+    codeTopology?: CodeNetTopology;
 }
 export interface ConnectionData {
     id: string;
@@ -148,6 +151,8 @@ export declare class ExtensionBuilder {
     tokenizeForSearch(text: string): string[];
     semanticSimilarity(a: string[], b: string[]): number;
     importCodeToNet(projectId: string, name: string, binaryCode: Uint8Array): NeuronData | null;
+    /** Reverse of importCodeToNet() -- walks the neuron's own stored network topology back into the exact original bytes. */
+    exportCodeNet(projectId: string, neuronId: string): number[] | null;
     saveWithoutQuantization(projectId: string): string | null;
     /** Does NOT train -- call train() yourself first if you want the definitions/scripts trained before deploying. */
     installWithQuantization(projectId: string, options: {

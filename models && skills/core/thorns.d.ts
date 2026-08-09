@@ -135,6 +135,12 @@ export declare class CodeToNet {
      */
     importCode(bytecode: number[], behavior: string): CodeNetTopology;
     /**
+     * Reverse of importCode() -- walks the topology's own graph edges
+     * (inputLayer -> ... -> outputLayer) and reconstructs the exact
+     * original byte sequence from each visited neuron's stored bytecode.
+     */
+    exportCode(topology: CodeNetTopology): number[];
+    /**
      * Get topology as serializable object
      */
     getTopology(): CodeNetTopology;

@@ -1,0 +1,389 @@
+partman-auto recipe files
+
+Contents:
+  0. Introduction
+  1. Format of the recipes
+  2. Examples
+  3. LVM specific options
+  4. Architecture specific recipes
+  5. Limitations
+  6. How the actual partition sizes are computed
+  7. Appendix
+
+0. INTRODUCTION
+---------------
+
+partman-auto is the part of the partitioner that automatically partitions
+disks. It is controlled by recipes, which are provided in partman-auto as
+files, but may also be provided by other udebs, or by preseeding. This
+document explains the format of the recipes and how to use them.
+
+
+1. FORMAT OF THE RECIPES
+------------------------
+
+The recipe format is described here using a variant of Backus-Naur Form.
+See https://en.wikipedia.org/wiki/Backus%E2%80%93Naur_form if you are
+unfamiliar with this.
+
+All new lines and tabs in the recipe are converted to spaces.
+Then two or more consecutive spaces are converted to one space.
+Almost all tokens must be separated by spaces.  An important exception
+is the opening curly bracket ("{"); before it there must be _no_
+space.
+
+In the following rules we denote spaces by "_".
+
+<recipe>::=<header>_<partitions>
+
+<header>::=<simple name>|<debconf name>
+
+<simple name>::=<name>_:
+
+<name> can be for example "Multi user system".
+
+<debconf name>::=<debconf template>_::
+
+The purpose of <debconf name> is to allow translation of the names of
+the recipes into different languages.
+
+<partitions>::=<partition>|<partition>_<partitions>
+
+<partition>::=<limits>_<specifiers>_.
+
+<limits>::=<minimal size>_<priority>_<maximal size>_<parted fs>
+
+These three values are in decimal megabytes (MB).  They may also be given
+as a percentage, which makes the size be that percentage of the system's
+total RAM, or (as of partman-auto 87) as a number plus a percentage
+(e.g. "2000+50%"), which makes the size be that number plus that
+percentage of the system's total RAM.  The RAM size taken into account
+may be capped by preseeding partman-auto/cap-ram to the desired value
+in MB (disabled by default as of partman-auto 168, used to be ~1GB).
+
+<minimal size> is the minimal allowed size of the partition.  Notice that
+in some edge cases due to minimal required disk space miscalculation the
+last partition size may be less than <minimal size>.
+
+<priority> is some number usually equal to or higher than <minimal
+size>.  It determines the priority of this partition in the contest
+with the other partitions for size through a relative "factor", see
+section 6 "How the actual partition sizes are computed" for details.
+If <priority> is less than or equal to <minimal size> then the
+partition size is capped to <minimal size>.  If <priority> is too
+small (relative to the priority of the other partitions) then this
+partition will have a size close to <minimal size>.
+
+<maximal size> is the maximal size for the partition, i.e. a limit
+size such that there is no sense to make this partition larger.
+The special value "-1" is used to indicate unlimited partition size.
+If <maximal size> is less than or equal to <minimal size>, then the
+partition size is capped to <minimal size>.  Notice that currently,
+if no partition has unlimited size then the last partition will be
+given all remaining free space regardless of <maximum size> (see
+section 5 "Limitations").
+
+By default, the resulting size is rounded by optimal alignment for
+modern disks and SSDs (usually 1MiB), so it is possible for it to be
+slightly less than expected.
+
+<parted fs> is the file system as known to parted of this partition.
+It may be $default_filesystem to use partman's default (currently ext4
+for linux, ext2 for hurd, ufs for kfreebsd, can be overriden by preseeding
+partman-base/default_filesystem).
+
+
+<specifiers>::=<specifier>|<specifier>_<specifiers>
+
+<specifier>::=<internal specifier>|<regular specifier>|<type specifier>
+
+<internal specifier>::=$primary{_}|$bootable{_}|$default_filesystem{_}|
+$legacy_boot{_}|$iflabel{_<disklabels>_}|$reusemethod{_}
+
+<disklabels>::=<disklabel>|<disklabel>_<disklabels>
+
+<disklabel> is a supported disk label (partition table) type: gpt, msdos...
+
+$primary{_} says that the partition should be primary (if possible).
+
+$bootable{_} says that the bootable flag will be set (ignored on gpt).
+
+$default_filesystem{_} says that partman's default filesystem (currently
+ext4 for linux, ext2 for hurd, ufs for kfreebsd, can be overriden by
+preseeding partman-base/default_filesystem) should be used.
+
+$legacy_boot{_} says that the gpt legacy_boot flag will be set.
+
+$iflabel{_<disklabels>_} says that the partition will be created only
+on the specified partition table types. Multiple space-separated disk
+labels are supported as of partman-auto 170.
+
+$reusemethod{_} lets partman reuse an existing partition with the same
+method on the selected disk when "Guided - use the largest continuous
+free space" or "Automatically partition the free space" is chosen.
+The format{_} specifier will be ignored to preserve its contents.
+As of partman-auto 170, an existing partition can be reused only if its
+size is at least <minimal size>.  Unused partitions (with no method)
+cannot be reused even if they have the same type.  As of
+partman-basicfilesystems 169, existing swap partitions are not
+automatically marked with method "swap" any more, so will not be reused
+by default (on the assumption that they may be used by another system
+for hibernation and should not be shared).
+
+<regular specifier>::=<file name>{ <file contents> }
+
+<file name> is a file to be created in the directory of the partition
+in partman's filesystem info. (See section 2.4 of the partman manual
+for details.)
+<file contents> is the information to write in this file.
+
+<type specifier>::=$lvmok{_}|$defaultignore{_}|$lvmignore{_}
+
+$lvmok{_}
+	Indicates that the partition is permitted to be an LVM logical 
+	volume should an LVM partitioning scheme be in use.
+$defaultignore{_}
+	Used to void a partition definition so that it is ignored in the
+	default case. That is to say it will be valid in the LVM case.
+$lvmignore{_}
+	Used to void a partition definition so that it is ignored in the
+	LVM case. That is to say it will be valid in the default case.
+
+The specifiers defaultignore and lvmignore allow one recipe to define different 
+handling of say the /boot partition between an LVM partitioning scheme and a 
+non-LVM scheme.
+
+2. EXAMPLES
+-----------
+
+Here is a very simple recipe that creates a swap partition and uses the
+rest of the disk for one large root filesystem.
+
+partman-auto/text/atomic_scheme ::
+
+500 10000 1000000 ext3
+	$primary{ }
+	$bootable{ }
+	method{ format }
+	format{ }
+	use_filesystem{ }
+	filesystem{ ext3 }
+	mountpoint{ / } .
+
+64 512 300% linux-swap
+	method{ swap }
+	format{ } .
+
+Here the root partition must be at least 500 mb, and has effectively no
+maximum size. The swap partition ranges from 64 mb to 3 times the system's
+ram.
+
+Note the use of $bootable{ } to make the partition bootable, and $primary{ }
+to mark it as the primary partition.
+
+The specifiers used in this example are:
+method{ format }
+	Used to make the partition be formatted. For swap partitions,
+	change it to "swap". To create a new partition but do not
+	format it, change "format" to "keep" (such a partition can be
+	used to reserve for future use some disk space).
+format{ }
+	Also needed to make the partition be formatted.
+	Ignored if an existing partition is reused, see $reusemethod{_}.
+use_filesystem{ }
+	Specifies that the partition has a filesystem on it.
+filesystem{ ext3 }
+	Specifies the filesystem to put on the partition.
+mountpoint{ / }
+	Where to mount the partition.
+
+It is also possible to specify mount options. For example, to specify
+"nodev,ro" for a partition, add the following lines for that partition:
+	options/nodev{ nodev }
+	options/ro{ ro }
+
+It is also possible to specify filesystem labels, for filesystems that
+support labels (e.g. ext2, ext3). For example, to specify a label of
+"fred" for a partition, add the following line for that partition:
+        label{ fred }
+Note that the partition must be one that will be reformatted during
+the installation, i.e. one for which you have specified
+        method{ format }
+
+Here is another example; this time there is a smaller root partition, and a
+separate /home partition.
+
+partman-auto/text/home_scheme ::
+
+300 4000 7000 ext3
+        $primary{ }
+        $bootable{ }
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext3 }
+        mountpoint{ / } .
+
+64 512 300% linux-swap
+        method{ swap }
+        format{ } .
+
+100 10000 -1 ext3
+        method{ format }
+        format{ }
+        use_filesystem{ }
+        filesystem{ ext3 }
+        mountpoint{ /home } .
+
+Notice that the partitions will be created in the order they are defined
+in the recipe.
+
+3. LVM SPECIFIC OPTIONS
+-----------------------
+
+When using the "lvm" autopartioning method, specific options are recognized in
+the recipe. Those enable multiple disks to be partitioned at once, specifying
+partitions holding Physical Volumes, which Volume Group a Physical Volume
+holds, in which Volume Group a Logical Volume is put and the name of the
+Logical Volumes.
+
+Multiple disks can also be partitioned at the same time. Those must be
+specified in partman-auto/disk. Partitions that are neither on a Logical
+Volume, nor have a specific device specified (e.g. /boot) will default on
+being on the first disk.
+    
+To explicitly declare a Physical Volume, define a partition as follows:
+
+100 1000 -1 ext3
+        $defaultignore{ }
+        $primary{ }
+        method{ lvm }
+        device{ /dev/hdb }
+        vg_name{ vg00 } .
+    
+Both "device{ ... }" and "vg_name{ }" are optional.
+    
+The device *must* be listed in partman-auto/disk.
+    
+The Volume Group holding a Logical Volume can be specified using
+"in_vg{ }", e.g.:
+
+96 512 300% linux-swap
+        $lvmok{ }
+        in_vg{ vg00 }
+        lv_name{ myswap }
+        method{ swap }
+        format{ } .
+
+"lv_name{ }" specifies the name of the Logical Volume being created.
+
+4. ARCHITECTURE DEPENDENT RECIPES
+---------------------------------
+
+Some architectures have specific requirements for their partitions.
+For example many of them require special partitions to support
+bootloading.
+
+For example, newworld powerpc machines need a newworld boot partition at
+the start of the disk. Here is an example fragment of a recipe file to
+create one; it should come before other partitions in a recipe. Notice that
+the partition is not formatted.
+
+1 1 1 hfs
+	$bootable{ }
+	method{ newworld } .
+
+Another example is ppc64el machines with Petitboot firmware, which
+does not support ext4 and requires a /boot partition formatted in ext2.
+
+68 788 1024 ext2
+	$primary{ }
+	method{ format }
+	format{ }
+	use_filesystem{ }
+	filesystem{ ext2 }
+	mountpoint{ /boot } .
+
+On x86 with legacy BIOS (or UEFI set up for legacy boot), GRUB needs a
+tiny "BIOS boot" partition if the boot disk has a gpt partition table.
+
+1 1 1 free
+	$iflabel{ gpt }
+	$reusemethod{ }
+	method{ biosgrub } .
+
+Finally, an example of how to set up an EFI system partition (ESP).
+Notice that if an existing ESP is reused then it will not be formatted
+in order to preserve its contents.
+
+538 538 1075 free
+        $iflabel{ gpt msdos }
+        $reusemethod{ }
+        method{ efi }
+        format{ } .
+
+For other examples, see the architecture-specific recipes in partman-auto.
+The EFI example above was taken from partman-auto/recipe-amd64-efi/atomic.
+
+
+5. LIMITATIONS
+--------------
+
+Due to limitation of the algorithms in partman-auto, there must be at
+least one partition with unlimited maximal size or the sum of maximal
+sizes must be higher than the free space size so that the whole free
+space can be used.  Usually you can give the partition containing
+/home a maximal size.  -1 is used to indicate unlimited maximal size.
+Otherwise the last partition will be given all remaining free space.
+
+If the large /home is not an option for you, you can also define in the
+recipe one additional partition with size -1, method "keep" and leave it
+unmounted.  When the installation completes you can remove it.
+
+
+6. HOW THE ACTUAL PARTITION SIZES ARE COMPUTED
+----------------------------------------------
+
+Suppose we have to create N partitions and min[i], max[i] and
+priority[i] are the minimal size, the maximal size and the priority of
+the partition #i as described in section 1.
+
+Let free_space be the size of the free space to partition.
+
+Then do the following:
+
+for(i=1;i<=N;i++) {
+   if (priority[i] < min[i])
+      priority[i] = min[i];
+   if (max[i] < min[i])
+      max[i] = min[i];
+   factor[i] = priority[i] - min[i];
+}
+ready = FALSE;
+while (! ready) {
+   minsum = min[1] + min[2] + ... + min[N];
+   factsum = factor[1] + factor[2] + ... + factor[N];
+   ready = TRUE;
+   for(i=1;i<=N;i++) {
+      x = min[i] + (free_space - minsum) * factor[i] / factsum;
+      if (x > max[i]) {
+         x = max[i];
+         factor[i] = 0;
+      }
+      if (x != min[i]) {
+         ready = FALSE;
+         min[i] = x;
+      }
+   }
+}
+
+Then min[i] will be the size of partition #i.
+
+
+7. APPENDIX
+-----------
+
+As of 2025, on amd64 systems, the very minimum size of a Debian Trixie
+installation on a classical (/, /home) setup was:
+2GB on / (100MB on /boot)
+It is thus wise to use minimum values with this consideration in mind.

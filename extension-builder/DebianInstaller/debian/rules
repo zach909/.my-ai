@@ -1,0 +1,126 @@
+#! /usr/bin/make -f
+
+ARCH=$(shell dpkg-architecture -qDEB_HOST_ARCH)
+VERSION=$(shell LC_ALL=C dpkg-parsechangelog | grep ^Version: | cut -d ' ' -f 2)
+DATE=$(firstword $(subst +~, ,$(subst ., ,$(VERSION))))
+SOURCE_DATE_EPOCH = $(shell date -d "$$(dpkg-parsechangelog -SDate)" +%s)
+SUITE=$(shell LC_ALL=C dpkg-parsechangelog | grep ^Distribution: | cut -d ' ' -f 2)
+
+# Daily builds vs. uploads to unstable:
+ifeq (${SUITE},UNRELEASED)
+USE_UDEBS_FROM=unstable
+TRANSSTATUS=
+BOOTMENU_BEEP=n
+else
+USE_UDEBS_FROM=forky
+USE_PROPOSED_UPDATES=0
+TRANSSTATUS=translation-status
+BOOTMENU_BEEP=y
+endif
+
+# Adjust for non-released ports if needed:
+RELEASE_ARCHES=amd64 arm64 armel armhf i386 loong64 mips mips64el mipsel ppc64el riscv64 s390x
+ifeq (,$(filter $(ARCH), $(RELEASE_ARCHES)))
+USE_UNRELEASED=1
+USE_UDEBS_FROM=unstable
+USE_PROPOSED_UPDATES=0
+endif
+
+# check profile to see if we're trying to just build a miniiso
+ifneq ($(filter pkg.debian-installer.miniiso,$(DEB_BUILD_PROFILES)),)
+BUILD_TARGETS=build_netboot-gtk
+ADDITIONAL_BUILD_PRODUCT=miniiso
+MINIISONAME=debian-$(VERSION)-$(ARCH)-gtkmini.iso
+ifdef APTLY_REPO
+PRESEED=$(CURDIR)/build/tmp/devel_repo_preseed.cfg
+endif
+else
+BUILD_TARGETS=all_build stats release
+ADDITIONAL_BUILD_PRODUCT=tarball
+endif
+
+ARCHIVEDIR=debian/tmp/installer-$(ARCH)
+DESTDIR=$(ARCHIVEDIR)/$(DATE)
+IMAGEDIR=$(DESTDIR)/images
+TARNAME=debian-installer-images_$(VERSION)_$(ARCH).tar.gz
+
+export SOURCE_DATE_EPOCH
+
+clean:
+	dh_testdir
+	dh_testroot
+	dh_clean
+	$(MAKE) -C build reallyclean
+	$(MAKE) -C doc/devel/partman clean
+	$(MAKE) -C doc/devel/internals clean
+
+# Must run as root, so is not run as part of regular build.
+build-images:
+	$(MAKE) -C build $(BUILD_TARGETS) \
+		USE_UDEBS_FROM=$(USE_UDEBS_FROM) BUILD_DATE=$(DATE) \
+		USE_PROPOSED_UPDATES=$(USE_PROPOSED_UPDATES) \
+		USE_UNRELEASED=$(USE_UNRELEASED) \
+		PRESEED=$(PRESEED) \
+		$(addprefix LINUX_KERNEL_ABI=,$(LINUX_KERNEL_ABI)) \
+		TRANSSTATUS=$(TRANSSTATUS) BOOTMENU_BEEP=$(BOOTMENU_BEEP)
+
+publish-tarball:
+	./build/util/gen-tarball debian/tmp ../$(TARNAME)
+	dpkg-distaddfile $(TARNAME) raw-installer -
+
+publish-miniiso:
+	mv ./build/tmp/netboot-gtk/mini.iso ../$(MINIISONAME)
+	dpkg-distaddfile $(MINIISONAME) raw-installer -
+
+build: build-arch build-indep
+build-arch: build-stamp
+build-indep: build-stamp
+
+build-stamp:
+	rm -f $@
+	$(MAKE) -C doc/devel/internals
+	$(MAKE) -C doc/devel/partman
+	touch $@
+
+install: build
+	dh_testdir
+	dh_testroot
+	dh_prep
+	dh_installdirs
+
+	# $(PRESEED) is only defined in the pkg.debian-installer.miniiso profile
+	# 
+	# This creates the sources.list file including a salsa-CI aptly repo and
+	# also adds a preseed file to the miniISO that enables the target to access
+	# that repo after the first reboot.
+	[ -z "$(PRESEED)" ] || ./build/util/create_aptly_udeb_local "$(PRESEED)"
+	# It would be better to teach gen-sources.list.udeb to deal with an extra
+	# repo that would be passed into the build via sbuild's --extra-repository
+
+	debian/rules build-images
+
+	install -d $(IMAGEDIR)
+	cp -a build/dest/* $(IMAGEDIR)
+	ln -s $(DATE) $(ARCHIVEDIR)/current
+
+binary-arch: install
+	dh_testdir
+	dh_testroot
+	dh_installchangelogs
+	dh_installdocs doc/* -X Makefile -X build.sh -X .xsl \
+		-X internals.xml -X partman-doc.dbk -X .gitignore
+	dh_compress
+	dh_fixperms
+
+	./build/util/write-built-using
+
+	dh_gencontrol
+	dh_md5sums
+	dh_builddeb
+
+	debian/rules publish-$(ADDITIONAL_BUILD_PRODUCT)
+
+binary-indep:
+
+binary: binary-indep binary-arch
+.PHONY: build build-images clean binary-indep binary-arch binary install

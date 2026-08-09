@@ -1509,6 +1509,28 @@ async function testExtensionBuilderFlow() {
   // No evidence -> no fabricated "fully confident" neuron.
   check(B.netSearchGenerate(pid, 'zzzqqq nonexistent xxyyzz', 2) === null, 'Net Search returns null when there are zero semantic matches');
   check(B.netSearchGenerate(pid, '', 2) === null, 'Net Search returns null for an empty/untokenizable query');
+
+  // Code-to-Net, reversed: exportCodeNet() must walk a codenet neuron's own
+  // stored topology (its network's actual edges, inputLayer -> ... ->
+  // outputLayer -- see CodeToNet.exportCode() in thorns.js) back into the
+  // exact original bytes, not an approximation. Cover the boundary cases
+  // importCode()'s 8-byte chunking makes easy to get subtly wrong: a
+  // length that's an exact multiple of the chunk size, one that isn't, and
+  // a single byte.
+  for (const text of ['exactly16bytes!!', 'not a multiple of eight bytes', 'x', '']) {
+    const original = Buffer.from(text, 'utf8');
+    const codeNeuron = B.importCodeToNet(pid, `roundtrip_${original.length}`, original);
+    if (original.length === 0) {
+      check(codeNeuron !== null, 'importCodeToNet() still creates a neuron for zero-length input');
+      check(B.exportCodeNet(pid, codeNeuron.id).length === 0, 'exportCodeNet() reverses a zero-length import back to zero bytes');
+      continue;
+    }
+    const reconstructed = Buffer.from(B.exportCodeNet(pid, codeNeuron.id));
+    check(Buffer.compare(reconstructed, original) === 0,
+      `exportCodeNet() reverses a ${original.length}-byte Code-to-Net import back to the exact original bytes (not just the same length)`);
+  }
+  check(B.exportCodeNet(pid, 'nonexistent-neuron-id') === null, 'exportCodeNet() returns null for a neuron id that does not exist, instead of throwing');
+  check(B.exportCodeNet(pid, n1.id) === null, 'exportCodeNet() returns null for a neuron that was never imported via Code-to-Net (no topology to reverse)');
 }
 
 // The Neural Definition DSL parses every spec directive, including both

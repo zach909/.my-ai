@@ -1,0 +1,23 @@
+<appendix id="coordination-team"><title>&d-i; i18n coordinators</title>
+
+<para>
+The &d-i; internationalisation (i18n) coordinators are currently:
+</para>
+
+<itemizedlist>
+<listitem>
+<para>
+Holger Wansing <email>hwansing@mailbox.org</email>
+is responsible for the i18n maintenance, daily monitoring of the i18n automation tools and should be contacted
+for any i18n related problems during the &d-i; development process.
+</para>
+</listitem>
+<listitem>
+<para>
+Holger Wansing <email>hwansing@mailbox.org</email> is also responsible for the
+Installation Guide and its localization effort.
+</para>
+</listitem>
+</itemizedlist>
+
+</appendix>
