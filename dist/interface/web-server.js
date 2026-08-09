@@ -498,6 +498,62 @@ export class WebServer {
             req.on('error', reject);
         });
     }
+    /**
+     * Shared by POST /api/extension/train-pytorch, /generate-coding-skills,
+     * and /merge-with-saved: builds @definishon+scripting samples from a
+     * plain neuron list the exact same way train-pytorch already does, then
+     * trains them via the persistent PyTorchTrainerWorker. Extracted here
+     * so the merge endpoint doesn't have to re-derive this logic to train
+     * "the other" saved extension's neurons before averaging weights with
+     * them.
+     */
+    async trainNeuronsViaPyTorch(neurons, opts = {}) {
+        const dims = 16;
+        const { embedText } = await import('../models && skills/core/neuro-lang.js');
+        const definitionTrigger = new Array(dims).fill(0.7);
+        const samples = [];
+        const names = [];
+        for (const n of neurons) {
+            if (!n.name)
+                continue;
+            const def = (n.definition ?? '').trim();
+            const scripts = (n.scripts ?? []).filter(s => (s.userSays ?? '').trim() && (s.response ?? '').trim());
+            if (!def && scripts.length === 0)
+                continue;
+            const readout = names.length;
+            names.push(n.name);
+            if (def)
+                samples.push({ readout, input: definitionTrigger, target: embedText(def, dims) });
+            for (const s of scripts) {
+                samples.push({ readout, input: embedText(s.userSays.trim(), dims), target: embedText(s.response.trim(), dims) });
+            }
+        }
+        if (samples.length === 0) {
+            return { ok: true, names: [], W: [], b: [], samples: [], trainedNeurons: [], epochsRun: 0, converged: true, torchVersion: '' };
+        }
+        const path = await import('node:path');
+        const scriptPath = path.resolve(process.cwd(), 'extension-builder', 'pytorch_trainer.py');
+        const result = await this.pytorchWorker.send(scriptPath, {
+            dims, numReadouts: names.length,
+            epochs: opts.epochs ?? 1000, learningRate: opts.learningRate ?? 0.05, tolerance: opts.tolerance ?? 1e-3,
+            samples,
+        });
+        if (result.ok === false)
+            return { ok: false, error: result.error };
+        const satisfiedReadouts = new Set();
+        const failedReadouts = new Set();
+        samples.forEach((s, i) => {
+            if (result.sampleConverged[i])
+                satisfiedReadouts.add(s.readout);
+            else
+                failedReadouts.add(s.readout);
+        });
+        const trainedNeurons = names.filter((_, i) => satisfiedReadouts.has(i) && !failedReadouts.has(i));
+        return {
+            ok: true, names, W: result.W, b: result.b, samples,
+            trainedNeurons, epochsRun: result.epochsRun, converged: result.converged, torchVersion: result.torchVersion,
+        };
+    }
     async handleRequest(req, res) {
         let parsedUrl;
         try {
@@ -1065,6 +1121,221 @@ export class WebServer {
             catch (err) {
                 const msg = err instanceof Error ? err.message : String(err);
                 this.sendJson(res, { ok: false, backend: 'pytorch', error: msg }, 500);
+            }
+            return;
+        }
+        // POST /api/extension/generate-coding-skills — execution-grounded
+        // training: each instantiation of a fixed code template (JS/Python/
+        // Shell arithmetic, NeuroLang @value) is ACTUALLY RUN, and its neuron
+        // is trained on the real (code -> result) it produced -- the live,
+        // /builder-reachable equivalent of extension-builder/train-coding-
+        // skills.mjs's one-time build script (see that file's doc comment for
+        // why each instantiation gets its own readout rather than sharing
+        // one: a single per-readout linear+tanh transform can't fit many
+        // distinct random mappings at once -- an earlier version of the
+        // standalone script measured a real, reproducible 0% held-out
+        // accuracy trying that). Deliberately scoped to languages this
+        // server can already run without new hard dependencies (Node/Python/
+        // Shell/NeuroLang) -- see that file's header for the same reasoning.
+        if (pathname === '/api/extension/generate-coding-skills' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const perTemplate = Math.max(1, Math.min(50, body?.count ?? 5)); // capped -- this runs real subprocesses per instantiation
+                const vm = await import('node:vm');
+                const { spawnSync } = await import('node:child_process');
+                const { NeuroLangInterpreter } = await import('../models && skills/core/neuro-lang.js');
+                const neuroLang = new NeuroLangInterpreter();
+                const randInt = (lo, hi) => lo + Math.floor(Math.random() * (hi - lo + 1));
+                const templates = [
+                    {
+                        name: 'skill_js_add', lang: 'javascript',
+                        gen: () => `${randInt(0, 50)} + ${randInt(0, 50)}`,
+                        run: async (code) => String(vm.runInContext(code, vm.createContext({}), { timeout: 1000 })),
+                    },
+                    {
+                        name: 'skill_python_mul', lang: 'python',
+                        gen: () => `print(${randInt(0, 15)} * ${randInt(0, 15)})`,
+                        run: async (code) => {
+                            const r = spawnSync('python3', ['-c', code], { timeout: 5000, encoding: 'utf8' });
+                            return r.error || r.status !== 0 ? null : r.stdout.trim();
+                        },
+                    },
+                    {
+                        name: 'skill_shell_sub', lang: 'shell',
+                        gen: () => `echo $(( ${randInt(10, 60)} - ${randInt(0, 10)} ))`,
+                        run: async (code) => {
+                            const r = spawnSync('bash', ['-c', code], { timeout: 5000, encoding: 'utf8' });
+                            return r.error || r.status !== 0 ? null : r.stdout.trim();
+                        },
+                    },
+                    {
+                        name: 'skill_neurolang_value', lang: 'neurolang',
+                        gen: () => `"n"@value="${(randInt(0, 100) / 100).toFixed(2)}"`,
+                        run: async (code) => {
+                            const result = await neuroLang.parse(code);
+                            const n = result.neurons.get('n');
+                            return n ? String(n.value) : null;
+                        },
+                    },
+                ];
+                const generated = [];
+                for (const t of templates) {
+                    for (let i = 0; i < perTemplate; i++) {
+                        const code = t.gen();
+                        const result = await t.run(code);
+                        if (result === null || result === undefined || result === '')
+                            continue; // this language's runtime isn't available here -- skip, don't fake it
+                        generated.push({
+                            name: `${t.name}_${generated.length}`,
+                            definition: code,
+                            scripts: [{ userSays: `What does \`${code}\` output?`, response: result }],
+                        });
+                    }
+                }
+                if (generated.length === 0) {
+                    this.sendJson(res, { ok: false, error: 'no language runtime (node/python3/bash) produced a result on this server' });
+                    return;
+                }
+                const trainResult = await this.trainNeuronsViaPyTorch(generated, { epochs: 800 });
+                if (trainResult.ok === false) {
+                    this.sendJson(res, { ok: false, error: trainResult.error });
+                    return;
+                }
+                const trainedSet = new Set(trainResult.trainedNeurons);
+                this.sendJson(res, {
+                    ok: true,
+                    neurons: generated.map(n => ({ ...n, trained: trainedSet.has(n.name) })),
+                    trainedCount: trainResult.trainedNeurons.length,
+                    totalCount: generated.length,
+                    epochs: trainResult.epochsRun,
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { ok: false, error: msg }, 500);
+            }
+            return;
+        }
+        // POST /api/extension/merge-with-saved — real weight averaging
+        // ("model soup") between the current /builder project and a
+        // previously saved extension: both get trained fresh via PyTorch,
+        // then for every neuron NAME present in both, the merged (W, b) row
+        // is the genuine elementwise average of the two trained rows -- a
+        // name in only one side carries over unchanged. The merged weights
+        // are then fine-tuned for real on the union of both sides' samples
+        // (not just assumed correct) before being reported back. Same
+        // mechanism as extension-builder/merge-networks.mjs, live instead of
+        // a one-time build step -- see that file's doc comment for why this
+        // only makes sense for PyTorch-trained (@definishon/scripting)
+        // neurons, never Code-to-Net's byte-chain ones (moby/Debian), which
+        // have no trained weights to average in the first place.
+        if (pathname === '/api/extension/merge-with-saved' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const currentNeurons = Array.isArray(body?.neurons) ? body.neurons : [];
+                const savedFile = (body?.savedFile ?? '').trim();
+                if (!savedFile || /[\\/]|\.\./.test(savedFile)) {
+                    this.sendJson(res, { ok: false, error: 'savedFile must be a bare filename (no path segments)' }, 400);
+                    return;
+                }
+                const path = await import('node:path');
+                const { promises: fs } = await import('node:fs');
+                const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+                const savedPath = path.join(dir, savedFile);
+                if (path.dirname(savedPath) !== dir) {
+                    this.sendJson(res, { ok: false, error: 'savedFile resolved outside the extensions directory' }, 400);
+                    return;
+                }
+                let savedData;
+                try {
+                    savedData = JSON.parse(await fs.readFile(savedPath, 'utf8'));
+                }
+                catch (err) {
+                    this.sendJson(res, { ok: false, error: `could not read "${savedFile}": ${err instanceof Error ? err.message : String(err)}` }, 404);
+                    return;
+                }
+                const savedNeurons = Array.isArray(savedData.neurons) ? savedData.neurons : [];
+                const [a, b] = await Promise.all([
+                    this.trainNeuronsViaPyTorch(currentNeurons, { epochs: 800 }),
+                    this.trainNeuronsViaPyTorch(savedNeurons, { epochs: 800 }),
+                ]);
+                if (a.ok === false) {
+                    this.sendJson(res, { ok: false, error: `current project: ${a.error}` });
+                    return;
+                }
+                if (b.ok === false) {
+                    this.sendJson(res, { ok: false, error: `"${savedFile}": ${b.error}` });
+                    return;
+                }
+                if (a.names.length === 0 && b.names.length === 0) {
+                    this.sendJson(res, { ok: false, error: 'neither side has any trainable (@definishon or scripted) neurons to merge' });
+                    return;
+                }
+                // The actual merge: union of names, elementwise-averaged rows for
+                // any name in both.
+                const bIndexByName = new Map(b.names.map((n, i) => [n, i]));
+                const mergedNames = [];
+                const mergedW = [];
+                const mergedB = [];
+                let overlapCount = 0;
+                for (let i = 0; i < a.names.length; i++) {
+                    const name = a.names[i];
+                    const bi = bIndexByName.get(name);
+                    if (bi === undefined) {
+                        mergedNames.push(name);
+                        mergedW.push(a.W[i]);
+                        mergedB.push(a.b[i]);
+                    }
+                    else {
+                        overlapCount++;
+                        mergedNames.push(name);
+                        mergedW.push(a.W[i].map((v, d) => (v + b.W[bi][d]) / 2));
+                        mergedB.push(a.b[i].map((v, d) => (v + b.b[bi][d]) / 2));
+                        bIndexByName.delete(name);
+                    }
+                }
+                for (const [name, bi] of bIndexByName) {
+                    mergedNames.push(name);
+                    mergedW.push(b.W[bi]);
+                    mergedB.push(b.b[bi]);
+                }
+                const mergedIndexByName = new Map(mergedNames.map((n, i) => [n, i]));
+                const remap = (samples, names) => samples.map(s => ({ ...s, readout: mergedIndexByName.get(names[s.readout]) }));
+                const unionSamples = [...remap(a.samples, a.names), ...remap(b.samples, b.names)];
+                const pathMod = await import('node:path');
+                const scriptPath = pathMod.resolve(process.cwd(), 'extension-builder', 'pytorch_trainer.py');
+                const fineTune = await this.pytorchWorker.send(scriptPath, {
+                    dims: 16, numReadouts: mergedNames.length, epochs: 800, learningRate: 0.05, tolerance: 1e-3,
+                    samples: unionSamples, initW: mergedW, initB: mergedB,
+                });
+                const currentByName = new Map(currentNeurons.map(n => [n.name, n]));
+                const savedByName = new Map(savedNeurons.map(n => [n.name, n]));
+                const trainedSet = new Set(fineTune.ok
+                    ? mergedNames.filter((_, i) => fineTune.sampleConverged
+                        .filter((_c, si) => unionSamples[si].readout === i)
+                        .every(Boolean))
+                    : []);
+                const mergedNeurons = mergedNames.map(name => {
+                    const src = currentByName.get(name) ?? savedByName.get(name);
+                    return {
+                        name,
+                        definition: src?.definition ?? '',
+                        scripts: src?.scripts ?? [],
+                        trained: trainedSet.has(name),
+                    };
+                });
+                this.sendJson(res, {
+                    ok: true,
+                    neurons: mergedNeurons,
+                    totalCount: mergedNeurons.length,
+                    overlapCount,
+                    fineTuneOk: fineTune.ok,
+                    fineTuneError: fineTune.ok === false ? fineTune.error : undefined,
+                });
+            }
+            catch (err) {
+                const msg = err instanceof Error ? err.message : String(err);
+                this.sendJson(res, { ok: false, error: msg }, 500);
             }
             return;
         }

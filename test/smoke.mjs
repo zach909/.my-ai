@@ -1260,6 +1260,59 @@ async function testWebBackend() {
         `Web backend POST /api/extension/train-pytorch reuses its subprocess instead of re-spawning python3 per request (2nd call took ${warmMs}ms, well under a cold torch-import spawn's 4-25s)`);
     }
 
+    // POST /api/extension/generate-coding-skills -- the live, /builder-
+    // reachable equivalent of extension-builder/train-coding-skills.mjs:
+    // actually runs real JS/Python/Shell/NeuroLang code and trains a
+    // neuron per instantiation on the real executed result. Same
+    // optional-dependency contract as train-pytorch: 200 either way, never
+    // a crash, ok:false with a clear error if python3/torch is missing.
+    const codingSkills = await post('/api/extension/generate-coding-skills', { count: 3 });
+    const codingSkillsJson = JSON.parse(codingSkills.body);
+    check(codingSkills.status === 200, 'Web backend POST /api/extension/generate-coding-skills always responds 200, never crashes the process');
+    if (codingSkillsJson.ok) {
+      check(Array.isArray(codingSkillsJson.neurons) && codingSkillsJson.neurons.length > 0,
+        'Web backend POST /api/extension/generate-coding-skills returns real neurons, each with a definition (the actual code) and a script (the actual executed result)');
+      const first = codingSkillsJson.neurons[0];
+      check(typeof first.definition === 'string' && first.definition.length > 0 && Array.isArray(first.scripts) && first.scripts.length === 1 && first.scripts[0].response.length > 0,
+        'Web backend POST /api/extension/generate-coding-skills: each neuron carries the real code as its definition and the real executed result as its script response');
+      check(codingSkillsJson.trainedCount > 0,
+        'Web backend POST /api/extension/generate-coding-skills genuinely trains and converges at least one execution-grounded neuron when torch is available');
+    } else {
+      check(typeof codingSkillsJson.error === 'string' && codingSkillsJson.error.length > 0,
+        'Web backend POST /api/extension/generate-coding-skills reports a clear, non-empty error instead of failing silently when torch/python3 is unavailable');
+    }
+
+    // POST /api/extension/merge-with-saved -- real weight averaging
+    // ("model soup") against a saved extension file. Reject an obviously
+    // unsafe savedFile (path traversal) before it ever attempts to touch
+    // disk, matching every other filename-taking endpoint's convention.
+    const traversal = await post('/api/extension/merge-with-saved', { neurons: [], savedFile: '../../../etc/passwd' });
+    check(traversal.status === 400, 'Web backend POST /api/extension/merge-with-saved rejects a savedFile containing path segments (traversal) with 400, not a filesystem read attempt');
+
+    const missingFile = await post('/api/extension/merge-with-saved', { neurons: [{ name: 'alpha', definition: 'a test neuron', scripts: [] }], savedFile: 'definitely_does_not_exist.ext.json' });
+    const missingFileJson = JSON.parse(missingFile.body);
+    check(missingFile.status === 404 && missingFileJson.ok === false,
+      'Web backend POST /api/extension/merge-with-saved reports 404 for a savedFile that does not exist, instead of crashing or silently merging with nothing');
+
+    if (codingSkillsJson.ok) {
+      // Merge the current (empty-canvas) project against the coding-skills
+      // extension we just registered-worth of neurons above -- exercises
+      // the real merge path end to end: both sides trained fresh, then
+      // averaged/unioned by name.
+      const registerBody = { name: 'merge_smoke_test', neurons: codingSkillsJson.neurons };
+      const registered = await post('/api/extension/register', registerBody);
+      const registeredJson = JSON.parse(registered.body);
+      if (registeredJson.ok) {
+        const merged = await post('/api/extension/merge-with-saved', {
+          neurons: [{ name: 'alpha', definition: 'a test neuron', scripts: [] }],
+          savedFile: registeredJson.savedAs,
+        });
+        const mergedJson = JSON.parse(merged.body);
+        check(merged.status === 200 && mergedJson.ok === true && mergedJson.totalCount >= codingSkillsJson.neurons.length,
+          'Web backend POST /api/extension/merge-with-saved genuinely merges the current project with a saved extension, unioning both sides\' neurons');
+      }
+    }
+
     // AppLauncher.launch() called spawn(command, args, {shell: true}), so a
     // shell metacharacter (`;`, `&&`, backticks, ...) inside an *args* entry
     // ran as an additional, unintended command rather than literal argv

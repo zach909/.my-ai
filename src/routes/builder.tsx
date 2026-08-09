@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -51,6 +51,10 @@ function BuilderPage() {
   const [scriptResponse, setScriptResponse] = useState('')
   const [training, setTraining] = useState(false)
   const [trainingPyTorch, setTrainingPyTorch] = useState(false)
+  const [generatingSkills, setGeneratingSkills] = useState(false)
+  const [merging, setMerging] = useState(false)
+  const [mergeTarget, setMergeTarget] = useState('')
+  const [savedExtensions, setSavedExtensions] = useState<Array<{ file: string; name: string; neurons: number }>>([])
 
   const selected = b.neurons.find((n) => n.id === selectedId) ?? null
 
@@ -58,6 +62,16 @@ function BuilderPage() {
     () => new Set(query.trim() ? b.search(query).map((n) => n.id) : []),
     [b, query],
   )
+
+  // Populates the "Merge with saved" dropdown -- fetched once on mount,
+  // not on every render; a merge success also refreshes it since the
+  // merged model itself may get saved next.
+  useEffect(() => {
+    fetch('/api/extension/list')
+      .then((res) => res.json())
+      .then((json) => { if (Array.isArray(json.extensions)) setSavedExtensions(json.extensions) })
+      .catch(() => {}) // no server / no saved extensions yet -- the dropdown just stays empty
+  }, [])
 
   const handleAddNeuron = () => {
     const name = neuronName.trim() || `neuron_${b.neurons.length + 1}`
@@ -184,6 +198,49 @@ function BuilderPage() {
       )
     } finally {
       setTrainingPyTorch(false)
+    }
+  }
+
+  // Execution-grounded training: the server actually RUNS real JS/Python/
+  // Shell/NeuroLang snippets with randomized inputs and trains a neuron per
+  // instantiation on the real result -- see use-builder.ts's
+  // generateCodingSkills() and interface/web-server.ts's POST
+  // /api/extension/generate-coding-skills. ADDS to the current canvas
+  // (doesn't replace anything), same as any other "generate" action here.
+  const handleGenerateCodingSkills = async () => {
+    setGeneratingSkills(true)
+    try {
+      const result = await b.generateCodingSkills()
+      if (!result.ok) {
+        setStatusMsg(`Coding skills generation unavailable: ${result.error}`)
+        return
+      }
+      setStatusMsg(`Generated ${result.addedCount} execution-grounded coding neuron(s) — ${result.trainedCount} converged`)
+    } finally {
+      setGeneratingSkills(false)
+    }
+  }
+
+  // Real weight averaging ("model soup") with a previously saved
+  // extension -- see use-builder.ts's mergeWithSaved() and
+  // interface/web-server.ts's POST /api/extension/merge-with-saved.
+  // REPLACES the current canvas's neurons with the merged, fine-tuned
+  // result (averaging is a whole-model operation, not incremental).
+  const handleMergeWithSaved = async () => {
+    if (!mergeTarget) {
+      setStatusMsg('Pick a saved extension to merge with first')
+      return
+    }
+    setMerging(true)
+    try {
+      const result = await b.mergeWithSaved(mergeTarget)
+      if (!result.ok) {
+        setStatusMsg(`Merge unavailable: ${result.error}`)
+        return
+      }
+      setStatusMsg(`Merged with "${mergeTarget}" — ${result.totalCount} total neuron(s), ${result.overlapCount} genuinely weight-averaged`)
+    } finally {
+      setMerging(false)
     }
   }
 
@@ -529,6 +586,39 @@ function BuilderPage() {
                   {b.lastTraining.converged ? '✓ converged' : '⋯ not yet converged'} — {b.lastTraining.trainedNeurons.length} true
                 </p>
               )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-xs"
+                onClick={handleGenerateCodingSkills}
+                disabled={generatingSkills}
+                title="Actually runs real JS/Python/Shell/NeuroLang code with randomized inputs and trains a neuron per instantiation on the real executed result -- adds to this canvas, doesn't replace anything."
+              >
+                {generatingSkills ? 'Generating…' : 'Generate Coding Skills (execution-grounded)'}
+              </Button>
+              <div className="flex gap-1.5">
+                <select
+                  value={mergeTarget}
+                  onChange={(e) => setMergeTarget(e.target.value)}
+                  className="h-7 flex-1 rounded-md border border-input bg-transparent px-1.5 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  aria-label="Saved extension to merge with"
+                >
+                  <option value="">Merge with…</option>
+                  {savedExtensions.map((e) => (
+                    <option key={e.file} value={e.file}>{e.name} ({e.neurons})</option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs shrink-0"
+                  onClick={handleMergeWithSaved}
+                  disabled={merging || !mergeTarget}
+                  title="Real weight averaging: trains both sides fresh, averages every matching neuron's connections, then fine-tunes the merged result. Replaces this canvas's neurons with the merge."
+                >
+                  {merging ? 'Merging…' : 'Merge'}
+                </Button>
+              </div>
               <Button size="sm" variant="secondary" className="h-7 w-full text-xs" onClick={handleSave} disabled={training}>
                 Save (no quantization)
               </Button>
