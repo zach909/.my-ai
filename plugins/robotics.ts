@@ -7,6 +7,7 @@
 
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
+import * as path from 'node:path';
 
 export interface RobotState {
   joints: Record<string, number>;
@@ -137,18 +138,19 @@ export class RoboticsPlugin extends BasePlugin {
       throw new Error('Security Error: Potential argument injection detected in endpoint.');
     }
 
+    if (connectionType === 'serial') {
+      // Path traversal validation
+      if (process.platform !== 'win32' || endpoint.startsWith('/')) {
+        const target = path.resolve(endpoint);
+        const devDir = path.resolve('/dev');
+        if (!target.startsWith(devDir) || target === devDir) {
+          throw new Error('Security Error: Path traversal or unauthorized serial path detected.');
+        }
+      }
+    }
+
     try {
       if (connectionType === 'serial') {
-        // Path traversal validation
-        const path = await import('path');
-        if (process.platform !== 'win32' || endpoint.startsWith('/')) {
-          const target = path.resolve(endpoint);
-          const devDir = path.resolve('/dev');
-          if (!target.startsWith(devDir) || target === devDir) {
-            throw new Error('Security Error: Path traversal or unauthorized serial path detected.');
-          }
-        }
-
         // Would use serialport in real implementation
         const fs = await import('fs');
         if (!fs.existsSync(endpoint)) {
@@ -218,7 +220,7 @@ export class RoboticsPlugin extends BasePlugin {
       return { success: false, error: 'Not connected to a robot' };
     }
 
-    if (!(jointId in this.robotState.joints)) {
+    if (!Object.prototype.hasOwnProperty.call(this.robotState.joints, jointId)) {
       return { success: false, error: `Unknown joint: ${jointId}` };
     }
 
@@ -346,14 +348,14 @@ export class RoboticsPlugin extends BasePlugin {
       temperature: () => ({ temp: 35.0 }),
     };
 
-    if (sensorId in sensorTypes) {
+    if (Object.prototype.hasOwnProperty.call(sensorTypes, sensorId)) {
       const reading = sensorTypes[sensorId]();
       this.robotState.sensors[sensorId] = reading;
       return { success: true, sensorId, reading };
     }
 
     // Return cached value if exists
-    if (sensorId in this.robotState.sensors) {
+    if (Object.prototype.hasOwnProperty.call(this.robotState.sensors, sensorId)) {
       return {
         success: true,
         sensorId,
