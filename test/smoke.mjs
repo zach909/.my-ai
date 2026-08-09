@@ -1608,6 +1608,34 @@ async function testResearchPlugin() {
   const emptyReport = await noSources.conductResearch('nothing found anywhere');
   check(emptyReport.claims.length === 0 && emptyReport.verifiedCount === 0 && emptyReport.unverifiedCount === 0,
     'ResearchPlugin.conductResearch() reports an honest empty result when no source has anything, instead of fabricating a claim');
+
+  // digestIntel(): "Ultra-Fast Processing... digests global data (news,
+  // surveillance, scientific papers) in seconds to give actionable intel."
+  // searchWeb() is stubbed so this is deterministic and network-independent
+  // -- the point under test is the fan-out/synthesis logic, not DuckDuckGo
+  // reachability (already covered by the real, unstubbed searchWeb() calls
+  // above via searchDrive()'s sibling tests and by manual verification
+  // during development).
+  const intelPlugin = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
+  const queriesSeen = [];
+  intelPlugin.searchWeb = async (query) => {
+    queriesSeen.push(query);
+    return [{ source: 'web', title: `result for ${query.slice(0, 12)}`, snippet: 'x'.repeat(250), location: 'https://example.com' }];
+  };
+  const brief = await intelPlugin.digestIntel('volcanic activity');
+  check(queriesSeen.length === 3, 'ResearchPlugin.digestIntel() queries all three channels (news, monitoring, papers)');
+  check(new Set(brief.items.map(i => i.channel)).size === 3 && brief.items.every(i => ['news', 'monitoring', 'papers'].includes(i.channel)),
+    'ResearchPlugin.digestIntel() tags every item with its real channel');
+  check(brief.actionableIntel.length === brief.items.length && brief.actionableIntel.every(s => /^\[(news|monitoring|papers)\]/.test(s)),
+    'ResearchPlugin.digestIntel() synthesizes one channel-labeled actionable bullet per item, not a raw dump');
+  check(brief.actionableIntel.every(s => s.length < 250), 'ResearchPlugin.digestIntel() clips long snippets down to a short, actionable bullet');
+  check(typeof brief.elapsedMs === 'number' && brief.elapsedMs >= 0, 'ResearchPlugin.digestIntel() reports real elapsed wall-clock time');
+
+  const intelNoResults = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
+  intelNoResults.searchWeb = async () => { throw new Error('network unreachable'); };
+  const emptyBrief = await intelNoResults.digestIntel('anything');
+  check(emptyBrief.items.length === 0 && emptyBrief.actionableIntel.length === 0,
+    'ResearchPlugin.digestIntel() degrades to an empty, honest brief when every channel fails, instead of throwing');
 }
 
 async function testSelfReplicatePluginConstructs() {

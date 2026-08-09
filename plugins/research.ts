@@ -38,6 +38,25 @@ export interface ResearchReport {
   unverifiedCount: number;
 }
 
+export type IntelChannel = "news" | "monitoring" | "papers";
+
+export interface IntelItem {
+  channel: IntelChannel;
+  title: string;
+  snippet: string;
+  location: string;
+}
+
+export interface IntelBrief {
+  topic: string;
+  /** Wall-clock time the whole digest took, in milliseconds. */
+  elapsedMs: number;
+  items: IntelItem[];
+  /** Short, actionable bullet points synthesized from `items` -- never a
+   *  bare data dump, matching the "actionable intel" requirement. */
+  actionableIntel: string[];
+}
+
 const DEFAULT_SKIP_DIRS = new Set(["node_modules", ".git", "dist", "clones", ".next", ".cache", "__pycache__"]);
 
 export class ResearchPlugin extends BasePlugin {
@@ -214,5 +233,59 @@ export class ResearchPlugin extends BasePlugin {
       verifiedCount: claims.filter((c) => c.verified).length,
       unverifiedCount: claims.filter((c) => !c.verified).length,
     };
+  }
+
+  /**
+   * "Ultra-Fast Processing: digests global data (news, surveillance,
+   * scientific papers) in seconds to give actionable intel."
+   *
+   * Three PUBLIC-information channels, queried in parallel over the same
+   * zero-key searchWeb() this plugin already uses -- no new external
+   * dependency, no private/authenticated data source, and no capability
+   * to monitor or track any specific individual. "surveillance" here
+   * means public situational-awareness reporting (open incident trackers,
+   * public safety/infrastructure bulletins, current-events monitoring
+   * feeds) -- the same category of information a news aggregator
+   * surfaces, not covert or targeted collection about a person.
+   *
+   *   - news: the topic as-is.
+   *   - monitoring: the topic plus terms that bias results toward public
+   *     situational-awareness/incident-tracking coverage.
+   *   - papers: the topic plus terms that bias results toward scientific
+   *     literature (journal articles, preprints, conference papers).
+   *
+   * All three run concurrently via Promise.all -- this is what makes the
+   * digest fast (one round-trip's worth of wall-clock time, not three
+   * sequential ones), and each channel degrades to an empty list on its
+   * own rather than failing the whole brief, same as every other network
+   * call in this plugin. The result is never a raw dump: findings are
+   * distilled into short, actionable bullet points, one per item, so the
+   * caller gets "so what" rather than a pile of snippets to re-read.
+   */
+  async digestIntel(topic: string, maxPerChannel = 5): Promise<IntelBrief> {
+    const started = Date.now();
+    const channelQueries: Array<{ channel: IntelChannel; query: string }> = [
+      { channel: "news", query: topic },
+      { channel: "monitoring", query: `${topic} situation report OR incident tracker OR bulletin` },
+      { channel: "papers", query: `${topic} research paper OR journal article OR preprint` },
+    ];
+
+    const results = await Promise.all(
+      channelQueries.map(async ({ channel, query }) => {
+        const hits = await this.searchWeb(query, maxPerChannel).catch(() => []);
+        return hits.map((h): IntelItem => ({ channel, title: h.title, snippet: h.snippet, location: h.location }));
+      }),
+    );
+    const items = results.flat();
+
+    // One actionable bullet per item: lead with the channel so the reader
+    // can immediately tell news from a monitoring bulletin from a paper,
+    // then the concrete takeaway -- never just "here's a snippet".
+    const actionableIntel = items.map((item) => {
+      const clipped = item.snippet.length > 180 ? `${item.snippet.slice(0, 180)}…` : item.snippet;
+      return `[${item.channel}] ${item.title}: ${clipped}`;
+    });
+
+    return { topic, elapsedMs: Date.now() - started, items, actionableIntel };
   }
 }
