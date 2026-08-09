@@ -52,6 +52,29 @@ export interface BuilderApi {
    * with zero Python/torch present anywhere.
    */
   trainWithPyTorch: (epochs?: number) => Promise<(TrainingResult & { ok: true; backend: 'pytorch'; torchVersion?: string }) | { ok: false; error: string }>;
+  /**
+   * Execution-grounded training: the server actually RUNS real JS/Python/
+   * Shell/NeuroLang code with randomized inputs (POST
+   * /api/extension/generate-coding-skills) and adds one trained neuron per
+   * instantiation to this project, its definition the real code and its
+   * script the real executed result -- not a hand-written answer. Same
+   * "optional, degrades cleanly" contract as trainWithPyTorch: no
+   * Python/torch here just means `{ ok: false, error }`.
+   */
+  generateCodingSkills: (count?: number) => Promise<
+    { ok: true; addedCount: number; trainedCount: number } | { ok: false; error: string }
+  >;
+  /**
+   * Real weight averaging ("model soup") between this project and a
+   * previously saved extension (POST /api/extension/merge-with-saved):
+   * both get trained fresh, then for every neuron name in both, the
+   * merged connection is the genuine elementwise average of the two
+   * trained values; a name in only one side carries over unchanged. The
+   * merged, fine-tuned result REPLACES this project's neuron set.
+   */
+  mergeWithSaved: (savedFile: string) => Promise<
+    { ok: true; totalCount: number; overlapCount: number } | { ok: false; error: string }
+  >;
   lastTraining: TrainingResult | undefined;
   search: (query: string) => NeuronData[];
   simulate: (neuronId: string, inputValue: number) => string;
@@ -182,6 +205,60 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
           return { ...result, ok: true, backend: 'pytorch', torchVersion: json.torchVersion };
         }
         return { ok: false, error: json.error ?? 'PyTorch training failed for an unknown reason' };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    generateCodingSkills: async (count) => {
+      try {
+        const res = await fetch('/api/extension/generate-coding-skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count }),
+        });
+        const json = await res.json();
+        if (!json.ok) return { ok: false, error: json.error ?? 'generation failed for an unknown reason' };
+        // Server ran real code and trained real neurons -- add each one to
+        // THIS project's canvas, same shape addNeuron()+addScript() would
+        // produce by hand, just already filled in and already trained.
+        for (const n of json.neurons as Array<{ name: string; definition: string; scripts: Array<{ userSays: string; response: string }>; trained: boolean }>) {
+          const neuron = engine.addNeuron(projectId, n.name, 0);
+          if (!neuron) continue;
+          neuron.definition = n.definition;
+          for (const s of n.scripts) engine.addScript(projectId, neuron.id, s.userSays, s.response);
+          neuron.trained = n.trained;
+        }
+        bump();
+        return { ok: true, addedCount: json.totalCount, trainedCount: json.trainedCount };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    mergeWithSaved: async (savedFile) => {
+      const neuronsPayload = Array.from(project.neurons.values()).map((n) => ({
+        name: n.name, definition: n.definition, scripts: n.scripts,
+      }));
+      try {
+        const res = await fetch('/api/extension/merge-with-saved', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ neurons: neuronsPayload, savedFile }),
+        });
+        const json = await res.json();
+        if (!json.ok) return { ok: false, error: json.error ?? 'merge failed for an unknown reason' };
+        // The merged set REPLACES this project's neurons -- averaging is
+        // only meaningful as a whole-model operation, not an incremental
+        // add like generateCodingSkills() above.
+        for (const id of Array.from(project.neurons.keys())) engine.deleteNeuron(projectId, id);
+        for (const n of json.neurons as Array<{ name: string; definition: string; scripts: Array<{ userSays: string; response: string }>; trained: boolean }>) {
+          const neuron = engine.addNeuron(projectId, n.name, 0);
+          if (!neuron) continue;
+          neuron.definition = n.definition;
+          for (const s of n.scripts) engine.addScript(projectId, neuron.id, s.userSays, s.response);
+          neuron.trained = n.trained;
+        }
+        bump();
+        return { ok: true, totalCount: json.totalCount, overlapCount: json.overlapCount };
       } catch (err) {
         return { ok: false, error: err instanceof Error ? err.message : String(err) };
       }
