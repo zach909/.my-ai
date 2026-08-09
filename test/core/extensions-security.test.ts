@@ -33,21 +33,6 @@ describe('ImageExtension and VideoExtension security validations', () => {
         },
       };
     });
-    vi.doMock('node:fs', () => ({
-      ...vi.importActual('node:fs') as any,
-      existsSync: (path: string) => {
-        // Mock to make the generate methods think file was produced successfully
-        if (path.includes('neuroclaw_img_') || path.includes('neuroclaw_vid_')) {
-          return true;
-        }
-        if (path.includes('.neuroclaw')) {
-          return true;
-        }
-        return false;
-      },
-      mkdirSync: () => {},
-      writeFileSync: () => {},
-    }));
   });
 
   afterEach(() => {
@@ -182,6 +167,8 @@ describe('ImageExtension and VideoExtension security validations', () => {
       const res = await ext.onMessage('create C++ :: name="test"');
       expect(res).not.toBeNull();
       expect((res as any).created).toBe('C++');
+    });
+
     it('rejects malicious language names with path-traversal or invalid characters in create', async () => {
       const { UniversalLanguageSkill } = await import('../../plugins/extensions/index');
       const ext = new UniversalLanguageSkill({ id: 'lang', name: 'Language', type: 'api-connection', capabilities: [] } as any);
