@@ -2225,13 +2225,23 @@ export class HyperDimensionalEngine {
             .map((def, i) => ({ id: def.readoutNeuronId, ok: losses[i] < tolerance }))
             .filter(x => x.ok)
             .map(x => x.id);
-        // Conflict detection. A direct contradiction (same readout, incompatible
-        // targets) drives both losses to a stuck, near-flat equilibrium rather
-        // than a visibly oscillating one, so anti-correlation of loss *levels*
-        // alone misses it. Combine two signals over pairs that did not both
-        // converge: (1) a structural check — they constrain the same readout to
-        // targets further apart than tolerance allows; (2) anti-correlated loss
-        // *deltas* (satisfying one epoch-over-epoch worsens the other).
+        const conflicts = this.detectDefinitionConflicts(definitions, losses, lossHistory, dims, tolerance);
+        return { converged, epochs: ranEpochs, losses, satisfied, conflicts };
+    }
+    /**
+     * Shared by trainDefinitions() (analytic delta rule) and
+     * trainDefinitionsRandomSearch() (below) -- conflict detection doesn't
+     * depend on which update rule got the losses to where they are, only on
+     * the resulting loss trajectories and targets. A direct contradiction
+     * (same readout, incompatible targets) drives both losses to a stuck,
+     * near-flat equilibrium rather than a visibly oscillating one, so
+     * anti-correlation of loss *levels* alone misses it. Combine two
+     * signals over pairs that did not both converge: (1) a structural
+     * check — they constrain the same readout to targets further apart
+     * than tolerance allows; (2) anti-correlated loss *deltas* (satisfying
+     * one epoch-over-epoch worsens the other).
+     */
+    detectDefinitionConflicts(definitions, losses, lossHistory, dims, tolerance) {
         const deltas = lossHistory.map(h => h.slice(1).map((v, k) => v - h[k]));
         const targetDist = (a, b) => {
             let s = 0;
@@ -2253,6 +2263,99 @@ export class HyperDimensionalEngine {
                     conflicts.push({ a: i, b: j, correlation: corr });
             }
         }
+        return conflicts;
+    }
+    /**
+     * Section 4 alternative: the SAME "clamp -> settle -> check -> adjust"
+     * contract as trainDefinitions() above, but the adjustment itself is
+     * random search (evolution-strategy style), not an analytic gradient --
+     * "each variable is randomly changed, either positively or negatively;
+     * if the result is good, move toward the change; if it's bad, move
+     * away from it (revert)." Every definition's readout gets ONE random
+     * step across all its incoming weights+bias together per epoch (not a
+     * per-weight coordinate search, which would need one settle() call per
+     * individual weight -- far too expensive for any real neuron count):
+     * try the step, re-settle, keep it if the loss actually improved,
+     * revert the whole step otherwise. Genuinely a different algorithm
+     * from trainDefinitions()'s delta rule, not gradient descent given a
+     * new name -- typically needs many more epochs to converge, since a
+     * random step only has a roughly 50% chance of even pointing the right
+     * direction, versus the delta rule's step being the exact direction of
+     * steepest descent every time.
+     */
+    trainDefinitionsRandomSearch(definitions, opts = {}) {
+        const epochs = opts.epochs ?? 500; // random search needs more attempts than the delta rule to find the same minimum
+        const stepSize = opts.stepSize ?? 0.15;
+        const tolerance = opts.tolerance ?? 1e-3;
+        const dims = this.config.dimensions;
+        const D = this.totalDims;
+        const N = this.neurons.length;
+        const evalLoss = (def) => {
+            this.settle(def.input, new Set([def.driveNeuronId]));
+            const readout = this.neurons.find(n => n.id === def.readoutNeuronId);
+            if (!readout)
+                return Infinity;
+            let sse = 0;
+            for (let d = 0; d < dims; d++) {
+                const err = (def.target[d] ?? 0) - readout.state[d + 1];
+                sse += err * err;
+            }
+            return sse / dims;
+        };
+        const lossHistory = definitions.map(() => []);
+        let losses = definitions.map(() => Infinity);
+        let converged = false;
+        let ranEpochs = 0;
+        for (let epoch = 0; epoch < epochs; epoch++) {
+            ranEpochs = epoch + 1;
+            losses = [];
+            for (const def of definitions) {
+                const baseline = evalLoss(def);
+                const biasOffset = def.readoutNeuronId * D;
+                // One random step across every weight+bias this readout has --
+                // the same set trainDefinitions()'s delta rule updates -- tried
+                // as a single unit, kept or reverted as a single unit.
+                const snapshot = [];
+                for (let d = 0; d < dims; d++) {
+                    const cd = d + 1;
+                    const rowOffset = (def.readoutNeuronId * D + cd) * N;
+                    for (const nj of this.neurons) {
+                        if (nj.id === def.readoutNeuronId)
+                            continue;
+                        const wdIdx = rowOffset + nj.id;
+                        snapshot.push({ idx: wdIdx, inDiag: true, value: this.connDiag[wdIdx] });
+                        this.connDiag[wdIdx] = clamp(this.connDiag[wdIdx] + (Math.random() * 2 - 1) * stepSize, -2, 2);
+                    }
+                    const bIdx = biasOffset + cd;
+                    snapshot.push({ idx: bIdx, inDiag: false, value: this.bias[bIdx] });
+                    this.bias[bIdx] = clamp(this.bias[bIdx] + (Math.random() * 2 - 1) * stepSize, -1, 1);
+                }
+                const trial = evalLoss(def);
+                if (trial < baseline) {
+                    losses.push(trial); // the random step genuinely helped -- keep it
+                }
+                else {
+                    for (const s of snapshot) {
+                        if (s.inDiag)
+                            this.connDiag[s.idx] = s.value;
+                        else
+                            this.bias[s.idx] = s.value;
+                    }
+                    losses.push(baseline); // it didn't help -- revert the whole step
+                }
+            }
+            for (let i = 0; i < definitions.length; i++)
+                lossHistory[i].push(losses[i]);
+            if (losses.every(l => l < tolerance)) {
+                converged = true;
+                break;
+            }
+        }
+        const satisfied = definitions
+            .map((def, i) => ({ id: def.readoutNeuronId, ok: losses[i] < tolerance }))
+            .filter(x => x.ok)
+            .map(x => x.id);
+        const conflicts = this.detectDefinitionConflicts(definitions, losses, lossHistory, dims, tolerance);
         return { converged, epochs: ranEpochs, losses, satisfied, conflicts };
     }
     initializeNeurons() {

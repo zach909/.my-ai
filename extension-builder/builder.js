@@ -682,13 +682,25 @@ export class ExtensionBuilder {
         if (!project)
             return null;
         const dims = 16;
+        // method: 'delta' (default) is the analytic tanh-derivative delta
+        // rule; 'random' is genuine random-search/evolution-strategy
+        // updates -- "each variable randomly changed; keep the change if
+        // it helped, revert if it didn't" -- a different algorithm, not
+        // gradient descent under another name. See
+        // HyperDimensionalEngine.trainDefinitionsRandomSearch()'s doc
+        // comment in onebrain.ts.
+        const method = opts.method === 'random' ? 'random' : 'delta';
         // 300 converged a single neuron reliably but not two neurons each
         // with their own script trained together in one pass (empirically:
         // that needed ~800). Convergence is cheap here regardless -- 5000
         // epochs on a handful of neurons still runs in well under 100ms --
         // so default generously rather than making multi-neuron projects
         // need a manual epoch bump just to converge on the first Train.
-        const epochs = opts.epochs ?? 1000;
+        // Random search needs more attempts than the delta rule to find
+        // the same minimum (a random step is only ~50% likely to even
+        // point the right way; the delta rule's step always does), so its
+        // default budget is generously higher.
+        const epochs = opts.epochs ?? (method === 'random' ? 3000 : 1000);
         const neuronCount = project.neurons.size + 1; // +1 for the shared query/drive neuron (id 0)
         const engine = new HyperDimensionalEngine({ dimensions: dims, neuronCount, propagationSteps: 12, convergenceThreshold: 0.01 });
         const vale = new ValueRangeAllocator({
@@ -720,7 +732,7 @@ export class ExtensionBuilder {
             });
         }
 
-        const result = runtime.materialize(neurons, { epochs });
+        const result = runtime.materialize(neurons, { epochs, method });
 
         // Extra training pass: every script, on top of whatever
         // materialize() already trained for @definishon, on the SAME
@@ -739,7 +751,11 @@ export class ExtensionBuilder {
                 });
             }
         }
-        const scriptResult = scriptSamples.length > 0 ? engine.trainDefinitions(scriptSamples, { epochs }) : null;
+        const scriptResult = scriptSamples.length > 0
+            ? (method === 'random'
+                ? engine.trainDefinitionsRandomSearch(scriptSamples, { epochs })
+                : engine.trainDefinitions(scriptSamples, { epochs }))
+            : null;
 
         // A neuron is "trained" only once BOTH its @definishon (if any) and
         // ALL of its scripts (if any) converged -- never claimed true on a

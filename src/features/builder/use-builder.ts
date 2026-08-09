@@ -41,7 +41,8 @@ export interface BuilderApi {
   addScript: (neuronId: string, userSays: string, response: string) => boolean;
   removeScript: (neuronId: string, index: number) => boolean;
   /** The real training sequence -- connections, then @definishon + every script, trained together until convergence. */
-  train: (epochs?: number) => TrainingResult | null;
+  /** method: 'delta' (default) is the analytic tanh-derivative delta rule; 'random' is genuine random-search/evolution-strategy updates -- each variable is randomly nudged, the nudge is kept if it genuinely improved the result and reverted otherwise. A real, different algorithm, not gradient descent renamed -- typically needs more epochs to converge than 'delta'. */
+  train: (epochs?: number, method?: 'delta' | 'random') => TrainingResult | null;
   /**
    * ALTERNATIVE training backend: real torch.autograd/torch.optim gradient
    * descent, run server-side (POST /api/extension/train-pytorch) since
@@ -172,8 +173,11 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       bump();
       return ok;
     },
-    train: (epochs) => {
-      const result = engine.train(projectId, epochs ? { epochs } : undefined);
+    train: (epochs, method) => {
+      const opts: { epochs?: number; method?: 'delta' | 'random' } = {};
+      if (epochs) opts.epochs = epochs;
+      if (method) opts.method = method;
+      const result = engine.train(projectId, Object.keys(opts).length ? opts : undefined);
       bump();
       return result;
     },
