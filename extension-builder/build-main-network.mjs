@@ -187,7 +187,19 @@ function trainCmudictBatch(sample) {
     };
     child.stdin.write(JSON.stringify(spec) + '\n');
     child.stdin.end();
-  });
+  }).then((result) => ({ ...result, samples: sampleToSpecSamples(sample) }));
+}
+
+// Recomputed (not captured from the closure above) so trainCmudictBatch()'s
+// returned `samples` is available even on the `ok:false` (no torch) path --
+// merge-networks.mjs needs these regardless of whether this particular
+// build run could train them itself.
+function sampleToSpecSamples(sample) {
+  return sample.map(({ pronunciation }, idx) => ({
+    readout: idx,
+    input: DEFINITION_TRIGGER,
+    target: embedText(pronunciation, DIMS),
+  }));
 }
 
 // ── Main ─────────────────────────────────────────────────────────────────
@@ -234,9 +246,22 @@ async function main() {
   const outPath = path.join(outDir, `main_network_${Date.now()}.ext.json`);
   writeFileSync(outPath, json, 'utf8');
 
+  let weightsPath = null;
+  if (result.ok) {
+    // The actual trained model, not just the project shape: W/b per
+    // cmudict readout (in readoutNames order), the same artifact
+    // train-coding-skills.mjs saves for its own network -- what a real
+    // weight merge (see merge-networks.mjs) averages together.
+    weightsPath = path.join(outDir, `main_network_weights_${Date.now()}.json`);
+    writeFileSync(weightsPath, JSON.stringify({
+      dims: DIMS, names: readoutNames, W: result.W, b: result.b, samples: result.samples,
+    }, null, 2), 'utf8');
+    log(`Saved weights: ${path.relative(ROOT, weightsPath)}`);
+  }
+
   log(`Saved: ${path.relative(ROOT, outPath)}`);
   log(`Total neurons: ${project.neurons.size} (${mobyCount} moby Code-to-Net + ${readoutNames.length} cmudict, ${trainedCount} trained)`);
-  return { outPath, mobyCount, cmudictCount: readoutNames.length, trainedCount, pytorchOk: result.ok };
+  return { outPath, weightsPath, mobyCount, cmudictCount: readoutNames.length, trainedCount, pytorchOk: result.ok };
 }
 
 main().then((summary) => {
