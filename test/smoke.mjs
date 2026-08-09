@@ -1548,6 +1548,68 @@ async function testEmailPluginCommandInjection() {
     'EmailPlugin: the full MIME content (including the attacker-controlled payload) is passed via stdin, not the command line');
 }
 
+// ResearchPlugin: "long-term memory / drive / web" search plus "conduct
+// research studies itself" -- never trust a single source, only mark a
+// claim verified once 2+ independent sources corroborate it.
+async function testResearchPlugin() {
+  const { ResearchPlugin } = await load('plugins/research.js');
+  const r = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
+
+  // Real filesystem search, scoped to this repo -- must find the plugin's
+  // own source file. Regression guard for a real bug caught while
+  // building this: a naive depth-first walk exhausts its whole file
+  // budget descending into whichever subdirectory sorts first
+  // alphabetically (this repo's own extension-builder/Moby, 13,000+
+  // vendored files) before ever reaching a sibling directory like
+  // plugins/ -- silently starving every later-sorted directory. The fix
+  // is breadth-first traversal; this proves plugins/research.ts itself
+  // is actually found, not just that *some* file somewhere matched.
+  const driveHits = await r.searchDrive('class ResearchPlugin', { root: process.cwd(), maxResults: 5 });
+  check(driveHits.some(h => h.location.endsWith('plugins/research.ts')),
+    'ResearchPlugin.searchDrive() finds its own source file in a real repo with a large, alphabetically-earlier sibling directory (BFS, not DFS-starved)');
+  check(driveHits.every(h => h.source === 'drive' && h.snippet.length > 0),
+    'ResearchPlugin.searchDrive() results carry a real snippet, not just a bare filename');
+
+  // A directory that doesn't exist must degrade to zero results, not throw.
+  const noHits = await r.searchDrive('anything', { root: '/definitely/does/not/exist/xyz', maxResults: 5 });
+  check(Array.isArray(noHits) && noHits.length === 0, 'ResearchPlugin.searchDrive() returns an empty array (not a throw) for a root that does not exist');
+
+  // conductResearch()'s cross-source verification, isolated from real
+  // memory/web calls by stubbing the three search methods with
+  // controlled sources -- deterministic, not dependent on network
+  // reachability or this container's accumulated memory state.
+  const withStubbedSources = (memory, drive, web) => {
+    const stub = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
+    stub.searchMemory = async () => memory;
+    stub.searchDrive = async () => drive;
+    stub.searchWeb = async () => web;
+    return stub;
+  };
+
+  const corroborated = withStubbedSources(
+    [{ source: 'memory', title: 'm', snippet: 'the launch date is scheduled for October fifteenth', location: 'mem-1' }],
+    [],
+    [{ source: 'web', title: 'w', snippet: 'officials confirmed the launch date is scheduled for October fifteenth', location: 'https://example.com' }],
+  );
+  const corroboratedReport = await corroborated.conductResearch('launch date');
+  check(corroboratedReport.verifiedCount === 1 && corroboratedReport.claims[0].verified === true,
+    'ResearchPlugin.conductResearch() marks a claim verified when 2+ independent sources corroborate the same fact');
+
+  const singleSourced = withStubbedSources(
+    [],
+    [],
+    [{ source: 'web', title: 'w', snippet: 'a single unconfirmed rumor with no corroboration anywhere else', location: 'https://example.com' }],
+  );
+  const singleSourcedReport = await singleSourced.conductResearch('rumor');
+  check(singleSourcedReport.unverifiedCount === 1 && singleSourcedReport.claims[0].verified === false,
+    'ResearchPlugin.conductResearch() never marks a single-sourced claim verified -- "checking checking checking," not trusting one hit');
+
+  const noSources = withStubbedSources([], [], []);
+  const emptyReport = await noSources.conductResearch('nothing found anywhere');
+  check(emptyReport.claims.length === 0 && emptyReport.verifiedCount === 0 && emptyReport.unverifiedCount === 0,
+    'ResearchPlugin.conductResearch() reports an honest empty result when no source has anything, instead of fabricating a claim');
+}
+
 async function testSelfReplicatePluginConstructs() {
   // self_replicate.ts's constructor used __dirname to locate the repo root
   // (for its clones/ directory) -- CommonJS-only, and this whole backend runs
@@ -4439,6 +4501,7 @@ async function main() {
     ['Extension catalog fully active', testExtensionCatalogFullyActive],
     ['Chrome Apps', testChromeApps],
     ['EmailPlugin command injection fix', testEmailPluginCommandInjection],
+    ['ResearchPlugin: long-term memory / drive / web search + never-trust-one-source verification', testResearchPlugin],
     ['SelfReplicatePlugin constructs under native ESM (no __dirname)', testSelfReplicatePluginConstructs],
     ['Extension Builder flow', testExtensionBuilderFlow],
     ['Neural Definition directives', testNeuralDefinitionDirectives],
