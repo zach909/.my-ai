@@ -1,3 +1,8 @@
 # Runtime output of the Extension Builder (POST /api/extension/build).
 # User-built extensions are local artifacts, regenerable from the builder UI.
 extensions/*.ext.json
+
+# Trained weight artifacts from the build-*.mjs/train-*.mjs/merge-networks.mjs
+# scripts (extension-builder/) -- regenerable by rerunning those scripts,
+# same reasoning as the .ext.json rule above.
+extensions/*_weights_*.json
