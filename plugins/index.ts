@@ -23,6 +23,7 @@ import { PasskeysPlugin } from "./passkeys.js";
 import { RoboticsPlugin } from "./robotics.js";
 import { CodingExtension } from "./extensions/coding.js";
 import { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
+import { ResearchPlugin } from "./research.js";
 import type { BasePlugin } from "../plugin_manager/sdk.js";
 
 export { LocationPlugin } from "./location.js";
@@ -49,6 +50,7 @@ export { RoboticsPlugin } from "./robotics.js";
 export { MultiInputPlugin } from "./multi-input.js";
 export { CodingExtension } from "./extensions/coding.js";
 export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
+export { ResearchPlugin } from "./research.js";
 
 export function createPluginInstance(
   name: string,
@@ -86,6 +88,7 @@ export function createPluginInstance(
   if (lower.includes("plugin maker") || lower.includes("plugin-maker")) return new PluginMakerExtension(definition);
   if (lower === "multi-input" || lower === "multi input" || lower === "multiinput" || lower.includes("desktop")) return new MultiInputPlugin(definition);
   if (lower.includes("language") || lower.includes("universal-language")) return new UniversalLanguageSkill(definition);
+  if (lower === "research") return new ResearchPlugin(definition);
   throw new Error(`Unknown plugin: ${name}`);
 }
 
@@ -120,6 +123,7 @@ const pluginExtensions: Record<string, PluginDefinition> = {
   "skill-maker": { id: "skill-maker", name: "Skill Maker", type: "api-connection", capabilities: ["skill-maker"] },
   "plugin-maker": { id: "plugin-maker", name: "Plugin Maker", type: "api-connection", capabilities: ["plugin-maker"] },
   "universal-language-skill": { id: "universal-language-skill", name: "Universal Language Skill", type: "skill-expert", capabilities: ["language-support", "code-detection", "neuron-clusters"] },
+  research: { id: "research", name: "Research", type: "api-connection", capabilities: ["memory-search", "drive-search", "web-search"] },
 };
 
 const allExtensions: ExtensionManifest[] = Object.entries(pluginExtensions).map(([key, def]) => ({
