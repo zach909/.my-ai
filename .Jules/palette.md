@@ -94,3 +94,7 @@
 ## 2026-09-10 - [Interactive Empty State Card & High-Contrast CTA Triggers]
 **Learning:** Static basic text empty states (such as zero-chats indicator) must be refactored into structured, visual-tactile onboarding empty state cards. Utilizing a central contextual decorative icon wrapper, distinct supportive descriptions, and high-contrast `<Button>` elements (wrapping TanStack Router `<Link>` using `asChild` composition) equipped with tactical active micro-interactions (`active:scale-95`) provides exceptional visual delight and accessible direction.
 **Action:** Always replace basic static plain text empty states with structured empty state card dashboards containing actionable triggers, tactile scale down animation transforms, and accessible descriptive elements.
+
+## 2026-09-10 - [Interactive Onboarding Planning State Redesign]
+**Learning:** Replacing flat, non-actionable static text descriptions on empty views (such as the Planning dashboard) with interactive, beautifully structured card wrappers drastically enhances user orientation and experience. Providing a styled dashed border, central decorative icons (`Goal`), explicit supportive descriptions, and high-contrast, tactile navigation triggers (`active:scale-95 transition-all`) wraps complex onboarding with clear user direction and interactive delight.
+**Action:** When a screen or list reports a zero state, always implement structured, visual empty-state cards containing clear supportive text and responsive action-oriented routing triggers.
