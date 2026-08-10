@@ -1,3 +1,7 @@
+## 2026-09-15 - [Interactive Empty State Redesign & Accessible Query Validation for Knowledge]
+**Learning:** Redesigning static empty dashboard screens (such as Knowledge & Reasoning) into interactive, beautifully designed empty state cards with a central decorative icon, clear supportive labels associated with inputs (`htmlFor` to `id`), and instant live feedback regions wrapped in `role="status"` with `aria-live="polite"` drastically elevates visual delight, user guidance, and keyboard/screen-reader accessibility.
+**Action:** For all zero-state views, implement an interactive preview with clear accessible labels, stateful aria-live updates, and interactive tactile micro-animations (`active:scale-95`).
+
 ## 2026-09-11 - [Interactive Empty State Card & High-Contrast CTA Triggers for Planning]
 **Learning:** Redesigning basic static text placeholder/empty states (such as the Planning page description) into structured, interactive onboarding empty state cards with a dashed-border, a central decorative icon, clear explanatory text, and high-contrast, accessible `<Button>` elements (wrapping TanStack Router `<Link>` with `asChild`) equipped with tactile scale-down micro-interactions (`active:scale-95 transition-all`) substantially elevates user engagement, onboard direction, and design coherence.
 **Action:** Replace plain-text placeholder descriptions with interactive empty-state cards featuring custom decorative icons, supportive text, and tactile click transitions to guide users to actionable entry points.
