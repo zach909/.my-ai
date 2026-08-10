@@ -11,7 +11,7 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, relative, isAbsolute } from "node:path";
 
 export interface SearchResult {
   source: "memory" | "drive" | "web";
@@ -94,7 +94,14 @@ export class ResearchPlugin extends BasePlugin {
     query: string,
     opts: { root?: string; maxResults?: number; maxFiles?: number } = {},
   ): Promise<SearchResult[]> {
-    const root = resolve(opts.root ?? process.cwd());
+    const absoluteRoot = resolve(process.cwd());
+    const root = resolve(absoluteRoot, opts.root ?? ".");
+
+    const rel = relative(absoluteRoot, root);
+    if (rel.startsWith("..") || isAbsolute(rel)) {
+      throw new Error(`Security Error: Path traversal detected for root: ${opts.root}`);
+    }
+
     const maxResults = opts.maxResults ?? 20;
     const maxFiles = opts.maxFiles ?? 5000;
     const needle = query.toLowerCase();
