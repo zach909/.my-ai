@@ -1571,7 +1571,7 @@ async function testResearchPlugin() {
     'ResearchPlugin.searchDrive() results carry a real snippet, not just a bare filename');
 
   // A directory that doesn't exist must degrade to zero results, not throw.
-  const noHits = await r.searchDrive('anything', { root: '/definitely/does/not/exist/xyz', maxResults: 5 });
+  const noHits = await r.searchDrive('anything', { root: './definitely/does/not/exist/xyz', maxResults: 5 });
   check(Array.isArray(noHits) && noHits.length === 0, 'ResearchPlugin.searchDrive() returns an empty array (not a throw) for a root that does not exist');
 
   // conductResearch()'s cross-source verification, isolated from real
