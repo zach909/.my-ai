@@ -232,7 +232,7 @@ function withSandboxWorktree(fn) {
  *  to a logged, non-fatal failure if git push isn't possible in this
  *  environment (no credentials, no network) -- the improvement stays
  *  recorded locally and the loop tries again next cycle. */
-function pushScoreboardToBeta(board) {
+export function pushScoreboardToBeta(board) {
   const tmp = mkdtempSync(path.join(os.tmpdir(), 'neuroclaw-beta-push-'))
   const worktree = path.join(tmp, 'wt')
   try {

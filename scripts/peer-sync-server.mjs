@@ -12,7 +12,15 @@
  */
 
 import { startPeerServer, DEFAULT_PEER_PORT } from './peer-sync.mjs'
-import { loadScoreboard, saveScoreboard } from './self-improve.mjs'
+import { loadScoreboard, saveScoreboard, pushScoreboardToBeta } from './self-improve.mjs'
 
 const port = Number(process.env.NEUROCLAW_PEER_PORT) || DEFAULT_PEER_PORT
-startPeerServer({ port, loadScoreboard: () => loadScoreboard(), saveScoreboard: (board) => saveScoreboard(board) })
+startPeerServer({
+  port,
+  loadScoreboard: () => loadScoreboard(),
+  saveScoreboard: (board) => saveScoreboard(board),
+  // "When one model learns they all learn, and push to GitHub" -- an
+  // improvement adopted from a peer gets pushed to beta the same way a
+  // self-trained one does, not just kept locally.
+  pushToBeta: (board) => pushScoreboardToBeta(board),
+})

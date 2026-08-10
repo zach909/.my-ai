@@ -22,8 +22,9 @@ import {
   DEFAULT_HYPERPARAMS,
   TARGETS,
 } from '../../scripts/self-improve.mjs';
-import { validateImprovementMessage, mergeImprovement, loadPeers } from '../../scripts/peer-sync.mjs';
+import { validateImprovementMessage, mergeImprovement, loadPeers, startPeerServer } from '../../scripts/peer-sync.mjs';
 import { computeTunedEnv, tunedEnv } from '../../scripts/process-tuning.mjs';
+import { createConnection } from 'node:net';
 
 describe('mutateHyperparams() -- evolution-strategy style perturbation', () => {
   it('stays within a bounded jitter of the base, never wildly off', () => {
@@ -249,5 +250,99 @@ describe('process-tuning: computeTunedEnv() -- scoped to this process only', () 
     const env = tunedEnv({ NODE_OPTIONS: '--some-existing-flag' });
     expect(env.NODE_OPTIONS).toContain('--some-existing-flag');
     expect(env.NODE_OPTIONS).toContain('--max-old-space-size=');
+  });
+});
+
+describe('peer-sync: startPeerServer() -- "when one model learns they all learn"', () => {
+  function sendMessage(port: number, payload: unknown): Promise<void> {
+    return new Promise((resolve, reject) => {
+      const socket = createConnection({ host: '127.0.0.1', port }, () => {
+        socket.write(JSON.stringify(payload) + '\n');
+        socket.end();
+      });
+      socket.on('close', () => resolve());
+      socket.on('error', reject);
+    });
+  }
+
+  it('accepting a real improvement over the socket also pushes it to beta, not just saves it locally', async () => {
+    const target = TARGETS[0].script;
+    let savedBoard: any = null;
+    let pushedBoard: any = null;
+    const server = startPeerServer({
+      port: 0, // OS-assigned free port -- no fixed-port collision between test runs
+      loadScoreboard: () => ({ targets: {} }),
+      saveScoreboard: (board) => { savedBoard = board; },
+      pushToBeta: (board) => { pushedBoard = board; return { ok: true }; },
+    });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      await sendMessage(port, {
+        type: 'scoreboard-improvement',
+        target,
+        hyperparams: { epochs: 1000, learningRate: 0.05, tolerance: 1e-3 },
+        score: 0.8,
+        from: 'test-peer',
+      });
+      // socket 'end' handling is async -- give the event loop a tick.
+      await new Promise((r) => setTimeout(r, 50));
+
+      expect(savedBoard).not.toBeNull();
+      expect(savedBoard.targets[target].bestScore).toBe(0.8);
+      expect(pushedBoard).not.toBeNull(); // the accept path called pushToBeta, not just saveScoreboard
+    } finally {
+      server.close();
+    }
+  });
+
+  it('a malformed or invalid message is dropped silently -- never saved, never pushed', async () => {
+    let saveCalled = false;
+    let pushCalled = false;
+    const server = startPeerServer({
+      port: 0,
+      loadScoreboard: () => ({ targets: {} }),
+      saveScoreboard: () => { saveCalled = true; },
+      pushToBeta: () => { pushCalled = true; return { ok: true }; },
+    });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      await sendMessage(port, { type: 'not-a-real-message', garbage: true });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(saveCalled).toBe(false);
+      expect(pushCalled).toBe(false);
+    } finally {
+      server.close();
+    }
+  });
+
+  it('works with no pushToBeta supplied at all -- push is optional, never required', async () => {
+    const target = TARGETS[0].script;
+    let savedBoard: any = null;
+    const server = startPeerServer({
+      port: 0,
+      loadScoreboard: () => ({ targets: {} }),
+      saveScoreboard: (board) => { savedBoard = board; },
+      // pushToBeta intentionally omitted
+    });
+    await new Promise<void>((resolve) => server.once('listening', resolve));
+    const port = (server.address() as { port: number }).port;
+
+    try {
+      await sendMessage(port, {
+        type: 'scoreboard-improvement',
+        target,
+        hyperparams: { epochs: 1000, learningRate: 0.05, tolerance: 1e-3 },
+        score: 0.6,
+        from: 'test-peer',
+      });
+      await new Promise((r) => setTimeout(r, 50));
+      expect(savedBoard).not.toBeNull(); // still accepted and saved locally without a push handler
+    } finally {
+      server.close();
+    }
   });
 });
