@@ -122,13 +122,16 @@ export class LocationPlugin extends BasePlugin {
 
   async geocode(address: string): Promise<GeocodeResult> {
     if (typeof address !== "string") {
-      throw new Error("Security Error: Address must be a string");
+      throw new Error("Security Error: Input must be a string.");
     }
-    if (!address) {
-      throw new Error("Security Error: Address cannot be empty");
+    if (address.length === 0) {
+      throw new Error("Security Error: Address cannot be empty.");
     }
     if (address.length > 100) {
-      throw new Error("Security Error: Address exceeds maximum length");
+      throw new Error("Security Error: Address exceeds maximum length limit.");
+    }
+    if (address.includes("..") || address.includes("/") || address.includes("\\")) {
+      throw new Error("Security Error: Invalid address format.");
     }
 
     const normalized = Object.keys(CITY_DATABASE).find(k => k.toLowerCase() === address.toLowerCase());
