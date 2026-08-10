@@ -1,4 +1,4 @@
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { MultiDesktopManager } from "../interface/multi-desktop.js";
 export class MultiInputPlugin extends BasePlugin {
@@ -146,8 +146,7 @@ export class MultiInputPlugin extends BasePlugin {
             const dev = this.desktopManager.getVirtualDevices().find(d => d.type === 'mouse');
             if (dev && dev.masterId !== undefined) {
                 try {
-                    const cmd = `xinput click ${dev.masterId} ${btnArg}`;
-                    execSync(cmd, { timeout: 2000 });
+                    execFileSync("xinput", ["click", String(dev.masterId), String(btnArg)], { timeout: 2000, stdio: "ignore" });
                 }
                 catch { }
             }
@@ -158,8 +157,11 @@ export class MultiInputPlugin extends BasePlugin {
             const dev = this.desktopManager.getVirtualDevices().find(d => d.type === 'mouse');
             if (dev) {
                 try {
-                    const cmd = `DISPLAY=:0 xdotool mousemove ${Math.round(x)} ${Math.round(y)}`;
-                    execSync(cmd, { timeout: 2000 });
+                    execFileSync("xdotool", ["mousemove", String(Math.round(x)), String(Math.round(y))], {
+                        timeout: 2000,
+                        env: { ...process.env, DISPLAY: ":0" },
+                        stdio: "ignore"
+                    });
                 }
                 catch { }
             }
@@ -169,8 +171,16 @@ export class MultiInputPlugin extends BasePlugin {
         if (this.desktopManager.hasXinput()) {
             try {
                 const safe = key.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase();
-                const cmd = `DISPLAY=:0 xdotool key ${safe === " " ? "space" : safe}`;
-                execSync(cmd, { timeout: 2000 });
+                if (!safe)
+                    return;
+                if (safe.length > 32)
+                    return;
+                const keyArg = safe === " " ? "space" : safe;
+                execFileSync("xdotool", ["key", keyArg], {
+                    timeout: 2000,
+                    env: { ...process.env, DISPLAY: ":0" },
+                    stdio: "ignore"
+                });
             }
             catch { }
         }
