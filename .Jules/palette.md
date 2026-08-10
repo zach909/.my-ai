@@ -1,3 +1,7 @@
+## 2026-08-10 - [Interactive Subsystem Mapping & Live Topology Announcements]
+**Learning:** When transitioning a static, non-functional view into an interactive layout (like the ASI Subsystem Topology Architect), providing real-time screen-reader state announcements via `role="status"` and `aria-live="polite"` is crucial for cognitive mapping. In tandem, using disabled button states for already-provisioned items and adding high-contrast visually-directed connectors (such as an animated pulse arrow) gives users clear, multi-sensory confirmation of the current network state.
+**Action:** For interactive graph/topology-builders, map visual connections to structured, accessible lists paired with screen-reader status updates and clear tactile click indicators.
+
 ## 2026-09-11 - [Interactive Empty State Card & High-Contrast CTA Triggers for Planning]
 **Learning:** Redesigning basic static text placeholder/empty states (such as the Planning page description) into structured, interactive onboarding empty state cards with a dashed-border, a central decorative icon, clear explanatory text, and high-contrast, accessible `<Button>` elements (wrapping TanStack Router `<Link>` with `asChild`) equipped with tactile scale-down micro-interactions (`active:scale-95 transition-all`) substantially elevates user engagement, onboard direction, and design coherence.
 **Action:** Replace plain-text placeholder descriptions with interactive empty-state cards featuring custom decorative icons, supportive text, and tactile click transitions to guide users to actionable entry points.
@@ -101,7 +105,7 @@
 **Action:** When a screen or list reports a zero state, always implement structured, visual empty-state cards containing clear supportive text and responsive action-oriented routing triggers.
 
 ## 2026-09-10 - [Accessible Collapsed Sidebar Navigation Items]
-**Learning:** Collapsed navigation layouts often strip visible text labels from interactive controls to show only icons. While tooltip wrappers provide visual assistance, they do not automatically supply the accessible names required by screen readers. For icon-only links and buttons, developers must explicitly provide an `aria-label` matching the navigation item's logical target.
+**Learning:** Collapsed navigation layouts often strip visual text labels from interactive controls to show only icons. While tooltip wrappers provide visual assistance, they do not automatically supply the accessible names required by screen readers. For icon-only links and buttons, developers must explicitly provide an `aria-label` matching the navigation item's logical target.
 **Action:** Always declare explicit `aria-label` attributes on icon-only interactive components, especially inside collapsed sidebars and status bars.
 
 ## 2026-09-08 - [Interactive Onboarding & Clear Next-Steps in Static Empty States]
