@@ -7,7 +7,7 @@
  * single canonical MultiDesktopManager — do not duplicate it elsewhere.
  */
 
-import { execSync, spawn } from 'node:child_process';
+import { execSync, spawn, execFileSync } from 'node:child_process';
 import { existsSync } from 'node:fs';
 
 // Same destructive-command denylist as desktop-app/src/main/main.js's
@@ -323,7 +323,9 @@ export class MultiDesktopManager {
     if (!/^[a-zA-Z0-9_xX][a-zA-Z0-9_xX-]*$/.test(windowId)) return;
     const index = desktopId === 'ai' ? this.aiGnomeWorkspaceIndex : 0;
     if (!this.gnomeAvailable || index < 0) return;
-    try { execSync(`wmctrl -i -r ${windowId} -t ${index} 2>/dev/null`, { timeout: 3000 }); } catch { /* best effort */ }
+    try {
+      execFileSync("wmctrl", ["-i", "-r", windowId, "-t", String(index)], { timeout: 3000, stdio: "ignore" });
+    } catch { /* best effort */ }
   }
 
   /**
@@ -387,7 +389,9 @@ export class MultiDesktopManager {
     const dev = this.virtualDevices.get(deviceId);
     if (!dev) return false;
     if (dev.masterId !== undefined && this.xinputAvailable) {
-      try { execSync(`xinput remove-master ${dev.masterId} 2>/dev/null`, { timeout: 3000 }); } catch { /* best effort */ }
+      try {
+        execFileSync("xinput", ["remove-master", String(dev.masterId)], { timeout: 3000, stdio: "ignore" });
+      } catch { /* best effort */ }
     }
     return this.virtualDevices.delete(deviceId);
   }
