@@ -20,8 +20,8 @@ This software runs locally on your own machine by default. It doesn't have accou
 | Feature | What's sent | Where it goes | When it happens |
 |---|---|---|---|
 | Web search (`ResearchPlugin.searchWeb()`, `digestIntel()`) | Your search query text | DuckDuckGo's public HTML search endpoint | Only when you or the agent explicitly invoke a web search — never automatically, never in the background |
-| Self-improvement `beta` push | Hyperparameter values (epochs, learning rate, tolerance) and a numeric accuracy score — **never conversation content, files, or personal data** | This project's own GitHub repository, `beta` branch | Only when a candidate genuinely outperforms the current best (see [[Home]]'s self-improvement section) and `NEUROCLAW_SELF_IMPROVE` isn't disabled |
-| Peer sync (`scripts/peer-sync.mjs`) | The same hyperparameter/score data as the beta push — nothing else | Directly to peers YOU configure (`NEUROCLAW_PEERS` or `extension-builder/peers.txt`) | Only when you've configured at least one peer; empty (a complete no-op) by default |
+| Self-improvement push | Hyperparameter values (epochs, learning rate, tolerance) and a numeric accuracy score — **never conversation content, files, or personal data** | This project's own GitHub repository, directly to the `main` branch by default (`NEUROCLAW_SELF_IMPROVE_BRANCH` to change it) | Only when a candidate genuinely outperforms the current best AND passes the full runner test suite (see [[Self-Improvement]]) and `NEUROCLAW_SELF_IMPROVE` isn't disabled |
+| Peer sync (`scripts/peer-sync.mjs`) | The same hyperparameter/score data as the GitHub push — nothing else | Directly to peers YOU configure (`NEUROCLAW_PEERS` or `extension-builder/peers.txt`) | Only when you've configured at least one peer; empty (a complete no-op) by default |
 
 Nothing else in this project makes an outbound network call. This is enforced at multiple layers, not just claimed once — see [[Privacy]]'s "What 'no external APIs' actually means here" section for the specifics (plugin architecture, server bind address, CORS policy).
 
@@ -35,7 +35,7 @@ Nothing else in this project makes an outbound network call. This is enforced at
 ## Your control over the network-touching features
 
 - Web search only fires when explicitly invoked (a tool call, not a background process).
-- The self-improvement loop and its `beta` push can be turned off entirely with `NEUROCLAW_SELF_IMPROVE=0`.
+- The self-improvement loop and its push to `main` can be turned off entirely with `NEUROCLAW_SELF_IMPROVE=0`, or redirected to an isolated branch instead of `main` with `NEUROCLAW_SELF_IMPROVE_BRANCH=<branch>`.
 - Peer sync is opt-in and empty by default (`NEUROCLAW_PEER_SYNC=0` disables the listener entirely); you choose exactly who your instance talks to.
 
 ## See Also
