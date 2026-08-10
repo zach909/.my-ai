@@ -11,6 +11,7 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { readFileSync, readdirSync, statSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, relative, isAbsolute } from "node:path";
 
 export interface SearchResult {
@@ -106,6 +107,12 @@ export class ResearchPlugin extends BasePlugin {
     // Graceful fallback for non-existent path requirements in tests
     if (!existsSync(root)) {
       return [];
+    const absoluteRoot = resolve(process.cwd());
+    const root = resolve(absoluteRoot, opts.root ?? ".");
+
+    const rel = relative(absoluteRoot, root);
+    if (rel.startsWith("..") || isAbsolute(rel)) {
+      throw new Error(`Security Error: Path traversal detected for root: ${opts.root}`);
     }
 
     const maxResults = opts.maxResults ?? 20;
