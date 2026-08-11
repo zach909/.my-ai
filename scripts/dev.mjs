@@ -9,9 +9,18 @@
 
 import { execFileSync, spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
+import { printUpdateCheck } from './update-check.mjs';
 
 const ROOT = process.cwd();
 const BACKEND_PORT = 7861;
+
+// Same motivation as the "always rebuild" comment below: a stale
+// checkout behind origin is exactly what caused real, reported breakage
+// this session (another automated agent's bad merge broke `main`, and
+// the user's local checkout stayed broken until they pulled). Read-only,
+// never blocks startup on failure.
+console.log('[dev] checking for updates...');
+printUpdateCheck(ROOT);
 
 // Always rebuild, not just when dist/interface/main.js is missing. It used
 // to only build once "if missing" -- fine the very first time, but on every
