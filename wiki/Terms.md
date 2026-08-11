@@ -14,11 +14,11 @@ This software is provided as-is. It is a research/hobby project (an experimental
 
 Running `npm run server` starts more than a web server. Before you run it, you should know what else it does:
 
-- **Autonomous self-improvement** (`scripts/self-improve.mjs`): periodically retrains a bounded set of this project's own skill networks with mutated hyperparameters, inside an isolated local sandbox, and — only if a candidate strictly outperforms the current best AND still passes the full runner test suite — pushes that result to this repository's `beta` branch and (if you've configured peers) to them directly. This happens automatically, on a timer, once the server is running. **Disable it** with `NEUROCLAW_SELF_IMPROVE=0`.
+- **Autonomous self-improvement** (`scripts/self-improve.mjs`): periodically retrains a bounded set of this project's own skill networks with mutated hyperparameters, inside an isolated local sandbox, and — only if a candidate strictly outperforms the current best AND still passes the full runner test suite — pushes that result **directly to `main`, with no human review step**, and (if you've configured peers) to them directly too. This happens automatically, on a timer, once the server is running. **This is an explicit choice, not a conservative default** — commits land on your primary branch unattended the moment a candidate passes its checks. **Disable it entirely** with `NEUROCLAW_SELF_IMPROVE=0`, or redirect it to an isolated branch instead of `main` with `NEUROCLAW_SELF_IMPROVE_BRANCH=<branch>`.
 - **Peer sync** (`scripts/peer-sync.mjs`): listens on a local port for improvements from peers you configure, and only accepts a message if it's a real improvement over your own local best, matches a fixed whitelist of target scripts, and passes strict validation (no arbitrary code is ever executed from a peer message — see [[Privacy-Policy]]). Off/empty by default; you must configure `NEUROCLAW_PEERS` or `extension-builder/peers.txt` for it to talk to anyone. **Disable the listener** with `NEUROCLAW_PEER_SYNC=0`.
 - **System diagnostics**: read-only, printed to your own terminal at startup — never modifies anything on your machine, never transmits anything. See [[Privacy-Policy]] for exactly what it reads.
 
-If you're deploying this on a machine you don't fully control, or somewhere the `beta` branch push matters (a shared/production repo), read `scripts/self-improve.mjs`'s own doc comment before enabling it — it explains exactly what gets pushed and under what conditions.
+If you're deploying this on a machine you don't fully control, or somewhere a direct push to `main` matters (a shared/production repo), read `scripts/self-improve.mjs`'s own doc comment before enabling it — it explains exactly what gets pushed and under what conditions.
 
 ## What this software does not do
 
@@ -28,7 +28,7 @@ If you're deploying this on a machine you don't fully control, or somewhere the 
 
 ## Your responsibility
 
-You are responsible for reviewing what this software does before running it in any context where the consequences matter — especially the autonomous push-to-`beta` and peer-sync behavior described above. The defaults are conservative (self-improvement stays local except for the final `beta` push; peer sync is empty until you configure it), but you should understand them rather than assume them.
+You are responsible for reviewing what this software does before running it in any context where the consequences matter — especially the autonomous push-to-`main` and peer-sync behavior described above. Peer sync defaults to empty/off until you configure it, but the self-improvement push to `main` is on by default once the server is running — you should understand it rather than assume it's conservative.
 
 ## Changes to these terms
 

@@ -70,7 +70,24 @@ if (isEntryPoint()) {
         const host = process.env.NEUROCLAW_WEB_HOST || '127.0.0.1';
         startWeb(port)
             .then(() => console.log(`Neuroclaw HTTP backend listening on http://${host}:${port}`))
-            .catch(err => { console.error('Failed to start web backend:', err); process.exit(1); });
+            .catch(err => {
+            // EADDRINUSE is common and self-explanatory once you know the
+            // cause: `npm run dev` and `npm run server` both default to the
+            // same backend port (7861), so leaving one running and starting
+            // the other collides -- a real report from running exactly that.
+            // The raw Node stack trace this used to print didn't say why;
+            // this does.
+            if (err && err.code === 'EADDRINUSE') {
+                console.error(`Failed to start web backend: port ${port} is already in use.\n` +
+                    `This usually means another Neuroclaw backend is already running -- ` +
+                    `check for an existing 'npm run dev' or 'npm run server' in another ` +
+                    `terminal, or pass a different port: node dist/interface/main.js web <port>.`);
+            }
+            else {
+                console.error('Failed to start web backend:', err);
+            }
+            process.exit(1);
+        });
     }
     else {
         bootstrap()

@@ -2,7 +2,7 @@
 /**
  * peer-sync.mjs — direct, decentralized propagation of self-improvement
  * results between running NeuroClaw instances, alongside (never instead
- * of) the GitHub `beta` push.
+ * of) the GitHub push.
  *
  * "GitHub is the core... this is how all the information gets passed
  * from one sandbox to another... I want a way to pass it directly
@@ -16,7 +16,7 @@
  * which is the whole point: no single server anyone can take down or
  * gate stops the propagation). When scripts/self-improve.mjs rewards a
  * candidate, it broadcasts the improvement directly to every configured
- * peer over a plain TCP socket, in addition to pushing it to `beta`.
+ * peer over a plain TCP socket, in addition to pushing it to the target branch.
  * When a peer receives one, if it's a real improvement over what that
  * peer already has, it adopts it into its own local scoreboard --
  * spreading hyperparameter improvements peer-to-peer even if GitHub is
@@ -156,7 +156,7 @@ function sendToPeer(peer, payload, timeoutMs = 5000) {
 
 /** Broadcasts one improvement to every configured peer, in parallel,
  *  best-effort -- called by self-improve.mjs right after a candidate is
- *  rewarded, alongside (not instead of) the GitHub beta push. */
+ *  rewarded, alongside (not instead of) the GitHub push. */
 export async function broadcastImprovement(target, hyperparams, score, peers = loadPeers()) {
   if (peers.length === 0) return { sent: 0, peers: [] }
   const payload = {
@@ -178,8 +178,26 @@ export async function broadcastImprovement(target, hyperparams, score, peers = l
  * it's a real improvement -- merged into the local scoreboard on disk via
  * the caller-supplied load/save functions (dependency-injected so this
  * stays testable without real files or sockets).
+ *
+ * "When one model learns they all learn, and push to GitHub" -- "not
+ * beta, but to git": accepting an improvement from a peer isn't just a
+ * local write -- it's treated the same way this instance's OWN
+ * self-improvement loop treats a reward. `pushToBeta` (dependency-
+ * injected, same pattern as loadScoreboard/saveScoreboard -- see
+ * peer-sync-server.mjs for the real wiring; the name is a holdover from
+ * an earlier design and it now pushes to TARGET_BRANCH, main by
+ * default -- see self-improve.mjs) pushes the newly-adopted best
+ * straight to that branch, same as if this instance had trained it
+ * itself. And the improvement is
+ * re-broadcast to this instance's OWN configured peers, so it keeps
+ * propagating outward through the whole mesh, not just one hop from
+ * whoever originally trained it -- a peer of a peer eventually
+ * converges too. This can't loop forever: mergeImprovement() only ever
+ * accepts a STRICT improvement, so once every peer's local best matches
+ * the true best for a target, no further "accepted" event fires and the
+ * re-broadcast chain naturally stops on its own.
  */
-export function startPeerServer({ port = DEFAULT_PEER_PORT, loadScoreboard, saveScoreboard } = {}) {
+export function startPeerServer({ port = DEFAULT_PEER_PORT, loadScoreboard, saveScoreboard, pushToBeta } = {}) {
   const server = createServer((socket) => {
     let buf = ''
     socket.on('data', (chunk) => {
@@ -200,6 +218,14 @@ export function startPeerServer({ port = DEFAULT_PEER_PORT, loadScoreboard, save
       if (accepted) {
         saveScoreboard(merged)
         log(`accepted improvement for ${validated.target} from peer ${validated.from} (score ${validated.score.toFixed(4)})`)
+        if (pushToBeta) {
+          const result = pushToBeta(merged)
+          if (result?.ok) log(`pushed peer-learned improvement for ${validated.target}`)
+        }
+        // Propagate outward to this instance's own peers -- "when one
+        // model learns they all learn." A no-op when no peers are
+        // configured, same as every other peer-sync call.
+        broadcastImprovement(validated.target, validated.hyperparams, validated.score).catch(() => {})
       }
     })
     socket.on('error', () => {}) // a peer dropping mid-write is normal, not fatal

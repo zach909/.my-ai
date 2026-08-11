@@ -4,13 +4,12 @@
  * launches alongside the web backend.
  *
  * "when you run npm run server it will do autonomous improvements, it will
- * improve its skills, push them to GitHub beta... it will run improvement
+ * improve its skills, push them to GitHub... it will run improvement
  * algorithms that you can use to improve, making it code stuff and learn...
- * this will be pushed to GitHub beta, then the third stage where it has a
+ * this will be pushed to GitHub, then the third stage where it has a
  * sandbox and basically what it does is it improves its own code, if it
  * works then the model will be rewarded... if it fails it will be
- * punished, then if it is better than the original it'll be pushed to
- * beta."
+ * punished, then if it is better than the original it'll be pushed."
  *
  * A concrete, honest realization of that spec, scoped to what this repo
  * can actually and safely do:
@@ -35,15 +34,20 @@
  *     trainDefinitionsRandomSearch() elsewhere in this repo -- a real,
  *     different algorithm from plain gradient descent, not just a
  *     restart of it.
- *   - "rewarded... punished... pushed to beta if better than the
- *     original": a real, persisted scoreboard
+ *   - "rewarded... punished... pushed if it's better than the original":
+ *     a real, persisted scoreboard
  *     (extension-builder/self-improvement-scoreboard.json) tracks the
  *     best hyperparameters and score seen so far per target script. A
  *     candidate that scores higher is the reward -- it becomes the new
- *     best and gets pushed straight to a dedicated `beta` branch (never
- *     main, never this session's own dev branch) via a second isolated
- *     worktree. A candidate that scores the same or worse is the
- *     punishment -- discarded, logged to history, nothing pushed.
+ *     best and gets pushed straight to the target branch (main by
+ *     default -- see NEUROCLAW_SELF_IMPROVE_BRANCH below; NOT this
+ *     session's own dev branch, which stays untouched either way) via a
+ *     second isolated worktree. A candidate that scores the same or
+ *     worse is the punishment -- discarded, logged to history, nothing
+ *     pushed. Pushing straight to main with no human review step is a
+ *     real, explicit choice this project's owner made (see
+ *     wiki/Self-Improvement.md) -- it is not this script's default
+ *     assumption about what's safe, it's what was asked for.
  *
  * Deliberately NOT built: literal unrestricted self-rewriting of
  * arbitrary source files, or any external "hacking" target -- per this
@@ -53,6 +57,7 @@
  * Env vars:
  *   NEUROCLAW_SELF_IMPROVE=0             disable the loop entirely
  *   NEUROCLAW_SELF_IMPROVE_INTERVAL_MS   ms between cycles (default 30 min)
+ *   NEUROCLAW_SELF_IMPROVE_BRANCH        branch a reward is pushed to (default 'main')
  *
  * Usage: node scripts/self-improve.mjs           (runs the loop forever)
  *        node scripts/self-improve.mjs --once     (runs exactly one cycle, for testing)
@@ -69,7 +74,11 @@ import { TARGETS } from './self-improve-targets.mjs'
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const ROOT = path.resolve(__dirname, '..')
 const SCOREBOARD_PATH = path.join(ROOT, 'extension-builder', 'self-improvement-scoreboard.json')
-const BETA_BRANCH = 'beta'
+// "Not beta, but to git" -- rewarded improvements are pushed straight to
+// the repository's real branch, not an isolated side branch nobody
+// merges. Still overridable (NEUROCLAW_SELF_IMPROVE_BRANCH) for anyone
+// who wants the more conservative isolated-branch behavior back.
+export const TARGET_BRANCH = process.env.NEUROCLAW_SELF_IMPROVE_BRANCH || 'main'
 
 function log(...args) {
   console.log('[self-improve]', ...args)
@@ -226,22 +235,24 @@ function withSandboxWorktree(fn) {
   }
 }
 
-/** Pushes the improved scoreboard straight to the dedicated `beta`
- *  branch, via its OWN isolated worktree -- never the live server's
+/** Pushes the improved scoreboard straight to TARGET_BRANCH (main by
+ *  default), via its OWN isolated worktree -- never the live server's
  *  checked-out branch, and never this session's own dev branch. Degrades
  *  to a logged, non-fatal failure if git push isn't possible in this
- *  environment (no credentials, no network) -- the improvement stays
- *  recorded locally and the loop tries again next cycle. */
-function pushScoreboardToBeta(board) {
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'neuroclaw-beta-push-'))
+ *  environment (no credentials, no network, or the branch moved since
+ *  the fetch below and the push is no longer a fast-forward) -- the
+ *  improvement stays recorded locally and the loop tries again next
+ *  cycle, so a transient failure here is never fatal to the loop. */
+export function pushScoreboardToTargetBranch(board) {
+  const tmp = mkdtempSync(path.join(os.tmpdir(), 'neuroclaw-branch-push-'))
   const worktree = path.join(tmp, 'wt')
   try {
-    spawnSync('git', ['fetch', 'origin', BETA_BRANCH], { cwd: ROOT, encoding: 'utf8' })
-    const hasRemoteBeta =
-      spawnSync('git', ['rev-parse', '--verify', `origin/${BETA_BRANCH}`], { cwd: ROOT, encoding: 'utf8' }).status === 0
-    const base = hasRemoteBeta ? `origin/${BETA_BRANCH}` : 'HEAD'
+    spawnSync('git', ['fetch', 'origin', TARGET_BRANCH], { cwd: ROOT, encoding: 'utf8' })
+    const hasRemoteBranch =
+      spawnSync('git', ['rev-parse', '--verify', `origin/${TARGET_BRANCH}`], { cwd: ROOT, encoding: 'utf8' }).status === 0
+    const base = hasRemoteBranch ? `origin/${TARGET_BRANCH}` : 'HEAD'
     const added = spawnSync('git', ['worktree', 'add', '--detach', worktree, base], { cwd: ROOT, encoding: 'utf8' })
-    if (added.status !== 0) return { ok: false, error: `could not create beta worktree: ${(added.stderr || '').slice(-500)}` }
+    if (added.status !== 0) return { ok: false, error: `could not create push worktree: ${(added.stderr || '').slice(-500)}` }
 
     mkdirSync(path.join(worktree, 'extension-builder'), { recursive: true })
     writeFileSync(
@@ -256,20 +267,25 @@ function pushScoreboardToBeta(board) {
       { cwd: worktree, encoding: 'utf8' },
     )
     if (committed.status !== 0) {
-      // "nothing to commit" (identical scoreboard already on beta) isn't a
-      // real failure -- anything else is.
+      // "nothing to commit" (identical scoreboard already on the target
+      // branch) isn't a real failure -- anything else is.
       const nothingToCommit = /nothing to commit/i.test(committed.stdout || '')
       return nothingToCommit ? { ok: true, noop: true } : { ok: false, error: (committed.stdout || '').slice(-500) }
     }
-    // Fully-qualified destination ref (refs/heads/beta, not just "beta")
-    // -- pushing a detached-HEAD worktree's HEAD to a bare branch name
-    // that doesn't exist on the remote yet is genuinely ambiguous to git
-    // and fails with "failed to push some refs" otherwise (found by
-    // actually running this end-to-end rather than trusting it from
-    // reading the command).
-    const pushed = spawnSync('git', ['push', 'origin', `HEAD:refs/heads/${BETA_BRANCH}`], { cwd: worktree, encoding: 'utf8' })
+    // Fully-qualified destination ref (refs/heads/<branch>, not just
+    // "<branch>") -- pushing a detached-HEAD worktree's HEAD to a bare
+    // branch name is genuinely ambiguous to git when that branch doesn't
+    // already exist locally and fails with "failed to push some refs"
+    // otherwise (found by actually running this end-to-end rather than
+    // trusting it from reading the command). Since the worktree is based
+    // on origin/TARGET_BRANCH (when it exists), this push is a normal
+    // fast-forward in the common case -- it only fails if TARGET_BRANCH
+    // moved between the fetch above and this push, in which case it
+    // degrades to the retry-next-cycle path below rather than force-
+    // pushing over someone else's commits.
+    const pushed = spawnSync('git', ['push', 'origin', `HEAD:refs/heads/${TARGET_BRANCH}`], { cwd: worktree, encoding: 'utf8' })
     if (pushed.status !== 0) {
-      log(`push to ${BETA_BRANCH} failed (no credentials/network in this environment?) -- keeping the improvement locally, will retry next cycle: ${(pushed.stderr || '').slice(-500)}`)
+      log(`push to ${TARGET_BRANCH} failed (no credentials/network in this environment, or the branch moved since the fetch) -- keeping the improvement locally, will retry next cycle: ${(pushed.stderr || '').slice(-500)}`)
       return { ok: false, error: pushed.stderr }
     }
     return { ok: true }
@@ -279,9 +295,14 @@ function pushScoreboardToBeta(board) {
   }
 }
 
+// Backwards-compatible alias -- earlier versions of this script and its
+// callers (peer-sync-server.mjs) referenced this function as
+// pushScoreboardToBeta(); kept so nothing importing that name breaks.
+export const pushScoreboardToBeta = pushScoreboardToTargetBranch
+
 /** One full cycle: pick a target, mutate its best-known hyperparameters,
- *  train the candidate in a sandbox, and reward (push to beta) or punish
- *  (discard) based on whether it's a real improvement. */
+ *  train the candidate in a sandbox, and reward (push to TARGET_BRANCH)
+ *  or punish (discard) based on whether it's a real improvement. */
 export async function runOneCycle({ scoreboardPath = SCOREBOARD_PATH, rand = Math.random, push = true } = {}) {
   const board = loadScoreboard(scoreboardPath)
   const target = TARGETS[Math.floor(rand() * TARGETS.length)]
@@ -339,10 +360,10 @@ export async function runOneCycle({ scoreboardPath = SCOREBOARD_PATH, rand = Mat
   board.targets[key] = entry
   saveScoreboard(board, scoreboardPath)
 
-  const pushResult = push ? pushScoreboardToBeta(board) : { ok: false, skipped: true }
-  if (pushResult.ok) log(`pushed new best hyperparameters for ${key} to ${BETA_BRANCH}`)
+  const pushResult = push ? pushScoreboardToTargetBranch(board) : { ok: false, skipped: true }
+  if (pushResult.ok) log(`pushed new best hyperparameters for ${key} to ${TARGET_BRANCH}`)
 
-  // Alongside (never instead of) the GitHub beta push -- "GitHub is the
+  // Alongside (never instead of) the GitHub push -- "GitHub is the
   // weakness here, I want it to go directly between people": every
   // rewarded improvement also gets broadcast directly to any configured
   // peers, so it propagates even if GitHub is unreachable or simply not

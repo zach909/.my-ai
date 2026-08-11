@@ -12,7 +12,9 @@ Every 30 minutes by default (configurable via `NEUROCLAW_SELF_IMPROVE_INTERVAL_M
 4. **Judges the result** two ways, both required:
    - Did the candidate's real trained accuracy strictly beat the current best? (Ties don't count — "better than the original" means strictly better.)
    - Does the runner that actually executes skills still pass its own test suite (`test/smoke.mjs`) against it? A skill improvement that breaks the runner is rejected regardless of its accuracy score.
-5. **Rewards or punishes**: a candidate that passes both checks becomes the new best, gets recorded in `extension-builder/self-improvement-scoreboard.json`, and gets pushed straight to this repository's `beta` branch — never `main`, never the active development branch. A candidate that fails either check is discarded; the attempt is logged to the scoreboard's history either way, so nothing is silently dropped.
+5. **Rewards or punishes**: a candidate that passes both checks becomes the new best, gets recorded in `extension-builder/self-improvement-scoreboard.json`, and gets pushed straight to `main` (configurable via `NEUROCLAW_SELF_IMPROVE_BRANCH`) — **directly, with no human review step** — never to this session's own active development branch, which stays untouched either way. A candidate that fails either check is discarded; the attempt is logged to the scoreboard's history either way, so nothing is silently dropped.
+
+  **This is a deliberate, explicit choice, not a conservative default.** An earlier version of this pushed to an isolated `beta` branch instead, specifically so nothing landed on `main` unreviewed — the project owner asked for that to change: "not beta, but to git." If you want the more conservative isolated-branch behavior back, set `NEUROCLAW_SELF_IMPROVE_BRANCH=beta` (or any branch name you choose).
 
 **Turn it off** entirely with `NEUROCLAW_SELF_IMPROVE=0`.
 
@@ -20,7 +22,7 @@ Every 30 minutes by default (configurable via `NEUROCLAW_SELF_IMPROVE_INTERVAL_M
 
 GitHub is the backbone, but it's still a single point of coordination — if you want improvements to reach another running instance directly, without going through GitHub at all, peer sync does that:
 
-- When a candidate is rewarded, the loop broadcasts the same small hyperparameter/score payload directly to any peers you've configured, over a plain TCP socket — in addition to (never instead of) the `beta` push.
+- When a candidate is rewarded, the loop broadcasts the same small hyperparameter/score payload directly to any peers you've configured, over a plain TCP socket — in addition to (never instead of) the push to `main`. A peer that adopts an improvement pushes it to `main` itself and re-broadcasts it to its own peers, so it propagates through the whole mesh, not just one hop.
 - Peers are configured locally, not auto-discovered: `NEUROCLAW_PEERS="host1:port1,host2:port2"` or a `extension-builder/peers.txt` file (one `host:port` per line, gitignored — deployment-specific). **Empty by default: a complete no-op until you configure at least one peer.**
 - **The trust boundary is strict.** The only thing ever sent or accepted is a small JSON message: a target script name (checked against the same fixed whitelist as the local loop), three bounded numeric hyperparameters, and a score in `[0, 1]`. Nothing received from a peer is ever executed, evaluated, or written as code — a malicious or buggy peer can at most cause a future sandbox run to try different (still bounded) hyperparameters, never run arbitrary code. And a peer can never overwrite a better local result with a worse one: incoming scores are only ever adopted if they're a strict improvement over what's already there.
 
