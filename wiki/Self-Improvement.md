@@ -18,6 +18,32 @@ Every 30 minutes by default (configurable via `NEUROCLAW_SELF_IMPROVE_INTERVAL_M
 
 **Turn it off** entirely with `NEUROCLAW_SELF_IMPROVE=0`.
 
+## The skill-creation agent (`scripts/skill-agent.mjs`)
+
+A separate autonomous agent from the self-improvement loop above — same engine, different job. Instead of tuning the hyperparameters of a fixed set of existing skill scripts, this one creates **new** skills from scratch, one research topic per cycle (45 minutes by default, `NEUROCLAW_SKILL_AGENT_INTERVAL_MS`):
+
+1. **Research** — runs `ResearchPlugin.conductResearch()` (the same real memory/drive/web search + never-trust-one-source corroboration described in [[Plugins]]) against a topic drawn from a rotating pool (physics/chemistry/computation/AI research — explicitly no biology, matching this project's curriculum scope).
+2. **Wiki** — writes up *only* the corroborated findings (2+ independent sources) as a new page under `wiki/`, explicitly disclosed as AI-generated with an honest explanation of what "verified" means. A topic that turns up nothing corroborated produces no page at all.
+3. **Skill** — trains a real `@definishon` neuron from that page's actual content via genuine `torch.autograd` gradient descent.
+4. **Share** — only if the skill converges *and* the runner gate (`test/smoke.mjs`) still passes, the page is pushed straight to the same target branch as the self-improvement loop, and a lightweight notification (topic + slug only, never the page content) is broadcast to peers.
+
+**Turn it off** with `NEUROCLAW_SKILL_AGENT=0`.
+
+## The conversation-learning agent (`scripts/conversation-learning-agent.mjs`)
+
+The only one of these agents that learns from real usage instead of external research or existing skills — and the only one that is **never published anywhere**, structurally, not just by policy.
+
+Every real (your message → its response) exchange gets appended locally to `extension-builder/conversation-log.jsonl` (gitignored — see [[Privacy-Policy]]). Every 20 minutes by default (`NEUROCLAW_CONVERSATION_LEARNING_INTERVAL_MS`), this agent reads that log and trains two real prediction directions via genuine gradient descent:
+
+1. **Respond**: given your actual message, predict this agent's actual response to it.
+2. **Anticipate**: given this agent's prior response, predict what you actually said next.
+
+Both are trained from real local data, never fabricated. The result is written to a single local file (`extension-builder/extensions/conversation_learning.ext.json`, overwritten each cycle, gitignored) that the running server loads at boot like any other trained skill.
+
+**This script has no code path capable of sending any of it anywhere**: it never calls the sandbox/publish helpers the other two agents use, never imports `peer-sync.mjs`, and only ever touches two gitignored local files. Conversation content stays on this machine by construction.
+
+**Turn it off** with `NEUROCLAW_CONVERSATION_LEARNING=0`.
+
 ## Peer sync (`scripts/peer-sync.mjs`)
 
 GitHub is the backbone, but it's still a single point of coordination — if you want improvements to reach another running instance directly, without going through GitHub at all, peer sync does that:
