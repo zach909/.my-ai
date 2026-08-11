@@ -2,15 +2,17 @@
 /**
  * server.mjs — `npm run server`: builds and starts the production
  * backend, prints a read-only startup resource diagnostic and an
- * automatic update check, and launches three autonomous agents
- * alongside it: the self-improvement loop (scripts/self-improve.mjs,
- * tunes existing skills' hyperparameters), the skill-creation agent
+ * automatic update check, and launches four autonomous agents alongside
+ * it: the self-improvement loop (scripts/self-improve.mjs, tunes
+ * existing skills' hyperparameters), the skill-creation agent
  * (scripts/skill-agent.mjs -- "a separate AI... working on skills":
  * researches new topics, writes them up, and trains genuinely new
- * skills from scratch), and the peer-sync listener
- * (scripts/peer-sync.mjs). All child processes get the CPU/memory-aware
- * tuning from process-tuning.mjs so these cycles run as fast as this
- * machine's real resources allow.
+ * skills from scratch), the conversation-learning agent
+ * (scripts/conversation-learning-agent.mjs -- "it learns by talking to
+ * you": trains on real local usage, strictly local, never published),
+ * and the peer-sync listener (scripts/peer-sync.mjs). All child
+ * processes get the CPU/memory-aware tuning from process-tuning.mjs so
+ * these cycles run as fast as this machine's real resources allow.
  *
  * Mirrors scripts/dev.mjs's structure (build once, spawn, tear down
  * together on exit) but for the production entry point instead of the
@@ -66,6 +68,14 @@ if (process.env.NEUROCLAW_SKILL_AGENT !== '0') {
   children.push(skillAgent)
 } else {
   console.log('[server] skill-creation agent disabled (NEUROCLAW_SKILL_AGENT=0)')
+}
+
+if (process.env.NEUROCLAW_CONVERSATION_LEARNING !== '0') {
+  console.log('[server] starting conversation-learning agent (local only, never published)...')
+  const conversationLearner = spawn('node', ['scripts/conversation-learning-agent.mjs'], { cwd: ROOT, stdio: 'inherit', env: childEnv })
+  children.push(conversationLearner)
+} else {
+  console.log('[server] conversation-learning agent disabled (NEUROCLAW_CONVERSATION_LEARNING=0)')
 }
 
 if (process.env.NEUROCLAW_PEER_SYNC !== '0') {

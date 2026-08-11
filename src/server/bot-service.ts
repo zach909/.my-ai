@@ -9,6 +9,7 @@
 
 import type { NeuroclawSystem } from '../index.js'
 import { logError, getRecentErrors, type LoggedError } from '../lib/error-log.js'
+import { appendConversationTurn } from '../lib/conversation-log.js'
 
 /** A route the bot knows about and can reference/point users to. */
 export interface AppRoute {
@@ -204,6 +205,17 @@ export class ChatBot {
       const alreadyHandled =
         raw.metadata?.domain === 'route' || raw.metadata?.domain === 'error' || raw.metadata?.domain === 'clarify'
       const response = alreadyHandled ? raw : this.applyBehavior(userMessage, raw)
+
+      // "It learns by talking to you" -- real (message, response) pairs,
+      // persisted locally so scripts/conversation-learning-agent.mjs can
+      // actually train on them later. Route lookups aren't a real
+      // conversational exchange worth learning from; a 'clarify'
+      // response is real agent behavior and stays in. Fire-and-forget:
+      // appendConversationTurn() never throws, so a logging hiccup can
+      // never break the actual response being returned below.
+      if (response.metadata?.domain !== 'route' && response.metadata?.domain !== 'error') {
+        appendConversationTurn(userMessage, response.message)
+      }
 
       this.conversationHistory.push({
         id: `msg_${Date.now()}_assistant`,

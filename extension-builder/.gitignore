@@ -25,3 +25,15 @@ self-improvement-scoreboard.json
 # wiki/*.md page) is what gets committed; this registry is just local
 # bookkeeping for topic rotation.
 skill-agent-registry.json
+
+# The real local conversation log (src/lib/conversation-log.ts /
+# scripts/conversation-learning-agent.mjs) -- absolute privacy boundary,
+# not just a regenerable-artifact convenience like the entries above.
+# This file contains real message content. It must never be committed,
+# ever, under any circumstance -- see wiki/Privacy-Policy.md.
+conversation-log.jsonl
+
+# scripts/conversation-learning-agent.mjs's own runtime bookkeeping
+# (which turn it last trained on) -- local only, same reasoning as the
+# scoreboard/registry entries above.
+conversation-learning-state.json
