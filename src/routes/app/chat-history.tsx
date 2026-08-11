@@ -19,6 +19,7 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles } from 'lucide-react'
 
@@ -87,6 +88,9 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
     <Card className="space-y-2 p-4">
       <button
         onClick={() => setOpen((v) => !v)}
+        className="flex w-full items-center justify-between gap-2 text-left rounded-md p-1 -m-1 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none active:scale-[0.98] transition-all duration-150 cursor-pointer"
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} group, containing ${group.threads.length} chat${group.threads.length !== 1 ? 's' : ''}`}
         className="flex w-full items-center justify-between gap-2 text-left rounded-md p-1 -m-1 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-all duration-200 active:scale-95 cursor-pointer"
         aria-expanded={open}
         aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} topic group`}
@@ -98,6 +102,7 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
             ({group.threads.length})
           </span>
         </div>
+        <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
         <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
           <span>{timeAgo(group.updatedAt)}</span>
           <ChevronDown
