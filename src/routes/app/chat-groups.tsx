@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Users, Send, Vote, Zap, Lock, EyeOff, History } from 'lucide-react'
+import { Users, Send, Vote, Zap, Lock, EyeOff, History, Eye } from 'lucide-react'
 
 function Chip({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -77,6 +77,7 @@ function LockScreen({ onUnlock }: { onUnlock: (password: string) => Promise<bool
   const [password, setPassword] = useState('')
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [showPassword, setShowPassword] = useState(false)
 
   const submit = async () => {
     if (!password) return
@@ -99,25 +100,39 @@ function LockScreen({ onUnlock }: { onUnlock: (password: string) => Promise<bool
         </p>
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         <div className="flex gap-2">
-          <Label htmlFor="chat-groups-password" className="sr-only">
-            Password
-          </Label>
-          <Input
-            id="chat-groups-password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                submit()
-              }
-            }}
-            placeholder="Password"
-            disabled={checking}
-            autoFocus
-            className="flex-1"
-          />
+          <div className="relative flex-1 flex items-center">
+            <Label htmlFor="chat-groups-password" className="sr-only">
+              Password
+            </Label>
+            <Input
+              id="chat-groups-password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  submit()
+                }
+              }}
+              placeholder="Password"
+              disabled={checking}
+              autoFocus
+              className="flex-1 pr-10"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowPassword((prev) => !prev)}
+              className="absolute right-1 h-7 w-7 p-0 hover:bg-transparent text-muted-foreground hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              title={showPassword ? 'Hide password' : 'Show password'}
+              disabled={checking}
+            >
+              {showPassword ? <EyeOff size={16} /> : <Eye size={16} />}
+            </Button>
+          </div>
           <Button
             onClick={submit}
             disabled={checking || !password}
