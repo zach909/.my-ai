@@ -60,5 +60,45 @@ class TestSelfHealSecurity(unittest.TestCase):
             self.plugin.watch_server(None, "true")
         self.assertIn("Security Error", str(ctx.exception))
 
+    def test_invalid_restart_cmd_types(self):
+        # restart_cmd must be a string
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.watch_server(8080, None)
+        self.assertIn("Security Error", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.watch_server(8080, 12345)
+        self.assertIn("Security Error", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.watch_server(8080, [])
+        self.assertIn("Security Error", str(ctx.exception))
+
+    def test_empty_restart_cmd(self):
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.watch_server(8080, "")
+        self.assertIn("Security Error", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.watch_server(8080, "   ")
+        self.assertIn("Security Error", str(ctx.exception))
+
+    def test_argument_injection_restart_cmd(self):
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.watch_server(8080, "--help")
+        self.assertIn("Security Error", str(ctx.exception))
+
+        with self.assertRaises(ValueError) as ctx:
+            self.plugin.watch_server(8080, "-xyz")
+        self.assertIn("Security Error", str(ctx.exception))
+
+    def test_command_injection_restart_cmd(self):
+        # Shell metacharacters should trigger a ValueError
+        for char in [";", "&", "|", "$", "`", ">", "<", "\n", "\r", "(", ")", "{", "}", "[", "]", "*", "?"]:
+            with self.subTest(char=char):
+                with self.assertRaises(ValueError) as ctx:
+                    self.plugin.watch_server(8080, f"reboot{char}")
+                self.assertIn("Security Error", str(ctx.exception))
+
 if __name__ == "__main__":
     unittest.main()

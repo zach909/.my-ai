@@ -303,10 +303,21 @@ ipcMain.handle('exec-command', async (event, command, options = {}) => {
   });
 });
 
-// Open external URLs in default browser
+// Open external URLs in default browser, strictly validating protocol to prevent unsafe protocols (like file://, ms-msdt:) or RCE.
 ipcMain.handle('open-external', async (event, url) => {
-  await shell.openExternal(url);
-  return { success: true };
+  if (typeof url !== 'string') {
+    return { success: false, error: 'Blocked: invalid URL type' };
+  }
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      return { success: false, error: 'Blocked: unsafe protocol scheme' };
+    }
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: 'Blocked: invalid URL format' };
+  }
 });
 
 // Show item in file manager
