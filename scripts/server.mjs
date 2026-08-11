@@ -1,12 +1,13 @@
 #!/usr/bin/env node
 /**
  * server.mjs — `npm run server`: builds and starts the production
- * backend, prints a read-only startup resource diagnostic, and launches
- * the autonomous self-improvement loop (scripts/self-improve.mjs) and
- * the peer-sync listener (scripts/peer-sync.mjs) alongside it. All three
- * child processes get the CPU/memory-aware tuning from
- * process-tuning.mjs so the self-improvement cycles run as fast as this
- * machine's real resources allow.
+ * backend, prints a read-only startup resource diagnostic and an
+ * automatic update check, and launches the autonomous self-improvement
+ * loop (scripts/self-improve.mjs) and the peer-sync listener
+ * (scripts/peer-sync.mjs) alongside it. All three child processes get
+ * the CPU/memory-aware tuning from process-tuning.mjs so the
+ * self-improvement cycles run as fast as this machine's real resources
+ * allow.
  *
  * Mirrors scripts/dev.mjs's structure (build once, spawn, tear down
  * together on exit) but for the production entry point instead of the
@@ -15,6 +16,7 @@
 
 import { execFileSync, spawn } from 'node:child_process'
 import { printDiagnostics } from './system-diagnostics.mjs'
+import { printUpdateCheck } from './update-check.mjs'
 import { tunedEnv } from './process-tuning.mjs'
 import { DEFAULT_PEER_PORT } from './peer-sync.mjs'
 
@@ -23,6 +25,15 @@ const PORT = Number(process.env.PORT) || 7861
 
 console.log('[server] read-only startup diagnostics...')
 printDiagnostics()
+
+// Real motivation: this session watched a bad merge from another
+// automated agent break `npm run server` on `main`, and the user's own
+// checkout stayed broken until they pulled the fix -- knowing "you're
+// behind origin" the moment the server starts beats finding out from a
+// crash. Read-only (git fetch only updates tracking refs), never blocks
+// startup on failure (offline/no-upstream degrades to a one-line notice).
+console.log('[server] checking for updates...')
+printUpdateCheck(ROOT)
 
 console.log('[server] building backend...')
 execFileSync('node', ['scripts/build-backend.mjs'], { cwd: ROOT, stdio: 'inherit' })
