@@ -173,6 +173,47 @@ export async function broadcastImprovement(target, hyperparams, score, peers = l
 }
 
 /**
+ * Broadcasts a "a new skill was published" notification to every
+ * configured peer -- used by scripts/skill-agent.mjs, distinct from
+ * broadcastImprovement()'s hyperparameter deltas. Deliberately carries
+ * ONLY a topic and a slug, never the page content itself: "everyone has
+ * access to it" is satisfied by the shared git history skill-agent.mjs
+ * already pushed to TARGET_BRANCH (a peer that wants the actual page
+ * runs `git pull`), keeping the same trust boundary
+ * validateImprovementMessage() enforces -- nothing arbitrary a peer
+ * sends is ever written to disk or executed here.
+ */
+export async function broadcastNewSkill(topic, slug, peers = loadPeers()) {
+  if (peers.length === 0) return { sent: 0, peers: [] }
+  const payload = {
+    type: 'new-skill-published',
+    topic: String(topic).slice(0, 300),
+    slug: String(slug).slice(0, 200),
+    from: `${process.env.HOSTNAME || 'node'}-${process.pid}`,
+  }
+  const results = await Promise.all(peers.map((peer) => sendToPeer(peer, payload)))
+  const sent = results.filter((r) => r.ok).length
+  log(`broadcast new skill "${topic}" to ${sent}/${peers.length} peer(s)`)
+  return { sent, peers: results }
+}
+
+/** Validates an incoming new-skill notification -- same discipline as
+ *  validateImprovementMessage(): exact shape, bounded string lengths,
+ *  nothing else accepted. */
+export function validateNewSkillMessage(msg) {
+  if (!msg || typeof msg !== 'object') return null
+  if (msg.type !== 'new-skill-published') return null
+  if (typeof msg.topic !== 'string' || msg.topic.length === 0 || msg.topic.length > 300) return null
+  if (typeof msg.slug !== 'string' || msg.slug.length === 0 || msg.slug.length > 200) return null
+  return {
+    type: 'new-skill-published',
+    topic: msg.topic,
+    slug: msg.slug,
+    from: typeof msg.from === 'string' ? msg.from.slice(0, 200) : 'unknown-peer',
+  }
+}
+
+/**
  * Starts listening for incoming peer broadcasts. Every connection is
  * read as a single newline-delimited JSON message, validated, and -- if
  * it's a real improvement -- merged into the local scoreboard on disk via
@@ -211,8 +252,20 @@ export function startPeerServer({ port = DEFAULT_PEER_PORT, loadScoreboard, save
       } catch {
         return // malformed input -- silently ignored, never crashes the server
       }
+
+      // A new-skill notification carries no scoreboard data to
+      // merge/push -- it's just informational (skill-agent.mjs already
+      // pushed the actual page to git before broadcasting), so it's
+      // logged and re-propagated, not written to any local state.
+      const newSkill = validateNewSkillMessage(parsed)
+      if (newSkill) {
+        log(`peer ${newSkill.from} published a new skill: "${newSkill.topic}" (wiki/${newSkill.slug}.md) -- pull to get it`)
+        broadcastNewSkill(newSkill.topic, newSkill.slug).catch(() => {})
+        return
+      }
+
       const validated = validateImprovementMessage(parsed)
-      if (!validated) return // anything not matching the exact expected shape is dropped
+      if (!validated) return // anything not matching either expected shape is dropped
       const board = loadScoreboard()
       const { board: merged, accepted } = mergeImprovement(board, validated)
       if (accepted) {

@@ -64,12 +64,12 @@
  */
 
 import { spawnSync } from 'node:child_process'
-import { mkdtempSync, rmSync, existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, symlinkSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs'
 import path from 'node:path'
-import os from 'node:os'
 import { fileURLToPath } from 'node:url'
 import { broadcastImprovement } from './peer-sync.mjs'
 import { TARGETS } from './self-improve-targets.mjs'
+import { withSandboxWorktree, runnerPassesSmoke, publishFilesToBranch } from './git-worktree-utils.mjs'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const ROOT = path.resolve(__dirname, '..')
@@ -173,126 +173,27 @@ function runTargetInSandbox(cwd, targetScript, hyperparams) {
   }
 }
 
-/**
- * The runner gate: "it's the skills and the model runner which is
- * basically the thing that runs the model, which is made up of skills."
- * A skill only matters if the runner that executes it still works, so a
- * candidate's trained-accuracy score is never sufficient on its own --
- * this runs the same smoke suite every other change in this repo is
- * verified against (test/smoke.mjs), inside the same sandbox worktree
- * that just trained the candidate, and treats any failure as an
- * automatic disqualification regardless of how good the accuracy score
- * looked. Parses the suite's own final "<N> passed, <M> failed" summary
- * line rather than just checking the exit code, so the reason is
- * recorded, not just a pass/fail bit.
- */
-function runnerPassesSmoke(worktree) {
-  const res = spawnSync('node', ['test/smoke.mjs'], { cwd: worktree, encoding: 'utf8', timeout: 5 * 60 * 1000 })
-  const output = `${res.stdout || ''}\n${res.stderr || ''}`
-  const match = output.match(/(\d+)\s+passed,\s+(\d+)\s+failed/)
-  if (!match) return { ok: false, reason: 'could not read smoke test results (runner may be broken)' }
-  const [, passed, failed] = match
-  if (Number(failed) > 0) return { ok: false, reason: `${failed} smoke test(s) failed against the runner` }
-  return { ok: true, passed: Number(passed) }
-}
-
-/** Sandbox: a throwaway git worktree checked out from the current commit.
- *  Every file write during a training run happens here; the live server's
- *  own working directory is never touched. Always torn down, win or lose. */
-function withSandboxWorktree(fn) {
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'neuroclaw-self-improve-'))
-  const worktree = path.join(tmp, 'wt')
-  const created = spawnSync('git', ['worktree', 'add', '--detach', worktree, 'HEAD'], { cwd: ROOT, encoding: 'utf8' })
-  if (created.status !== 0) {
-    rmSync(tmp, { recursive: true, force: true })
-    return { ok: false, error: `could not create sandbox worktree: ${(created.stderr || '').slice(-500)}` }
-  }
-  try {
-    // A git worktree only ever contains tracked files -- node_modules/
-    // and the .bin/ toolchain symlinks are gitignored, so a fresh
-    // worktree has neither. Symlinking them in from the real checkout
-    // (read-only reuse, same repo/same dependency versions) avoids
-    // needing a full `npm install` -- and therefore network access --
-    // just to build inside the sandbox.
-    for (const dir of ['node_modules', '.bin']) {
-      const target = path.join(ROOT, dir)
-      const link = path.join(worktree, dir)
-      if (existsSync(target) && !existsSync(link)) {
-        symlinkSync(target, link, 'dir')
-      }
-    }
-    // The sandbox needs its own real dist/ to run the target script
-    // against -- build it inside the worktree rather than trusting
-    // whatever happens to be on disk from an unrelated build.
-    const built = spawnSync('node', ['scripts/build-backend.mjs'], { cwd: worktree, encoding: 'utf8' })
-    if (built.status !== 0) {
-      return { ok: false, error: `sandbox backend build failed: ${(built.stderr || '').slice(-2000)}` }
-    }
-    return fn(worktree)
-  } finally {
-    spawnSync('git', ['worktree', 'remove', '--force', worktree], { cwd: ROOT, encoding: 'utf8' })
-    rmSync(tmp, { recursive: true, force: true })
-  }
-}
+// Sandbox worktree + runner gate + branch-publish plumbing now lives in
+// git-worktree-utils.mjs, shared with scripts/skill-agent.mjs -- both
+// agents publish to the repo the exact same tested way instead of each
+// maintaining their own (and risking drift) copy of the git-worktree
+// symlink workaround and the fully-qualified-ref push fix.
 
 /** Pushes the improved scoreboard straight to TARGET_BRANCH (main by
- *  default), via its OWN isolated worktree -- never the live server's
- *  checked-out branch, and never this session's own dev branch. Degrades
- *  to a logged, non-fatal failure if git push isn't possible in this
- *  environment (no credentials, no network, or the branch moved since
- *  the fetch below and the push is no longer a fast-forward) -- the
+ *  default) via publishFilesToBranch(). Degrades to a logged, non-fatal
+ *  failure if git push isn't possible in this environment -- the
  *  improvement stays recorded locally and the loop tries again next
  *  cycle, so a transient failure here is never fatal to the loop. */
 export function pushScoreboardToTargetBranch(board) {
-  const tmp = mkdtempSync(path.join(os.tmpdir(), 'neuroclaw-branch-push-'))
-  const worktree = path.join(tmp, 'wt')
-  try {
-    spawnSync('git', ['fetch', 'origin', TARGET_BRANCH], { cwd: ROOT, encoding: 'utf8' })
-    const hasRemoteBranch =
-      spawnSync('git', ['rev-parse', '--verify', `origin/${TARGET_BRANCH}`], { cwd: ROOT, encoding: 'utf8' }).status === 0
-    const base = hasRemoteBranch ? `origin/${TARGET_BRANCH}` : 'HEAD'
-    const added = spawnSync('git', ['worktree', 'add', '--detach', worktree, base], { cwd: ROOT, encoding: 'utf8' })
-    if (added.status !== 0) return { ok: false, error: `could not create push worktree: ${(added.stderr || '').slice(-500)}` }
-
-    mkdirSync(path.join(worktree, 'extension-builder'), { recursive: true })
-    writeFileSync(
-      path.join(worktree, 'extension-builder', 'self-improvement-scoreboard.json'),
-      JSON.stringify(board, null, 2) + '\n',
-      'utf8',
-    )
-    spawnSync('git', ['add', 'extension-builder/self-improvement-scoreboard.json'], { cwd: worktree, encoding: 'utf8' })
-    const committed = spawnSync(
-      'git',
-      ['commit', '-m', 'Self-improvement: new best hyperparameters (automated)'],
-      { cwd: worktree, encoding: 'utf8' },
-    )
-    if (committed.status !== 0) {
-      // "nothing to commit" (identical scoreboard already on the target
-      // branch) isn't a real failure -- anything else is.
-      const nothingToCommit = /nothing to commit/i.test(committed.stdout || '')
-      return nothingToCommit ? { ok: true, noop: true } : { ok: false, error: (committed.stdout || '').slice(-500) }
-    }
-    // Fully-qualified destination ref (refs/heads/<branch>, not just
-    // "<branch>") -- pushing a detached-HEAD worktree's HEAD to a bare
-    // branch name is genuinely ambiguous to git when that branch doesn't
-    // already exist locally and fails with "failed to push some refs"
-    // otherwise (found by actually running this end-to-end rather than
-    // trusting it from reading the command). Since the worktree is based
-    // on origin/TARGET_BRANCH (when it exists), this push is a normal
-    // fast-forward in the common case -- it only fails if TARGET_BRANCH
-    // moved between the fetch above and this push, in which case it
-    // degrades to the retry-next-cycle path below rather than force-
-    // pushing over someone else's commits.
-    const pushed = spawnSync('git', ['push', 'origin', `HEAD:refs/heads/${TARGET_BRANCH}`], { cwd: worktree, encoding: 'utf8' })
-    if (pushed.status !== 0) {
-      log(`push to ${TARGET_BRANCH} failed (no credentials/network in this environment, or the branch moved since the fetch) -- keeping the improvement locally, will retry next cycle: ${(pushed.stderr || '').slice(-500)}`)
-      return { ok: false, error: pushed.stderr }
-    }
-    return { ok: true }
-  } finally {
-    spawnSync('git', ['worktree', 'remove', '--force', worktree], { cwd: ROOT, encoding: 'utf8' })
-    rmSync(tmp, { recursive: true, force: true })
+  const result = publishFilesToBranch(
+    [{ relPath: 'extension-builder/self-improvement-scoreboard.json', content: JSON.stringify(board, null, 2) + '\n' }],
+    'Self-improvement: new best hyperparameters (automated)',
+    TARGET_BRANCH,
+  )
+  if (!result.ok) {
+    log(`push to ${TARGET_BRANCH} failed (no credentials/network in this environment, or the branch moved since the fetch) -- keeping the improvement locally, will retry next cycle: ${(result.error || '').slice(-500)}`)
   }
+  return result
 }
 
 // Backwards-compatible alias -- earlier versions of this script and its
@@ -315,7 +216,7 @@ export async function runOneCycle({ scoreboardPath = SCOREBOARD_PATH, rand = Mat
   // Train AND run the runner gate inside the SAME sandbox worktree, before
   // it gets torn down -- the smoke suite needs the worktree's own dist/
   // and test/ files still in place.
-  const result = withSandboxWorktree((worktree) => {
+  const result = await withSandboxWorktree((worktree) => {
     const trained = runTargetInSandbox(worktree, key, candidate)
     if (!trained.ok) return trained
     const gate = runnerPassesSmoke(worktree)
