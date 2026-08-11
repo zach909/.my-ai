@@ -2,12 +2,15 @@
 /**
  * server.mjs — `npm run server`: builds and starts the production
  * backend, prints a read-only startup resource diagnostic and an
- * automatic update check, and launches the autonomous self-improvement
- * loop (scripts/self-improve.mjs) and the peer-sync listener
- * (scripts/peer-sync.mjs) alongside it. All three child processes get
- * the CPU/memory-aware tuning from process-tuning.mjs so the
- * self-improvement cycles run as fast as this machine's real resources
- * allow.
+ * automatic update check, and launches three autonomous agents
+ * alongside it: the self-improvement loop (scripts/self-improve.mjs,
+ * tunes existing skills' hyperparameters), the skill-creation agent
+ * (scripts/skill-agent.mjs -- "a separate AI... working on skills":
+ * researches new topics, writes them up, and trains genuinely new
+ * skills from scratch), and the peer-sync listener
+ * (scripts/peer-sync.mjs). All child processes get the CPU/memory-aware
+ * tuning from process-tuning.mjs so these cycles run as fast as this
+ * machine's real resources allow.
  *
  * Mirrors scripts/dev.mjs's structure (build once, spawn, tear down
  * together on exit) but for the production entry point instead of the
@@ -55,6 +58,14 @@ if (process.env.NEUROCLAW_SELF_IMPROVE !== '0') {
   children.push(improver)
 } else {
   console.log('[server] self-improvement loop disabled (NEUROCLAW_SELF_IMPROVE=0)')
+}
+
+if (process.env.NEUROCLAW_SKILL_AGENT !== '0') {
+  console.log('[server] starting autonomous skill-creation agent (research -> wiki -> skill)...')
+  const skillAgent = spawn('node', ['scripts/skill-agent.mjs'], { cwd: ROOT, stdio: 'inherit', env: childEnv })
+  children.push(skillAgent)
+} else {
+  console.log('[server] skill-creation agent disabled (NEUROCLAW_SKILL_AGENT=0)')
 }
 
 if (process.env.NEUROCLAW_PEER_SYNC !== '0') {

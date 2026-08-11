@@ -14,8 +14,14 @@ peers.txt
 
 # scripts/self-improve.mjs's own runtime scoreboard on the dev branch --
 # it only ever gets committed by the loop itself, and only to the
-# dedicated `beta` branch (see pushScoreboardToBeta() in that script),
+# target branch (see pushScoreboardToTargetBranch() in that script),
 # never here. loadScoreboard() already degrades to an empty baseline
 # when this file doesn't exist, so a local test run of the loop doesn't
 # leave an untracked file behind on this branch.
 self-improvement-scoreboard.json
+
+# scripts/skill-agent.mjs's own runtime topic-coverage registry -- same
+# reasoning as the scoreboard above. The actual published output (a new
+# wiki/*.md page) is what gets committed; this registry is just local
+# bookkeeping for topic rotation.
+skill-agent-registry.json
