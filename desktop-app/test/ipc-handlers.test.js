@@ -163,6 +163,26 @@ async function main() {
   check(shellCalls.openExternal[shellCalls.openExternal.length - 1] === 'https://example.com/real-url',
     'open-external opens the real url argument, not the event object');
 
+  const blockedFileUrl = await handlers.get('open-external')(FAKE_EVENT, 'file:///etc/passwd');
+  check(blockedFileUrl.success === false && /Blocked/.test(blockedFileUrl.error),
+    'open-external blocks unsafe file:// protocol scheme');
+
+  const blockedMailtoUrl = await handlers.get('open-external')(FAKE_EVENT, 'mailto:test@example.com');
+  check(blockedMailtoUrl.success === false && /Blocked/.test(blockedMailtoUrl.error),
+    'open-external blocks mailto: protocol scheme');
+
+  const blockedJsUrl = await handlers.get('open-external')(FAKE_EVENT, 'javascript:alert(1)');
+  check(blockedJsUrl.success === false && /Blocked/.test(blockedJsUrl.error),
+    'open-external blocks javascript: protocol scheme');
+
+  const invalidUrl = await handlers.get('open-external')(FAKE_EVENT, 'not-a-valid-url');
+  check(invalidUrl.success === false && /Blocked/.test(invalidUrl.error),
+    'open-external blocks invalid URL formats');
+
+  const invalidTypeUrl = await handlers.get('open-external')(FAKE_EVENT, 12345);
+  check(invalidTypeUrl.success === false && /Blocked/.test(invalidTypeUrl.error),
+    'open-external blocks invalid URL types (non-strings)');
+
   // --- show-in-folder ---
   await handlers.get('show-in-folder')(FAKE_EVENT, '/some/real/path');
   check(shellCalls.showItemInFolder[shellCalls.showItemInFolder.length - 1] === '/some/real/path',

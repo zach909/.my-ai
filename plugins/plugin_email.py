@@ -1,13 +1,21 @@
 """Email plugin — read and send email via IMAP/SMTP (no external API)."""
 
 from __future__ import annotations
-import email, imaplib, smtplib, ssl, os, json
+import email, imaplib, smtplib, ssl, os, json, re
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from typing import Dict, List, Optional
 from .plugin_base import Plugin
 
 _CREDS_FILE = os.path.expanduser("~/.config/neuroclaw/email_creds.json")
+
+
+def _sanitize_header(value: str) -> str:
+    """Strip CR and LF characters to prevent MIME header injection and HeaderParseError."""
+    if not isinstance(value, str):
+        return ""
+    # Replace any sequence of carriage returns and line feeds with a space
+    return re.sub(r"[\r\n]+", " ", value)
 
 
 class EmailPlugin(Plugin):
@@ -88,9 +96,9 @@ class EmailPlugin(Plugin):
         if not self._creds:
             raise RuntimeError("Email not configured.")
         msg = MIMEMultipart()
-        msg["From"] = self._creds["email"]
-        msg["To"] = to
-        msg["Subject"] = subject
+        msg["From"] = _sanitize_header(self._creds["email"])
+        msg["To"] = _sanitize_header(to)
+        msg["Subject"] = _sanitize_header(subject)
         msg.attach(MIMEText(body, "plain"))
         ctx = ssl.create_default_context()
         with smtplib.SMTP(self._creds["smtp_host"], self._creds["smtp_port"]) as server:
