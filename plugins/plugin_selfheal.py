@@ -101,6 +101,20 @@ class SelfHealPlugin(Plugin):
         if not (1 <= port_val <= 65535):
             raise ValueError("Security Error: Port must be a valid TCP port (1-65535).")
 
+        # Security check: Validate restart_cmd type and content to prevent command injection
+        if not isinstance(restart_cmd, str):
+            raise ValueError("Security Error: restart_cmd must be a string.")
+        if not restart_cmd.strip():
+            raise ValueError("Security Error: restart_cmd cannot be empty.")
+        if restart_cmd.strip().startswith("-"):
+            raise ValueError("Security Error: Potential argument injection detected in restart_cmd.")
+
+        # Block shell command chaining and redirection metacharacters
+        forbidden_chars = [";", "&", "|", "$", "`", ">", "<", "\n", "\r", "(", ")", "{", "}", "[", "]", "*", "?"]
+        for char in forbidden_chars:
+            if char in restart_cmd:
+                raise ValueError(f"Security Error: Forbidden shell metacharacter '{char}' detected in restart_cmd.")
+
         def check() -> bool:
             try:
                 urllib.request.urlopen(f"http://localhost:{port_val}/health", timeout=2)
