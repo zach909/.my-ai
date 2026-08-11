@@ -1,3 +1,21 @@
 # Runtime output of the Extension Builder (POST /api/extension/build).
 # User-built extensions are local artifacts, regenerable from the builder UI.
 extensions/*.ext.json
+
+# Trained weight artifacts from the build-*.mjs/train-*.mjs/merge-networks.mjs
+# scripts (extension-builder/) -- regenerable by rerunning those scripts,
+# same reasoning as the .ext.json rule above.
+extensions/*_weights_*.json
+
+# Deployment-local peer list for scripts/peer-sync.mjs -- who a given
+# running instance talks to directly is specific to that deployment, not
+# something to commit (and not auto-discovered, by design).
+peers.txt
+
+# scripts/self-improve.mjs's own runtime scoreboard on the dev branch --
+# it only ever gets committed by the loop itself, and only to the
+# dedicated `beta` branch (see pushScoreboardToBeta() in that script),
+# never here. loadScoreboard() already degrades to an empty baseline
+# when this file doesn't exist, so a local test run of the loop doesn't
+# leave an untracked file behind on this branch.
+self-improvement-scoreboard.json

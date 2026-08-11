@@ -629,7 +629,9 @@ export class NeuroLangRuntime {
             readoutNeuronId: nameToId.get(name),
             target: embedText(neuron.definition, dims),
         }));
-        const result = this.engine.trainDefinitions(definitions, opts);
+        const result = opts.method === 'random'
+            ? this.engine.trainDefinitionsRandomSearch(definitions, opts)
+            : this.engine.trainDefinitions(definitions, opts);
         const idToName = new Map(Array.from(nameToId.entries()).map(([n, i]) => [i, n]));
         const satisfied = result.satisfied
             .map(id => idToName.get(id))

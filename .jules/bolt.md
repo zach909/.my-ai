@@ -1,5 +1,9 @@
 # Bolt's Journal - Critical Learnings
 
+## 2026-08-05 - HyperDimensionalEngine Self-Model Optimization
+**Learning:** During continuous training ticks in state settling processes, redundant execution of $O(\text{dimensions} \times \text{rank})$ matrix-vector multiplications for calculating identical intermediate states (like the $h$ projection) across prediction and weight-update stages causes significant performance overhead. Sharing a class-level, pre-allocated scratch buffer (`selfModelHScratch`) directly eliminates this calculation and its associated JIT and garbage collection boundaries.
+**Action:** Always inspect sequential execution paths in simulation loops for shared intermediate projections or states that can be cached and passed/shared directly between steps.
+
 ## 2025-05-14 - MoE Router Cache Locality Optimization
 **Learning:** The `MoERouter` implementation used a strided memory access pattern in its matrix-vector multiplications for both router scoring and expert computation. This caused significant performance overhead due to cache misses. Swapping the nested loops to ensure row-major (sequential) access to `Float32Array` weights improved `moe-router` performance by ~52% and overall pipeline throughput by ~22%.
 **Action:** Always verify loop ordering for matrix operations in performance-critical paths to ensure cache-friendly sequential access.
@@ -75,6 +79,11 @@
 ## 2026-08-04 - MoE Router Blending Truncation correctness
 **Learning:** In Mixture of Experts (MoE) routing, assuming expert outputs are padded with zeros beyond `expertHiddenDim` and truncating the blending/combination loops to `Math.min(outputDim, expertHiddenDim)` is mathematically and architecturally incorrect. Standard MoE expert layers typically project to the full dense `outputDim`, and truncating elements discards valid values.
 **Action:** Avoid truncating blending/combination steps across projection boundaries; always run standard loops fully up to the dense output dimension to ensure numerical correctness.
+
 ## 2026-07-29 - BackgroundQuantizer 8-Bit Copy Fast-Path Optimization
 **Learning:** In standard background quantization pipelines, the 8-bit configuration (`bits === 8`) is by far the most commonly used. Despite previous JIT register accumulator optimizations, bitwise packing/unpacking loops still incur overhead from traversing elements sequentially and executing bit-shifting operations. Implementing a highly specialized 8-bit copy fast-path using native typed array methods (such as `Uint8Array.prototype.set()` and `Uint32Array.prototype.set()`) completely bypasses these loops and reduces 8-bit pack latency by ~40% and unpack latency by ~28.2% (an overall ~32.7% reduction in round-trip primitives latency).
 **Action:** Always identify standard configurations (such as 8-bit widths in quantization engines) and supply direct, zero-overhead fast-paths utilizing native TypedArray methods to bypass general-purpose bit-shifting logic.
+
+## 2026-08-06 - HyperDimensional Engine Settle Buffer Swap Synchronization
+**Learning:** Hoisting state buffer writes (e.g. assigning driven states to `nextStates`) completely outside of the iterative settle loop can cause state corruption or synchronization lag because recurrent models frequently update and copy from `nextStates` back to `states` (and `allStates`). However, the input clamping, bound checks, property-access fallbacks, and driven content energy summation are completely invariant during settle. Hoisting *only* the clamping, normalization, and energy summation outside the loop achieves the same huge speedups while keeping state assignments cleanly synchronized.
+**Action:** When optimizing iterative/recurrent state updates, hoist invariant input sanitization and energy calculations, but keep active state writes inside the iteration loop to guarantee buffer synchronization.

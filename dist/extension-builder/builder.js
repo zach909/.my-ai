@@ -1,7 +1,8 @@
 import { BackgroundQuantizer } from '../models && skills/core/quantizer.js';
-import { NeuroLangInterpreter } from '../models && skills/core/neuro-lang.js';
+import { NeuroLangInterpreter, NeuroLangRuntime, embedText } from '../models && skills/core/neuro-lang.js';
 import { CodeToNet } from '../models && skills/core/thorns.js';
 import { NetSearchEngine } from '../models && skills/core/net-search.js';
+import { HyperDimensionalEngine, ValueRangeAllocator } from '../models && skills/core/onebrain.js';
 
 /**
  * Cooperative yield: hands control back to the event loop. Defined locally
@@ -61,7 +62,8 @@ export class ExtensionBuilder {
             labels: new Map(),
             dims: 3,
             createdAt: Date.now(),
-            updatedAt: Date.now()
+            updatedAt: Date.now(),
+            lockedPairs: new Set()
         };
         this.projects.set(id, project);
         this.currentProjectId = id;
@@ -103,7 +105,8 @@ export class ExtensionBuilder {
             vale: 0.5,
             endpoint: '',
             method: 'POST',
-            external: []
+            external: [],
+            scripts: []
         };
         project.neurons.set(id, neuron);
         project.updatedAt = Date.now();
@@ -177,7 +180,8 @@ export class ExtensionBuilder {
             vale: 0.5,
             endpoint: '',
             method: 'POST',
-            external: []
+            external: [],
+            scripts: []
         };
         project.neurons.set(id, neuron);
         project.updatedAt = Date.now();
@@ -204,7 +208,8 @@ export class ExtensionBuilder {
             vale: 0.5,
             endpoint: '',
             method: 'POST',
-            external: []
+            external: [],
+            scripts: []
         };
         project.neurons.set(id, neuron);
         project.updatedAt = Date.now();
@@ -231,7 +236,8 @@ export class ExtensionBuilder {
             vale: 0.5,
             endpoint: apiConfig.endpoints[0]?.path || '/api/predict',
             method: apiConfig.endpoints[0]?.method || 'POST',
-            external: []
+            external: [],
+            scripts: []
         };
         project.neurons.set(id, neuron);
         project.updatedAt = Date.now();
@@ -252,7 +258,24 @@ export class ExtensionBuilder {
         project.updatedAt = Date.now();
         return layer;
     }
-    connectNeurons(projectId, fromId, toId, weight, bias = 0) {
+    /**
+     * `locked` distinguishes "permanent" connections (fixed once set --
+     * reconnecting or disconnecting the same pair is refused below) from
+     * "starting place" connections (the default: freely editable). Refuses
+     * outright if an existing locked connection already exists between the
+     * same pair, rather than silently adding a second parallel connection.
+     *
+     * `project.lockedPairs` (Set<"fromId|toId">, lazily created) makes that
+     * check O(1) instead of scanning every connection: parseNeuroLang()'s
+     * default all-to-all wiring calls connectNeurons() up to O(n^2) times
+     * for a large project (evaluate() connects every neuron to every other
+     * unless @connections narrows it, per the DSL spec), so a per-call
+     * linear scan over project.connections there turned the whole
+     * connection-wiring phase O(n^2) calls * O(n^2) connections-so-far =
+     * effectively O(n^4) -- 300 auto-connected neurons alone took long
+     * enough to look like a genuine hang, not just "slow".
+     */
+    connectNeurons(projectId, fromId, toId, weight, bias = 0, locked = false) {
         const project = this.projects.get(projectId);
         if (!project)
             return false;
@@ -260,21 +283,49 @@ export class ExtensionBuilder {
         const toNeuron = project.neurons.get(toId);
         if (!fromNeuron || !toNeuron)
             return false;
+        if (!project.lockedPairs)
+            project.lockedPairs = new Set();
+        const pairKey = `${fromId}|${toId}`;
+        if (project.lockedPairs.has(pairKey))
+            return false;
         const id = `conn_${fromId}_${toId}_${Date.now()}`;
         const connection = {
             id,
             fromId,
             toId,
             weight,
-            bias
+            bias,
+            locked
         };
         project.connections.set(id, connection);
+        if (locked)
+            project.lockedPairs.add(pairKey);
+        project.updatedAt = Date.now();
+        return true;
+    }
+    /** Toggle a connection between "permanent" (locked) and "starting place" (unlocked). */
+    setConnectionLocked(projectId, connectionId, locked) {
+        const project = this.projects.get(projectId);
+        const conn = project?.connections.get(connectionId);
+        if (!conn)
+            return false;
+        if (!project.lockedPairs)
+            project.lockedPairs = new Set();
+        const pairKey = `${conn.fromId}|${conn.toId}`;
+        if (locked)
+            project.lockedPairs.add(pairKey);
+        else
+            project.lockedPairs.delete(pairKey);
+        conn.locked = locked;
         project.updatedAt = Date.now();
         return true;
     }
     disconnectNeurons(projectId, connectionId) {
         const project = this.projects.get(projectId);
         if (!project)
+            return false;
+        const existing = project.connections.get(connectionId);
+        if (existing?.locked)
             return false;
         const deleted = project.connections.delete(connectionId);
         if (deleted) {
@@ -292,6 +343,7 @@ export class ExtensionBuilder {
             for (const [connId, conn] of project.connections) {
                 if (conn.fromId === neuronId || conn.toId === neuronId) {
                     project.connections.delete(connId);
+                    project.lockedPairs?.delete(`${conn.fromId}|${conn.toId}`);
                 }
             }
             // Remove from layers
@@ -317,6 +369,34 @@ export class ExtensionBuilder {
             y: neuron.y
         };
         project.labels.set(id, labelData);
+        project.updatedAt = Date.now();
+        return true;
+    }
+    /**
+     * "Scripting": a (user says X -> should respond Y) example attached to
+     * a neuron. Not a canned string match -- train() below feeds every
+     * script as a genuine training sample (embedText(userSays) driving the
+     * settle, embedText(response) as the target the neuron's readout is
+     * trained toward), the same mechanism @definishon contracts use. A
+     * neuron accumulates as many scripts as it needs; train() runs them
+     * all together with its @definishon (if any) until everything
+     * converges or the epoch budget runs out.
+     */
+    addScript(projectId, neuronId, userSays, response) {
+        const project = this.projects.get(projectId);
+        const neuron = project?.neurons.get(neuronId);
+        if (!neuron || !userSays.trim() || !response.trim())
+            return false;
+        neuron.scripts.push({ userSays: userSays.trim(), response: response.trim() });
+        project.updatedAt = Date.now();
+        return true;
+    }
+    removeScript(projectId, neuronId, index) {
+        const project = this.projects.get(projectId);
+        const neuron = project?.neurons.get(neuronId);
+        if (!neuron || index < 0 || index >= neuron.scripts.length)
+            return false;
+        neuron.scripts.splice(index, 1);
         project.updatedAt = Date.now();
         return true;
     }
@@ -538,11 +618,177 @@ export class ExtensionBuilder {
             vale: 0.5,
             endpoint: '',
             method: 'POST',
-            external: []
+            external: [],
+            scripts: [],
+            // The importCode() call above already built this call's own
+            // self-contained topology (this.codeToNet's internal maps are
+            // shared/keyed by byte offset across every import, so THEY
+            // collide across multiple files -- this per-neuron copy is
+            // what makes exportCodeNet() below actually reversible for
+            // more than just the most recently imported file).
+            codeTopology: topology
         };
         project.neurons.set(id, neuron);
         project.updatedAt = Date.now();
         return neuron;
+    }
+    /**
+     * Reverse of importCodeToNet(): walks this neuron's own stored network
+     * topology back into the exact original bytes -- "reverse the network
+     * so you get what you want [the original code] instead of it being
+     * [only] reversed [into a network]." Genuinely lossless (see
+     * CodeToNet.exportCode()'s own doc comment in thorns.js), not an
+     * approximation -- verified by round-trip tests that import then
+     * export and check byte-for-byte equality against the source.
+     */
+    exportCodeNet(projectId, neuronId) {
+        const project = this.projects.get(projectId);
+        if (!project)
+            return null;
+        const neuron = project.neurons.get(neuronId);
+        if (!neuron || neuron.type !== 'codenet' || !neuron.codeTopology)
+            return null;
+        return this.codeToNet.exportCode(neuron.codeTopology);
+    }
+    /**
+     * The real training sequence: "connections then makes all definishons
+     * true then does the scripting -- a loop till all is true." NOT a
+     * script (no keyword matching, no canned playback) -- a genuine
+     * HyperDimensionalEngine training run, the same trainDefinitions()
+     * mechanism NeuroLangRuntime.materialize() already uses for
+     * @definishon (see neuro-lang.ts), extended here to also train every
+     * neuron's attached scripts (addScript() above) as additional
+     * (input -> target) samples on the same shared engine and the same
+     * per-neuron readout, so a script and a @definishon on the same neuron
+     * genuinely shape the same trained state rather than two disconnected
+     * mechanisms.
+     *
+     * 1. @connections/@conections are written as real connDiag weights
+     *    (materialize() step 2) -- "permanent" (locked) connections were
+     *    already protected from being overwritten by further edits in
+     *    connectNeurons()/disconnectNeurons() above; they're applied here
+     *    identically to "starting place" ones since materialize() always
+     *    re-applies whatever's currently in the project, locked or not.
+     * 2. @vale nudges the value budget (materialize() step 3).
+     * 3. @definishon + every script become constraint-loss training
+     *    samples, trained together until convergence or `epochs` runs out.
+     * 4. Neurons whose definition and every one of their scripts converged
+     *    get `trained = true` and their vale raised (locked in) -- the
+     *    same "on success raises that neuron's vale" mechanism
+     *    materialize() already applies to @definishon alone.
+     */
+    train(projectId, opts = {}) {
+        const project = this.projects.get(projectId);
+        if (!project)
+            return null;
+        const dims = 16;
+        // method: 'delta' (default) is the analytic tanh-derivative delta
+        // rule; 'random' is genuine random-search/evolution-strategy
+        // updates -- "each variable randomly changed; keep the change if
+        // it helped, revert if it didn't" -- a different algorithm, not
+        // gradient descent under another name. See
+        // HyperDimensionalEngine.trainDefinitionsRandomSearch()'s doc
+        // comment in onebrain.ts.
+        const method = opts.method === 'random' ? 'random' : 'delta';
+        // 300 converged a single neuron reliably but not two neurons each
+        // with their own script trained together in one pass (empirically:
+        // that needed ~800). Convergence is cheap here regardless -- 5000
+        // epochs on a handful of neurons still runs in well under 100ms --
+        // so default generously rather than making multi-neuron projects
+        // need a manual epoch bump just to converge on the first Train.
+        // Random search needs more attempts than the delta rule to find
+        // the same minimum (a random step is only ~50% likely to even
+        // point the right way; the delta rule's step always does), so its
+        // default budget is generously higher.
+        const epochs = opts.epochs ?? (method === 'random' ? 3000 : 1000);
+        const neuronCount = project.neurons.size + 1; // +1 for the shared query/drive neuron (id 0)
+        const engine = new HyperDimensionalEngine({ dimensions: dims, neuronCount, propagationSteps: 12, convergenceThreshold: 0.01 });
+        const vale = new ValueRangeAllocator({
+            enabled: true, totalPoints: 100, minLearningRate: 0.001, maxLearningRate: 0.5,
+            redistributionInterval: 1000, decayFactor: 0,
+        });
+        vale.initializeNeurons(Array.from({ length: neuronCount }, (_, i) => ({
+            id: String(i), name: i === 0 ? 'query' : `n${i}`, value: 0, learningRate: 0,
+            states: new Map(), connections: new Map(), expertGroup: null, active: true,
+        })));
+        const runtime = new NeuroLangRuntime(engine, vale, 0);
+
+        // Build the Map<string, NeuriNeuron> materialize() expects: keyed
+        // by name (not builder id), connections keyed by target *name*.
+        const neurons = new Map();
+        for (const [, n] of project.neurons) {
+            const connections = new Map();
+            for (const conn of project.connections.values()) {
+                if (conn.fromId !== n.id)
+                    continue;
+                const target = project.neurons.get(conn.toId);
+                if (target)
+                    connections.set(target.name, conn.weight);
+            }
+            neurons.set(n.name, {
+                name: n.name, value: n.value, vale: n.vale, connections,
+                definition: n.definition ?? '', code: null,
+                isNetSearch: n.type === 'netsearch', netLocation: null, isCodeNet: n.type === 'codenet',
+            });
+        }
+
+        const result = runtime.materialize(neurons, { epochs, method });
+
+        // Extra training pass: every script, on top of whatever
+        // materialize() already trained for @definishon, on the SAME
+        // engine instance and the SAME assigned neuron ids (result.nameToId).
+        const scriptSamples = [];
+        for (const [name, n] of project.neurons) {
+            for (const script of n.scripts) {
+                const readoutId = result.nameToId.get(n.name);
+                if (readoutId === undefined)
+                    continue;
+                scriptSamples.push({
+                    driveNeuronId: 0,
+                    input: embedText(script.userSays, dims),
+                    readoutNeuronId: readoutId,
+                    target: embedText(script.response, dims),
+                });
+            }
+        }
+        const scriptResult = scriptSamples.length > 0
+            ? (method === 'random'
+                ? engine.trainDefinitionsRandomSearch(scriptSamples, { epochs })
+                : engine.trainDefinitions(scriptSamples, { epochs }))
+            : null;
+
+        // A neuron is "trained" only once BOTH its @definishon (if any) and
+        // ALL of its scripts (if any) converged -- never claimed true on a
+        // partial pass.
+        const idToName = new Map(Array.from(result.nameToId.entries()).map(([nm, id]) => [id, nm]));
+        const scriptSatisfiedNames = new Set((scriptResult?.satisfied ?? []).map(id => idToName.get(id)));
+        const definitionSatisfiedNames = new Set(result.satisfied);
+        for (const [, n] of project.neurons) {
+            const hasDefinition = n.definition.trim().length > 0;
+            const hasScripts = n.scripts.length > 0;
+            const definitionOk = !hasDefinition || definitionSatisfiedNames.has(n.name);
+            const scriptsOk = !hasScripts || n.scripts.every(() => scriptSatisfiedNames.has(n.name));
+            n.trained = (hasDefinition || hasScripts) && definitionOk && scriptsOk;
+            if (n.trained) {
+                const id = result.nameToId.get(n.name);
+                if (id !== undefined)
+                    vale.updateNeuronValue(String(id), 5); // lock in, same mechanism materialize() uses
+                n.vale = vale.getValeFractions().get(String(result.nameToId.get(n.name))) ?? n.vale;
+            }
+        }
+        project.updatedAt = Date.now();
+
+        const trainingResult = {
+            converged: result.converged && (scriptResult?.converged ?? true),
+            definitionsConverged: result.converged,
+            scriptsConverged: scriptResult?.converged ?? true,
+            epochs: Math.max(result.epochs, scriptResult?.epochs ?? 0),
+            satisfied: Array.from(new Set([...definitionSatisfiedNames, ...scriptSatisfiedNames])),
+            conflicts: result.conflicts,
+            trainedNeurons: Array.from(project.neurons.values()).filter(n => n.trained).map(n => n.name),
+        };
+        project.lastTraining = trainingResult;
+        return trainingResult;
     }
     saveWithoutQuantization(projectId) {
         const project = this.projects.get(projectId);
@@ -568,6 +814,19 @@ export class ExtensionBuilder {
         const project = this.projects.get(projectId);
         if (!project)
             return null;
+        // train() is a deliberate, separate, explicit action (the UI's
+        // "Train" button / a direct train() call) -- NOT run implicitly
+        // here. An earlier version of this method auto-triggered training
+        // whenever any neuron had a non-empty `definition`, but several
+        // neuron kinds stamp a purely descriptive `definition` string that
+        // was never meant to be a trainable @definishon contract (Code-to-Net
+        // sets `definition = "CodeNet with N neurons"`, a brain-snapshot
+        // import sets `definition = "bias=..."`) -- auto-training on that
+        // signal fired far more often than intended and made every
+        // pre-existing install() call (including in tests with no training
+        // intent at all) pay for a real HyperDimensionalEngine pass it
+        // never asked for. Call train(projectId) yourself first when you
+        // actually want the definitions/scripts trained before deploying.
         // Update quantizer config
         this.quantizer = new BackgroundQuantizer({
             enabled: true,

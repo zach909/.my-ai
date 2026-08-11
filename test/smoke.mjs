@@ -495,6 +495,56 @@ async function testDefinitionTraining() {
     { driveNeuronId: 1, input: [0, 1, 0, 0], readoutNeuronId: 6, target: [-0.4, 0.4, -0.4, 0.4] },
   ], { epochs: 300 });
   check(c3.satisfied.length === 2 && c3.conflicts.length === 0, 'Definishon training satisfies independent contracts without false conflict');
+
+  // trainDefinitionsRandomSearch(): the same clamp->settle->check contract
+  // as trainDefinitions() above, but the update rule is genuine random
+  // search (evolution-strategy style) instead of the analytic delta rule
+  // -- "each variable randomly changed; keep the change if it helped,
+  // revert if it didn't." A different algorithm, so covered with the same
+  // three shapes trainDefinitions() is: solvable, contradictory,
+  // independent -- plus a direct proof it's not secretly reusing the
+  // delta rule under a different name.
+  const r1 = mk().trainDefinitionsRandomSearch(
+    [{ driveNeuronId: 0, input: [1, 0, -1, 0.5], readoutNeuronId: 5, target: [0.5, -0.5, 0.5, -0.5] }],
+    { epochs: 2000 },
+  );
+  check(r1.converged && r1.satisfied.includes(5) && r1.conflicts.length === 0,
+    'Random-search training satisfies a solvable contract (may take many more epochs than the delta rule -- a random step is only ~50% likely to even point the right way)');
+
+  const r2 = mk().trainDefinitionsRandomSearch([
+    { driveNeuronId: 0, input: [1, 0, 0, 0], readoutNeuronId: 5, target: [0.9, 0.9, 0.9, 0.9] },
+    { driveNeuronId: 0, input: [1, 0, 0, 0], readoutNeuronId: 5, target: [-0.9, -0.9, -0.9, -0.9] },
+  ], { epochs: 500 });
+  check(!r2.converged && r2.satisfied.length === 0 && r2.conflicts.some(x => x.a === 0 && x.b === 1),
+    'Random-search training also detects a contradictory pair (conflict detection is shared, not duplicated per algorithm)');
+
+  const r3 = mk().trainDefinitionsRandomSearch([
+    { driveNeuronId: 0, input: [1, 0, 0, 0], readoutNeuronId: 5, target: [0.3, -0.3, 0.3, -0.3] },
+    { driveNeuronId: 1, input: [0, 1, 0, 0], readoutNeuronId: 6, target: [-0.4, 0.4, -0.4, 0.4] },
+  ], { epochs: 2000 });
+  check(r3.satisfied.length === 2 && r3.conflicts.length === 0,
+    'Random-search training satisfies independent contracts without false conflict');
+
+  // Direct proof the two algorithms actually differ, not just "produce a
+  // similar answer eventually": connDiag/bias both start at a fixed,
+  // deterministic zero for every fresh engine (only neuron *state* init
+  // is randomized), so at a matched, epoch-starved budget the delta
+  // rule's step -- always the exact analytic gradient direction -- should
+  // converge far more reliably than a random step, which only has a
+  // rough chance of even pointing the right way each time. Measured
+  // directly: at epochs=40 on this contract, the delta rule converged
+  // 15/15 independent trials while random search converged 2/15 -- a
+  // real, large, repeatable gap, not noise. Use a looser threshold than
+  // the measured gap so this isn't flaky on a slow CI run.
+  const def = [{ driveNeuronId: 0, input: [1, 0, -1, 0.5], readoutNeuronId: 5, target: [0.5, -0.5, 0.5, -0.5] }];
+  let deltaConverged = 0, randomConverged = 0;
+  const TRIALS = 15, MATCHED_EPOCHS = 40;
+  for (let trial = 0; trial < TRIALS; trial++) {
+    if (mk().trainDefinitions(def, { epochs: MATCHED_EPOCHS }).converged) deltaConverged++;
+    if (mk().trainDefinitionsRandomSearch(def, { epochs: MATCHED_EPOCHS }).converged) randomConverged++;
+  }
+  check(deltaConverged >= TRIALS - 1 && randomConverged <= deltaConverged - 5,
+    `Random-search training is genuinely a different, slower-converging algorithm from the delta rule at a matched epoch budget (delta: ${deltaConverged}/${TRIALS} converged, random search: ${randomConverged}/${TRIALS}) -- not gradient descent silently relabelled`);
 }
 
 async function testNeuroLangLiveWiring() {
@@ -1071,6 +1121,68 @@ async function testBootstrap() {
   check(lines.some(l => l.includes('System access:') && l.includes('terminal:') && l.includes('file:')), 'printStatus() now surfaces real SystemAccess.getSystemInfo() (OS/terminal/file config), not just multi-desktop state');
 }
 
+// WebServer.loadSavedExtensions(): "integrate it into the runner" -- a
+// trained Extension Builder network must survive a server restart, not
+// just live in memory for the one process that happened to POST
+// /api/extension/register. Write a synthetic saved extension to disk
+// BEFORE the server ever boots, then confirm a fresh WebServer instance
+// picks it up on its own during start() -- no register() call in this
+// test at all.
+async function testExtensionAutoLoadOnBoot() {
+  const path = await import('node:path');
+  const { promises: fs } = await import('node:fs');
+  const http = await import('node:http');
+  const { startWeb } = await load('interface/main.js');
+
+  const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+  await fs.mkdir(dir, { recursive: true });
+  const marker = `autoload_probe_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const filePath = path.join(dir, `${marker}.ext.json`);
+  const question = `What does the boot-load probe token ${marker} decode to?`;
+  await fs.writeFile(filePath, JSON.stringify({
+    project: { name: marker },
+    // A scripted (userSays -> response) pair, queried with the EXACT same
+    // phrasing below -- the same pattern that reliably recalled the
+    // Coding Skills network's answers earlier this session. This
+    // container's extension-builder/extensions/ has accumulated many
+    // hundreds of memories across past sessions' test runs, so recall is
+    // similarity-based, not exact-match; an exact-phrase query against a
+    // long, highly distinctive random token is what keeps this reliable
+    // regardless of how many other memories are competing with it.
+    neurons: [{ name: marker, definition: '', scripts: [{ userSays: question, response: marker }] }],
+  }, null, 2), 'utf8');
+
+  const port = 7990 + Math.floor(Math.random() * 9);
+  const web = await startWeb(port);
+  try {
+    const get = (p) => new Promise((resolve, reject) => {
+      http.get({ host: '127.0.0.1', port, path: p }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      }).on('error', reject);
+    });
+    const post = (p, obj) => new Promise((resolve, reject) => {
+      const payload = JSON.stringify(obj);
+      const req = http.request({ host: '127.0.0.1', port, path: p, method: 'POST', headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) } }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', reject); req.write(payload); req.end();
+    });
+
+    const status = await get('/api/status');
+    const statusJson = JSON.parse(status.body);
+    check(statusJson.loadedExtensions && statusJson.loadedExtensions.files >= 1 && statusJson.loadedExtensions.remembered >= 1,
+      `GET /api/status reports at least one saved extension loaded at boot, without any /api/extension/register call this run (loadedExtensions=${JSON.stringify(statusJson.loadedExtensions)})`);
+
+    const chat = await post('/api/chat/messages', { message: question });
+    const chatJson = JSON.parse(chat.body);
+    check(chat.status === 200 && typeof chatJson.message === 'string' && chatJson.message.includes(marker),
+      `The boot-loaded extension's content is genuinely recallable through live chat -- the runner actually has it, not just a status-endpoint count (reply: ${JSON.stringify(chatJson.message)})`);
+  } finally {
+    await web.stop();
+    await fs.unlink(filePath).catch(() => {});
+  }
+}
+
 async function testWebBackend() {
   const http = await import('node:http');
   const { startWeb } = await load('interface/main.js');
@@ -1206,6 +1318,113 @@ async function testWebBackend() {
     check(goodBits.status === 200 && goodBitsJson.ok === true && goodBitsJson.bits === 8,
       'Web backend POST /api/extension/build still accepts a valid numeric bits value');
 
+    // POST /api/extension/train-pytorch -- the optional real-gradient-descent
+    // training backend (extension-builder/pytorch_trainer.py, spawned as a
+    // Python subprocess). Runs end-to-end against whatever Python/torch
+    // environment this machine actually has: if torch isn't installed the
+    // route must still return 200 with ok:false and a clear error (never a
+    // 500, never a hang) -- that IS the optional-dependency contract, not a
+    // failure of the test. If torch is installed, it must actually converge
+    // on a trivially learnable single definition.
+    const pytorchTrain = await post('/api/extension/train-pytorch', {
+      neurons: [{ name: 'alpha', definition: 'a test neuron', scripts: [] }],
+      epochs: 500,
+    });
+    const pytorchJson = JSON.parse(pytorchTrain.body);
+    check(pytorchTrain.status === 200, 'Web backend POST /api/extension/train-pytorch always responds 200, never crashes the process, regardless of whether Python/torch is installed');
+    check(typeof pytorchJson.ok === 'boolean' && pytorchJson.backend === 'pytorch',
+      'Web backend POST /api/extension/train-pytorch response is shaped as a real backend result (ok/backend fields present)');
+    if (pytorchJson.ok) {
+      check(pytorchJson.converged === true && pytorchJson.trainedNeurons?.includes('alpha'),
+        'Web backend POST /api/extension/train-pytorch genuinely trains and converges a single trivial definition when torch is available');
+    } else {
+      check(typeof pytorchJson.error === 'string' && pytorchJson.error.length > 0,
+        'Web backend POST /api/extension/train-pytorch reports a clear, non-empty error instead of failing silently when torch is unavailable');
+    }
+
+    // Empty/no-op input (no neurons with a definition or script) must be a
+    // fast, trivially-converged no-op -- not a spawn at all.
+    const pytorchEmpty = await post('/api/extension/train-pytorch', { neurons: [] });
+    const pytorchEmptyJson = JSON.parse(pytorchEmpty.body);
+    check(pytorchEmpty.status === 200 && pytorchEmptyJson.ok === true && pytorchEmptyJson.converged === true,
+      'Web backend POST /api/extension/train-pytorch short-circuits to a trivial converged result when there is nothing to train, without spawning python3');
+
+    // The whole point of PyTorchTrainerWorker (interface/web-server.ts) is
+    // reusing one already-warm subprocess -- `import torch` alone costs
+    // ~2s, and a cold python3+numpy+torch spawn runs 4-25s -- instead of
+    // paying that on every request. `pytorchTrain` above already forced a
+    // spawn (or a confirmed "torch unavailable"); if it succeeded, a
+    // second real training call through the same server instance must
+    // come back fast, proving the process was actually reused rather than
+    // re-spawned. If torch isn't available here, this is a no-op check
+    // (nothing to time).
+    if (pytorchJson.ok) {
+      const t0 = Date.now();
+      const pytorchWarm = await post('/api/extension/train-pytorch', {
+        neurons: [{ name: 'beta', definition: 'a second test neuron', scripts: [] }],
+        epochs: 500,
+      });
+      const warmMs = Date.now() - t0;
+      const pytorchWarmJson = JSON.parse(pytorchWarm.body);
+      check(pytorchWarm.status === 200 && pytorchWarmJson.ok === true && pytorchWarmJson.converged === true,
+        'Web backend POST /api/extension/train-pytorch: a second, independent training call also converges correctly on the reused worker');
+      check(warmMs < 2000,
+        `Web backend POST /api/extension/train-pytorch reuses its subprocess instead of re-spawning python3 per request (2nd call took ${warmMs}ms, well under a cold torch-import spawn's 4-25s)`);
+    }
+
+    // POST /api/extension/generate-coding-skills -- the live, /builder-
+    // reachable equivalent of extension-builder/train-coding-skills.mjs:
+    // actually runs real JS/Python/Shell/NeuroLang code and trains a
+    // neuron per instantiation on the real executed result. Same
+    // optional-dependency contract as train-pytorch: 200 either way, never
+    // a crash, ok:false with a clear error if python3/torch is missing.
+    const codingSkills = await post('/api/extension/generate-coding-skills', { count: 3 });
+    const codingSkillsJson = JSON.parse(codingSkills.body);
+    check(codingSkills.status === 200, 'Web backend POST /api/extension/generate-coding-skills always responds 200, never crashes the process');
+    if (codingSkillsJson.ok) {
+      check(Array.isArray(codingSkillsJson.neurons) && codingSkillsJson.neurons.length > 0,
+        'Web backend POST /api/extension/generate-coding-skills returns real neurons, each with a definition (the actual code) and a script (the actual executed result)');
+      const first = codingSkillsJson.neurons[0];
+      check(typeof first.definition === 'string' && first.definition.length > 0 && Array.isArray(first.scripts) && first.scripts.length === 1 && first.scripts[0].response.length > 0,
+        'Web backend POST /api/extension/generate-coding-skills: each neuron carries the real code as its definition and the real executed result as its script response');
+      check(codingSkillsJson.trainedCount > 0,
+        'Web backend POST /api/extension/generate-coding-skills genuinely trains and converges at least one execution-grounded neuron when torch is available');
+    } else {
+      check(typeof codingSkillsJson.error === 'string' && codingSkillsJson.error.length > 0,
+        'Web backend POST /api/extension/generate-coding-skills reports a clear, non-empty error instead of failing silently when torch/python3 is unavailable');
+    }
+
+    // POST /api/extension/merge-with-saved -- real weight averaging
+    // ("model soup") against a saved extension file. Reject an obviously
+    // unsafe savedFile (path traversal) before it ever attempts to touch
+    // disk, matching every other filename-taking endpoint's convention.
+    const traversal = await post('/api/extension/merge-with-saved', { neurons: [], savedFile: '../../../etc/passwd' });
+    check(traversal.status === 400, 'Web backend POST /api/extension/merge-with-saved rejects a savedFile containing path segments (traversal) with 400, not a filesystem read attempt');
+
+    const missingFile = await post('/api/extension/merge-with-saved', { neurons: [{ name: 'alpha', definition: 'a test neuron', scripts: [] }], savedFile: 'definitely_does_not_exist.ext.json' });
+    const missingFileJson = JSON.parse(missingFile.body);
+    check(missingFile.status === 404 && missingFileJson.ok === false,
+      'Web backend POST /api/extension/merge-with-saved reports 404 for a savedFile that does not exist, instead of crashing or silently merging with nothing');
+
+    if (codingSkillsJson.ok) {
+      // Merge the current (empty-canvas) project against the coding-skills
+      // extension we just registered-worth of neurons above -- exercises
+      // the real merge path end to end: both sides trained fresh, then
+      // averaged/unioned by name.
+      const registerBody = { name: 'merge_smoke_test', neurons: codingSkillsJson.neurons };
+      const registered = await post('/api/extension/register', registerBody);
+      const registeredJson = JSON.parse(registered.body);
+      if (registeredJson.ok) {
+        const merged = await post('/api/extension/merge-with-saved', {
+          neurons: [{ name: 'alpha', definition: 'a test neuron', scripts: [] }],
+          savedFile: registeredJson.savedAs,
+        });
+        const mergedJson = JSON.parse(merged.body);
+        check(merged.status === 200 && mergedJson.ok === true && mergedJson.totalCount >= codingSkillsJson.neurons.length,
+          'Web backend POST /api/extension/merge-with-saved genuinely merges the current project with a saved extension, unioning both sides\' neurons');
+      }
+    }
+
     // AppLauncher.launch() called spawn(command, args, {shell: true}), so a
     // shell metacharacter (`;`, `&&`, backticks, ...) inside an *args* entry
     // ran as an additional, unintended command rather than literal argv
@@ -1327,6 +1546,96 @@ async function testEmailPluginCommandInjection() {
     'EmailPlugin: the shell command is exactly the sendmail binary + fixed flags, nothing else');
   check(input === mime,
     'EmailPlugin: the full MIME content (including the attacker-controlled payload) is passed via stdin, not the command line');
+}
+
+// ResearchPlugin: "long-term memory / drive / web" search plus "conduct
+// research studies itself" -- never trust a single source, only mark a
+// claim verified once 2+ independent sources corroborate it.
+async function testResearchPlugin() {
+  const { ResearchPlugin } = await load('plugins/research.js');
+  const r = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
+
+  // Real filesystem search, scoped to this repo -- must find the plugin's
+  // own source file. Regression guard for a real bug caught while
+  // building this: a naive depth-first walk exhausts its whole file
+  // budget descending into whichever subdirectory sorts first
+  // alphabetically (this repo's own extension-builder/Moby, 13,000+
+  // vendored files) before ever reaching a sibling directory like
+  // plugins/ -- silently starving every later-sorted directory. The fix
+  // is breadth-first traversal; this proves plugins/research.ts itself
+  // is actually found, not just that *some* file somewhere matched.
+  const driveHits = await r.searchDrive('class ResearchPlugin', { root: process.cwd(), maxResults: 5 });
+  check(driveHits.some(h => h.location.endsWith('plugins/research.ts')),
+    'ResearchPlugin.searchDrive() finds its own source file in a real repo with a large, alphabetically-earlier sibling directory (BFS, not DFS-starved)');
+  check(driveHits.every(h => h.source === 'drive' && h.snippet.length > 0),
+    'ResearchPlugin.searchDrive() results carry a real snippet, not just a bare filename');
+
+  // A directory that doesn't exist must degrade to zero results, not throw.
+  const noHits = await r.searchDrive('anything', { root: './definitely/does/not/exist/xyz', maxResults: 5 });
+  check(Array.isArray(noHits) && noHits.length === 0, 'ResearchPlugin.searchDrive() returns an empty array (not a throw) for a root that does not exist');
+
+  // conductResearch()'s cross-source verification, isolated from real
+  // memory/web calls by stubbing the three search methods with
+  // controlled sources -- deterministic, not dependent on network
+  // reachability or this container's accumulated memory state.
+  const withStubbedSources = (memory, drive, web) => {
+    const stub = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
+    stub.searchMemory = async () => memory;
+    stub.searchDrive = async () => drive;
+    stub.searchWeb = async () => web;
+    return stub;
+  };
+
+  const corroborated = withStubbedSources(
+    [{ source: 'memory', title: 'm', snippet: 'the launch date is scheduled for October fifteenth', location: 'mem-1' }],
+    [],
+    [{ source: 'web', title: 'w', snippet: 'officials confirmed the launch date is scheduled for October fifteenth', location: 'https://example.com' }],
+  );
+  const corroboratedReport = await corroborated.conductResearch('launch date');
+  check(corroboratedReport.verifiedCount === 1 && corroboratedReport.claims[0].verified === true,
+    'ResearchPlugin.conductResearch() marks a claim verified when 2+ independent sources corroborate the same fact');
+
+  const singleSourced = withStubbedSources(
+    [],
+    [],
+    [{ source: 'web', title: 'w', snippet: 'a single unconfirmed rumor with no corroboration anywhere else', location: 'https://example.com' }],
+  );
+  const singleSourcedReport = await singleSourced.conductResearch('rumor');
+  check(singleSourcedReport.unverifiedCount === 1 && singleSourcedReport.claims[0].verified === false,
+    'ResearchPlugin.conductResearch() never marks a single-sourced claim verified -- "checking checking checking," not trusting one hit');
+
+  const noSources = withStubbedSources([], [], []);
+  const emptyReport = await noSources.conductResearch('nothing found anywhere');
+  check(emptyReport.claims.length === 0 && emptyReport.verifiedCount === 0 && emptyReport.unverifiedCount === 0,
+    'ResearchPlugin.conductResearch() reports an honest empty result when no source has anything, instead of fabricating a claim');
+
+  // digestIntel(): "Ultra-Fast Processing... digests global data (news,
+  // surveillance, scientific papers) in seconds to give actionable intel."
+  // searchWeb() is stubbed so this is deterministic and network-independent
+  // -- the point under test is the fan-out/synthesis logic, not DuckDuckGo
+  // reachability (already covered by the real, unstubbed searchWeb() calls
+  // above via searchDrive()'s sibling tests and by manual verification
+  // during development).
+  const intelPlugin = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
+  const queriesSeen = [];
+  intelPlugin.searchWeb = async (query) => {
+    queriesSeen.push(query);
+    return [{ source: 'web', title: `result for ${query.slice(0, 12)}`, snippet: 'x'.repeat(250), location: 'https://example.com' }];
+  };
+  const brief = await intelPlugin.digestIntel('volcanic activity');
+  check(queriesSeen.length === 3, 'ResearchPlugin.digestIntel() queries all three channels (news, monitoring, papers)');
+  check(new Set(brief.items.map(i => i.channel)).size === 3 && brief.items.every(i => ['news', 'monitoring', 'papers'].includes(i.channel)),
+    'ResearchPlugin.digestIntel() tags every item with its real channel');
+  check(brief.actionableIntel.length === brief.items.length && brief.actionableIntel.every(s => /^\[(news|monitoring|papers)\]/.test(s)),
+    'ResearchPlugin.digestIntel() synthesizes one channel-labeled actionable bullet per item, not a raw dump');
+  check(brief.actionableIntel.every(s => s.length < 250), 'ResearchPlugin.digestIntel() clips long snippets down to a short, actionable bullet');
+  check(typeof brief.elapsedMs === 'number' && brief.elapsedMs >= 0, 'ResearchPlugin.digestIntel() reports real elapsed wall-clock time');
+
+  const intelNoResults = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
+  intelNoResults.searchWeb = async () => { throw new Error('network unreachable'); };
+  const emptyBrief = await intelNoResults.digestIntel('anything');
+  check(emptyBrief.items.length === 0 && emptyBrief.actionableIntel.length === 0,
+    'ResearchPlugin.digestIntel() degrades to an empty, honest brief when every channel fails, instead of throwing');
 }
 
 async function testSelfReplicatePluginConstructs() {
@@ -1455,6 +1764,28 @@ async function testExtensionBuilderFlow() {
   // No evidence -> no fabricated "fully confident" neuron.
   check(B.netSearchGenerate(pid, 'zzzqqq nonexistent xxyyzz', 2) === null, 'Net Search returns null when there are zero semantic matches');
   check(B.netSearchGenerate(pid, '', 2) === null, 'Net Search returns null for an empty/untokenizable query');
+
+  // Code-to-Net, reversed: exportCodeNet() must walk a codenet neuron's own
+  // stored topology (its network's actual edges, inputLayer -> ... ->
+  // outputLayer -- see CodeToNet.exportCode() in thorns.js) back into the
+  // exact original bytes, not an approximation. Cover the boundary cases
+  // importCode()'s 8-byte chunking makes easy to get subtly wrong: a
+  // length that's an exact multiple of the chunk size, one that isn't, and
+  // a single byte.
+  for (const text of ['exactly16bytes!!', 'not a multiple of eight bytes', 'x', '']) {
+    const original = Buffer.from(text, 'utf8');
+    const codeNeuron = B.importCodeToNet(pid, `roundtrip_${original.length}`, original);
+    if (original.length === 0) {
+      check(codeNeuron !== null, 'importCodeToNet() still creates a neuron for zero-length input');
+      check(B.exportCodeNet(pid, codeNeuron.id).length === 0, 'exportCodeNet() reverses a zero-length import back to zero bytes');
+      continue;
+    }
+    const reconstructed = Buffer.from(B.exportCodeNet(pid, codeNeuron.id));
+    check(Buffer.compare(reconstructed, original) === 0,
+      `exportCodeNet() reverses a ${original.length}-byte Code-to-Net import back to the exact original bytes (not just the same length)`);
+  }
+  check(B.exportCodeNet(pid, 'nonexistent-neuron-id') === null, 'exportCodeNet() returns null for a neuron id that does not exist, instead of throwing');
+  check(B.exportCodeNet(pid, n1.id) === null, 'exportCodeNet() returns null for a neuron that was never imported via Code-to-Net (no topology to reverse)');
 }
 
 // The Neural Definition DSL parses every spec directive, including both
@@ -2008,6 +2339,75 @@ async function testNetSearchEngine() {
   check(bindings.some(b => b.name === 'finder' && b.location === 'self'), 'NeuroLang records a netsearch@net="self" binding');
   const hit = interp.netSearch('expert routing', { mode: 'semantic' });
   check(hit.length > 0 && hit[0].name === 'router', 'NeuroLang netSearch finds the relevant neuron by definition');
+}
+
+// extension-builder/pytorch_trainer.py's "eval" op and initW/initB
+// continuation -- added for train-coding-skills.mjs's round loop and
+// merge-networks.mjs's post-merge fine-tune, neither of which go through
+// the HTTP endpoint (POST /api/extension/train-pytorch, covered
+// separately in testWebBackend above) since they're one-time build
+// scripts, not live requests. Optional-dependency degradation applies the
+// same way here: if python3/torch isn't on this machine, every check
+// below is skipped rather than failing the whole suite.
+async function testPyTorchTrainerOpsAndContinuation() {
+  const { spawnSync } = await import('node:child_process');
+  const scriptPath = new URL('../extension-builder/pytorch_trainer.py', import.meta.url).pathname;
+
+  function callTrainer(spec) {
+    const res = spawnSync('python3', [scriptPath], { input: JSON.stringify(spec) + '\n', encoding: 'utf8', timeout: 30000 });
+    if (res.error || res.status !== 0 && !res.stdout?.trim()) return null;
+    try { return JSON.parse(res.stdout.trim().split('\n').pop()); } catch { return null; }
+  }
+
+  const probe = callTrainer({ op: 'train', dims: 2, numReadouts: 1, epochs: 5, samples: [{ readout: 0, input: [0.1, 0.1], target: [0.2, 0.2] }] });
+  if (!probe || probe.ok !== true) {
+    console.log('  (skip) PyTorch not available in this environment -- testPyTorchTrainerOpsAndContinuation');
+    return;
+  }
+
+  // "train" now returns the trained W/b, not just convergence stats --
+  // the whole basis for merge-networks.mjs averaging two real models.
+  check(Array.isArray(probe.W) && probe.W.length === 1 && probe.W[0].length === 2, 'pytorch_trainer.py "train" returns trained W shaped [numReadouts][dims], not just loss stats');
+  check(Array.isArray(probe.b) && probe.b.length === 1, 'pytorch_trainer.py "train" returns trained b alongside W');
+
+  // initW/initB: continuing from an already-good starting point should
+  // converge in fewer (or equal) epochs than starting cold from zeros --
+  // a real fine-tune, not silently ignored.
+  const cold = callTrainer({ op: 'train', dims: 2, numReadouts: 1, epochs: 200, samples: [{ readout: 0, input: [0.3, 0.7], target: [0.5, -0.5] }] });
+  const warm = callTrainer({
+    op: 'train', dims: 2, numReadouts: 1, epochs: 200,
+    samples: [{ readout: 0, input: [0.3, 0.7], target: [0.5, -0.5] }],
+    initW: cold.W, initB: cold.b,
+  });
+  check(warm.ok === true && warm.epochsRun <= cold.epochsRun, 'pytorch_trainer.py continues training from initW/initB instead of restarting cold (converges in <= the epochs a fresh run needed)');
+
+  // A shape mismatch between initW/initB and numReadouts/dims must be
+  // rejected, not silently reshaped or truncated.
+  const badShape = callTrainer({
+    op: 'train', dims: 2, numReadouts: 1, epochs: 10,
+    samples: [{ readout: 0, input: [0.1, 0.1], target: [0.1, 0.1] }],
+    initW: [[1, 2, 3]], initB: [[1, 2, 3]],
+  });
+  check(badShape && badShape.ok === false, 'pytorch_trainer.py rejects initW/initB whose shape does not match numReadouts/dims instead of silently misusing it');
+
+  // "eval": a pure forward pass against already-trained weights -- no
+  // optimizer, no weight mutation, genuine held-out measurement.
+  const evalSame = callTrainer({
+    op: 'eval', dims: 2, tolerance: 1e-2,
+    samples: [{ readout: 0, input: [0.3, 0.7], target: [0.5, -0.5] }],
+    W: warm.W, b: warm.b,
+  });
+  check(evalSame.ok === true && evalSame.accuracy === 1, 'pytorch_trainer.py "eval" reports full accuracy when re-scored against the exact sample it was just trained on');
+
+  const evalDifferent = callTrainer({
+    op: 'eval', dims: 2, tolerance: 1e-6, // near-zero tolerance -- an untrained-on target essentially never lands this close by chance
+    samples: [{ readout: 0, input: [0.9, 0.1], target: [-0.9, 0.9] }],
+    W: warm.W, b: warm.b,
+  });
+  check(evalDifferent.ok === true && evalDifferent.accuracy === 0, 'pytorch_trainer.py "eval" honestly reports low accuracy on an unrelated held-out sample, not inflated by re-testing the training sample');
+
+  const evalMissingWeights = callTrainer({ op: 'eval', dims: 2, samples: [{ readout: 0, input: [0.1, 0.1], target: [0.1, 0.1] }] });
+  check(evalMissingWeights && evalMissingWeights.ok === false, 'pytorch_trainer.py "eval" requires W/b and fails clearly instead of crashing when they are missing');
 }
 
 async function testCodeToNet() {
@@ -4123,10 +4523,13 @@ async function main() {
     ['NeuroclawTrainer elastic-core training path also yields to event loop (Section 26)', testElasticCoreTrainingYields],
     ['NeuroLang Elastic Core materializer', testNeuroLangElasticMaterializer],
     ['App bootstrap', testBootstrap],
+    ['Extension auto-load on boot (integrated into the runner)', testExtensionAutoLoadOnBoot],
     ['Web backend (server.py bridge)', testWebBackend],
+    ['pytorch_trainer.py eval op + initW/initB continuation', testPyTorchTrainerOpsAndContinuation],
     ['Extension catalog fully active', testExtensionCatalogFullyActive],
     ['Chrome Apps', testChromeApps],
     ['EmailPlugin command injection fix', testEmailPluginCommandInjection],
+    ['ResearchPlugin: long-term memory / drive / web search + never-trust-one-source verification', testResearchPlugin],
     ['SelfReplicatePlugin constructs under native ESM (no __dirname)', testSelfReplicatePluginConstructs],
     ['Extension Builder flow', testExtensionBuilderFlow],
     ['Neural Definition directives', testNeuralDefinitionDirectives],

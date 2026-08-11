@@ -242,6 +242,36 @@ export default defineConfig({
     strictPort: true,
     host: true,
     allowedHosts: true,
+    watch: {
+      // Real crash reported running `npm run dev`: "ENOSPC: System limit
+      // for number of file watchers reached" from a file under
+      // `model && skills manager/venv/.../torch/...` -- a Python venv's
+      // site-packages easily contains tens of thousands of files, and
+      // .gitignore (venv/, node_modules/, dist/, ...) has zero effect on
+      // chokidar/native fs.watch, which watches the real filesystem
+      // regardless of git's ignore rules. None of these directories
+      // contain source Vite needs HMR for, so excluding them here is a
+      // straightforward, low-risk fix (fewer watched files is strictly
+      // safer, never a source of missed-reload bugs since nothing under
+      // them is ever imported into the frontend bundle).
+      ignored: [
+        '**/venv/**',
+        '**/.venv/**',
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/dist/**',
+        '**/clones/**',
+        '**/extension-builder/Moby/**',
+        '**/extension-builder/CMUDict/**',
+        '**/extension-builder/debian-installer/**',
+        '**/extension-builder/extensions/**',
+        '**/__pycache__/**',
+        '**/.mypy_cache/**',
+        '**/.pytest_cache/**',
+        '**/coverage/**',
+        '**/htmlcov/**',
+      ],
+    },
     // src/components/Desktop.tsx (the only fetch('/api/...') caller anywhere
     // in src/, confirmed by grep) calls the Node backend (interface/web-server.ts,
     // default port 7861 per interface/main.ts) assuming same-origin -- with no

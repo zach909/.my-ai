@@ -1915,6 +1915,9 @@ export class HyperDimensionalEngine {
         const dims = this.config.dimensions;
         this.selfModelA = new Float32Array(dims * rank);
         this.selfModelB = new Float32Array(rank * dims);
+        this.selfModelHScratch = new Float32Array(rank);
+        this.selfModelErrorScratch = new Float32Array(dims);
+        this.selfModelDHScratch = new Float32Array(rank);
         const scale = Math.sqrt(1 / Math.max(1, dims));
         for (let i = 0; i < this.selfModelA.length; i++)
             this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
@@ -2222,13 +2225,23 @@ export class HyperDimensionalEngine {
             .map((def, i) => ({ id: def.readoutNeuronId, ok: losses[i] < tolerance }))
             .filter(x => x.ok)
             .map(x => x.id);
-        // Conflict detection. A direct contradiction (same readout, incompatible
-        // targets) drives both losses to a stuck, near-flat equilibrium rather
-        // than a visibly oscillating one, so anti-correlation of loss *levels*
-        // alone misses it. Combine two signals over pairs that did not both
-        // converge: (1) a structural check — they constrain the same readout to
-        // targets further apart than tolerance allows; (2) anti-correlated loss
-        // *deltas* (satisfying one epoch-over-epoch worsens the other).
+        const conflicts = this.detectDefinitionConflicts(definitions, losses, lossHistory, dims, tolerance);
+        return { converged, epochs: ranEpochs, losses, satisfied, conflicts };
+    }
+    /**
+     * Shared by trainDefinitions() (analytic delta rule) and
+     * trainDefinitionsRandomSearch() (below) -- conflict detection doesn't
+     * depend on which update rule got the losses to where they are, only on
+     * the resulting loss trajectories and targets. A direct contradiction
+     * (same readout, incompatible targets) drives both losses to a stuck,
+     * near-flat equilibrium rather than a visibly oscillating one, so
+     * anti-correlation of loss *levels* alone misses it. Combine two
+     * signals over pairs that did not both converge: (1) a structural
+     * check — they constrain the same readout to targets further apart
+     * than tolerance allows; (2) anti-correlated loss *deltas* (satisfying
+     * one epoch-over-epoch worsens the other).
+     */
+    detectDefinitionConflicts(definitions, losses, lossHistory, dims, tolerance) {
         const deltas = lossHistory.map(h => h.slice(1).map((v, k) => v - h[k]));
         const targetDist = (a, b) => {
             let s = 0;
@@ -2250,6 +2263,99 @@ export class HyperDimensionalEngine {
                     conflicts.push({ a: i, b: j, correlation: corr });
             }
         }
+        return conflicts;
+    }
+    /**
+     * Section 4 alternative: the SAME "clamp -> settle -> check -> adjust"
+     * contract as trainDefinitions() above, but the adjustment itself is
+     * random search (evolution-strategy style), not an analytic gradient --
+     * "each variable is randomly changed, either positively or negatively;
+     * if the result is good, move toward the change; if it's bad, move
+     * away from it (revert)." Every definition's readout gets ONE random
+     * step across all its incoming weights+bias together per epoch (not a
+     * per-weight coordinate search, which would need one settle() call per
+     * individual weight -- far too expensive for any real neuron count):
+     * try the step, re-settle, keep it if the loss actually improved,
+     * revert the whole step otherwise. Genuinely a different algorithm
+     * from trainDefinitions()'s delta rule, not gradient descent given a
+     * new name -- typically needs many more epochs to converge, since a
+     * random step only has a roughly 50% chance of even pointing the right
+     * direction, versus the delta rule's step being the exact direction of
+     * steepest descent every time.
+     */
+    trainDefinitionsRandomSearch(definitions, opts = {}) {
+        const epochs = opts.epochs ?? 500; // random search needs more attempts than the delta rule to find the same minimum
+        const stepSize = opts.stepSize ?? 0.15;
+        const tolerance = opts.tolerance ?? 1e-3;
+        const dims = this.config.dimensions;
+        const D = this.totalDims;
+        const N = this.neurons.length;
+        const evalLoss = (def) => {
+            this.settle(def.input, new Set([def.driveNeuronId]));
+            const readout = this.neurons.find(n => n.id === def.readoutNeuronId);
+            if (!readout)
+                return Infinity;
+            let sse = 0;
+            for (let d = 0; d < dims; d++) {
+                const err = (def.target[d] ?? 0) - readout.state[d + 1];
+                sse += err * err;
+            }
+            return sse / dims;
+        };
+        const lossHistory = definitions.map(() => []);
+        let losses = definitions.map(() => Infinity);
+        let converged = false;
+        let ranEpochs = 0;
+        for (let epoch = 0; epoch < epochs; epoch++) {
+            ranEpochs = epoch + 1;
+            losses = [];
+            for (const def of definitions) {
+                const baseline = evalLoss(def);
+                const biasOffset = def.readoutNeuronId * D;
+                // One random step across every weight+bias this readout has --
+                // the same set trainDefinitions()'s delta rule updates -- tried
+                // as a single unit, kept or reverted as a single unit.
+                const snapshot = [];
+                for (let d = 0; d < dims; d++) {
+                    const cd = d + 1;
+                    const rowOffset = (def.readoutNeuronId * D + cd) * N;
+                    for (const nj of this.neurons) {
+                        if (nj.id === def.readoutNeuronId)
+                            continue;
+                        const wdIdx = rowOffset + nj.id;
+                        snapshot.push({ idx: wdIdx, inDiag: true, value: this.connDiag[wdIdx] });
+                        this.connDiag[wdIdx] = clamp(this.connDiag[wdIdx] + (Math.random() * 2 - 1) * stepSize, -2, 2);
+                    }
+                    const bIdx = biasOffset + cd;
+                    snapshot.push({ idx: bIdx, inDiag: false, value: this.bias[bIdx] });
+                    this.bias[bIdx] = clamp(this.bias[bIdx] + (Math.random() * 2 - 1) * stepSize, -1, 1);
+                }
+                const trial = evalLoss(def);
+                if (trial < baseline) {
+                    losses.push(trial); // the random step genuinely helped -- keep it
+                }
+                else {
+                    for (const s of snapshot) {
+                        if (s.inDiag)
+                            this.connDiag[s.idx] = s.value;
+                        else
+                            this.bias[s.idx] = s.value;
+                    }
+                    losses.push(baseline); // it didn't help -- revert the whole step
+                }
+            }
+            for (let i = 0; i < definitions.length; i++)
+                lossHistory[i].push(losses[i]);
+            if (losses.every(l => l < tolerance)) {
+                converged = true;
+                break;
+            }
+        }
+        const satisfied = definitions
+            .map((def, i) => ({ id: def.readoutNeuronId, ok: losses[i] < tolerance }))
+            .filter(x => x.ok)
+            .map(x => x.id);
+        const conflicts = this.detectDefinitionConflicts(definitions, losses, lossHistory, dims, tolerance);
         return { converged, epochs: ranEpochs, losses, satisfied, conflicts };
     }
     initializeNeurons() {
@@ -2321,6 +2427,19 @@ export class HyperDimensionalEngine {
                 isDriven[id] = 1;
             }
         }
+        // BOLT OPTIMIZATION: Filter driven and non-driven indices up-front
+        // This completely eliminates the nested branch checks `if (isDriven[i]) continue;` inside the hot loops.
+        const drivenIndices = [];
+        const nonDrivenIndices = [];
+        for (let i = 0; i < N; i++) {
+            if (isDriven[i]) {
+                drivenIndices.push(i);
+            }
+            else {
+                nonDrivenIndices.push(i);
+            }
+        }
+        const nonDrivenCount = nonDrivenIndices.length;
         const vs = new Float32Array(N);
         const hasV = new Uint8Array(N);
         const priorStates = new Array(N);
@@ -2341,19 +2460,31 @@ export class HyperDimensionalEngine {
         const connDiag = this.connDiag;
         const connShift = this.connShift;
         const bias = this.bias;
+        // BOLT OPTIMIZATION: Pre-calculate driven content energy contribution and clamped input vector once.
+        // Since input values are invariant during the entire settling run, we completely eliminate
+        // redundant loops, array access, and Math.max/Math.min/clamping checks inside the propagation loop.
+        let drivenEnergyContribution = 0;
+        const clampedInput = new Float32Array(dims);
+        for (let d = 0; d < dims; d++) {
+            const inputVal = resolvedInput[d] ?? 0;
+            const val = inputVal < -1 ? -1 : (inputVal > 1 ? 1 : inputVal);
+            clampedInput[d] = val;
+            drivenEnergyContribution += val * val;
+        }
+        const totalDrivenEnergyContribution = drivenIndices.length * drivenEnergyContribution;
         for (; iterations < this.config.propagationSteps; iterations++) {
-            let currentTotalContentEnergy = 0;
-            // Handle driven neurons first (isolated pass)
-            for (let i = 0; i < N; i++) {
-                if (!isDriven[i])
-                    continue;
+            // Initialize content energy with the pre-calculated constant driven energy contribution.
+            let currentTotalContentEnergy = totalDrivenEnergyContribution;
+            // Fill driven neurons state vectors into nextStates.
+            // Keeping this inside the propagation loop is critical to ensure both state buffers
+            // remain synchronized without corruption, while using pre-calculated clamped values
+            // avoids any redundant evaluation overhead.
+            for (let idx = 0; idx < drivenIndices.length; idx++) {
+                const i = drivenIndices[idx];
                 const offset = i * D;
-                nextStates[offset] = 1.0;
+                nextStates[offset] = 1.0; // Mark as externally driven
                 for (let d = 0; d < dims; d++) {
-                    const inputVal = resolvedInput[d] ?? 0;
-                    const val = inputVal < -1 ? -1 : (inputVal > 1 ? 1 : inputVal);
-                    nextStates[offset + d + 1] = val;
-                    currentTotalContentEnergy += val * val;
+                    nextStates[offset + d + 1] = clampedInput[d];
                 }
             }
             // Handle non-driven neurons using loop-swapping to hoist dimension/state/weight views
@@ -2362,9 +2493,8 @@ export class HyperDimensionalEngine {
                 const srcD = (d - 1 + D) % D;
                 const sjShiftRow = stateViews[srcD];
                 const dn = d * N;
-                for (let i = 0; i < N; i++) {
-                    if (isDriven[i])
-                        continue;
+                for (let idx = 0; idx < nonDrivenCount; idx++) {
+                    const i = nonDrivenIndices[idx];
                     const biasOffset = i * D;
                     const rowOffset = i * DN + dn;
                     let dotDiag = 0;
@@ -2693,7 +2823,8 @@ export class HyperDimensionalEngine {
     selfModelPredict(vec) {
         const dims = this.config.dimensions;
         const rank = this.config.selfModelRank;
-        const h = new Float32Array(rank);
+        const h = this.selfModelHScratch;
+        h.fill(0);
         for (let d = 0; d < dims; d++) {
             const v = vec[d] ?? 0;
             const offset = d * rank;
@@ -2731,31 +2862,64 @@ export class HyperDimensionalEngine {
         const dims = this.config.dimensions;
         const rank = this.config.selfModelRank;
         const lr = 0.01;
-        const h = new Float32Array(rank);
-        for (let d = 0; d < dims; d++) {
-            const v = prevVec[d] ?? 0;
-            for (let r = 0; r < rank; r++)
-                h[r] += v * this.selfModelA[d * rank + r];
-        }
-        const error = new Float32Array(dims);
+        // OPTIMIZATION: Reuse pre-computed h projection from selfModelPredict to avoid
+        // O(dimensions * rank) redundant recalculations and Float32Array allocations.
+        const h = this.selfModelHScratch;
+        const error = this.selfModelErrorScratch;
+        error.fill(0);
         for (let d = 0; d < dims; d++)
             error[d] = (actual[d] ?? 0) - (predicted[d] ?? 0);
-        const dh = new Float32Array(rank);
+        const dh = this.selfModelDHScratch;
+        dh.fill(0);
         for (let r = 0; r < rank; r++) {
             let acc = 0;
-            for (let d = 0; d < dims; d++)
-                acc += error[d] * this.selfModelB[r * dims + d];
+            const bOffset = r * dims;
+            let d = 0;
+            const limit = dims - 3;
+            // OPTIMIZATION: 4x loop unrolling to reduce branch overhead.
+            for (; d < limit; d += 4) {
+                acc += error[d] * this.selfModelB[bOffset + d]
+                    + error[d + 1] * this.selfModelB[bOffset + d + 1]
+                    + error[d + 2] * this.selfModelB[bOffset + d + 2]
+                    + error[d + 3] * this.selfModelB[bOffset + d + 3];
+            }
+            for (; d < dims; d++) {
+                acc += error[d] * this.selfModelB[bOffset + d];
+            }
             dh[r] = acc;
         }
         for (let r = 0; r < rank; r++) {
-            for (let d = 0; d < dims; d++) {
-                this.selfModelB[r * dims + d] += lr * error[d] * h[r];
+            const hr = h[r];
+            const lrHr = lr * hr;
+            const bOffset = r * dims;
+            let d = 0;
+            const limit = dims - 3;
+            // OPTIMIZATION: 4x loop unrolling and factored multiplier out of inner loop.
+            for (; d < limit; d += 4) {
+                this.selfModelB[bOffset + d] += lrHr * error[d];
+                this.selfModelB[bOffset + d + 1] += lrHr * error[d + 1];
+                this.selfModelB[bOffset + d + 2] += lrHr * error[d + 2];
+                this.selfModelB[bOffset + d + 3] += lrHr * error[d + 3];
+            }
+            for (; d < dims; d++) {
+                this.selfModelB[bOffset + d] += lrHr * error[d];
             }
         }
         for (let d = 0; d < dims; d++) {
             const v = prevVec[d] ?? 0;
-            for (let r = 0; r < rank; r++) {
-                this.selfModelA[d * rank + r] += lr * dh[r] * v;
+            const lrV = lr * v;
+            const offset = d * rank;
+            let r = 0;
+            const limit = rank - 3;
+            // OPTIMIZATION: 4x loop unrolling and factored multiplier out of inner loop.
+            for (; r < limit; r += 4) {
+                this.selfModelA[offset + r] += lrV * dh[r];
+                this.selfModelA[offset + r + 1] += lrV * dh[r + 1];
+                this.selfModelA[offset + r + 2] += lrV * dh[r + 2];
+                this.selfModelA[offset + r + 3] += lrV * dh[r + 3];
+            }
+            for (; r < rank; r++) {
+                this.selfModelA[offset + r] += lrV * dh[r];
             }
         }
     }
@@ -2909,19 +3073,29 @@ export class HyperDimensionalEngine {
                 const v5 = this.allStates[rowOffset + i + 5];
                 const v6 = this.allStates[rowOffset + i + 6];
                 const v7 = this.allStates[rowOffset + i + 7];
-                hist[Math.min(9, Math.floor((v0 + 1) * 5))]++;
-                hist[Math.min(9, Math.floor((v1 + 1) * 5))]++;
-                hist[Math.min(9, Math.floor((v2 + 1) * 5))]++;
-                hist[Math.min(9, Math.floor((v3 + 1) * 5))]++;
-                hist[Math.min(9, Math.floor((v4 + 1) * 5))]++;
-                hist[Math.min(9, Math.floor((v5 + 1) * 5))]++;
-                hist[Math.min(9, Math.floor((v6 + 1) * 5))]++;
-                hist[Math.min(9, Math.floor((v7 + 1) * 5))]++;
+                // BOLT OPTIMIZATION: Replace expensive Math.min and Math.floor calls in hot loops
+                // with inline branchless ternaries and extremely fast bitwise OR `| 0` truncation.
+                const idx0 = ((v0 + 1) * 5) | 0;
+                const idx1 = ((v1 + 1) * 5) | 0;
+                const idx2 = ((v2 + 1) * 5) | 0;
+                const idx3 = ((v3 + 1) * 5) | 0;
+                const idx4 = ((v4 + 1) * 5) | 0;
+                const idx5 = ((v5 + 1) * 5) | 0;
+                const idx6 = ((v6 + 1) * 5) | 0;
+                const idx7 = ((v7 + 1) * 5) | 0;
+                hist[idx0 > 9 ? 9 : (idx0 < 0 ? 0 : idx0)]++;
+                hist[idx1 > 9 ? 9 : (idx1 < 0 ? 0 : idx1)]++;
+                hist[idx2 > 9 ? 9 : (idx2 < 0 ? 0 : idx2)]++;
+                hist[idx3 > 9 ? 9 : (idx3 < 0 ? 0 : idx3)]++;
+                hist[idx4 > 9 ? 9 : (idx4 < 0 ? 0 : idx4)]++;
+                hist[idx5 > 9 ? 9 : (idx5 < 0 ? 0 : idx5)]++;
+                hist[idx6 > 9 ? 9 : (idx6 < 0 ? 0 : idx6)]++;
+                hist[idx7 > 9 ? 9 : (idx7 < 0 ? 0 : idx7)]++;
             }
             for (; i < N; i++) {
                 const v = this.allStates[rowOffset + i];
-                const idx = Math.min(9, Math.floor((v + 1) * 5));
-                hist[idx]++;
+                const idx = ((v + 1) * 5) | 0;
+                hist[idx > 9 ? 9 : (idx < 0 ? 0 : idx)]++;
             }
             for (let b = 0; b < buckets; b++) {
                 const p = hist[b] / N;

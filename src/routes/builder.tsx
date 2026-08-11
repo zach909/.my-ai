@@ -1,5 +1,5 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useMemo, useState } from 'react'
+import { useEffect, useMemo, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
@@ -47,6 +47,15 @@ function BuilderPage() {
   const [netSearchQuery, setNetSearchQuery] = useState('')
   const [netSearchResults, setNetSearchResults] = useState<Array<{ results: string[]; confidence: number }>>([])
   const [codeName, setCodeName] = useState('')
+  const [scriptUserSays, setScriptUserSays] = useState('')
+  const [scriptResponse, setScriptResponse] = useState('')
+  const [training, setTraining] = useState(false)
+  const [trainMethod, setTrainMethod] = useState<'delta' | 'random'>('delta')
+  const [trainingPyTorch, setTrainingPyTorch] = useState(false)
+  const [generatingSkills, setGeneratingSkills] = useState(false)
+  const [merging, setMerging] = useState(false)
+  const [mergeTarget, setMergeTarget] = useState('')
+  const [savedExtensions, setSavedExtensions] = useState<Array<{ file: string; name: string; neurons: number }>>([])
 
   const selected = b.neurons.find((n) => n.id === selectedId) ?? null
 
@@ -54,6 +63,16 @@ function BuilderPage() {
     () => new Set(query.trim() ? b.search(query).map((n) => n.id) : []),
     [b, query],
   )
+
+  // Populates the "Merge with saved" dropdown -- fetched once on mount,
+  // not on every render; a merge success also refreshes it since the
+  // merged model itself may get saved next.
+  useEffect(() => {
+    fetch('/api/extension/list')
+      .then((res) => res.json())
+      .then((json) => { if (Array.isArray(json.extensions)) setSavedExtensions(json.extensions) })
+      .catch(() => {}) // no server / no saved extensions yet -- the dropdown just stays empty
+  }, [])
 
   const handleAddNeuron = () => {
     const name = neuronName.trim() || `neuron_${b.neurons.length + 1}`
@@ -108,13 +127,122 @@ function BuilderPage() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           name: b.projectName,
-          neurons: b.neurons.map((n) => ({ name: n.name, value: n.value, definition: n.definition })),
+          neurons: b.neurons.map((n) => ({ name: n.name, value: n.value, definition: n.definition, scripts: n.scripts })),
         }),
       })
       if (!res.ok) return null
       return (await res.json()) as { remembered: number }
     } catch {
       return null
+    }
+  }
+
+  // "Scripting": attach a (user says X -> should respond Y) training
+  // example to the selected neuron. Not a canned reply -- handleTrain()
+  // above genuinely trains the neuron's readout toward `response` when
+  // driven by an embedding of `userSays`, the same mechanism a
+  // @definishon uses.
+  const handleAddScript = () => {
+    if (!selected || !scriptUserSays.trim() || !scriptResponse.trim()) return
+    b.addScript(selected.id, scriptUserSays, scriptResponse)
+    setScriptUserSays('')
+    setScriptResponse('')
+  }
+
+  // The real training sequence (spec: "connections then makes all
+  // definishons true then does the scripting -- a loop till all is true...
+  // NOT a script, a training sequence"): connections are already live as
+  // soon as they're drawn; this step is what actually runs every
+  // @definishon and every script (see handleAddScript below) through
+  // HyperDimensionalEngine.trainDefinitions() until it converges or the
+  // epoch budget runs out. Deliberately separate from Save/Install (not
+  // run automatically by either) -- see extension-builder/builder.js's
+  // installWithQuantization() doc comment for why an implicit trigger
+  // caused real problems.
+  const handleTrain = async () => {
+    setTraining(true)
+    try {
+      const result = b.train(undefined, trainMethod)
+      if (!result) {
+        setStatusMsg('Train failed')
+        return
+      }
+      const methodLabel = trainMethod === 'random' ? ' via random search' : ''
+      setStatusMsg(
+        result.converged
+          ? `Trained${methodLabel}: converged in ${result.epochs} epoch(s) — ${result.trainedNeurons.length} neuron(s) now true: ${result.trainedNeurons.join(', ') || '(none had a @definishon or script)'}`
+          : `Trained${methodLabel}: did not fully converge after ${result.epochs} epoch(s) — ${result.trainedNeurons.length}/${b.neurons.filter((n) => n.definition || n.scripts.length > 0).length} trainable neuron(s) true so far${result.conflicts.length ? `; ${result.conflicts.length} conflicting definition(s)` : ''}. Try Train again.`,
+      )
+    } finally {
+      setTraining(false)
+    }
+  }
+
+  // ALTERNATIVE backend to handleTrain() above: real torch.autograd/torch.optim
+  // gradient descent, run server-side (see use-builder.ts's trainWithPyTorch()
+  // and interface/web-server.ts's POST /api/extension/train-pytorch) against
+  // the PyTorch copy vendored under extension-builder/PyTorch. Strictly
+  // optional -- if this machine has no Python/torch, the request still comes
+  // back {ok:false, error} instead of throwing, and the regular Train button
+  // above is completely unaffected either way.
+  const handleTrainPyTorch = async () => {
+    setTrainingPyTorch(true)
+    try {
+      const result = await b.trainWithPyTorch()
+      if (!result.ok) {
+        setStatusMsg(`PyTorch training unavailable: ${result.error}`)
+        return
+      }
+      setStatusMsg(
+        result.converged
+          ? `PyTorch trained: converged in ${result.epochs} epoch(s) (torch ${result.torchVersion ?? '?'}) — ${result.trainedNeurons.length} neuron(s) now true: ${result.trainedNeurons.join(', ') || '(none had a @definishon or script)'}`
+          : `PyTorch trained: did not fully converge after ${result.epochs} epoch(s) — ${result.trainedNeurons.length} trainable neuron(s) true so far. Try again.`,
+      )
+    } finally {
+      setTrainingPyTorch(false)
+    }
+  }
+
+  // Execution-grounded training: the server actually RUNS real JS/Python/
+  // Shell/NeuroLang snippets with randomized inputs and trains a neuron per
+  // instantiation on the real result -- see use-builder.ts's
+  // generateCodingSkills() and interface/web-server.ts's POST
+  // /api/extension/generate-coding-skills. ADDS to the current canvas
+  // (doesn't replace anything), same as any other "generate" action here.
+  const handleGenerateCodingSkills = async () => {
+    setGeneratingSkills(true)
+    try {
+      const result = await b.generateCodingSkills()
+      if (!result.ok) {
+        setStatusMsg(`Coding skills generation unavailable: ${result.error}`)
+        return
+      }
+      setStatusMsg(`Generated ${result.addedCount} execution-grounded coding neuron(s) — ${result.trainedCount} converged`)
+    } finally {
+      setGeneratingSkills(false)
+    }
+  }
+
+  // Real weight averaging ("model soup") with a previously saved
+  // extension -- see use-builder.ts's mergeWithSaved() and
+  // interface/web-server.ts's POST /api/extension/merge-with-saved.
+  // REPLACES the current canvas's neurons with the merged, fine-tuned
+  // result (averaging is a whole-model operation, not incremental).
+  const handleMergeWithSaved = async () => {
+    if (!mergeTarget) {
+      setStatusMsg('Pick a saved extension to merge with first')
+      return
+    }
+    setMerging(true)
+    try {
+      const result = await b.mergeWithSaved(mergeTarget)
+      if (!result.ok) {
+        setStatusMsg(`Merge unavailable: ${result.error}`)
+        return
+      }
+      setStatusMsg(`Merged with "${mergeTarget}" — ${result.totalCount} total neuron(s), ${result.overlapCount} genuinely weight-averaged`)
+    } finally {
+      setMerging(false)
     }
   }
 
@@ -439,13 +567,77 @@ function BuilderPage() {
               </CardTitle>
             </CardHeader>
             <CardContent className="space-y-1.5">
-              <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleApiLayer}>
+              <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleApiLayer} disabled={training}>
                 Add API output layer
               </Button>
-              <Button size="sm" variant="secondary" className="h-7 w-full text-xs" onClick={handleSave}>
+              <div className="flex items-center gap-1.5 text-[11px] text-muted-foreground">
+                <span>Method:</span>
+                <select
+                  value={trainMethod}
+                  onChange={(e) => setTrainMethod(e.target.value as 'delta' | 'random')}
+                  className="h-6 flex-1 rounded-md border border-input bg-transparent px-1.5 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  aria-label="Training method"
+                  title="delta: the analytic tanh-derivative gradient, computed directly (fewer epochs). random: each weight/bias is randomly nudged, keeping the nudge only if it genuinely improved the result -- a real, different algorithm, not gradient descent, so it typically needs more epochs to converge."
+                >
+                  <option value="delta">delta rule (gradient)</option>
+                  <option value="random">random search</option>
+                </select>
+              </div>
+              <Button size="sm" variant="outline" className="h-7 w-full text-xs" onClick={handleTrain} disabled={training}>
+                {training ? `Training${trainMethod === 'random' ? ' (random search)' : ''}…` : `Train${trainMethod === 'random' ? ' (random search)' : ''}`}
+              </Button>
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-xs"
+                onClick={handleTrainPyTorch}
+                disabled={trainingPyTorch}
+                title="Optional: trains via a real PyTorch subprocess instead of the built-in JS engine. Falls back cleanly if this server has no Python/torch installed."
+              >
+                {trainingPyTorch ? 'Training (PyTorch)…' : 'Train (PyTorch)'}
+              </Button>
+              {b.lastTraining && (
+                <p className={`text-[11px] ${b.lastTraining.converged ? 'text-emerald-500' : 'text-muted-foreground'}`}>
+                  {b.lastTraining.converged ? '✓ converged' : '⋯ not yet converged'} — {b.lastTraining.trainedNeurons.length} true
+                </p>
+              )}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-xs"
+                onClick={handleGenerateCodingSkills}
+                disabled={generatingSkills}
+                title="Actually runs real JS/Python/Shell/NeuroLang code with randomized inputs and trains a neuron per instantiation on the real executed result -- adds to this canvas, doesn't replace anything."
+              >
+                {generatingSkills ? 'Generating…' : 'Generate Coding Skills (execution-grounded)'}
+              </Button>
+              <div className="flex gap-1.5">
+                <select
+                  value={mergeTarget}
+                  onChange={(e) => setMergeTarget(e.target.value)}
+                  className="h-7 flex-1 rounded-md border border-input bg-transparent px-1.5 text-[11px] outline-none focus-visible:ring-1 focus-visible:ring-ring"
+                  aria-label="Saved extension to merge with"
+                >
+                  <option value="">Merge with…</option>
+                  {savedExtensions.map((e) => (
+                    <option key={e.file} value={e.file}>{e.name} ({e.neurons})</option>
+                  ))}
+                </select>
+                <Button
+                  size="sm"
+                  variant="outline"
+                  className="h-7 text-xs shrink-0"
+                  onClick={handleMergeWithSaved}
+                  disabled={merging || !mergeTarget}
+                  title="Real weight averaging: trains both sides fresh, averages every matching neuron's connections, then fine-tunes the merged result. Replaces this canvas's neurons with the merge."
+                >
+                  {merging ? 'Merging…' : 'Merge'}
+                </Button>
+              </div>
+              <Button size="sm" variant="secondary" className="h-7 w-full text-xs" onClick={handleSave} disabled={training}>
                 Save (no quantization)
               </Button>
-              <Button size="sm" className="h-7 w-full text-xs" onClick={handleInstall}>
+              <Button size="sm" className="h-7 w-full text-xs" onClick={handleInstall} disabled={training}>
                 Install (quantize 8-bit)
               </Button>
             </CardContent>
@@ -529,6 +721,47 @@ function BuilderPage() {
                     {simResult && (
                       <p className="mt-1.5 rounded bg-muted px-2 py-1 font-mono text-[11px]">{simResult}</p>
                     )}
+                  </div>
+                  <div className="border-t border-border pt-2">
+                    <span className="mb-1 block text-muted-foreground">
+                      Scripting — train a response ({selected.scripts.length} example{selected.scripts.length !== 1 ? 's' : ''})
+                    </span>
+                    {selected.scripts.map((s, i) => (
+                      <div key={i} className="mb-1 flex items-start justify-between gap-1 rounded bg-muted px-2 py-1 text-[11px]">
+                        <span className="min-w-0 flex-1">
+                          <span className="text-muted-foreground">user says </span>“{s.userSays}”
+                          <span className="text-muted-foreground"> → </span>“{s.response}”
+                        </span>
+                        <button
+                          onClick={() => b.removeScript(selected.id, i)}
+                          className="shrink-0 text-muted-foreground hover:text-destructive"
+                          aria-label={`Remove script "${s.userSays}"`}
+                          title="Remove"
+                        >
+                          ✕
+                        </button>
+                      </div>
+                    ))}
+                    <Label htmlFor="script-user-says" className="sr-only">User says</Label>
+                    <Input
+                      id="script-user-says"
+                      value={scriptUserSays}
+                      onChange={(e) => setScriptUserSays(e.target.value)}
+                      placeholder="user says…"
+                      className="mb-1 h-7 text-xs"
+                    />
+                    <Label htmlFor="script-response" className="sr-only">Trained response</Label>
+                    <Input
+                      id="script-response"
+                      value={scriptResponse}
+                      onChange={(e) => setScriptResponse(e.target.value)}
+                      onKeyDown={(e) => e.key === 'Enter' && handleAddScript()}
+                      placeholder="…respond with"
+                      className="mb-1 h-7 text-xs"
+                    />
+                    <Button size="sm" variant="secondary" className="h-7 w-full text-xs" onClick={handleAddScript}>
+                      Add script
+                    </Button>
                   </div>
                   <Button
                     size="sm"

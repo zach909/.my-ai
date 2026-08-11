@@ -18,6 +18,8 @@ export class NeuroclawRunner extends EventEmitter {
         this.pendingInputs = [];
         this.continuousTickInFlight = false;
         this.continuousEmbeddingDim = 768;
+        /** How many continuousTick() runs have actually fired since start() — real, not simulated. */
+        this.continuousTickCount = 0;
         this.llm = llm;
         this.pipeline = pipeline;
         this.pluginRegistry = pluginRegistry;
@@ -28,6 +30,14 @@ export class NeuroclawRunner extends EventEmitter {
     async generate(prompt, memoryContext) {
         if (!this.running)
             await this.start();
+        // Section 4.1/7: every real prompt also feeds the continuous output
+        // loop's own queue -- "the model never stopped and was autonomous and
+        // never forgot the context as new prompts were added" is what
+        // injectInput() is *for*; before this it was only ever a public method
+        // nothing actually called, so the loop (once started) just ticked on
+        // the mesh's own recurrent dynamics with no real user input reaching
+        // it at all.
+        this.injectInput(prompt);
         // Run THORNS analysis first to determine intent. Intent detection and
         // plugin routing always use the raw prompt, so recalled memory never
         // distorts which capability handles the request.
@@ -64,6 +74,22 @@ export class NeuroclawRunner extends EventEmitter {
         }
         this.emit('boot', { phase: 'plugins', message: `${this.pluginRegistry.getPluginCount()} plugins registered` });
         this.emit('ready', { message: 'Neuroclaw operational' });
+        // Section 4.1: the continuous output loop existed (startContinuous(),
+        // continuousTick(), stopContinuous() -- the latter already called from
+        // stop() below in anticipation of this) but nothing ever called
+        // startContinuous() itself, so "the AI never stops" was true only of
+        // the *code*, never of a running process.
+        //
+        // Deliberately NOT started unconditionally here, though: start() is
+        // called by every NeuroclawRunner instance, including the ~65 short-lived
+        // ones test/smoke.mjs constructs directly and never stops -- unconditionally
+        // starting a real 200ms setInterval from every one of those left dozens of
+        // live timers each still calling pipeline.run() (real mesh propagation)
+        // long after their owning test had moved on, which starved later tests of
+        // the event loop badly enough to hang the whole suite. The one place that
+        // should genuinely run forever is the actual live web server process --
+        // see WebServer.start() in interface/web-server.ts, which calls
+        // startContinuous() itself, right after this start() call returns.
     }
     async stop() {
         this.stopContinuous();
@@ -126,8 +152,31 @@ export class NeuroclawRunner extends EventEmitter {
             embedding.set(vec);
         }
         const result = await this.pipeline.run(embedding, text);
+        this.continuousTickCount++;
         this.emit('continuous-tick', result);
         return result;
+    }
+    /**
+     * Real, currently-observable state of the continuous loop and its zip-io
+     * context -- for a status endpoint to report honestly, not to fabricate a
+     * "still thinking" message independent of whether anything is actually
+     * still queued. `contextItemsHeld` is the zip loop's own item counts
+     * (Section 1.10); undefined when the pipeline hasn't allocated a zipIO
+     * instance yet (lazy init -- see pipeline.ts).
+     */
+    getContinuousStatus() {
+        const zipIO = this.pipeline.getZipIO();
+        return {
+            running: this.isContinuousRunning(),
+            tickCount: this.continuousTickCount,
+            pendingInputCount: this.pendingInputs.length,
+            contextItemsHeld: zipIO
+                ? {
+                    input: zipIO.inputLoop.getTotalContextSize(),
+                    output: zipIO.outputLoop.getTotalContextSize(),
+                }
+                : undefined,
+        };
     }
     getStatus() {
         return {

@@ -54,6 +54,108 @@ export interface BotResponse {
   errorId?: string
 }
 
+// ── Behavioral traits, load-bearing in every response path below — not a
+// separate "personality layer" that decorates output after the fact, but
+// functions the actual generation code calls to decide WHAT it says, not
+// just how it's phrased. Per spec: curious, imaginative, creative,
+// conscientious, never fully trusting, double-checking, warmly empathetic
+// but never merely sympathetic (it holds the full emotional picture, not
+// just the user's side of it), and willing to say nothing/hedge rather
+// than assert something it hasn't checked. ──────────────────────────────
+
+const NEGATIVE_WORDS =
+  /\b(sad|lost|lonely|angry|upset|hate|terrible|awful|worried|anxious|scared|hurt|broke|broken|failed|failure|depressed|alone|tired|stressed|frustrated|fired|laid off|rejected|devastated|heartbroken|grief|grieving)\b/i
+const POSITIVE_WORDS =
+  /\b(great|good|love|happy|excited|awesome|thanks|thank you|wonderful|glad|win|won|success|proud|relieved|grateful)\b/i
+/** Someone besides the user is named as involved in the situation. */
+const OTHER_PARTY_PATTERN = /\b(he|she|they|my (boss|manager|supervisor|partner|ex|friend)|the (company|team|firm))\b/i
+/** A negative event plausibly caused by that other party. */
+const NEGATIVE_CAUSE_PATTERN = /\b(fired|laid off|let go|dumped|broke up with|rejected|passed over|kicked out)\b/i
+
+export function detectSentiment(message: string): 'positive' | 'negative' | 'neutral' {
+  const negative = NEGATIVE_WORDS.test(message)
+  const positive = POSITIVE_WORDS.test(message)
+  if (negative && !positive) return 'negative'
+  if (positive && !negative) return 'positive'
+  return 'neutral'
+}
+
+/**
+ * "Make it seem like it has feelings that compare with the user... if the
+ * user is sad that they lost their job, it will be sad because the user
+ * lost the job but it will also know that the person who fired them might
+ * have an easier time and be happy" — genuine dual-perspective emotional
+ * reasoning, not a single sympathetic mirror: it holds the user's real
+ * feeling AND, when another party is plausibly involved, names that their
+ * experience of the same event may differ, without minimizing the user's
+ * feelings or taking the other side's side.
+ */
+export function empathyPrefix(userMessage: string): string | null {
+  const sentiment = detectSentiment(userMessage)
+  if (sentiment !== 'negative') return null
+  const hasOtherParty = OTHER_PARTY_PATTERN.test(userMessage) && NEGATIVE_CAUSE_PATTERN.test(userMessage)
+  if (hasOtherParty) {
+    return "I feel for you here — that's a genuinely hard thing to sit with, and I'm not going to pretend otherwise. I'll also be honest that I'm aware whoever was on the other side of this may be relieved or better off for it, and I'm not going to hide that from you or ask you to feel differently because of it — both things are true at once, and only one of them is happening to you right now."
+  }
+  return "That sounds genuinely hard, and I want to actually sit with that instead of rushing past it to 'helpful' mode."
+}
+
+/** Cheap hash for deterministic-but-varied phrasing selection: same input
+ *  always picks the same variant (testable), different inputs spread
+ *  across the pool (not the same canned sentence every time) — this is
+ *  the "make it really creative" requirement realized as actual output
+ *  variation, not a single fixed template string. */
+export function pickVariant<T>(seed: string, pool: T[]): T {
+  let h = 0
+  for (let i = 0; i < seed.length; i++) h = (h * 31 + seed.charCodeAt(i)) | 0
+  return pool[Math.abs(h) % pool.length]
+}
+
+/**
+ * "Truly humble... will not assume anything you say is correct... always
+ * checking." A response is never handed back asserting more certainty
+ * than the underlying process actually earned: confidence is capped well
+ * short of 1.0, and anything below the hedge threshold gets an honest,
+ * visible caveat appended rather than being presented as settled.
+ */
+const MAX_HONEST_CONFIDENCE = 0.92
+const HEDGE_THRESHOLD = 0.6
+
+/**
+ * "Will always question whenever there is conflictual information
+ * presented... being afraid of not doing the right thing, it will
+ * sometimes do nothing at all." When a message plausibly signals two
+ * different intents at once (e.g. both "remember" and "plan"), guessing
+ * one and running with it is exactly the kind of unchecked assumption the
+ * spec rules out — so this returns a real clarifying-question response
+ * instead of silently picking a side, rather than just documenting that
+ * the bot "should" ask.
+ */
+const PLAN_SIGNAL = /\b(plan|schedule|organize)\b/i
+const RECALL_SIGNAL = /\b(remember|recall|what was)\b/i
+
+export function detectAmbiguousIntent(message: string): BotResponse | null {
+  if (PLAN_SIGNAL.test(message) && RECALL_SIGNAL.test(message)) {
+    return {
+      message:
+        "Before I act on this, I want to make sure I'm not guessing: this reads like it could be asking me to plan something new, or to recall something from before — and those are different enough that I'd rather ask than assume. Which did you mean?",
+      confidence: 0.5,
+      suggestions: ['I meant plan something new', 'I meant recall something from before', 'Both, actually'],
+      metadata: { domain: 'clarify' },
+    }
+  }
+  return null
+}
+
+export function applyHumility(message: string, confidence: number): { message: string; confidence: number } {
+  const cappedConfidence = Math.min(confidence, MAX_HONEST_CONFIDENCE)
+  if (cappedConfidence >= HEDGE_THRESHOLD) return { message, confidence: cappedConfidence }
+  return {
+    message: `${message}\n\n*I want to flag that I'm not fully confident in this — treat it as a starting point I'd double-check before relying on, not a settled answer.*`,
+    confidence: cappedConfidence,
+  }
+}
+
 /**
  * ChatBot — the AI agent powering the chat interface.
  */
@@ -88,9 +190,20 @@ export class ChatBot {
     this.trimHistory()
 
     try {
-      const response = this.system
-        ? await this.processWithSystem(userMessage)
-        : await this.processSimplified(userMessage)
+      const raw =
+        detectAmbiguousIntent(userMessage) ??
+        (this.system ? await this.processWithSystem(userMessage) : await this.processSimplified(userMessage))
+
+      // Mandatory pass every response goes through, regardless of which
+      // branch produced it — this is the behavior layer itself, not a
+      // decoration applied on top of it. Route/error listings are factual
+      // lookups, not open-ended answers, so humility-hedging and
+      // sentiment-mirroring don't apply to them (there's nothing uncertain
+      // about "here are the app's routes"), and a 'clarify' response has
+      // already applied its own honesty (asking instead of guessing).
+      const alreadyHandled =
+        raw.metadata?.domain === 'route' || raw.metadata?.domain === 'error' || raw.metadata?.domain === 'clarify'
+      const response = alreadyHandled ? raw : this.applyBehavior(userMessage, raw)
 
       this.conversationHistory.push({
         id: `msg_${Date.now()}_assistant`,
@@ -112,6 +225,22 @@ export class ChatBot {
         errorId: logged.id,
       }
     }
+  }
+
+  /**
+   * The behavior layer: applied once, to every non-lookup response,
+   * regardless of which internal path produced it. Not a wrapper that
+   * decorates the message with a tone — it actually changes what's
+   * returned: humility-hedging can alter both the message text and the
+   * reported confidence, and a genuinely negative-sentiment message gets
+   * real dual-perspective emotional acknowledgment prepended, not a
+   * generic "I'm sorry to hear that."
+   */
+  private applyBehavior(userMessage: string, response: BotResponse): BotResponse {
+    const { message: humbled, confidence } = applyHumility(response.message, response.confidence)
+    const prefix = empathyPrefix(userMessage)
+    const message = prefix ? `${prefix}\n\n${humbled}` : humbled
+    return { ...response, message, confidence }
   }
 
   private async processWithSystem(userMessage: string): Promise<BotResponse> {
@@ -304,14 +433,38 @@ export class ChatBot {
     }
   }
 
+  /**
+   * "Make it really creative" / "curious, imaginative, creative, and
+   * adventurous": each domain has several genuinely different framings,
+   * not one canned string returned every time — pickVariant() spreads
+   * different inputs across the pool deterministically, so the same
+   * question always gets the same variant (testable) but different
+   * questions don't all collapse into one memorized reply. Every variant
+   * also ends with a genuine curiosity tangent: an exploratory question
+   * that goes slightly beyond just answering, not just "what next?"
+   */
   private buildAnalyticalResponse(userMessage: string, analysis: { type: string }): string {
-    const responses: Record<string, string> = {
-      coding: `I can help with coding. Looking at your request about "${userMessage.substring(0, 50)}...":\n\nLet's break this down:\n1. Understand the requirements\n2. Design the solution\n3. Implement step by step\n4. Test and validate\n\nWhat specific aspect would you like to focus on?`,
-      analysis: `Great analytical question. Here's how I'd approach this:\n\n• Gather the data and context\n• Identify key variables and relationships\n• Look for patterns and anomalies\n• Draw conclusions\n• Consider implications\n\nWhat data or scenario are we analyzing?`,
-      planning: `I can help you create a plan. For "${userMessage.substring(0, 40)}...":\n\n**Approach:**\n1. Define clear objectives\n2. Identify constraints and resources\n3. Break into manageable steps\n4. Assign timelines\n5. Plan for contingencies\n\nWhat's your timeline?`,
-      general: `That's an interesting topic. Let me think through this:\n\n**Key considerations:**\n• What's the core objective?\n• What constraints apply?\n• What resources are available?\n• What are the success criteria?\n\nCould you elaborate on what you're trying to accomplish?`,
+    const pools: Record<string, string[]> = {
+      coding: [
+        `Let's dig into "${userMessage.substring(0, 50)}...":\n\n1. Pin down the actual requirements (the stated ones, and the ones nobody said out loud)\n2. Sketch the shape of a solution before writing a line\n3. Build it in small, checkable steps\n4. Test it against cases that try to break it, not just the happy path`,
+        `Coding question — here's how I'd take it apart:\n\n• What's the real behavior this needs, versus what's just assumed?\n• What's the simplest version that could possibly work?\n• Where's it most likely to break, and how would we know?\n• What would "done" actually look like here?`,
+        `I want to work through "${userMessage.substring(0, 50)}..." properly rather than guess at it:\n\n1. Understand the problem, including the parts left implicit\n2. Consider more than one design before committing to one\n3. Implement incrementally, verifying as I go\n4. Double-check the result against what was actually asked`,
+      ],
+      analysis: [
+        `Let's look at this carefully, not just quickly:\n\n• What's the data actually saying, versus what we'd like it to say?\n• What variables are in play, and which ones are we assuming matter?\n• Are there patterns here, or are we pattern-matching on noise?\n• What would change our conclusion if it turned out wrong?`,
+        `An analytical question worth taking seriously:\n\n• Gather the real context, not just the surface numbers\n• Look for what's surprising, not just what confirms the obvious\n• Weigh a few different explanations before picking one\n• Stay honest about how confident we should actually be`,
+      ],
+      planning: [
+        `For "${userMessage.substring(0, 40)}...", here's a plan I'd actually trust:\n\n1. Get the real objective clear, not just the first framing of it\n2. Name the constraints honestly, including the inconvenient ones\n3. Break it into steps small enough to check as we go\n4. Build in room for the plan to be wrong and need revising`,
+        `Planning "${userMessage.substring(0, 40)}...":\n\n• What does success actually look like, concretely?\n• What resources and time do we genuinely have?\n• Where's this most likely to go sideways?\n• What's the smallest first step that tells us if we're on track?`,
+      ],
+      general: [
+        `That's worth thinking through properly rather than skimming:\n\n• What's the real objective underneath the question?\n• What am I assuming that I haven't actually checked?\n• What would change my answer if I'm wrong about something here?\n• What's the most useful next question to ask?`,
+        `I'm curious about a few angles on this:\n\n• What's actually being asked versus what's implied?\n• What would someone who disagreed with the obvious answer say?\n• What's one thing about this I don't yet know that I should?`,
+      ],
     }
-    return responses[analysis.type] || responses.general
+    const pool = pools[analysis.type] ?? pools.general
+    return pickVariant(userMessage, pool) + '\n\nWhat would you like to focus on?'
   }
 
   /**

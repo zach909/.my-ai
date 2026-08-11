@@ -20,6 +20,8 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Folder, MessageSquare, Users, RefreshCw, ChevronDown } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
@@ -89,6 +91,9 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
         className="flex w-full items-center justify-between gap-2 text-left rounded-md p-1 -m-1 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none active:scale-[0.98] transition-all duration-150 cursor-pointer"
         aria-expanded={open}
         aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} group, containing ${group.threads.length} chat${group.threads.length !== 1 ? 's' : ''}`}
+        className="flex w-full items-center justify-between gap-2 text-left rounded-md p-1 -m-1 hover:bg-accent/50 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-all duration-200 active:scale-95 cursor-pointer"
+        aria-expanded={open}
+        aria-label={`${open ? 'Collapse' : 'Expand'} ${group.name} topic group`}
       >
         <div className="flex min-w-0 items-center gap-2 text-sm font-medium">
           <Folder size={14} className="shrink-0 text-primary" />
@@ -98,6 +103,7 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
           </span>
         </div>
         <div className="flex shrink-0 items-center gap-1.5 text-[11px] text-muted-foreground">
+        <div className="flex shrink-0 items-center gap-2 text-[11px] text-muted-foreground">
           <span>{timeAgo(group.updatedAt)}</span>
           <ChevronDown
             size={14}
@@ -159,24 +165,48 @@ function ChatHistoryPage() {
             {totalChats} chat{totalChats !== 1 ? 's' : ''} across {groups.length} auto-organized group{groups.length !== 1 ? 's' : ''}
           </p>
         </div>
-        <button
+        <Button
           onClick={load}
           disabled={loading}
-          aria-label="Refresh"
-          title="Refresh"
-          className="flex items-center gap-1.5 rounded-md border border-border px-2.5 py-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground disabled:opacity-50 active:scale-95"
+          variant="outline"
+          size="sm"
+          aria-label="Refresh chat history"
+          title="Refresh chat history"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground active:scale-95"
         >
-          <RefreshCw size={12} className={loading ? 'animate-spin' : ''} />
+          <RefreshCw className={loading ? 'size-3.5 animate-spin' : 'size-3.5'} />
           Refresh
-        </button>
+        </Button>
       </div>
 
-      {error && <p className="text-xs text-destructive">{error}</p>}
+      {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
 
       {!loading && totalChats === 0 && !error && (
-        <p className="text-sm text-muted-foreground">
-          No saved chats yet — anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
-        </p>
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center max-w-md mx-auto my-6 space-y-4">
+          <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary">
+            <MessageSquare className="h-6 w-6" />
+          </div>
+          <div className="space-y-1">
+            <h3 className="font-semibold text-foreground text-sm">No saved chats yet</h3>
+            <p className="text-xs text-muted-foreground leading-relaxed">
+              Anything you send in AI Chat or Chat Groups (outside incognito mode) will show up here, automatically grouped by topic.
+            </p>
+          </div>
+          <div className="flex flex-wrap justify-center gap-2 pt-2">
+            <Button asChild size="sm" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat">
+                <Sparkles size={13} className="mr-1" />
+                Start AI Chat
+              </Link>
+            </Button>
+            <Button asChild size="sm" variant="outline" className="active:scale-95 transition-all duration-150">
+              <Link to="/app/chat-groups">
+                <Users size={13} className="mr-1" />
+                Collaborate with Hive
+              </Link>
+            </Button>
+          </div>
+        </div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">

@@ -1,0 +1,2 @@
+# the XML source is in the same directory, so I'm not sure why lintian is upset
+source-is-missing [doc/devel/historic/docbook/kernel-policy.html]

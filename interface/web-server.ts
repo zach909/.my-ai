@@ -1,9 +1,120 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
+
+type PyTorchTrainResult =
+  { ok: true; torchVersion: string; epochsRun: number; converged: boolean; sampleLosses: number[]; sampleConverged: boolean[]; W: number[][]; b: number[][] }
+  | { ok: false; error: string };
+
+/**
+ * Keeps exactly one `extension-builder/pytorch_trainer.py` subprocess alive
+ * for the life of the server instead of spawning (and re-importing torch
+ * in) a fresh one per request. `import torch` alone costs ~2s and a cold
+ * python3+numpy+torch startup runs 4-25s depending on disk cache state --
+ * dominating every single training call if paid per-request. Paying it once
+ * here turns every call after the first into single-digit milliseconds
+ * (the actual gradient descent), confirmed by timing the same spec run
+ * three times through one persistent process vs. three fresh spawns.
+ *
+ * Protocol: one JSON object per line in on stdin, one JSON object per line
+ * back on stdout, in request order -- see pytorch_trainer.py's own header
+ * comment. Requests are queued and answered strictly FIFO (matches the
+ * script's own single-threaded, line-at-a-time loop), so concurrent calls
+ * to send() are safe: each just waits its turn in `pending`.
+ */
+class PyTorchTrainerWorker {
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private pending: Array<{ resolve: (r: PyTorchTrainResult) => void }> = [];
+  private stdoutBuf = '';
+  private stderrBuf = '';
+  // Serializes concurrent ensureSpawned() calls -- without this, two
+  // requests racing in before the first spawn resolves would each see
+  // `this.child === null` and spawn a second orphaned python3 process.
+  private spawning: Promise<ChildProcessWithoutNullStreams | { error: string }> | null = null;
+
+  private ensureSpawned(scriptPath: string): Promise<ChildProcessWithoutNullStreams | { error: string }> {
+    if (this.child) return Promise.resolve(this.child);
+    if (!this.spawning) {
+      this.spawning = this.doSpawn(scriptPath).finally(() => { this.spawning = null; });
+    }
+    return this.spawning;
+  }
+
+  private async doSpawn(scriptPath: string): Promise<ChildProcessWithoutNullStreams | { error: string }> {
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      // Deferred import, not a top-level one: keeps `node:child_process`
+      // (and the subprocess it can spawn) out of any code path that
+      // doesn't actually use this optional backend.
+      const { spawn } = await import('node:child_process');
+      child = spawn('python3', [scriptPath], { stdio: ['pipe', 'pipe', 'pipe'] });
+    } catch (err) {
+      return { error: `could not launch python3: ${err instanceof Error ? err.message : String(err)}` };
+    }
+    child.stdout.on('data', (d: Buffer) => this.onStdout(d));
+    child.stderr.on('data', (d: Buffer) => { this.stderrBuf += d; });
+    const onDown = (detail: string) => {
+      // The process is gone (crashed, killed, or python3/torch missing) --
+      // fail every request still waiting on it and drop the reference so
+      // the next call respawns fresh instead of writing into a dead pipe.
+      const err: PyTorchTrainResult = { ok: false, error: detail };
+      const waiting = this.pending;
+      this.pending = [];
+      this.child = null;
+      for (const p of waiting) p.resolve(err);
+    };
+    child.on('error', (err) => onDown(`python3 not available: ${err.message}`));
+    child.on('exit', (code, signal) => {
+      if (this.pending.length > 0) {
+        onDown(this.stderrBuf.trim() || `pytorch_trainer.py exited (code=${code}, signal=${signal})`);
+      } else {
+        this.child = null;
+      }
+    });
+    this.child = child;
+    return child;
+  }
+
+  private onStdout(chunk: Buffer): void {
+    this.stdoutBuf += chunk;
+    let nl: number;
+    while ((nl = this.stdoutBuf.indexOf('\n')) !== -1) {
+      const line = this.stdoutBuf.slice(0, nl).trim();
+      this.stdoutBuf = this.stdoutBuf.slice(nl + 1);
+      if (!line) continue;
+      const next = this.pending.shift();
+      if (!next) continue; // stray output with nothing waiting on it
+      try {
+        next.resolve(JSON.parse(line));
+      } catch {
+        next.resolve({ ok: false, error: `could not parse pytorch_trainer.py output: ${line}` });
+      }
+    }
+  }
+
+  async send(scriptPath: string, spec: unknown): Promise<PyTorchTrainResult> {
+    const child = await this.ensureSpawned(scriptPath);
+    if (!('stdin' in child)) return { ok: false, error: child.error };
+    return new Promise<PyTorchTrainResult>((resolve) => {
+      this.pending.push({ resolve });
+      child.stdin.write(JSON.stringify(spec) + '\n');
+    });
+  }
+
+  /** Called from WebServer.stop() so a stopped server doesn't leave an orphaned python3 process behind. */
+  shutdown(): void {
+    this.child?.stdin.end();
+    this.child?.kill();
+    this.child = null;
+    const err: PyTorchTrainResult = { ok: false, error: 'server is shutting down' };
+    for (const p of this.pending) p.resolve(err);
+    this.pending = [];
+  }
+}
 
 const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
@@ -227,6 +338,14 @@ export class WebServer {
   // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
   private readonly chatGroupsLock = new PasswordLock();
   private readonly chatHistory = new ChatHistoryStore();
+  // Lazily spawned on first POST /api/extension/train-pytorch call, then
+  // reused for the life of this server -- see PyTorchTrainerWorker's own
+  // doc comment for why (torch import cost dominates a per-request spawn).
+  private readonly pytorchWorker = new PyTorchTrainerWorker();
+  // Set once by loadSavedExtensions() during start() -- surfaced via
+  // GET /api/status so "did the runner actually pick up my trained
+  // network on this boot" is observable, not just assumed.
+  private loadedExtensions: { files: number; remembered: number } = { files: 0, remembered: 0 };
 
   constructor(runner: NeuroclawRunner, launcher?: AppLauncher) {
     this.runner = runner;
@@ -258,6 +377,18 @@ export class WebServer {
       await this.chatGroupsLock.set(process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD);
     }
     await this.runner.start();
+    // Section 4.1: the continuous output loop should genuinely never stop
+    // for the actual live web backend -- see runner.ts's start() for why
+    // that's started explicitly here rather than unconditionally inside
+    // start() itself (every short-lived NeuroclawRunner instance calls
+    // start() too, and most never call stop()).
+    this.runner.startContinuous();
+    // Same reasoning, same placement: loading every saved extension is
+    // real work (parsing N files, remembering M neurons) that only makes
+    // sense to pay once per actual live server process, not once per
+    // short-lived NeuroclawRunner test instance -- see loadSavedExtensions()'s
+    // own doc comment for what this actually does and why it belongs here.
+    this.loadedExtensions = await this.loadSavedExtensions();
     return new Promise<void>((resolve, reject) => {
       this.server = http.createServer((req, res) => this.handleRequest(req, res));
       this.server.listen(port, host, () => resolve());
@@ -311,6 +442,7 @@ export class WebServer {
 
   async stop(): Promise<void> {
     if (!this.server) throw new Error('Server not running');
+    this.pytorchWorker.shutdown();
     return new Promise<void>((resolve) => {
       this.server?.close(() => { this.server = null; resolve(); });
     });
@@ -381,6 +513,142 @@ export class WebServer {
     });
   }
 
+  /**
+   * Shared by POST /api/extension/train-pytorch, /generate-coding-skills,
+   * and /merge-with-saved: builds @definishon+scripting samples from a
+   * plain neuron list the exact same way train-pytorch already does, then
+   * trains them via the persistent PyTorchTrainerWorker. Extracted here
+   * so the merge endpoint doesn't have to re-derive this logic to train
+   * "the other" saved extension's neurons before averaging weights with
+   * them.
+   */
+  private async trainNeuronsViaPyTorch(
+    neurons: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }>,
+    opts: { epochs?: number; learningRate?: number; tolerance?: number } = {},
+  ): Promise<
+    | { ok: true; names: string[]; W: number[][]; b: number[][]; samples: Array<{ readout: number; input: number[]; target: number[] }>; trainedNeurons: string[]; epochsRun: number; converged: boolean; torchVersion: string }
+    | { ok: false; error: string }
+  > {
+    const dims = 16;
+    const { embedText } = await import('../models && skills/core/neuro-lang.js');
+    const definitionTrigger = new Array(dims).fill(0.7);
+
+    type Sample = { readout: number; input: number[]; target: number[] };
+    const samples: Sample[] = [];
+    const names: string[] = [];
+    for (const n of neurons) {
+      if (!n.name) continue;
+      const def = (n.definition ?? '').trim();
+      const scripts = (n.scripts ?? []).filter(s => (s.userSays ?? '').trim() && (s.response ?? '').trim());
+      if (!def && scripts.length === 0) continue;
+      const readout = names.length;
+      names.push(n.name);
+      if (def) samples.push({ readout, input: definitionTrigger, target: embedText(def, dims) });
+      for (const s of scripts) {
+        samples.push({ readout, input: embedText(s.userSays!.trim(), dims), target: embedText(s.response!.trim(), dims) });
+      }
+    }
+
+    if (samples.length === 0) {
+      return { ok: true, names: [], W: [], b: [], samples: [], trainedNeurons: [], epochsRun: 0, converged: true, torchVersion: '' };
+    }
+
+    const path = await import('node:path');
+    const scriptPath = path.resolve(process.cwd(), 'extension-builder', 'pytorch_trainer.py');
+    const result = await this.pytorchWorker.send(scriptPath, {
+      dims, numReadouts: names.length,
+      epochs: opts.epochs ?? 1000, learningRate: opts.learningRate ?? 0.05, tolerance: opts.tolerance ?? 1e-3,
+      samples,
+    });
+    if (result.ok === false) return { ok: false, error: result.error };
+
+    const satisfiedReadouts = new Set<number>();
+    const failedReadouts = new Set<number>();
+    samples.forEach((s, i) => {
+      if (result.sampleConverged[i]) satisfiedReadouts.add(s.readout); else failedReadouts.add(s.readout);
+    });
+    const trainedNeurons = names.filter((_, i) => satisfiedReadouts.has(i) && !failedReadouts.has(i));
+
+    return {
+      ok: true, names, W: result.W, b: result.b, samples,
+      trainedNeurons, epochsRun: result.epochsRun, converged: result.converged, torchVersion: result.torchVersion,
+    };
+  }
+
+  /**
+   * "Integrate it into the runner of the model": every real Extension
+   * Builder deliverable this session (Main Network, Coding Skills
+   * Network, the merged network, ...) only ever became part of the live
+   * agent when POST /api/extension/register happened to be called during
+   * that one server process's lifetime -- system.memory.remember() has
+   * no persistence of its own, so a trained network was invisible to the
+   * agent again the moment the server restarted, with nothing to reload
+   * it. This is the fix: on every real server boot, read every
+   * previously saved extension file (extension-builder/extensions/*.ext.json
+   * -- the exact artifacts train(), trainWithPyTorch(), Save, and
+   * Install already write) and remember() each one's definitions/scripts
+   * into the live NeuroclawSystem, the same way register() does for one
+   * extension at a time. A trained network is now a permanent property
+   * of the runner, not a one-session fluke of whoever happened to click
+   * a button.
+   *
+   * Deliberately best-effort: a missing directory, an unreadable file, or
+   * malformed JSON in one saved extension must never stop the server from
+   * finishing its boot sequence -- skip that one file and keep going.
+   */
+  private async loadSavedExtensions(): Promise<{ files: number; remembered: number }> {
+    try {
+      const path = await import('node:path');
+      const { promises: fs } = await import('node:fs');
+      const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+      let entries: string[];
+      try {
+        entries = (await fs.readdir(dir)).filter(f => f.endsWith('.ext.json'));
+      } catch {
+        return { files: 0, remembered: 0 }; // no extensions directory yet -- nothing to load, not an error
+      }
+      if (entries.length === 0) return { files: 0, remembered: 0 };
+
+      const { getNeuroclawSystem } = await import('../src/index.js');
+      const system = await getNeuroclawSystem();
+
+      let filesLoaded = 0;
+      let remembered = 0;
+      for (const filename of entries) {
+        let data: { project?: { name?: string }; name?: string; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
+        try {
+          data = JSON.parse(await fs.readFile(path.join(dir, filename), 'utf8'));
+        } catch {
+          continue; // malformed/unreadable -- skip this one file, don't fail the boot
+        }
+        const extName = data.project?.name ?? data.name ?? filename;
+        const neurons = Array.isArray(data.neurons) ? data.neurons : [];
+        if (neurons.length === 0) continue;
+        filesLoaded++;
+        for (const n of neurons) {
+          if (!n.name) continue;
+          const def = (n.definition ?? '').trim();
+          if (def) {
+            system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', extName] });
+            remembered++;
+          }
+          for (const s of n.scripts ?? []) {
+            const userSays = (s.userSays ?? '').trim();
+            const response = (s.response ?? '').trim();
+            if (!userSays || !response) continue;
+            system.memory.remember(`When asked "${userSays}", ${n.name} responds: ${response}`, {
+              importance: 0.7, tags: ['extension', extName, 'script'],
+            });
+            remembered++;
+          }
+        }
+      }
+      return { files: filesLoaded, remembered };
+    } catch {
+      return { files: 0, remembered: 0 }; // never let a boot-time extension-load failure take the whole server down
+    }
+  }
+
   private async handleRequest(req: http.IncomingMessage, res: http.ServerResponse): Promise<void> {
     let parsedUrl: URL;
     try {
@@ -438,6 +706,11 @@ export class WebServer {
         running: status.running,
         uptime: Math.floor(status.uptime),
         subsystems: status.subsystems,
+        // How many previously saved Extension Builder networks (Main
+        // Network, Coding Skills Network, a merge, ...) this boot picked
+        // up and remembered into the live agent -- see
+        // loadSavedExtensions()'s own doc comment.
+        loadedExtensions: this.loadedExtensions,
         llm: {
           neurons: status.llm.neuronCount,
           connections: status.llm.connectionCount,
@@ -451,6 +724,18 @@ export class WebServer {
           rlmExploration: (status.llm.rlmExplorationRate * 100).toFixed(1) + '%',
         },
       });
+      return;
+    }
+
+    // GET /api/continuous/status — Section 4.1's continuous output loop
+    // (startContinuous()/injectInput(), now actually running -- see
+    // runner.ts's start()) genuinely never terminates; this reports its
+    // real, current state (tick count, queued input, zip-io context held)
+    // instead of the loop running invisibly with no way for a client to
+    // ever observe "there is more, this isn't the whole context" versus
+    // "the queue is actually empty right now."
+    if (pathname === '/api/continuous/status' && method === 'GET') {
+      this.sendJson(res, this.runner.getContinuousStatus());
       return;
     }
 
@@ -810,7 +1095,13 @@ export class WebServer {
     if (pathname === '/api/extension/register' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as
-          { name?: string; neurons?: Array<{ name?: string; value?: number; definition?: string }> } | null;
+          {
+            name?: string;
+            neurons?: Array<{
+              name?: string; value?: number; definition?: string;
+              scripts?: Array<{ userSays?: string; response?: string }>;
+            }>;
+          } | null;
         const name = (body?.name ?? '').trim() || `extension_${Date.now()}`;
         const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
 
@@ -826,16 +1117,376 @@ export class WebServer {
         const system = await getNeuroclawSystem();
         let remembered = 0;
         for (const n of neurons) {
+          if (!n.name) continue;
           const def = (n.definition ?? '').trim();
-          if (!def || !n.name) continue;
-          system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
-          remembered++;
+          if (def) {
+            system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
+            remembered++;
+          }
+          // Scripts are equally real recallable knowledge -- "when asked X,
+          // the trained response is Y" is exactly what train()'s
+          // trainDefinitions() pass shapes the mesh toward; recall() should
+          // be able to surface it the same way a @definishon can.
+          for (const s of n.scripts ?? []) {
+            const userSays = (s.userSays ?? '').trim();
+            const response = (s.response ?? '').trim();
+            if (!userSays || !response) continue;
+            system.memory.remember(`When asked "${userSays}", ${n.name} responds: ${response}`, {
+              importance: 0.7, tags: ['extension', name, 'script'],
+            });
+            remembered++;
+          }
         }
 
         this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.sendJson(res, { error: msg }, 500);
+      }
+      return;
+    }
+
+    // POST /api/extension/train-pytorch — an ALTERNATIVE training backend to
+    // ExtensionBuilder.train()'s hand-rolled JS delta rule
+    // (HyperDimensionalEngine.trainDefinitions() in
+    // "models && skills/core/onebrain.ts"): this one does genuine
+    // torch.autograd/torch.optim gradient descent via a Python subprocess
+    // (extension-builder/pytorch_trainer.py), against the PyTorch source
+    // vendored under extension-builder/PyTorch for local reference/build.
+    //
+    // Deliberately NOT wired into extension-builder/builder.js: that file is
+    // loaded directly in the browser (see its own header comment) with no
+    // build step, so it cannot spawn a subprocess -- only server code can.
+    //
+    // Deliberately OPTIONAL, never a hard requirement: nothing here adds
+    // `torch` to any manifest, and the app's install/build/existing JS
+    // training path work identically whether or not a Python/torch
+    // environment happens to exist on this machine. If python3 or the torch
+    // import is missing, this endpoint reports that plainly (still 200, with
+    // ok:false) instead of throwing -- the UI is expected to fall back to
+    // the regular Train button, never to block on this being present.
+    if (pathname === '/api/extension/train-pytorch' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as
+          {
+            neurons?: Array<{
+              name?: string; definition?: string;
+              scripts?: Array<{ userSays?: string; response?: string }>;
+            }>;
+            epochs?: number; learningRate?: number; tolerance?: number;
+          } | null;
+        const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
+        const dims = 16; // matches builder.js train()'s fixed dims
+
+        const { embedText } = await import('../models && skills/core/neuro-lang.js');
+        // Same fixed, concept-agnostic "recall your definition" drive vector
+        // materialize() uses for every @definishon contract (see
+        // definitionTrigger() in neuro-lang.ts) -- not exported, so mirrored
+        // here rather than adding an export just for this one caller.
+        const definitionTrigger = new Array(dims).fill(0.7);
+
+        type Sample = { readout: number; input: number[]; target: number[] };
+        const samples: Sample[] = [];
+        const readoutNames: string[] = [];
+        for (const n of neurons) {
+          if (!n.name) continue;
+          const def = (n.definition ?? '').trim();
+          const scripts = (n.scripts ?? []).filter(
+            s => (s.userSays ?? '').trim() && (s.response ?? '').trim()
+          );
+          if (!def && scripts.length === 0) continue;
+          const readout = readoutNames.length;
+          readoutNames.push(n.name);
+          if (def) {
+            samples.push({ readout, input: definitionTrigger, target: embedText(def, dims) });
+          }
+          for (const s of scripts) {
+            samples.push({
+              readout,
+              input: embedText(s.userSays!.trim(), dims),
+              target: embedText(s.response!.trim(), dims),
+            });
+          }
+        }
+
+        if (samples.length === 0) {
+          this.sendJson(res, {
+            ok: true, backend: 'pytorch', converged: true, epochs: 0,
+            satisfied: [], conflicts: [], trainedNeurons: [],
+          });
+          return;
+        }
+
+        const spec = {
+          dims,
+          numReadouts: readoutNames.length,
+          epochs: body?.epochs ?? 1000,
+          learningRate: body?.learningRate ?? 0.05,
+          tolerance: body?.tolerance ?? 1e-3,
+          samples,
+        };
+
+        const path = await import('node:path');
+        const scriptPath = path.resolve(process.cwd(), 'extension-builder', 'pytorch_trainer.py');
+        // Reuses one already-warm subprocess (torch already imported) across
+        // requests instead of spawning + re-importing torch every call --
+        // see PyTorchTrainerWorker's doc comment.
+        const pytorchResult = await this.pytorchWorker.send(scriptPath, spec);
+
+        if (pytorchResult.ok === false) {
+          this.sendJson(res, { ok: false, backend: 'pytorch', error: pytorchResult.error });
+          return;
+        }
+
+        // Group per-sample convergence back up to per-neuron, the same
+        // "definition AND every script" all-or-nothing rule builder.js's
+        // train() applies.
+        const satisfiedReadouts = new Set<number>();
+        const failedReadouts = new Set<number>();
+        samples.forEach((s, i) => {
+          if (pytorchResult.sampleConverged[i]) satisfiedReadouts.add(s.readout);
+          else failedReadouts.add(s.readout);
+        });
+        const trainedNeurons = readoutNames.filter(
+          (_, i) => satisfiedReadouts.has(i) && !failedReadouts.has(i)
+        );
+
+        this.sendJson(res, {
+          ok: true,
+          backend: 'pytorch',
+          torchVersion: pytorchResult.torchVersion,
+          converged: pytorchResult.converged,
+          epochs: pytorchResult.epochsRun,
+          satisfied: trainedNeurons,
+          conflicts: [], // per-dimension independent readouts can't collide the way shared-mesh weights can
+          trainedNeurons,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.sendJson(res, { ok: false, backend: 'pytorch', error: msg }, 500);
+      }
+      return;
+    }
+
+    // POST /api/extension/generate-coding-skills — execution-grounded
+    // training: each instantiation of a fixed code template (JS/Python/
+    // Shell arithmetic, NeuroLang @value) is ACTUALLY RUN, and its neuron
+    // is trained on the real (code -> result) it produced -- the live,
+    // /builder-reachable equivalent of extension-builder/train-coding-
+    // skills.mjs's one-time build script (see that file's doc comment for
+    // why each instantiation gets its own readout rather than sharing
+    // one: a single per-readout linear+tanh transform can't fit many
+    // distinct random mappings at once -- an earlier version of the
+    // standalone script measured a real, reproducible 0% held-out
+    // accuracy trying that). Deliberately scoped to languages this
+    // server can already run without new hard dependencies (Node/Python/
+    // Shell/NeuroLang) -- see that file's header for the same reasoning.
+    if (pathname === '/api/extension/generate-coding-skills' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { count?: number } | null;
+        const perTemplate = Math.max(1, Math.min(50, body?.count ?? 5)); // capped -- this runs real subprocesses per instantiation
+
+        const vm = await import('node:vm');
+        const { spawnSync } = await import('node:child_process');
+        const { NeuroLangInterpreter } = await import('../models && skills/core/neuro-lang.js');
+        const neuroLang = new NeuroLangInterpreter();
+        const randInt = (lo: number, hi: number) => lo + Math.floor(Math.random() * (hi - lo + 1));
+
+        type Template = { name: string; lang: string; gen: () => string; run: (code: string) => Promise<string | null> };
+        const templates: Template[] = [
+          {
+            name: 'skill_js_add', lang: 'javascript',
+            gen: () => `${randInt(0, 50)} + ${randInt(0, 50)}`,
+            run: async (code) => String(vm.runInContext(code, vm.createContext({}), { timeout: 1000 })),
+          },
+          {
+            name: 'skill_python_mul', lang: 'python',
+            gen: () => `print(${randInt(0, 15)} * ${randInt(0, 15)})`,
+            run: async (code) => {
+              const r = spawnSync('python3', ['-c', code], { timeout: 5000, encoding: 'utf8' });
+              return r.error || r.status !== 0 ? null : r.stdout.trim();
+            },
+          },
+          {
+            name: 'skill_shell_sub', lang: 'shell',
+            gen: () => `echo $(( ${randInt(10, 60)} - ${randInt(0, 10)} ))`,
+            run: async (code) => {
+              const r = spawnSync('bash', ['-c', code], { timeout: 5000, encoding: 'utf8' });
+              return r.error || r.status !== 0 ? null : r.stdout.trim();
+            },
+          },
+          {
+            name: 'skill_neurolang_value', lang: 'neurolang',
+            gen: () => `"n"@value="${(randInt(0, 100) / 100).toFixed(2)}"`,
+            run: async (code) => {
+              const result = await neuroLang.parse(code);
+              const n = result.neurons.get('n');
+              return n ? String(n.value) : null;
+            },
+          },
+        ];
+
+        const generated: Array<{ name: string; definition: string; scripts: Array<{ userSays: string; response: string }> }> = [];
+        for (const t of templates) {
+          for (let i = 0; i < perTemplate; i++) {
+            const code = t.gen();
+            const result = await t.run(code);
+            if (result === null || result === undefined || result === '') continue; // this language's runtime isn't available here -- skip, don't fake it
+            generated.push({
+              name: `${t.name}_${generated.length}`,
+              definition: code,
+              scripts: [{ userSays: `What does \`${code}\` output?`, response: result }],
+            });
+          }
+        }
+
+        if (generated.length === 0) {
+          this.sendJson(res, { ok: false, error: 'no language runtime (node/python3/bash) produced a result on this server' });
+          return;
+        }
+
+        const trainResult = await this.trainNeuronsViaPyTorch(generated, { epochs: 800 });
+        if (trainResult.ok === false) {
+          this.sendJson(res, { ok: false, error: trainResult.error });
+          return;
+        }
+
+        const trainedSet = new Set(trainResult.trainedNeurons);
+        this.sendJson(res, {
+          ok: true,
+          neurons: generated.map(n => ({ ...n, trained: trainedSet.has(n.name) })),
+          trainedCount: trainResult.trainedNeurons.length,
+          totalCount: generated.length,
+          epochs: trainResult.epochsRun,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.sendJson(res, { ok: false, error: msg }, 500);
+      }
+      return;
+    }
+
+    // POST /api/extension/merge-with-saved — real weight averaging
+    // ("model soup") between the current /builder project and a
+    // previously saved extension: both get trained fresh via PyTorch,
+    // then for every neuron NAME present in both, the merged (W, b) row
+    // is the genuine elementwise average of the two trained rows -- a
+    // name in only one side carries over unchanged. The merged weights
+    // are then fine-tuned for real on the union of both sides' samples
+    // (not just assumed correct) before being reported back. Same
+    // mechanism as extension-builder/merge-networks.mjs, live instead of
+    // a one-time build step -- see that file's doc comment for why this
+    // only makes sense for PyTorch-trained (@definishon/scripting)
+    // neurons, never Code-to-Net's byte-chain ones (moby/Debian), which
+    // have no trained weights to average in the first place.
+    if (pathname === '/api/extension/merge-with-saved' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as
+          {
+            neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }>;
+            savedFile?: string;
+          } | null;
+        const currentNeurons = Array.isArray(body?.neurons) ? body.neurons : [];
+        const savedFile = (body?.savedFile ?? '').trim();
+        if (!savedFile || /[\\/]|\.\./.test(savedFile)) {
+          this.sendJson(res, { ok: false, error: 'savedFile must be a bare filename (no path segments)' }, 400);
+          return;
+        }
+
+        const path = await import('node:path');
+        const { promises: fs } = await import('node:fs');
+        const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
+        const savedPath = path.join(dir, savedFile);
+        if (path.dirname(savedPath) !== dir) {
+          this.sendJson(res, { ok: false, error: 'savedFile resolved outside the extensions directory' }, 400);
+          return;
+        }
+        let savedData: { neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
+        try {
+          savedData = JSON.parse(await fs.readFile(savedPath, 'utf8'));
+        } catch (err) {
+          this.sendJson(res, { ok: false, error: `could not read "${savedFile}": ${err instanceof Error ? err.message : String(err)}` }, 404);
+          return;
+        }
+        const savedNeurons = Array.isArray(savedData.neurons) ? savedData.neurons : [];
+
+        const [a, b] = await Promise.all([
+          this.trainNeuronsViaPyTorch(currentNeurons, { epochs: 800 }),
+          this.trainNeuronsViaPyTorch(savedNeurons, { epochs: 800 }),
+        ]);
+        if (a.ok === false) { this.sendJson(res, { ok: false, error: `current project: ${a.error}` }); return; }
+        if (b.ok === false) { this.sendJson(res, { ok: false, error: `"${savedFile}": ${b.error}` }); return; }
+        if (a.names.length === 0 && b.names.length === 0) {
+          this.sendJson(res, { ok: false, error: 'neither side has any trainable (@definishon or scripted) neurons to merge' });
+          return;
+        }
+
+        // The actual merge: union of names, elementwise-averaged rows for
+        // any name in both.
+        const bIndexByName = new Map(b.names.map((n, i) => [n, i]));
+        const mergedNames: string[] = [];
+        const mergedW: number[][] = [];
+        const mergedB: number[][] = [];
+        let overlapCount = 0;
+        for (let i = 0; i < a.names.length; i++) {
+          const name = a.names[i];
+          const bi = bIndexByName.get(name);
+          if (bi === undefined) {
+            mergedNames.push(name); mergedW.push(a.W[i]); mergedB.push(a.b[i]);
+          } else {
+            overlapCount++;
+            mergedNames.push(name);
+            mergedW.push(a.W[i].map((v, d) => (v + b.W[bi][d]) / 2));
+            mergedB.push(a.b[i].map((v, d) => (v + b.b[bi][d]) / 2));
+            bIndexByName.delete(name);
+          }
+        }
+        for (const [name, bi] of bIndexByName) {
+          mergedNames.push(name); mergedW.push(b.W[bi]); mergedB.push(b.b[bi]);
+        }
+
+        const mergedIndexByName = new Map(mergedNames.map((n, i) => [n, i]));
+        const remap = (samples: typeof a.samples, names: string[]) =>
+          samples.map(s => ({ ...s, readout: mergedIndexByName.get(names[s.readout])! }));
+        const unionSamples = [...remap(a.samples, a.names), ...remap(b.samples, b.names)];
+
+        const pathMod = await import('node:path');
+        const scriptPath = pathMod.resolve(process.cwd(), 'extension-builder', 'pytorch_trainer.py');
+        const fineTune = await this.pytorchWorker.send(scriptPath, {
+          dims: 16, numReadouts: mergedNames.length, epochs: 800, learningRate: 0.05, tolerance: 1e-3,
+          samples: unionSamples, initW: mergedW, initB: mergedB,
+        });
+
+        const currentByName = new Map(currentNeurons.map(n => [n.name, n]));
+        const savedByName = new Map(savedNeurons.map(n => [n.name, n]));
+        const trainedSet = new Set(
+          fineTune.ok
+            ? mergedNames.filter((_, i) => fineTune.sampleConverged
+                .filter((_c, si) => unionSamples[si].readout === i)
+                .every(Boolean))
+            : [],
+        );
+        const mergedNeurons = mergedNames.map(name => {
+          const src = currentByName.get(name) ?? savedByName.get(name);
+          return {
+            name,
+            definition: src?.definition ?? '',
+            scripts: src?.scripts ?? [],
+            trained: trainedSet.has(name),
+          };
+        });
+
+        this.sendJson(res, {
+          ok: true,
+          neurons: mergedNeurons,
+          totalCount: mergedNeurons.length,
+          overlapCount,
+          fineTuneOk: fineTune.ok,
+          fineTuneError: fineTune.ok === false ? fineTune.error : undefined,
+        });
+      } catch (err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        this.sendJson(res, { ok: false, error: msg }, 500);
       }
       return;
     }

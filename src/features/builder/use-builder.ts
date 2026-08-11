@@ -15,9 +15,10 @@ import type {
   ConnectionData,
   LabelData,
   APIOutputConfig,
+  TrainingResult,
 } from '../../../extension-builder/builder.js';
 
-export type { NeuronData, ConnectionData, LabelData };
+export type { NeuronData, ConnectionData, LabelData, TrainingResult };
 
 export interface BuilderApi {
   /** The live engine, for anything not wrapped below. */
@@ -31,9 +32,51 @@ export interface BuilderApi {
   addNeuron: (name: string, value: number, position?: { x: number; y: number }) => NeuronData | null;
   deleteNeuron: (neuronId: string) => void;
   moveNeuron: (neuronId: string, x: number, y: number) => void;
-  connect: (fromId: string, toId: string, weight?: number, bias?: number) => boolean;
+  connect: (fromId: string, toId: string, weight?: number, bias?: number, locked?: boolean) => boolean;
   disconnect: (connectionId: string) => void;
+  /** Toggle a connection between "permanent" (locked) and "starting place" (unlocked). */
+  setConnectionLocked: (connectionId: string, locked: boolean) => boolean;
   dragLabel: (neuronId: string, label: string) => boolean;
+  /** "Scripting": attach a (user says X -> should respond Y) training example to a neuron. */
+  addScript: (neuronId: string, userSays: string, response: string) => boolean;
+  removeScript: (neuronId: string, index: number) => boolean;
+  /** The real training sequence -- connections, then @definishon + every script, trained together until convergence. */
+  /** method: 'delta' (default) is the analytic tanh-derivative delta rule; 'random' is genuine random-search/evolution-strategy updates -- each variable is randomly nudged, the nudge is kept if it genuinely improved the result and reverted otherwise. A real, different algorithm, not gradient descent renamed -- typically needs more epochs to converge than 'delta'. */
+  train: (epochs?: number, method?: 'delta' | 'random') => TrainingResult | null;
+  /**
+   * ALTERNATIVE training backend: real torch.autograd/torch.optim gradient
+   * descent, run server-side (POST /api/extension/train-pytorch) since
+   * builder.js runs in the browser and can't spawn the Python subprocess
+   * itself. Strictly optional -- if the server's Python/torch environment
+   * isn't available, resolves to `{ ok: false, error }` instead of the
+   * usual TrainingResult; the regular `train()` above always still works
+   * with zero Python/torch present anywhere.
+   */
+  trainWithPyTorch: (epochs?: number) => Promise<(TrainingResult & { ok: true; backend: 'pytorch'; torchVersion?: string }) | { ok: false; error: string }>;
+  /**
+   * Execution-grounded training: the server actually RUNS real JS/Python/
+   * Shell/NeuroLang code with randomized inputs (POST
+   * /api/extension/generate-coding-skills) and adds one trained neuron per
+   * instantiation to this project, its definition the real code and its
+   * script the real executed result -- not a hand-written answer. Same
+   * "optional, degrades cleanly" contract as trainWithPyTorch: no
+   * Python/torch here just means `{ ok: false, error }`.
+   */
+  generateCodingSkills: (count?: number) => Promise<
+    { ok: true; addedCount: number; trainedCount: number } | { ok: false; error: string }
+  >;
+  /**
+   * Real weight averaging ("model soup") between this project and a
+   * previously saved extension (POST /api/extension/merge-with-saved):
+   * both get trained fresh, then for every neuron name in both, the
+   * merged connection is the genuine elementwise average of the two
+   * trained values; a name in only one side carries over unchanged. The
+   * merged, fine-tuned result REPLACES this project's neuron set.
+   */
+  mergeWithSaved: (savedFile: string) => Promise<
+    { ok: true; totalCount: number; overlapCount: number } | { ok: false; error: string }
+  >;
+  lastTraining: TrainingResult | undefined;
   search: (query: string) => NeuronData[];
   simulate: (neuronId: string, inputValue: number) => string;
   addApiOutputLayer: (config: APIOutputConfig) => boolean;
@@ -78,6 +121,7 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       },
     };
   }, [engine, project, projectId, version]);
+  const lastTraining = useMemo(() => { void version; return project.lastTraining; }, [project, version]);
 
   return {
     engine,
@@ -100,8 +144,8 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       engine.moveNeuron(projectId, neuronId, x, y);
       bump();
     },
-    connect: (fromId, toId, weight = 0.5, bias = 0) => {
-      const ok = engine.connectNeurons(projectId, fromId, toId, weight, bias);
+    connect: (fromId, toId, weight = 0.5, bias = 0, locked = false) => {
+      const ok = engine.connectNeurons(projectId, fromId, toId, weight, bias, locked);
       bump();
       return ok;
     },
@@ -109,11 +153,121 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
       engine.disconnectNeurons(projectId, connectionId);
       bump();
     },
+    setConnectionLocked: (connectionId, locked) => {
+      const ok = engine.setConnectionLocked(projectId, connectionId, locked);
+      bump();
+      return ok;
+    },
     dragLabel: (neuronId, label) => {
       const ok = engine.dragLabel(projectId, neuronId, label);
       bump();
       return ok;
     },
+    addScript: (neuronId, userSays, response) => {
+      const ok = engine.addScript(projectId, neuronId, userSays, response);
+      bump();
+      return ok;
+    },
+    removeScript: (neuronId, index) => {
+      const ok = engine.removeScript(projectId, neuronId, index);
+      bump();
+      return ok;
+    },
+    train: (epochs, method) => {
+      const opts: { epochs?: number; method?: 'delta' | 'random' } = {};
+      if (epochs) opts.epochs = epochs;
+      if (method) opts.method = method;
+      const result = engine.train(projectId, Object.keys(opts).length ? opts : undefined);
+      bump();
+      return result;
+    },
+    trainWithPyTorch: async (epochs) => {
+      const neuronsPayload = Array.from(project.neurons.values()).map((n) => ({
+        name: n.name,
+        definition: n.definition,
+        scripts: n.scripts,
+      }));
+      try {
+        const res = await fetch('/api/extension/train-pytorch', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ neurons: neuronsPayload, epochs }),
+        });
+        const json = await res.json();
+        if (json.ok) {
+          const result: TrainingResult = {
+            converged: json.converged,
+            definitionsConverged: json.converged,
+            scriptsConverged: json.converged,
+            epochs: json.epochs,
+            satisfied: json.satisfied,
+            conflicts: json.conflicts,
+            trainedNeurons: json.trainedNeurons,
+          };
+          project.lastTraining = result;
+          bump();
+          return { ...result, ok: true, backend: 'pytorch', torchVersion: json.torchVersion };
+        }
+        return { ok: false, error: json.error ?? 'PyTorch training failed for an unknown reason' };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    generateCodingSkills: async (count) => {
+      try {
+        const res = await fetch('/api/extension/generate-coding-skills', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ count }),
+        });
+        const json = await res.json();
+        if (!json.ok) return { ok: false, error: json.error ?? 'generation failed for an unknown reason' };
+        // Server ran real code and trained real neurons -- add each one to
+        // THIS project's canvas, same shape addNeuron()+addScript() would
+        // produce by hand, just already filled in and already trained.
+        for (const n of json.neurons as Array<{ name: string; definition: string; scripts: Array<{ userSays: string; response: string }>; trained: boolean }>) {
+          const neuron = engine.addNeuron(projectId, n.name, 0);
+          if (!neuron) continue;
+          neuron.definition = n.definition;
+          for (const s of n.scripts) engine.addScript(projectId, neuron.id, s.userSays, s.response);
+          neuron.trained = n.trained;
+        }
+        bump();
+        return { ok: true, addedCount: json.totalCount, trainedCount: json.trainedCount };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    mergeWithSaved: async (savedFile) => {
+      const neuronsPayload = Array.from(project.neurons.values()).map((n) => ({
+        name: n.name, definition: n.definition, scripts: n.scripts,
+      }));
+      try {
+        const res = await fetch('/api/extension/merge-with-saved', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ neurons: neuronsPayload, savedFile }),
+        });
+        const json = await res.json();
+        if (!json.ok) return { ok: false, error: json.error ?? 'merge failed for an unknown reason' };
+        // The merged set REPLACES this project's neurons -- averaging is
+        // only meaningful as a whole-model operation, not an incremental
+        // add like generateCodingSkills() above.
+        for (const id of Array.from(project.neurons.keys())) engine.deleteNeuron(projectId, id);
+        for (const n of json.neurons as Array<{ name: string; definition: string; scripts: Array<{ userSays: string; response: string }>; trained: boolean }>) {
+          const neuron = engine.addNeuron(projectId, n.name, 0);
+          if (!neuron) continue;
+          neuron.definition = n.definition;
+          for (const s of n.scripts) engine.addScript(projectId, neuron.id, s.userSays, s.response);
+          neuron.trained = n.trained;
+        }
+        bump();
+        return { ok: true, totalCount: json.totalCount, overlapCount: json.overlapCount };
+      } catch (err) {
+        return { ok: false, error: err instanceof Error ? err.message : String(err) };
+      }
+    },
+    lastTraining,
     search: (query) => engine.searchNeurons(projectId, query),
     simulate: (neuronId, inputValue) => engine.typeModelOutput(projectId, neuronId, inputValue),
     addApiOutputLayer: (config) => {
