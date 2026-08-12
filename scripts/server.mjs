@@ -2,12 +2,17 @@
 /**
  * server.mjs — `npm run server`: builds and starts the production
  * backend, prints a read-only startup resource diagnostic and an
- * automatic update check, and launches four autonomous agents alongside
+ * automatic update check, and launches five autonomous agents alongside
  * it: the self-improvement loop (scripts/self-improve.mjs, tunes
  * existing skills' hyperparameters), the skill-creation agent
  * (scripts/skill-agent.mjs -- "a separate AI... working on skills":
  * researches new topics, writes them up, and trains genuinely new
- * skills from scratch), the conversation-learning agent
+ * skills from scratch, publishing five things per skill -- see that
+ * file's own doc comment), the skill-drill agent
+ * (scripts/skill-drill-agent.mjs -- the fifth of those five things:
+ * constantly re-drills each published skill with fresh problems,
+ * judges whether it genuinely got better, and pushes real
+ * improvements), the conversation-learning agent
  * (scripts/conversation-learning-agent.mjs -- "it learns by talking to
  * you": trains on real local usage, strictly local, never published),
  * and the peer-sync listener (scripts/peer-sync.mjs). All child
@@ -76,6 +81,14 @@ if (process.env.NEUROCLAW_CONVERSATION_LEARNING !== '0') {
   children.push(conversationLearner)
 } else {
   console.log('[server] conversation-learning agent disabled (NEUROCLAW_CONVERSATION_LEARNING=0)')
+}
+
+if (process.env.NEUROCLAW_SKILL_DRILLS !== '0') {
+  console.log('[server] starting skill-drill agent (constantly re-drills published skills, judges + graphs the result)...')
+  const drillAgent = spawn('node', ['scripts/skill-drill-agent.mjs'], { cwd: ROOT, stdio: 'inherit', env: childEnv })
+  children.push(drillAgent)
+} else {
+  console.log('[server] skill-drill agent disabled (NEUROCLAW_SKILL_DRILLS=0)')
 }
 
 if (process.env.NEUROCLAW_PEER_SYNC !== '0') {

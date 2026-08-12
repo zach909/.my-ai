@@ -25,9 +25,33 @@ A separate autonomous agent from the self-improvement loop above — same engine
 1. **Research** — runs `ResearchPlugin.conductResearch()` (the same real memory/drive/web search + never-trust-one-source corroboration described in [[Plugins]]) against a topic drawn from a rotating pool (physics/chemistry/computation/AI research — explicitly no biology, matching this project's curriculum scope).
 2. **Wiki** — writes up *only* the corroborated findings (2+ independent sources) as a new page under `wiki/`, explicitly disclosed as AI-generated with an honest explanation of what "verified" means. A topic that turns up nothing corroborated produces no page at all.
 3. **Skill** — trains a real `@definishon` neuron from that page's actual content via genuine `torch.autograd` gradient descent.
-4. **Share** — only if the skill converges *and* the runner gate (`test/smoke.mjs`) still passes, the page is pushed straight to the same target branch as the self-improvement loop, and a lightweight notification (topic + slug only, never the page content) is broadcast to peers.
+4. **Share** — only if the skill converges *and* the runner gate (`test/smoke.mjs`) still passes, **five things** get published together to the same target branch as the self-improvement loop, and a lightweight notification (topic + slug only, never the page content) is broadcast to peers:
+
+   | # | File | What it is |
+   |---|------|------------|
+   | 1 | `wiki/<slug>.md` | The sourced article — the corroborated research findings (and the skill itself is trained *from* this content) |
+   | 2 | `extension-builder/extensions/<slug>.skill.json` | The compiled skill — quantized, the "binary" |
+   | 3 | `extension-builder/extensions/<slug>.source.json` | The same skill, unquantized — the "source code" |
+   | 4 | `test/skills/<slug>.test.ts` | An auto-generated regression test (does this artifact actually contain a real, trained neuron?) |
+   | 5 | `extension-builder/drill-weights/<slug>.json` | Seeded here at zero, then kept "constantly improving" by the skill-drill agent below |
 
 **Turn it off** with `NEUROCLAW_SKILL_AGENT=0`.
+
+## The skill-drill agent (`scripts/skill-drill-agent.mjs`)
+
+Artifact #5 above, made real: "an algorithm that you can run on your machine to constantly improve it... if it was a math skill, it would constantly spam it with math problems." A separate `npm run server` process (10 minutes by default, `NEUROCLAW_SKILL_DRILLS_INTERVAL_MS`) that:
+
+1. **Picks a published skill** — least-recently-drilled first, rotating through whatever `skill-agent.mjs` has actually published on this machine.
+2. **Classifies it** — right now exactly one concrete drill category is implemented, matching the math example above: topics that look like arithmetic/algebra/number theory get real, freshly-generated arithmetic problems (`scripts/drill-generators/arithmetic.mjs` — pure JS, no external API). Everything else falls back to a **generic** drill: a regression check that the skill still reproduces its own trained content. This project deliberately never calls out to an external LLM to invent held-out quiz material for arbitrary research topics (see "NO EXTERNAL APIS" throughout this page) — the generic fallback is the honest alternative, not a disguised version of the real thing.
+3. **Measures real held-out accuracy** *before* drilling — a pure forward pass (`pytorch_trainer.py`'s `"op": "eval"`, no weight update) against a batch the current weights were never trained on.
+4. **Continues training** on a second fresh batch (`"op": "train"`, resuming from the current weights via `initW`/`initB` — a genuine fine-tune, not a cold restart).
+5. **Measures accuracy again** on a *third* fresh batch, never touched by steps 3 or 4.
+6. **The judge**: only a strict accuracy improvement (same rule as `decideReward()` above) counts as real progress. A cycle that doesn't improve discards its weight update and keeps the previous best — but the attempt is still logged, win or not.
+7. **On genuine improvement**, the updated weights are committed to `extension-builder/drill-weights/<slug>.json` and pushed straight to the same target branch as everything else — "when one model learns, they all learn": a `git pull` on any other install picks up the improved weights.
+
+Every attempt (improved or not) is appended to the local, gitignored `extension-builder/skill-quality-history.json` — this is the data behind the **Self-Improvement dashboard** (the "Self-Improvement" nav item, `src/routes/app/self-improvement.tsx`, served from `GET /api/self-improvement/history`): one graph of real trained scores over time (`self-improve.mjs`'s own scoreboard), one graph of the cumulative pass rate of the improvement-test judge above (this agent's history). Both graphs are empty on a fresh install or with the relevant agent disabled — not an error, just nothing recorded yet.
+
+**Turn it off** with `NEUROCLAW_SKILL_DRILLS=0`.
 
 ## The conversation-learning agent (`scripts/conversation-learning-agent.mjs`)
 

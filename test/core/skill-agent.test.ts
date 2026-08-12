@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
-import { slugifyTopic, loadRegistry, saveRegistry, pickTopic, renderWikiPage, TOPIC_POOL } from '../../scripts/skill-agent.mjs';
+import { slugifyTopic, loadRegistry, saveRegistry, pickTopic, renderWikiPage, renderSkillTest, TOPIC_POOL } from '../../scripts/skill-agent.mjs';
 import { validateNewSkillMessage } from '../../scripts/peer-sync.mjs';
 
 describe('slugifyTopic()', () => {
@@ -125,6 +125,44 @@ describe('renderWikiPage()', () => {
     const page = renderWikiPage(topic, report as any)!;
     expect(page).toMatch(/generated autonomously/i);
     expect(page).toMatch(/not independent human fact-checking|not.*human fact-checking/i);
+  });
+});
+
+describe('renderSkillTest() -- artifact #4 of the five things a published skill gets', () => {
+  it('references the exact slug-based paths the same cycle publishes as artifacts #2/#3', () => {
+    const src = renderSkillTest('quantum-computing', 'quantum computing');
+    expect(src).toContain('"quantum-computing" + \'.source.json\'');
+    expect(src).toContain('"quantum-computing" + \'.skill.json\'');
+  });
+
+  it('never breaks the generated file\'s syntax even if the topic contains quotes', () => {
+    const topic = `a topic with "double" and 'single' quotes`;
+    const src = renderSkillTest('weird-topic', topic);
+    // The topic is embedded via JSON.stringify(), a real JS string
+    // literal expression -- not raw-interpolated into an existing
+    // quoted string, which is what would actually break on a quote.
+    expect(src).toContain(JSON.stringify(topic));
+    // A real (if crude) syntax check: strip the TS-only `: any` type
+    // annotation and the two ESM `import` lines (neither is valid inside
+    // `new Function`'s plain-JS body), then confirm the rest still
+    // parses without throwing -- catching exactly the failure mode a
+    // stray unescaped quote in the topic would cause (an unterminated
+    // or prematurely-closed string literal).
+    const body = src.replace(/^import .*$/gm, '').replace(/: any/g, '');
+    expect(() => new Function(body)).not.toThrow();
+  });
+
+  it('produces syntactically parseable TypeScript (no stray template-literal breakage)', () => {
+    const src = renderSkillTest('some-topic', "a topic with 'quotes' in it");
+    // A crude but real check: every brace/paren opened is closed, and the
+    // describe/it/expect shape this project's other generated code relies
+    // on (vitest globals -- see vitest.config.ts) is present.
+    const opens = (src.match(/\{/g) ?? []).length;
+    const closes = (src.match(/\}/g) ?? []).length;
+    expect(opens).toBe(closes);
+    expect(src).toContain('describe(');
+    expect(src).toContain('it(');
+    expect(src).toContain('expect(');
   });
 });
 
