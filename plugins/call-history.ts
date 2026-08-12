@@ -10,6 +10,11 @@ export class CallHistoryPlugin extends BasePlugin {
   setSource(plugin: PhoneCallsPlugin): void { this.source = plugin; }
 
   async getCallHistory(limit?: number): Promise<any[]> {
+    if (limit !== undefined) {
+      if (typeof limit !== "number" || isNaN(limit) || !isFinite(limit) || limit <= 0 || !Number.isInteger(limit)) {
+        throw new Error("Security Error: Limit must be a positive integer.");
+      }
+    }
     if (!this.source) return [];
     return this.source.getHistory(limit);
   }
