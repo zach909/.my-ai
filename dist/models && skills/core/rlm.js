@@ -132,6 +132,16 @@ export class RLMTrainer {
             return { action: actions[idx], thinkingSteps: [idx] };
         }
         const qValues = this.computeQValues(state);
+        // Predict-before-commit: score every candidate action once. Since simulateStep(state, a)
+        // is mathematically `qValues[a] * 0.1`, the score is `qValues[a] * (1 + 0.1 * discountFactor)`.
+        // Since the multiplier is a positive constant, sorting by score is mathematically identical
+        // to sorting directly by the computed Q-values. This avoids executing `actionDim` redundant
+        // matrix-vector multiplications per call.
+        const actionsCopy = actions.slice();
+        actionsCopy.sort((x, y) => qValues[y] - qValues[x]);
+        const topK = actionsCopy.slice(0, Math.max(1, this.config.lookaheadSteps));
+        const thinkingSteps = topK;
+        let bestAction = topK[0];
         const numActions = actions.length;
         while (this.scoredScratch.length < numActions) {
             this.scoredScratch.push({ action: 0, score: 0 });
@@ -327,10 +337,6 @@ export class RLMTrainer {
             this.policyWeights[s * actionDim + action] += gradient * state[s];
         }
         this.policyBias[action] += gradient;
-    }
-    simulateStep(state, action) {
-        const qValues = this.computeQValues(state);
-        return qValues[action] * 0.1;
     }
     sampleBatch() {
         const bufferSize = this.bufferSize;
