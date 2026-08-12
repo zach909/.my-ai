@@ -61,9 +61,10 @@ function ExperimentsPage() {
   }, [])
 
   return (
-    <div className="space-y-6 p-4">
+    <div className="space-y-6 p-4 max-w-4xl mx-auto">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2 animate-fade-in">
+          <FlaskConical className="h-6 w-6 text-primary" />
           Experiments
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -72,31 +73,13 @@ function ExperimentsPage() {
         </p>
       </div>
 
-      <div className="flex flex-col items-center justify-center min-h-[350px] p-8 border-2 border-dashed border-muted rounded-xl bg-muted/20 text-center animate-fade-in">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4 transition-transform hover:scale-110 duration-200">
-          <FlaskConical className="h-6 w-6" />
-        </div>
-        <h3 className="text-lg font-semibold text-foreground">
-          No active experiments
-        </h3>
-        <p className="mt-2 text-sm text-muted-foreground max-w-sm mb-6">
-          To run structured protocols and run safety-critical benchmarks, you
-          first need to construct and install an extension.
-        </p>
-        <Button asChild className="active:scale-95 transition-all duration-150">
-          <Link to="/builder" className="flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            Go to Extension Builder
-          </Link>
-        </Button>
-      </div>
-      <Card className="flex flex-col items-center justify-center border-2 border-dashed border-muted-foreground/20 rounded-xl p-12 text-center max-w-2xl mx-auto mt-8 bg-card/50 backdrop-blur-xs">
-        <div className="rounded-full bg-primary/10 p-4 mb-4">
+      <Card className="flex flex-col items-center justify-center border-2 border-dashed border-muted-foreground/20 rounded-xl p-12 text-center bg-card/40 backdrop-blur-xs animate-fade-in">
+        <div className="rounded-full bg-primary/10 p-4 mb-4 transition-transform hover:scale-110 duration-200">
           <FlaskConical className={`h-8 w-8 text-primary ${running ? 'animate-bounce' : ''}`} />
         </div>
-        <h2 className="text-lg font-semibold tracking-tight">No Active Experiments</h2>
-        <p className="text-sm text-muted-foreground max-w-sm mt-2 mb-6">
-          You haven't run any ASI prototype evaluations yet. Launch a simulated alignment check to verify environment calibration.
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">No Active Experiments</h2>
+        <p className="text-sm text-muted-foreground max-w-md mt-2 mb-6">
+          To run structured protocols and run safety-critical benchmarks, you first need to construct and install an extension. Alternatively, launch a simulated alignment check to verify environment calibration.
         </p>
 
         {running ? (
@@ -110,29 +93,45 @@ function ExperimentsPage() {
             </div>
           </div>
         ) : completed ? (
-          <div className="flex flex-col items-center space-y-3">
+          <div className="flex flex-col items-center space-y-4">
             <div className="flex items-center gap-2 text-sm font-medium text-emerald-500" role="status">
-              <CheckCircle2 className="h-4 w-4" />
+              <CheckCircle2 className="h-4 w-4 animate-pulse" />
               <span>Calibration Successful</span>
             </div>
+            <div className="flex flex-wrap gap-3 justify-center">
+              <Button asChild variant="outline" className="active:scale-95 transition-all duration-150">
+                <Link to="/builder" className="flex items-center gap-1.5">
+                  <Plus className="h-4 w-4" />
+                  Go to Extension Builder
+                </Link>
+              </Button>
+              <Button
+                onClick={runSimulation}
+                className="gap-2 active:scale-95 transition-all duration-150"
+                aria-label="Run simulated alignment experiment again"
+              >
+                <Play className="h-4 w-4" />
+                Run Again
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-3 justify-center">
+            <Button asChild variant="outline" className="active:scale-95 transition-all duration-150">
+              <Link to="/builder" className="flex items-center gap-1.5">
+                <Plus className="h-4 w-4" />
+                Go to Extension Builder
+              </Link>
+            </Button>
             <Button
               onClick={runSimulation}
               className="gap-2 active:scale-95 transition-all duration-150"
-              aria-label="Run simulated alignment experiment again"
+              aria-label="Run simulated alignment experiment"
             >
-              <Play className="h-4 w-4" />
-              Run Again
+              <Sparkles className="h-4 w-4" />
+              Run Calibrator Demo
             </Button>
           </div>
-        ) : (
-          <Button
-            onClick={runSimulation}
-            className="gap-2 active:scale-95 transition-all duration-150"
-            aria-label="Run simulated alignment experiment"
-          >
-            <Sparkles className="h-4 w-4" />
-            Run Calibrator Demo
-          </Button>
         )}
       </Card>
     </div>
