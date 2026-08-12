@@ -1,5 +1,9 @@
 # Bolt's Journal - Critical Learnings
 
+## 2026-08-12 - HyperDimensionalEngine Dimensional Entropy Lookup Optimization
+**Learning:** During high-frequency entropy calculations in state evaluation loops, executing expensive transcendental `Math.log2` computations and divisions on discrete, bounded probability values causes significant CPU bottlenecks. Pre-calculating all possible entropy values (`p * Math.log2(p)`) once in the constructor into a static `Float64Array` lookup table allows O(1) array access indexed by bucket count, completely eliminating log2 math and division overhead.
+**Action:** When computing entropy or other functions over discrete ratios where the denominator (like total count N) is invariant, replace runtime transcendental math with a static pre-computed lookup table.
+
 ## 2026-08-05 - HyperDimensionalEngine Self-Model Optimization
 **Learning:** During continuous training ticks in state settling processes, redundant execution of $O(\text{dimensions} \times \text{rank})$ matrix-vector multiplications for calculating identical intermediate states (like the $h$ projection) across prediction and weight-update stages causes significant performance overhead. Sharing a class-level, pre-allocated scratch buffer (`selfModelHScratch`) directly eliminates this calculation and its associated JIT and garbage collection boundaries.
 **Action:** Always inspect sequential execution paths in simulation loops for shared intermediate projections or states that can be cached and passed/shared directly between steps.
