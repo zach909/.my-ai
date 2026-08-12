@@ -10,6 +10,7 @@
 import type { NeuroclawSystem } from '../index.js'
 import { logError, getRecentErrors, type LoggedError } from '../lib/error-log.js'
 import { appendConversationTurn } from '../lib/conversation-log.js'
+import { triggerConversationLearning } from '../lib/conversation-learning-trigger.js'
 
 /** A route the bot knows about and can reference/point users to. */
 export interface AppRoute {
@@ -215,6 +216,16 @@ export class ChatBot {
       // never break the actual response being returned below.
       if (response.metadata?.domain !== 'route' && response.metadata?.domain !== 'error') {
         appendConversationTurn(userMessage, response.message)
+        // "Always learn by talking to it / using it" -- don't wait for the
+        // background agent's next scheduled tick (up to
+        // NEUROCLAW_CONVERSATION_LEARNING_INTERVAL_MS away, 20 min by
+        // default). Fire a real cycle right now instead. Also
+        // fire-and-forget: triggerConversationLearning() never throws into
+        // the caller, and its own in-process + cross-process locks
+        // (learningInFlight, scripts/conversation-learning-agent.mjs's
+        // acquireLock()) make this safe to call on every single turn even
+        // while the background loop or a previous trigger is mid-cycle.
+        void triggerConversationLearning()
       }
 
       this.conversationHistory.push({

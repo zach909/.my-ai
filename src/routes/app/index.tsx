@@ -35,16 +35,6 @@ function DashboardHome() {
           <Link
             key={title}
             to={href}
-            aria-label={`Open ${title} module: ${description}`}
-            className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
-          >
-            <Card className="h-full transition-all duration-200 group-hover:border-primary/50 cursor-pointer">
-              <CardHeader className="flex flex-row items-center justify-between pb-2">
-                <div className="flex items-center gap-3">
-                  <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary group-hover:bg-primary/20 transition-all duration-200 group-hover:scale-110">
-                    <Icon className="h-4 w-4" />
-                  </div>
-                  <CardTitle className="text-sm font-medium group-hover:text-primary transition-colors">{title}</CardTitle>
             aria-label={`Open ${title}: ${description}`}
             className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] transition-all duration-150"
           >
@@ -53,7 +43,7 @@ function DashboardHome() {
                 <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary group-hover:bg-primary/20 transition-all duration-300 group-hover:scale-110">
                   <Icon className="h-4 w-4" />
                 </div>
-                <ArrowUpRight className="h-4 w-4 text-muted-foreground/50 transition-all duration-200 group-hover:text-primary group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
+                <CardTitle className="text-sm font-medium group-hover:text-primary transition-colors">{title}</CardTitle>
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>

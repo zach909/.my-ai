@@ -9,12 +9,12 @@
  * precedent as this session's other autonomous-agent scripts.
  */
 
-import { mkdtempSync, rmSync, appendFileSync } from 'node:fs';
+import { mkdtempSync, rmSync, appendFileSync, existsSync, readFileSync, utimesSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 
 import { appendConversationTurn, readRecentConversationTurns } from '../../src/lib/conversation-log';
-import { buildSamples, readRecentTurns } from '../../scripts/conversation-learning-agent.mjs';
+import { buildSamples, readRecentTurns, acquireLock, releaseLock } from '../../scripts/conversation-learning-agent.mjs';
 
 describe('conversation-log: appendConversationTurn() / readRecentConversationTurns()', () => {
   let dir: string;
@@ -124,5 +124,66 @@ describe('conversation-learning-agent: buildSamples() -- both real prediction di
     const turns = Array.from({ length: 5 }, (_, i) => ({ at: i, userMessage: `m${i}`, response: `r${i}` }));
     const samples = buildSamples(turns);
     expect(samples.length).toBe(2 * 5 - 1);
+  });
+});
+
+describe('conversation-learning-agent: acquireLock() / releaseLock() -- the cross-process guard', () => {
+  // This is the real thing that keeps the immediate in-process trigger
+  // (src/lib/conversation-learning-trigger.ts, fired from bot-service.ts
+  // on every turn) from training at the same moment as the separate
+  // background scripts/conversation-learning-agent.mjs process -- two
+  // different OS processes, so a same-process boolean can't see each
+  // other. Exercised against a real throwaway file, not mocked.
+  let dir: string;
+  afterEach(() => {
+    if (dir) rmSync(dir, { recursive: true, force: true });
+  });
+
+  it('the first caller acquires it, and it leaves a real lock file behind', () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'conv-lock-test-'));
+    const lockPath = path.join(dir, 'sub', 'conversation-learning.lock');
+    expect(acquireLock(lockPath)).toBe(true);
+    expect(existsSync(lockPath)).toBe(true);
+    expect(readFileSync(lockPath, 'utf8')).toBe(String(process.pid));
+  });
+
+  it('a second caller is refused while the lock is held', () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'conv-lock-test-'));
+    const lockPath = path.join(dir, 'conversation-learning.lock');
+    expect(acquireLock(lockPath)).toBe(true);
+    expect(acquireLock(lockPath)).toBe(false); // still held -- real EEXIST path
+  });
+
+  it('releaseLock() frees it for the next caller', () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'conv-lock-test-'));
+    const lockPath = path.join(dir, 'conversation-learning.lock');
+    expect(acquireLock(lockPath)).toBe(true);
+    releaseLock(lockPath);
+    expect(existsSync(lockPath)).toBe(false);
+    expect(acquireLock(lockPath)).toBe(true); // free again
+  });
+
+  it('releaseLock() on a lock that was never acquired is a harmless no-op', () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'conv-lock-test-'));
+    const lockPath = path.join(dir, 'never-created.lock');
+    expect(() => releaseLock(lockPath)).not.toThrow();
+  });
+
+  it('a stale lock (older than the staleness window) is reclaimed instead of blocking forever', () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'conv-lock-test-'));
+    const lockPath = path.join(dir, 'conversation-learning.lock');
+    expect(acquireLock(lockPath)).toBe(true);
+    // Simulate an abandoned lock from a process that died without cleaning
+    // up: backdate its mtime past LOCK_STALE_MS (10 minutes).
+    const staleTime = new Date(Date.now() - 11 * 60 * 1000);
+    utimesSync(lockPath, staleTime, staleTime);
+    expect(acquireLock(lockPath)).toBe(true); // reclaimed, not refused
+  });
+
+  it('a fresh lock (within the staleness window) is not reclaimed', () => {
+    dir = mkdtempSync(path.join(tmpdir(), 'conv-lock-test-'));
+    const lockPath = path.join(dir, 'conversation-learning.lock');
+    expect(acquireLock(lockPath)).toBe(true);
+    expect(acquireLock(lockPath)).toBe(false); // just created -- nowhere near stale
   });
 });
