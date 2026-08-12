@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Users, Send, Vote, Zap, Lock, Eye, EyeOff, History } from 'lucide-react'
+import { Users, Send, Vote, Zap, Lock, Eye, EyeOff, History, Loader2 } from 'lucide-react'
 
 function Chip({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -137,9 +137,11 @@ function LockScreen({ onUnlock }: { onUnlock: (password: string) => Promise<bool
             onClick={submit}
             disabled={checking || !password}
             size="sm"
-            className="active:scale-95 transition-all duration-150"
+            className="active:scale-95 transition-all duration-150 gap-2"
+            aria-label={checking ? "Unlocking Chat Groups" : "Unlock Chat Groups"}
           >
-            Unlock
+            {checking && <Loader2 size={14} className="animate-spin" />}
+            {checking ? "Unlocking..." : "Unlock"}
           </Button>
         </div>
       </Card>
@@ -474,11 +476,17 @@ function ChatGroupsPage() {
               disabled={loading || !task.trim()}
               size="sm"
               className="gap-2 active:scale-95 transition-all duration-150"
-              aria-label="Submit task to hive"
-              title="Submit task to hive"
+              aria-label={loading ? "Submitting task to hive" : "Submit task to hive"}
+              title={loading ? "Submitting..." : "Submit task to hive"}
             >
-              <Send size={16} />
-              <span className="hidden sm:inline">Submit</span>
+              {loading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Send size={16} />
+              )}
+              <span className="hidden sm:inline">
+                {loading ? "Submitting..." : "Submit"}
+              </span>
             </Button>
           </div>
         </Card>
