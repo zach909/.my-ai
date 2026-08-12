@@ -1911,6 +1911,15 @@ export class HyperDimensionalEngine {
         this.preSettleStatesBuffer = new Float32Array(D * N);
         this.preSettleEnergiesBuffer = new Float32Array(N);
         this.defaultDrivenIds = new Set(this.neurons.map(n => n.id));
+        // Pre-calculate the entropy lookup table for fast dimensional entropy calculations.
+        // Since count is always an integer from 0 to N (neuronCount), there are exactly N + 1 possible probabilities.
+        // Pre-calculating p * Math.log2(p) avoids transcendental Math.log2 calls in the hot loop.
+        this.entropyLookup = new Float64Array(N + 1);
+        this.entropyLookup[0] = 0; // 0 * log2(0) = 0
+        for (let c = 1; c <= N; c++) {
+            const p = c / N;
+            this.entropyLookup[c] = p * Math.log2(p);
+        }
         const rank = this.config.selfModelRank;
         const dims = this.config.dimensions;
         this.selfModelA = new Float32Array(dims * rank);
@@ -3098,9 +3107,7 @@ export class HyperDimensionalEngine {
                 hist[idx > 9 ? 9 : (idx < 0 ? 0 : idx)]++;
             }
             for (let b = 0; b < buckets; b++) {
-                const p = hist[b] / N;
-                if (p > 0)
-                    entropy -= p * Math.log2(p);
+                entropy -= this.entropyLookup[hist[b]];
             }
         }
         return entropy / dims;
