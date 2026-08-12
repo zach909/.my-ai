@@ -1,3 +1,7 @@
+## 2026-09-19 - [Dynamic Async Button States & Interactive Screen Reader Labels]
+**Learning:** Adding dynamic, state-synchronized text (such as "Sending..." or "Unlocking...") and spinning loader icons on primary CTA buttons during asynchronous requests significantly improves keyboard/screen-reader visibility and prevents frustrating double-clicks or double-submissions. Updating the button's `aria-label` dynamically to match the current loading state ensures assistive technologies immediately announce the ongoing background task.
+**Action:** Always transition action button content and screen reader labels to distinct, active loading states during any asynchronous network/computational tasks.
+
 ## 2026-09-18 - [Accessible Password Visibility Toggle with Standard Focus Rings]
 **Learning:** Adding a password visibility toggle button on password input fields (such as on the chat groups lock screen) provides outstanding visual clarity and assistive control. To satisfy keyboard accessibility, the toggle button must not suppress focus rings (avoiding focus-visible:ring-0) and instead supply a clear, offset visible ring (`focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none`), accompanied by distinct, dynamic ARIA labeling (`aria-label` and `title` attributes) mirroring the current visibility state.
 **Action:** When designing a password lock-screen or input form, always pair standard input fields with an accessible, focusable toggle button carrying state-synchronized ARIA descriptions.
