@@ -43,7 +43,7 @@
  */
 
 import { spawn } from 'node:child_process'
-import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from 'node:fs'
+import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -52,11 +52,60 @@ const ROOT = path.resolve(__dirname, '..')
 const LOG_PATH = path.join(ROOT, 'extension-builder', 'conversation-log.jsonl')
 const OUTPUT_PATH = path.join(ROOT, 'extension-builder', 'extensions', 'conversation_learning.ext.json')
 const STATE_PATH = path.join(ROOT, 'extension-builder', 'conversation-learning-state.json')
+const LOCK_PATH = path.join(ROOT, 'extension-builder', 'conversation-learning.lock')
 const DIMS = 16
 const MAX_TURNS = 150 // bounded, same reasoning as every other capped batch this session
+// A stale lock (the process that held it died without cleaning up --
+// e.g. `kill -9`, an OOM) shouldn't wedge learning forever. Real cycles
+// finish in well under this; anything older is treated as abandoned.
+const LOCK_STALE_MS = 10 * 60 * 1000
 
 function log(...args) {
   console.log('[conversation-learning]', ...args)
+}
+
+/**
+ * Cross-process lock: src/lib/conversation-learning-trigger.ts fires a
+ * cycle immediately after every real chat turn ("always learn by
+ * talking to it"), IN the backend server process, while
+ * scripts/server.mjs also runs this same script as a separate
+ * background process on a timer as a catch-up fallback. Without a lock
+ * spanning BOTH processes, they could race writing OUTPUT_PATH/
+ * STATE_PATH at the same time. A same-process in-memory flag (which
+ * conversation-learning-trigger.ts also keeps, for the common case)
+ * isn't enough on its own since it can't see the other process at all.
+ */
+export function acquireLock(lockPath = LOCK_PATH) {
+  mkdirSync(path.dirname(lockPath), { recursive: true })
+  try {
+    writeFileSync(lockPath, String(process.pid), { flag: 'wx' }) // 'wx' = exclusive create, fails if it already exists
+    return true
+  } catch (err) {
+    if (err.code !== 'EEXIST') return false
+    // Held already -- but by a live process, or an abandoned one?
+    try {
+      const age = Date.now() - statSyncMtime(lockPath)
+      if (age > LOCK_STALE_MS) {
+        writeFileSync(lockPath, String(process.pid)) // stale -- reclaim it, no 'wx' this time
+        return true
+      }
+    } catch {
+      // Couldn't even stat it -- treat as held, safest default.
+    }
+    return false
+  }
+}
+
+function statSyncMtime(p) {
+  return statSync(p).mtimeMs
+}
+
+export function releaseLock(lockPath = LOCK_PATH) {
+  try {
+    unlinkSync(lockPath)
+  } catch {
+    // Already gone, or never ours to remove -- fine either way.
+  }
 }
 
 /** Reads real turns straight off disk -- a plain JS mirror of
@@ -165,56 +214,71 @@ function saveState(state, statePath = STATE_PATH) {
  *  unchanged log), train both prediction directions for real, and
  *  overwrite the single local output file with the new state -- never
  *  git, never a peer, ever. */
-export async function runOneCycle({ logPath = LOG_PATH, outputPath = OUTPUT_PATH, statePath = STATE_PATH, worktreeRoot = ROOT } = {}) {
-  const turns = readRecentTurns(logPath)
-  if (turns.length === 0) {
-    log('no conversation turns logged yet -- nothing to learn from this cycle')
-    return { ok: true, trained: false, reason: 'no turns' }
+export async function runOneCycle({ logPath = LOG_PATH, outputPath = OUTPUT_PATH, statePath = STATE_PATH, worktreeRoot = ROOT, lockPath = LOCK_PATH } = {}) {
+  // The in-process trigger (src/lib/conversation-learning-trigger.ts, fired
+  // immediately from bot-service.ts on every real exchange) and this
+  // background loop's own timer can both land on runOneCycle() at close to
+  // the same moment, from two different OS processes -- a same-process
+  // boolean can't stop that. This lock is the actual cross-process guard;
+  // whichever side loses just defers to the other, no turn is lost, since
+  // state.lastTrainedTurnAt makes the next successful cycle catch up anyway.
+  if (!acquireLock(lockPath)) {
+    log('another cycle is already running (cross-process lock held) -- skipping, will catch up next time')
+    return { ok: true, trained: false, reason: 'locked' }
   }
+  try {
+    const turns = readRecentTurns(logPath)
+    if (turns.length === 0) {
+      log('no conversation turns logged yet -- nothing to learn from this cycle')
+      return { ok: true, trained: false, reason: 'no turns' }
+    }
 
-  const state = loadState(statePath)
-  const newestTurnAt = turns[turns.length - 1].at
-  if (newestTurnAt <= state.lastTrainedTurnAt) {
-    log('no new turns since the last cycle -- skipping')
-    return { ok: true, trained: false, reason: 'no new turns' }
+    const state = loadState(statePath)
+    const newestTurnAt = turns[turns.length - 1].at
+    if (newestTurnAt <= state.lastTrainedTurnAt) {
+      log('no new turns since the last cycle -- skipping')
+      return { ok: true, trained: false, reason: 'no new turns' }
+    }
+
+    const samples = buildSamples(turns)
+    log(`training on ${turns.length} real turn(s) (${samples.length} sample(s) across both prediction directions)...`)
+
+    const { ExtensionBuilder } = await import(path.join(worktreeRoot, 'dist', 'extension-builder', 'builder.js'))
+    const builder = new ExtensionBuilder()
+    const project = builder.createProject(
+      'Conversation Learning',
+      'Trained locally on real (message, response) turns -- never published, never shared. See wiki/Privacy-Policy.md.',
+    )
+
+    const trainResult = await trainSamples(worktreeRoot, samples)
+    let convergedCount = 0
+    const neurons = []
+    for (let i = 0; i < samples.length; i++) {
+      const s = samples[i]
+      const neuron = builder.addNeuron(project.id, `${s.kind}_${i}`, 0)
+      if (!neuron) continue
+      builder.addScript(project.id, neuron.id, s.inputText, s.targetText)
+      const converged = trainResult.ok && trainResult.sampleConverged?.[i] === true
+      neuron.trained = converged
+      if (converged) convergedCount++
+      neurons.push(neuron)
+    }
+
+    if (!trainResult.ok) {
+      log(`training unavailable this cycle (${trainResult.error}) -- neurons kept as untrained definitions, will retry`)
+    } else {
+      log(`${convergedCount}/${samples.length} sample(s) genuinely converged`)
+    }
+
+    mkdirSync(path.dirname(outputPath), { recursive: true })
+    writeFileSync(outputPath, builder.saveWithoutQuantization(project.id), 'utf8')
+    saveState({ lastTrainedTurnAt: newestTurnAt, turnsSeen: turns.length, convergedCount, sampleCount: samples.length }, statePath)
+
+    log(`saved: ${path.relative(ROOT, outputPath)}`)
+    return { ok: true, trained: true, turnCount: turns.length, sampleCount: samples.length, convergedCount, pytorchOk: trainResult.ok }
+  } finally {
+    releaseLock(lockPath)
   }
-
-  const samples = buildSamples(turns)
-  log(`training on ${turns.length} real turn(s) (${samples.length} sample(s) across both prediction directions)...`)
-
-  const { ExtensionBuilder } = await import(path.join(worktreeRoot, 'dist', 'extension-builder', 'builder.js'))
-  const builder = new ExtensionBuilder()
-  const project = builder.createProject(
-    'Conversation Learning',
-    'Trained locally on real (message, response) turns -- never published, never shared. See wiki/Privacy-Policy.md.',
-  )
-
-  const trainResult = await trainSamples(worktreeRoot, samples)
-  let convergedCount = 0
-  const neurons = []
-  for (let i = 0; i < samples.length; i++) {
-    const s = samples[i]
-    const neuron = builder.addNeuron(project.id, `${s.kind}_${i}`, 0)
-    if (!neuron) continue
-    builder.addScript(project.id, neuron.id, s.inputText, s.targetText)
-    const converged = trainResult.ok && trainResult.sampleConverged?.[i] === true
-    neuron.trained = converged
-    if (converged) convergedCount++
-    neurons.push(neuron)
-  }
-
-  if (!trainResult.ok) {
-    log(`training unavailable this cycle (${trainResult.error}) -- neurons kept as untrained definitions, will retry`)
-  } else {
-    log(`${convergedCount}/${samples.length} sample(s) genuinely converged`)
-  }
-
-  mkdirSync(path.dirname(outputPath), { recursive: true })
-  writeFileSync(outputPath, builder.saveWithoutQuantization(project.id), 'utf8')
-  saveState({ lastTrainedTurnAt: newestTurnAt, turnsSeen: turns.length, convergedCount, sampleCount: samples.length }, statePath)
-
-  log(`saved: ${path.relative(ROOT, outputPath)}`)
-  return { ok: true, trained: true, turnCount: turns.length, sampleCount: samples.length, convergedCount, pytorchOk: trainResult.ok }
 }
 
 const DEFAULT_INTERVAL_MS = 20 * 60 * 1000

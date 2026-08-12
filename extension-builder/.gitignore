@@ -37,3 +37,10 @@ conversation-log.jsonl
 # (which turn it last trained on) -- local only, same reasoning as the
 # scoreboard/registry entries above.
 conversation-learning-state.json
+
+# Cross-process lock file (scripts/conversation-learning-agent.mjs's
+# acquireLock()/releaseLock()) so the immediate in-process trigger
+# (src/lib/conversation-learning-trigger.ts) and the background loop never
+# train concurrently. Transient -- created and removed at runtime, never
+# meant to persist or be shared.
+conversation-learning.lock

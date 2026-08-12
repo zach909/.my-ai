@@ -44,6 +44,17 @@ Both are trained from real local data, never fabricated. The result is written t
 
 **Turn it off** with `NEUROCLAW_CONVERSATION_LEARNING=0`.
 
+### Learning immediately, not on a 20-minute timer
+
+The 20-minute loop above is a catch-up fallback now, not the primary path. `src/lib/conversation-learning-trigger.ts` fires a real training cycle **right after every real exchange**, called directly from `bot-service.ts` the moment a response is logged — you don't wait for the timer.
+
+- **Fire-and-forget**: the chat response you already got back is never delayed by this. `triggerConversationLearning()` runs the cycle in the background and swallows any failure (missing `python3`/`torch`, disk issue) rather than surfacing it to you — same graceful-degradation rule as every other optional dependency in this project.
+- **Two locks, because two different processes can both try to train at once**: an in-process `learningInFlight` flag skips a trigger fired while this server's own last cycle is still running, and a real cross-process file lock (`extension-builder/conversation-learning.lock`, gitignored, `acquireLock()`/`releaseLock()` in `scripts/conversation-learning-agent.mjs`) stops the immediate trigger and the separate 20-minute background process from training at the same moment. A lock older than 10 minutes is treated as abandoned and reclaimed automatically, so a crashed process can never wedge learning shut. Either way, nothing is lost — `state.lastTrainedTurnAt` means the next cycle that *does* get the lock picks up whatever a skipped one missed.
+
+### Personalized to you
+
+There are no accounts and no multi-tenant separation in this project (see [[Privacy-Policy]]) — one install has exactly one conversation log. So everything this agent trains is shaped only by whoever actually talks to *this* instance, on *this* machine. That's real personalization for a single local install, not a shared/generic model: nobody else's conversations ever touch your trained state, and yours never touch anyone else's.
+
 ## Peer sync (`scripts/peer-sync.mjs`)
 
 GitHub is the backbone, but it's still a single point of coordination — if you want improvements to reach another running instance directly, without going through GitHub at all, peer sync does that:
