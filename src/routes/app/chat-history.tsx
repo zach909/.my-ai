@@ -20,7 +20,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles } from 'lucide-react'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles, ArrowRight } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
@@ -62,11 +62,15 @@ function timeAgo(ts: number): string {
 
 function ThreadRow({ thread }: { thread: ThreadSummary }) {
   const href = thread.source === 'chat-group' ? '/app/chat-groups' : '/app/chat'
+  const sourceName = thread.source === 'chat-group' ? 'hive discussion' : 'AI chat'
+  const titleText = thread.title || 'untitled'
+
   return (
     <Link
       to={href}
       search={{ thread: thread.id }}
-      className="flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm transition-all duration-150 hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary"
+      aria-label={`Continue ${sourceName}: ${titleText}`}
+      className="group flex items-center justify-between gap-3 rounded-md border border-border px-3 py-2 text-sm transition-all duration-150 hover:border-primary/50 hover:bg-primary/5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary active:scale-[0.98]"
     >
       <div className="flex min-w-0 items-center gap-2">
         {thread.source === 'chat-group' ? (
@@ -74,9 +78,16 @@ function ThreadRow({ thread }: { thread: ThreadSummary }) {
         ) : (
           <MessageSquare size={13} className="shrink-0 text-muted-foreground" />
         )}
-        <span className="truncate">{thread.title || '(untitled)'}</span>
+        <span className="truncate group-hover:text-primary transition-colors">{titleText}</span>
       </div>
-      <span className="shrink-0 text-[11px] text-muted-foreground">{timeAgo(thread.updatedAt)}</span>
+      <div className="flex items-center gap-1.5 shrink-0">
+        <span className="text-[11px] text-muted-foreground">{timeAgo(thread.updatedAt)}</span>
+        <ArrowRight
+          size={13}
+          className="text-primary opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 group-focus:opacity-100 group-focus:translate-x-0 transition-all duration-150"
+          aria-hidden="true"
+        />
+      </div>
     </Link>
   )
 }
