@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Cpu, FlaskConical, Network, Brain, MessageSquare, Blocks } from 'lucide-react'
+import { Cpu, FlaskConical, Network, Brain, MessageSquare, Blocks, ArrowUpRight } from 'lucide-react'
 
 export const Route = createFileRoute('/app/')({
   head: () => ({
@@ -35,17 +35,21 @@ function DashboardHome() {
           <Link
             key={title}
             to={href}
-            className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.98] transition-transform duration-100"
+            aria-label={`Open ${title} module: ${description}`}
+            className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] transition-all duration-200 hover:-translate-y-1 hover:shadow-md"
           >
-            <Card className="h-full transition-colors group-hover:border-primary/50 cursor-pointer">
-              <CardHeader className="flex flex-row items-center gap-3 pb-2">
-                <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary group-hover:bg-primary/20 transition-colors">
-                  <Icon className="h-4 w-4" />
+            <Card className="h-full transition-all duration-200 group-hover:border-primary/50 cursor-pointer">
+              <CardHeader className="flex flex-row items-center justify-between pb-2">
+                <div className="flex items-center gap-3">
+                  <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary group-hover:bg-primary/20 transition-all duration-200 group-hover:scale-110">
+                    <Icon className="h-4 w-4" />
+                  </div>
+                  <CardTitle className="text-sm font-medium group-hover:text-primary transition-colors">{title}</CardTitle>
                 </div>
-                <CardTitle className="text-sm font-medium group-hover:text-primary transition-colors">{title}</CardTitle>
+                <ArrowUpRight className="h-4 w-4 text-muted-foreground/50 transition-all duration-200 group-hover:text-primary group-hover:translate-x-0.5 group-hover:-translate-y-0.5" />
               </CardHeader>
               <CardContent>
-                <p className="text-sm text-muted-foreground">{description}</p>
+                <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
               </CardContent>
             </Card>
           </Link>
