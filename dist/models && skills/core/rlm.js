@@ -54,6 +54,9 @@ export class RLMTrainer {
         this.qValuesBuffer = new Float32Array(this.config.actionDim);
         this.wPlusResidualBuffer = new Float32Array(this.policyWeights.length);
         this.bPlusResidualBuffer = new Float32Array(this.policyBias.length);
+        this.defaultActions = Array.from({ length: this.config.actionDim }, (_, i) => i);
+        this.scoredScratch = Array.from({ length: this.config.actionDim }, () => ({ action: 0, score: 0 }));
+        this.sampledBatchBuffer = new Array(this.config.batchSize);
         this.refreshQuantizedForward();
     }
     /**
@@ -123,38 +126,72 @@ export class RLMTrainer {
         return sum / this.weightResidual.length;
     }
     selectAction(state, availableActions) {
-        const actions = availableActions || Array.from({ length: this.config.actionDim }, (_, i) => i);
+        const actions = availableActions || this.defaultActions;
         if (Math.random() < this.currentExplorationRate) {
             const idx = Math.floor(Math.random() * actions.length);
             return { action: actions[idx], thinkingSteps: [idx] };
         }
         const qValues = this.computeQValues(state);
+        // Predict-before-commit: score every candidate action once. Since simulateStep(state, a)
+        // is mathematically `qValues[a] * 0.1`, the score is `qValues[a] * (1 + 0.1 * discountFactor)`.
+        // Since the multiplier is a positive constant, sorting by score is mathematically identical
+        // to sorting directly by the computed Q-values. This avoids executing `actionDim` redundant
+        // matrix-vector multiplications per call.
+        const actionsCopy = actions.slice();
+        actionsCopy.sort((x, y) => qValues[y] - qValues[x]);
+        const topK = actionsCopy.slice(0, Math.max(1, this.config.lookaheadSteps));
+        const thinkingSteps = topK;
+        let bestAction = topK[0];
+        const numActions = actions.length;
+        while (this.scoredScratch.length < numActions) {
+            this.scoredScratch.push({ action: 0, score: 0 });
+        }
         // Predict-before-commit: score every candidate action once (immediate Q
-        // value plus a discounted simulated-reward estimate), then keep the top
-        // `lookaheadSteps` candidates by score. Previously this looped
-        // `lookaheadSteps` times over the *same* undisturbed state with only the
-        // discount exponent changing per iteration, which never simulated a
-        // future state and — since the exponent only shrinks each pass — could
-        // never actually change which action won; it just repeated the same
-        // one-ply evaluation and padded thinkingSteps with duplicates.
-        const scored = actions
-            .map(a => ({ action: a, score: qValues[a] + this.simulateStep(state, a) * this.config.discountFactor }))
-            .sort((x, y) => y.score - x.score);
-        const topK = scored.slice(0, Math.max(1, this.config.lookaheadSteps));
-        const thinkingSteps = topK.map(c => c.action);
-        let bestAction = topK[0].action;
+        // value plus a discounted simulated-reward estimate).
+        // OPTIMIZATION: Bypassing simulateStep avoids recalculating computeQValues (re-evaluating neural forward pass)
+        // multiple times redundantly inside the loop. This reduces complexity from O(A^2 * S) to O(A * S).
+        const discount = this.config.discountFactor;
+        for (let i = 0; i < numActions; i++) {
+            const a = actions[i];
+            const obj = this.scoredScratch[i];
+            obj.action = a;
+            obj.score = qValues[a] + (qValues[a] * 0.1) * discount;
+        }
+        // Sort scoredScratch prefix of size numActions in-place (Insertion Sort in descending order) to avoid any allocations
+        for (let i = 1; i < numActions; i++) {
+            const keyAction = this.scoredScratch[i].action;
+            const keyScore = this.scoredScratch[i].score;
+            let j = i - 1;
+            while (j >= 0 && this.scoredScratch[j].score < keyScore) {
+                this.scoredScratch[j + 1].action = this.scoredScratch[j].action;
+                this.scoredScratch[j + 1].score = this.scoredScratch[j].score;
+                j--;
+            }
+            this.scoredScratch[j + 1].action = keyAction;
+            this.scoredScratch[j + 1].score = keyScore;
+        }
+        const k = Math.min(numActions, Math.max(1, this.config.lookaheadSteps));
+        const thinkingSteps = new Array(k);
+        for (let i = 0; i < k; i++) {
+            thinkingSteps[i] = this.scoredScratch[i].action;
+        }
+        let bestAction = thinkingSteps[0];
         const loopAction = this.detectLoop(bestAction);
         if (loopAction !== -1) {
-            const nonLoopActions = actions.filter(a => a !== loopAction);
-            if (nonLoopActions.length > 0) {
-                bestAction = nonLoopActions[0];
-                let bestQ2 = -Infinity;
-                for (const a of nonLoopActions) {
+            // OPTIMIZATION: Manually find the best non-loop action to completely avoid allocating a filtered array.
+            let bestQ2 = -Infinity;
+            let bestAction2 = -1;
+            for (let i = 0; i < numActions; i++) {
+                const a = actions[i];
+                if (a !== loopAction) {
                     if (qValues[a] > bestQ2) {
                         bestQ2 = qValues[a];
-                        bestAction = a;
+                        bestAction2 = a;
                     }
                 }
+            }
+            if (bestAction2 !== -1) {
+                bestAction = bestAction2;
             }
         }
         return { action: bestAction, thinkingSteps };
@@ -190,8 +227,8 @@ export class RLMTrainer {
         }
     }
     async train() {
-        const batch = this.sampleBatch();
-        if (batch.length === 0) {
+        const batchSize = this.sampleBatch();
+        if (batchSize === 0) {
             return {
                 loss: 0,
                 avgReward: 0,
@@ -204,7 +241,8 @@ export class RLMTrainer {
         const tdErrors = [];
         let totalLoss = 0;
         const discount = this.config.discountFactor;
-        for (const exp of batch) {
+        for (let b = 0; b < batchSize; b++) {
+            const exp = this.sampledBatchBuffer[b];
             // Avoid copying since computeQValues reuses the buffer; reading currentQ immediately avoids the allocation.
             const currentQ = this.computeQValues(exp.state)[exp.action];
             const targetQValues = this.computeQValues(exp.nextState);
@@ -227,14 +265,18 @@ export class RLMTrainer {
         // through the quantizer, carrying forward whatever rounding error is
         // left over as the residual for the next tick's forward pass.
         this.refreshQuantizedForward();
-        const avgReward = batch.reduce((s, e) => s + e.reward, 0) / batch.length;
+        let rewardSum = 0;
+        for (let b = 0; b < batchSize; b++) {
+            rewardSum += this.sampledBatchBuffer[b].reward;
+        }
+        const avgReward = rewardSum / batchSize;
         return {
-            loss: totalLoss / batch.length,
+            loss: totalLoss / batchSize,
             avgReward,
             explorationRate: this.currentExplorationRate,
             policyState: this.getPolicyState(),
             tdErrors,
-            stepsTrained: batch.length,
+            stepsTrained: batchSize,
         };
     }
     computeQValues(state) {
@@ -250,6 +292,8 @@ export class RLMTrainer {
         // memory access. Swapping loops ensures we read weights sequentially.
         for (let s = 0; s < state.length; s++) {
             const stateVal = state[s];
+            if (stateVal === 0)
+                continue; // Skip zero-value elements (sparsity fast-path)
             const offset = s * actionDim;
             // 4x loop unrolling for the inner loop to improve throughput
             let a = 0;
@@ -294,18 +338,17 @@ export class RLMTrainer {
         }
         this.policyBias[action] += gradient;
     }
-    simulateStep(state, action) {
-        const qValues = this.computeQValues(state);
-        return qValues[action] * 0.1;
-    }
     sampleBatch() {
         const bufferSize = this.bufferSize;
         if (bufferSize === 0)
-            return [];
+            return 0;
         const priorities = this.prioritiesBuffer;
         const totalPriority = this.cachedTotalPriority;
-        const batch = [];
         const batchSize = Math.min(this.config.batchSize, bufferSize);
+        // Ensure our sampledBatchBuffer is properly sized (safety resize)
+        while (this.sampledBatchBuffer.length < batchSize) {
+            this.sampledBatchBuffer.push(this.replayBuffer[0]);
+        }
         for (let i = 0; i < batchSize; i++) {
             const target = Math.random() * totalPriority;
             let low = 0;
@@ -321,9 +364,9 @@ export class RLMTrainer {
                     low = mid + 1;
                 }
             }
-            batch.push(this.replayBuffer[idx]);
+            this.sampledBatchBuffer[i] = this.replayBuffer[idx];
         }
-        return batch;
+        return batchSize;
     }
     syncTargetPolicy() {
         for (let i = 0; i < this.targetWeights.length; i++) {

@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Send, Zap, Sparkles, EyeOff, History } from 'lucide-react'
+import { Send, Zap, Sparkles, EyeOff, History, Loader2 } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat')({
   head: () => ({
@@ -382,11 +382,17 @@ function ChatPage() {
             disabled={loading || !input.trim()}
             size="sm"
             className="gap-2 active:scale-95 transition-all duration-150"
-            aria-label="Send message"
-            title="Send message (or press Enter)"
+            aria-label={loading ? "Sending message" : "Send message"}
+            title={loading ? "Sending..." : "Send message (or press Enter)"}
           >
-            <Send size={16} />
-            <span className="hidden sm:inline">Send</span>
+            {loading ? (
+              <Loader2 size={16} className="animate-spin" />
+            ) : (
+              <Send size={16} />
+            )}
+            <span className="hidden sm:inline">
+              {loading ? "Sending..." : "Send"}
+            </span>
           </Button>
         </div>
         <p className="text-muted-foreground py-1 text-[11px]">
