@@ -436,14 +436,40 @@ function BuilderPage() {
                 placeholder="label text"
                 className="h-8 text-xs"
               />
-              {labelText.trim() && (
-                <span
-                  draggable
-                  onDragStart={(e) => e.dataTransfer.setData('text/neuroclaw-label', labelText.trim())}
-                  className="inline-block cursor-grab rounded bg-primary/15 px-2 py-1 text-xs text-primary active:cursor-grabbing"
-                >
-                  ⠿ {labelText.trim()}
-                </span>
+              {labelText.trim() ? (
+                <div className="space-y-1.5">
+                  <span
+                    draggable
+                    onDragStart={(e) => e.dataTransfer.setData('text/neuroclaw-label', labelText.trim())}
+                    className="inline-block cursor-grab rounded bg-primary/15 px-2 py-1 text-xs text-primary active:cursor-grabbing border border-primary/20 hover:bg-primary/20 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                    tabIndex={0}
+                    aria-label={`Draggable label: ${labelText.trim()}`}
+                  >
+                    ⠿ {labelText.trim()}
+                  </span>
+                  <p className="text-[10px] text-muted-foreground italic">
+                    Drag this chip onto a neuron node on the canvas.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground italic">
+                    Type a label, or select a preset below:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {['sensor', 'actuator', 'hidden', 'output'].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setLabelText(preset)}
+                        className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+                        aria-label={`Select preset label: ${preset}`}
+                      >
+                        +{preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>
