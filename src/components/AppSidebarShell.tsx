@@ -23,6 +23,7 @@ import {
   Users,
   Blocks,
   Folder,
+  TrendingUp,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -44,6 +45,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: '/app/architecture', icon: <Network className="h-4 w-4" />, label: 'Architecture' },
   { href: '/app/knowledge', icon: <Brain className="h-4 w-4" />, label: 'Knowledge & Reasoning' },
   { href: '/app/evaluation', icon: <Gauge className="h-4 w-4" />, label: 'Evaluation' },
+  { href: '/app/self-improvement', icon: <TrendingUp className="h-4 w-4" />, label: 'Self-Improvement' },
   { href: '/app/planning', icon: <Goal className="h-4 w-4" />, label: 'Planning' },
 ]
 

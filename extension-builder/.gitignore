@@ -44,3 +44,12 @@ conversation-learning-state.json
 # train concurrently. Transient -- created and removed at runtime, never
 # meant to persist or be shared.
 conversation-learning.lock
+
+# scripts/skill-drill-agent.mjs's own local judge ledger -- every drill
+# attempt (win or not), the data GET /api/self-improvement/history and
+# the Self-Improvement dashboard graph read. Local bookkeeping about how
+# well drilling is going on THIS machine, same reasoning as
+# self-improvement-scoreboard.json above -- NOT the actual improved
+# skill weights (those live in extensions/drill-weights/*.json, which
+# ARE committed and pushed on genuine improvement).
+skill-quality-history.json

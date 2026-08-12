@@ -16,6 +16,7 @@ venv/
 node_modules/
 dist/
 build/
+.vite-out/
 target/
 .gradle/
 .mypy_cache/

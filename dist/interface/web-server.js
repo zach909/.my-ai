@@ -1,5 +1,7 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
+import { existsSync, readFileSync } from 'node:fs';
+import path from 'node:path';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
@@ -723,6 +725,39 @@ export class WebServer {
         // "the queue is actually empty right now."
         if (pathname === '/api/continuous/status' && method === 'GET') {
             this.sendJson(res, this.runner.getContinuousStatus());
+            return;
+        }
+        // GET /api/self-improvement/history — the graph data behind
+        // src/routes/app/self-improvement.tsx: "I want a graph about how
+        // the agent itself is doing on these tasks, and... how good it is
+        // at passing the improvement test." Reads two local, gitignored
+        // ledgers directly off disk -- self-improve.mjs's own scoreboard
+        // (per-target candidate scores + whether each was rewarded) and
+        // skill-drill-agent.mjs's quality history (per-skill held-out
+        // accuracy before/after each drill + whether it improved). Both
+        // already exist as real, running local state; this endpoint doesn't
+        // compute anything new, it just exposes what the two agents are
+        // already recording so the UI can chart it. Neither file existing
+        // yet (a fresh install, or both agents disabled) degrades to an
+        // empty-but-valid response, not an error.
+        if (pathname === '/api/self-improvement/history' && method === 'GET') {
+            const readJson = (relPath, fallback) => {
+                try {
+                    const full = path.join(process.cwd(), relPath);
+                    if (!existsSync(full))
+                        return fallback;
+                    return JSON.parse(readFileSync(full, 'utf8'));
+                }
+                catch {
+                    return fallback;
+                }
+            };
+            const scoreboard = readJson('extension-builder/self-improvement-scoreboard.json', { targets: {} });
+            const drillHistory = readJson('extension-builder/skill-quality-history.json', { skills: {} });
+            this.sendJson(res, {
+                selfImprovement: scoreboard.targets ?? {},
+                skillDrills: drillHistory.skills ?? {},
+            });
             return;
         }
         if (pathname === '/api/chat' && method === 'POST') {

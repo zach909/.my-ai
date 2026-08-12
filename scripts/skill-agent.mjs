@@ -26,14 +26,29 @@
  *      same mechanism build-self-knowledge-network.mjs already uses to
  *      train the wiki into a skill, just for one freshly-written page.
  *   4. SHARE: only if the skill genuinely converges AND the runner gate
- *      (test/smoke.mjs) still passes, the new wiki page is published
- *      straight to TARGET_BRANCH (same mechanism, same "not beta, but
- *      to git" destination as self-improve.mjs) and announced to any
- *      configured peers -- "everyone has access to it" via the shared
- *      git history a plain `git pull` retrieves, not by transmitting
- *      arbitrary page content peer-to-peer (same trust-boundary
- *      discipline as scripts/peer-sync.mjs: a peer notification only
- *      ever carries a topic/slug/commit, never page content itself).
+ *      (test/smoke.mjs) still passes, FIVE things get published
+ *      together, straight to TARGET_BRANCH (same mechanism, same
+ *      "not beta, but to git" destination as self-improve.mjs) and
+ *      announced to any configured peers -- "everyone has access to
+ *      it" via the shared git history a plain `git pull` retrieves, not
+ *      by transmitting arbitrary page content peer-to-peer (same
+ *      trust-boundary discipline as scripts/peer-sync.mjs: a peer
+ *      notification only ever carries a topic/slug/commit, never page
+ *      content itself):
+ *        1. wiki/<slug>.md            -- the sourced article (renderWikiPage())
+ *        2. extensions/<slug>.skill.json  -- the compiled skill (quantized, "binary")
+ *        3. extensions/<slug>.source.json -- the same skill unquantized ("source code")
+ *        4. test/skills/<slug>.test.ts    -- an auto-generated regression test for it
+ *        5. drill-weights/<slug>.json     -- kept "constantly improving" by
+ *           scripts/skill-drill-agent.mjs, a separate `npm run server`
+ *           agent that drills this skill (real, fresh problems for
+ *           categories it recognizes -- see
+ *           drill-generators/arithmetic.mjs -- or a content-regression
+ *           check otherwise) every cycle and pushes genuine improvements
+ *           back here the same way. That agent is the "algorithm you
+ *           can run on your machine to constantly improve it" -- one
+ *           shared, tested engine invoked per skill, not bespoke
+ *           generated code per topic.
  *
  * Topics are drawn from the same curriculum scope this project already
  * committed to this session: physics/chemistry/computation/AI research
@@ -165,6 +180,56 @@ export function renderWikiPage(topic, report) {
   return lines.join('\n') + '\n'
 }
 
+/**
+ * Renders an auto-generated regression test for one skill (artifact #4
+ * of the five things every published skill gets). Deliberately modest:
+ * there's no decode step anywhere in this project to check the trained
+ * neuron "means" ${topic} (embedText() is one-directional), so this
+ * checks the thing that's actually checkable -- that the published
+ * artifacts are structurally real and genuinely marked trained, not
+ * that publishing silently produced an empty or untrained skill.
+ */
+export function renderSkillTest(slug, topic) {
+  // JSON.stringify() rather than raw template interpolation for every
+  // value that lands inside a JS string literal below -- a topic (drawn
+  // from real research, not this project's own fixed literal pool) could
+  // in principle contain a quote or backslash, which would otherwise
+  // break the generated file's own syntax. slug is regex-derived
+  // ([a-z0-9-] only, see slugifyTopic()) so it's already safe, but
+  // stringifying it too costs nothing and keeps this function's safety
+  // independent of slugifyTopic()'s current implementation.
+  const slugLit = JSON.stringify(slug)
+  const topicLit = JSON.stringify(topic)
+  return `/**
+ * Auto-generated regression test for the ${topicLit} skill
+ * (scripts/skill-agent.mjs, see wiki/${slug}.md and [[Self-Improvement]]).
+ * Do not hand-edit -- skill-agent.mjs regenerates this file whenever it
+ * republishes this topic.
+ */
+import { readFileSync } from 'node:fs';
+import path from 'node:path';
+
+describe('skill: ' + ${topicLit} + ' (auto-generated)', () => {
+  it('has a real, trained neuron backing it (source artifact)', () => {
+    const data = JSON.parse(
+      readFileSync(path.join(process.cwd(), 'extension-builder', 'extensions', ${slugLit} + '.source.json'), 'utf8'),
+    );
+    expect(Array.isArray(data.neurons)).toBe(true);
+    expect(data.neurons.length).toBeGreaterThan(0);
+    expect(data.neurons.some((n: any) => n.trained === true)).toBe(true);
+  });
+
+  it('the quantized (binary) artifact carries the same neuron', () => {
+    const data = JSON.parse(
+      readFileSync(path.join(process.cwd(), 'extension-builder', 'extensions', ${slugLit} + '.skill.json'), 'utf8'),
+    );
+    expect(data.quantized).toBe(true);
+    expect(data.neurons.some((n: any) => n.name === ${slugLit})).toBe(true);
+  });
+});
+`
+}
+
 /** Runs pytorch_trainer.py once against a single (input, target) sample
  *  -- the same real gradient-descent contract every other @definishon
  *  in this repo uses, scoped to training exactly the one new page this
@@ -236,6 +301,27 @@ export async function runOneCycle({ registryPath = REGISTRY_PATH, topic, rand = 
       return { ok: false, error: trained.ok ? 'the new page did not converge as a trainable skill' : trained.error }
     }
 
+    // Artifacts #2/#3: the same trained neuron, saved both quantized
+    // ("binary") and not ("source") -- ExtensionBuilder's own two output
+    // modes, the exact ones the Extension Builder UI itself offers. This
+    // doesn't re-run the JS delta-rule engine's own training (the real
+    // convergence signal above already came from genuine torch.autograd
+    // gradient descent); it just records that outcome onto a real neuron
+    // structure so both artifacts are real, loadable ExtensionBuilder
+    // projects -- same pattern conversation-learning-agent.mjs already
+    // uses for its own (never-published) local output.
+    const { ExtensionBuilder } = await import(path.join(worktree, 'dist', 'extension-builder', 'builder.js'))
+    const builder = new ExtensionBuilder()
+    const project = builder.createProject(
+      chosenTopic.replace(/\b\w/g, (c) => c.toUpperCase()),
+      `Autonomously researched and trained skill on "${chosenTopic}" -- see wiki/${slug}.md and [[Self-Improvement]].`,
+    )
+    const neuron = builder.addNeuron(project.id, slug, 0)
+    builder.addScript(project.id, neuron.id, chosenTopic, wikiContent)
+    neuron.trained = true
+    const sourceJson = builder.saveWithoutQuantization(project.id)
+    const skillJson = await builder.installWithQuantization(project.id, { bits: 8 })
+
     const gate = runnerPassesSmoke(worktree)
     if (!gate.ok) {
       return { ok: false, error: `runner regression: ${gate.reason}` }
@@ -244,6 +330,9 @@ export async function runOneCycle({ registryPath = REGISTRY_PATH, topic, rand = 
     return {
       ok: true,
       wikiContent,
+      sourceJson,
+      skillJson,
+      testContent: renderSkillTest(slug, chosenTopic),
       verifiedCount: report.verifiedCount,
       unverifiedCount: report.unverifiedCount,
       smokeTestsPassed: gate.passed,
@@ -260,17 +349,35 @@ export async function runOneCycle({ registryPath = REGISTRY_PATH, topic, rand = 
     return { topic: chosenTopic, slug, published: false, reason: resolved.error, ...attempt }
   }
 
-  log(`"${chosenTopic}" converged as a real skill (${resolved.verifiedCount} verified, ${resolved.unverifiedCount} unverified finding(s), runner still passes ${resolved.smokeTestsPassed} tests) -- publishing`)
+  log(`"${chosenTopic}" converged as a real skill (${resolved.verifiedCount} verified, ${resolved.unverifiedCount} unverified finding(s), runner still passes ${resolved.smokeTestsPassed} tests) -- publishing all five artifacts`)
+
+  // Artifact #5, seeded here so all five things exist together the
+  // moment a skill is first published, not just once
+  // scripts/skill-drill-agent.mjs happens to drill it for the first
+  // time: zeroed drill weights that agent will load, drill, and
+  // (only on genuine improvement) overwrite going forward.
+  const seedDrillWeights = JSON.stringify(
+    { dims: DIMS, numReadouts: 1, W: [new Array(DIMS).fill(0)], b: [new Array(DIMS).fill(0)], slug, topic: chosenTopic, category: null, updatedAt: attempt.at },
+    null,
+    2,
+  ) + '\n'
 
   const publishResult = push
     ? publishFilesToBranch(
-        [{ relPath: `wiki/${slug}.md`, content: resolved.wikiContent }],
+        [
+          { relPath: `wiki/${slug}.md`, content: resolved.wikiContent },
+          { relPath: `extension-builder/extensions/${slug}.skill.json`, content: resolved.skillJson },
+          { relPath: `extension-builder/extensions/${slug}.source.json`, content: resolved.sourceJson },
+          { relPath: `test/skills/${slug}.test.ts`, content: resolved.testContent },
+          { relPath: `extension-builder/drill-weights/${slug}.json`, content: seedDrillWeights },
+        ],
         `skill-agent: new researched skill "${chosenTopic}" (automated)`,
         TARGET_BRANCH,
       )
     : { ok: false, skipped: true }
 
   registry.topics[slug] = {
+    topic: chosenTopic,
     publishedAt: attempt.at,
     verifiedCount: resolved.verifiedCount,
     history: [...(registry.topics[slug]?.history ?? []).slice(-9), { ...attempt, verifiedCount: resolved.verifiedCount }],
