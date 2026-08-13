@@ -1152,6 +1152,20 @@ async function testExtensionAutoLoadOnBoot() {
     neurons: [{ name: marker, definition: '', scripts: [{ userSays: question, response: marker }] }],
   }, null, 2), 'utf8');
 
+  // Same probe pattern, but as a *.source.json file -- the unquantized
+  // artifact scripts/skill-agent.mjs actually publishes per skill (see
+  // wiki/Self-Improvement.md's "five things"). loadSavedExtensions() used
+  // to filter for *.ext.json only, so a skill-agent-published skill was
+  // silently never loaded at boot at all; this second probe fails loudly
+  // if that regresses.
+  const sourceMarker = `source_autoload_probe_${Date.now()}_${Math.random().toString(36).slice(2)}`;
+  const sourceFilePath = path.join(dir, `${sourceMarker}.source.json`);
+  const sourceQuestion = `What does the source-artifact boot-load probe token ${sourceMarker} decode to?`;
+  await fs.writeFile(sourceFilePath, JSON.stringify({
+    project: { name: sourceMarker },
+    neurons: [{ name: sourceMarker, definition: '', scripts: [{ userSays: sourceQuestion, response: sourceMarker }] }],
+  }, null, 2), 'utf8');
+
   const port = 7990 + Math.floor(Math.random() * 9);
   const web = await startWeb(port);
   try {
@@ -1177,9 +1191,17 @@ async function testExtensionAutoLoadOnBoot() {
     const chatJson = JSON.parse(chat.body);
     check(chat.status === 200 && typeof chatJson.message === 'string' && chatJson.message.includes(marker),
       `The boot-loaded extension's content is genuinely recallable through live chat -- the runner actually has it, not just a status-endpoint count (reply: ${JSON.stringify(chatJson.message)})`);
+
+    const sourceChat = await post('/api/chat/messages', { message: sourceQuestion });
+    const sourceChatJson = JSON.parse(sourceChat.body);
+    check(sourceChat.status === 200 && typeof sourceChatJson.message === 'string' && sourceChatJson.message.includes(sourceMarker),
+      `A *.source.json skill artifact (scripts/skill-agent.mjs's actual publish format) is loaded at boot too, not just *.ext.json (reply: ${JSON.stringify(sourceChatJson.message)})`);
+    check(sourceChatJson.metadata?.domain === 'skill' && sourceChatJson.metadata?.matchedSkill === sourceMarker,
+      `An exact-phrase trigger match answers directly through the skill-mesh fast path (domain:'skill'), not diluted into the reasoner (metadata=${JSON.stringify(sourceChatJson.metadata)})`);
   } finally {
     await web.stop();
     await fs.unlink(filePath).catch(() => {});
+    await fs.unlink(sourceFilePath).catch(() => {});
   }
 }
 

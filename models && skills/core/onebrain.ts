@@ -361,27 +361,6 @@ export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
     }
     if (len & 1) {
       out[bytePos] = levels[len - 1];
-  // BOLT OPTIMIZATION: Extremely fast-path for the 16-bit case.
-  // Directly copy levels into a Uint16Array view, bypassing bitwise packing logic.
-  if (bits === 16) {
-    const out = new Uint8Array(levels.length * 2);
-    const u16 = new Uint16Array(out.buffer);
-    u16.set(levels);
-    return out;
-  }
-
-  // BOLT OPTIMIZATION: Extremely fast-path for the 4-bit (nibble) case.
-  // Directly pack two levels per byte, bypassing dynamic bitwise packing logic.
-  if (bits === 4) {
-    const out = new Uint8Array(Math.ceil(levels.length / 2));
-    let bytePos = 0;
-    const len = levels.length;
-    let i = 0;
-    for (; i < len - 1; i += 2) {
-      out[bytePos++] = (levels[i] & 0x0F) | ((levels[i + 1] & 0x0F) << 4);
-    }
-    if (i < len) {
-      out[bytePos] = levels[i] & 0x0F;
     }
     return out;
   }
@@ -421,8 +400,6 @@ export function unpackLevels(packed: Uint8Array, count: number, bits: number): U
 
   // BOLT OPTIMIZATION: Extremely fast-path for 16-bit configuration.
   // Extract 16-bit words cleanly, handling offset/alignment boundaries gracefully.
-  // BOLT OPTIMIZATION: Extremely fast-path for the 16-bit case.
-  // Directly copy levels from Uint16Array view, ensuring proper byteOffset alignment fallback.
   if (bits === 16) {
     const out = new Uint32Array(count);
     if (packed.byteOffset % 2 === 0) {
@@ -431,10 +408,6 @@ export function unpackLevels(packed: Uint8Array, count: number, bits: number): U
     } else {
       for (let i = 0; i < count; i++) {
         out[i] = packed[i * 2] | (packed[i * 2 + 1] << 8);
-      // Safe fallback for unaligned buffers
-      for (let i = 0; i < count; i++) {
-        const idx = i * 2;
-        out[i] = packed[idx] | (packed[idx + 1] << 8);
       }
     }
     return out;
@@ -453,20 +426,6 @@ export function unpackLevels(packed: Uint8Array, count: number, bits: number): U
     }
     if (count & 1) {
       out[count - 1] = packed[bytePos] & 0xF;
-  // BOLT OPTIMIZATION: Extremely fast-path for the 4-bit (nibble) case.
-  // Directly unpack two 4-bit elements per byte, bypassing dynamic bit-shifting loop accumulators.
-  if (bits === 4) {
-    const out = new Uint32Array(count);
-    let bytePos = 0;
-    let i = 0;
-    const limit = count - 1;
-    for (; i < limit; i += 2) {
-      const byte = packed[bytePos++];
-      out[i] = byte & 0x0F;
-      out[i + 1] = (byte >>> 4) & 0x0F;
-    }
-    if (i < count) {
-      out[i] = packed[bytePos] & 0x0F;
     }
     return out;
   }
@@ -4763,32 +4722,11 @@ export class MoERouter {
     if (len <= 1) return 0;
 
     // First, find the maximum score for numerical stability during exponentiation
-    // OPTIMIZATION: Mathematically exact Shannon entropy of softmax calculated in a single pass.
-    // This bypasses the allocation of intermediate `probs` and temporary arrays inside `softmax()`,
-    // and reduces the number of slow `Math.log` calls from O(E) to exactly O(1).
-    const len = scores.length;
-    if (len === 0) return 0;
-
     let max = scores[0];
     for (let i = 1; i < len; i++) {
       if (scores[i] > max) {
         max = scores[i];
       }
-    }
-
-    let sumExps = 0;
-    let sumWeightedExps = 0;
-    for (let i = 0; i < len; i++) {
-      const diff = scores[i] - max;
-      const expVal = Math.exp(diff);
-      sumExps += expVal;
-      sumWeightedExps += expVal * diff;
-    }
-
-    if (sumExps === 0) return 0;
-    // Mathematically exact Shannon entropy of softmax in a single pass over exp values
-    // with exactly 1 Math.log call and zero intermediate array allocations.
-    return Math.log(sumExps) - (sumWeightedExps / sumExps);
     }
 
     // Compute sum(exp(s_i - max)) and sum((s_i - max) * exp(s_i - max))
@@ -4808,17 +4746,6 @@ export class MoERouter {
     // This reduces the number of expensive Math.log transcendental math calls from O(E) to exactly O(1),
     // and completely eliminates the allocation of intermediate probability arrays.
     return Math.log(sumExp) - sumExpS / sumExp;
-    let sumExp = 0;
-    let sumExpScore = 0;
-    for (let i = 0; i < len; i++) {
-      const diff = scores[i] - max;
-      const e = Math.exp(diff);
-      sumExp += e;
-      sumExpScore += e * diff;
-    }
-
-    if (sumExp === 0) return 0;
-    return Math.log(sumExp) - sumExpScore / sumExp;
   }
 
   private computeLoadBalanceLoss(): number {

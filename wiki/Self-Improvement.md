@@ -53,6 +53,20 @@ Every attempt (improved or not) is appended to the local, gitignored `extension-
 
 **Turn it off** with `NEUROCLAW_SKILL_DRILLS=0`.
 
+## Skills directly connected into live chat, not routed to a separate expert network
+
+An architecture audit this session found a real gap: every trained skill's actual (trigger → response) content was reachable only two ways, both weak. Boot-time loading flattened it into one plain-text memory sentence per script ("When asked X, Y responds: Z"), and ordinary chat only ever consulted that memory as loosely-weighted background context for the reasoner (`ReasoningEngine`'s `recall` dependency) — a trained skill could influence a response, but never directly *be* the response, and its own trigger text was diluted by boilerplate wording around it before anything ever compared it to a live message.
+
+This is fixed now, and deliberately *not* via a Mixture-of-Experts-style routing layer that picks between separate expert networks — that's the wrong shape for what was asked for here ("not the skill system, because the skill system connects skills directly into the rest of it, versus having a bunch of different neural networks solve different problems"). Instead:
+
+- **`interface/web-server.ts`'s `rememberSkillScript()`** stores a trained skill's trigger (`userSays`) as the memory item's `content` — what actually gets embedded and matched — and its literal response as a new, separate `payload` field (`models && skills/core/long-term-memory.ts`), tagged `'skill-script'`. Previously the response was only recoverable by re-parsing a flattened sentence; now it's returned directly.
+- **`loadSavedExtensions()`** now also loads `*.source.json` (what `skill-agent.mjs` actually publishes per skill — see the five things above) alongside the older `*.ext.json` format. Previously a skill-agent-published skill was silently never loaded into memory at boot at all.
+- **`ChatBot.matchSkillMesh()`** (`src/server/bot-service.ts`) runs on every real chat message, ahead of the reasoner/hive fallback: it queries `LongTermMemory`'s real bag-of-words cosine similarity for the closest `'skill-script'` trigger, and if the match is genuinely confident (`SKILL_MATCH_THRESHOLD = 0.6` — chosen from real measured similarity scores: genuine paraphrases of a trigger scored 0.67–0.89, an unrelated query scored 0.29, against the same trigger set during development), returns that skill's trained response **verbatim**, short-circuiting the entire reasoner/hive path. Below the threshold, nothing changes — the message falls through to `plan`/`recall`/`solve` exactly as before.
+
+This makes every skill `skill-agent.mjs` publishes (and every skill manually built/registered via the Extension Builder) something live chat can actually be directly answered by, for the first time — not just background text a heuristic reasoner might or might not use.
+
+**"A test for the AI"**: every real chat message is itself a live trial of this. `src/lib/skill-mesh-metrics.ts` logs every attempt (matched or not, and its real similarity score) to the local, gitignored `extension-builder/skill-mesh-history.jsonl`. The Self-Improvement dashboard's third graph, **"Skill-mesh direct-answer rate"**, is the cumulative fraction of real messages a trained skill has directly answered, over time — genuinely continuous testing of whether this connection is actually working, not a one-off assertion.
+
 ## The conversation-learning agent (`scripts/conversation-learning-agent.mjs`)
 
 The only one of these agents that learns from real usage instead of external research or existing skills — and the only one that is **never published anywhere**, structurally, not just by policy.

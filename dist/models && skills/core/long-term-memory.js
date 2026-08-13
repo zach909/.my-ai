@@ -53,6 +53,7 @@ export class LongTermMemory {
             tags: opts.tags ?? [],
             accessCount: 0,
             lastAccess: now,
+            ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
         };
         this.items.set(id, item);
         this.evictIfNeeded();

@@ -33,12 +33,23 @@ export interface MemoryItem {
   tags: string[];
   accessCount: number;
   lastAccess: number;
+  /**
+   * Optional payload distinct from `content` -- for a trained skill's
+   * (trigger, response) script pair, `content` is the trigger text
+   * (what gets embedded and matched against a live query) and `payload`
+   * is the literal response to return on a confident match. Plain chat
+   * turns and other callers leave this unset; embedding is always
+   * computed from `content` only, never from `payload`.
+   */
+  payload?: string;
 }
 
 export interface RememberOptions {
   importance?: number;
   tags?: string[];
   id?: string;
+  /** See MemoryItem.payload. */
+  payload?: string;
 }
 
 export interface RetrieveOptions {
@@ -95,6 +106,7 @@ export class LongTermMemory {
       tags: opts.tags ?? [],
       accessCount: 0,
       lastAccess: now,
+      ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
     };
     this.items.set(id, item);
     this.evictIfNeeded();

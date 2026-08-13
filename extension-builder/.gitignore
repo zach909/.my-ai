@@ -45,6 +45,14 @@ conversation-learning-state.json
 # meant to persist or be shared.
 conversation-learning.lock
 
+# src/lib/skill-mesh-metrics.ts's own local ledger -- every real chat
+# message's skill-mesh direct-answer attempt (hit or miss), the data
+# GET /api/self-improvement/history and the Self-Improvement dashboard's
+# third graph read. Local diagnostic data about how well this machine's
+# trained skills cover real usage, same reasoning as the scoreboard/
+# quality-history entries above.
+skill-mesh-history.jsonl
+
 # scripts/skill-drill-agent.mjs's own local judge ledger -- every drill
 # attempt (win or not), the data GET /api/self-improvement/history and
 # the Self-Improvement dashboard graph read. Local bookkeeping about how
