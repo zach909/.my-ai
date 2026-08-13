@@ -39,13 +39,16 @@ import {
   Sparkles,
   FlaskConical,
   ArrowRight,
+  Puzzle,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
   buildPassRateSeries,
   buildScoreSeries,
+  buildSkillMeshRateSeries,
   type DrillEntry,
   type ScoreboardEntry,
+  type SkillMeshAttemptInput,
 } from "@/lib/self-improvement-charts";
 
 export const Route = createFileRoute("/app/self-improvement")({
@@ -98,6 +101,9 @@ function SelfImprovementPage() {
   const [skillDrills, setSkillDrills] = useState<Record<string, DrillEntry>>(
     {},
   );
+  const [skillMeshAttempts, setSkillMeshAttempts] = useState<
+    SkillMeshAttemptInput[]
+  >([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -109,6 +115,9 @@ function SelfImprovementPage() {
       const data = await res.json();
       setSelfImprovement(data.selfImprovement ?? {});
       setSkillDrills(data.skillDrills ?? {});
+      setSkillMeshAttempts(
+        Array.isArray(data.skillMeshAttempts) ? data.skillMeshAttempts : [],
+      );
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -130,6 +139,13 @@ function SelfImprovementPage() {
     atLabel: shortTime(row.at),
     passRatePct: Math.round(row.passRate * 1000) / 10,
   }));
+  const skillMeshSeries = buildSkillMeshRateSeries(skillMeshAttempts).map(
+    (row) => ({
+      ...row,
+      atLabel: shortTime(new Date(row.at).toISOString()),
+      directAnswerRatePct: Math.round(row.directAnswerRate * 1000) / 10,
+    }),
+  );
   const targetKeys = Object.keys(selfImprovement);
 
   return (
@@ -320,6 +336,71 @@ function SelfImprovementPage() {
                     stroke="#22c55e"
                     dot={{ r: 2 }}
                   />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <Puzzle size={15} className="text-primary" />
+            Skill-mesh direct-answer rate
+          </CardTitle>
+          <CardDescription className="text-xs">
+            "A test for the AI": every real chat message is a live trial of
+            whether a trained skill directly answers it
+            (ChatBot.matchSkillMesh()) instead of falling through to the
+            reasoner. Cumulative rate across every real message on this
+            machine.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!mounted || skillMeshSeries.length === 0 ? (
+            <div className="py-6">
+              {mounted ? (
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-6 text-center max-w-md mx-auto space-y-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Puzzle className="h-5 w-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-semibold text-foreground text-xs">
+                      No chat messages recorded yet
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Talk to the AI to see how often a trained skill answers
+                      directly instead of falling through to the reasoner.
+                    </p>
+                  </div>
+                  <Button
+                    asChild
+                    size="sm"
+                    className="active:scale-95 transition-all duration-150 text-xs"
+                  >
+                    <Link to="/app/chat">
+                      <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                      Prompt AI Chat
+                      <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-center text-xs text-muted-foreground">
+                  Loading…
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={skillMeshSeries}>
+                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
+                  <XAxis dataKey="atLabel" tick={{ fontSize: 10 }} minTickGap={20} />
+                  <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} unit="%" />
+                  <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number) => [`${v}%`, 'Direct-answer rate']} />
+                  <Line type="monotone" dataKey="directAnswerRatePct" name="Direct-answer rate" stroke="#a855f7" dot={{ r: 2 }} />
                 </LineChart>
               </ResponsiveContainer>
             </div>

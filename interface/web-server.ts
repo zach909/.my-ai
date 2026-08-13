@@ -598,17 +598,50 @@ export class WebServer {
    * malformed JSON in one saved extension must never stop the server from
    * finishing its boot sequence -- skip that one file and keep going.
    */
+  /**
+   * Remembers one trained skill script as a directly-matchable (trigger,
+   * response) pair -- `content` is the trigger text alone (what actually
+   * gets embedded and compared against a live query), `payload` is the
+   * literal response text to return verbatim on a confident match. This
+   * replaced an earlier version that flattened both into one sentence
+   * ("When asked X, Y responds: Z") and stored no payload at all -- that
+   * meant the trigger's own embedding was diluted by boilerplate text
+   * around it, AND there was no way to recover the exact response
+   * without re-parsing the flattened sentence. Both are fixed here.
+   *
+   * Tagged 'skill-script' (plus the source extension's name) so
+   * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
+   * there) can query this exact tag rather than mixing skill triggers in
+   * with ordinary chat-turn memories.
+   */
+  private rememberSkillScript(
+    system: { memory: { remember: (content: string, opts: { importance?: number; tags?: string[]; payload?: string }) => unknown } },
+    userSays: string,
+    response: string,
+    extName: string,
+  ): void {
+    system.memory.remember(userSays, { importance: 0.7, tags: ['skill-script', extName], payload: response });
+  }
+
   private async loadSavedExtensions(): Promise<{ files: number; remembered: number }> {
     try {
       const path = await import('node:path');
       const { promises: fs } = await import('node:fs');
       const dir = path.resolve(process.cwd(), 'extension-builder', 'extensions');
-      let entries: string[];
+      let allEntries: string[];
       try {
-        entries = (await fs.readdir(dir)).filter(f => f.endsWith('.ext.json'));
+        allEntries = await fs.readdir(dir);
       } catch {
         return { files: 0, remembered: 0 }; // no extensions directory yet -- nothing to load, not an error
       }
+      // Both the quantized (*.ext.json -- the historical format, still what
+      // conversation-learning-agent.mjs and the manual /api/extension/register
+      // endpoint below write) and unquantized (*.source.json -- what
+      // scripts/skill-agent.mjs publishes per skill, see wiki/Self-Improvement.md's
+      // "five things") artifact shapes carry the same {project|name, neurons}
+      // structure below -- loading only *.ext.json silently never picked up
+      // any skill-agent-published skill at all.
+      const entries = allEntries.filter(f => f.endsWith('.ext.json') || f.endsWith('.source.json'));
       if (entries.length === 0) return { files: 0, remembered: 0 };
 
       const { getNeuroclawSystem } = await import('../src/index.js');
@@ -638,9 +671,7 @@ export class WebServer {
             const userSays = (s.userSays ?? '').trim();
             const response = (s.response ?? '').trim();
             if (!userSays || !response) continue;
-            system.memory.remember(`When asked "${userSays}", ${n.name} responds: ${response}`, {
-              importance: 0.7, tags: ['extension', extName, 'script'],
-            });
+            this.rememberSkillScript(system, userSays, response, extName);
             remembered++;
           }
         }
@@ -744,15 +775,18 @@ export class WebServer {
     // GET /api/self-improvement/history — the graph data behind
     // src/routes/app/self-improvement.tsx: "I want a graph about how
     // the agent itself is doing on these tasks, and... how good it is
-    // at passing the improvement test." Reads two local, gitignored
-    // ledgers directly off disk -- self-improve.mjs's own scoreboard
-    // (per-target candidate scores + whether each was rewarded) and
-    // skill-drill-agent.mjs's quality history (per-skill held-out
-    // accuracy before/after each drill + whether it improved). Both
-    // already exist as real, running local state; this endpoint doesn't
-    // compute anything new, it just exposes what the two agents are
-    // already recording so the UI can chart it. Neither file existing
-    // yet (a fresh install, or both agents disabled) degrades to an
+    // at passing the improvement test... a test for the AI and a graph
+    // for npm run server." Reads three local, gitignored ledgers
+    // directly off disk -- self-improve.mjs's own scoreboard (per-target
+    // candidate scores + whether each was rewarded), skill-drill-agent.mjs's
+    // quality history (per-skill held-out accuracy before/after each
+    // drill + whether it improved), and skill-mesh-metrics.ts's own
+    // ledger (every real chat message's direct-skill-match attempt, hit
+    // or miss -- see ChatBot.matchSkillMesh()). All three already exist
+    // as real, running local state; this endpoint doesn't compute
+    // anything new, it just exposes what's already being recorded so
+    // the UI can chart it. None of the files existing yet (a fresh
+    // install, or the relevant agent disabled) degrades to an
     // empty-but-valid response, not an error.
     if (pathname === '/api/self-improvement/history' && method === 'GET') {
       const readJson = (relPath: string, fallback: unknown) => {
@@ -770,9 +804,11 @@ export class WebServer {
       const drillHistory = readJson('extension-builder/skill-quality-history.json', { skills: {} }) as {
         skills?: Record<string, { history?: unknown[] }>;
       };
+      const { readRecentSkillMeshAttempts } = await import('../src/lib/skill-mesh-metrics.js');
       this.sendJson(res, {
         selfImprovement: scoreboard.targets ?? {},
         skillDrills: drillHistory.skills ?? {},
+        skillMeshAttempts: readRecentSkillMeshAttempts(),
       });
       return;
     }
@@ -1164,14 +1200,14 @@ export class WebServer {
           // Scripts are equally real recallable knowledge -- "when asked X,
           // the trained response is Y" is exactly what train()'s
           // trainDefinitions() pass shapes the mesh toward; recall() should
-          // be able to surface it the same way a @definishon can.
+          // be able to surface it the same way a @definishon can. Also
+          // reachable via bot-service.ts's live skill-match fast path
+          // (see rememberSkillScript()'s own doc comment).
           for (const s of n.scripts ?? []) {
             const userSays = (s.userSays ?? '').trim();
             const response = (s.response ?? '').trim();
             if (!userSays || !response) continue;
-            system.memory.remember(`When asked "${userSays}", ${n.name} responds: ${response}`, {
-              importance: 0.7, tags: ['extension', name, 'script'],
-            });
+            this.rememberSkillScript(system, userSays, response, name);
             remembered++;
           }
         }

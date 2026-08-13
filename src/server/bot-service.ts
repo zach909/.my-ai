@@ -11,6 +11,7 @@ import type { NeuroclawSystem } from '../index.js'
 import { logError, getRecentErrors, type LoggedError } from '../lib/error-log.js'
 import { appendConversationTurn } from '../lib/conversation-log.js'
 import { triggerConversationLearning } from '../lib/conversation-learning-trigger.js'
+import { recordSkillMeshAttempt } from '../lib/skill-mesh-metrics.js'
 
 /** A route the bot knows about and can reference/point users to. */
 export interface AppRoute {
@@ -51,6 +52,8 @@ export interface BotResponse {
     domain?: string
     usedMemory?: boolean
     usedPlanning?: boolean
+    /** Set when domain is 'skill' -- which trained skill's script answered directly (see ChatBot.matchSkillMesh()). */
+    matchedSkill?: string
   }
   /** Set when this response reports an error, so callers can look it up via getRecentErrors(). */
   errorId?: string
@@ -157,6 +160,9 @@ export function applyHumility(message: string, confidence: number): { message: s
     confidence: cappedConfidence,
   }
 }
+
+/** See ChatBot.matchSkillMesh()'s own doc comment for where this number comes from. */
+const SKILL_MATCH_THRESHOLD = 0.6
 
 /**
  * ChatBot — the AI agent powering the chat interface.
@@ -273,13 +279,28 @@ export class ChatBot {
 
     const intent = this.detectIntent(userMessage)
 
+    // Route/error queries are factual app-introspection, not domain
+    // content -- never worth checking against trained skills, and kept
+    // ahead of the skill-mesh match below so an app-navigation question
+    // never gets pre-empted by a coincidentally-similar trained skill.
+    if (intent === 'route') return this.buildRouteResponse()
+    if (intent === 'error') return this.buildErrorResponse()
+
+    // "Skills directly connected into the rest of it" -- a trained skill
+    // (published by scripts/skill-agent.mjs, or manually built/registered
+    // via the Extension Builder) gets first chance at answering, ahead of
+    // the reasoner/hive fallback below, when its trigger genuinely,
+    // confidently matches this message -- see matchSkillMesh()'s own doc
+    // comment for the threshold and why. This is a real short-circuit,
+    // not background context: previously a trained skill's content only
+    // ever reached a response as one of several topK snippets fed loosely
+    // into the reasoner (ReasoningEngine's `recall` dependency) -- diluted,
+    // and with no guarantee it was actually used. A confident direct match
+    // returns the skill's own trained response verbatim instead.
+    const skillMatch = this.matchSkillMesh(userMessage)
+    if (skillMatch) return skillMatch
+
     switch (intent) {
-      case 'route':
-        return this.buildRouteResponse()
-
-      case 'error':
-        return this.buildErrorResponse()
-
       case 'plan': {
         const result = await this.system.autonomousTask('user request', [userMessage])
         const message = result.results?.[0]?.result || 'Planning in progress...'
@@ -311,6 +332,44 @@ export class ChatBot {
           metadata: { domain: result.domain },
         }
       }
+    }
+  }
+
+  /**
+   * The direct skill short-circuit: queries `this.system.memory` for the
+   * closest 'skill-script' trigger to this exact message (interface/
+   * web-server.ts's rememberSkillScript() is what puts those triggers
+   * there, tagged and carrying the real response as `payload` -- see its
+   * own doc comment). Returns a real response only when the match is
+   * genuinely confident; otherwise null, so the caller falls through to
+   * the existing plan/recall/solve behavior completely unchanged.
+   *
+   * SKILL_MATCH_THRESHOLD (0.6) is not an arbitrary guess -- it comes from
+   * running LongTermMemory's own real bag-of-words cosine similarity
+   * against realistic paraphrases during development: genuine paraphrases
+   * of a trained trigger scored 0.67-0.89, an unrelated query scored 0.29,
+   * against the same trigger set. 0.6 sits cleanly in the gap between
+   * "different wording of the same question" and "a different question
+   * entirely" observed there, not at either extreme.
+   */
+  private matchSkillMesh(userMessage: string): BotResponse | null {
+    if (!this.system) return null
+    const hits = this.system.memory.retrieve(userMessage, { topK: 1, tag: 'skill-script' })
+    const top = hits[0]
+    const matched = !!top && top.similarity >= SKILL_MATCH_THRESHOLD && typeof top.item.payload === 'string'
+    const matchedSkill = matched ? (top!.item.tags.find((t) => t !== 'skill-script') ?? 'skill') : undefined
+    // Every real attempt (hit or miss) is itself a live trial of "does a
+    // trained skill directly cover this message" -- recorded so the
+    // Self-Improvement dashboard can graph the real direct-answer rate
+    // over time instead of relying on a one-off test run. Fire-and-forget,
+    // never throws into this path.
+    recordSkillMeshAttempt({ matched, similarity: top?.similarity ?? 0, matchedSkill })
+    if (!matched) return null
+    return {
+      message: top!.item.payload!,
+      confidence: Math.min(0.95, top!.similarity),
+      suggestions: this.generateSuggestions(userMessage, top!.item.payload!, 'skill'),
+      metadata: { domain: 'skill', matchedSkill },
     }
   }
 

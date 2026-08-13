@@ -7,9 +7,29 @@
 
 import { getBot, resetBot, detectSentiment, empathyPrefix, pickVariant, applyHumility, detectAmbiguousIntent } from '../../src/server/bot-service';
 import type { NeuroclawSystem } from '../../src/index';
+import { LongTermMemory } from '../../models && skills/core/long-term-memory.js';
 
 function fakeSystem(): NeuroclawSystem {
   return { initialize: async () => {} } as unknown as NeuroclawSystem;
+}
+
+/**
+ * A fake system carrying a REAL LongTermMemory instance (not mocked --
+ * this is exactly the same class ChatBot.matchSkillMesh() queries in
+ * production) plus stubs for solve()/processQuery()/autonomousTask() so
+ * a non-matching message can fall through without throwing.
+ */
+function fakeSystemWithMemory(): NeuroclawSystem {
+  return {
+    initialize: async () => {},
+    memory: new LongTermMemory(),
+    solve: async (problem: string) => ({
+      result: `solved: ${problem}`, confidence: 0.7, verified: true, domain: 'general',
+      approach: 'default', transfers: [], subresults: 0, contradictions: [], criticIssues: [], trace: [],
+    }),
+    processQuery: async (q: string) => `recalled: ${q}`,
+    autonomousTask: async () => ({ results: [{ result: 'planned' }] }),
+  } as unknown as NeuroclawSystem;
 }
 
 describe('getBot() singleton', () => {
@@ -128,5 +148,70 @@ describe('behavior layer (bot-service.ts) — real functional changes, not docum
     const bot = await getBot();
     const response = await bot.processMessage('hello there');
     expect(response.confidence).toBeLessThan(1.0);
+  });
+});
+
+describe('matchSkillMesh() (via processMessage) -- trained skills directly answering, not just background context', () => {
+  it('a confident trigger match returns the trained skill\'s real response verbatim, bypassing solve()', async () => {
+    resetBot();
+    const system = fakeSystemWithMemory();
+    system.memory.remember('What is the capital of France', {
+      tags: ['skill-script', 'geography-basics'],
+      payload: 'Paris is the capital of France.',
+    });
+    const bot = await getBot(system);
+    const response = await bot.processMessage('What is the capital of France?');
+    expect(response.message).toBe('Paris is the capital of France.');
+    expect(response.metadata?.domain).toBe('skill');
+    expect(response.metadata?.matchedSkill).toBe('geography-basics');
+  });
+
+  it('a genuine paraphrase of the trigger still matches (real cosine similarity, not exact-string)', async () => {
+    resetBot();
+    const system = fakeSystemWithMemory();
+    system.memory.remember('How do I center a div in CSS', {
+      tags: ['skill-script', 'css-basics'],
+      payload: 'Use display:flex with align-items and justify-content: center.',
+    });
+    const bot = await getBot(system);
+    const response = await bot.processMessage('How do you center a div using CSS');
+    expect(response.message).toBe('Use display:flex with align-items and justify-content: center.');
+    expect(response.metadata?.domain).toBe('skill');
+  });
+
+  it('an unrelated message falls through to solve() instead of a weak/wrong skill match', async () => {
+    resetBot();
+    const system = fakeSystemWithMemory();
+    system.memory.remember('What is the capital of France', {
+      tags: ['skill-script', 'geography-basics'],
+      payload: 'Paris is the capital of France.',
+    });
+    const bot = await getBot(system);
+    const response = await bot.processMessage('What is the weather like today');
+    expect(response.metadata?.domain).not.toBe('skill');
+  });
+
+  it('a memory item with no payload (an ordinary chat-turn memory, not a skill script) never gets returned as a skill match', async () => {
+    resetBot();
+    const system = fakeSystemWithMemory();
+    // Same tag namespace deliberately NOT used here -- a plain remembered
+    // chat turn carries no payload and must never be mistaken for a
+    // trained skill's response.
+    system.memory.remember('What is the capital of France', { tags: ['chat-turn'] });
+    const bot = await getBot(system);
+    const response = await bot.processMessage('What is the capital of France?');
+    expect(response.metadata?.domain).not.toBe('skill');
+  });
+
+  it('route and error queries are never pre-empted by a coincidentally-similar trained skill', async () => {
+    resetBot();
+    const system = fakeSystemWithMemory();
+    system.memory.remember('what pages does this app have', {
+      tags: ['skill-script', 'coincidence'],
+      payload: 'this should never be returned for a route query',
+    });
+    const bot = await getBot(system);
+    const response = await bot.processMessage('list all the pages');
+    expect(response.metadata?.domain).not.toBe('skill');
   });
 });

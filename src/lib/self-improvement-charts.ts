@@ -70,3 +70,35 @@ export function buildPassRateSeries(skillDrills: Record<string, DrillEntry>): Pa
     return { at: attempt.at, passRate: improvedCount / (i + 1), attempts: i + 1 };
   });
 }
+
+export interface SkillMeshAttemptInput {
+  at: number;
+  matched: boolean;
+  similarity: number;
+}
+
+export interface SkillMeshRatePoint {
+  at: number;
+  directAnswerRate: number;
+  attempts: number;
+}
+
+/**
+ * "A test for the AI" made continuous: every real chat message is itself
+ * a live trial of whether a trained skill directly covers it
+ * (ChatBot.matchSkillMesh(), recorded by skill-mesh-metrics.ts). This is
+ * the cumulative, running direct-answer rate across every real attempt
+ * on this machine, sorted by real timestamp -- distinct from the
+ * improvement-test pass rate above (that's skill-drill-agent.mjs judging
+ * whether *training* got better; this is whether *live usage* is
+ * actually being answered by a trained skill instead of falling through
+ * to the reasoner).
+ */
+export function buildSkillMeshRateSeries(attempts: SkillMeshAttemptInput[]): SkillMeshRatePoint[] {
+  const sorted = [...attempts].sort((a, b) => a.at - b.at);
+  let matchedCount = 0;
+  return sorted.map((attempt, i) => {
+    if (attempt.matched) matchedCount++;
+    return { at: attempt.at, directAnswerRate: matchedCount / (i + 1), attempts: i + 1 };
+  });
+}

@@ -3949,31 +3949,12 @@ export class MoERouter {
         if (len <= 1)
             return 0;
         // First, find the maximum score for numerical stability during exponentiation
-        // OPTIMIZATION: Mathematically exact Shannon entropy of softmax calculated in a single pass.
-        // This bypasses the allocation of intermediate `probs` and temporary arrays inside `softmax()`,
-        // and reduces the number of slow `Math.log` calls from O(E) to exactly O(1).
-        const len = scores.length;
-        if (len === 0)
-            return 0;
         let max = scores[0];
         for (let i = 1; i < len; i++) {
             if (scores[i] > max) {
                 max = scores[i];
             }
         }
-        let sumExps = 0;
-        let sumWeightedExps = 0;
-        for (let i = 0; i < len; i++) {
-            const diff = scores[i] - max;
-            const expVal = Math.exp(diff);
-            sumExps += expVal;
-            sumWeightedExps += expVal * diff;
-        }
-        if (sumExps === 0)
-            return 0;
-        // Mathematically exact Shannon entropy of softmax in a single pass over exp values
-        // with exactly 1 Math.log call and zero intermediate array allocations.
-        return Math.log(sumExps) - (sumWeightedExps / sumExps);
         // Compute sum(exp(s_i - max)) and sum((s_i - max) * exp(s_i - max))
         // in a single pass over the scores.
         let sumExp = 0;
@@ -3990,17 +3971,6 @@ export class MoERouter {
         // This reduces the number of expensive Math.log transcendental math calls from O(E) to exactly O(1),
         // and completely eliminates the allocation of intermediate probability arrays.
         return Math.log(sumExp) - sumExpS / sumExp;
-        let sumExp = 0;
-        let sumExpScore = 0;
-        for (let i = 0; i < len; i++) {
-            const diff = scores[i] - max;
-            const e = Math.exp(diff);
-            sumExp += e;
-            sumExpScore += e * diff;
-        }
-        if (sumExp === 0)
-            return 0;
-        return Math.log(sumExp) - sumExpScore / sumExp;
     }
     computeLoadBalanceLoss() {
         const stats = this.getUtilizationStats();
