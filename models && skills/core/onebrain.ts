@@ -2380,6 +2380,15 @@ export class HyperDimensionalEngine {
   private selfModelDHScratch: Float32Array;
   private entropyLookup: Float64Array;
 
+  private stateViews: Float32Array[];
+  private isDrivenScratch: Uint8Array;
+  private drivenIndicesScratch: Int32Array;
+  private nonDrivenIndicesScratch: Int32Array;
+  private vsScratch: Float32Array;
+  private hasVScratch: Uint8Array;
+  private ratesScratch: Float32Array;
+  private deltaSumsScratch: Float32Array;
+
   constructor(config: Record<string, any> = {}) {
     this.config = {
       neuronCount: config.neuronCount ?? 100,
@@ -2440,6 +2449,18 @@ export class HyperDimensionalEngine {
     const scale = Math.sqrt(1 / Math.max(1, dims));
     for (let i = 0; i < this.selfModelA.length; i++) this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
     for (let i = 0; i < this.selfModelB.length; i++) this.selfModelB[i] = (Math.random() * 2 - 1) * scale;
+
+    this.stateViews = new Array<Float32Array>(D);
+    for (let d = 0; d < D; d++) {
+      this.stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
+    }
+    this.isDrivenScratch = new Uint8Array(N);
+    this.drivenIndicesScratch = new Int32Array(N);
+    this.nonDrivenIndicesScratch = new Int32Array(N);
+    this.vsScratch = new Float32Array(N);
+    this.hasVScratch = new Uint8Array(N);
+    this.ratesScratch = new Float32Array(N);
+    this.deltaSumsScratch = new Float32Array(N);
   }
 
   /**
@@ -3023,7 +3044,8 @@ export class HyperDimensionalEngine {
     const dims = this.config.dimensions;
 
     // Pre-allocate fast lookup structures to avoid Map/Set lookup inside loop
-    const isDriven = new Uint8Array(N);
+    const isDriven = this.isDrivenScratch;
+    isDriven.fill(0);
     for (const id of drivenIds) {
       if (id >= 0 && id < N) {
         isDriven[id] = 1;
@@ -3032,22 +3054,23 @@ export class HyperDimensionalEngine {
 
     // BOLT OPTIMIZATION: Filter driven and non-driven indices up-front
     // This completely eliminates the nested branch checks `if (isDriven[i]) continue;` inside the hot loops.
-    const drivenIndices: number[] = [];
-    const nonDrivenIndices: number[] = [];
+    const drivenIndices = this.drivenIndicesScratch;
+    const nonDrivenIndices = this.nonDrivenIndicesScratch;
+    let drivenCount = 0;
+    let nonDrivenCount = 0;
     for (let i = 0; i < N; i++) {
       if (isDriven[i]) {
-        drivenIndices.push(i);
+        drivenIndices[drivenCount++] = i;
       } else {
-        nonDrivenIndices.push(i);
+        nonDrivenIndices[nonDrivenCount++] = i;
       }
     }
-    const nonDrivenCount = nonDrivenIndices.length;
 
-    const vs = new Float32Array(N);
-    const hasV = new Uint8Array(N);
-    const priorStates = new Array<Float32Array>(N);
+    const vs = this.vsScratch;
+    const hasV = this.hasVScratch;
+    hasV.fill(0);
+
     for (let i = 0; i < N; i++) {
-      priorStates[i] = this.neurons[i].state;
       const v = vale?.get(i);
       if (v !== undefined) {
         vs[i] = v;
@@ -3056,10 +3079,7 @@ export class HyperDimensionalEngine {
     }
 
     // Pre-fetch all dimension views of allStates to avoid subarray() in hot loops
-    const stateViews = new Array<Float32Array>(D);
-    for (let d = 0; d < D; d++) {
-      stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
-    }
+    const stateViews = this.stateViews;
 
     const DN = D * N;
     const connDiag = this.connDiag;
@@ -3077,7 +3097,7 @@ export class HyperDimensionalEngine {
       clampedInput[d] = val;
       drivenEnergyContribution += val * val;
     }
-    const totalDrivenEnergyContribution = drivenIndices.length * drivenEnergyContribution;
+    const totalDrivenEnergyContribution = drivenCount * drivenEnergyContribution;
 
     for (; iterations < this.config.propagationSteps; iterations++) {
       // Initialize content energy with the pre-calculated constant driven energy contribution.
@@ -3087,7 +3107,7 @@ export class HyperDimensionalEngine {
       // Keeping this inside the propagation loop is critical to ensure both state buffers
       // remain synchronized without corruption, while using pre-calculated clamped values
       // avoids any redundant evaluation overhead.
-      for (let idx = 0; idx < drivenIndices.length; idx++) {
+      for (let idx = 0; idx < drivenCount; idx++) {
         const i = drivenIndices[idx];
         const offset = i * D;
         nextStates[offset] = 1.0; // Mark as externally driven
@@ -3139,7 +3159,7 @@ export class HyperDimensionalEngine {
           }
 
           const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
-          const finalVal = hasV[i] ? vs[i] * priorStates[i][d] + (1 - vs[i]) * computedState : computedState;
+          const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
           nextStates[i * D + d] = finalVal;
           if (d > 0) {
             currentTotalContentEnergy += finalVal * finalVal;
@@ -3157,7 +3177,7 @@ export class HyperDimensionalEngine {
         for (let i = 0; i < N; i++) {
           if (isDriven[i]) continue;
           const offset = i * D;
-          const state = priorStates[i];
+          const state = this.neurons[i].state;
           for (let d = 0; d < D; d++) {
             nextStates[offset + d] = 0.5 * nextStates[offset + d] + 0.5 * state[d];
           }
@@ -3205,16 +3225,11 @@ export class HyperDimensionalEngine {
     const N = this.neurons.length;
 
     // Pre-fetch all dimension views of allStates for sequential access
-    const stateViews = new Array<Float32Array>(D);
-    for (let d = 0; d < D; d++) {
-      stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
-    }
+    const stateViews = this.stateViews;
 
-    const states = new Array<Float32Array>(N);
-    const rates = new Float32Array(N);
+    const rates = this.ratesScratch;
     const defaultRate = this.config.learningRate;
     for (let i = 0; i < N; i++) {
-      states[i] = this.neurons[i].state;
       rates[i] = learningRates?.get(i) ?? defaultRate;
     }
 
@@ -3222,12 +3237,13 @@ export class HyperDimensionalEngine {
     const connShift = this.connShift;
     const bias = this.bias;
 
-    const deltaSums = new Float32Array(N);
+    const deltaSums = this.deltaSumsScratch;
+    deltaSums.fill(0);
 
     // Keep i as outer loop and d as middle loop to ensure perfect sequential cache-friendly access to connDiag/connShift
     for (let i = 0; i < N; i++) {
       const rate = rates[i];
-      const si = states[i];
+      const si = this.neurons[i].state;
       let deltaSum = 0;
 
       for (let d = 0; d < D; d++) {
@@ -3410,7 +3426,7 @@ export class HyperDimensionalEngine {
     // Update biases after weight updates
     for (let i = 0; i < N; i++) {
       const rate = rates[i];
-      const si = states[i];
+      const si = this.neurons[i].state;
       const biasOffset = i * D;
       for (let d = 0; d < D; d++) {
         const valB = bias[biasOffset + d] + rate * 0.1 * si[d];
