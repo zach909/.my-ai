@@ -216,3 +216,8 @@
 **Vulnerability:** The `MessagingPlugin` lacked any parameter type checking, parameter length checks, or empty value validation. This exposed the application to potential type confusion exceptions and Denial of Service (DoS) / resource exhaustion via excessively large text payloads or unbounded conversation retrieve limits when fetching history.
 **Learning:** Sibling utility plugins that handle dynamic inputs must strictly enforce runtime types, enforce concise size limits, and restrict pagination or query bounds to protect against resource degradation and crash risks.
 **Prevention:** Always validate parameter types, restrict input sizes (e.g., max 100 characters for names/IDs, 4096 characters for text payloads), and enforce integer limits (e.g. max 1000 items) on retrieval operations.
+
+## 2026-09-14 - Directory Prefix Bypass in RoboticsPlugin Path Resolution
+**Vulnerability:** In the TypeScript `RoboticsPlugin`, the path resolution check for serial connection endpoints used `.startsWith(devDir)` to verify that target device paths reside within `/dev`. Since it did not append a trailing path separator to `/dev`, a malicious endpoint like `/dev-unauthorized/ttyUSB0` would start with `/dev` and bypass the directory validation.
+**Learning:** Using simple string-based `.startsWith()` prefix checks on directory paths without a trailing separator leads to classic prefix-bypass vulnerabilities, where sibling directories starting with the same prefix are incorrectly authorized.
+**Prevention:** Always append a trailing directory separator (e.g., `path.sep` or `/`) to parent sandbox paths before utilizing `.startsWith()` string matching, or use path relative-depth checking (`path.relative`) to confirm boundary containment.
