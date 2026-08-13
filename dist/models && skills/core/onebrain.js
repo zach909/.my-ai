@@ -154,12 +154,15 @@ export class CalibrationCollector {
 }
 // ─── Scale derivation ───────────────────────────────────────────────────────
 function symmetricScale(absMax, bits) {
-    const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
+    // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+    // Math.floor(((1 << bits) - 1) / 2) is mathematically identical to ((1 << bits) - 1) >> 1.
+    const qMax = ((1 << bits) - 1) >> 1;
     const scale = (absMax / qMax) || 1;
     return { scale, zeroPoint: 0, symmetric: true, bits };
 }
 function asymmetricScale(min, max, bits) {
-    const levels = Math.pow(2, bits) - 1;
+    // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+    const levels = (1 << bits) - 1;
     const scale = ((max - min) / levels) || 1;
     const zeroPoint = Math.round(-min / scale);
     return { scale, zeroPoint, symmetric: false, bits };
@@ -356,7 +359,8 @@ export class BackgroundQuantizer {
         // to bypass the call stack and reduce branching overhead.
         const invScale = 1.0 / scale;
         if (symmetric) {
-            const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
+            // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+            const qMax = ((1 << bits) - 1) >> 1;
             const qMin = -qMax;
             let i = 0;
             for (; i < len - 3; i += 4) {
@@ -384,7 +388,8 @@ export class BackgroundQuantizer {
             }
         }
         else {
-            const levels = Math.pow(2, bits) - 1;
+            // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+            const levels = (1 << bits) - 1;
             const maxLevel = Math.round(levels);
             let i = 0;
             for (; i < len - 3; i += 4) {
@@ -470,7 +475,8 @@ export class BackgroundQuantizer {
             max = min + 1;
         } // avoid a zero-width range collapsing the scale
         const scaleInfo = deriveScale(min, max, effectiveBits, this.config.method);
-        const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, effectiveBits) - 1) / 2) : 0;
+        // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+        const offset = scaleInfo.symmetric ? (((1 << effectiveBits) - 1) >> 1) : 0;
         const levels = new Uint32Array(weights.length);
         const { scale, zeroPoint, symmetric, bits: sBits } = scaleInfo;
         const len = weights.length;
@@ -480,7 +486,8 @@ export class BackgroundQuantizer {
         // to bypass the call stack and reduce branching overhead.
         const invScale = 1.0 / scale;
         if (symmetric) {
-            const qMax = Math.floor((Math.pow(2, sBits) - 1) / 2);
+            // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+            const qMax = ((1 << sBits) - 1) >> 1;
             const qMin = -qMax;
             let i = 0;
             for (; i < len - 3; i += 4) {
@@ -504,7 +511,8 @@ export class BackgroundQuantizer {
             }
         }
         else {
-            const levelsCount = Math.pow(2, sBits) - 1;
+            // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+            const levelsCount = (1 << sBits) - 1;
             const maxLevel = Math.round(levelsCount);
             let i = 0;
             for (; i < len - 3; i += 4) {
@@ -535,7 +543,8 @@ export class BackgroundQuantizer {
     }
     unpack(tensor) {
         const { scaleInfo, length } = tensor;
-        const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, scaleInfo.bits) - 1) / 2) : 0;
+        // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+        const offset = scaleInfo.symmetric ? (((1 << scaleInfo.bits) - 1) >> 1) : 0;
         const levels = unpackLevels(tensor.packed, length, scaleInfo.bits);
         const out = new Float32Array(length);
         const scale = scaleInfo.scale;
@@ -3915,7 +3924,9 @@ export class MoERouter {
         const meanUtil = totalUtil / stats.length;
         let variance = 0;
         for (const s of stats) {
-            variance += Math.pow(s.utilization - meanUtil, 2);
+            // BOLT OPTIMIZATION: Replacing slow Math.pow(x, 2) with fast inline multiplication.
+            const diff = s.utilization - meanUtil;
+            variance += diff * diff;
         }
         return variance / stats.length;
     }
