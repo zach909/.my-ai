@@ -4,7 +4,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/com
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Brain, Search, Sparkles, ArrowRight } from 'lucide-react'
+import { Brain, Search, Sparkles, ArrowRight, Loader2 } from 'lucide-react'
 
 export const Route = createFileRoute('/app/knowledge')({
   head: () => ({
@@ -78,10 +78,15 @@ function KnowledgePage() {
                   type="submit"
                   disabled={loading || !query.trim()}
                   className="gap-2 active:scale-95 transition-all duration-150"
-                  aria-label="Search semantic rules"
+                  aria-label={loading ? "Searching semantic rules" : "Search semantic rules"}
+                  title={loading ? "Searching..." : "Search semantic rules"}
                 >
-                  <Search className="h-4 w-4" />
-                  Query
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Search className="h-4 w-4" />
+                  )}
+                  {loading ? "Querying..." : "Query"}
                 </Button>
               </div>
             </div>
