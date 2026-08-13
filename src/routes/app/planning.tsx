@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare } from 'lucide-react'
+import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare, Loader2 } from 'lucide-react'
 
 export const Route = createFileRoute('/app/planning')({
   head: () => ({
@@ -98,6 +98,7 @@ function PlanningPage() {
               </h3>
               {planning ? (
                 <div className="flex flex-col items-center justify-center py-8 space-y-2" role="status">
+                  <Loader2 className="h-5 w-5 animate-spin text-primary" />
                   <span className="text-xs text-muted-foreground animate-pulse">Decomposing objective...</span>
                 </div>
               ) : (
