@@ -4739,6 +4739,21 @@ export class MoERouter {
       }
     }
 
+    let sumExps = 0;
+    let sumWeightedExps = 0;
+    for (let i = 0; i < len; i++) {
+      const diff = scores[i] - max;
+      const expVal = Math.exp(diff);
+      sumExps += expVal;
+      sumWeightedExps += expVal * diff;
+    }
+
+    if (sumExps === 0) return 0;
+    // Mathematically exact Shannon entropy of softmax in a single pass over exp values
+    // with exactly 1 Math.log call and zero intermediate array allocations.
+    return Math.log(sumExps) - (sumWeightedExps / sumExps);
+    }
+
     // Compute sum(exp(s_i - max)) and sum((s_i - max) * exp(s_i - max))
     // in a single pass over the scores.
     let sumExp = 0;
