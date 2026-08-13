@@ -13,8 +13,8 @@
  * NEUROCLAW_SELF_IMPROVE=0 / NEUROCLAW_SKILL_DRILLS=0) means an empty
  * chart, not an error -- see the empty states below.
  */
-import { createFileRoute } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { createFileRoute, Link } from "@tanstack/react-router";
+import { useEffect, useState } from "react";
 import {
   CartesianGrid,
   Legend,
@@ -24,34 +24,64 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-} from 'recharts'
-import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
-import { TrendingUp, Target, RefreshCw } from 'lucide-react'
-import { Button } from '@/components/ui/button'
+} from "recharts";
+import {
+  Card,
+  CardContent,
+  CardDescription,
+  CardHeader,
+  CardTitle,
+} from "@/components/ui/card";
+import {
+  TrendingUp,
+  Target,
+  RefreshCw,
+  Sparkles,
+  FlaskConical,
+  ArrowRight,
+} from "lucide-react";
+import { Button } from "@/components/ui/button";
 import {
   buildPassRateSeries,
   buildScoreSeries,
   type DrillEntry,
   type ScoreboardEntry,
-} from '@/lib/self-improvement-charts'
+} from "@/lib/self-improvement-charts";
 
-export const Route = createFileRoute('/app/self-improvement')({
+export const Route = createFileRoute("/app/self-improvement")({
   head: () => ({
     meta: [
-      { title: 'Self-Improvement · ASI Architect' },
-      { name: 'description', content: 'Real progress from the autonomous self-improvement, skill-creation, and skill-drilling agents.' },
+      { title: "Self-Improvement · ASI Architect" },
+      {
+        name: "description",
+        content:
+          "Real progress from the autonomous self-improvement, skill-creation, and skill-drilling agents.",
+      },
     ],
   }),
   component: SelfImprovementPage,
-})
+});
 
-const LINE_COLORS = ['#6366f1', '#22c55e', '#f97316', '#ec4899', '#06b6d4', '#eab308', '#a855f7']
+const LINE_COLORS = [
+  "#6366f1",
+  "#22c55e",
+  "#f97316",
+  "#ec4899",
+  "#06b6d4",
+  "#eab308",
+  "#a855f7",
+];
 
 function shortTime(at: string) {
   try {
-    return new Date(at).toLocaleString(undefined, { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })
+    return new Date(at).toLocaleString(undefined, {
+      month: "short",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
   } catch {
-    return at
+    return at;
   }
 }
 
@@ -61,35 +91,46 @@ function SelfImprovementPage() {
   // asking recharts to measure anything during this app's SSR
   // prerender pass (npm run build), same reason other client-only
   // widgets in this project gate on a mounted flag.
-  const [mounted, setMounted] = useState(false)
-  const [selfImprovement, setSelfImprovement] = useState<Record<string, ScoreboardEntry>>({})
-  const [skillDrills, setSkillDrills] = useState<Record<string, DrillEntry>>({})
-  const [loading, setLoading] = useState(true)
-  const [error, setError] = useState<string | null>(null)
+  const [mounted, setMounted] = useState(false);
+  const [selfImprovement, setSelfImprovement] = useState<
+    Record<string, ScoreboardEntry>
+  >({});
+  const [skillDrills, setSkillDrills] = useState<Record<string, DrillEntry>>(
+    {},
+  );
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
 
   const load = async () => {
-    setLoading(true)
-    setError(null)
+    setLoading(true);
+    setError(null);
     try {
-      const res = await fetch('/api/self-improvement/history')
-      const data = await res.json()
-      setSelfImprovement(data.selfImprovement ?? {})
-      setSkillDrills(data.skillDrills ?? {})
+      const res = await fetch("/api/self-improvement/history");
+      const data = await res.json();
+      setSelfImprovement(data.selfImprovement ?? {});
+      setSkillDrills(data.skillDrills ?? {});
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err))
+      setError(err instanceof Error ? err.message : String(err));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   useEffect(() => {
-    setMounted(true)
-    load()
-  }, [])
+    setMounted(true);
+    load();
+  }, []);
 
-  const scoreSeries = buildScoreSeries(selfImprovement).map((row) => ({ ...row, atLabel: shortTime(row.at) }))
-  const passRateSeries = buildPassRateSeries(skillDrills).map((row) => ({ ...row, atLabel: shortTime(row.at), passRatePct: Math.round(row.passRate * 1000) / 10 }))
-  const targetKeys = Object.keys(selfImprovement)
+  const scoreSeries = buildScoreSeries(selfImprovement).map((row) => ({
+    ...row,
+    atLabel: shortTime(row.at),
+  }));
+  const passRateSeries = buildPassRateSeries(skillDrills).map((row) => ({
+    ...row,
+    atLabel: shortTime(row.at),
+    passRatePct: Math.round(row.passRate * 1000) / 10,
+  }));
+  const targetKeys = Object.keys(selfImprovement);
 
   return (
     <div className="space-y-4 p-4">
@@ -97,7 +138,8 @@ function SelfImprovementPage() {
         <div>
           <h1 className="text-lg font-semibold">Self-Improvement</h1>
           <p className="text-xs text-muted-foreground">
-            Real progress from the autonomous agents `npm run server` launches -- not a simulated demo.
+            Real progress from the autonomous agents `npm run server` launches
+            -- not a simulated demo.
           </p>
         </div>
         <Button
@@ -108,12 +150,18 @@ function SelfImprovementPage() {
           aria-label="Refresh self-improvement history"
           className="flex items-center gap-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground active:scale-95"
         >
-          <RefreshCw className={loading ? 'size-3.5 animate-spin' : 'size-3.5'} />
+          <RefreshCw
+            className={loading ? "size-3.5 animate-spin" : "size-3.5"}
+          />
           Refresh
         </Button>
       </div>
 
-      {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
+      {error && (
+        <p className="text-xs text-destructive" role="alert">
+          {error}
+        </p>
+      )}
 
       <Card>
         <CardHeader>
@@ -122,20 +170,61 @@ function SelfImprovementPage() {
             Agent capability over time
           </CardTitle>
           <CardDescription className="text-xs">
-            Each line is one self-improve.mjs target script's trained score across every sandbox attempt (scripts/self-improve.mjs). Rising means genuine, measured improvement -- ties and regressions are never rewarded.
+            Each line is one self-improve.mjs target script's trained score
+            across every sandbox attempt (scripts/self-improve.mjs). Rising
+            means genuine, measured improvement -- ties and regressions are
+            never rewarded.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {!mounted || scoreSeries.length === 0 ? (
-            <p className="py-8 text-center text-xs text-muted-foreground">
-              {mounted ? 'No self-improvement attempts recorded yet on this machine.' : 'Loading…'}
-            </p>
+            <div className="py-6">
+              {mounted ? (
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-6 text-center max-w-md mx-auto space-y-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <TrendingUp className="h-5 w-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-semibold text-foreground text-xs">
+                      No self-improvement attempts recorded yet
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Launch self-improvement workflows on your local machine to
+                      see target scripts trained and evaluated over sandbox
+                      attempts.
+                    </p>
+                  </div>
+                  <Button
+                    asChild
+                    size="sm"
+                    className="active:scale-95 transition-all duration-150 text-xs"
+                  >
+                    <Link to="/app/chat">
+                      <Sparkles className="mr-1.5 h-3.5 w-3.5" />
+                      Prompt AI Chat
+                      <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-center text-xs text-muted-foreground">
+                  Loading…
+                </p>
+              )}
+            </div>
           ) : (
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={scoreSeries}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="atLabel" tick={{ fontSize: 10 }} minTickGap={20} />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    className="stroke-border"
+                  />
+                  <XAxis
+                    dataKey="atLabel"
+                    tick={{ fontSize: 10 }}
+                    minTickGap={20}
+                  />
                   <YAxis tick={{ fontSize: 10 }} />
                   <Tooltip contentStyle={{ fontSize: 12 }} />
                   <Legend wrapperStyle={{ fontSize: 11 }} />
@@ -144,7 +233,7 @@ function SelfImprovementPage() {
                       key={key}
                       type="monotone"
                       dataKey={key}
-                      name={key.split('/').pop()}
+                      name={key.split("/").pop()}
                       stroke={LINE_COLORS[i % LINE_COLORS.length]}
                       dot={{ r: 2 }}
                       connectNulls
@@ -164,23 +253,73 @@ function SelfImprovementPage() {
             Improvement-test pass rate
           </CardTitle>
           <CardDescription className="text-xs">
-            The cumulative fraction of scripts/skill-drill-agent.mjs's drill cycles that the judge counted as a genuine, strictly-held-out accuracy improvement -- across every drilled skill on this machine.
+            The cumulative fraction of scripts/skill-drill-agent.mjs's drill
+            cycles that the judge counted as a genuine, strictly-held-out
+            accuracy improvement -- across every drilled skill on this machine.
           </CardDescription>
         </CardHeader>
         <CardContent>
           {!mounted || passRateSeries.length === 0 ? (
-            <p className="py-8 text-center text-xs text-muted-foreground">
-              {mounted ? 'No skill-drill attempts recorded yet on this machine.' : 'Loading…'}
-            </p>
+            <div className="py-6">
+              {mounted ? (
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-6 text-center max-w-md mx-auto space-y-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <Target className="h-5 w-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-semibold text-foreground text-xs">
+                      No skill-drill attempts recorded yet
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Run automated target drills on physical and symbolic
+                      skills to measure cumulative held-out accuracy
+                      improvements.
+                    </p>
+                  </div>
+                  <Button
+                    asChild
+                    size="sm"
+                    variant="outline"
+                    className="active:scale-95 transition-all duration-150 text-xs"
+                  >
+                    <Link to="/app/experiments">
+                      <FlaskConical className="mr-1.5 h-3.5 w-3.5" />
+                      View Experiments
+                      <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
+                </div>
+              ) : (
+                <p className="text-center text-xs text-muted-foreground">
+                  Loading…
+                </p>
+              )}
+            </div>
           ) : (
             <div className="h-64 w-full">
               <ResponsiveContainer width="100%" height="100%">
                 <LineChart data={passRateSeries}>
-                  <CartesianGrid strokeDasharray="3 3" className="stroke-border" />
-                  <XAxis dataKey="atLabel" tick={{ fontSize: 10 }} minTickGap={20} />
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    className="stroke-border"
+                  />
+                  <XAxis
+                    dataKey="atLabel"
+                    tick={{ fontSize: 10 }}
+                    minTickGap={20}
+                  />
                   <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} unit="%" />
-                  <Tooltip contentStyle={{ fontSize: 12 }} formatter={(v: number) => [`${v}%`, 'Pass rate']} />
-                  <Line type="monotone" dataKey="passRatePct" name="Pass rate" stroke="#22c55e" dot={{ r: 2 }} />
+                  <Tooltip
+                    contentStyle={{ fontSize: 12 }}
+                    formatter={(v: number) => [`${v}%`, "Pass rate"]}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="passRatePct"
+                    name="Pass rate"
+                    stroke="#22c55e"
+                    dot={{ r: 2 }}
+                  />
                 </LineChart>
               </ResponsiveContainer>
             </div>
@@ -188,5 +327,5 @@ function SelfImprovementPage() {
         </CardContent>
       </Card>
     </div>
-  )
+  );
 }

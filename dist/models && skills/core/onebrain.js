@@ -1941,6 +1941,17 @@ export class HyperDimensionalEngine {
             this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
         for (let i = 0; i < this.selfModelB.length; i++)
             this.selfModelB[i] = (Math.random() * 2 - 1) * scale;
+        this.stateViews = new Array(D);
+        for (let d = 0; d < D; d++) {
+            this.stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
+        }
+        this.isDrivenScratch = new Uint8Array(N);
+        this.drivenIndicesScratch = new Int32Array(N);
+        this.nonDrivenIndicesScratch = new Int32Array(N);
+        this.vsScratch = new Float32Array(N);
+        this.hasVScratch = new Uint8Array(N);
+        this.ratesScratch = new Float32Array(N);
+        this.deltaSumsScratch = new Float32Array(N);
     }
     /**
      * Run one tick: settle the mesh to convergence for the given input, apply
@@ -2439,7 +2450,8 @@ export class HyperDimensionalEngine {
         const strength = this.config.crossInfluenceStrength;
         const dims = this.config.dimensions;
         // Pre-allocate fast lookup structures to avoid Map/Set lookup inside loop
-        const isDriven = new Uint8Array(N);
+        const isDriven = this.isDrivenScratch;
+        isDriven.fill(0);
         for (const id of drivenIds) {
             if (id >= 0 && id < N) {
                 isDriven[id] = 1;
@@ -2447,22 +2459,22 @@ export class HyperDimensionalEngine {
         }
         // BOLT OPTIMIZATION: Filter driven and non-driven indices up-front
         // This completely eliminates the nested branch checks `if (isDriven[i]) continue;` inside the hot loops.
-        const drivenIndices = [];
-        const nonDrivenIndices = [];
+        const drivenIndices = this.drivenIndicesScratch;
+        const nonDrivenIndices = this.nonDrivenIndicesScratch;
+        let drivenCount = 0;
+        let nonDrivenCount = 0;
         for (let i = 0; i < N; i++) {
             if (isDriven[i]) {
-                drivenIndices.push(i);
+                drivenIndices[drivenCount++] = i;
             }
             else {
-                nonDrivenIndices.push(i);
+                nonDrivenIndices[nonDrivenCount++] = i;
             }
         }
-        const nonDrivenCount = nonDrivenIndices.length;
-        const vs = new Float32Array(N);
-        const hasV = new Uint8Array(N);
-        const priorStates = new Array(N);
+        const vs = this.vsScratch;
+        const hasV = this.hasVScratch;
+        hasV.fill(0);
         for (let i = 0; i < N; i++) {
-            priorStates[i] = this.neurons[i].state;
             const v = vale?.get(i);
             if (v !== undefined) {
                 vs[i] = v;
@@ -2470,10 +2482,7 @@ export class HyperDimensionalEngine {
             }
         }
         // Pre-fetch all dimension views of allStates to avoid subarray() in hot loops
-        const stateViews = new Array(D);
-        for (let d = 0; d < D; d++) {
-            stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
-        }
+        const stateViews = this.stateViews;
         const DN = D * N;
         const connDiag = this.connDiag;
         const connShift = this.connShift;
@@ -2489,7 +2498,7 @@ export class HyperDimensionalEngine {
             clampedInput[d] = val;
             drivenEnergyContribution += val * val;
         }
-        const totalDrivenEnergyContribution = drivenIndices.length * drivenEnergyContribution;
+        const totalDrivenEnergyContribution = drivenCount * drivenEnergyContribution;
         for (; iterations < this.config.propagationSteps; iterations++) {
             // Initialize content energy with the pre-calculated constant driven energy contribution.
             let currentTotalContentEnergy = totalDrivenEnergyContribution;
@@ -2497,7 +2506,7 @@ export class HyperDimensionalEngine {
             // Keeping this inside the propagation loop is critical to ensure both state buffers
             // remain synchronized without corruption, while using pre-calculated clamped values
             // avoids any redundant evaluation overhead.
-            for (let idx = 0; idx < drivenIndices.length; idx++) {
+            for (let idx = 0; idx < drivenCount; idx++) {
                 const i = drivenIndices[idx];
                 const offset = i * D;
                 nextStates[offset] = 1.0; // Mark as externally driven
@@ -2544,7 +2553,7 @@ export class HyperDimensionalEngine {
                         dotShift += sjShiftRow[j] * connShift[rowOffset + j];
                     }
                     const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
-                    const finalVal = hasV[i] ? vs[i] * priorStates[i][d] + (1 - vs[i]) * computedState : computedState;
+                    const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
                     nextStates[i * D + d] = finalVal;
                     if (d > 0) {
                         currentTotalContentEnergy += finalVal * finalVal;
@@ -2560,7 +2569,7 @@ export class HyperDimensionalEngine {
                     if (isDriven[i])
                         continue;
                     const offset = i * D;
-                    const state = priorStates[i];
+                    const state = this.neurons[i].state;
                     for (let d = 0; d < D; d++) {
                         nextStates[offset + d] = 0.5 * nextStates[offset + d] + 0.5 * state[d];
                     }
@@ -2600,25 +2609,21 @@ export class HyperDimensionalEngine {
         const D = this.totalDims;
         const N = this.neurons.length;
         // Pre-fetch all dimension views of allStates for sequential access
-        const stateViews = new Array(D);
-        for (let d = 0; d < D; d++) {
-            stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
-        }
-        const states = new Array(N);
-        const rates = new Float32Array(N);
+        const stateViews = this.stateViews;
+        const rates = this.ratesScratch;
         const defaultRate = this.config.learningRate;
         for (let i = 0; i < N; i++) {
-            states[i] = this.neurons[i].state;
             rates[i] = learningRates?.get(i) ?? defaultRate;
         }
         const connDiag = this.connDiag;
         const connShift = this.connShift;
         const bias = this.bias;
-        const deltaSums = new Float32Array(N);
+        const deltaSums = this.deltaSumsScratch;
+        deltaSums.fill(0);
         // Keep i as outer loop and d as middle loop to ensure perfect sequential cache-friendly access to connDiag/connShift
         for (let i = 0; i < N; i++) {
             const rate = rates[i];
-            const si = states[i];
+            const si = this.neurons[i].state;
             let deltaSum = 0;
             for (let d = 0; d < D; d++) {
                 const sjRow = stateViews[d];
@@ -2776,7 +2781,7 @@ export class HyperDimensionalEngine {
         // Update biases after weight updates
         for (let i = 0; i < N; i++) {
             const rate = rates[i];
-            const si = states[i];
+            const si = this.neurons[i].state;
             const biasOffset = i * D;
             for (let d = 0; d < D; d++) {
                 const valB = bias[biasOffset + d] + rate * 0.1 * si[d];
@@ -3887,13 +3892,29 @@ export class MoERouter {
         return result;
     }
     computeEntropy(scores) {
-        const probs = this.softmax(scores);
-        let entropy = 0;
-        for (const p of probs) {
-            if (p > 0)
-                entropy -= p * Math.log(p);
+        // OPTIMIZATION: Mathematically exact Shannon entropy of softmax calculated in a single pass.
+        // This bypasses the allocation of intermediate `probs` and temporary arrays inside `softmax()`,
+        // and reduces the number of slow `Math.log` calls from O(E) to exactly O(1).
+        const len = scores.length;
+        if (len === 0)
+            return 0;
+        let max = scores[0];
+        for (let i = 1; i < len; i++) {
+            if (scores[i] > max) {
+                max = scores[i];
+            }
         }
-        return entropy;
+        let sumExp = 0;
+        let sumExpScore = 0;
+        for (let i = 0; i < len; i++) {
+            const diff = scores[i] - max;
+            const e = Math.exp(diff);
+            sumExp += e;
+            sumExpScore += e * diff;
+        }
+        if (sumExp === 0)
+            return 0;
+        return Math.log(sumExp) - sumExpScore / sumExp;
     }
     computeLoadBalanceLoss() {
         const stats = this.getUtilizationStats();
