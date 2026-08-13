@@ -46,8 +46,8 @@ function runBenchmarkForBits(bits: number) {
   }
 
   console.log(`Quantizer Primitives Benchmark (size: ${size}, bits: ${bits}):`);
-  console.log(`  Average packLevels execution time: ${avgPack.toFixed(4)}ms`);
-  console.log(`  Average unpackLevels execution time: ${avgUnpack.toFixed(4)}ms`);
+  console.log(`  Average packLevels_${bits} execution time: ${avgPack.toFixed(4)}ms`);
+  console.log(`  Average unpackLevels_${bits} execution time: ${avgUnpack.toFixed(4)}ms`);
   console.log(`  Total round-trip time: ${(avgPack + avgUnpack).toFixed(4)}ms`);
   console.log(`  Correctness: ${correct ? 'PASSED' : 'FAILED'}`);
   console.log('---');
@@ -61,3 +61,10 @@ function main() {
 }
 
 main();
+function benchmark() {
+  runBenchmarkForBits(4);
+  runBenchmarkForBits(8);
+  runBenchmarkForBits(16);
+}
+
+benchmark();
