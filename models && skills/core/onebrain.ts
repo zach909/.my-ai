@@ -4662,6 +4662,10 @@ export class MoERouter {
   }
 
   private computeEntropy(scores: number[]): number {
+    const len = scores.length;
+    if (len <= 1) return 0;
+
+    // First, find the maximum score for numerical stability during exponentiation
     // OPTIMIZATION: Mathematically exact Shannon entropy of softmax calculated in a single pass.
     // This bypasses the allocation of intermediate `probs` and temporary arrays inside `softmax()`,
     // and reduces the number of slow `Math.log` calls from O(E) to exactly O(1).
@@ -4675,6 +4679,23 @@ export class MoERouter {
       }
     }
 
+    // Compute sum(exp(s_i - max)) and sum((s_i - max) * exp(s_i - max))
+    // in a single pass over the scores.
+    let sumExp = 0;
+    let sumExpS = 0;
+    for (let i = 0; i < len; i++) {
+      const sShifted = scores[i] - max;
+      const expVal = Math.exp(sShifted);
+      sumExp += expVal;
+      sumExpS += sShifted * expVal;
+    }
+
+    if (sumExp === 0) return 0;
+
+    // Shannon entropy of softmax: H = ln(sumExp) - (sum(sShifted * exp(sShifted)) / sumExp)
+    // This reduces the number of expensive Math.log transcendental math calls from O(E) to exactly O(1),
+    // and completely eliminates the allocation of intermediate probability arrays.
+    return Math.log(sumExp) - sumExpS / sumExp;
     let sumExp = 0;
     let sumExpScore = 0;
     for (let i = 0; i < len; i++) {
