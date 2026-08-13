@@ -338,6 +338,30 @@ export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
     return out;
   }
 
+  // BOLT OPTIMIZATION: Extremely fast-path for 16-bit configuration.
+  // Directly set using native Uint16Array, bypassing bitwise packing logic.
+  if (bits === 16) {
+    const u16 = new Uint16Array(levels.length);
+    u16.set(levels);
+    return new Uint8Array(u16.buffer, u16.byteOffset, u16.byteLength);
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for 4-bit configuration.
+  // Directly pack adjacent nibbles into single bytes.
+  if (bits === 4) {
+    const len = levels.length;
+    const out = new Uint8Array(Math.ceil(len / 2));
+    const limit = len & ~1;
+    let bytePos = 0;
+    for (let i = 0; i < limit; i += 2) {
+      out[bytePos++] = levels[i] | (levels[i + 1] << 4);
+    }
+    if (len & 1) {
+      out[bytePos] = levels[len - 1];
+    }
+    return out;
+  }
+
   const totalBits = levels.length * bits;
   const out = new Uint8Array(Math.ceil(totalBits / 8));
   let accumulator = 0;
@@ -368,6 +392,38 @@ export function unpackLevels(packed: Uint8Array, count: number, bits: number): U
   if (bits === 8) {
     const out = new Uint32Array(count);
     out.set(packed.subarray(0, count));
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for 16-bit configuration.
+  // Extract 16-bit words cleanly, handling offset/alignment boundaries gracefully.
+  if (bits === 16) {
+    const out = new Uint32Array(count);
+    if (packed.byteOffset % 2 === 0) {
+      const u16 = new Uint16Array(packed.buffer, packed.byteOffset, count);
+      out.set(u16);
+    } else {
+      for (let i = 0; i < count; i++) {
+        out[i] = packed[i * 2] | (packed[i * 2 + 1] << 8);
+      }
+    }
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for 4-bit configuration.
+  // Unpack nibbles from single bytes using fast unrolled iteration.
+  if (bits === 4) {
+    const out = new Uint32Array(count);
+    const limit = count & ~1;
+    let bytePos = 0;
+    for (let i = 0; i < limit; i += 2) {
+      const byte = packed[bytePos++];
+      out[i] = byte & 0xF;
+      out[i + 1] = byte >>> 4;
+    }
+    if (count & 1) {
+      out[count - 1] = packed[bytePos] & 0xF;
+    }
     return out;
   }
 
