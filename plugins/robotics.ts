@@ -143,7 +143,8 @@ export class RoboticsPlugin extends BasePlugin {
       if (process.platform !== 'win32' || endpoint.startsWith('/')) {
         const target = path.resolve(endpoint);
         const devDir = path.resolve('/dev');
-        if (!target.startsWith(devDir) || target === devDir) {
+        const devDirWithSep = devDir + (devDir.endsWith(path.sep) ? '' : path.sep);
+        if (!(target.startsWith(devDirWithSep))) {
           throw new Error('Security Error: Path traversal or unauthorized serial path detected.');
         }
       }
