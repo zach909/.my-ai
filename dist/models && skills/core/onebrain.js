@@ -3878,13 +3878,28 @@ export class MoERouter {
         return result;
     }
     computeEntropy(scores) {
-        const probs = this.softmax(scores);
-        let entropy = 0;
-        for (const p of probs) {
-            if (p > 0)
-                entropy -= p * Math.log(p);
+        const len = scores.length;
+        if (len === 0)
+            return 0;
+        let max = scores[0];
+        for (let i = 1; i < len; i++) {
+            if (scores[i] > max) {
+                max = scores[i];
+            }
         }
-        return entropy;
+        let sumExps = 0;
+        let sumWeightedExps = 0;
+        for (let i = 0; i < len; i++) {
+            const diff = scores[i] - max;
+            const expVal = Math.exp(diff);
+            sumExps += expVal;
+            sumWeightedExps += expVal * diff;
+        }
+        if (sumExps === 0)
+            return 0;
+        // Mathematically exact Shannon entropy of softmax in a single pass over exp values
+        // with exactly 1 Math.log call and zero intermediate array allocations.
+        return Math.log(sumExps) - (sumWeightedExps / sumExps);
     }
     computeLoadBalanceLoss() {
         const stats = this.getUtilizationStats();
