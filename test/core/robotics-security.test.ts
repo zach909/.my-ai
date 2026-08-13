@@ -38,6 +38,10 @@ describe('RoboticsPlugin security restrictions', () => {
     await expect(plugin.connect('serial', '/dev')).rejects.toThrow(
       /Security Error: Path traversal or unauthorized serial path detected/
     );
+
+    await expect(plugin.connect('serial', '/dev-unauthorized/ttyUSB0')).rejects.toThrow(
+      /Security Error: Path traversal or unauthorized serial path detected/
+    );
   });
 
   it('blocks non-numeric joint values in moveJoint', async () => {

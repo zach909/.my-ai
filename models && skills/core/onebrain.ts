@@ -277,13 +277,16 @@ export class CalibrationCollector {
 // ─── Scale derivation ───────────────────────────────────────────────────────
 
 function symmetricScale(absMax: number, bits: number): QuantizationScale {
-  const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
+  // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+  // Math.floor(((1 << bits) - 1) / 2) is mathematically identical to ((1 << bits) - 1) >> 1.
+  const qMax = ((1 << bits) - 1) >> 1;
   const scale = (absMax / qMax) || 1;
   return { scale, zeroPoint: 0, symmetric: true, bits };
 }
 
 function asymmetricScale(min: number, max: number, bits: number): QuantizationScale {
-  const levels = Math.pow(2, bits) - 1;
+  // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+  const levels = (1 << bits) - 1;
   const scale = ((max - min) / levels) || 1;
   const zeroPoint = Math.round(-min / scale);
   return { scale, zeroPoint, symmetric: false, bits };
@@ -338,6 +341,51 @@ export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
     return out;
   }
 
+  // BOLT OPTIMIZATION: Extremely fast-path for 16-bit configuration.
+  // Directly set using native Uint16Array, bypassing bitwise packing logic.
+  if (bits === 16) {
+    const u16 = new Uint16Array(levels.length);
+    u16.set(levels);
+    return new Uint8Array(u16.buffer, u16.byteOffset, u16.byteLength);
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for 4-bit configuration.
+  // Directly pack adjacent nibbles into single bytes.
+  if (bits === 4) {
+    const len = levels.length;
+    const out = new Uint8Array(Math.ceil(len / 2));
+    const limit = len & ~1;
+    let bytePos = 0;
+    for (let i = 0; i < limit; i += 2) {
+      out[bytePos++] = levels[i] | (levels[i + 1] << 4);
+    }
+    if (len & 1) {
+      out[bytePos] = levels[len - 1];
+  // BOLT OPTIMIZATION: Extremely fast-path for the 16-bit case.
+  // Directly copy levels into a Uint16Array view, bypassing bitwise packing logic.
+  if (bits === 16) {
+    const out = new Uint8Array(levels.length * 2);
+    const u16 = new Uint16Array(out.buffer);
+    u16.set(levels);
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for the 4-bit (nibble) case.
+  // Directly pack two levels per byte, bypassing dynamic bitwise packing logic.
+  if (bits === 4) {
+    const out = new Uint8Array(Math.ceil(levels.length / 2));
+    let bytePos = 0;
+    const len = levels.length;
+    let i = 0;
+    for (; i < len - 1; i += 2) {
+      out[bytePos++] = (levels[i] & 0x0F) | ((levels[i + 1] & 0x0F) << 4);
+    }
+    if (i < len) {
+      out[bytePos] = levels[i] & 0x0F;
+    }
+    return out;
+  }
+
   const totalBits = levels.length * bits;
   const out = new Uint8Array(Math.ceil(totalBits / 8));
   let accumulator = 0;
@@ -368,6 +416,58 @@ export function unpackLevels(packed: Uint8Array, count: number, bits: number): U
   if (bits === 8) {
     const out = new Uint32Array(count);
     out.set(packed.subarray(0, count));
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for 16-bit configuration.
+  // Extract 16-bit words cleanly, handling offset/alignment boundaries gracefully.
+  // BOLT OPTIMIZATION: Extremely fast-path for the 16-bit case.
+  // Directly copy levels from Uint16Array view, ensuring proper byteOffset alignment fallback.
+  if (bits === 16) {
+    const out = new Uint32Array(count);
+    if (packed.byteOffset % 2 === 0) {
+      const u16 = new Uint16Array(packed.buffer, packed.byteOffset, count);
+      out.set(u16);
+    } else {
+      for (let i = 0; i < count; i++) {
+        out[i] = packed[i * 2] | (packed[i * 2 + 1] << 8);
+      // Safe fallback for unaligned buffers
+      for (let i = 0; i < count; i++) {
+        const idx = i * 2;
+        out[i] = packed[idx] | (packed[idx + 1] << 8);
+      }
+    }
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for 4-bit configuration.
+  // Unpack nibbles from single bytes using fast unrolled iteration.
+  if (bits === 4) {
+    const out = new Uint32Array(count);
+    const limit = count & ~1;
+    let bytePos = 0;
+    for (let i = 0; i < limit; i += 2) {
+      const byte = packed[bytePos++];
+      out[i] = byte & 0xF;
+      out[i + 1] = byte >>> 4;
+    }
+    if (count & 1) {
+      out[count - 1] = packed[bytePos] & 0xF;
+  // BOLT OPTIMIZATION: Extremely fast-path for the 4-bit (nibble) case.
+  // Directly unpack two 4-bit elements per byte, bypassing dynamic bit-shifting loop accumulators.
+  if (bits === 4) {
+    const out = new Uint32Array(count);
+    let bytePos = 0;
+    let i = 0;
+    const limit = count - 1;
+    for (; i < limit; i += 2) {
+      const byte = packed[bytePos++];
+      out[i] = byte & 0x0F;
+      out[i + 1] = (byte >>> 4) & 0x0F;
+    }
+    if (i < count) {
+      out[i] = packed[bytePos] & 0x0F;
+    }
     return out;
   }
 
@@ -496,7 +596,8 @@ export class BackgroundQuantizer {
     // to bypass the call stack and reduce branching overhead.
     const invScale = 1.0 / scale;
     if (symmetric) {
-      const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+      const qMax = ((1 << bits) - 1) >> 1;
       const qMin = -qMax;
       let i = 0;
       for (; i < len - 3; i += 4) {
@@ -526,7 +627,8 @@ export class BackgroundQuantizer {
         result[i] = level * scale;
       }
     } else {
-      const levels = Math.pow(2, bits) - 1;
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+      const levels = (1 << bits) - 1;
       const maxLevel = Math.round(levels);
       let i = 0;
       for (; i < len - 3; i += 4) {
@@ -600,7 +702,8 @@ export class BackgroundQuantizer {
     }
     if (max === min) { max = min + 1; } // avoid a zero-width range collapsing the scale
     const scaleInfo = deriveScale(min, max, effectiveBits, this.config.method);
-    const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, effectiveBits) - 1) / 2) : 0;
+    // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+    const offset = scaleInfo.symmetric ? (((1 << effectiveBits) - 1) >> 1) : 0;
     const levels = new Uint32Array(weights.length);
     const { scale, zeroPoint, symmetric, bits: sBits } = scaleInfo;
     const len = weights.length;
@@ -610,7 +713,8 @@ export class BackgroundQuantizer {
     // to bypass the call stack and reduce branching overhead.
     const invScale = 1.0 / scale;
     if (symmetric) {
-      const qMax = Math.floor((Math.pow(2, sBits) - 1) / 2);
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+      const qMax = ((1 << sBits) - 1) >> 1;
       const qMin = -qMax;
       let i = 0;
       for (; i < len - 3; i += 4) {
@@ -635,7 +739,8 @@ export class BackgroundQuantizer {
         levels[i] = level + offset;
       }
     } else {
-      const levelsCount = Math.pow(2, sBits) - 1;
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+      const levelsCount = (1 << sBits) - 1;
       const maxLevel = Math.round(levelsCount);
       let i = 0;
       for (; i < len - 3; i += 4) {
@@ -669,7 +774,8 @@ export class BackgroundQuantizer {
 
   unpack(tensor: QuantizedTensor): Float32Array {
     const { scaleInfo, length } = tensor;
-    const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, scaleInfo.bits) - 1) / 2) : 0;
+    // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+    const offset = scaleInfo.symmetric ? (((1 << scaleInfo.bits) - 1) >> 1) : 0;
     const levels = unpackLevels(tensor.packed, length, scaleInfo.bits);
     const out = new Float32Array(length);
     const scale = scaleInfo.scale;
@@ -2380,6 +2486,15 @@ export class HyperDimensionalEngine {
   private selfModelDHScratch: Float32Array;
   private entropyLookup: Float64Array;
 
+  private stateViews: Float32Array[];
+  private isDrivenScratch: Uint8Array;
+  private drivenIndicesScratch: Int32Array;
+  private nonDrivenIndicesScratch: Int32Array;
+  private vsScratch: Float32Array;
+  private hasVScratch: Uint8Array;
+  private ratesScratch: Float32Array;
+  private deltaSumsScratch: Float32Array;
+
   constructor(config: Record<string, any> = {}) {
     this.config = {
       neuronCount: config.neuronCount ?? 100,
@@ -2440,6 +2555,18 @@ export class HyperDimensionalEngine {
     const scale = Math.sqrt(1 / Math.max(1, dims));
     for (let i = 0; i < this.selfModelA.length; i++) this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
     for (let i = 0; i < this.selfModelB.length; i++) this.selfModelB[i] = (Math.random() * 2 - 1) * scale;
+
+    this.stateViews = new Array<Float32Array>(D);
+    for (let d = 0; d < D; d++) {
+      this.stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
+    }
+    this.isDrivenScratch = new Uint8Array(N);
+    this.drivenIndicesScratch = new Int32Array(N);
+    this.nonDrivenIndicesScratch = new Int32Array(N);
+    this.vsScratch = new Float32Array(N);
+    this.hasVScratch = new Uint8Array(N);
+    this.ratesScratch = new Float32Array(N);
+    this.deltaSumsScratch = new Float32Array(N);
   }
 
   /**
@@ -3023,7 +3150,8 @@ export class HyperDimensionalEngine {
     const dims = this.config.dimensions;
 
     // Pre-allocate fast lookup structures to avoid Map/Set lookup inside loop
-    const isDriven = new Uint8Array(N);
+    const isDriven = this.isDrivenScratch;
+    isDriven.fill(0);
     for (const id of drivenIds) {
       if (id >= 0 && id < N) {
         isDriven[id] = 1;
@@ -3032,22 +3160,23 @@ export class HyperDimensionalEngine {
 
     // BOLT OPTIMIZATION: Filter driven and non-driven indices up-front
     // This completely eliminates the nested branch checks `if (isDriven[i]) continue;` inside the hot loops.
-    const drivenIndices: number[] = [];
-    const nonDrivenIndices: number[] = [];
+    const drivenIndices = this.drivenIndicesScratch;
+    const nonDrivenIndices = this.nonDrivenIndicesScratch;
+    let drivenCount = 0;
+    let nonDrivenCount = 0;
     for (let i = 0; i < N; i++) {
       if (isDriven[i]) {
-        drivenIndices.push(i);
+        drivenIndices[drivenCount++] = i;
       } else {
-        nonDrivenIndices.push(i);
+        nonDrivenIndices[nonDrivenCount++] = i;
       }
     }
-    const nonDrivenCount = nonDrivenIndices.length;
 
-    const vs = new Float32Array(N);
-    const hasV = new Uint8Array(N);
-    const priorStates = new Array<Float32Array>(N);
+    const vs = this.vsScratch;
+    const hasV = this.hasVScratch;
+    hasV.fill(0);
+
     for (let i = 0; i < N; i++) {
-      priorStates[i] = this.neurons[i].state;
       const v = vale?.get(i);
       if (v !== undefined) {
         vs[i] = v;
@@ -3056,10 +3185,7 @@ export class HyperDimensionalEngine {
     }
 
     // Pre-fetch all dimension views of allStates to avoid subarray() in hot loops
-    const stateViews = new Array<Float32Array>(D);
-    for (let d = 0; d < D; d++) {
-      stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
-    }
+    const stateViews = this.stateViews;
 
     const DN = D * N;
     const connDiag = this.connDiag;
@@ -3077,7 +3203,7 @@ export class HyperDimensionalEngine {
       clampedInput[d] = val;
       drivenEnergyContribution += val * val;
     }
-    const totalDrivenEnergyContribution = drivenIndices.length * drivenEnergyContribution;
+    const totalDrivenEnergyContribution = drivenCount * drivenEnergyContribution;
 
     for (; iterations < this.config.propagationSteps; iterations++) {
       // Initialize content energy with the pre-calculated constant driven energy contribution.
@@ -3087,7 +3213,7 @@ export class HyperDimensionalEngine {
       // Keeping this inside the propagation loop is critical to ensure both state buffers
       // remain synchronized without corruption, while using pre-calculated clamped values
       // avoids any redundant evaluation overhead.
-      for (let idx = 0; idx < drivenIndices.length; idx++) {
+      for (let idx = 0; idx < drivenCount; idx++) {
         const i = drivenIndices[idx];
         const offset = i * D;
         nextStates[offset] = 1.0; // Mark as externally driven
@@ -3139,7 +3265,7 @@ export class HyperDimensionalEngine {
           }
 
           const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
-          const finalVal = hasV[i] ? vs[i] * priorStates[i][d] + (1 - vs[i]) * computedState : computedState;
+          const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
           nextStates[i * D + d] = finalVal;
           if (d > 0) {
             currentTotalContentEnergy += finalVal * finalVal;
@@ -3157,7 +3283,7 @@ export class HyperDimensionalEngine {
         for (let i = 0; i < N; i++) {
           if (isDriven[i]) continue;
           const offset = i * D;
-          const state = priorStates[i];
+          const state = this.neurons[i].state;
           for (let d = 0; d < D; d++) {
             nextStates[offset + d] = 0.5 * nextStates[offset + d] + 0.5 * state[d];
           }
@@ -3205,16 +3331,11 @@ export class HyperDimensionalEngine {
     const N = this.neurons.length;
 
     // Pre-fetch all dimension views of allStates for sequential access
-    const stateViews = new Array<Float32Array>(D);
-    for (let d = 0; d < D; d++) {
-      stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
-    }
+    const stateViews = this.stateViews;
 
-    const states = new Array<Float32Array>(N);
-    const rates = new Float32Array(N);
+    const rates = this.ratesScratch;
     const defaultRate = this.config.learningRate;
     for (let i = 0; i < N; i++) {
-      states[i] = this.neurons[i].state;
       rates[i] = learningRates?.get(i) ?? defaultRate;
     }
 
@@ -3222,12 +3343,13 @@ export class HyperDimensionalEngine {
     const connShift = this.connShift;
     const bias = this.bias;
 
-    const deltaSums = new Float32Array(N);
+    const deltaSums = this.deltaSumsScratch;
+    deltaSums.fill(0);
 
     // Keep i as outer loop and d as middle loop to ensure perfect sequential cache-friendly access to connDiag/connShift
     for (let i = 0; i < N; i++) {
       const rate = rates[i];
-      const si = states[i];
+      const si = this.neurons[i].state;
       let deltaSum = 0;
 
       for (let d = 0; d < D; d++) {
@@ -3410,7 +3532,7 @@ export class HyperDimensionalEngine {
     // Update biases after weight updates
     for (let i = 0; i < N; i++) {
       const rate = rates[i];
-      const si = states[i];
+      const si = this.neurons[i].state;
       const biasOffset = i * D;
       for (let d = 0; d < D; d++) {
         const valB = bias[biasOffset + d] + rate * 0.1 * si[d];
@@ -4637,12 +4759,66 @@ export class MoERouter {
   }
 
   private computeEntropy(scores: number[]): number {
-    const probs = this.softmax(scores);
-    let entropy = 0;
-    for (const p of probs) {
-      if (p > 0) entropy -= p * Math.log(p);
+    const len = scores.length;
+    if (len <= 1) return 0;
+
+    // First, find the maximum score for numerical stability during exponentiation
+    // OPTIMIZATION: Mathematically exact Shannon entropy of softmax calculated in a single pass.
+    // This bypasses the allocation of intermediate `probs` and temporary arrays inside `softmax()`,
+    // and reduces the number of slow `Math.log` calls from O(E) to exactly O(1).
+    const len = scores.length;
+    if (len === 0) return 0;
+
+    let max = scores[0];
+    for (let i = 1; i < len; i++) {
+      if (scores[i] > max) {
+        max = scores[i];
+      }
     }
-    return entropy;
+
+    let sumExps = 0;
+    let sumWeightedExps = 0;
+    for (let i = 0; i < len; i++) {
+      const diff = scores[i] - max;
+      const expVal = Math.exp(diff);
+      sumExps += expVal;
+      sumWeightedExps += expVal * diff;
+    }
+
+    if (sumExps === 0) return 0;
+    // Mathematically exact Shannon entropy of softmax in a single pass over exp values
+    // with exactly 1 Math.log call and zero intermediate array allocations.
+    return Math.log(sumExps) - (sumWeightedExps / sumExps);
+    }
+
+    // Compute sum(exp(s_i - max)) and sum((s_i - max) * exp(s_i - max))
+    // in a single pass over the scores.
+    let sumExp = 0;
+    let sumExpS = 0;
+    for (let i = 0; i < len; i++) {
+      const sShifted = scores[i] - max;
+      const expVal = Math.exp(sShifted);
+      sumExp += expVal;
+      sumExpS += sShifted * expVal;
+    }
+
+    if (sumExp === 0) return 0;
+
+    // Shannon entropy of softmax: H = ln(sumExp) - (sum(sShifted * exp(sShifted)) / sumExp)
+    // This reduces the number of expensive Math.log transcendental math calls from O(E) to exactly O(1),
+    // and completely eliminates the allocation of intermediate probability arrays.
+    return Math.log(sumExp) - sumExpS / sumExp;
+    let sumExp = 0;
+    let sumExpScore = 0;
+    for (let i = 0; i < len; i++) {
+      const diff = scores[i] - max;
+      const e = Math.exp(diff);
+      sumExp += e;
+      sumExpScore += e * diff;
+    }
+
+    if (sumExp === 0) return 0;
+    return Math.log(sumExp) - sumExpScore / sumExp;
   }
 
   private computeLoadBalanceLoss(): number {
@@ -4652,7 +4828,9 @@ export class MoERouter {
     const meanUtil = totalUtil / stats.length;
     let variance = 0;
     for (const s of stats) {
-      variance += Math.pow(s.utilization - meanUtil, 2);
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(x, 2) with fast inline multiplication.
+      const diff = s.utilization - meanUtil;
+      variance += diff * diff;
     }
     return variance / stats.length;
   }
