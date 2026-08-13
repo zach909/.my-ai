@@ -4653,12 +4653,30 @@ export class MoERouter {
   }
 
   private computeEntropy(scores: number[]): number {
-    const probs = this.softmax(scores);
-    let entropy = 0;
-    for (const p of probs) {
-      if (p > 0) entropy -= p * Math.log(p);
+    // OPTIMIZATION: Mathematically exact Shannon entropy of softmax calculated in a single pass.
+    // This bypasses the allocation of intermediate `probs` and temporary arrays inside `softmax()`,
+    // and reduces the number of slow `Math.log` calls from O(E) to exactly O(1).
+    const len = scores.length;
+    if (len === 0) return 0;
+
+    let max = scores[0];
+    for (let i = 1; i < len; i++) {
+      if (scores[i] > max) {
+        max = scores[i];
+      }
     }
-    return entropy;
+
+    let sumExp = 0;
+    let sumExpScore = 0;
+    for (let i = 0; i < len; i++) {
+      const diff = scores[i] - max;
+      const e = Math.exp(diff);
+      sumExp += e;
+      sumExpScore += e * diff;
+    }
+
+    if (sumExp === 0) return 0;
+    return Math.log(sumExp) - sumExpScore / sumExp;
   }
 
   private computeLoadBalanceLoss(): number {
