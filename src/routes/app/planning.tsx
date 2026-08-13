@@ -51,25 +51,40 @@ function PlanningPage() {
         <div className="space-y-3 md:col-span-1">
           <h2 className="text-sm font-semibold text-foreground">Select Goal to Decompose</h2>
           <div className="space-y-2">
-            {GOALS.map((g) => (
-              <button
-                key={g.id}
-                onClick={() => handleDecompose(g.id)}
-                disabled={planning}
-                className={`w-full text-left p-3 rounded-xl border text-xs transition-all duration-150 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-                  selectedGoal === g.id
-                    ? 'border-primary bg-primary/5 text-foreground'
-                    : 'border-border bg-card hover:bg-accent/50 text-muted-foreground'
-                }`}
-                aria-label={`Select and decompose goal: ${g.title}`}
-              >
-                <div className="font-semibold text-foreground flex items-center gap-1.5">
-                  <Goal className="h-3.5 w-3.5 text-primary shrink-0" />
-                  {g.title}
-                </div>
-                <p className="mt-1 text-[11px] leading-relaxed">{g.desc}</p>
-              </button>
-            ))}
+            {GOALS.map((g) => {
+              const isSelected = selectedGoal === g.id;
+              return (
+                <button
+                  key={g.id}
+                  onClick={() => handleDecompose(g.id)}
+                  disabled={planning}
+                  aria-pressed={isSelected}
+                  aria-label={`${isSelected ? 'Selected' : 'Select and decompose'} goal: ${g.title}`}
+                  className={`group relative w-full text-left p-3 rounded-xl border text-xs transition-all duration-150 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                    isSelected
+                      ? 'border-primary bg-primary/5 text-foreground'
+                      : 'border-border bg-card hover:bg-accent/50 text-muted-foreground'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-foreground flex items-center gap-1.5 min-w-0">
+                      <Goal className="h-3.5 w-3.5 text-primary shrink-0" />
+                      <span className="truncate">{g.title}</span>
+                    </div>
+                    <ChevronRight
+                      size={14}
+                      className={`text-primary shrink-0 transition-all duration-150 ${
+                        isSelected
+                          ? 'opacity-100 translate-x-0'
+                          : 'opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 group-focus:opacity-60 group-focus:translate-x-0'
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <p className="mt-1 pr-4 text-[11px] leading-relaxed">{g.desc}</p>
+                </button>
+              );
+            })}
           </div>
         </div>
 
