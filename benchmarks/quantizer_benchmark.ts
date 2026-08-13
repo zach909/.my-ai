@@ -1,8 +1,7 @@
 import { packLevels, unpackLevels } from '../models && skills/core/quantizer.js';
 
-function benchmark() {
+function runBenchmarkForBits(bits: number) {
   const size = 100000;
-  const bits = 8;
   const levels = new Uint32Array(size);
   const max = (1 << bits) - 1;
   for (let i = 0; i < size; i++) {
@@ -36,9 +35,15 @@ function benchmark() {
   const avgUnpack = (endUnpack - startUnpack) / iterations;
 
   console.log(`Quantizer Primitives Benchmark (size: ${size}, bits: ${bits}):`);
-  console.log(`  Average packLevels execution time: ${avgPack.toFixed(4)}ms`);
-  console.log(`  Average unpackLevels execution time: ${avgUnpack.toFixed(4)}ms`);
+  console.log(`  Average packLevels_${bits} execution time: ${avgPack.toFixed(4)}ms`);
+  console.log(`  Average unpackLevels_${bits} execution time: ${avgUnpack.toFixed(4)}ms`);
   console.log(`  Total round-trip time: ${(avgPack + avgUnpack).toFixed(4)}ms`);
+}
+
+function benchmark() {
+  runBenchmarkForBits(4);
+  runBenchmarkForBits(8);
+  runBenchmarkForBits(16);
 }
 
 benchmark();

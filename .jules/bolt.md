@@ -1,5 +1,9 @@
 # Bolt's Journal - Critical Learnings
 
+## 2026-08-14 - Background Quantizer 4-Bit and 16-Bit Fast-Paths
+**Learning:** For standard quantization bit widths like 4-bit and 16-bit, using dynamic register-level accumulator bitwise shift loops introduces severe loop overhead, dynamic branch mispredictions, and unnecessary arithmetic complexity. By defining specialized fast-paths (direct TypedArray copying for 16-bit, and nibble-paired byte writing for 4-bit), we can completely bypass the general bitwise packing engine, delivering ~2x faster packing/unpacking for 4-bit and up to ~3x faster unpacking for 16-bit configurations.
+**Action:** When designing bit packing, unpacking, or serialization systems, always identify power-of-two (16-bit) and half-byte boundary configurations (4-bit) and provide specialized fast paths using direct byte array copying or paired nibble indexing.
+
 ## 2026-08-12 - HyperDimensionalEngine Dimensional Entropy Lookup Optimization
 **Learning:** During high-frequency entropy calculations in state evaluation loops, executing expensive transcendental `Math.log2` computations and divisions on discrete, bounded probability values causes significant CPU bottlenecks. Pre-calculating all possible entropy values (`p * Math.log2(p)`) once in the constructor into a static `Float64Array` lookup table allows O(1) array access indexed by bucket count, completely eliminating log2 math and division overhead.
 **Action:** When computing entropy or other functions over discrete ratios where the denominator (like total count N) is invariant, replace runtime transcendental math with a static pre-computed lookup table.
