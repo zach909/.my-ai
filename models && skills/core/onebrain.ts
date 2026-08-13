@@ -341,6 +341,31 @@ export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
     return out;
   }
 
+  // BOLT OPTIMIZATION: Extremely fast-path for the 16-bit case.
+  // Directly copy levels into a Uint16Array view, bypassing bitwise packing logic.
+  if (bits === 16) {
+    const out = new Uint8Array(levels.length * 2);
+    const u16 = new Uint16Array(out.buffer);
+    u16.set(levels);
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for the 4-bit (nibble) case.
+  // Directly pack two levels per byte, bypassing dynamic bitwise packing logic.
+  if (bits === 4) {
+    const out = new Uint8Array(Math.ceil(levels.length / 2));
+    let bytePos = 0;
+    const len = levels.length;
+    let i = 0;
+    for (; i < len - 1; i += 2) {
+      out[bytePos++] = (levels[i] & 0x0F) | ((levels[i + 1] & 0x0F) << 4);
+    }
+    if (i < len) {
+      out[bytePos] = levels[i] & 0x0F;
+    }
+    return out;
+  }
+
   const totalBits = levels.length * bits;
   const out = new Uint8Array(Math.ceil(totalBits / 8));
   let accumulator = 0;
@@ -371,6 +396,41 @@ export function unpackLevels(packed: Uint8Array, count: number, bits: number): U
   if (bits === 8) {
     const out = new Uint32Array(count);
     out.set(packed.subarray(0, count));
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for the 16-bit case.
+  // Directly copy levels from Uint16Array view, ensuring proper byteOffset alignment fallback.
+  if (bits === 16) {
+    const out = new Uint32Array(count);
+    if (packed.byteOffset % 2 === 0) {
+      const u16 = new Uint16Array(packed.buffer, packed.byteOffset, count);
+      out.set(u16);
+    } else {
+      // Safe fallback for unaligned buffers
+      for (let i = 0; i < count; i++) {
+        const idx = i * 2;
+        out[i] = packed[idx] | (packed[idx + 1] << 8);
+      }
+    }
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for the 4-bit (nibble) case.
+  // Directly unpack two 4-bit elements per byte, bypassing dynamic bit-shifting loop accumulators.
+  if (bits === 4) {
+    const out = new Uint32Array(count);
+    let bytePos = 0;
+    let i = 0;
+    const limit = count - 1;
+    for (; i < limit; i += 2) {
+      const byte = packed[bytePos++];
+      out[i] = byte & 0x0F;
+      out[i + 1] = (byte >>> 4) & 0x0F;
+    }
+    if (i < count) {
+      out[i] = packed[bytePos] & 0x0F;
+    }
     return out;
   }
 
