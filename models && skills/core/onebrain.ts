@@ -1127,6 +1127,7 @@ export class NeuronMesh {
   private biases: Float32Array = new Float32Array(0);
   private currActivations: Float32Array = new Float32Array(0);
   private nextActivations: Float32Array = new Float32Array(0);
+  private historyScratch: Float32Array = new Float32Array(0);
 
   constructor(config: Partial<MeshConfig> = {}) {
     const nodeCount = config.nodeCount ?? config.initialNodeCount ?? 10;
@@ -1228,15 +1229,14 @@ export class NeuronMesh {
     const N = nodes.length;
     const maxIters = this.config.maxIterations;
 
-    // Bolt's Optimization: Pre-allocate standard arrays of size maxIters
-    // to completely avoid memory allocations and garbage collection pressure in hot loops.
-    const histories: number[][] = [];
-    const nodeHistory = new Map<number, number[]>();
-    for (let i = 0; i < N; i++) {
-      const arr = new Array<number>(maxIters);
-      histories.push(arr);
-      nodeHistory.set(nodes[i].id, arr);
+    // Bolt's Optimization: Pre-allocate a class-level flat history scratchpad to avoid O(N) array allocations inside propagation
+    // BOLT OPTIMIZATION: Use a pre-allocated flat Float32Array to record node histories
+    // across propagation iterations, eliminating O(N) array allocations per propagate call.
+    const totalHistorySize = N * maxIters;
+    if (this.historyScratch.length < totalHistorySize) {
+      this.historyScratch = new Float32Array(totalHistorySize);
     }
+    const historyScratch = this.historyScratch;
 
     // Synchronize activations from source of truth and inputs
     for (let i = 0; i < N; i++) this.currActivations[i] = nodes[i].activation;
@@ -1279,39 +1279,116 @@ export class NeuronMesh {
 
     // Fast-path: When there are no gates and no vale gating (most common case)
     if (!activeGroups && !vale) {
-      for (; iteration < maxIters; iteration++) {
-        for (let i = 0; i < N; i++) {
-          let sum = biases[i];
-          const start = rowStarts[i], end = rowStarts[i + 1];
-          // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
-          const limit = end - 7;
-          let k = start;
-          for (; k < limit; k += 8) {
-            sum += curr[flatIndices[k]] * flatWeights[k]
-                 + curr[flatIndices[k + 1]] * flatWeights[k + 1]
-                 + curr[flatIndices[k + 2]] * flatWeights[k + 2]
-                 + curr[flatIndices[k + 3]] * flatWeights[k + 3]
-                 + curr[flatIndices[k + 4]] * flatWeights[k + 4]
-                 + curr[flatIndices[k + 5]] * flatWeights[k + 5]
-                 + curr[flatIndices[k + 6]] * flatWeights[k + 6]
-                 + curr[flatIndices[k + 7]] * flatWeights[k + 7];
+      if (actFn === 'relu') {
+        for (; iteration < maxIters; iteration++) {
+          for (let i = 0; i < N; i++) {
+            let sum = biases[i];
+            const start = rowStarts[i], end = rowStarts[i + 1];
+            // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
+            const limit = end - 7;
+            let k = start;
+            for (; k < limit; k += 8) {
+              sum += curr[flatIndices[k]] * flatWeights[k]
+                   + curr[flatIndices[k + 1]] * flatWeights[k + 1]
+                   + curr[flatIndices[k + 2]] * flatWeights[k + 2]
+                   + curr[flatIndices[k + 3]] * flatWeights[k + 3]
+                   + curr[flatIndices[k + 4]] * flatWeights[k + 4]
+                   + curr[flatIndices[k + 5]] * flatWeights[k + 5]
+                   + curr[flatIndices[k + 6]] * flatWeights[k + 6]
+                   + curr[flatIndices[k + 7]] * flatWeights[k + 7];
+            }
+            for (; k < end; k++) {
+              sum += curr[flatIndices[k]] * flatWeights[k];
+            }
+            next[i] = sum > 0 ? sum : 0;
+            this.historyScratch[i * maxIters + iteration] = next[i];
           }
-          for (; k < end; k++) {
-            sum += curr[flatIndices[k]] * flatWeights[k];
-          }
-          next[i] = activate(sum);
-          histories[i][iteration] = next[i];
-        }
 
+          residual = 0;
+          for (let i = 0; i < N; i++) {
+            // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
+            const diff = next[i] - curr[i];
+            residual += diff < 0 ? -diff : diff;
+            curr[i] = next[i];
+          }
+          if (this.checkConvergence(residual)) { converged = true; break; }
+          next[i] = activate(sum);
+          historyScratch[i * maxIters + iteration] = next[i];
+        }
+      } else if (actFn === 'tanh') {
+        for (; iteration < maxIters; iteration++) {
+          for (let i = 0; i < N; i++) {
+            let sum = biases[i];
+            const start = rowStarts[i], end = rowStarts[i + 1];
+            // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
+            const limit = end - 7;
+            let k = start;
+            for (; k < limit; k += 8) {
+              sum += curr[flatIndices[k]] * flatWeights[k]
+                   + curr[flatIndices[k + 1]] * flatWeights[k + 1]
+                   + curr[flatIndices[k + 2]] * flatWeights[k + 2]
+                   + curr[flatIndices[k + 3]] * flatWeights[k + 3]
+                   + curr[flatIndices[k + 4]] * flatWeights[k + 4]
+                   + curr[flatIndices[k + 5]] * flatWeights[k + 5]
+                   + curr[flatIndices[k + 6]] * flatWeights[k + 6]
+                   + curr[flatIndices[k + 7]] * flatWeights[k + 7];
+            }
+            for (; k < end; k++) {
+              sum += curr[flatIndices[k]] * flatWeights[k];
+            }
+            next[i] = Math.tanh(sum);
+            this.historyScratch[i * maxIters + iteration] = next[i];
+          }
+
+          residual = 0;
+          for (let i = 0; i < N; i++) {
+            // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
+            const diff = next[i] - curr[i];
+            residual += diff < 0 ? -diff : diff;
+            curr[i] = next[i];
+          }
+          if (this.checkConvergence(residual)) { converged = true; break; }
+        }
+      } else {
+        for (; iteration < maxIters; iteration++) {
+          for (let i = 0; i < N; i++) {
+            let sum = biases[i];
+            const start = rowStarts[i], end = rowStarts[i + 1];
+            // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
+            const limit = end - 7;
+            let k = start;
+            for (; k < limit; k += 8) {
+              sum += curr[flatIndices[k]] * flatWeights[k]
+                   + curr[flatIndices[k + 1]] * flatWeights[k + 1]
+                   + curr[flatIndices[k + 2]] * flatWeights[k + 2]
+                   + curr[flatIndices[k + 3]] * flatWeights[k + 3]
+                   + curr[flatIndices[k + 4]] * flatWeights[k + 4]
+                   + curr[flatIndices[k + 5]] * flatWeights[k + 5]
+                   + curr[flatIndices[k + 6]] * flatWeights[k + 6]
+                   + curr[flatIndices[k + 7]] * flatWeights[k + 7];
+            }
+            for (; k < end; k++) {
+              sum += curr[flatIndices[k]] * flatWeights[k];
+            }
+            next[i] = activate(sum);
+            this.historyScratch[i * maxIters + iteration] = next[i];
+          }
+
+          residual = 0;
+          for (let i = 0; i < N; i++) {
+            // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
+            const diff = next[i] - curr[i];
+            residual += diff < 0 ? -diff : diff;
+            curr[i] = next[i];
+          }
+          if (this.checkConvergence(residual)) { converged = true; break; }
         residual = 0;
         for (let i = 0; i < N; i++) {
           // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
           const diff = next[i] - curr[i];
           residual += diff < 0 ? -diff : diff;
           curr[i] = next[i];
-          nodes[i].activation = curr[i];
         }
-        if (this.checkConvergence(residual)) { converged = true; break; }
       }
     } else {
       // General path: When either gates or vale gating is active
@@ -1353,7 +1430,8 @@ export class NeuronMesh {
             const comp = activate(sum);
             next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
           }
-          histories[i][iteration] = next[i];
+          this.historyScratch[i * maxIters + iteration] = next[i];
+          historyScratch[i * maxIters + iteration] = next[i];
         }
 
         residual = 0;
@@ -1362,28 +1440,53 @@ export class NeuronMesh {
           const diff = next[i] - curr[i];
           residual += diff < 0 ? -diff : diff;
           curr[i] = next[i];
-          nodes[i].activation = curr[i];
         }
         if (this.checkConvergence(residual)) { converged = true; break; }
       }
     }
 
-    // Bolt's Optimization: Truncate pre-allocated arrays and bulk-append history to node's activationHistory
+    // Bolt's Optimization: Populate standard arrays and update node's activation/history in a single pass at final convergence
     const finalIters = converged ? iteration + 1 : iteration;
+    const nodeHistory = new Map<number, number[]>();
     for (let i = 0; i < N; i++) {
-      const history = histories[i];
-      history.length = finalIters;
-      nodes[i].activationHistory.push(...history);
+      const arr = new Array<number>(finalIters);
+      const startIdx = i * maxIters;
+      for (let iter = 0; iter < finalIters; iter++) {
+        arr[iter] = this.historyScratch[startIdx + iter];
+      }
+      nodeHistory.set(nodes[i].id, arr);
+      nodes[i].activationHistory.push(...arr);
+      nodes[i].activation = curr[i];
     }
 
+    // BOLT OPTIMIZATION: Consolidate final states updating, history extraction, and nodeHistory map
+    // creation into a single unified loop, and only update node.activation once upon convergence.
+    const finalIters = converged ? iteration + 1 : iteration;
     const finalStates = new Map<number, number>();
+    const nodeHistory = new Map<number, number[]>();
+
     for (let i = 0; i < N; i++) {
-      finalStates.set(nodes[i].id, nodes[i].activation);
+      finalStates.set(nodes[i].id, curr[i]);
+      const node = nodes[i];
+      node.activation = curr[i];
+
+      const nodeHist = new Array<number>(finalIters);
+      const scratchOffset = i * maxIters;
+      for (let step = 0; step < finalIters; step++) {
+        nodeHist[step] = historyScratch[scratchOffset + step];
+      }
+
+      node.activationHistory.push(...nodeHist);
+      nodeHistory.set(node.id, nodeHist);
+      finalStates.set(node.id, curr[i]);
     }
 
     return {
       finalStates,
-      iterations: finalIters, converged, residual, nodeHistory
+      iterations: finalIters,
+      converged,
+      residual,
+      nodeHistory
     };
   }
 
