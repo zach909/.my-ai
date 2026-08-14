@@ -2,6 +2,8 @@
 # NeuroClaw — OneBrain Installer
 # Modern one-click installer with desktop integration
 
+git clone https://github.com/zach909/.my-ai.git
+
 set -e
 
 # Modern color palette (tech/AI themed). These must be real ANSI escape
