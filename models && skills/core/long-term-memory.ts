@@ -105,6 +105,12 @@ export class LongTermMemory {
   remember(content: string, opts: RememberOptions = {}): MemoryItem {
     const id = opts.id ?? `mem-${Date.now()}-${++this.seq}`;
     const now = Date.now();
+    const sparseEmbedding = this.embedSparse(content);
+    const item: MemoryItem = {
+      id,
+      content,
+      embedding: this.sparseToDense(sparseEmbedding),
+      sparseEmbedding,
     const denseEmb = this.embed(content);
     const item: MemoryItem = {
       id,
@@ -134,12 +140,15 @@ export class LongTermMemory {
     const iw = opts.importanceWeight ?? 0.3;
     const rw = opts.recencyWeight ?? 0.15;
     const minScore = opts.minScore ?? 0;
+    const q = this.embedSparse(query);
     // OPTIMIZATION: Convert query embedding to sparse vector with pre-calculated norm
     const qSparse = toSparse(this.embed(query));
     const now = Date.now();
     const hits: MemoryHit[] = [];
     for (const item of this.items.values()) {
       if (opts.tag && !item.tags.includes(opts.tag)) continue;
+      const itemSparse = item.sparseEmbedding ?? (item.sparseEmbedding = this.denseToSparse(item.embedding));
+      const similarity = cosineSparse(q, itemSparse);
       if (!item.sparseEmbedding || !(item.sparseEmbedding.indices instanceof Int32Array)) {
         item.sparseEmbedding = toSparse(item.embedding);
       }
@@ -206,6 +215,16 @@ export class LongTermMemory {
     const data = JSON.parse(json);
     const mem = new LongTermMemory({ dim: data.dim, capacity: data.capacity });
     for (const it of data.items as MemoryItem[]) {
+      if (it.sparseEmbedding) {
+        const ind = it.sparseEmbedding.indices;
+        const val = it.sparseEmbedding.values;
+        it.sparseEmbedding = {
+          indices: ind instanceof Int32Array ? ind : new Int32Array(Object.values(ind)),
+          values: val instanceof Float32Array ? val : new Float32Array(Object.values(val)),
+          norm: it.sparseEmbedding.norm,
+        };
+      } else if (it.embedding) {
+        it.sparseEmbedding = mem.denseToSparse(it.embedding);
       if (it.embedding) {
         it.sparseEmbedding = toSparse(it.embedding);
       }
@@ -214,15 +233,9 @@ export class LongTermMemory {
     return mem;
   }
 
-  /**
-   * Enforce capacity by removing the lowest-retention memories. Retention
-   * combines importance, recency and how often the memory has been recalled —
-   * so important, recent, frequently-used memories are preserved and stale,
-   * unimportant ones are removed first.
-   */
-  /** Token-level hashed bag-of-words embedding: cosine reflects shared words. */
-  private embed(text: string): number[] {
-    const v = new Array(this.dim).fill(0);
+  /** Token-level hashed bag-of-words sparse embedding: cosine reflects shared words. */
+  private embedSparse(text: string): SparseVector {
+    const map = new Map<number, number>();
     for (const t of tokenize(text)) {
       let h = 2166136261;
       for (let i = 0; i < t.length; i++) {
@@ -230,9 +243,53 @@ export class LongTermMemory {
         h = Math.imul(h, 16777619);
       }
       const idx = (h >>> 0) % this.dim;
-      v[idx] += (h & 1) === 0 ? 1 : -1;
+      const val = (h & 1) === 0 ? 1 : -1;
+      map.set(idx, (map.get(idx) || 0) + val);
+    }
+    const keys = Array.from(map.keys()).filter(k => map.get(k) !== 0).sort((a, b) => a - b);
+    const len = keys.length;
+    const indices = new Int32Array(len);
+    const values = new Float32Array(len);
+    let normSq = 0;
+    for (let i = 0; i < len; i++) {
+      const k = keys[i];
+      const val = map.get(k)!;
+      indices[i] = k;
+      values[i] = val;
+      normSq += val * val;
+    }
+    return { indices, values, norm: Math.sqrt(normSq) };
+  }
+
+  private denseToSparse(dense: number[]): SparseVector {
+    const indices: number[] = [];
+    const values: number[] = [];
+    let normSq = 0;
+    for (let i = 0; i < dense.length; i++) {
+      const val = dense[i];
+      if (val !== 0) {
+        indices.push(i);
+        values.push(val);
+        normSq += val * val;
+      }
+    }
+    return {
+      indices: new Int32Array(indices),
+      values: new Float32Array(values),
+      norm: Math.sqrt(normSq),
+    };
+  }
+
+  private sparseToDense(sparse: SparseVector): number[] {
+    const v = new Array(this.dim).fill(0);
+    for (let i = 0; i < sparse.indices.length; i++) {
+      v[sparse.indices[i]] = sparse.values[i];
     }
     return v;
+  }
+
+  private embed(text: string): number[] {
+    return this.sparseToDense(this.embedSparse(text));
   }
 
   private evictIfNeeded(): void {
@@ -269,6 +326,8 @@ function tokenize(text: string): string[] {
     .filter(w => w.length > 1 && !STOPWORDS.has(w));
 }
 
+function cosineSparse(q: SparseVector, item: SparseVector): number {
+  if (q.norm === 0 || item.norm === 0) return 0;
 /** Converts a dense vector into a sparse representation with non-zero indices and pre-calculated L2 norm. */
 function toSparse(v: number[]): SparseVector {
   let count = 0;
@@ -299,6 +358,19 @@ function cosineSparse(q: SparseVector, target: SparseVector): number {
   let j = 0;
   const qInd = q.indices;
   const qVal = q.values;
+  const itInd = item.indices;
+  const itVal = item.values;
+  const qLen = qInd.length;
+  const itLen = itInd.length;
+
+  while (i < qLen && j < itLen) {
+    const qi = qInd[i];
+    const itj = itInd[j];
+    if (qi === itj) {
+      dot += qVal[i] * itVal[j];
+      i++;
+      j++;
+    } else if (qi < itj) {
   const tInd = target.indices;
   const tVal = target.values;
   const qLen = qInd.length;
@@ -317,6 +389,7 @@ function cosineSparse(q: SparseVector, target: SparseVector): number {
       j++;
     }
   }
+  return dot / (q.norm * item.norm);
 
   return dot / (q.norm * target.norm);
 }
