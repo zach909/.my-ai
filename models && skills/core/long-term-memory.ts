@@ -78,8 +78,19 @@ export interface MemoryHit {
   similarity: number;
 }
 
+/**
+ * Sparse vector representation for high-speed $O(\text{nonZeros})$ cosine scoring.
+ */
+export interface SparseVector {
+  indices: Int32Array;
+  values: Float32Array;
+  norm: number;
+}
+
 export class LongTermMemory {
   private items = new Map<string, MemoryItem>();
+  /** Cached sparse vector representations for stored memory items. */
+  private sparseMap = new Map<string, SparseVector>();
   private readonly dim: number;
   private readonly capacity: number;
   private seq = 0;
@@ -105,6 +116,11 @@ export class LongTermMemory {
   remember(content: string, opts: RememberOptions = {}): MemoryItem {
     const id = opts.id ?? `mem-${Date.now()}-${++this.seq}`;
     const now = Date.now();
+    const embedding = this.embed(content);
+    const item: MemoryItem = {
+      id,
+      content,
+      embedding,
     const sparseEmbedding = this.embedSparse(content);
     const item: MemoryItem = {
       id,
@@ -125,6 +141,8 @@ export class LongTermMemory {
       ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
     };
     this.items.set(id, item);
+    // Cache precomputed sparse vector for fast $O(\text{nonZeros})$ retrieval
+    this.sparseMap.set(id, embedSparseFromDense(embedding));
     this.evictIfNeeded();
     return item;
   }
@@ -140,6 +158,9 @@ export class LongTermMemory {
     const iw = opts.importanceWeight ?? 0.3;
     const rw = opts.recencyWeight ?? 0.15;
     const minScore = opts.minScore ?? 0;
+    const qDense = this.embed(query);
+    const qSparse = embedSparseFromDense(qDense);
+    if (qSparse.norm === 0) return [];
     const q = this.embedSparse(query);
     // OPTIMIZATION: Convert query embedding to sparse vector with pre-calculated norm
     const qSparse = toSparse(this.embed(query));
@@ -147,6 +168,13 @@ export class LongTermMemory {
     const hits: MemoryHit[] = [];
     for (const item of this.items.values()) {
       if (opts.tag && !item.tags.includes(opts.tag)) continue;
+      let itemSparse = this.sparseMap.get(item.id);
+      if (!itemSparse) {
+        itemSparse = embedSparseFromDense(item.embedding);
+        this.sparseMap.set(item.id, itemSparse);
+      }
+      // Fast $O(\text{nonZeros})$ two-pointer sparse vector cosine similarity
+      const similarity = cosineSparse(qSparse, itemSparse);
       const itemSparse = item.sparseEmbedding ?? (item.sparseEmbedding = this.denseToSparse(item.embedding));
       const similarity = cosineSparse(q, itemSparse);
       if (!item.sparseEmbedding || !(item.sparseEmbedding.indices instanceof Int32Array)) {
@@ -195,6 +223,7 @@ export class LongTermMemory {
   }
 
   forget(id: string): boolean {
+    this.sparseMap.delete(id);
     return this.items.delete(id);
   }
 
@@ -302,7 +331,11 @@ export class LongTermMemory {
     });
     ranked.sort((a, b) => a.retention - b.retention);
     const toRemove = this.items.size - this.capacity;
-    for (let i = 0; i < toRemove; i++) this.items.delete(ranked[i].item.id);
+    for (let i = 0; i < toRemove; i++) {
+      const removeId = ranked[i].item.id;
+      this.items.delete(removeId);
+      this.sparseMap.delete(removeId);
+    }
   }
 }
 
@@ -326,6 +359,54 @@ function tokenize(text: string): string[] {
     .filter(w => w.length > 1 && !STOPWORDS.has(w));
 }
 
+/**
+ * Converts a dense bag-of-words embedding vector into a sorted sparse vector representation with precomputed L2 norm.
+ */
+function embedSparseFromDense(v: number[]): SparseVector {
+  let count = 0;
+  let sumSq = 0;
+  for (let i = 0; i < v.length; i++) {
+    if (v[i] !== 0) {
+      count++;
+      sumSq += v[i] * v[i];
+    }
+  }
+  const indices = new Int32Array(count);
+  const values = new Float32Array(count);
+  let pos = 0;
+  for (let i = 0; i < v.length; i++) {
+    if (v[i] !== 0) {
+      indices[pos] = i;
+      values[pos] = v[i];
+      pos++;
+    }
+  }
+  return { indices, values, norm: Math.sqrt(sumSq) };
+}
+
+/**
+ * Computes cosine similarity between two sorted sparse vectors in $O(\text{nonZeros}_a + \text{nonZeros}_b)$ time
+ * using a fast two-pointer intersection scan.
+ */
+function cosineSparse(a: SparseVector, b: SparseVector): number {
+  if (a.norm === 0 || b.norm === 0) return 0;
+  let dot = 0;
+  let i = 0;
+  let j = 0;
+  const aLen = a.indices.length;
+  const bLen = b.indices.length;
+  const aIdx = a.indices;
+  const bIdx = b.indices;
+  const aVal = a.values;
+  const bVal = b.values;
+
+  while (i < aLen && j < bLen) {
+    const diff = aIdx[i] - bIdx[j];
+    if (diff === 0) {
+      dot += aVal[i] * bVal[j];
+      i++;
+      j++;
+    } else if (diff < 0) {
 function cosineSparse(q: SparseVector, item: SparseVector): number {
   if (q.norm === 0 || item.norm === 0) return 0;
 /** Converts a dense vector into a sparse representation with non-zero indices and pre-calculated L2 norm. */
@@ -389,6 +470,8 @@ function cosineSparse(q: SparseVector, target: SparseVector): number {
       j++;
     }
   }
+  const denom = a.norm * b.norm;
+  return denom > 0 ? dot / denom : 0;
   return dot / (q.norm * item.norm);
 
   return dot / (q.norm * target.norm);
