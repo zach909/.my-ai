@@ -1127,6 +1127,7 @@ export class NeuronMesh {
   private biases: Float32Array = new Float32Array(0);
   private currActivations: Float32Array = new Float32Array(0);
   private nextActivations: Float32Array = new Float32Array(0);
+  private historyScratch: Float32Array = new Float32Array(0);
 
   constructor(config: Partial<MeshConfig> = {}) {
     const nodeCount = config.nodeCount ?? config.initialNodeCount ?? 10;
@@ -1228,15 +1229,13 @@ export class NeuronMesh {
     const N = nodes.length;
     const maxIters = this.config.maxIterations;
 
-    // Bolt's Optimization: Pre-allocate standard arrays of size maxIters
-    // to completely avoid memory allocations and garbage collection pressure in hot loops.
-    const histories: number[][] = [];
-    const nodeHistory = new Map<number, number[]>();
-    for (let i = 0; i < N; i++) {
-      const arr = new Array<number>(maxIters);
-      histories.push(arr);
-      nodeHistory.set(nodes[i].id, arr);
+    // BOLT OPTIMIZATION: Use a pre-allocated flat Float32Array to record node histories
+    // across propagation iterations, eliminating O(N) array allocations per propagate call.
+    const totalHistorySize = N * maxIters;
+    if (this.historyScratch.length < totalHistorySize) {
+      this.historyScratch = new Float32Array(totalHistorySize);
     }
+    const historyScratch = this.historyScratch;
 
     // Synchronize activations from source of truth and inputs
     for (let i = 0; i < N; i++) this.currActivations[i] = nodes[i].activation;
@@ -1300,7 +1299,7 @@ export class NeuronMesh {
             sum += curr[flatIndices[k]] * flatWeights[k];
           }
           next[i] = activate(sum);
-          histories[i][iteration] = next[i];
+          historyScratch[i * maxIters + iteration] = next[i];
         }
 
         residual = 0;
@@ -1309,7 +1308,6 @@ export class NeuronMesh {
           const diff = next[i] - curr[i];
           residual += diff < 0 ? -diff : diff;
           curr[i] = next[i];
-          nodes[i].activation = curr[i];
         }
         if (this.checkConvergence(residual)) { converged = true; break; }
       }
@@ -1353,7 +1351,7 @@ export class NeuronMesh {
             const comp = activate(sum);
             next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
           }
-          histories[i][iteration] = next[i];
+          historyScratch[i * maxIters + iteration] = next[i];
         }
 
         residual = 0;
@@ -1362,28 +1360,38 @@ export class NeuronMesh {
           const diff = next[i] - curr[i];
           residual += diff < 0 ? -diff : diff;
           curr[i] = next[i];
-          nodes[i].activation = curr[i];
         }
         if (this.checkConvergence(residual)) { converged = true; break; }
       }
     }
 
-    // Bolt's Optimization: Truncate pre-allocated arrays and bulk-append history to node's activationHistory
+    // BOLT OPTIMIZATION: Consolidate final states updating, history extraction, and nodeHistory map
+    // creation into a single unified loop, and only update node.activation once upon convergence.
     const finalIters = converged ? iteration + 1 : iteration;
-    for (let i = 0; i < N; i++) {
-      const history = histories[i];
-      history.length = finalIters;
-      nodes[i].activationHistory.push(...history);
-    }
-
     const finalStates = new Map<number, number>();
+    const nodeHistory = new Map<number, number[]>();
+
     for (let i = 0; i < N; i++) {
-      finalStates.set(nodes[i].id, nodes[i].activation);
+      const node = nodes[i];
+      node.activation = curr[i];
+
+      const nodeHist = new Array<number>(finalIters);
+      const scratchOffset = i * maxIters;
+      for (let step = 0; step < finalIters; step++) {
+        nodeHist[step] = historyScratch[scratchOffset + step];
+      }
+
+      node.activationHistory.push(...nodeHist);
+      nodeHistory.set(node.id, nodeHist);
+      finalStates.set(node.id, curr[i]);
     }
 
     return {
       finalStates,
-      iterations: finalIters, converged, residual, nodeHistory
+      iterations: finalIters,
+      converged,
+      residual,
+      nodeHistory
     };
   }
 
