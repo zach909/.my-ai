@@ -16,27 +16,42 @@ export const Route = createFileRoute('/app/knowledge')({
   component: KnowledgePage,
 })
 
+const SUGGESTIONS = [
+  { id: 'containment', text: 'containment', label: 'containment' },
+  { id: 'consensus', text: 'consensus', label: 'consensus' },
+  { id: 'coordination', text: 'coordination', label: 'coordination' },
+]
+
 function KnowledgePage() {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('Idle. Ready to query knowledge base.')
   const [loading, setLoading] = useState(false)
 
+  const executeSearch = (searchText: string) => {
+    setLoading(true)
+    setStatus(`Searching knowledge graphs for "${searchText}"...`)
+    setTimeout(() => {
+      setLoading(false)
+      const q = searchText.toLowerCase().trim()
+      if (q.includes('sandbox') || q.includes('containment') || q.includes('safety')) {
+        setStatus(`Found 1 semantic rule for "${searchText}": Containment isolation constraint is strict and fully verified.`)
+      } else if (q.includes('consensus') || q.includes('hive') || q.includes('coordination')) {
+        setStatus(`Found 1 semantic rule for "${searchText}": Multi-agent consensus protocol requires 2/3 trust majority.`)
+      } else {
+        setStatus(`Query completed. No semantic rules found for "${searchText}". Try searching "containment" or "consensus".`)
+      }
+    }, 400)
+  }
+
   const handleQuery = (e: React.FormEvent) => {
     e.preventDefault()
     if (!query.trim()) return
-    setLoading(true)
-    setStatus(`Searching knowledge graphs for "${query}"...`)
-    setTimeout(() => {
-      setLoading(false)
-      const q = query.toLowerCase().trim()
-      if (q.includes('sandbox') || q.includes('containment') || q.includes('safety')) {
-        setStatus(`Found 1 semantic rule for "${query}": Containment isolation constraint is strict and fully verified.`)
-      } else if (q.includes('consensus') || q.includes('hive') || q.includes('coordination')) {
-        setStatus(`Found 1 semantic rule for "${query}": Multi-agent consensus protocol requires 2/3 trust majority.`)
-      } else {
-        setStatus(`Query completed. No semantic rules found for "${query}". Try searching "containment" or "consensus".`)
-      }
-    }, 400)
+    executeSearch(query)
+  }
+
+  const handleSuggestionClick = (searchText: string) => {
+    setQuery(searchText)
+    executeSearch(searchText)
   }
 
   return (
@@ -91,6 +106,26 @@ function KnowledgePage() {
               </div>
             </div>
           </form>
+
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-muted-foreground italic">
+              Suggested queries:
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion.id}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => handleSuggestionClick(suggestion.text)}
+                  className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label={`Search suggestion: ${suggestion.label}`}
+                >
+                  +{suggestion.label}
+                </button>
+              ))}
+            </div>
+          </div>
 
           <div
             role="status"
