@@ -547,15 +547,20 @@ export class RLMTrainer {
     }
   }
 
+  /**
+   * Detects loops in action history.
+   * OPTIMIZATION: Replaces array slicing and temporary array allocations with
+   * direct element comparison over the existing bounded array to achieve zero-allocation loop detection.
+   */
   private detectLoop(action: number): number {
-    if (this.recentActions.length < this.config.loopDetectionWindow) return -1;
-    const lastActions = this.recentActions.slice(-this.config.loopDetectionWindow);
-    const half = Math.floor(lastActions.length / 2);
-    const firstHalf = lastActions.slice(0, half);
-    const secondHalf = lastActions.slice(half);
-    if (firstHalf.length !== secondHalf.length) return -1;
-    for (let i = 0; i < firstHalf.length; i++) {
-      if (firstHalf[i] !== secondHalf[i]) return -1;
+    const windowSize = this.config.loopDetectionWindow;
+    if (this.recentActions.length < windowSize || (windowSize & 1) !== 0) return -1;
+    const startIdx = this.recentActions.length - windowSize;
+    const half = windowSize >> 1;
+    for (let i = 0; i < half; i++) {
+      if (this.recentActions[startIdx + i] !== this.recentActions[startIdx + half + i]) {
+        return -1;
+      }
     }
     return action;
   }
