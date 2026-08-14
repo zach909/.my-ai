@@ -20,7 +20,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Send, Zap, Sparkles, EyeOff, History, Loader2 } from 'lucide-react'
+import { Send, Zap, Sparkles, EyeOff, History, Loader2, Copy, Check } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat')({
   head: () => ({
@@ -54,6 +54,31 @@ const INITIAL_SUGGESTIONS = [
   'Help me write and test code for this',
   'What are potential risks or edge cases?',
 ]
+
+function CopyButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy text: ', err)
+    }
+  }
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      onClick={handleCopy}
+      className="absolute top-1.5 right-1.5 h-7 w-7 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-all duration-150 active:scale-95"
+      aria-label={copied ? "Copied message to clipboard" : "Copy message to clipboard"}
+      title={copied ? "Copied!" : "Copy message"}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-500 animate-fade-in" /> : <Copy className="h-3.5 w-3.5 animate-fade-in" />}
+    </Button>
+  )
+}
 
 function ChatPage() {
   const [messages, setMessages] = useState<Message[]>([
@@ -314,13 +339,14 @@ function ChatPage() {
             className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
           >
             <div
-              className={`max-w-xl rounded-lg px-4 py-3 ${
+              className={`max-w-xl rounded-lg px-4 py-3 relative group ${
                 msg.role === 'user'
                   ? 'bg-primary text-primary-foreground'
-                  : 'bg-card border border-border text-foreground'
+                  : 'bg-card border border-border text-foreground pr-10'
               }`}
             >
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
+              {msg.role === 'assistant' && <CopyButton text={msg.content} />}
             </div>
 
             {/* Agent-suggested follow-up prompts */}
