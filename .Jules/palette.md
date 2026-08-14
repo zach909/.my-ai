@@ -1,3 +1,7 @@
+## 2026-09-21 - [Copy-to-Clipboard Micro-UX and Safe Keyboard Shortcuts in Conversational UIs]
+**Learning:** When implementing copy-to-clipboard actions on chat message bubbles, provide outstanding focus states (`focus-visible:opacity-100`), group-hover visibility (`opacity-0 group-hover:opacity-100`), tactile scaling (`active:scale-95`), and instant visual feedback (swapping Copy and Check icon states). To prevent global keyboard shortcuts (e.g. `Alt+I` for toggling Incognito mode) from colliding with text entry, always ignore shortcut keydowns when an `input` or `textarea` element is actively focused.
+**Action:** Include highly responsive, screen-reader accessible copy buttons on text outputs, and scope global keyboard listeners to ignore interactions when user text focus is active.
+
 ## 2026-08-12 - [Visual Sidebar Palettes & Dynamic Preset Click-to-Fill]
 **Learning:** When designing sidebar palettes, drag-and-drop tools, or visual node-building components, leaving interactive sections blank or static leaves users confused about how gestures operate. Providing quick, touch-friendly preset buttons that dynamically set the target input, accompanied by explicit step-by-step helper copy, dramatically lowers cognitive load, speeds up prototyping, and preserves accessibility when paired with standard focus visible indicators and ARIA roles.
 **Action:** On any visual tool or canvas builder sidebar, always pair text input fields with click-to-populate helper preset buttons and explicit textual guidelines on how to interact with the visual canvas.
