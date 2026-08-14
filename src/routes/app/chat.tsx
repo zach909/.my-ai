@@ -72,12 +72,6 @@ function CopyButton({ text }: { text: string }) {
     <Button
       variant="ghost"
       size="icon"
-      onClick={handleCopy}
-      className="absolute top-1.5 right-1.5 h-7 w-7 text-muted-foreground hover:text-foreground opacity-0 group-hover:opacity-100 focus-visible:opacity-100 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none transition-all duration-150 active:scale-95"
-      aria-label={copied ? "Copied message to clipboard" : "Copy message to clipboard"}
-      title={copied ? "Copied!" : "Copy message"}
-    >
-      {copied ? <Check className="h-3.5 w-3.5 text-emerald-500 animate-fade-in" /> : <Copy className="h-3.5 w-3.5 animate-fade-in" />}
       className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-150 active:scale-95 text-muted-foreground hover:text-foreground hover:bg-muted"
       onClick={handleCopy}
       aria-label={copied ? 'Copied' : 'Copy assistant message'}
@@ -363,7 +357,6 @@ function ChatPage() {
             className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
           >
             <div
-              className={`max-w-xl rounded-lg px-4 py-3 relative group ${
               className={`group relative max-w-xl rounded-lg px-4 py-3 ${
                 msg.role === 'user'
                   ? 'bg-primary text-primary-foreground'
