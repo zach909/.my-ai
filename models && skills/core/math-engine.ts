@@ -271,11 +271,18 @@ export function matrixMultiply(a: number[][], b: number[][]): number[][] {
   const bRows = b.length, bCols = b[0]?.length ?? 0;
   if (aCols !== bRows) throw new Error("matrix dimensions do not match for multiplication");
   const result: number[][] = Array.from({ length: aRows }, () => new Array(bCols).fill(0));
+  // Loop ordering i -> k -> j caches row references and ensures row-major sequential access into b and result,
+  // bypassing strided column access and optimizing L1 cache locality.
   for (let i = 0; i < aRows; i++) {
-    for (let j = 0; j < bCols; j++) {
-      let sum = 0;
-      for (let k = 0; k < aCols; k++) sum += a[i][k] * b[k][j];
-      result[i][j] = sum;
+    const aRow = a[i];
+    const resRow = result[i];
+    for (let k = 0; k < aCols; k++) {
+      const aik = aRow[k];
+      if (aik === 0) continue;
+      const bRow = b[k];
+      for (let j = 0; j < bCols; j++) {
+        resRow[j] += aik * bRow[j];
+      }
     }
   }
   return result;
