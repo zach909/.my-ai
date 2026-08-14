@@ -984,10 +984,13 @@ export class NeuronMesh {
         const N = nodes.length;
         const maxIters = this.config.maxIterations;
         // Bolt's Optimization: Pre-allocate a class-level flat history scratchpad to avoid O(N) array allocations inside propagation
+        // BOLT OPTIMIZATION: Use a pre-allocated flat Float32Array to record node histories
+        // across propagation iterations, eliminating O(N) array allocations per propagate call.
         const totalHistorySize = N * maxIters;
         if (this.historyScratch.length < totalHistorySize) {
             this.historyScratch = new Float32Array(totalHistorySize);
         }
+        const historyScratch = this.historyScratch;
         // Synchronize activations from source of truth and inputs
         for (let i = 0; i < N; i++)
             this.currActivations[i] = nodes[i].activation;
@@ -1100,6 +1103,15 @@ export class NeuronMesh {
                         converged = true;
                         break;
                     }
+                    next[i] = activate(sum);
+                    historyScratch[i * maxIters + iteration] = next[i];
+                }
+                residual = 0;
+                for (let i = 0; i < N; i++) {
+                    // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
+                    const diff = next[i] - curr[i];
+                    residual += diff < 0 ? -diff : diff;
+                    curr[i] = next[i];
                 }
             }
             else {
@@ -1183,6 +1195,7 @@ export class NeuronMesh {
                         next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
                     }
                     this.historyScratch[i * maxIters + iteration] = next[i];
+                    historyScratch[i * maxIters + iteration] = next[i];
                 }
                 residual = 0;
                 for (let i = 0; i < N; i++) {
@@ -1210,13 +1223,30 @@ export class NeuronMesh {
             nodes[i].activationHistory.push(...arr);
             nodes[i].activation = curr[i];
         }
+        // BOLT OPTIMIZATION: Consolidate final states updating, history extraction, and nodeHistory map
+        // creation into a single unified loop, and only update node.activation once upon convergence.
+        const finalIters = converged ? iteration + 1 : iteration;
         const finalStates = new Map();
+        const nodeHistory = new Map();
         for (let i = 0; i < N; i++) {
             finalStates.set(nodes[i].id, curr[i]);
+            const node = nodes[i];
+            node.activation = curr[i];
+            const nodeHist = new Array(finalIters);
+            const scratchOffset = i * maxIters;
+            for (let step = 0; step < finalIters; step++) {
+                nodeHist[step] = historyScratch[scratchOffset + step];
+            }
+            node.activationHistory.push(...nodeHist);
+            nodeHistory.set(node.id, nodeHist);
+            finalStates.set(node.id, curr[i]);
         }
         return {
             finalStates,
-            iterations: finalIters, converged, residual, nodeHistory
+            iterations: finalIters,
+            converged,
+            residual,
+            nodeHistory
         };
     }
     /**
