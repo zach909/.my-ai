@@ -56,6 +56,9 @@ function PlanningPage() {
 
   const handleCopyPlan = async () => {
     if (!plan) return
+    const textToCopy = plan.map((step, idx) => `${idx + 1}. ${step}`).join('\n')
+    try {
+      await navigator.clipboard.writeText(textToCopy)
     try {
       const formattedPlan = plan.map((step, idx) => `${idx + 1}. ${step}`).join('\n')
     const formattedPlan = plan.map((step, i) => `${i + 1}. ${step}`).join('\n')
@@ -190,6 +193,12 @@ function PlanningPage() {
                         variant="ghost"
                         size="sm"
                         onClick={handleCopyPlan}
+                        className="h-7 gap-1.5 text-xs text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+                        aria-label={copied ? 'Plan copied to clipboard' : 'Copy decomposed plan to clipboard'}
+                        title={copied ? 'Copied' : 'Copy plan to clipboard'}
+                      >
+                        {copied ? <Check className="h-3.5 w-3.5 text-emerald-500" /> : <Copy className="h-3.5 w-3.5" />}
+                        <span>{copied ? 'Copied' : 'Copy plan'}</span>
                         className="h-7 px-2 text-[11px] gap-1.5 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
                         aria-label={copied ? 'Plan copied to clipboard' : 'Copy plan to clipboard'}
                         title={copied ? 'Plan copied!' : 'Copy plan to clipboard'}
