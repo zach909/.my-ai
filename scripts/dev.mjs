@@ -7,21 +7,22 @@
 // once, runs it in the background on port 7861, then runs Vite in the
 // foreground, and tears the backend down when Vite exits (Ctrl+C or crash).
 
-import { execFileSync, spawn } from 'node:child_process';
+import { spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
-import { printUpdateCheck } from './update-check.mjs';
+import { spawnAwait } from './spawn-utils.mjs';
 
 const ROOT = process.cwd();
 const BACKEND_PORT = 7861;
 
-// Same motivation as the "always rebuild" comment below: a stale
-// checkout behind origin is exactly what caused real, reported breakage
-// this session (another automated agent's bad merge broke `main`, and
-// the user's local checkout stayed broken until they pulled). Read-only,
-// never blocks startup on failure.
-console.log('[dev] checking for updates...');
-printUpdateCheck(ROOT);
-
+// Startup-time optimization: the update check (a network call, up to a
+// 15s git-fetch timeout -- see update-check.mjs) and the backend build
+// (a pure CPU-bound tsc compile) don't depend on each other at all; they
+// only ever ran one after the other because this script called them as
+// sequential blocking steps. Running them concurrently removes that
+// dead time from every single `npm run dev`, not just a slow-network
+// edge case. (The update check itself is still read-only and never
+// blocks startup on failure -- see its own doc comment.)
+//
 // Always rebuild, not just when dist/interface/main.js is missing. It used
 // to only build once "if missing" -- fine the very first time, but on every
 // later `npm run dev` it silently ran whatever was already in dist/, even
@@ -30,8 +31,15 @@ printUpdateCheck(ROOT);
 // stale/broken build (nothing to fall back to but ECONNREFUSED forever),
 // and a full rebuild only takes a few seconds, always rebuilding is the
 // only way to guarantee dev never silently runs old backend code.
-console.log('[dev] building backend...');
-execFileSync('node', ['scripts/build-backend.mjs'], { cwd: ROOT, stdio: 'inherit' });
+console.log('[dev] checking for updates and building backend...');
+const [, buildCode] = await Promise.all([
+  spawnAwait('node', ['scripts/update-check.mjs'], { cwd: ROOT }),
+  spawnAwait('node', ['scripts/build-backend.mjs'], { cwd: ROOT }),
+]);
+if (buildCode !== 0) {
+  console.error(`[dev] backend build failed (exit ${buildCode})`);
+  process.exit(buildCode);
+}
 
 console.log(`[dev] starting backend on port ${BACKEND_PORT}...`);
 const backend = spawn('node', ['dist/interface/main.js', 'web', String(BACKEND_PORT)], {
