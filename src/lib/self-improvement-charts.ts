@@ -10,7 +10,7 @@
  */
 
 export interface ScoreboardEntry {
-  history?: Array<{ at: string; score?: number; ok?: boolean; runnerOk?: boolean }>;
+  history?: Array<{ at: string; score?: number; ok?: boolean; runnerOk?: boolean; examScore?: number; examPassed?: boolean }>;
 }
 
 export interface DrillEntry {
@@ -68,6 +68,40 @@ export function buildPassRateSeries(skillDrills: Record<string, DrillEntry>): Pa
   return attempts.map((attempt, i) => {
     if (attempt.improved) improvedCount++;
     return { at: attempt.at, passRate: improvedCount / (i + 1), attempts: i + 1 };
+  });
+}
+
+export interface ExamPassRatePoint {
+  at: string;
+  passRate: number;
+  avgScore: number;
+  attempts: number;
+}
+
+/**
+ * "A graph about how well the agent is doing and how well the agent is
+ * improving itself" tied directly to the randomized capability exam
+ * (scripts/capability-exam.mjs): the cumulative pass rate AND the
+ * cumulative average exam score across every self-improve.mjs attempt
+ * from every target (not just the exam network's own row -- every
+ * candidate for every target has to clear this same gate before it's
+ * rewarded, see self-improve.mjs's runCapabilityExamGate()). Only real
+ * attempts that actually ran the exam (examScore present) count --
+ * older history entries recorded before this gate existed have no
+ * examScore and are excluded rather than silently treated as failures.
+ */
+export function buildExamPassRateSeries(selfImprovement: Record<string, ScoreboardEntry>): ExamPassRatePoint[] {
+  const attempts = Object.values(selfImprovement)
+    .flatMap((entry) => entry.history ?? [])
+    .filter((a) => a.ok === true && typeof a.examScore === 'number')
+    .sort((a, b) => a.at.localeCompare(b.at));
+
+  let passedCount = 0;
+  let scoreTotal = 0;
+  return attempts.map((attempt, i) => {
+    if (attempt.examPassed) passedCount++;
+    scoreTotal += attempt.examScore ?? 0;
+    return { at: attempt.at, passRate: passedCount / (i + 1), avgScore: scoreTotal / (i + 1), attempts: i + 1 };
   });
 }
 

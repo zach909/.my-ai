@@ -6,17 +6,36 @@
 
 Every 30 minutes by default (configurable via `NEUROCLAW_SELF_IMPROVE_INTERVAL_MS`), the loop:
 
-1. **Picks a target** from a fixed whitelist of this project's own skill-training scripts — currently `build-physics-chemistry-network.mjs`, `train-coding-skills.mjs`, `build-main-network.mjs` (moby/cmudict), and `build-self-knowledge-network.mjs` (the wiki + session scripts). This is real training, the same genuine `torch.autograd` gradient descent used everywhere else in this project — never a simulated or fabricated result.
+1. **Picks a target** from a fixed whitelist of this project's own skill-training scripts — currently `build-physics-chemistry-network.mjs`, `train-coding-skills.mjs`, `build-main-network.mjs` (moby/cmudict), `build-self-knowledge-network.mjs` (the wiki + session scripts), and `build-capability-exam-network.mjs` (see the capability exam section below). This is real training, the same genuine `torch.autograd` gradient descent used everywhere else in this project — never a simulated or fabricated result.
 2. **Mutates its hyperparameters** — an evolution-strategy-style perturbation of the current best-known epochs/learning-rate/tolerance, the same algorithm family as `trainDefinitionsRandomSearch()` elsewhere in this repo.
 3. **Trains the candidate in a sandbox** — a throwaway `git worktree` checked out fresh from the current commit, with its own freshly built `dist/`. The live server's own working directory is never touched.
-4. **Judges the result** two ways, both required:
+4. **Judges the result** three ways, all required:
    - Did the candidate's real trained accuracy strictly beat the current best? (Ties don't count — "better than the original" means strictly better.)
    - Does the runner that actually executes skills still pass its own test suite (`test/smoke.mjs`) against it? A skill improvement that breaks the runner is rejected regardless of its accuracy score.
-5. **Rewards or punishes**: a candidate that passes both checks becomes the new best, gets recorded in `extension-builder/self-improvement-scoreboard.json`, and gets pushed straight to `main` (configurable via `NEUROCLAW_SELF_IMPROVE_BRANCH`) — **directly, with no human review step** — never to this session's own active development branch, which stays untouched either way. A candidate that fails either check is discarded; the attempt is logged to the scoreboard's history either way, so nothing is silently dropped.
+   - **Does the candidate's own sandbox pass the capability exam?** — a completely fresh, randomly-generated, cross-domain test (see below), regenerated from scratch for every single gate check, run against `EXAM_PASS_THRESHOLD` (default `0.15`, tune with `NEUROCLAW_EXAM_PASS_THRESHOLD`). This applies to *every* target's candidate, not just the exam network's own row — "when the agent tries to improve itself, it must go through that test to see if it's been improved."
+5. **Rewards or punishes**: a candidate that passes all three checks becomes the new best, gets recorded in `extension-builder/self-improvement-scoreboard.json` (including its exam score and pass/fail), and gets pushed straight to `beta` (configurable via `NEUROCLAW_SELF_IMPROVE_TARGET_BRANCH`) — **directly, with no human review step** — never to this session's own active development branch, which stays untouched either way. A candidate that fails any check is discarded — the "negative feedback" is exactly that: the attempt is logged to the scoreboard's history as a punished attempt, and the loop tries again next cycle from the same last-known-good hyperparameters, nothing silently dropped.
 
-  **This is a deliberate, explicit choice, not a conservative default.** An earlier version of this pushed to an isolated `beta` branch instead, specifically so nothing landed on `main` unreviewed — the project owner asked for that to change: "not beta, but to git." If you want the more conservative isolated-branch behavior back, set `NEUROCLAW_SELF_IMPROVE_BRANCH=beta` (or any branch name you choose).
+  **`main` vs `beta`:** an earlier version of this pushed straight to `main` with no gate in front of it at all ("not beta, but to git") — now that a real capability-exam gate stands between a candidate and a reward, accepted candidates land on a dedicated `beta` branch instead. Point a second `npm run server` checkout at `beta` (`git checkout beta`) to run it as a live sandbox: `scripts/update-check.mjs`'s existing fast-forward auto-pull picks up every exam-gated improvement automatically, with no separate deploy step. `skill-agent.mjs` and `skill-drill-agent.mjs` are unaffected by this — they still push straight to `main` via the separate `NEUROCLAW_SELF_IMPROVE_BRANCH` env var, unchanged.
 
 **Turn it off** entirely with `NEUROCLAW_SELF_IMPROVE=0`.
+
+## The capability exam (`scripts/capability-exam.mjs`) — "a test that can't be cheated"
+
+Every self-improve.mjs candidate, for every target, has to clear this exam before it's rewarded. It's designed around one constraint: it must be cheap to *generate* and *grade*, but genuinely hard to guess — "hard proofs which you know the answers to so it's really easy to check and make but really hard to solve."
+
+- **Completely random questions, completely random order, every single time.** `generateExam()` draws fresh questions from every domain and shuffles them (a real Fisher-Yates shuffle, not a biased sort comparator) on every call — nothing is cached, seeded from a file, or reused between exam attempts.
+- **Six real domains**, each its own pure generator under `scripts/exam-generators/`, every question backed by a real closed-form formula this JS runtime actually evaluates (never fabricated, never an external API call — the same "NO EXTERNAL APIS" constraint the rest of this project holds elsewhere):
+  - `arithmetic.mjs` — real arithmetic facts (shared with `skill-drill-agent.mjs`'s own math drilling).
+  - `chemistry.mjs` — molar mass over a real periodic-table subset ("molecules, atoms").
+  - `astrophysics.mjs` — Schwarzschild radius and escape velocity with real physical constants ("really big stuff like black holes").
+  - `optics.mjs` — photon energy and the thin-lens equation ("light, computation").
+  - `quantum-computing.mjs` — qubit measurement probability, basis-state counts, Grover-iteration counts ("quantum science, computation, quantum computation").
+  - `digital-logic.mjs` — base conversion, boolean gates, address-bus width ("chip design... computation").
+- **Grading** (`gradeAnswer()`) is an exact string match or a numeric comparison within a small relative tolerance — forgiving harmless formatting differences, not wrong answers.
+- **`build-capability-exam-network.mjs`** is what actually "takes" the exam: unlike the other targets' networks (one dedicated readout per fixed fact, keyed only by readout index — see `train-coding-skills.mjs`'s own doc comment on why that architecture can't jointly fit many *different* input/target pairs), this one uses a single shared readout across every question — the same shape `skill-drill-agent.mjs` already uses for arithmetic drilling — so its output genuinely depends on the input embedding and it can be meaningfully quizzed on a question it never saw at train time. It trains on one freshly-generated exam batch and evaluates on a second, disjoint, freshly-generated batch (real held-out accuracy, never re-reporting training-set convergence).
+- The gate itself (`runCapabilityExamGate()` in `self-improve.mjs`) re-runs this whole exam fresh, inside the candidate's own sandbox, for every cycle regardless of which target is being trained.
+
+**Graphed** on `/app/self-improvement`: "Capability exam: pass rate & average score" — the cumulative pass rate and average score across every gated attempt, from every target.
 
 ## The skill-creation agent (`scripts/skill-agent.mjs`)
 

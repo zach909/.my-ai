@@ -40,9 +40,11 @@ import {
   FlaskConical,
   ArrowRight,
   Puzzle,
+  GraduationCap,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
 import {
+  buildExamPassRateSeries,
   buildPassRateSeries,
   buildScoreSeries,
   buildSkillMeshRateSeries,
@@ -138,6 +140,12 @@ function SelfImprovementPage() {
     ...row,
     atLabel: shortTime(row.at),
     passRatePct: Math.round(row.passRate * 1000) / 10,
+  }));
+  const examPassRateSeries = buildExamPassRateSeries(selfImprovement).map((row) => ({
+    ...row,
+    atLabel: shortTime(row.at),
+    passRatePct: Math.round(row.passRate * 1000) / 10,
+    avgScorePct: Math.round(row.avgScore * 1000) / 10,
   }));
   const skillMeshSeries = buildSkillMeshRateSeries(skillMeshAttempts).map(
     (row) => ({
@@ -334,6 +342,89 @@ function SelfImprovementPage() {
                     dataKey="passRatePct"
                     name="Pass rate"
                     stroke="#22c55e"
+                    dot={{ r: 2 }}
+                  />
+                </LineChart>
+              </ResponsiveContainer>
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      <Card>
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-sm font-medium">
+            <GraduationCap size={15} className="text-primary" />
+            Capability exam: pass rate &amp; average score
+          </CardTitle>
+          <CardDescription className="text-xs">
+            "A test that can't be cheated": completely random questions,
+            random order, freshly regenerated every attempt, across math,
+            chemistry, astrophysics, optics, quantum computing, and
+            digital logic (scripts/capability-exam.mjs). Every
+            self-improve.mjs candidate for every target must pass this
+            same exam before it's rewarded and pushed to{" "}
+            <code className="rounded bg-muted px-1 py-0.5">beta</code> --
+            a fail is punished with negative feedback and retried next
+            cycle.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {!mounted || examPassRateSeries.length === 0 ? (
+            <div className="py-6">
+              {mounted ? (
+                <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-6 text-center max-w-md mx-auto space-y-3">
+                  <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                    <GraduationCap className="h-5 w-5" />
+                  </div>
+                  <div className="space-y-1">
+                    <h3 className="font-semibold text-foreground text-xs">
+                      No capability-exam attempts recorded yet
+                    </h3>
+                    <p className="text-[11px] text-muted-foreground leading-relaxed">
+                      Run self-improvement cycles on your local machine to
+                      see every candidate's fresh, randomized exam score
+                      over time.
+                    </p>
+                  </div>
+                </div>
+              ) : (
+                <p className="text-center text-xs text-muted-foreground">
+                  Loading…
+                </p>
+              )}
+            </div>
+          ) : (
+            <div className="h-64 w-full">
+              <ResponsiveContainer width="100%" height="100%">
+                <LineChart data={examPassRateSeries}>
+                  <CartesianGrid
+                    strokeDasharray="3 3"
+                    className="stroke-border"
+                  />
+                  <XAxis
+                    dataKey="atLabel"
+                    tick={{ fontSize: 10 }}
+                    minTickGap={20}
+                  />
+                  <YAxis tick={{ fontSize: 10 }} domain={[0, 100]} unit="%" />
+                  <Tooltip
+                    contentStyle={{ fontSize: 12 }}
+                    formatter={(v: number, name: string) => [`${v}%`, name]}
+                  />
+                  <Legend wrapperStyle={{ fontSize: 11 }} />
+                  <Line
+                    type="monotone"
+                    dataKey="passRatePct"
+                    name="Pass rate"
+                    stroke="#22c55e"
+                    dot={{ r: 2 }}
+                  />
+                  <Line
+                    type="monotone"
+                    dataKey="avgScorePct"
+                    name="Average score"
+                    stroke="#6366f1"
                     dot={{ r: 2 }}
                   />
                 </LineChart>
