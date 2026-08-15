@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare, Loader2 } from 'lucide-react'
+import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare, Loader2, Copy, Check } from 'lucide-react'
 
 export const Route = createFileRoute('/app/planning')({
   head: () => ({
@@ -23,11 +23,13 @@ function PlanningPage() {
   const [selectedGoal, setSelectedGoal] = useState<string | null>(null)
   const [planning, setPlanning] = useState(false)
   const [plan, setPlan] = useState<string[] | null>(null)
+  const [copied, setCopied] = useState(false)
 
   const handleDecompose = (id: string) => {
     setSelectedGoal(id)
     setPlanning(true)
     setPlan(null)
+    setCopied(false)
     setTimeout(() => {
       setPlanning(false)
       setPlan([
@@ -36,6 +38,18 @@ function PlanningPage() {
         'Establish recursive compliance check loops',
       ])
     }, 600)
+  }
+
+  const handleCopyPlan = async () => {
+    if (!plan) return
+    try {
+      const formattedPlan = plan.map((step, idx) => `${idx + 1}. ${step}`).join('\n')
+      await navigator.clipboard.writeText(formattedPlan)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy plan:', err)
+    }
   }
 
   return (
@@ -119,9 +133,31 @@ function PlanningPage() {
               ) : (
                 plan && (
                   <div className="space-y-3" role="log" aria-live="polite">
-                    <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
-                      <CheckCircle2 className="h-4 w-4" /> Goal decomposed successfully:
-                    </p>
+                    <div className="flex items-center justify-between">
+                      <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4" /> Goal decomposed successfully:
+                      </p>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        onClick={handleCopyPlan}
+                        className="h-7 px-2 text-[11px] gap-1.5 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+                        aria-label={copied ? 'Plan copied to clipboard' : 'Copy plan to clipboard'}
+                        title={copied ? 'Plan copied!' : 'Copy plan to clipboard'}
+                      >
+                        {copied ? (
+                          <>
+                            <Check className="h-3.5 w-3.5 text-emerald-500" />
+                            <span className="text-emerald-500">Copied</span>
+                          </>
+                        ) : (
+                          <>
+                            <Copy className="h-3.5 w-3.5" />
+                            <span>Copy plan</span>
+                          </>
+                        )}
+                      </Button>
+                    </div>
                     <ol className="space-y-2 pl-1">
                       {plan.map((step, i) => (
                         <li key={i} className="flex gap-2 text-xs text-muted-foreground leading-relaxed">
