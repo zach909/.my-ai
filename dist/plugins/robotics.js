@@ -99,6 +99,34 @@ export class RoboticsPlugin extends BasePlugin {
                 }
             }
         }
+        else if (connectionType === 'tcp') {
+            const parts = endpoint.split(':');
+            if (parts.length !== 2) {
+                throw new Error('Security Error: Invalid TCP endpoint format. Expected host:port.');
+            }
+            const port = Number(parts[1]);
+            if (isNaN(port) || !Number.isInteger(port) || port <= 0 || port > 65535) {
+                throw new Error('Security Error: Invalid TCP port number.');
+            }
+        }
+        else if (connectionType === 'ros') {
+            let parsedUrl;
+            try {
+                parsedUrl = new URL(endpoint);
+            }
+            catch {
+                throw new Error('Security Error: Invalid ROS master URI or endpoint scheme.');
+            }
+            if (!['http:', 'https:', 'rosrpc:'].includes(parsedUrl.protocol)) {
+                throw new Error('Security Error: Invalid ROS master URI or endpoint scheme.');
+            }
+            if (parsedUrl.port) {
+                const port = Number(parsedUrl.port);
+                if (isNaN(port) || !Number.isInteger(port) || port <= 0 || port > 65535) {
+                    throw new Error('Security Error: Invalid ROS endpoint port.');
+                }
+            }
+        }
         try {
             if (connectionType === 'serial') {
                 // Would use serialport in real implementation

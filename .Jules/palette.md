@@ -1,3 +1,7 @@
+## 2026-09-22 - [Accessible "Copy Plan" Action with Stateful Icons and Focus Rings]
+**Learning:** Adding a "Copy plan" action button to generated task decomposition outputs (such as on the Planning page) dramatically increases utility for users wishing to export or reference generated steps. Providing tactile active scaling (`active:scale-95`), clear focus rings (`focus-visible:ring-2 focus-visible:ring-primary`), visual icon state transitions (`Copy` swapping to `Check`), and dynamic ARIA descriptions (`aria-label` and `title` attributes updating from "Copy decomposed plan..." to "Plan copied...") ensures a highly delightful, accessible experience for both keyboard and screen reader users.
+**Action:** When displaying generated plans, code snippets, or structured step lists, integrate an accessible Copy button with dynamic ARIA descriptors and instant visual feedback.
+
 ## 2026-08-14 - [Accessible Hover/Focus-Visible Copy to Clipboard with Active Feedback]
 **Learning:** Adding a "Copy to Clipboard" button on assistant or system messages drastically improves SPA user utility. For optimal accessibility, the button must be visible not only on hover (`group-hover:opacity-100`) but also immediately upon keyboard focus (`focus-visible:opacity-100`), accompanied by dynamic, state-synchronized screen reader labels (`aria-label` transitioning from "Copy message..." to "Copied...") and a distinct title attribute. Pairing this with a 2-second visual reset timeout using an animated check icon delivers a highly tactile, delightful, and inclusive user experience.
 **Action:** When displaying readable logs, generated code blocks, or assistant answers, integrate a hidden-by-default, focus-visible Copy to Clipboard button with dynamic ARIA descriptors and instant tactile feedback.
@@ -106,7 +110,7 @@
 
 ## 2026-08-20 - [Desktop Icon Accessibility & Visual Tactility]
 **Learning:** Desktop icons and launcher buttons lack inherent screen reader accessibility if they use complex layouts. They must carry explicit descriptive `aria-label` attributes to ensure high screen reader visibility, and should be paired with tactile click transitions (`active:scale-95 transition-all duration-150`) to enrich responsiveness and visual feedback. Error toast popups also benefit heavily from a `role="alert"` wrapper for immediate announcement.
-**Action:** Always pair `aria-label` with tactile click scale animations on app launchers or visual triggers, and wrap dynamic toast errors in a `role="alert"` region.
+**Action:** Always pair `aria-label` with tactile click scale animations on app launchers or visual triggers, and wrap notification banners in a `role="alert"` region.
 
 ## 2026-08-20 - [Tactile Feedback & Accessibility on Desktop Launcher Panels]
 **Learning:** App launcher panels and custom modal triggers (such as desktop grids) need descriptive `aria-label` properties, and their status alerts must be wrapped in `role="alert"` regions to immediately inform assistive technology. To ensure high-quality micro-interactions, pair them with tactile visual click animations (`active:scale-95` or `active:scale-90` with fast 150ms transitions).
@@ -165,3 +169,7 @@
 ## 2026-09-21 - [Interactive Subsystem Topology Badges with Removal Triggers & Live ARIA Announcements]
 **Learning:** In multi-item topology or architecture builders (such as `src/routes/app/architecture.tsx`), rendering integrated items as static badges without individual delete triggers forces users to resort to destructive "Clear All" actions to modify their setup. Equipping each badge with an explicit remove button (`X` icon) that features tactile feedback (`active:scale-95`), clear focus rings, and dynamic `aria-label`s—and pairing it with an ARIA live region (`role="status" aria-live="polite"`)—delivers fine-grained control, preserves context, and ensures screen reader users receive immediate confirmation of topology updates.
 **Action:** When building interactive item lists or graph topology badges, provide individual remove controls with explicit screen-reader labels and status live region announcements.
+
+## 2026-09-21 - [Decomposed Plan Copy-to-Clipboard & Dynamic ARIA Descriptors]
+**Learning:** Adding a "Copy plan" trigger on generated task decomposition hierarchies on the Planning page (`src/routes/app/planning.tsx`) empowers users to instantly extract structured steps for execution or sharing. For maximum accessibility and tactile satisfaction, the button should feature dynamic text and icon transitions (`Copy` / `Check`), a 2-second timeout reset, focus-visible rings, dynamic `aria-label` state updates ("Copy decomposed plan" -> "Plan copied to clipboard"), and tactile press feedback (`active:scale-95`).
+**Action:** Whenever generating ordered steps or decomposed plans, include an accessible Copy button with dynamic ARIA descriptors and visual state transitions.
