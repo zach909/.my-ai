@@ -54,10 +54,25 @@
  * session's own scoping decision, "hack the box" means experimenting on
  * its own code in its own sandbox, nothing else.
  *
+ * "when the agent [improves] itself, I wanted it to go through that test
+ * to see if it's been improved -- if it passes it'll get saved to Beta
+ * and if it fails, it will try again with negative feedback": every
+ * candidate, for every target (not just the exam network's own row),
+ * must ALSO clear a fresh, randomized, cross-domain capability exam
+ * (scripts/capability-exam.mjs) before it's rewarded -- see
+ * runCapabilityExamGate() below. A candidate that fails the exam is
+ * punished exactly like any other failed candidate: discarded, logged,
+ * retried next cycle with nothing but "not good enough yet" (the
+ * scoreboard entry) carried forward -- the "negative feedback."
+ * Accepted candidates still push straight to a real branch, just not
+ * `main` directly anymore now that a gate stands in front of them --
+ * see TARGET_BRANCH below.
+ *
  * Env vars:
- *   NEUROCLAW_SELF_IMPROVE=0             disable the loop entirely
- *   NEUROCLAW_SELF_IMPROVE_INTERVAL_MS   ms between cycles (default 30 min)
- *   NEUROCLAW_SELF_IMPROVE_BRANCH        branch a reward is pushed to (default 'main')
+ *   NEUROCLAW_SELF_IMPROVE=0                 disable the loop entirely
+ *   NEUROCLAW_SELF_IMPROVE_INTERVAL_MS       ms between cycles (default 30 min)
+ *   NEUROCLAW_SELF_IMPROVE_TARGET_BRANCH     branch an exam-gated reward is pushed to (default 'beta')
+ *   NEUROCLAW_EXAM_PASS_THRESHOLD            minimum capability-exam score required to be rewarded (default 0.15)
  *
  * Usage: node scripts/self-improve.mjs           (runs the loop forever)
  *        node scripts/self-improve.mjs --once     (runs exactly one cycle, for testing)
@@ -74,11 +89,16 @@ import { withSandboxWorktree, runnerPassesSmoke, publishFilesToBranch } from './
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 export const ROOT = path.resolve(__dirname, '..')
 const SCOREBOARD_PATH = path.join(ROOT, 'extension-builder', 'self-improvement-scoreboard.json')
-// "Not beta, but to git" -- rewarded improvements are pushed straight to
-// the repository's real branch, not an isolated side branch nobody
-// merges. Still overridable (NEUROCLAW_SELF_IMPROVE_BRANCH) for anyone
-// who wants the more conservative isolated-branch behavior back.
-export const TARGET_BRANCH = process.env.NEUROCLAW_SELF_IMPROVE_BRANCH || 'main'
+// This pipeline's own dedicated branch var -- deliberately NOT the same
+// NEUROCLAW_SELF_IMPROVE_BRANCH env var skill-agent.mjs/skill-drill-agent.mjs
+// read (those two stay on 'main', unchanged): once a capability-exam gate
+// stands in front of a reward, an exam-gated candidate lands on `beta`
+// instead, and a `beta`-tracking sandbox checkout (`npm run server` on
+// that branch) picks it up automatically via update-check.mjs's existing
+// fast-forward auto-pull.
+export const TARGET_BRANCH = process.env.NEUROCLAW_SELF_IMPROVE_TARGET_BRANCH || 'beta'
+export const CAPABILITY_EXAM_TARGET = 'extension-builder/build-capability-exam-network.mjs'
+export const EXAM_PASS_THRESHOLD = Number(process.env.NEUROCLAW_EXAM_PASS_THRESHOLD) || 0.15
 
 function log(...args) {
   console.log('[self-improve]', ...args)
@@ -173,13 +193,40 @@ function runTargetInSandbox(cwd, targetScript, hyperparams) {
   }
 }
 
+/** Runs a completely fresh, randomly-generated, cross-domain capability
+ *  exam against the candidate's OWN sandbox worktree -- literally
+ *  `node extension-builder/build-capability-exam-network.mjs`, the same
+ *  script this loop trains as an ordinary target. Every call generates
+ *  brand-new questions (never cached, never reused between cycles), so
+ *  this really is "changing every time you take the test," applied at
+ *  gate-time for every target, not just the exam network's own row.
+ *  Never throws -- an exam that can't run at all is treated as a failed
+ *  gate (punished), not a crashed cycle. */
+function runCapabilityExamGate(worktree) {
+  const res = spawnSync('node', ['extension-builder/build-capability-exam-network.mjs'], {
+    cwd: worktree, encoding: 'utf8', timeout: 5 * 60 * 1000,
+  })
+  if (res.error || res.status !== 0) {
+    return { ok: false, examScore: 0, error: res.error?.message ?? (res.stderr || '').slice(-2000) }
+  }
+  const lines = (res.stdout || '').split('\n')
+  const jsonStart = lines.lastIndexOf('{')
+  if (jsonStart === -1) return { ok: false, examScore: 0, error: 'no exam summary in output' }
+  try {
+    const summary = JSON.parse(lines.slice(jsonStart).join('\n'))
+    return { ok: summary.pytorchOk === true, examScore: summary.examScore ?? 0 }
+  } catch {
+    return { ok: false, examScore: 0, error: 'could not parse exam summary' }
+  }
+}
+
 // Sandbox worktree + runner gate + branch-publish plumbing now lives in
 // git-worktree-utils.mjs, shared with scripts/skill-agent.mjs -- both
 // agents publish to the repo the exact same tested way instead of each
 // maintaining their own (and risking drift) copy of the git-worktree
 // symlink workaround and the fully-qualified-ref push fix.
 
-/** Pushes the improved scoreboard straight to TARGET_BRANCH (main by
+/** Pushes the improved scoreboard straight to TARGET_BRANCH (beta by
  *  default) via publishFilesToBranch(). Degrades to a logged, non-fatal
  *  failure if git push isn't possible in this environment -- the
  *  improvement stays recorded locally and the loop tries again next
@@ -213,14 +260,21 @@ export async function runOneCycle({ scoreboardPath = SCOREBOARD_PATH, rand = Mat
 
   log(`cycle: target=${key} baseline_score=${entry.bestScore.toFixed(4)} candidate=${JSON.stringify(candidate)}`)
 
-  // Train AND run the runner gate inside the SAME sandbox worktree, before
-  // it gets torn down -- the smoke suite needs the worktree's own dist/
-  // and test/ files still in place.
+  // Train, run the runner gate, AND sit the candidate's own sandbox down
+  // for a fresh capability exam -- all inside the SAME sandbox worktree,
+  // before it gets torn down (the smoke suite and the exam script both
+  // need the worktree's own dist/ and test/ files still in place). When
+  // this cycle's target IS the exam network itself, its own train/eval
+  // already produced a genuine held-out exam score -- reuse that instead
+  // of paying for a second, redundant exam run.
   const result = await withSandboxWorktree((worktree) => {
     const trained = runTargetInSandbox(worktree, key, candidate)
     if (!trained.ok) return trained
     const gate = runnerPassesSmoke(worktree)
-    return { ...trained, gate }
+    const examResult = key === CAPABILITY_EXAM_TARGET
+      ? { ok: true, examScore: trained.summary.examScore ?? 0 }
+      : runCapabilityExamGate(worktree)
+    return { ...trained, gate, examResult }
   })
   const attempt = { at: new Date().toISOString(), candidate, ok: result.ok }
 
@@ -233,28 +287,39 @@ export async function runOneCycle({ scoreboardPath = SCOREBOARD_PATH, rand = Mat
     return { target: key, rewarded: false, reason: 'sandbox failure', ...attempt }
   }
 
-  // The judge: a candidate only earns a reward if BOTH hold -- its
+  // The judge: a candidate only earns a reward if ALL THREE hold -- its
   // trained accuracy is a real, strict improvement over the current best
-  // (decideReward), AND the runner that actually executes skills still
-  // passes its own test suite against it (runnerPassesSmoke). Either one
-  // failing is a punishment, no matter how good the other looks.
+  // (decideReward); the runner that actually executes skills still
+  // passes its own test suite against it (runnerPassesSmoke); AND the
+  // candidate's own sandbox passes a completely fresh, randomly-generated
+  // capability exam (runCapabilityExamGate) at or above
+  // EXAM_PASS_THRESHOLD. Any one failing is a punishment -- "if it fails,
+  // it will try again with negative feedback" -- no matter how good the
+  // other two look.
   const score = target.metric(result.summary)
   attempt.score = score
   attempt.runnerOk = result.gate.ok
   if (!result.gate.ok) attempt.runnerFailureReason = result.gate.reason
+  attempt.examScore = result.examResult.examScore
+  attempt.examPassed = result.examResult.ok && result.examResult.examScore >= EXAM_PASS_THRESHOLD
+  if (!attempt.examPassed && result.examResult.error) attempt.examFailureReason = result.examResult.error
   const improved = decideReward(score, entry.bestScore)
-  const rewarded = improved && result.gate.ok
+  const rewarded = improved && result.gate.ok && attempt.examPassed
 
   if (!rewarded) {
-    const reason = !result.gate.ok ? `runner regression: ${result.gate.reason}` : 'not an improvement'
-    log(`candidate scored ${score.toFixed(4)} (baseline ${entry.bestScore.toFixed(4)}) -- punished (discarded): ${reason}`)
+    const reason = !attempt.examPassed
+      ? `capability exam failed: score ${attempt.examScore.toFixed(4)} below threshold ${EXAM_PASS_THRESHOLD}`
+      : !result.gate.ok
+        ? `runner regression: ${result.gate.reason}`
+        : 'not an improvement'
+    log(`candidate scored ${score.toFixed(4)} (baseline ${entry.bestScore.toFixed(4)}), exam ${attempt.examScore.toFixed(4)} -- punished (discarded): ${reason}`)
     entry.history = [...entry.history.slice(-19), attempt]
     board.targets[key] = entry
     saveScoreboard(board, scoreboardPath)
     return { target: key, rewarded: false, reason, ...attempt }
   }
 
-  log(`candidate scored ${score.toFixed(4)} -- beats current best ${entry.bestScore.toFixed(4)} and the runner still passes (${result.gate.passed} smoke tests), rewarded`)
+  log(`candidate scored ${score.toFixed(4)} -- beats current best ${entry.bestScore.toFixed(4)}, the runner still passes (${result.gate.passed} smoke tests), and the exam passed (${attempt.examScore.toFixed(4)} >= ${EXAM_PASS_THRESHOLD}) -- rewarded`)
   entry.bestHyperparams = candidate
   entry.bestScore = score
   entry.history = [...entry.history.slice(-19), attempt]

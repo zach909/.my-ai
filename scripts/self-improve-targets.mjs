@@ -20,6 +20,16 @@ export const TARGETS = [
     metric: (s) => (s.curriculumCount > 0 ? s.trainedCount / s.curriculumCount : 0),
   },
   {
+    // "A test that can't be cheated... I don't want it just to be math":
+    // scripts/capability-exam.mjs, trained/evaluated on two disjoint,
+    // freshly-generated randomized exams every single attempt (never
+    // reused). Its score is BOTH an ordinary self-improve target (this
+    // entry) AND the required exam gate every OTHER target's candidate
+    // must also clear -- see runCapabilityExamGate() in self-improve.mjs.
+    script: 'extension-builder/build-capability-exam-network.mjs',
+    metric: (s) => s.examScore ?? 0,
+  },
+  {
     script: 'extension-builder/train-coding-skills.mjs',
     metric: (s) => s.finalAccuracy ?? 0,
   },

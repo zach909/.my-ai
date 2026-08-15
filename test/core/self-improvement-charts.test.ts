@@ -1,4 +1,4 @@
-import { buildScoreSeries, buildPassRateSeries, buildSkillMeshRateSeries } from '../../src/lib/self-improvement-charts';
+import { buildScoreSeries, buildPassRateSeries, buildExamPassRateSeries, buildSkillMeshRateSeries } from '../../src/lib/self-improvement-charts';
 
 describe('buildScoreSeries()', () => {
   it('emits one row per scored attempt, with only that attempt\'s own target populated', () => {
@@ -63,6 +63,52 @@ describe('buildPassRateSeries()', () => {
 
   it('handles no drilled skills at all -- a fresh install', () => {
     expect(buildPassRateSeries({})).toEqual([]);
+  });
+});
+
+describe('buildExamPassRateSeries() -- "how well the agent is doing/improving," tied to the exam', () => {
+  it('computes a real cumulative pass rate AND average score across every target, sorted by time', () => {
+    const rows = buildExamPassRateSeries({
+      'target-a': { history: [{ at: '2026-01-01T00:00:00Z', ok: true, examScore: 0.2, examPassed: true }] },
+      'target-b': {
+        history: [
+          { at: '2026-01-02T00:00:00Z', ok: true, examScore: 0.1, examPassed: false },
+          { at: '2026-01-03T00:00:00Z', ok: true, examScore: 0.4, examPassed: true },
+        ],
+      },
+    });
+    expect(rows.map((r) => r.passRate)).toEqual([1, 0.5, 2 / 3]);
+    expect(rows.map((r) => Math.round(r.avgScore * 100) / 100)).toEqual([0.2, 0.15, 0.23]);
+    expect(rows.map((r) => r.attempts)).toEqual([1, 2, 3]);
+  });
+
+  it('excludes attempts recorded before the exam gate existed (no examScore) instead of counting them as failures', () => {
+    const rows = buildExamPassRateSeries({
+      'target-a': {
+        history: [
+          { at: '2026-01-01T00:00:00Z', ok: true, score: 0.5 }, // pre-exam-gate history entry
+          { at: '2026-01-02T00:00:00Z', ok: true, examScore: 0.3, examPassed: true },
+        ],
+      },
+    });
+    expect(rows.length).toBe(1);
+    expect(rows[0].passRate).toBe(1);
+  });
+
+  it('excludes attempts that failed outright (ok: false)', () => {
+    const rows = buildExamPassRateSeries({
+      'target-a': {
+        history: [
+          { at: '2026-01-01T00:00:00Z', ok: false, examScore: 0 },
+          { at: '2026-01-02T00:00:00Z', ok: true, examScore: 0.5, examPassed: true },
+        ],
+      },
+    });
+    expect(rows.length).toBe(1);
+  });
+
+  it('handles no attempts at all -- a fresh install', () => {
+    expect(buildExamPassRateSeries({})).toEqual([]);
   });
 });
 
