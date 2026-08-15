@@ -44,6 +44,7 @@ function PlanningPage() {
     setSelectedGoal(id)
     setPlanning(true)
     setPlan(null)
+    setCopied(false)
     setTimeout(() => {
       setPlanning(false)
       setPlan([
@@ -52,6 +53,18 @@ function PlanningPage() {
         'Establish recursive compliance check loops',
       ])
     }, 600)
+  }
+
+  const handleCopyPlan = async () => {
+    if (!plan) return
+    try {
+      const formattedPlan = plan.map((step, idx) => `${idx + 1}. ${step}`).join('\n')
+      await navigator.clipboard.writeText(formattedPlan)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy plan:', err)
+    }
   }
 
   return (
@@ -144,6 +157,9 @@ function PlanningPage() {
                         variant="ghost"
                         size="sm"
                         onClick={handleCopyPlan}
+                        className="h-7 px-2 text-[11px] gap-1.5 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+                        aria-label={copied ? 'Plan copied to clipboard' : 'Copy plan to clipboard'}
+                        title={copied ? 'Plan copied!' : 'Copy plan to clipboard'}
                         className="h-7 px-2 text-[11px] gap-1.5 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary"
                         aria-label={copied ? 'Plan copied to clipboard' : 'Copy decomposed plan'}
                         title={copied ? 'Copied' : 'Copy decomposed plan'}
@@ -151,6 +167,7 @@ function PlanningPage() {
                         {copied ? (
                           <>
                             <Check className="h-3.5 w-3.5 text-emerald-500" />
+                            <span className="text-emerald-500">Copied</span>
                             <span>Copied</span>
                           </>
                         ) : (
