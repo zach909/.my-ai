@@ -110,7 +110,7 @@
 
 ## 2026-08-20 - [Desktop Icon Accessibility & Visual Tactility]
 **Learning:** Desktop icons and launcher buttons lack inherent screen reader accessibility if they use complex layouts. They must carry explicit descriptive `aria-label` attributes to ensure high screen reader visibility, and should be paired with tactile click transitions (`active:scale-95 transition-all duration-150`) to enrich responsiveness and visual feedback. Error toast popups also benefit heavily from a `role="alert"` wrapper for immediate announcement.
-**Action:** Always pair `aria-label` with tactile click scale animations on app launchers or visual triggers, and wrap dynamic toast errors in a `role="alert"` region.
+**Action:** Always pair `aria-label` with tactile click scale animations on app launchers or visual triggers, and wrap notification banners in a `role="alert"` region.
 
 ## 2026-08-20 - [Tactile Feedback & Accessibility on Desktop Launcher Panels]
 **Learning:** App launcher panels and custom modal triggers (such as desktop grids) need descriptive `aria-label` properties, and their status alerts must be wrapped in `role="alert"` regions to immediately inform assistive technology. To ensure high-quality micro-interactions, pair them with tactile visual click animations (`active:scale-95` or `active:scale-90` with fast 150ms transitions).
@@ -169,3 +169,7 @@
 ## 2026-09-21 - [Interactive Subsystem Topology Badges with Removal Triggers & Live ARIA Announcements]
 **Learning:** In multi-item topology or architecture builders (such as `src/routes/app/architecture.tsx`), rendering integrated items as static badges without individual delete triggers forces users to resort to destructive "Clear All" actions to modify their setup. Equipping each badge with an explicit remove button (`X` icon) that features tactile feedback (`active:scale-95`), clear focus rings, and dynamic `aria-label`s—and pairing it with an ARIA live region (`role="status" aria-live="polite"`)—delivers fine-grained control, preserves context, and ensures screen reader users receive immediate confirmation of topology updates.
 **Action:** When building interactive item lists or graph topology badges, provide individual remove controls with explicit screen-reader labels and status live region announcements.
+
+## 2026-09-21 - [Decomposed Plan Copy-to-Clipboard & Dynamic ARIA Descriptors]
+**Learning:** Adding a "Copy plan" trigger on generated task decomposition hierarchies on the Planning page (`src/routes/app/planning.tsx`) empowers users to instantly extract structured steps for execution or sharing. For maximum accessibility and tactile satisfaction, the button should feature dynamic text and icon transitions (`Copy` / `Check`), a 2-second timeout reset, focus-visible rings, dynamic `aria-label` state updates ("Copy decomposed plan" -> "Plan copied to clipboard"), and tactile press feedback (`active:scale-95`).
+**Action:** Whenever generating ordered steps or decomposed plans, include an accessible Copy button with dynamic ARIA descriptors and visual state transitions.
