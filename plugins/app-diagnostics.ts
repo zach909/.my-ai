@@ -1,6 +1,6 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { cpus, totalmem, freemem, loadavg, uptime } from "node:os";
 
 export interface DiagnosticReport {
@@ -39,7 +39,7 @@ export class AppDiagnosticsPlugin extends BasePlugin {
 
   async checkDisk(): Promise<Record<string, { total: number; used: number; free: number; percent: number }>> {
     try {
-      const out = execSync("df -B1 / /home 2>/dev/null", { encoding: "utf8", timeout: 5000 });
+      const out = execFileSync("df", ["-B1", "/", "/home"], { encoding: "utf8", timeout: 5000 });
       const lines = out.trim().split("\n").slice(1);
       const result: Record<string, any> = {};
       for (const line of lines) {
@@ -71,8 +71,9 @@ export class AppDiagnosticsPlugin extends BasePlugin {
 
   private getProcessCount(): number {
     try {
-      const out = execSync("ps -e --no-headers 2>/dev/null | wc -l", { encoding: "utf8", timeout: 3000 });
-      return parseInt(out.trim()) || 0;
+      const out = execFileSync("ps", ["-e", "--no-headers"], { encoding: "utf8", timeout: 3000 });
+      const lines = out.trim().split("\n").filter((l) => l.trim().length > 0);
+      return lines.length;
     } catch { return 0; }
   }
 }
