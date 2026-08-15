@@ -2513,8 +2513,10 @@ export class HyperDimensionalEngine {
   private preSettleEnergiesBuffer: Float32Array;
   private defaultDrivenIds: Set<number>;
   private selfModelHScratch: Float32Array;
+  private selfModelOutScratch: Float32Array;
   private selfModelErrorScratch: Float32Array;
   private selfModelDHScratch: Float32Array;
+  private outputVectorScratch: Float32Array;
   private entropyLookup: Float64Array;
 
   private stateViews: Float32Array[];
@@ -2581,8 +2583,10 @@ export class HyperDimensionalEngine {
     this.selfModelA = new Float32Array(dims * rank);
     this.selfModelB = new Float32Array(rank * dims);
     this.selfModelHScratch = new Float32Array(rank);
+    this.selfModelOutScratch = new Float32Array(dims);
     this.selfModelErrorScratch = new Float32Array(dims);
     this.selfModelDHScratch = new Float32Array(rank);
+    this.outputVectorScratch = new Float32Array(dims);
     const scale = Math.sqrt(1 / Math.max(1, dims));
     for (let i = 0; i < this.selfModelA.length; i++) this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
     for (let i = 0; i < this.selfModelB.length; i++) this.selfModelB[i] = (Math.random() * 2 - 1) * scale;
@@ -3630,7 +3634,7 @@ export class HyperDimensionalEngine {
   }
 
   /** Rank-r compressed self-model: predict(x) = B^T (A^T x). */
-  private selfModelPredict(vec: number[]): number[] {
+  private selfModelPredict(vec: number[]): Float32Array {
     const dims = this.config.dimensions;
     const rank = this.config.selfModelRank;
     const h = this.selfModelHScratch;
@@ -3650,7 +3654,9 @@ export class HyperDimensionalEngine {
         h[r] += v * this.selfModelA[offset + r];
       }
     }
-    const out = new Array<number>(dims).fill(0);
+    // BOLT OPTIMIZATION: Reuse pre-allocated selfModelOutScratch Float32Array to achieve zero-allocation predictions.
+    const out = this.selfModelOutScratch;
+    out.fill(0);
     for (let r = 0; r < rank; r++) {
       const hr = h[r];
       const bOffset = r * dims;
@@ -3669,7 +3675,7 @@ export class HyperDimensionalEngine {
     return out;
   }
 
-  private selfModelTrainStep(prevVec: number[], predicted: number[], actual: number[]): void {
+  private selfModelTrainStep(prevVec: number[], predicted: ArrayLike<number>, actual: number[]): void {
     const dims = this.config.dimensions;
     const rank = this.config.selfModelRank;
     const lr = 0.01;
@@ -3738,7 +3744,7 @@ export class HyperDimensionalEngine {
     }
   }
 
-  private meanAbsDiff(a: number[], b: number[]): number {
+  private meanAbsDiff(a: ArrayLike<number>, b: ArrayLike<number>): number {
     const n = Math.min(a.length, b.length);
     if (n === 0) return 0;
     let sum = 0;
@@ -3806,7 +3812,7 @@ export class HyperDimensionalEngine {
 
   private computeOutputVector(activeStates: HyperNeuron[]): number[] {
     const dims = this.config.dimensions;
-    const output = new Array(dims).fill(0);
+    const output = new Array<number>(dims).fill(0);
     const len = activeStates.length;
     if (len === 0) return output;
 
