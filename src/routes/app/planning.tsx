@@ -19,6 +19,35 @@ const GOALS = [
   { id: 'g2', title: 'Multi-agent coordination protocol', desc: 'Synthesize consensus guidelines.' },
 ]
 
+function CopyPlanButton({ plan }: { plan: string[] }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      const textToCopy = plan.map((step, idx) => `${idx + 1}. ${step}`).join('\n')
+      await navigator.clipboard.writeText(textToCopy)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy plan: ', err)
+    }
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="sm"
+      className="h-7 px-2 text-xs gap-1.5 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+      onClick={handleCopy}
+      aria-label={copied ? 'Plan copied to clipboard' : 'Copy decomposed plan'}
+      title={copied ? 'Plan copied to clipboard' : 'Copy plan to clipboard'}
+    >
+      {copied ? <Check className="h-3.5 w-3.5 text-emerald-500 shrink-0" /> : <Copy className="h-3.5 w-3.5 shrink-0" />}
+      <span>{copied ? 'Copied' : 'Copy plan'}</span>
+    </Button>
+  )
+}
+
 function PlanningPage() {
   const [selectedGoal, setSelectedGoal] = useState<string | null>(null)
   const [planning, setPlanning] = useState(false)
@@ -149,6 +178,10 @@ function PlanningPage() {
                 plan && (
                   <div className="space-y-3" role="log" aria-live="polite">
                     <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4 shrink-0" /> Goal decomposed successfully:
+                      </p>
+                      <CopyPlanButton plan={plan} />
                     <div className="flex items-center justify-between">
                       <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
                         <CheckCircle2 className="h-4 w-4" /> Goal decomposed successfully:
