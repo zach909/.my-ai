@@ -14,6 +14,34 @@ export const Route = createFileRoute('/app/planning')({
   component: PlanningPage,
 })
 
+function CopyPlanButton({ planText }: { planText: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(planText)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy plan: ', err)
+    }
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-7 gap-1.5 text-xs active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+      onClick={handleCopy}
+      aria-label={copied ? 'Copied plan to clipboard' : 'Copy decomposed plan'}
+      title={copied ? 'Copied plan to clipboard' : 'Copy decomposed plan'}
+    >
+      {copied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+      <span>{copied ? 'Copied' : 'Copy plan'}</span>
+    </Button>
+  )
+}
+
 const GOALS = [
   { id: 'g1', title: 'Verify containment constraints', desc: 'Assess sandbox network isolation.' },
   { id: 'g2', title: 'Multi-agent coordination protocol', desc: 'Synthesize consensus guidelines.' },
@@ -182,6 +210,9 @@ function PlanningPage() {
                   <div className="space-y-3" role="log" aria-live="polite">
                     <div className="flex items-center justify-between gap-2">
                       <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4" /> Goal decomposed successfully:
+                      </p>
+                      <CopyPlanButton planText={plan.map((step, i) => `${i + 1}. ${step}`).join('\n')} />
                         <CheckCircle2 className="h-4 w-4 shrink-0" /> Goal decomposed successfully:
                       </p>
                       <CopyPlanButton plan={plan} />
