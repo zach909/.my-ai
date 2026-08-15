@@ -111,6 +111,10 @@ Scoped deliberately to the server's own Node processes, never the host machine: 
 
 Printed once when `npm run server` starts: current memory pressure and the processes actually consuming it, read-only. **This is explicitly not a virus scanner** — it has no malware signature database and doesn't claim to detect anything malicious, only surfaces "this process is using an unusual amount of memory, might be worth a look." If something looks wrong, run a real antivirus/anti-malware tool. Nothing here is transmitted anywhere or modifies anything.
 
+## Faster startup: the update check and the backend build run concurrently
+
+Both `npm run dev` and `npm run server` used to run the update check (a network call — `git fetch`, up to a 15-second timeout, longer still if it auto-pulls) and the backend build (a pure CPU-bound `tsc` compile) one after the other, purely because the startup scripts called them as sequential steps — neither one actually depends on the other's result. `scripts/spawn-utils.mjs`'s `spawnAwait()` lets both scripts run them as two real concurrent child processes instead (`Promise.all(...)`), so the network call's latency is hidden behind the build instead of adding to it. The win scales with how slow or flaky your network is — on a fast connection it saves a second or two; on a slow one, it can save the whole multi-second fetch. Nothing about *what* either step does changed, only that they no longer block each other.
+
 ## See Also
 
 - [[Privacy-Policy]] — exactly what data this leaves your machine, and when

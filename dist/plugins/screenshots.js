@@ -6,6 +6,14 @@ import { tmpdir } from "node:os";
 export class ScreenshotsPlugin extends BasePlugin {
     constructor(definition) { super(definition); }
     async capture(filename) {
+        if (filename !== undefined) {
+            if (typeof filename !== "string") {
+                throw new Error("Security Error: filename must be a string.");
+            }
+            if (filename.startsWith("-")) {
+                throw new Error("Security Error: Potential argument injection detected in filename.");
+            }
+        }
         const tmpDir = mkdtempSync(join(tmpdir(), "neuroclaw-ss-"));
         // basename() so a caller-supplied filename can't escape tmpDir via `../`;
         // execFileSync (no shell) below means it also can't inject shell commands.
@@ -58,6 +66,14 @@ export class ScreenshotsPlugin extends BasePlugin {
         return { data: "", width: 0, height: 0, format: "none", timestamp: Date.now() };
     }
     async captureArea(x, y, w, h) {
+        if (typeof x !== "number" || !Number.isFinite(x) || x < 0 ||
+            typeof y !== "number" || !Number.isFinite(y) || y < 0) {
+            throw new Error("Security Error: x and y coordinates must be non-negative finite numbers.");
+        }
+        if (typeof w !== "number" || !Number.isFinite(w) || w <= 0 || !Number.isInteger(w) || w > 10000 ||
+            typeof h !== "number" || !Number.isFinite(h) || h <= 0 || !Number.isInteger(h) || h > 10000) {
+            throw new Error("Security Error: w and h must be positive integers up to 10000.");
+        }
         const tmpDir = mkdtempSync(join(tmpdir(), "neuroclaw-ss-"));
         const outPath = join(tmpDir, `area-${Date.now()}.png`);
         try {
