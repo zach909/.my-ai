@@ -143,6 +143,27 @@ class RoboticsPlugin(Plugin):
 
                 if common != dev_dir or target == dev_dir:
                     raise ValueError("Security Error: Path traversal or unauthorized serial path detected.")
+        elif connection_type == "tcp":
+            parts = endpoint.split(":")
+            if len(parts) != 2:
+                raise ValueError("Security Error: Invalid TCP endpoint format. Expected host:port.")
+            try:
+                port = int(parts[1])
+                if not (1 <= port <= 65535):
+                    raise ValueError("Security Error: Invalid TCP port number.")
+            except (ValueError, TypeError):
+                raise ValueError("Security Error: Invalid TCP port number.")
+        elif connection_type == "ros":
+            from urllib.parse import urlparse
+            try:
+                parsed = urlparse(endpoint)
+            except Exception:
+                raise ValueError("Security Error: Invalid ROS master URI or endpoint scheme.")
+            if parsed.scheme not in ["http", "https", "rosrpc"]:
+                raise ValueError("Security Error: Invalid ROS master URI or endpoint scheme.")
+            if parsed.port is not None:
+                if not (1 <= parsed.port <= 65535):
+                    raise ValueError("Security Error: Invalid ROS endpoint port.")
 
         # Attempt connection based on type
         try:

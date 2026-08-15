@@ -1,5 +1,5 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { cpus, totalmem, freemem, loadavg, uptime } from "node:os";
 export class AppDiagnosticsPlugin extends BasePlugin {
     constructor(definition) { super(definition); }
@@ -28,7 +28,7 @@ export class AppDiagnosticsPlugin extends BasePlugin {
     }
     async checkDisk() {
         try {
-            const out = execSync("df -B1 / /home 2>/dev/null", { encoding: "utf8", timeout: 5000 });
+            const out = execFileSync("df", ["-B1", "/", "/home"], { encoding: "utf8", timeout: 5000 });
             const lines = out.trim().split("\n").slice(1);
             const result = {};
             for (const line of lines) {
@@ -61,8 +61,9 @@ export class AppDiagnosticsPlugin extends BasePlugin {
     }
     getProcessCount() {
         try {
-            const out = execSync("ps -e --no-headers 2>/dev/null | wc -l", { encoding: "utf8", timeout: 3000 });
-            return parseInt(out.trim()) || 0;
+            const out = execFileSync("ps", ["-e", "--no-headers"], { encoding: "utf8", timeout: 3000 });
+            const lines = out.trim().split("\n").filter((l) => l.trim().length > 0);
+            return lines.length;
         }
         catch {
             return 0;

@@ -44,6 +44,56 @@ describe('RoboticsPlugin security restrictions', () => {
     );
   });
 
+  it('blocks invalid TCP endpoints', async () => {
+    await expect(plugin.connect('tcp', '--flag=1')).rejects.toThrow(
+      /Security Error: Potential argument injection detected in endpoint/
+    );
+
+    await expect(plugin.connect('tcp', 'invalid_endpoint_no_port')).rejects.toThrow(
+      /Security Error: Invalid TCP endpoint format/
+    );
+
+    await expect(plugin.connect('tcp', '127.0.0.1:70000')).rejects.toThrow(
+      /Security Error: Invalid TCP port number/
+    );
+
+    await expect(plugin.connect('tcp', '127.0.0.1:0')).rejects.toThrow(
+      /Security Error: Invalid TCP port number/
+    );
+
+    await expect(plugin.connect('tcp', '127.0.0.1:abc')).rejects.toThrow(
+      /Security Error: Invalid TCP port number/
+    );
+  });
+
+  it('allows valid TCP endpoints', async () => {
+    const res = await plugin.connect('tcp', '127.0.0.1:9090');
+    expect(res.success).toBe(true);
+  });
+
+  it('blocks invalid ROS endpoint URIs', async () => {
+    await expect(plugin.connect('ros', '--ros-args')).rejects.toThrow(
+      /Security Error: Potential argument injection detected in endpoint/
+    );
+
+    await expect(plugin.connect('ros', 'file:///etc/passwd')).rejects.toThrow(
+      /Security Error: Invalid ROS master URI or endpoint scheme/
+    );
+
+    await expect(plugin.connect('ros', 'javascript:alert(1)')).rejects.toThrow(
+      /Security Error: Invalid ROS master URI or endpoint scheme/
+    );
+
+    await expect(plugin.connect('ros', 'http://127.0.0.1:70000')).rejects.toThrow(
+      /Security Error: Invalid ROS master URI or endpoint scheme/
+    );
+  });
+
+  it('allows valid ROS endpoints', async () => {
+    const res = await plugin.connect('ros', 'http://localhost:11311');
+    expect(res.success).toBe(true);
+  });
+
   it('blocks non-numeric joint values in moveJoint', async () => {
     await plugin.connect('simulation');
 
