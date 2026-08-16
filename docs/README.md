@@ -11,6 +11,9 @@ This directory contains all project documentation organized by category.
 
 ## Root Level Documents
 
+### Start Here
+- AI_NEURAL_NETWORK_BASICS.md - Plain-language primer on neurons, weights/biases, learning, elastic value, all-to-all connectivity, hyperdimensional thinking, and the Extension Builder, with pointers to the code and deep specs for each
+
 ### Architecture
 - ARCHITECTURE.md - Main system architecture (411KB comprehensive document)
 - SYSTEM_ARCHITECTURE.md - Detailed system architecture
