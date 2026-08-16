@@ -7,6 +7,7 @@ Welcome to the comprehensive wiki for NeuroClaw. NeuroClaw is the agent; it's po
 ### Core Documentation
 - [[Home|Home]] - Main wiki page
 - [AI & Neural Network Basics](../docs/AI_NEURAL_NETWORK_BASICS.md) - Plain-language primer on neurons, learning, elastic value, all-to-all connectivity, hyperdimensional thinking, and the Extension Builder
+- [Skill Acquisition Loop](../docs/SKILL_ACQUISITION_LOOP.md) - How an agent learns something new: check the wiki, fall back to web research, run experiments, then push the wiki page, skill source + binary, and the improvement algorithm
 - [[Architecture Overview|Architecture]] - System architecture and design
 - [[Quick Start Guide|Quick-Start]] - Getting started with installation and usage
 - [[NeuroLang Reference|NeuroLang]] - The custom neuron definition language
