@@ -49,6 +49,33 @@ const SUGGESTIONS = [
   { id: 'coordination', text: 'coordination', label: 'coordination' },
 ]
 
+function CopyResultButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy text: ', err)
+    }
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="absolute right-2 top-2 h-7 w-7 opacity-0 group-hover:opacity-100 focus-visible:opacity-100 transition-opacity duration-150 active:scale-95 text-muted-foreground hover:text-foreground hover:bg-muted/80 cursor-pointer"
+      onClick={handleCopy}
+      aria-label={copied ? 'Copied search status to clipboard' : 'Copy search status'}
+      title={copied ? 'Copied search status to clipboard' : 'Copy search status'}
+    >
+      {copied ? <Check size={14} className="text-emerald-500" /> : <Copy size={14} />}
+    </Button>
+  )
+}
+
 function KnowledgePage() {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('Idle. Ready to query knowledge base.')
@@ -163,6 +190,15 @@ function KnowledgePage() {
             {!loading && status !== 'Idle. Ready to query knowledge base.' && (
               <CopyResultButton text={status} />
             )}
+          <div className="group relative">
+            <div
+              role="status"
+              aria-live="polite"
+              className="rounded-lg border border-border bg-muted/30 p-4 pr-10 min-h-[64px] flex items-center justify-center text-center text-xs text-muted-foreground transition-all duration-200"
+            >
+              {status}
+            </div>
+            {!loading && status && <CopyResultButton text={status} />}
           </div>
 
           <div className="flex flex-wrap gap-3 pt-2">
