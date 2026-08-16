@@ -135,4 +135,5 @@ basis of the MoE routing between skills; see [[MoE]].
 | Hyperdimensional thinking | `HYPERDIMENSIONAL_THINKING.md`, [[Hyperdimensional]] | `asi_core/hyperdim_thinking.py` |
 | Extension Builder / skills | `EXTENSION_BUILDER_SPEC.md`, [[Builder]], [[Extensions]] | `extension-builder/` |
 | Mixture of Experts routing | [[MoE]] | `asi_core/neural_mesh.py` |
+| How the agent learns something new end-to-end | `SKILL_ACQUISITION_LOOP.md` | `docs/NET_SEARCH_SPEC.md`, `docs/SHARED_WIKI_SYSTEM.md` |
 | Full architecture | `ARCHITECTURE.md` | — |
