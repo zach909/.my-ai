@@ -75,6 +75,14 @@ export class FileSystemPlugin extends BasePlugin {
   }
 
   private resolvePath(relativePath: string): string {
+    if (typeof relativePath !== "string") {
+      throw new Error("Security Error: Path must be a string");
+    }
+    if (relativePath.includes("\0")) {
+      throw new Error(
+        `Security Error: Null byte injection detected in path: ${relativePath}`
+      );
+    }
     const absoluteRoot = path.resolve(this.rootDir);
     const fullPath = path.resolve(absoluteRoot, relativePath);
 
