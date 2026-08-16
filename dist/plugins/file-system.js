@@ -56,6 +56,12 @@ export class FileSystemPlugin extends BasePlugin {
         fs.mkdirSync(fullPath, { recursive });
     }
     resolvePath(relativePath) {
+        if (typeof relativePath !== "string") {
+            throw new Error("Security Error: Path must be a string");
+        }
+        if (relativePath.includes("\0")) {
+            throw new Error(`Security Error: Null byte injection detected in path: ${relativePath}`);
+        }
         const absoluteRoot = path.resolve(this.rootDir);
         const fullPath = path.resolve(absoluteRoot, relativePath);
         const relative = path.relative(absoluteRoot, fullPath);
