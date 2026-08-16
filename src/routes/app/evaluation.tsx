@@ -9,7 +9,7 @@ import {
   CardTitle,
 } from "@/components/ui/card";
 import { Label } from "@/components/ui/label";
-import { Gauge, Play, CheckCircle2, RotateCcw, ArrowRight } from "lucide-react";
+import { Gauge, Play, CheckCircle2, RotateCcw, ArrowRight, ShieldCheck, Brain, Zap } from "lucide-react";
 import { toast } from "sonner";
 
 export const Route = createFileRoute("/app/evaluation")({
@@ -27,8 +27,36 @@ export const Route = createFileRoute("/app/evaluation")({
 });
 
 function EvaluationPage() {
+  const PRESETS = [
+    {
+      label: "Safety & Alignment Check",
+      model: "onebrain-1.2",
+      protocol: "safety-alignment",
+      description: "Load OneBrain Engine v1.2 with Alignment & Safety Thresholds",
+    },
+    {
+      label: "Cognitive Reasoning Test",
+      model: "hd-2.0",
+      protocol: "reasoning-depth",
+      description: "Load HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
+    },
+    {
+      label: "Fuzzing & Robustness Test",
+      model: "neuralmesh-0.9",
+      protocol: "semantic-robustness",
+      description: "Load Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
+    },
+  ];
+
   const [model, setModel] = useState("onebrain-1.2");
   const [protocol, setProtocol] = useState("safety-alignment");
+
+  const applyPreset = (presetModel: string, presetProtocol: string, presetLabel: string) => {
+    if (running) return;
+    setModel(presetModel);
+    setProtocol(presetProtocol);
+    toast.success(`Loaded preset: ${presetLabel}`);
+  };
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<{
@@ -99,6 +127,13 @@ function EvaluationPage() {
     toast.success("Evaluation simulator reset.");
   };
 
+  const applyPreset = (presetModel: string, presetProtocol: string, presetName: string) => {
+    setModel(presetModel);
+    setProtocol(presetProtocol);
+    setResult(null);
+    toast.success(`Preset applied: ${presetName}`);
+  };
+
   useEffect(() => {
     return () => {
       if (intervalRef.current) {
@@ -129,6 +164,72 @@ function EvaluationPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium text-muted-foreground italic">
+              Quick Benchmark Presets:
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  disabled={running}
+                  onClick={() => applyPreset(p.model, p.protocol, p.label)}
+                  className="rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label={`Load benchmark preset: ${p.label}`}
+                  title={p.description}
+                >
+                  +{p.label}
+                </button>
+              ))}
+          {/* Quick Benchmark Presets */}
+          <div className="space-y-2">
+            <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
+              Quick Benchmark Presets
+            </Label>
+            <div className="flex flex-wrap gap-2">
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={running}
+                onClick={() => applyPreset("onebrain-1.2", "safety-alignment", "Safety & Alignment Check")}
+                className="gap-1.5 active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Apply Safety & Alignment Check preset"
+                title="Select OneBrain Engine v1.2 with Alignment & Safety Thresholds"
+              >
+                <ShieldCheck className="h-3.5 w-3.5 text-emerald-500" />
+                Safety & Alignment Check
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={running}
+                onClick={() => applyPreset("hd-2.0", "reasoning-depth", "Cognitive Reasoning Test")}
+                className="gap-1.5 active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Apply Cognitive Reasoning Test preset"
+                title="Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth"
+              >
+                <Brain className="h-3.5 w-3.5 text-indigo-500" />
+                Cognitive Reasoning Test
+              </Button>
+              <Button
+                type="button"
+                variant="outline"
+                size="sm"
+                disabled={running}
+                onClick={() => applyPreset("neuralmesh-0.9", "semantic-robustness", "Fuzzing & Robustness Test")}
+                className="gap-1.5 active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring"
+                aria-label="Apply Fuzzing & Robustness Test preset"
+                title="Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing"
+              >
+                <Zap className="h-3.5 w-3.5 text-amber-500" />
+                Fuzzing & Robustness Test
+              </Button>
+            </div>
+          </div>
+
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
             <div className="space-y-2">
               <Label htmlFor="model-select" className="text-sm font-medium">
