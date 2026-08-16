@@ -63,6 +63,57 @@ export class MultiInputPlugin extends BasePlugin {
     return true;
   }
 
+  private _validateCoordinate(val: unknown, name: string): number {
+    if (typeof val !== "number" || !Number.isFinite(val) || val < 0 || val > 10000) {
+      throw new Error(`Security Error: ${name} must be a finite number between 0 and 10000.`);
+    }
+    return val;
+  }
+
+  private _validateButton(btn: unknown): number {
+    if (btn === undefined || btn === null) return 1;
+    if (typeof btn !== "number" || !Number.isInteger(btn) || ![1, 2, 3].includes(btn)) {
+      throw new Error("Security Error: Button must be 1, 2, or 3.");
+    }
+    return btn;
+  }
+
+  private _validateDeviceId(deviceId: unknown): string {
+    if (typeof deviceId !== "string") {
+      throw new Error("Security Error: deviceId must be a string.");
+    }
+    const trimmed = deviceId.trim();
+    if (!trimmed) {
+      throw new Error("Security Error: deviceId cannot be empty.");
+    }
+    if (trimmed.length > 100) {
+      throw new Error("Security Error: deviceId exceeds maximum length limit of 100 characters.");
+    }
+    const safeRegex = /^[a-zA-Z0-9_.-]+$/;
+    if (!safeRegex.test(trimmed)) {
+      throw new Error("Security Error: deviceId contains invalid characters.");
+    }
+    return trimmed;
+  }
+
+  private _validateWorkspace(workspace: unknown): string {
+    if (typeof workspace !== "string" && typeof workspace !== "number") {
+      throw new Error("Security Error: workspace must be a string or number.");
+    }
+    const str = String(workspace).trim();
+    if (!str) {
+      throw new Error("Security Error: workspace cannot be empty.");
+    }
+    if (str.length > 50) {
+      throw new Error("Security Error: workspace exceeds maximum length limit of 50 characters.");
+    }
+    const safeRegex = /^[a-zA-Z0-9_.-]+$/;
+    if (!safeRegex.test(str)) {
+      throw new Error("Security Error: workspace contains invalid characters.");
+    }
+    return str;
+  }
+
   private async _initAiDesktop(msg: Record<string, unknown>): Promise<unknown> {
     const ws = await this.desktopManager.initAiWorkspace();
     return { workspace: ws, desktopCount: this.desktopManager.getDesktopCount() };
@@ -105,7 +156,30 @@ export class MultiInputPlugin extends BasePlugin {
   }
 
   private async _releaseVirtualInput(msg: Record<string, unknown>): Promise<unknown> {
-    const { x, y, button, key, type } = msg as Record<string, unknown>;
+    const { x, y, button, key, releaseType, actionType } = msg;
+    const kind = (releaseType || actionType) as string;
+    if (typeof kind !== "string" || !["button", "motion", "key"].includes(kind)) {
+      throw new Error("Security Error: Invalid or missing release type.");
+    }
+
+    let validatedBtn: number | undefined;
+    let validatedX: number | undefined;
+    let validatedY: number | undefined;
+
+    if (kind === "button") {
+      validatedBtn = this._validateButton(button);
+    } else if (kind === "motion") {
+      validatedX = this._validateCoordinate(x, "x");
+      validatedY = this._validateCoordinate(y, "y");
+    } else if (kind === "key") {
+      if (typeof key !== "string") {
+        throw new Error("Security Error: Key must be a string.");
+      }
+      if (key.length > 32) {
+        throw new Error("Security Error: Key exceeds maximum length limit of 32 characters.");
+      }
+    }
+
     const virtualPointer = this.desktopManager.getVirtualDevices().find(d => d.type === 'mouse');
     const virtualKeyboard = this.desktopManager.getVirtualDevices().find(d => d.type === 'keyboard');
 
@@ -116,44 +190,55 @@ export class MultiInputPlugin extends BasePlugin {
     // Ensure we're on AI's workspace before injecting
     this.desktopManager.focusAiDesktop();
 
-    switch (type) {
+    switch (kind) {
       case "button":
-        return this._simulateButton(Number(button) || 1, "press");
+        return this._simulateButton(validatedBtn!, "press");
       case "motion":
-        return this._simulateMotion(Number(x) || 0, Number(y) || 0);
+        return this._simulateMotion(validatedX!, validatedY!);
       case "key":
-        return this._simulateKey(String(key || ""));
-      default:
-        return { error: `Unknown release type: ${type}` };
+        return this._simulateKey(key as string);
     }
   }
 
   private async _virtualClick(msg: Record<string, unknown>): Promise<unknown> {
-    const { button, x, y } = msg as Record<string, unknown>;
+    const { button, x, y } = msg;
+    const btn = this._validateButton(button);
     this.desktopManager.focusAiDesktop();
-    if (x !== undefined && y !== undefined) {
-      await this._simulateMotion(Number(x), Number(y));
+    if (x !== undefined || y !== undefined) {
+      const validX = this._validateCoordinate(x, "x");
+      const validY = this._validateCoordinate(y, "y");
+      await this._simulateMotion(validX, validY);
     }
-    await this._simulateButton(Number(button) || 1, "click");
-    return { clicked: true, button: Number(button) || 1 };
+    await this._simulateButton(btn, "click");
+    return { clicked: true, button: btn };
   }
 
   private async _virtualType(msg: Record<string, unknown>): Promise<unknown> {
-    const { text } = msg as Record<string, unknown>;
-    if (!text) return { error: "No text provided" };
+    const { text } = msg;
+    if (typeof text !== "string") {
+      throw new Error("Security Error: Text must be a string.");
+    }
+    if (!text || text.trim().length === 0) {
+      throw new Error("Security Error: Text cannot be empty.");
+    }
+    if (text.length > 1000) {
+      throw new Error("Security Error: Text exceeds maximum length limit of 1000 characters.");
+    }
     this.desktopManager.focusAiDesktop();
-    const chars = String(text).split("");
+    const chars = text.split("");
     for (const ch of chars) {
       await this._simulateKey(ch);
     }
-    return { typed: String(text).length, text: String(text) };
+    return { typed: text.length, text };
   }
 
   private async _virtualMoveTo(msg: Record<string, unknown>): Promise<unknown> {
-    const { x, y } = msg as Record<string, unknown>;
+    const { x, y } = msg;
+    const validX = this._validateCoordinate(x, "x");
+    const validY = this._validateCoordinate(y, "y");
     this.desktopManager.focusAiDesktop();
-    await this._simulateMotion(Number(x), Number(y));
-    return { moved: true, x: Number(x), y: Number(y) };
+    await this._simulateMotion(validX, validY);
+    return { moved: true, x: validX, y: validY };
   }
 
   private async _simulateButton(button: number, action: "press" | "release" | "click"): Promise<void> {
@@ -200,19 +285,17 @@ export class MultiInputPlugin extends BasePlugin {
   }
 
   private async _bindDevice(msg: Record<string, unknown>): Promise<unknown> {
-    const { deviceId, workspace } = msg as Record<string, unknown>;
-    if (typeof deviceId !== "string" || (typeof workspace !== "string" && typeof workspace !== "number")) {
-      return { error: "deviceId (string) and workspace (string) required" };
-    }
-    const workspaceId = String(workspace);
-    const ok = this.desktopManager.bindDeviceToWorkspace(deviceId, workspaceId);
-    return { bound: ok, deviceId, workspace: workspaceId };
+    const { deviceId, workspace } = msg;
+    const validDevId = this._validateDeviceId(deviceId);
+    const validWs = this._validateWorkspace(workspace);
+    const ok = this.desktopManager.bindDeviceToWorkspace(validDevId, validWs);
+    return { bound: ok, deviceId: validDevId, workspace: validWs };
   }
 
   private async _unbindDevice(msg: Record<string, unknown>): Promise<unknown> {
-    const { deviceId } = msg as Record<string, unknown>;
-    if (typeof deviceId !== "string") return { error: "deviceId (string) required" };
-    return { unbound: this.desktopManager.unbindDevice(deviceId), deviceId };
+    const { deviceId } = msg;
+    const validDevId = this._validateDeviceId(deviceId);
+    return { unbound: this.desktopManager.unbindDevice(validDevId), deviceId: validDevId };
   }
 
   private _status(): Record<string, unknown> {
