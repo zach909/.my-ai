@@ -16,6 +16,33 @@ export const Route = createFileRoute('/app/knowledge')({
   component: KnowledgePage,
 })
 
+function CopyResultButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy text: ', err)
+    }
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/80 active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none shrink-0"
+      onClick={handleCopy}
+      aria-label={copied ? 'Query result copied' : 'Copy query result'}
+      title={copied ? 'Copied to clipboard' : 'Copy query result'}
+    >
+      {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+    </Button>
+  )
+}
+
 const SUGGESTIONS = [
   { id: 'containment', text: 'containment', label: 'containment' },
   { id: 'consensus', text: 'consensus', label: 'consensus' },
@@ -154,6 +181,15 @@ function KnowledgePage() {
             </div>
           </div>
 
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-lg border border-border bg-muted/30 p-4 min-h-[64px] flex items-center justify-between gap-3 text-xs text-muted-foreground transition-all duration-200"
+          >
+            <span className="flex-1 text-center">{status}</span>
+            {!loading && status !== 'Idle. Ready to query knowledge base.' && (
+              <CopyResultButton text={status} />
+            )}
           <div className="group relative">
             <div
               role="status"
