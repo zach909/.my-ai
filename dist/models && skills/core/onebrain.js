@@ -2064,8 +2064,10 @@ export class HyperDimensionalEngine {
         this.selfModelA = new Float32Array(dims * rank);
         this.selfModelB = new Float32Array(rank * dims);
         this.selfModelHScratch = new Float32Array(rank);
+        this.selfModelOutScratch = new Float32Array(dims);
         this.selfModelErrorScratch = new Float32Array(dims);
         this.selfModelDHScratch = new Float32Array(rank);
+        this.outputVectorScratch = new Float32Array(dims);
         const scale = Math.sqrt(1 / Math.max(1, dims));
         for (let i = 0; i < this.selfModelA.length; i++)
             this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
@@ -2993,7 +2995,9 @@ export class HyperDimensionalEngine {
                 h[r] += v * this.selfModelA[offset + r];
             }
         }
-        const out = new Array(dims).fill(0);
+        // BOLT OPTIMIZATION: Reuse pre-allocated selfModelOutScratch Float32Array to achieve zero-allocation predictions.
+        const out = this.selfModelOutScratch;
+        out.fill(0);
         for (let r = 0; r < rank; r++) {
             const hr = h[r];
             const bOffset = r * dims;
