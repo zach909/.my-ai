@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useEffect } from "react";
 import {
   Folder,
   Terminal,
@@ -342,6 +342,17 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
   // going through launchApp()/POST /api/apps/launch like the rest.
   const [logoViewerOpen, setLogoViewerOpen] = useState(false);
 
+  useEffect(() => {
+    if (!logoViewerOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setLogoViewerOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [logoViewerOpen]);
+
   const handleAppClick = async (app: AppItem) => {
     try {
       await launchApp(app);
@@ -484,6 +495,9 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
       {/* Twisted Strip viewer -- opened by clicking its desktop icon */}
       {logoViewerOpen && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Twisted Strip 3D viewer"
           className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
           onClick={() => setLogoViewerOpen(false)}
         >
