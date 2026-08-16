@@ -214,7 +214,7 @@ function runCapabilityExamGate(worktree) {
   if (jsonStart === -1) return { ok: false, examScore: 0, error: 'no exam summary in output' }
   try {
     const summary = JSON.parse(lines.slice(jsonStart).join('\n'))
-    return { ok: summary.pytorchOk === true, examScore: summary.examScore ?? 0 }
+    return { ok: summary.trainingOk === true, examScore: summary.examScore ?? 0 }
   } catch {
     return { ok: false, examScore: 0, error: 'could not parse exam summary' }
   }
