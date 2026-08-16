@@ -4,6 +4,10 @@ import { fileURLToPath } from 'node:url';
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
+import type { SkillDefinition } from "../plugin_manager/types.js";
+import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
+import type { CallHistoryPlugin } from "../plugins/call-history.js";
+import type { PhoneCallsPlugin } from "../plugins/phone-calls.js";
 import { SystemAccess } from "./system-access.js";
 import { CapabilitiesRegistry } from "./capabilities.js";
 import { CLI } from "./cli.js";
@@ -17,13 +21,77 @@ import { WebServer } from "./web-server.js";
  * and exited without launching anything. This wires the dependency graph once
  * and starts either the interactive CLI or the HTTP backend.
  */
+/**
+ * Instantiate and activate a real implementation for every plugin/skill in
+ * the extension catalog (plugins/index.ts's `pluginExtensions`) and register
+ * it into the registry `bootstrap()` only pre-seeded with placeholder
+ * definitions.
+ *
+ * Before this existed, `interface/main.ts` — the actual composition root for
+ * `npm start`, `npm run dev`/`npm run server`, and the `web` mode
+ * interface/server.py's /api/plugins proxies to — only ever called
+ * `pluginRegistry.bootstrap()`. That populates `definitions`/`skills` (so
+ * `plugins`/`skills` listings and status counts show real names/counts) but
+ * never touches the `plugins` instance map, so `PluginRegistry.dispatch()`
+ * (called on every CLI/web message — see cli.ts and runner.ts) always found
+ * `this.plugins.get(pluginId)` empty and fell through to `null`. Every real
+ * plugin implementation under plugins/*.ts (location, camera, file-system,
+ * self-heal, the plugin-maker/skill-maker extensions, ...) was therefore
+ * dead code in the actually-running app, reachable only from tests and from
+ * `src/index.ts`'s `NeuroclawSystem`, which nothing instantiates outside its
+ * own test file. This mirrors the correct wiring `NeuroclawSystem.initialize()`
+ * already does, so both composition roots register the same real plugins the
+ * same way.
+ */
+async function registerRealPlugins(pluginRegistry: PluginRegistry): Promise<void> {
+  for (const [key, def] of Object.entries(pluginExtensions)) {
+    const skillDef: SkillDefinition | undefined =
+      def.type === "skill-expert"
+        ? {
+            id: def.id,
+            name: def.name,
+            description: `${def.name} MoE expert`,
+            expertIndex: pluginRegistry.getSkillCount(),
+            specialization: def.capabilities[0] ?? def.id,
+            selfAuthored: false,
+          }
+        : undefined;
+    try {
+      const instance = createPluginInstance(def.name, def, skillDef);
+      pluginRegistry.register(def, instance);
+      if (skillDef) pluginRegistry.registerSkill(skillDef, def.id);
+    } catch (e) {
+      console.warn(`Failed to instantiate extension "${key}":`, e);
+    }
+  }
+
+  // call-history reads from phone-calls' log rather than keeping its own
+  // separate copy; wire that dependency once both plugins exist.
+  const callHistoryInstance = pluginRegistry.getPluginInstance("call-history") as CallHistoryPlugin | undefined;
+  const phoneCallsInstance = pluginRegistry.getPluginInstance("phone-calls") as PhoneCallsPlugin | undefined;
+  if (callHistoryInstance && phoneCallsInstance) {
+    callHistoryInstance.setSource(phoneCallsInstance);
+  }
+
+  for (const id of Object.keys(pluginExtensions)) {
+    try {
+      await pluginRegistry.activate(id);
+    } catch (e) {
+      console.warn(`Failed to activate plugin "${id}":`, e);
+    }
+  }
+}
+
 async function buildCore() {
   const llm = new NeuroclawLLM();
   const pipeline = new NeuroPipeline();
   const pluginRegistry = new PluginRegistry();
-  // Populate the plugin/skill catalog so the app launches with its real
-  // registry (the `plugins` command and status counts) instead of an empty one.
+  // bootstrap() only seeds placeholder PluginDefinitions/SkillDefinitions
+  // (id/name pairs, no BasePlugin instance) from the static catalogs in
+  // plugin_manager/registry-data.ts, purely so `plugins`/`skills` listings
+  // and status counts have something to show before real registration runs.
   await pluginRegistry.bootstrap();
+  await registerRealPlugins(pluginRegistry);
   const systemAccess = new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
   // Detects live capabilities and (if scripts/install.sh has run) loads this
   // machine's storage/OS/BIOS/driver profile for personalization -- see
