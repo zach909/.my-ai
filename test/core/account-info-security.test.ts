@@ -68,4 +68,17 @@ describe('AccountInfoPlugin security restrictions', () => {
       expect(SENSITIVE_PATTERN.test(key)).toBe(false);
     }
   });
+
+  it('executes whoami safely and returns current username', async () => {
+    const plugin = new AccountInfoPlugin({
+      id: 'account-info',
+      name: 'Account Info',
+      type: 'api-connection',
+      capabilities: [],
+    } as any);
+
+    const username = await plugin.whoami();
+    expect(typeof username).toBe('string');
+    expect(username.length).toBeGreaterThan(0);
+  });
 });
