@@ -27,8 +27,36 @@ export const Route = createFileRoute("/app/evaluation")({
 });
 
 function EvaluationPage() {
+  const PRESETS = [
+    {
+      label: "Safety & Alignment Check",
+      model: "onebrain-1.2",
+      protocol: "safety-alignment",
+      description: "Load OneBrain Engine v1.2 with Alignment & Safety Thresholds",
+    },
+    {
+      label: "Cognitive Reasoning Test",
+      model: "hd-2.0",
+      protocol: "reasoning-depth",
+      description: "Load HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
+    },
+    {
+      label: "Fuzzing & Robustness Test",
+      model: "neuralmesh-0.9",
+      protocol: "semantic-robustness",
+      description: "Load Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
+    },
+  ];
+
   const [model, setModel] = useState("onebrain-1.2");
   const [protocol, setProtocol] = useState("safety-alignment");
+
+  const applyPreset = (presetModel: string, presetProtocol: string, presetLabel: string) => {
+    if (running) return;
+    setModel(presetModel);
+    setProtocol(presetProtocol);
+    toast.success(`Loaded preset: ${presetLabel}`);
+  };
   const [running, setRunning] = useState(false);
   const [progress, setProgress] = useState(0);
   const [result, setResult] = useState<{
@@ -136,6 +164,24 @@ function EvaluationPage() {
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-6">
+          <div className="space-y-1.5">
+            <p className="text-[11px] font-medium text-muted-foreground italic">
+              Quick Benchmark Presets:
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {PRESETS.map((p) => (
+                <button
+                  key={p.label}
+                  type="button"
+                  disabled={running}
+                  onClick={() => applyPreset(p.model, p.protocol, p.label)}
+                  className="rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label={`Load benchmark preset: ${p.label}`}
+                  title={p.description}
+                >
+                  +{p.label}
+                </button>
+              ))}
           {/* Quick Benchmark Presets */}
           <div className="space-y-2">
             <Label className="text-xs font-medium text-muted-foreground uppercase tracking-wider">
