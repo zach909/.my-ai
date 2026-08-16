@@ -1,6 +1,6 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { homedir, hostname, userInfo, platform, release, arch, cpus, totalmem, freemem, uptime } from "node:os";
 
 export interface AccountInfo {
@@ -67,7 +67,7 @@ export class AccountInfoPlugin extends BasePlugin {
 
   async whoami(): Promise<string> {
     try {
-      return execSync("whoami", { encoding: "utf8", timeout: 3000 }).trim();
+      return execFileSync("whoami", [], { encoding: "utf8", timeout: 3000 }).trim();
     } catch {
       return userInfo().username;
     }

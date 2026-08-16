@@ -1,5 +1,5 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { homedir, hostname, userInfo, platform, release, arch, cpus, totalmem, freemem, uptime } from "node:os";
 export class AccountInfoPlugin extends BasePlugin {
     constructor(definition) {
@@ -43,7 +43,7 @@ export class AccountInfoPlugin extends BasePlugin {
     }
     async whoami() {
         try {
-            return execSync("whoami", { encoding: "utf8", timeout: 3000 }).trim();
+            return execFileSync("whoami", [], { encoding: "utf8", timeout: 3000 }).trim();
         }
         catch {
             return userInfo().username;
