@@ -6,7 +6,39 @@ this is already documented" through "ship a trained, quantized skill".
 Each step maps to an existing subsystem/spec; this doc is the glue that
 ties them into one loop.
 
-## The loop, in order
+## It's autonomous, not a manual checklist
+
+Nothing here waits on a human to kick off the next step. The loop is
+self-triggered by the same Research Scheduler triggers already defined in
+`docs/SHARED_WIKI_SYSTEM.md` §2.1 (file save/commit, a new skill/plugin
+being registered, a chat session ending, or a scheduled sweep) — any of
+those can start the loop on its own, the same way the "autonomous training
+loop" in `docs/SELF_IMPROVEMENT_IMPLEMENTATION_PLAN.md` runs unattended.
+"Autonomous" here specifically means *self-triggered*, not
+*unsupervised-forever*: the risk-scoring/review gate in
+`docs/SHARED_WIKI_SYSTEM.md` §2.2 step 5 still routes medium/high-risk
+wiki diffs to human review before they land, and any external web-research
+step stays opt-in per that spec — autonomy governs *when the loop starts
+and how it moves between steps*, not whether every output auto-merges.
+
+## It's non-linear — a loop with branches, not a pipeline
+
+The numbering below is for reference, not a strict 1→2→3→4→5 waterfall.
+Steps route back to earlier ones on failure instead of dead-ending:
+
+- A **failed experiment** (step 4) doesn't stop the loop — it routes back
+  to step 3 for broader/different web research, or back to step 1 with a
+  refined query if the first wiki check was too narrow. Only after
+  research options are exhausted does the loop give up and report why.
+- **Partial success** is pushed as-is (step 5) while the loop keeps
+  iterating on the rest — e.g. the wiki page documenting what was learned
+  ships even if the trained skill's quality gate hasn't passed yet, rather
+  than holding everything back for a single all-or-nothing finish.
+- A wiki check (step 1) that finds a *related but incomplete* page routes
+  to step 3 for the missing part specifically, not a full restart —
+  existing citations are kept, only the gap is researched.
+
+## The loop's steps
 
 1. **Check the wiki first.** Before doing anything else, the agent looks
    at its own wiki pages for a page that already covers the topic. This is
@@ -19,11 +51,13 @@ ties them into one loop.
    builds on it directly: reuse the documented facts/citations instead of
    re-deriving them, and skip straight to step 4 if the existing page
    already describes a working approach.
-3. **If nothing matches** — the agent falls back to external research: web
-   search via the same `WebFetch`-based, domain-allow-listed path described
-   in `docs/SHARED_WIKI_SYSTEM.md` §2.2 ("Crawl" stage, optional web
-   research scope). This is explicitly opt-in and local-first per that
-   spec — it only runs when the user has enabled it.
+3. **If nothing matches (or step 4 fails)** — the agent falls back to
+   external research: web search via the same `WebFetch`-based,
+   domain-allow-listed path described in `docs/SHARED_WIKI_SYSTEM.md` §2.2
+   ("Crawl" stage, optional web research scope). This is explicitly opt-in
+   and local-first per that spec — it only runs when the user has enabled
+   it. A retry from a failed step 4 broadens the query rather than
+   repeating the same search.
 4. **Run experiments.** Whatever was found (existing page or new research)
    is treated as a hypothesis, not a fact, until tried. The agent uses
    Net Search's temporary-network mechanism (`docs/NET_SEARCH_SPEC.md` §
@@ -31,9 +65,10 @@ ties them into one loop.
    actually build and run a small trial network against the idea, the same
    predict → compare → keep/discard loop described in
    `docs/AI_NEURAL_NETWORK_BASICS.md` — just scoped to a throwaway network
-   instead of a permanent one.
-5. **If the experiment confirms the approach works**, the agent pushes
-   everything it produced:
+   instead of a permanent one. A failed experiment loops back to step 3,
+   not to a dead stop.
+5. **As soon as any part of the approach is confirmed working**, the agent
+   pushes what it has — the loop doesn't wait for every piece to be done:
    - **The wiki page** — the researched/validated facts, written up with
      citations back to their source (code, commit, or external URL), via
      the Draft Composer + Citation Binder pipeline in
@@ -71,13 +106,14 @@ never blindly overwriting a page.
 
 ## Summary table
 
-| Step | Subsystem | Spec |
-|---|---|---|
-| Check existing wiki pages | Net Search over wiki index | `NET_SEARCH_SPEC.md`, `SHARED_WIKI_SYSTEM.md` |
-| Web research fallback | Wiki Source Crawlers (optional scope) | `SHARED_WIKI_SYSTEM.md` §2.2 |
-| Run experiments | Net Search temporary networks | `NET_SEARCH_SPEC.md` "Temporary networks" |
-| Push wiki page | Draft Composer + Citation Binder | `SHARED_WIKI_SYSTEM.md` §2.2 |
-| Push skill (build) | Extension Builder | `EXTENSION_BUILDER_SPEC.md`, [[Builder]] |
-| Push skill source | `saveWithoutQuantization` / `.exact.json` | `wiki/Quantization.md` |
-| Push binary skill | `installWithQuantization` / `.ext.json` | `EXTENSION_BUILDER_SPEC.md` §6 |
-| Record improvement algorithm | Self-improvement loop | `SELF_IMPROVEMENT_IMPLEMENTATION_PLAN.md` |
+| Step | Subsystem | Spec | On failure/gap |
+|---|---|---|---|
+| Self-trigger | Research Scheduler | `SHARED_WIKI_SYSTEM.md` §2.1 | — |
+| Check existing wiki pages | Net Search over wiki index | `NET_SEARCH_SPEC.md`, `SHARED_WIKI_SYSTEM.md` | Partial match → step 3 for the gap only |
+| Web research fallback | Wiki Source Crawlers (optional scope) | `SHARED_WIKI_SYSTEM.md` §2.2 | Exhausted → report why, stop |
+| Run experiments | Net Search temporary networks | `NET_SEARCH_SPEC.md` "Temporary networks" | Fails → back to step 3, broader query |
+| Push wiki page | Draft Composer + Citation Binder | `SHARED_WIKI_SYSTEM.md` §2.2 | Risk-scored; medium/high → human review |
+| Push skill (build) | Extension Builder | `EXTENSION_BUILDER_SPEC.md`, [[Builder]] | Can ship after wiki page even if not done |
+| Push skill source | `saveWithoutQuantization` / `.exact.json` | `wiki/Quantization.md` | — |
+| Push binary skill | `installWithQuantization` / `.ext.json` | `EXTENSION_BUILDER_SPEC.md` §6 | — |
+| Record improvement algorithm | Self-improvement loop | `SELF_IMPROVEMENT_IMPLEMENTATION_PLAN.md` | — |
