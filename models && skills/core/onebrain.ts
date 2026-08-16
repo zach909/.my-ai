@@ -4396,24 +4396,37 @@ export class MoERouter {
       const weights = expert.weights;
       const hiddenDim = this.config.expertHiddenDim;
 
-      // OPTIMIZATION: 8x loop unrolling on inner dimension and zero-value skip-path.
-      const limit = hiddenDim - 7;
-      for (let k = 0; k < input.length; k++) {
-        const inputVal = input[k];
-        if (inputVal === 0) continue; // Skip multiplications for zero-inputs (sparsity fast-path)
-        const weightOffset = k * hiddenDim;
+      // OPTIMIZATION: 4x loop unrolling on input dimension k combined with 4x unrolling on hidden dimension j.
+      // Unrolling k allows accumulating 4 input feature products per output write, reducing array store operations by 4x.
+      const limitJ = hiddenDim - 3;
+      const limitK = input.length - 3;
+      let k = 0;
+      for (; k < limitK; k += 4) {
+        const v0 = input[k];
+        const v1 = input[k + 1];
+        const v2 = input[k + 2];
+        const v3 = input[k + 3];
+        if (v0 === 0 && v1 === 0 && v2 === 0 && v3 === 0) continue;
+        const off0 = k * hiddenDim;
+        const off1 = (k + 1) * hiddenDim;
+        const off2 = (k + 2) * hiddenDim;
+        const off3 = (k + 3) * hiddenDim;
         let j = 0;
-        for (; j < limit; j += 8) {
-          output[j] += inputVal * weights[weightOffset + j];
-          output[j + 1] += inputVal * weights[weightOffset + j + 1];
-          output[j + 2] += inputVal * weights[weightOffset + j + 2];
-          output[j + 3] += inputVal * weights[weightOffset + j + 3];
-          output[j + 4] += inputVal * weights[weightOffset + j + 4];
-          output[j + 5] += inputVal * weights[weightOffset + j + 5];
-          output[j + 6] += inputVal * weights[weightOffset + j + 6];
-          output[j + 7] += inputVal * weights[weightOffset + j + 7];
+        for (; j < limitJ; j += 4) {
+          output[j]     += v0 * weights[off0 + j]     + v1 * weights[off1 + j]     + v2 * weights[off2 + j]     + v3 * weights[off3 + j];
+          output[j + 1] += v0 * weights[off0 + j + 1] + v1 * weights[off1 + j + 1] + v2 * weights[off2 + j + 1] + v3 * weights[off3 + j + 1];
+          output[j + 2] += v0 * weights[off0 + j + 2] + v1 * weights[off1 + j + 2] + v2 * weights[off2 + j + 2] + v3 * weights[off3 + j + 2];
+          output[j + 3] += v0 * weights[off0 + j + 3] + v1 * weights[off1 + j + 3] + v2 * weights[off2 + j + 3] + v3 * weights[off3 + j + 3];
         }
         for (; j < hiddenDim; j++) {
+          output[j] += v0 * weights[off0 + j] + v1 * weights[off1 + j] + v2 * weights[off2 + j] + v3 * weights[off3 + j];
+        }
+      }
+      for (; k < input.length; k++) {
+        const inputVal = input[k];
+        if (inputVal === 0) continue;
+        const weightOffset = k * hiddenDim;
+        for (let j = 0; j < hiddenDim; j++) {
           output[j] += inputVal * weights[weightOffset + j];
         }
       }

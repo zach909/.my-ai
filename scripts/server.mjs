@@ -24,11 +24,11 @@
  * Vite dev server, plus the autonomous pieces dev.mjs doesn't need.
  */
 
-import { execFileSync, spawn } from 'node:child_process'
+import { spawn } from 'node:child_process'
 import { printDiagnostics } from './system-diagnostics.mjs'
-import { printUpdateCheck } from './update-check.mjs'
 import { tunedEnv } from './process-tuning.mjs'
 import { DEFAULT_PEER_PORT } from './peer-sync.mjs'
+import { spawnAwait } from './spawn-utils.mjs'
 
 const ROOT = process.cwd()
 const PORT = Number(process.env.PORT) || 7861
@@ -36,17 +36,27 @@ const PORT = Number(process.env.PORT) || 7861
 console.log('[server] read-only startup diagnostics...')
 printDiagnostics()
 
-// Real motivation: this session watched a bad merge from another
-// automated agent break `npm run server` on `main`, and the user's own
-// checkout stayed broken until they pulled the fix -- knowing "you're
-// behind origin" the moment the server starts beats finding out from a
-// crash. Read-only (git fetch only updates tracking refs), never blocks
-// startup on failure (offline/no-upstream degrades to a one-line notice).
-console.log('[server] checking for updates...')
-printUpdateCheck(ROOT)
-
-console.log('[server] building backend...')
-execFileSync('node', ['scripts/build-backend.mjs'], { cwd: ROOT, stdio: 'inherit' })
+// Startup-time optimization: the update check (a network call, up to a
+// 15s git-fetch timeout -- real motivation: this session watched a bad
+// merge from another automated agent break `npm run server` on `main`,
+// and the user's own checkout stayed broken until they pulled the fix,
+// so knowing "you're behind origin" the moment the server starts beats
+// finding out from a crash) and the backend build (a pure CPU-bound tsc
+// compile) don't depend on each other at all -- running them
+// concurrently removes that dead time from every single `npm run
+// server`, not just a slow-network edge case. The update check itself
+// stays read-only-by-default and never blocks startup on failure
+// (offline/no-upstream degrades to a one-line notice) -- see its own
+// doc comment in update-check.mjs.
+console.log('[server] checking for updates and building backend...')
+const [, buildCode] = await Promise.all([
+  spawnAwait('node', ['scripts/update-check.mjs'], { cwd: ROOT }),
+  spawnAwait('node', ['scripts/build-backend.mjs'], { cwd: ROOT }),
+])
+if (buildCode !== 0) {
+  console.error(`[server] backend build failed (exit ${buildCode})`)
+  process.exit(buildCode)
+}
 
 const childEnv = tunedEnv()
 

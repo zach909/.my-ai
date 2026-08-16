@@ -14,14 +14,14 @@
  * lives exactly as long as the tab does.
  */
 
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Users, Send, Vote, Zap, Lock, Eye, EyeOff, History, Loader2 } from 'lucide-react'
+import { Users, Send, Vote, Zap, Lock, Eye, EyeOff, History, Loader2, Sparkles } from 'lucide-react'
 
 function Chip({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -416,9 +416,48 @@ function ChatGroupsPage() {
           )}
 
           {rounds.length === 0 && !loading && (
-            <p className="text-sm text-muted-foreground">
-              Submit a task below — the hive's chat group will discuss it and vote on a decision.
-            </p>
+            <div className="mx-auto my-auto flex max-w-md flex-col items-center justify-center rounded-xl border-2 border-dashed border-border/60 bg-card/40 p-6 text-center backdrop-blur-xs space-y-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Users size={20} />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-foreground">Hive Collaboration Ready</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Submit a task below — the hive&apos;s agents will discuss it, weigh trust, and vote on a consensus decision.
+                </p>
+              </div>
+              <div className="space-y-1.5 pt-1 w-full">
+                <p className="text-[11px] text-muted-foreground italic">Try a sample task:</p>
+                <div className="flex flex-wrap justify-center gap-1.5">
+                  {[
+                    'Analyze sandbox safety boundaries',
+                    'Design consensus protocol',
+                    'Evaluate system architecture',
+                  ].map((sample) => (
+                    <button
+                      key={sample}
+                      type="button"
+                      onClick={() => {
+                        setTask(sample)
+                        inputRef.current?.focus()
+                      }}
+                      className="rounded-md border border-border bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground hover:border-primary/40 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+                      aria-label={`Use sample task: ${sample}`}
+                    >
+                      +{sample}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="pt-2">
+                <Button asChild size="sm" variant="outline" className="active:scale-95 transition-all duration-150">
+                  <Link to="/app/chat">
+                    <Sparkles size={13} className="mr-1.5 text-primary" />
+                    Start AI Chat
+                  </Link>
+                </Button>
+              </div>
+            </div>
           )}
           {rounds.map((round) => (
             <div key={round.id} className="space-y-2">

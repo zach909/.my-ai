@@ -21,6 +21,9 @@ import {
   saveScoreboard,
   DEFAULT_HYPERPARAMS,
   TARGETS,
+  TARGET_BRANCH,
+  CAPABILITY_EXAM_TARGET,
+  EXAM_PASS_THRESHOLD,
 } from '../../scripts/self-improve.mjs';
 import { validateImprovementMessage, mergeImprovement, loadPeers, startPeerServer } from '../../scripts/peer-sync.mjs';
 import { computeTunedEnv, tunedEnv } from '../../scripts/process-tuning.mjs';
@@ -117,6 +120,27 @@ describe('TARGETS -- covers the skills, not just one script', () => {
       const score = target.metric({ trainedCount: 0, curriculumCount: 0, cmudictCount: 0, wikiCount: 0, finalAccuracy: 0 });
       expect(Number.isFinite(score)).toBe(true);
     }
+  });
+});
+
+describe('capability-exam gate wiring -- "it must go through that test" before a reward', () => {
+  it('defaults TARGET_BRANCH to beta, not main, now that an exam gate stands in front of rewards', () => {
+    expect(TARGET_BRANCH).toBe('beta');
+  });
+
+  it('registers the capability-exam network as a real, tunable self-improve target', () => {
+    expect(TARGETS.map((t) => t.script)).toContain(CAPABILITY_EXAM_TARGET);
+  });
+
+  it('the exam-network target reads its score from examScore', () => {
+    const target = TARGETS.find((t) => t.script === CAPABILITY_EXAM_TARGET)!;
+    expect(target.metric({ examScore: 0.42 })).toBe(0.42);
+    expect(target.metric({})).toBe(0); // missing examScore degrades to 0, never throws/NaN
+  });
+
+  it('a real, positive, sane default pass threshold', () => {
+    expect(EXAM_PASS_THRESHOLD).toBeGreaterThan(0);
+    expect(EXAM_PASS_THRESHOLD).toBeLessThan(1);
   });
 });
 

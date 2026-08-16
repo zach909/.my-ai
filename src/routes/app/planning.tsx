@@ -2,7 +2,7 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare, Loader2 } from 'lucide-react'
+import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare, Loader2, Copy, Check } from 'lucide-react'
 
 export const Route = createFileRoute('/app/planning')({
   head: () => ({
@@ -13,6 +13,34 @@ export const Route = createFileRoute('/app/planning')({
   }),
   component: PlanningPage,
 })
+
+function CopyPlanButton({ planText }: { planText: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(planText)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy plan: ', err)
+    }
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-7 gap-1.5 text-xs active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+      onClick={handleCopy}
+      aria-label={copied ? 'Copied plan to clipboard' : 'Copy decomposed plan'}
+      title={copied ? 'Copied plan to clipboard' : 'Copy decomposed plan'}
+    >
+      {copied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+      <span>{copied ? 'Copied' : 'Copy plan'}</span>
+    </Button>
+  )
+}
 
 const GOALS = [
   { id: 'g1', title: 'Verify containment constraints', desc: 'Assess sandbox network isolation.' },
@@ -119,9 +147,12 @@ function PlanningPage() {
               ) : (
                 plan && (
                   <div className="space-y-3" role="log" aria-live="polite">
-                    <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
-                      <CheckCircle2 className="h-4 w-4" /> Goal decomposed successfully:
-                    </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4" /> Goal decomposed successfully:
+                      </p>
+                      <CopyPlanButton planText={plan.map((step, i) => `${i + 1}. ${step}`).join('\n')} />
+                    </div>
                     <ol className="space-y-2 pl-1">
                       {plan.map((step, i) => (
                         <li key={i} className="flex gap-2 text-xs text-muted-foreground leading-relaxed">
