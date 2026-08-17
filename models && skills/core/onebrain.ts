@@ -1249,8 +1249,8 @@ export class NeuronMesh {
       }
     }
 
-    const curr = this.currActivations;
-    const next = this.nextActivations;
+    let curr = this.currActivations;
+    let next = this.nextActivations;
 
     const flatWeights = this.flatWeights;
     const flatIndices = this.flatIndices;
@@ -1273,11 +1273,13 @@ export class NeuronMesh {
     }
 
     let iteration = 0, converged = false, residual = 0;
+    const convergenceThreshold = this.config.convergenceThreshold;
 
     // Fast-path: When there are no gates and no vale gating (most common case)
     if (!activeGroups && !vale) {
       if (actFn === 'relu') {
         for (; iteration < maxIters; iteration++) {
+          residual = 0;
           for (let i = 0; i < N; i++) {
             let sum = biases[i];
             const start = rowStarts[i], end = rowStarts[i + 1];
@@ -1297,21 +1299,25 @@ export class NeuronMesh {
             for (; k < end; k++) {
               sum += curr[flatIndices[k]] * flatWeights[k];
             }
-            next[i] = sum > 0 ? sum : 0;
-            this.historyScratch[i * maxIters + iteration] = next[i];
+            const nextVal = sum > 0 ? sum : 0;
+            next[i] = nextVal;
+            this.historyScratch[i * maxIters + iteration] = nextVal;
+
+            // Bolt's Optimization: Compute residual in single pass to avoid full O(N) second loop
+            const diff = nextVal - curr[i];
+            residual += diff < 0 ? -diff : diff;
           }
 
-          residual = 0;
-          for (let i = 0; i < N; i++) {
-            // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
-            const diff = next[i] - curr[i];
-            residual += diff < 0 ? -diff : diff;
-            curr[i] = next[i];
-          }
-          if (this.checkConvergence(residual)) { converged = true; break; }
+          // Bolt's Optimization: Zero-copy pointer swap instead of O(N) array copy
+          const tmp = curr;
+          curr = next;
+          next = tmp;
+
+          if (residual < convergenceThreshold) { converged = true; break; }
         }
       } else if (actFn === 'tanh') {
         for (; iteration < maxIters; iteration++) {
+          residual = 0;
           for (let i = 0; i < N; i++) {
             let sum = biases[i];
             const start = rowStarts[i], end = rowStarts[i + 1];
@@ -1331,21 +1337,25 @@ export class NeuronMesh {
             for (; k < end; k++) {
               sum += curr[flatIndices[k]] * flatWeights[k];
             }
-            next[i] = Math.tanh(sum);
-            this.historyScratch[i * maxIters + iteration] = next[i];
+            const nextVal = Math.tanh(sum);
+            next[i] = nextVal;
+            this.historyScratch[i * maxIters + iteration] = nextVal;
+
+            // Bolt's Optimization: Compute residual in single pass to avoid full O(N) second loop
+            const diff = nextVal - curr[i];
+            residual += diff < 0 ? -diff : diff;
           }
 
-          residual = 0;
-          for (let i = 0; i < N; i++) {
-            // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
-            const diff = next[i] - curr[i];
-            residual += diff < 0 ? -diff : diff;
-            curr[i] = next[i];
-          }
-          if (this.checkConvergence(residual)) { converged = true; break; }
+          // Bolt's Optimization: Zero-copy pointer swap instead of O(N) array copy
+          const tmp = curr;
+          curr = next;
+          next = tmp;
+
+          if (residual < convergenceThreshold) { converged = true; break; }
         }
       } else {
         for (; iteration < maxIters; iteration++) {
+          residual = 0;
           for (let i = 0; i < N; i++) {
             let sum = biases[i];
             const start = rowStarts[i], end = rowStarts[i + 1];
@@ -1365,18 +1375,21 @@ export class NeuronMesh {
             for (; k < end; k++) {
               sum += curr[flatIndices[k]] * flatWeights[k];
             }
-            next[i] = activate(sum);
-            this.historyScratch[i * maxIters + iteration] = next[i];
+            const nextVal = activate(sum);
+            next[i] = nextVal;
+            this.historyScratch[i * maxIters + iteration] = nextVal;
+
+            // Bolt's Optimization: Compute residual in single pass to avoid full O(N) second loop
+            const diff = nextVal - curr[i];
+            residual += diff < 0 ? -diff : diff;
           }
 
-          residual = 0;
-          for (let i = 0; i < N; i++) {
-            // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
-            const diff = next[i] - curr[i];
-            residual += diff < 0 ? -diff : diff;
-            curr[i] = next[i];
-          }
-          if (this.checkConvergence(residual)) { converged = true; break; }
+          // Bolt's Optimization: Zero-copy pointer swap instead of O(N) array copy
+          const tmp = curr;
+          curr = next;
+          next = tmp;
+
+          if (residual < convergenceThreshold) { converged = true; break; }
         }
       }
     } else {
@@ -1394,9 +1407,11 @@ export class NeuronMesh {
       }
 
       for (; iteration < maxIters; iteration++) {
+        residual = 0;
         for (let i = 0; i < N; i++) {
+          let nextVal = 0;
           if (gates[i]) {
-            next[i] = curr[i];
+            nextVal = curr[i];
           } else {
             let sum = biases[i];
             const start = rowStarts[i], end = rowStarts[i + 1];
@@ -1417,21 +1432,28 @@ export class NeuronMesh {
               sum += curr[flatIndices[k]] * flatWeights[k];
             }
             const comp = activate(sum);
-            next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
+            nextVal = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
           }
-          this.historyScratch[i * maxIters + iteration] = next[i];
+          next[i] = nextVal;
+          this.historyScratch[i * maxIters + iteration] = nextVal;
+
+          // Bolt's Optimization: Compute residual in single pass to avoid full O(N) second loop
+          const diff = nextVal - curr[i];
+          residual += diff < 0 ? -diff : diff;
         }
 
-        residual = 0;
-        for (let i = 0; i < N; i++) {
-          // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
-          const diff = next[i] - curr[i];
-          residual += diff < 0 ? -diff : diff;
-          curr[i] = next[i];
-        }
-        if (this.checkConvergence(residual)) { converged = true; break; }
+        // Bolt's Optimization: Zero-copy pointer swap instead of O(N) array copy
+        const tmp = curr;
+        curr = next;
+        next = tmp;
+
+        if (residual < convergenceThreshold) { converged = true; break; }
       }
     }
+
+    // Ensure instance properties remain synchronized with swapped buffers
+    this.currActivations = curr;
+    this.nextActivations = next;
 
     // Bolt's Optimization: Populate standard arrays and update node's activation/history in a single pass at final convergence
     const finalIters = converged ? iteration + 1 : iteration;
