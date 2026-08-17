@@ -899,9 +899,26 @@ export class ExtensionBuilder {
         // via POST /api/extension/build. A local name->neuron map makes each
         // lookup O(1); periodic yields (mirroring evaluate()'s own fix) keep
         // it from monopolizing the event loop for very large n.
+        // Route each parsed neuron through the SAME constructor the visual
+        // editor's node palette uses for its kind (addCodeNet/addNetSearch/
+        // addNeuron) instead of always addNeuron() -- text-authored
+        // `code@name=`/`"netsearch"@name=` neurons used to all collapse to
+        // plain type:'neuron' here, silently dropping isCodeNet/isNetSearch
+        // and their corpus/query/netLocation, so exportToNeuroLang() (which
+        // branches on neuron.type) could never re-emit them as anything but
+        // a bare neuron on the next round trip.
         const nameToNeuron = new Map();
         for (const [name, neuronData] of evaluated) {
-            const neuron = this.addNeuron(projectId, name, neuronData.value);
+            let neuron;
+            if (neuronData.isCodeNet) {
+                neuron = this.addCodeNet(projectId, name, neuronData.code || '');
+            }
+            else if (neuronData.isNetSearch) {
+                neuron = this.addNetSearch(projectId, name, neuronData.corpus || '', neuronData.query || '', neuronData.netLocation || '');
+            }
+            else {
+                neuron = this.addNeuron(projectId, name, neuronData.value);
+            }
             if (neuron) {
                 neuron.definition = neuronData.definition;
                 neuron.code = neuronData.code || '';
@@ -971,13 +988,44 @@ export class ExtensionBuilder {
             }
             lines.push('');
         }
-        // Export connections
+        // Export connections. neuro-lang.ts's `"X"@connections="..."` line
+        // REPLACES that neuron's whole connection set every time it's
+        // parsed (parseLine does `neuron.connections = this.parseConnections(...)`,
+        // not a merge), so every incoming edge into the same target neuron
+        // must be combined into ONE line, not one line per edge, or all but
+        // the last incoming connection would silently vanish on the next
+        // parseNeuroLang() round trip. The full ".target*weight+bias" term
+        // also has to live INSIDE the quotes -- the parser's own
+        // `@connections\s*=\s*"([^"]*)"$` anchor requires the line to END
+        // on the closing quote, so writing the weight/bias *after* the
+        // quote (as this used to) made every connections line fail to
+        // match at all and get rejected as "Unrecognised NeuriLang
+        // statement" the moment it was re-imported.
+        //
+        // Note: neuro-lang.ts's connection grammar (`[\d.]+` for both the
+        // weight and the additive bias term) has no syntax for a negative
+        // number, so a negative bias is dropped here rather than emitted as
+        // unparseable text -- a pre-existing grammar limitation, not
+        // something this export step can paper over.
+        const incomingByTarget = new Map();
         for (const conn of project.connections.values()) {
             const fromNeuron = project.neurons.get(conn.fromId);
             const toNeuron = project.neurons.get(conn.toId);
-            if (fromNeuron && toNeuron) {
-                lines.push(`"${toNeuron.name}"@connections=".${fromNeuron.name}/state"*${conn.weight}+${conn.bias}`);
-            }
+            if (!fromNeuron || !toNeuron)
+                continue;
+            const terms = incomingByTarget.get(toNeuron.name) ?? [];
+            // A following bare number is parsed as an ADDITIVE refinement
+            // folded into the preceding edge's weight (see neuro-lang.ts's
+            // parseConnections), not a second target -- this is what lets
+            // conn.bias round-trip back onto the SAME edge as conn.weight.
+            let term = `.${fromNeuron.name}*${conn.weight}`;
+            if (conn.bias > 0)
+                term += `+${conn.bias}`;
+            terms.push(term);
+            incomingByTarget.set(toNeuron.name, terms);
+        }
+        for (const [targetName, terms] of incomingByTarget) {
+            lines.push(`"${targetName}"@connections="${terms.join('+')}"`);
         }
         return lines.join('\n');
     }
