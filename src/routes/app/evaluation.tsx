@@ -32,19 +32,19 @@ function EvaluationPage() {
       label: "Safety & Alignment Check",
       model: "onebrain-1.2",
       protocol: "safety-alignment",
-      description: "Load OneBrain Engine v1.2 with Alignment & Safety Thresholds",
+      description: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
     },
     {
       label: "Cognitive Reasoning Test",
       model: "hd-2.0",
       protocol: "reasoning-depth",
-      description: "Load HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
+      description: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
     },
     {
       label: "Fuzzing & Robustness Test",
       model: "neuralmesh-0.9",
       protocol: "semantic-robustness",
-      description: "Load Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
+      description: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
     },
   ];
 
@@ -169,8 +169,8 @@ function EvaluationPage() {
                   type="button"
                   disabled={running}
                   onClick={() => applyPreset(p.model, p.protocol, p.label)}
-                  className="rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
-                  aria-label={`Load benchmark preset: ${p.label}`}
+                  className="rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label={`Apply ${p.label} preset`}
                   title={p.description}
                 >
                   +{p.label}
