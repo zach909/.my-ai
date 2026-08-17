@@ -45,10 +45,16 @@ export class ContactsPlugin extends BasePlugin {
   }
 
   async get(id: string): Promise<Contact | undefined> {
+    this.validateId(id);
     return this.contacts.find((c) => c.id === id);
   }
 
   async add(contact: Omit<Contact, "id">): Promise<Contact> {
+    if (!contact || typeof contact !== "object") {
+      throw new Error("Security Error: Contact data must be an object.");
+    }
+    this.validateContactFields(contact, true);
+
     const newContact: Contact = { ...contact, id: this.generateId() };
     this.contacts.push(newContact);
     this.save();
@@ -56,6 +62,12 @@ export class ContactsPlugin extends BasePlugin {
   }
 
   async update(id: string, updates: Partial<Contact>): Promise<boolean> {
+    this.validateId(id);
+    if (!updates || typeof updates !== "object") {
+      throw new Error("Security Error: Updates must be an object.");
+    }
+    this.validateContactFields(updates, false);
+
     const idx = this.contacts.findIndex((c) => c.id === id);
     if (idx === -1) return false;
     this.contacts[idx] = { ...this.contacts[idx], ...updates };
@@ -64,6 +76,7 @@ export class ContactsPlugin extends BasePlugin {
   }
 
   async remove(id: string): Promise<boolean> {
+    this.validateId(id);
     const idx = this.contacts.findIndex((c) => c.id === id);
     if (idx === -1) return false;
     this.contacts.splice(idx, 1);
@@ -72,6 +85,13 @@ export class ContactsPlugin extends BasePlugin {
   }
 
   async search(query: string): Promise<Contact[]> {
+    if (typeof query !== "string") {
+      throw new Error("Security Error: Search query must be a string.");
+    }
+    if (query.length > 100) {
+      throw new Error("Security Error: Search query exceeds maximum length limit.");
+    }
+
     const lower = query.toLowerCase();
     return this.contacts.filter(
       (c) =>
@@ -79,6 +99,74 @@ export class ContactsPlugin extends BasePlugin {
         (c.phone && c.phone.includes(lower)) ||
         (c.email && c.email.toLowerCase().includes(lower)),
     );
+  }
+
+  private validateId(id: string): void {
+    if (typeof id !== "string") {
+      throw new Error("Security Error: Contact ID must be a string.");
+    }
+    if (id.length > 100) {
+      throw new Error("Security Error: Contact ID exceeds maximum length limit.");
+    }
+  }
+
+  private validateContactFields(fields: Partial<Contact>, isNew: boolean): void {
+    if (isNew || fields.name !== undefined) {
+      if (typeof fields.name !== "string") {
+        throw new Error("Security Error: Contact name must be a string.");
+      }
+      if (!fields.name.trim()) {
+        throw new Error("Security Error: Contact name cannot be empty.");
+      }
+      if (fields.name.length > 100) {
+        throw new Error("Security Error: Contact name exceeds maximum length limit.");
+      }
+    }
+
+    if (fields.phone !== undefined && fields.phone !== null) {
+      if (typeof fields.phone !== "string") {
+        throw new Error("Security Error: Phone must be a string.");
+      }
+      if (fields.phone.length > 100) {
+        throw new Error("Security Error: Phone exceeds maximum length limit.");
+      }
+    }
+
+    if (fields.email !== undefined && fields.email !== null) {
+      if (typeof fields.email !== "string") {
+        throw new Error("Security Error: Email must be a string.");
+      }
+      if (fields.email.length > 100) {
+        throw new Error("Security Error: Email exceeds maximum length limit.");
+      }
+    }
+
+    if (fields.group !== undefined && fields.group !== null) {
+      if (typeof fields.group !== "string") {
+        throw new Error("Security Error: Group must be a string.");
+      }
+      if (fields.group.length > 100) {
+        throw new Error("Security Error: Group exceeds maximum length limit.");
+      }
+    }
+
+    if (fields.address !== undefined && fields.address !== null) {
+      if (typeof fields.address !== "string") {
+        throw new Error("Security Error: Address must be a string.");
+      }
+      if (fields.address.length > 500) {
+        throw new Error("Security Error: Address exceeds maximum length limit.");
+      }
+    }
+
+    if (fields.notes !== undefined && fields.notes !== null) {
+      if (typeof fields.notes !== "string") {
+        throw new Error("Security Error: Notes must be a string.");
+      }
+      if (fields.notes.length > 500) {
+        throw new Error("Security Error: Notes exceeds maximum length limit.");
+      }
+    }
   }
 
   private generateId(): string {
