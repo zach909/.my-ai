@@ -40,4 +40,29 @@ describe('VoiceActivationPlugin Wake Word Security', () => {
     expect(() => plugin.setWakeWord('neuro$claw')).toThrow(/Security Error/);
     expect(() => plugin.setWakeWord('neuro`claw')).toThrow(/Security Error/);
   });
+
+  describe('processTranscript input validation and security', () => {
+    it('allows valid transcripts', async () => {
+      plugin.setWakeWord('neuroclaw');
+      const res = await plugin.processTranscript('neuroclaw open browser');
+      expect(res).not.toBeNull();
+      expect(res?.action).toBe('launch');
+    });
+
+    it('rejects non-string transcript inputs', async () => {
+      await expect(plugin.processTranscript(123 as any)).rejects.toThrow(/Security Error: Transcript must be a string/);
+      await expect(plugin.processTranscript(null as any)).rejects.toThrow(/Security Error: Transcript must be a string/);
+      await expect(plugin.processTranscript({ text: 'hello' } as any)).rejects.toThrow(/Security Error: Transcript must be a string/);
+    });
+
+    it('rejects empty or whitespace transcript inputs', async () => {
+      await expect(plugin.processTranscript('')).rejects.toThrow(/Security Error: Transcript cannot be empty/);
+      await expect(plugin.processTranscript('   ')).rejects.toThrow(/Security Error: Transcript cannot be empty/);
+    });
+
+    it('rejects excessively long transcript inputs (DoS prevention)', async () => {
+      const longTranscript = 'a'.repeat(1001);
+      await expect(plugin.processTranscript(longTranscript)).rejects.toThrow(/Security Error: Transcript exceeds maximum length limit/);
+    });
+  });
 });
