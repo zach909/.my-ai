@@ -20,7 +20,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Send, Zap, Sparkles, EyeOff, History, Loader2, Copy, Check } from 'lucide-react'
+import { Send, Zap, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'lucide-react'
+import { toast } from 'sonner'
 
 export const Route = createFileRoute('/app/chat')({
   head: () => ({
@@ -238,6 +239,27 @@ function ChatPage() {
     }
   }
 
+  const handleNewChat = () => {
+    setMessages([
+      {
+        id: `init_${Date.now()}`,
+        role: 'assistant',
+        content:
+          "Hello! I'm your AI assistant. Ask me anything, and I can help with analysis, coding, planning, or creative work. What would you like to work on today?",
+        timestamp: Date.now(),
+        suggestions: INITIAL_SUGGESTIONS,
+      },
+    ])
+    setThreadId(undefined)
+    setPendingMatch(null)
+    setInput('')
+    if (typeof window !== 'undefined' && window.location.search) {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+    toast.success('Started a new chat session')
+    inputRef.current?.focus()
+  }
+
   const sendMessage = async (messageText: string) => {
     const userMsg: Message = {
       id: `msg_${Date.now()}_user`,
@@ -298,6 +320,20 @@ function ChatPage() {
   return (
     <div className="flex h-[calc(100vh-120px)] flex-col">
       <div className="flex items-center justify-end gap-2 px-4 pt-2">
+        {(messages.length > 1 || threadId !== undefined) && (
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={handleNewChat}
+            disabled={loading}
+            className="gap-1.5 text-xs active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+            title="Start a new chat session"
+            aria-label="Start a new chat session"
+          >
+            <Plus size={12} />
+            New Chat
+          </Button>
+        )}
         <Button
           variant={incognito ? 'default' : 'outline'}
           size="sm"
