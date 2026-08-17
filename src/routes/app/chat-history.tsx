@@ -17,10 +17,12 @@
  */
 
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useEffect, useState, useMemo } from 'react'
 import { Card } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
-import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles, ArrowRight } from 'lucide-react'
+import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles, ArrowRight, Search, X } from 'lucide-react'
 
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
@@ -131,6 +133,7 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
 function ChatHistoryPage() {
   const [groups, setGroups] = useState<GroupWithThreads[]>([])
   const [ungrouped, setUngrouped] = useState<ThreadSummary[]>([])
+  const [searchQuery, setSearchQuery] = useState('')
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
 
@@ -162,8 +165,43 @@ function ChatHistoryPage() {
 
   const totalChats = groups.reduce((s, g) => s + g.threads.length, 0) + ungrouped.length
 
+  const filteredData = useMemo(() => {
+    const q = searchQuery.trim().toLowerCase()
+    if (!q) {
+      return { groups, ungrouped, totalFilteredChats: totalChats }
+    }
+
+    const filteredGroups = groups
+      .map((g) => {
+        const groupNameMatches = g.name.toLowerCase().includes(q)
+        const matchingThreads = g.threads.filter((t) => t.title.toLowerCase().includes(q))
+        if (groupNameMatches) {
+          return g
+        }
+        if (matchingThreads.length > 0) {
+          return { ...g, threads: matchingThreads }
+        }
+        return null
+      })
+      .filter((g): g is GroupWithThreads => g !== null)
+
+    const filteredUngrouped = ungrouped.filter((t) => t.title.toLowerCase().includes(q))
+
+    const totalFilteredChats =
+      filteredGroups.reduce((s, g) => s + g.threads.length, 0) + filteredUngrouped.length
+
+    return { groups: filteredGroups, ungrouped: filteredUngrouped, totalFilteredChats }
+  }, [groups, ungrouped, searchQuery, totalChats])
+
   return (
     <div className="space-y-4 p-4">
+      {/* Live ARIA status region for screen readers */}
+      <div className="sr-only" role="status" aria-live="polite">
+        {searchQuery.trim()
+          ? `Found ${filteredData.totalFilteredChats} chat${filteredData.totalFilteredChats !== 1 ? 's' : ''} matching "${searchQuery.trim()}"`
+          : `${totalChats} total chat${totalChats !== 1 ? 's' : ''} available`}
+      </div>
+
       <div className="flex items-center justify-between">
         <div>
           <h1 className="text-lg font-semibold">Chat History</h1>
@@ -186,6 +224,35 @@ function ChatHistoryPage() {
       </div>
 
       {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
+
+      {!loading && totalChats > 0 && (
+        <div className="relative max-w-sm">
+          <Label htmlFor="search-history-input" className="sr-only">
+            Filter chat history by title or group
+          </Label>
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+          <Input
+            id="search-history-input"
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Filter past chats or topic groups..."
+            className="pl-8 pr-8 h-8 text-xs focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label="Filter chat history by title or group"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xs p-0.5 text-muted-foreground hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+              aria-label="Clear filter query"
+              title="Clear filter query"
+            >
+              <X size={13} />
+            </button>
+          )}
+        </div>
+      )}
 
       {!loading && totalChats === 0 && !error && (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center max-w-md mx-auto my-6 space-y-4">
@@ -215,20 +282,37 @@ function ChatHistoryPage() {
         </div>
       )}
 
+      {!loading && totalChats > 0 && filteredData.totalFilteredChats === 0 && searchQuery.trim() !== '' && (
+        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-6 text-center max-w-sm mx-auto my-4 space-y-3">
+          <p className="text-xs text-muted-foreground">
+            No conversations or topic groups matching &ldquo;{searchQuery}&rdquo;
+          </p>
+          <Button
+            variant="outline"
+            size="sm"
+            onClick={() => setSearchQuery('')}
+            className="text-xs active:scale-95 transition-all duration-150"
+            aria-label="Clear search query filter"
+          >
+            Clear Filter
+          </Button>
+        </div>
+      )}
+
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-        {groups.map((g) => (
+        {filteredData.groups.map((g) => (
           <GroupCard key={g.id} group={g} />
         ))}
       </div>
 
-      {ungrouped.length > 0 && (
+      {filteredData.ungrouped.length > 0 && (
         <Card className="space-y-2 p-4">
           <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <Folder size={14} />
             Ungrouped
           </div>
           <div className="space-y-1.5">
-            {ungrouped.map((t) => (
+            {filteredData.ungrouped.map((t) => (
               <ThreadRow key={t.id} thread={t} />
             ))}
           </div>

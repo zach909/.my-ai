@@ -1,3 +1,7 @@
+## 2026-09-24 - [Real-time Search Filter with Live Status Announcements on Topic Views]
+**Learning:** Adding a real-time search filter input to auto-organized history or folder views lowers search friction for users with large topic collections. Linking the input with an accessible label (`<Label htmlFor="...">`), a quick reset button (`X`), focus rings, tactile press scaling (`active:scale-95`), and a live ARIA announcement region (`role="status" aria-live="polite"`) delivers immediate feedback for both visual and screen-reader users.
+**Action:** When displaying grouped lists or conversation history, integrate an accessible filter input paired with a reset button and live status announcements.
+
 ## 2026-09-23 - [Interactive Simulation Presets & Instant Multi-Parameter Configuration]
 **Learning:** Adding quick benchmark preset triggers to complex simulation dashboards (such as the ASI Evaluation page) drastically lowers configuration friction. Equipping preset buttons with distinct contextual icons, tactile active scale transitions (`active:scale-95`), focus-visible rings (`focus-visible:ring-2 focus-visible:ring-ring`), helpful title tooltips, and instant toast notifications provides multi-sensory confirmation that multi-parameter options have been updated.
 **Action:** On simulation or multi-parameter forms, provide quick interactive preset triggers with tactile scale feedback, focus rings, title tooltips, and clear status announcements.
