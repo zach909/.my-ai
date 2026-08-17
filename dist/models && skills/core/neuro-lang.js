@@ -9,7 +9,10 @@
  *   "name"@definition="text"                   — set definition (alias: @definishon=)
  *   "name"@code="code"                         — attach code
  *   code@name="calc"                           — create code-to-net neuron
- *   "netsearch"@net="location"                 — create netsearch neuron
+ *   "netsearch"@name="idx"                     — create/select a netsearch neuron
+ *   "netsearch"@corpus="text..."               — attach its training corpus
+ *   "netsearch"@query="find x"                 — attach its search query text
+ *   "netsearch"@net="location"                 — attach its search location
  *   print "name"                               — print neuron info
  *
  * @conections= and @definishon= are the DSL's canonical (deliberately
@@ -81,6 +84,21 @@ export class NeuroLangInterpreter {
         const lines = source.split(/\r?\n/);
         for (let lineNo = 0; lineNo < lines.length; lineNo++) {
             const raw = lines[lineNo];
+            // Full-line '#' comments -- the convention exportToNeuroLang() (and
+            // both the Python tracks, asi_core/neural_dsl.py and
+            // model && skills manager/neurolang.py) actually write, unlike this
+            // parser's own inline `-- ...` style. Without this, EVERY export
+            // round-tripped back through parse() failed on line 1 (its own
+            // `# NeuroLang export for ...` header), before a single real
+            // statement was ever reached.
+            if (raw.trim().startsWith('#'))
+                continue;
+            // A bare `dims = N` line (also emitted by exportToNeuroLang() as a
+            // header) is metadata about the project's dimensionality, not a
+            // neuron statement -- recognised and skipped rather than thrown as
+            // "unrecognised syntax".
+            if (/^dims\s*=\s*\d+$/i.test(raw.trim()))
+                continue;
             // Strip inline comments (-- ...) and trim whitespace
             const line = raw.replace(/--.*$/, '').trim();
             if (!line)
@@ -220,6 +238,8 @@ export class NeuroLangInterpreter {
                 code: n.code,
                 isNetSearch: n.isNetSearch,
                 netLocation: n.netLocation,
+                corpus: n.corpus,
+                query: n.query,
                 isCodeNet: n.isCodeNet,
             });
         }
@@ -256,6 +276,8 @@ export class NeuroLangInterpreter {
                 code: typeof sn.code === 'string' ? sn.code : null,
                 isNetSearch: Boolean(sn.isNetSearch),
                 netLocation: typeof sn.netLocation === 'string' ? sn.netLocation : null,
+                corpus: typeof sn.corpus === 'string' ? sn.corpus : '',
+                query: typeof sn.query === 'string' ? sn.query : '',
                 isCodeNet: Boolean(sn.isCodeNet),
             };
             neurons.set(neuron.name, neuron);
@@ -316,7 +338,30 @@ export class NeuroLangInterpreter {
                     neurons.set(target.name, target);
                 }
                 target.netLocation = location;
+                // `@net=` is always the LAST of the netsearch statements a producer
+                // emits (see extension-builder/builder.js's exportToNeuroLang:
+                // name, corpus, query, net, in that order) -- clearing the pending
+                // pointer here, not on @corpus=/@query=, is what lets all three
+                // bind to the same declaration.
                 this.pendingNetSearch = null;
+                return;
+            }
+        }
+        // ── "netsearch"@corpus="X" — attach a net-search training corpus ───────
+        {
+            const m = line.match(/^"netsearch"\s*@\s*corpus\s*=\s*"([^"]*)"$/);
+            if (m) {
+                const target = this.resolvePendingNetSearch(neurons);
+                target.corpus = m[1];
+                return;
+            }
+        }
+        // ── "netsearch"@query="X" — attach the search query text ───────────────
+        {
+            const m = line.match(/^"netsearch"\s*@\s*query\s*=\s*"([^"]*)"$/);
+            if (m) {
+                const target = this.resolvePendingNetSearch(neurons);
+                target.query = m[1];
                 return;
             }
         }
@@ -409,6 +454,29 @@ export class NeuroLangInterpreter {
         // Unknown syntax — record as error via throw so caller can log line number
         throw new Error(`Unrecognised NeuriLang statement: "${line}"`);
     }
+    /**
+     * Resolve the netsearch declaration that a following `@corpus=`/`@query=`
+     * statement (no line-order guarantee relative to each other, but both
+     * always following their `@name=`) should attach to -- the same
+     * "bind to the pending named netsearch definition, in parse order"
+     * resolution `@net=` above uses, factored out so all three attributes
+     * agree on which neuron they're describing.
+     */
+    resolvePendingNetSearch(neurons) {
+        const pending = this.pendingNetSearch;
+        let target = pending ? neurons.get(pending) : undefined;
+        if (!target) {
+            // No `"netsearch"@name=` seen yet this parse -- fall back to a
+            // synthetic holder rather than silently discarding the statement, so
+            // out-of-order NeuroLang (@corpus= before @name=) still round-trips.
+            const name = 'netsearch:pending';
+            target = neurons.get(name) ?? this.defaultNeuron(name);
+            target.isNetSearch = true;
+            neurons.set(target.name, target);
+            this.pendingNetSearch = target.name;
+        }
+        return target;
+    }
     // ── Parse connection string: .name*weight+.name*weight ... ─────────────────
     parseConnections(spec, sourceName) {
         const connections = new Map();
@@ -472,6 +540,8 @@ export class NeuroLangInterpreter {
             code: null,
             isNetSearch: false,
             netLocation: null,
+            corpus: '',
+            query: '',
             isCodeNet: false,
         };
     }

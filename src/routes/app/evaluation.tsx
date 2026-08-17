@@ -34,6 +34,9 @@ function EvaluationPage() {
       protocol: "safety-alignment",
       ariaLabel: "Apply Safety & Alignment Check preset",
       description: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
+      description: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
+      title: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
+      ariaLabel: "Apply Safety & Alignment Check preset",
     },
     {
       label: "Cognitive Reasoning Test",
@@ -41,6 +44,9 @@ function EvaluationPage() {
       protocol: "reasoning-depth",
       ariaLabel: "Apply Cognitive Reasoning Test preset",
       description: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
+      description: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
+      title: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
+      ariaLabel: "Apply Cognitive Reasoning Test preset",
     },
     {
       label: "Fuzzing & Robustness Test",
@@ -48,6 +54,9 @@ function EvaluationPage() {
       protocol: "semantic-robustness",
       ariaLabel: "Apply Fuzzing & Robustness Test preset",
       description: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
+      description: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
+      title: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
+      ariaLabel: "Apply Fuzzing & Robustness Test preset",
     },
   ];
 
@@ -174,7 +183,10 @@ function EvaluationPage() {
                   onClick={() => applyPreset(p.model, p.protocol, p.label)}
                   className="rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label={p.ariaLabel}
+                  aria-label={`Apply ${p.label} preset`}
                   title={p.description}
+                  aria-label={p.ariaLabel}
+                  title={p.title}
                 >
                   +{p.label}
                 </button>
