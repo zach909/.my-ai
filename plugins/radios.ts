@@ -147,6 +147,9 @@ export class RadiosPlugin extends BasePlugin {
     if (name.length > 100) {
       throw new Error("Security Error: name exceeds maximum length limit of 100 characters");
     }
+    if (name.startsWith("-")) {
+      throw new Error("Security Error: name cannot start with a hyphen");
+    }
   }
 
   async onHealthCheck(): Promise<boolean> { return true; }
