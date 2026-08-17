@@ -41,8 +41,10 @@ import {
   ArrowRight,
   Puzzle,
   GraduationCap,
+  Gauge,
 } from "lucide-react";
 import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 import {
   buildExamPassRateSeries,
   buildPassRateSeries,
@@ -109,7 +111,7 @@ function SelfImprovementPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = async () => {
+  const load = async (manual = false) => {
     setLoading(true);
     setError(null);
     try {
@@ -120,6 +122,9 @@ function SelfImprovementPage() {
       setSkillMeshAttempts(
         Array.isArray(data.skillMeshAttempts) ? data.skillMeshAttempts : [],
       );
+      if (manual) {
+        toast.success("Self-improvement history refreshed.");
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -167,18 +172,22 @@ function SelfImprovementPage() {
           </p>
         </div>
         <Button
-          onClick={load}
+          onClick={() => load(true)}
           disabled={loading}
           variant="outline"
           size="sm"
           aria-label="Refresh self-improvement history"
-          className="flex items-center gap-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground active:scale-95"
+          className="flex items-center gap-1.5 text-xs text-muted-foreground transition-all duration-150 hover:bg-accent hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-ring"
         >
           <RefreshCw
             className={loading ? "size-3.5 animate-spin" : "size-3.5"}
           />
           Refresh
         </Button>
+      </div>
+
+      <div role="status" aria-live="polite" className="sr-only">
+        {loading ? "Refreshing self-improvement history..." : "Self-improvement history updated."}
       </div>
 
       {error && (
@@ -387,6 +396,18 @@ function SelfImprovementPage() {
                       over time.
                     </p>
                   </div>
+                  <Button
+                    asChild
+                    size="sm"
+                    variant="outline"
+                    className="active:scale-95 transition-all duration-150 text-xs"
+                  >
+                    <Link to="/app/evaluation">
+                      <Gauge className="mr-1.5 h-3.5 w-3.5" />
+                      Run Evaluation
+                      <ArrowRight className="ml-1.5 h-3.5 w-3.5" />
+                    </Link>
+                  </Button>
                 </div>
               ) : (
                 <p className="text-center text-xs text-muted-foreground">

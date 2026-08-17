@@ -37,6 +37,11 @@ describe("RadiosPlugin Security and Validation", () => {
       const longName = "A".repeat(101);
       await expect(plugin.enable(longName)).rejects.toThrow("Security Error: name exceeds maximum length limit of 100 characters");
     });
+
+    it("rejects name parameters starting with a hyphen", async () => {
+      await expect(plugin.enable("-all")).rejects.toThrow("Security Error: name cannot start with a hyphen");
+      await expect(plugin.enable("--help")).rejects.toThrow("Security Error: name cannot start with a hyphen");
+    });
   });
 
   describe("disable method", () => {
@@ -59,6 +64,11 @@ describe("RadiosPlugin Security and Validation", () => {
     it("rejects name parameters exceeding 100 characters", async () => {
       const longName = "A".repeat(101);
       await expect(plugin.disable(longName)).rejects.toThrow("Security Error: name exceeds maximum length limit of 100 characters");
+    });
+
+    it("rejects name parameters starting with a hyphen", async () => {
+      await expect(plugin.disable("-all")).rejects.toThrow("Security Error: name cannot start with a hyphen");
+      await expect(plugin.disable("--help")).rejects.toThrow("Security Error: name cannot start with a hyphen");
     });
   });
 

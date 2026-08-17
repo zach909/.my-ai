@@ -19,11 +19,37 @@ export const Route = createFileRoute("/app/experiments")({
   component: ExperimentsPage,
 });
 
+const PRESETS = [
+  {
+    label: "Alignment Verification",
+    protocol: "alignment-verification",
+    description: "Select Alignment Verification protocol check on primary reasoning engine",
+  },
+  {
+    label: "Safety Boundary Check",
+    protocol: "safety-boundary",
+    description: "Select Safety Boundary Check stress test across active modules",
+  },
+  {
+    label: "Neuron Stress Test",
+    protocol: "neuron-stress",
+    description: "Select Neuron Stress Test high-throughput activation on neural mesh",
+  },
+]
+
 function ExperimentsPage() {
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState(0)
   const [completed, setCompleted] = useState(false)
+  const [selectedProtocol, setSelectedProtocol] = useState("alignment-verification")
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const applyPreset = (protocol: string, label: string) => {
+    if (running) return
+    setSelectedProtocol(protocol)
+    setCompleted(false)
+    toast.success(`Selected protocol: ${label}`)
+  }
 
   const runSimulation = () => {
     if (intervalRef.current) {
@@ -78,14 +104,39 @@ function ExperimentsPage() {
           <FlaskConical className={`h-8 w-8 text-primary ${running ? 'animate-bounce' : ''}`} />
         </div>
         <h2 className="text-lg font-semibold tracking-tight text-foreground">No Active Experiments</h2>
-        <p className="text-sm text-muted-foreground max-w-md mt-2 mb-6">
+        <p className="text-sm text-muted-foreground max-w-md mt-2 mb-4">
           To run structured protocols and run safety-critical benchmarks, you first need to construct and install an extension. Alternatively, launch a simulated alignment check to verify environment calibration.
         </p>
 
+        <div className="space-y-1.5 mb-6 w-full max-w-md">
+          <p className="text-[11px] font-medium text-muted-foreground italic">
+            Quick Protocol Presets:
+          </p>
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {PRESETS.map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                disabled={running}
+                onClick={() => applyPreset(p.protocol, p.label)}
+                className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-all focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 ${
+                  selectedProtocol === p.protocol
+                    ? "border-primary/50 bg-primary/10 text-primary"
+                    : "border-border bg-muted/50 text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground"
+                }`}
+                aria-label={`Apply ${p.label} preset`}
+                title={p.description}
+              >
+                +{p.label}
+              </button>
+            ))}
+          </div>
+        </div>
+
         {running ? (
           <div className="w-full max-w-xs space-y-2" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
-            <div className="flex justify-between text-xs text-muted-foreground font-medium">
-              <span>Running Alignment Check...</span>
+            <div className="flex justify-between text-xs text-muted-foreground font-medium" role="status" aria-live="polite">
+              <span>Running {PRESETS.find((p) => p.protocol === selectedProtocol)?.label || 'Alignment Check'}...</span>
               <span>{progress}%</span>
             </div>
             <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
