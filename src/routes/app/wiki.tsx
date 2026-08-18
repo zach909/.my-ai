@@ -2,7 +2,9 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { BookOpen, Loader2, Search } from 'lucide-react'
+import { Button } from '@/components/ui/button'
+import { Label } from '@/components/ui/label'
+import { BookOpen, Loader2, Plus, Search, X } from 'lucide-react'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 
 interface WikiSearch {
@@ -42,6 +44,12 @@ function WikiPage() {
   const [contentLoading, setContentLoading] = useState(false)
   const [contentError, setContentError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
+  const [creating, setCreating] = useState(false)
+  const [newName, setNewName] = useState('')
+  const [newTitle, setNewTitle] = useState('')
+  const [newContent, setNewContent] = useState('')
+  const [publishLoading, setPublishLoading] = useState(false)
+  const [publishError, setPublishError] = useState<string | null>(null)
 
   // Real list of every wiki/*.md page, fetched from GET /api/wiki -- see
   // interface/web-server.ts. Not a hardcoded catalog: adding a new page
@@ -109,6 +117,46 @@ function WikiPage() {
     )
   }, [pages, query])
 
+  // Publishes through the exact same POST /api/wiki that WikiPlugin's own
+  // publish() action uses internally (see plugins/wiki.ts, models &&
+  // skills/core/wiki-store.ts) -- a page created here looks identical to
+  // one the AI creates itself as part of docs/SKILL_ACQUISITION_LOOP.md's
+  // "push the wiki page" step, and both show up immediately in the list
+  // below since GET /api/wiki always reads the real directory.
+  const publishPage = async () => {
+    const name = newName.trim()
+    const title = newTitle.trim()
+    const body = newContent.trim()
+    if (!name || !title || !body) {
+      setPublishError('Name, title, and content are all required.')
+      return
+    }
+    setPublishLoading(true)
+    setPublishError(null)
+    try {
+      const res = await fetch('/api/wiki', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, title, content: body }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to publish page')
+      const summary: WikiPageSummary = { name: data.name, title: data.title, description: data.description }
+      setPages(prev => [...prev.filter(p => p.name !== summary.name), summary].sort((a, b) => a.title.localeCompare(b.title)))
+      setActiveName(summary.name)
+      setContent(data.content)
+      setContentTitle(data.title)
+      setCreating(false)
+      setNewName('')
+      setNewTitle('')
+      setNewContent('')
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : 'Failed to publish page')
+    } finally {
+      setPublishLoading(false)
+    }
+  }
+
   // A [[Page]] link inside rendered content may reference a page by its
   // display title rather than its file stem (wiki/*.md's own convention --
   // e.g. [[Elastic Value Budget|Elastic-Value-Budget]] links by title with
@@ -153,6 +201,84 @@ function WikiPage() {
               aria-label="Search wiki pages"
             />
           </div>
+          <Button
+            type="button"
+            variant="outline"
+            size="sm"
+            onClick={() => {
+              setCreating(v => !v)
+              setPublishError(null)
+            }}
+            className="mb-2 w-full gap-1.5 text-xs active:scale-95 transition-all duration-150"
+            aria-label={creating ? 'Cancel new wiki page' : 'Create a new wiki page'}
+            aria-expanded={creating}
+          >
+            {creating ? <X size={13} /> : <Plus size={13} />}
+            {creating ? 'Cancel' : 'New Page'}
+          </Button>
+          {creating && (
+            <div className="mb-3 space-y-2 rounded-md border border-border p-2.5">
+              <div className="space-y-1">
+                <Label htmlFor="wiki-new-name" className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Page name (file stem)
+                </Label>
+                <Input
+                  id="wiki-new-name"
+                  value={newName}
+                  onChange={e => setNewName(e.target.value)}
+                  placeholder="e.g. My-New-Page"
+                  className="h-7 text-xs"
+                  disabled={publishLoading}
+                  aria-label="New page name"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="wiki-new-title" className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Title
+                </Label>
+                <Input
+                  id="wiki-new-title"
+                  value={newTitle}
+                  onChange={e => setNewTitle(e.target.value)}
+                  placeholder="e.g. My New Page"
+                  className="h-7 text-xs"
+                  disabled={publishLoading}
+                  aria-label="New page title"
+                />
+              </div>
+              <div className="space-y-1">
+                <Label htmlFor="wiki-new-content" className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                  Content (Markdown)
+                </Label>
+                <textarea
+                  id="wiki-new-content"
+                  value={newContent}
+                  onChange={e => setNewContent(e.target.value)}
+                  placeholder="Write the page in Markdown -- headings, lists, tables, and [[Other Page]] links are all supported."
+                  disabled={publishLoading}
+                  rows={6}
+                  className="flex w-full min-w-0 rounded-md border border-input bg-transparent px-2 py-1.5 text-xs shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+                  aria-label="New page content"
+                />
+              </div>
+              {publishError && (
+                <p role="alert" className="text-[11px] text-destructive">
+                  {publishError}
+                </p>
+              )}
+              <Button
+                type="button"
+                size="sm"
+                onClick={publishPage}
+                disabled={publishLoading}
+                className="w-full gap-1.5 text-xs active:scale-95 transition-all duration-150"
+                aria-label="Publish new wiki page"
+              >
+                {publishLoading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
+                {publishLoading ? 'Publishing...' : 'Publish'}
+              </Button>
+            </div>
+          )}
           {pagesLoading && (
             <div className="flex items-center gap-2 px-2 py-3 text-xs text-muted-foreground">
               <Loader2 className="h-3.5 w-3.5 animate-spin" />

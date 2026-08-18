@@ -24,6 +24,7 @@ import { RoboticsPlugin } from "./robotics.js";
 import { CodingExtension } from "./extensions/coding.js";
 import { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
 import { ResearchPlugin } from "./research.js";
+import { WikiPlugin } from "./wiki.js";
 import type { BasePlugin } from "../plugin_manager/sdk.js";
 
 export { LocationPlugin } from "./location.js";
@@ -51,6 +52,7 @@ export { MultiInputPlugin } from "./multi-input.js";
 export { CodingExtension } from "./extensions/coding.js";
 export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
 export { ResearchPlugin } from "./research.js";
+export { WikiPlugin } from "./wiki.js";
 
 export function createPluginInstance(
   name: string,
@@ -89,6 +91,7 @@ export function createPluginInstance(
   if (lower === "multi-input" || lower === "multi input" || lower === "multiinput" || lower.includes("desktop")) return new MultiInputPlugin(definition);
   if (lower.includes("language") || lower.includes("universal-language")) return new UniversalLanguageSkill(definition);
   if (lower === "research") return new ResearchPlugin(definition);
+  if (lower === "wiki") return new WikiPlugin(definition);
   throw new Error(`Unknown plugin: ${name}`);
 }
 
@@ -124,6 +127,7 @@ const pluginExtensions: Record<string, PluginDefinition> = {
   "plugin-maker": { id: "plugin-maker", name: "Plugin Maker", type: "api-connection", capabilities: ["plugin-maker"] },
   "universal-language-skill": { id: "universal-language-skill", name: "Universal Language Skill", type: "skill-expert", capabilities: ["language-support", "code-detection", "neuron-clusters"] },
   research: { id: "research", name: "Research", type: "api-connection", capabilities: ["memory-search", "drive-search", "web-search"] },
+  wiki: { id: "wiki", name: "Wiki", type: "api-connection", capabilities: ["wiki"] },
 };
 
 const allExtensions: ExtensionManifest[] = Object.entries(pluginExtensions).map(([key, def]) => ({
