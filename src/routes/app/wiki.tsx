@@ -197,6 +197,31 @@ function WikiPage() {
     setCreating(true)
   }
 
+  // Same idea as startEditingPage(), but for a sidebar row that isn't
+  // necessarily the page currently open in the content pane -- fetches its
+  // content fresh (the `content`/`contentTitle` state only reflects
+  // whichever page is active) rather than requiring "view it, then click
+  // Edit" first.
+  const startEditingNamedPage = async (name: string, fallbackTitle: string) => {
+    setPublishError(null)
+    try {
+      const res = await fetch(`/api/wiki/${encodeURIComponent(name)}`)
+      if (!res.ok) throw new Error(`Page "${name}" not found`)
+      const data: { content: string; title: string; source: WikiSource } = await res.json()
+      setActiveName(name)
+      setContent(data.content)
+      setContentTitle(data.title || fallbackTitle)
+      setContentSource(data.source ?? 'bot')
+      setEditingName(name)
+      setNewName(name)
+      setNewTitle(data.title || fallbackTitle)
+      setNewContent(data.content)
+      setCreating(true)
+    } catch (err) {
+      setPublishError(err instanceof Error ? err.message : 'Failed to load page for editing')
+    }
+  }
+
   const cancelForm = () => {
     setCreating(false)
     setEditingName(null)
@@ -382,20 +407,33 @@ function WikiPage() {
                     Bot Wiki
                   </p>
                   {botPages.map(p => (
-                    <button
+                    <div
                       key={p.name}
-                      type="button"
-                      onClick={() => setActiveName(p.name)}
-                      aria-current={activeName === p.name ? 'page' : undefined}
-                      className={`w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
-                        activeName === p.name
-                          ? 'bg-primary/10 text-primary font-medium'
-                          : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                      className={`group flex items-center gap-0.5 rounded-md transition-colors ${
+                        activeName === p.name ? 'bg-primary/10' : 'hover:bg-muted/60'
                       }`}
-                      title={p.description}
                     >
-                      {p.title || p.name}
-                    </button>
+                      <button
+                        type="button"
+                        onClick={() => setActiveName(p.name)}
+                        aria-current={activeName === p.name ? 'page' : undefined}
+                        className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                          activeName === p.name ? 'text-primary font-medium' : 'text-muted-foreground group-hover:text-foreground'
+                        }`}
+                        title={p.description}
+                      >
+                        {p.title || p.name}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => startEditingNamedPage(p.name, p.title)}
+                        className="mr-1 flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
+                        aria-label={`Edit ${p.title || p.name}`}
+                        title={`Edit ${p.title || p.name}`}
+                      >
+                        <Pencil size={11} />
+                      </button>
+                    </div>
                   ))}
                 </div>
               )}
