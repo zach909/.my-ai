@@ -400,43 +400,54 @@ function WikiPage() {
                   <p className="px-2 py-1.5 text-xs text-muted-foreground">No pages match "{query}".</p>
                 )}
               </div>
-              {botPages.length > 0 && (
-                <div className="space-y-0.5 border-t border-border pt-2">
-                  <p className="flex items-center gap-1 px-2 pb-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-                    <Bot size={11} />
-                    Bot Wiki
+              {/* Always shown, even with zero pages -- previously this whole
+                  section was hidden until at least one bot page existed,
+                  which meant a first-time user saw no indication "Bot Wiki"
+                  (and therefore Edit, which only ever appears on a bot
+                  page) was a feature at all, not just that it was empty. */}
+              <div className="space-y-0.5 border-t border-border pt-2">
+                <p className="flex items-center gap-1 px-2 pb-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                  <Bot size={11} />
+                  Bot Wiki
+                </p>
+                {botPages.length === 0 && !query && (
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground">
+                    No bot-published pages yet. Use "New Page" above to create one -- it'll show up here, editable.
                   </p>
-                  {botPages.map(p => (
-                    <div
-                      key={p.name}
-                      className={`group flex items-center gap-0.5 rounded-md transition-colors ${
-                        activeName === p.name ? 'bg-primary/10' : 'hover:bg-muted/60'
+                )}
+                {botPages.length === 0 && query && (
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground">No pages match "{query}".</p>
+                )}
+                {botPages.map(p => (
+                  <div
+                    key={p.name}
+                    className={`group flex items-center gap-0.5 rounded-md transition-colors ${
+                      activeName === p.name ? 'bg-primary/10' : 'hover:bg-muted/60'
+                    }`}
+                  >
+                    <button
+                      type="button"
+                      onClick={() => setActiveName(p.name)}
+                      aria-current={activeName === p.name ? 'page' : undefined}
+                      className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                        activeName === p.name ? 'text-primary font-medium' : 'text-muted-foreground group-hover:text-foreground'
                       }`}
+                      title={p.description}
                     >
-                      <button
-                        type="button"
-                        onClick={() => setActiveName(p.name)}
-                        aria-current={activeName === p.name ? 'page' : undefined}
-                        className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
-                          activeName === p.name ? 'text-primary font-medium' : 'text-muted-foreground group-hover:text-foreground'
-                        }`}
-                        title={p.description}
-                      >
-                        {p.title || p.name}
-                      </button>
-                      <button
-                        type="button"
-                        onClick={() => startEditingNamedPage(p.name, p.title)}
-                        className="mr-1 flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
-                        aria-label={`Edit ${p.title || p.name}`}
-                        title={`Edit ${p.title || p.name}`}
-                      >
-                        <Pencil size={11} />
-                      </button>
-                    </div>
-                  ))}
-                </div>
-              )}
+                      {p.title || p.name}
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => startEditingNamedPage(p.name, p.title)}
+                      className="mr-1 flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
+                      aria-label={`Edit ${p.title || p.name}`}
+                      title={`Edit ${p.title || p.name}`}
+                    >
+                      <Pencil size={11} />
+                    </button>
+                  </div>
+                ))}
+              </div>
             </nav>
           )}
         </Card>
