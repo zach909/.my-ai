@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Cpu, FlaskConical, Network, Brain, MessageSquare, Blocks, ArrowUpRight } from 'lucide-react'
+import { Cpu, FlaskConical, Network, Brain, MessageSquare, Blocks, ArrowUpRight, Bot } from 'lucide-react'
 
 export const Route = createFileRoute('/app/')({
   head: () => ({
@@ -19,6 +19,9 @@ const MODULES = [
   { title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.', icon: Network, href: '/app/architecture' },
   { title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.', icon: Brain, href: '/app/knowledge' },
   { title: 'ASI Core', description: 'Monitor compute, memory, and core metrics across the platform.', icon: Cpu, href: '/app' },
+  // Deep-links straight into the real wiki/Bots.md page (see /app/wiki's
+  // validateSearch) instead of dropping the user on Home to go find it.
+  { title: 'Automated Bots', description: 'Which bots (Bolt, Sentinel, Palette, Jules) work on this repo, and the concurrent-PR corruption bug their overlapping PRs cause.', icon: Bot, href: '/app/wiki', search: { page: 'Bots' } },
 ]
 
 function DashboardHome() {
@@ -31,10 +34,11 @@ function DashboardHome() {
         </p>
       </div>
       <div className="grid gap-4 sm:grid-cols-2">
-        {MODULES.map(({ title, description, icon: Icon, href }) => (
+        {MODULES.map(({ title, description, icon: Icon, href, search }) => (
           <Link
             key={title}
             to={href}
+            search={search}
             aria-label={`Open ${title}: ${description}`}
             className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] transition-all duration-150"
           >

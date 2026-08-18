@@ -5,7 +5,17 @@ import { Input } from '@/components/ui/input'
 import { BookOpen, Loader2, Search } from 'lucide-react'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 
+interface WikiSearch {
+  page?: string
+}
+
 export const Route = createFileRoute('/app/wiki')({
+  // Lets a link elsewhere in the app (e.g. the Dashboard's "Automated Bots"
+  // shortcut) deep-link straight to one page via /app/wiki?page=Bots instead
+  // of landing on Home and making the user find it in the sidebar.
+  validateSearch: (search: Record<string, unknown>): WikiSearch => ({
+    page: typeof search.page === 'string' ? search.page : undefined,
+  }),
   head: () => ({
     meta: [
       { title: 'Wiki · ASI Architect' },
@@ -22,6 +32,7 @@ interface WikiPageSummary {
 }
 
 function WikiPage() {
+  const { page: requestedPage } = Route.useSearch()
   const [pages, setPages] = useState<WikiPageSummary[]>([])
   const [pagesLoading, setPagesLoading] = useState(true)
   const [pagesError, setPagesError] = useState<string | null>(null)
@@ -44,8 +55,11 @@ function WikiPage() {
         if (cancelled) return
         setPages(data.pages ?? [])
         setPagesError(null)
-        const home = data.pages?.find(p => p.name === 'Home') ?? data.pages?.[0]
-        if (home) setActiveName(home.name)
+        const requested = requestedPage
+          ? data.pages?.find(p => p.name === requestedPage || p.title.toLowerCase() === requestedPage.toLowerCase())
+          : undefined
+        const initial = requested ?? data.pages?.find(p => p.name === 'Home') ?? data.pages?.[0]
+        if (initial) setActiveName(initial.name)
       })
       .catch((err: unknown) => {
         if (!cancelled) setPagesError(err instanceof Error ? err.message : 'Failed to load wiki index')
