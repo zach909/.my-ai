@@ -30,6 +30,26 @@ export class WikiPlugin extends BasePlugin {
     return publishWikiPage(name, title, content);
   }
 
+  /**
+   * Same underlying call as publish() -- publishWikiPage() already
+   * overwrites a same-named wiki/bot/*.md file unconditionally -- but
+   * requires the page to already exist first, so an "edit" can't silently
+   * turn into creating a brand-new page from a typo'd name, and can't
+   * touch a curated wiki/ page (publishWikiPage() already refuses that on
+   * its own, but the error there is generic; this one names the actual
+   * mistake).
+   */
+  async edit(name: string, title: string, content: string): Promise<WikiPage> {
+    const existing = await this.read(name);
+    if (!existing) {
+      throw new WikiNameError(`No existing page named "${name}" to edit -- use publish() to create a new one.`);
+    }
+    if (existing.source !== "bot") {
+      throw new WikiNameError(`"${name}" is a curated wiki page and can't be edited here.`);
+    }
+    return publishWikiPage(name, title, content);
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = String(message).trim();
 
@@ -54,9 +74,22 @@ export class WikiPlugin extends BasePlugin {
       const [, name, title, content] = publishMatch;
       try {
         const page = await this.publish(name, title, content);
-        return `[Wiki] Published "${page.title}" to wiki/${page.name}.md.`;
+        return `[Wiki] Published "${page.title}" to wiki/bot/${page.name}.md.`;
       } catch (err) {
         const detail = err instanceof WikiNameError ? err.message : "Failed to publish.";
+        return `[Wiki] ${detail}`;
+      }
+    }
+
+    // wiki edit "<name>" "<title>": <content...>
+    const editMatch = input.match(/^wiki\s+edit\s+"([^"]+)"\s+"([^"]+)"\s*:\s*([\s\S]+)$/i);
+    if (editMatch) {
+      const [, name, title, content] = editMatch;
+      try {
+        const page = await this.edit(name, title, content);
+        return `[Wiki] Saved changes to "${page.title}" (wiki/bot/${page.name}.md).`;
+      } catch (err) {
+        const detail = err instanceof WikiNameError ? err.message : "Failed to save changes.";
         return `[Wiki] ${detail}`;
       }
     }
