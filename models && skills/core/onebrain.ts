@@ -333,19 +333,39 @@ function applyScale(value: number, scaleInfo: QuantizationScale): { level: numbe
  * whereas pack() is for persisting/transmitting the reduced-width form.
  */
 export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
-  // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
-  // Directly set the Uint8Array using typed array copy, bypassing bitwise packing logic.
+  // BOLT OPTIMIZATION: Fast-path for the highly frequent 8-bit case.
+  // Using 4x unrolled index loop copying avoids TypedArray.set cross-type conversion built-in overhead.
   if (bits === 8) {
-    const out = new Uint8Array(levels.length);
-    out.set(levels);
+    const len = levels.length;
+    const out = new Uint8Array(len);
+    let i = 0;
+    for (; i < len - 3; i += 4) {
+      out[i] = levels[i];
+      out[i + 1] = levels[i + 1];
+      out[i + 2] = levels[i + 2];
+      out[i + 3] = levels[i + 3];
+    }
+    for (; i < len; i++) {
+      out[i] = levels[i];
+    }
     return out;
   }
 
-  // BOLT OPTIMIZATION: Extremely fast-path for 16-bit configuration.
-  // Directly set using native Uint16Array, bypassing bitwise packing logic.
+  // BOLT OPTIMIZATION: Fast-path for 16-bit configuration.
+  // Using 4x unrolled index loop into Uint16Array avoids TypedArray.set cross-type conversion overhead.
   if (bits === 16) {
-    const u16 = new Uint16Array(levels.length);
-    u16.set(levels);
+    const len = levels.length;
+    const u16 = new Uint16Array(len);
+    let i = 0;
+    for (; i < len - 3; i += 4) {
+      u16[i] = levels[i];
+      u16[i + 1] = levels[i + 1];
+      u16[i + 2] = levels[i + 2];
+      u16[i + 3] = levels[i + 3];
+    }
+    for (; i < len; i++) {
+      u16[i] = levels[i];
+    }
     return new Uint8Array(u16.buffer, u16.byteOffset, u16.byteLength);
   }
 
@@ -389,24 +409,53 @@ export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
 }
 
 export function unpackLevels(packed: Uint8Array, count: number, bits: number): Uint32Array {
-  // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
-  // Directly set the Uint32Array using typed array copy, bypassing bitwise unpacking logic.
-  // We use subarray(0, count) to be safe if the packed source buffer is larger than count.
+  // BOLT OPTIMIZATION: Fast-path for the highly frequent 8-bit case.
+  // Using 4x unrolled index loop copying avoids TypedArray.set cross-type conversion built-in
+  // and subarray view object allocation overhead.
   if (bits === 8) {
     const out = new Uint32Array(count);
-    out.set(packed.subarray(0, count));
+    let i = 0;
+    for (; i < count - 3; i += 4) {
+      out[i] = packed[i];
+      out[i + 1] = packed[i + 1];
+      out[i + 2] = packed[i + 2];
+      out[i + 3] = packed[i + 3];
+    }
+    for (; i < count; i++) {
+      out[i] = packed[i];
+    }
     return out;
   }
 
-  // BOLT OPTIMIZATION: Extremely fast-path for 16-bit configuration.
-  // Extract 16-bit words cleanly, handling offset/alignment boundaries gracefully.
+  // BOLT OPTIMIZATION: Fast-path for 16-bit configuration.
+  // Extract 16-bit words cleanly with 4x unrolled loops, handling offset/alignment boundaries gracefully.
   if (bits === 16) {
     const out = new Uint32Array(count);
     if (packed.byteOffset % 2 === 0) {
       const u16 = new Uint16Array(packed.buffer, packed.byteOffset, count);
-      out.set(u16);
+      let i = 0;
+      for (; i < count - 3; i += 4) {
+        out[i] = u16[i];
+        out[i + 1] = u16[i + 1];
+        out[i + 2] = u16[i + 2];
+        out[i + 3] = u16[i + 3];
+      }
+      for (; i < count; i++) {
+        out[i] = u16[i];
+      }
     } else {
-      for (let i = 0; i < count; i++) {
+      let i = 0;
+      for (; i < count - 3; i += 4) {
+        const idx0 = i * 2;
+        const idx1 = idx0 + 2;
+        const idx2 = idx0 + 4;
+        const idx3 = idx0 + 6;
+        out[i] = packed[idx0] | (packed[idx0 + 1] << 8);
+        out[i + 1] = packed[idx1] | (packed[idx1 + 1] << 8);
+        out[i + 2] = packed[idx2] | (packed[idx2 + 1] << 8);
+        out[i + 3] = packed[idx3] | (packed[idx3 + 1] << 8);
+      }
+      for (; i < count; i++) {
         out[i] = packed[i * 2] | (packed[i * 2 + 1] << 8);
       }
     }

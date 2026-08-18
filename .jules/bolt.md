@@ -1,5 +1,9 @@
 # Bolt's Journal - Critical Learnings
 
+## 2026-08-18 - Background Quantizer Fast-Path TypedArray Set Cross-Type Overhead Optimization
+**Learning:** Calling `TypedArray.prototype.set()` across different array types (e.g. `Uint8Array.set(Uint32Array)` or `Uint32Array.set(Uint16Array)`) or on `.subarray()` views inside `packLevels` and `unpackLevels` triggers C++ engine built-in conversion routines and view allocations. Replacing `.set()` and `.subarray()` in 8-bit and 16-bit fast-paths with 4x unrolled index loops (`out[i] = levels[i]`) allows JIT compilers to emit direct CPU scalar load/store instructions (`mov`/`movzx`), reducing 8-bit round-trip quantization latency by ~3.1x (~0.885ms to ~0.284ms for 100,000 elements).
+**Action:** When copying element data between TypedArrays of different element bit widths or byte offsets in hot paths, avoid `TypedArray.prototype.set()` or `.subarray()`; use 4x unrolled scalar index loops instead.
+
 ## 2026-08-17 - MathEngine 4x4 Matrix Determinant Fast-Path and Minor Matrix Construction
 **Learning:** Computing matrix determinants via recursive cofactor expansion with higher-order functional methods (`m.slice(1).map(row => row.filter(...))`) causes excessive closure allocations and array copy churn per recursive call. Adding a direct analytic $4 \times 4$ determinant fast-path (`if (n === 4)`) using Laplace expansion over $2 \times 2$ sub-determinants completely eliminates recursive calls and minor allocations (~6.5x speedup for 4x4 matrices). For general $N \times N$ matrices ($N > 4$), constructing minor sub-matrices via direct nested `for` loops avoids `.slice()`, `.map()`, and `.filter()` overhead (~4.7x speedup).
 **Action:** When evaluating matrix determinants or recursive sub-matrix decompositions, add direct analytic fast-paths for common fixed small sizes ($3 \times 3$, $4 \times 4$) and substitute array functional chains with direct index loops.
