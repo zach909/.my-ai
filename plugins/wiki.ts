@@ -21,11 +21,51 @@ export class WikiPlugin extends BasePlugin {
   }
 
   async read(name: string): Promise<WikiPage | null> {
+    if (typeof name !== "string") {
+      throw new Error("Security Error: Page name must be a string.");
+    }
+    if (!name || name.trim().length === 0) {
+      throw new Error("Security Error: Page name cannot be empty.");
+    }
+    if (name.length > 100) {
+      throw new Error("Security Error: Page name exceeds maximum length limit of 100 characters.");
+    }
+
     return readWikiPage(name);
   }
 
   /** The AI publishing a page "with itself" -- no human in the loop required. */
   async publish(name: string, title: string, content: string): Promise<WikiPage> {
+    if (typeof name !== "string") {
+      throw new Error("Security Error: Page name must be a string.");
+    }
+    if (!name || name.trim().length === 0) {
+      throw new Error("Security Error: Page name cannot be empty.");
+    }
+    if (name.length > 100) {
+      throw new Error("Security Error: Page name exceeds maximum length limit of 100 characters.");
+    }
+
+    if (typeof title !== "string") {
+      throw new Error("Security Error: Page title must be a string.");
+    }
+    if (!title || title.trim().length === 0) {
+      throw new Error("Security Error: Page title cannot be empty.");
+    }
+    if (title.length > 200) {
+      throw new Error("Security Error: Page title exceeds maximum length limit of 200 characters.");
+    }
+
+    if (typeof content !== "string") {
+      throw new Error("Security Error: Page content must be a string.");
+    }
+    if (!content || content.trim().length === 0) {
+      throw new Error("Security Error: Page content cannot be empty.");
+    }
+    if (content.length > 100000) {
+      throw new Error("Security Error: Page content exceeds maximum length limit of 100,000 characters.");
+    }
+
     return publishWikiPage(name, title, content);
   }
 
