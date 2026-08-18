@@ -1,12 +1,13 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
+import { listWikiPages, readWikiPage, publishWikiPage, WikiNameError } from '../models && skills/core/wiki-store.js';
 
 type PyTorchTrainResult =
   { ok: true; torchVersion: string; epochsRun: number; converged: boolean; sampleLosses: number[]; sampleConverged: boolean[]; W: number[][]; b: number[][] }
@@ -298,32 +299,6 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 </html>`;
 
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
-
-/**
- * Pull a title and one-line description out of a wiki/*.md page's raw text:
- * the title is the first `# ` heading (falling back to the page name if a
- * page somehow has none), and the description is the first non-empty,
- * non-heading, non-table-row paragraph line after it -- every page in
- * wiki/*.md follows exactly this shape (see wiki/Home.md, wiki/Builder.md,
- * ...), so this is a real extraction of real page structure, not a guess.
- */
-function extractWikiSummary(raw: string): { title: string; description: string } {
-  const lines = raw.split('\n');
-  let title = '';
-  let description = '';
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!title) {
-      const h1 = trimmed.match(/^#\s+(.+)$/);
-      if (h1) title = h1[1].trim();
-      continue;
-    }
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('|') || trimmed.startsWith('```')) continue;
-    description = trimmed;
-    break;
-  }
-  return { title, description };
-}
 
 /**
  * A single password check, kept only in memory for the lifetime of one
@@ -1185,25 +1160,36 @@ export class WebServer {
 
     // GET /api/wiki — every real page under wiki/*.md (the same content
     // GitHub's wiki tab renders), lightweight summaries only (name/title/
-    // description) so /app/wiki can list them without fetching 31 full
-    // files. Reads the actual repo directory on every call rather than
+    // description) so /app/wiki can list them without fetching every full
+    // file. Reads the actual repo directory on every call rather than
     // caching, matching this project's "wiki is a living doc, not a build
     // artifact" convention (see docs/SHARED_WIKI_SYSTEM.md) — a page
-    // edited on disk while the server is running shows up on next load.
+    // edited on disk (by a human, or by WikiPlugin.publish() below) shows
+    // up on next load.
     if (pathname === '/api/wiki' && method === 'GET') {
-      const dir = path.resolve(process.cwd(), 'wiki');
-      let pages: { name: string; title: string; description: string }[] = [];
-      if (existsSync(dir)) {
-        pages = readdirSync(dir)
-          .filter(f => f.endsWith('.md'))
-          .map(f => {
-            const name = f.slice(0, -3);
-            const raw = readFileSync(path.join(dir, f), 'utf8');
-            return { name, ...extractWikiSummary(raw) };
-          })
-          .sort((a, b) => a.title.localeCompare(b.title));
-      }
+      const pages = listWikiPages();
       this.sendJson(res, { pages, total: pages.length });
+      return;
+    }
+
+    // POST /api/wiki — create or overwrite a page. This is the human-facing
+    // half of docs/SKILL_ACQUISITION_LOOP.md's "push the wiki page" step;
+    // the AI-facing half is plugins/wiki.ts's WikiPlugin.publish(), which
+    // calls the exact same wiki-store.ts helper so a page looks identical
+    // regardless of who published it.
+    if (pathname === '/api/wiki' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { name?: string; title?: string; content?: string } | null;
+        if (typeof body?.name !== 'string' || typeof body?.title !== 'string' || typeof body?.content !== 'string') {
+          this.sendJson(res, { error: 'Expected { name, title, content } (all strings)' }, 400);
+          return;
+        }
+        const page = publishWikiPage(body.name, body.title, body.content);
+        this.sendJson(res, page, 201);
+      } catch (err) {
+        const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
       return;
     }
 
@@ -1214,14 +1200,12 @@ export class WebServer {
     // which rules out both `..` traversal and an absolute-path override.
     const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)$/);
     if (wikiMatch && method === 'GET') {
-      const dir = path.resolve(process.cwd(), 'wiki');
-      const file = path.join(dir, `${wikiMatch[1]}.md`);
-      if (!existsSync(file)) {
+      const page = readWikiPage(wikiMatch[1]);
+      if (!page) {
         this.sendJson(res, { error: `No wiki page named "${wikiMatch[1]}"` }, 404);
         return;
       }
-      const content = readFileSync(file, 'utf8');
-      this.sendJson(res, { name: wikiMatch[1], content, ...extractWikiSummary(content) });
+      this.sendJson(res, page);
       return;
     }
 
