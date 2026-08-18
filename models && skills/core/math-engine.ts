@@ -473,46 +473,6 @@ export function determinant(m: number[][]): number {
     }
     const sign = col % 2 === 0 ? 1 : -1;
     det += sign * m[0][col] * determinant(minor);
-  // BOLT OPTIMIZATION: Direct analytic formula for 4x4 matrices using Laplace expansion over 2x2 sub-determinants.
-  // Bypasses recursive cofactor calls and minor array allocations (~6.5x speedup).
-  if (n === 4) {
-    const m00 = m[0][0], m01 = m[0][1], m02 = m[0][2], m03 = m[0][3];
-    const m10 = m[1][0], m11 = m[1][1], m12 = m[1][2], m13 = m[1][3];
-    const m20 = m[2][0], m21 = m[2][1], m22 = m[2][2], m23 = m[2][3];
-    const m30 = m[3][0], m31 = m[3][1], m32 = m[3][2], m33 = m[3][3];
-
-    const s0 = m20 * m31 - m21 * m30;
-    const s1 = m20 * m32 - m22 * m30;
-    const s2 = m20 * m33 - m23 * m30;
-    const s3 = m21 * m32 - m22 * m31;
-    const s4 = m21 * m33 - m23 * m31;
-    const s5 = m22 * m33 - m23 * m32;
-
-    const d0 = m11 * s5 - m12 * s4 + m13 * s3;
-    const d1 = m10 * s5 - m12 * s2 + m13 * s1;
-    const d2 = m10 * s4 - m11 * s2 + m13 * s0;
-    const d3 = m10 * s3 - m11 * s1 + m12 * s0;
-
-    return m00 * d0 - m01 * d1 + m02 * d2 - m03 * d3;
-  }
-  // BOLT OPTIMIZATION: Fast minor matrix construction for N > 4 using direct index iterations
-  // instead of high-overhead `.slice(1).map(row => row.filter(...))` closure and array allocation chains (~4.7x speedup).
-  let det = 0;
-  const minor = new Array(n - 1);
-  for (let col = 0; col < n; col++) {
-    for (let i = 1; i < n; i++) {
-      const mRow = m[i];
-      const subRow = new Array(n - 1);
-      let rIdx = 0;
-      for (let j = 0; j < n; j++) {
-        if (j !== col) {
-          subRow[rIdx++] = mRow[j];
-        }
-      }
-      minor[i - 1] = subRow;
-    }
-    const term = m[0][col] * determinant(minor);
-    det = (col & 1) ? det - term : det + term;
   }
   return det;
 }
