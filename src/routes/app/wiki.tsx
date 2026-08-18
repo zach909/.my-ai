@@ -410,7 +410,12 @@ function WikiPage() {
           {!pagesLoading && !pagesError && (
             <nav className="max-h-[70vh] space-y-3 overflow-y-auto" aria-label="Wiki pages">
               <div className="space-y-0.5">
-                <p className="px-2 pb-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Wiki</p>
+                <p
+                  className="px-2 pb-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider"
+                  title="Curated pages -- read-only in the app, changed only through a real commit to wiki/"
+                >
+                  Wiki
+                </p>
                 {curatedPages.map(p => (
                   <button
                     key={p.name}
@@ -437,7 +442,10 @@ function WikiPage() {
                   (and therefore Edit, which only ever appears on a bot
                   page) was a feature at all, not just that it was empty. */}
               <div className="space-y-0.5 border-t border-border pt-2">
-                <p className="flex items-center gap-1 px-2 pb-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                <p
+                  className="flex items-center gap-1 px-2 pb-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider"
+                  title="Published from the app (by you, or by the AI) -- editable and deletable, hover a page for controls"
+                >
                   <Bot size={11} />
                   Bot Wiki
                 </p>
@@ -508,6 +516,16 @@ function WikiPage() {
         )}
         {!contentLoading && !contentError && content && (
           <article aria-label={contentTitle}>
+            {/* Every page explains why it can or can't be edited here --
+                previously a curated page silently showed no Edit button
+                with no explanation at all, which read as "the feature is
+                broken" rather than "this page is protected by design". */}
+            {contentSource === 'human' && (
+              <div className="mb-4 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground w-fit">
+                <BookOpen size={13} />
+                Curated wiki page — not editable in the app; changes go through a real commit to wiki/
+              </div>
+            )}
             {contentSource === 'bot' && (
               <div className="mb-4 flex items-center gap-2 rounded-md border border-dashed border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary w-fit">
                 <Bot size={13} />
