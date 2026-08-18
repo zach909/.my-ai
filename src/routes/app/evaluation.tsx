@@ -183,9 +183,6 @@ function EvaluationPage() {
                   onClick={() => applyPreset(p.model, p.protocol, p.label)}
                   className="rounded-md border border-border bg-muted/50 px-2.5 py-1 text-xs font-medium text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
                   aria-label={p.ariaLabel}
-                  aria-label={`Apply ${p.label} preset`}
-                  title={p.description}
-                  aria-label={p.ariaLabel}
                   title={p.title}
                 >
                   +{p.label}
