@@ -35,4 +35,13 @@ describe('LocationPlugin Security Validation', () => {
     await expect(plugin.geocode('london\\suburb')).rejects.toThrowError('Security Error: Invalid address format.');
     await expect(plugin.geocode('../../etc/passwd')).rejects.toThrowError('Security Error: Invalid address format.');
   });
+
+  it('getCurrentPosition executes safely without subshells and returns valid position structure', async () => {
+    const position = await plugin.getCurrentPosition();
+    expect(position).toBeDefined();
+    expect(position.coords).toBeDefined();
+    expect(typeof position.coords.latitude).toBe('number');
+    expect(typeof position.coords.longitude).toBe('number');
+    expect(typeof position.timestamp).toBe('number');
+  });
 });
