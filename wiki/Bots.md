@@ -57,6 +57,12 @@ Evidence this isn't hypothetical: the exact commit `🎨 Palette: Add real-time 
 
 **Mitigation** (not yet implemented as of this page): a CI check that runs `tsc --noEmit` (and ideally `vite build`) on every PR, and again on `main` after each merge, would catch this class of bug before — or immediately after — it lands, instead of waiting for a developer's local `npm run build` to fail. See [[Home]] for where to track this if it gets built.
 
+## Not to be confused with: the AI publishing wiki pages at runtime
+
+Everything above is about **bots that open GitHub PRs** — code changes reviewed and merged through git, landing in `src/`, `plugins/`, etc. That's a completely different mechanism from `plugins/wiki.ts`'s `WikiPlugin`, which lets the running app (a human through `/app/wiki`'s "New Page" form, or the AI itself as a plugin action) publish a documentation page **without any git/PR step at all** — see `models && skills/core/wiki-store.ts`.
+
+To keep the two clearly separated, self-published pages never land in this curated `wiki/` directory — they're written to `wiki/bot/` instead, tagged `source: "bot"`, and rendered in their own "Bot Wiki" section in `/app/wiki`, distinct from the "Wiki" section you're reading right now. A curated page's name always wins if the two ever collide. This page you're reading is real, human-reviewed, and lives in `wiki/` proper — it will never be silently overwritten by something the AI wrote at runtime.
+
 ## See Also
 
 - [[Home]] - Main wiki page

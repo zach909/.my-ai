@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { BookOpen, Loader2, Plus, Search, X } from 'lucide-react'
+import { Bot, BookOpen, Loader2, Plus, Search, X } from 'lucide-react'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 
 interface WikiSearch {
@@ -27,10 +27,13 @@ export const Route = createFileRoute('/app/wiki')({
   component: WikiPage,
 })
 
+type WikiSource = 'human' | 'bot'
+
 interface WikiPageSummary {
   name: string
   title: string
   description: string
+  source: WikiSource
 }
 
 function WikiPage() {
@@ -41,6 +44,7 @@ function WikiPage() {
   const [activeName, setActiveName] = useState<string | null>(null)
   const [content, setContent] = useState<string | null>(null)
   const [contentTitle, setContentTitle] = useState<string>('')
+  const [contentSource, setContentSource] = useState<WikiSource>('human')
   const [contentLoading, setContentLoading] = useState(false)
   const [contentError, setContentError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
@@ -90,10 +94,11 @@ function WikiPage() {
         if (!res.ok) throw new Error(`Page "${activeName}" not found`)
         return res.json()
       })
-      .then((data: { content: string; title: string }) => {
+      .then((data: { content: string; title: string; source: WikiSource }) => {
         if (cancelled) return
         setContent(data.content)
         setContentTitle(data.title || activeName)
+        setContentSource(data.source ?? 'human')
       })
       .catch((err: unknown) => {
         if (!cancelled) {
@@ -116,6 +121,15 @@ function WikiPage() {
       p => p.title.toLowerCase().includes(q) || p.name.toLowerCase().includes(q) || p.description.toLowerCase().includes(q),
     )
   }, [pages, query])
+
+  // Two visibly distinct groups, never interleaved: the curated wiki/*.md
+  // pages (source: 'human') and pages published through POST /api/wiki
+  // (source: 'bot' -- wiki/bot/*.md, written by WikiPlugin on the AI's own
+  // behalf or by this page's own "New Page" form). See models && skills/
+  // core/wiki-store.ts's module doc for why they're kept in separate
+  // directories rather than one flat list.
+  const curatedPages = useMemo(() => filteredPages.filter(p => p.source === 'human'), [filteredPages])
+  const botPages = useMemo(() => filteredPages.filter(p => p.source === 'bot'), [filteredPages])
 
   // Publishes through the exact same POST /api/wiki that WikiPlugin's own
   // publish() action uses internally (see plugins/wiki.ts, models &&
@@ -141,11 +155,15 @@ function WikiPage() {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to publish page')
-      const summary: WikiPageSummary = { name: data.name, title: data.title, description: data.description }
-      setPages(prev => [...prev.filter(p => p.name !== summary.name), summary].sort((a, b) => a.title.localeCompare(b.title)))
+      // Always 'bot' -- publishWikiPage() (the function this endpoint and
+      // WikiPlugin.publish() both call) only ever writes into wiki/bot/,
+      // never the curated wiki/ directory, regardless of who submitted it.
+      const summary: WikiPageSummary = { name: data.name, title: data.title, description: data.description, source: 'bot' }
+      setPages(prev => [...prev.filter(p => p.name !== summary.name), summary])
       setActiveName(summary.name)
       setContent(data.content)
       setContentTitle(data.title)
+      setContentSource('bot')
       setCreating(false)
       setNewName('')
       setNewTitle('')
@@ -291,25 +309,52 @@ function WikiPage() {
             </p>
           )}
           {!pagesLoading && !pagesError && (
-            <nav className="max-h-[70vh] space-y-0.5 overflow-y-auto" aria-label="Wiki pages">
-              {filteredPages.map(p => (
-                <button
-                  key={p.name}
-                  type="button"
-                  onClick={() => setActiveName(p.name)}
-                  aria-current={activeName === p.name ? 'page' : undefined}
-                  className={`w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
-                    activeName === p.name
-                      ? 'bg-primary/10 text-primary font-medium'
-                      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                  }`}
-                  title={p.description}
-                >
-                  {p.title || p.name}
-                </button>
-              ))}
-              {filteredPages.length === 0 && (
-                <p className="px-2 py-3 text-xs text-muted-foreground">No pages match "{query}".</p>
+            <nav className="max-h-[70vh] space-y-3 overflow-y-auto" aria-label="Wiki pages">
+              <div className="space-y-0.5">
+                <p className="px-2 pb-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">Wiki</p>
+                {curatedPages.map(p => (
+                  <button
+                    key={p.name}
+                    type="button"
+                    onClick={() => setActiveName(p.name)}
+                    aria-current={activeName === p.name ? 'page' : undefined}
+                    className={`w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                      activeName === p.name
+                        ? 'bg-primary/10 text-primary font-medium'
+                        : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                    }`}
+                    title={p.description}
+                  >
+                    {p.title || p.name}
+                  </button>
+                ))}
+                {curatedPages.length === 0 && (
+                  <p className="px-2 py-1.5 text-xs text-muted-foreground">No pages match "{query}".</p>
+                )}
+              </div>
+              {botPages.length > 0 && (
+                <div className="space-y-0.5 border-t border-border pt-2">
+                  <p className="flex items-center gap-1 px-2 pb-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+                    <Bot size={11} />
+                    Bot Wiki
+                  </p>
+                  {botPages.map(p => (
+                    <button
+                      key={p.name}
+                      type="button"
+                      onClick={() => setActiveName(p.name)}
+                      aria-current={activeName === p.name ? 'page' : undefined}
+                      className={`w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                        activeName === p.name
+                          ? 'bg-primary/10 text-primary font-medium'
+                          : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                      }`}
+                      title={p.description}
+                    >
+                      {p.title || p.name}
+                    </button>
+                  ))}
+                </div>
               )}
             </nav>
           )}
@@ -329,7 +374,15 @@ function WikiPage() {
           </p>
         )}
         {!contentLoading && !contentError && content && (
-          <article aria-label={contentTitle}>{renderWikiMarkdown(content, { onWikiLink: resolveAndNavigate })}</article>
+          <article aria-label={contentTitle}>
+            {contentSource === 'bot' && (
+              <div className="mb-4 flex items-center gap-1.5 rounded-md border border-dashed border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary w-fit">
+                <Bot size={13} />
+                Bot-published — not part of the curated wiki
+              </div>
+            )}
+            {renderWikiMarkdown(content, { onWikiLink: resolveAndNavigate })}
+          </article>
         )}
         {!contentLoading && !contentError && !content && !activeName && (
           <p className="text-sm text-muted-foreground">Select a page from the list.</p>

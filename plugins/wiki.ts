@@ -5,11 +5,12 @@ import { listWikiPages, readWikiPage, publishWikiPage, WikiNameError, type WikiP
 /**
  * WikiPlugin — the AI's own hands for docs/SKILL_ACQUISITION_LOOP.md's
  * "push the wiki page" step: list()/read() let it check what's already
- * documented before researching further (the loop's step 1), and publish()
- * lets it write a new page itself once something is learned/verified,
- * exactly like a human would through the /app/wiki "New Page" form --
- * both paths go through the same models && skills/core/wiki-store.ts, so a
- * page looks identical regardless of who published it.
+ * documented before researching further (the loop's step 1, covering both
+ * the curated wiki/ and its own past wiki/bot/ pages), and publish() lets
+ * it write a new page itself once something is learned/verified, exactly
+ * like a human would through the /app/wiki "New Page" form -- both paths
+ * go through the same models && skills/core/wiki-store.ts and always land
+ * in wiki/bot/, tagged source: "bot", never the curated wiki/ collection.
  */
 export class WikiPlugin extends BasePlugin {
   constructor(definition: PluginDefinition) {
