@@ -29,7 +29,7 @@
  * list.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 
 // Matches the same rule interface/web-server.ts's GET /api/wiki/:name
@@ -161,4 +161,28 @@ export function publishWikiPage(name: string, title: string, content: string): W
   writeFileSync(file, body, "utf8");
   const { title: extractedTitle, description } = extractWikiSummary(body);
   return { name, source: "bot", title: extractedTitle || title.trim(), description, content: body };
+}
+
+/**
+ * Remove a bot-published page -- the cleanup half of publish()/edit(),
+ * needed the moment a page gets created under the wrong name (an "edit"
+ * that couldn't reach the original because the name didn't match exactly,
+ * back before this app locked the name field during edit) and needs
+ * deleting rather than leaving an orphaned duplicate with no way to remove
+ * it. Only ever touches wiki/bot/ -- deleting a curated page is refused
+ * with the same message publishing/editing one is, since this function
+ * can't distinguish "doesn't exist" from "exists but is curated" without
+ * checking, and the curated collection should never be touched by this
+ * module regardless of which error message is technically more precise.
+ */
+export function deleteWikiPage(name: string): void {
+  assertSafeName(name);
+  if (existsSync(path.join(wikiDir(), `${name}.md`))) {
+    throw new WikiNameError(`"${name}" is a curated wiki page and can't be deleted here.`);
+  }
+  const file = path.join(botWikiDir(), `${name}.md`);
+  if (!existsSync(file)) {
+    throw new WikiNameError(`No bot-published page named "${name}" to delete.`);
+  }
+  unlinkSync(file);
 }

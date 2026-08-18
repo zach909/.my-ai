@@ -7,7 +7,7 @@ import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
-import { listWikiPages, readWikiPage, publishWikiPage, WikiNameError } from '../models && skills/core/wiki-store.js';
+import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError } from '../models && skills/core/wiki-store.js';
 
 type PyTorchTrainResult =
   { ok: true; torchVersion: string; epochsRun: number; converged: boolean; sampleLosses: number[]; sampleConverged: boolean[]; W: number[][]; b: number[][] }
@@ -455,7 +455,7 @@ export class WebServer {
 
   private setSecurityHeaders(res: http.ServerResponse): void {
     // Security: Restricted CORS and standard security headers
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -1206,6 +1206,20 @@ export class WebServer {
         return;
       }
       this.sendJson(res, page);
+      return;
+    }
+
+    // DELETE /api/wiki/:name — remove a bot-published page. Same name rule
+    // and route shape as the GET above; deleteWikiPage() itself refuses a
+    // curated wiki/ name, so this can never touch the reviewed pages.
+    if (wikiMatch && method === 'DELETE') {
+      try {
+        deleteWikiPage(wikiMatch[1]);
+        this.sendJson(res, { name: wikiMatch[1], deleted: true });
+      } catch (err) {
+        const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
       return;
     }
 

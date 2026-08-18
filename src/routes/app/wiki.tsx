@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Bot, BookOpen, Loader2, Pencil, Plus, Search, X } from 'lucide-react'
+import { Bot, BookOpen, Loader2, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 
 interface WikiSearch {
@@ -61,6 +61,7 @@ function WikiPage() {
   const [newContent, setNewContent] = useState('')
   const [publishLoading, setPublishLoading] = useState(false)
   const [publishError, setPublishError] = useState<string | null>(null)
+  const [deletingName, setDeletingName] = useState<string | null>(null)
 
   // Real list of every wiki/*.md page, fetched from GET /api/wiki -- see
   // interface/web-server.ts. Not a hardcoded catalog: adding a new page
@@ -229,6 +230,36 @@ function WikiPage() {
     setNewTitle('')
     setNewContent('')
     setPublishError(null)
+  }
+
+  // Cleanup for a page that got created under the wrong name (the case
+  // that motivated adding this at all: before Edit locked the name field
+  // and was reliably reachable, "editing" via New Page under a slightly
+  // different name than the original just created a duplicate) -- there
+  // was previously no way to remove it once that happened.
+  const deletePage = async (name: string, title: string) => {
+    if (!window.confirm(`Delete "${title || name}"? This can't be undone.`)) return
+    setDeletingName(name)
+    try {
+      const res = await fetch(`/api/wiki/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to delete page')
+      setPages(prev => prev.filter(p => p.name !== name))
+      if (activeName === name) {
+        setActiveName(null)
+        setContent(null)
+        setContentTitle('')
+      }
+      if (editingName === name) cancelForm()
+    } catch (err) {
+      // Deletion can be triggered from a sidebar row while the New
+      // Page/Edit form isn't open at all, so publishError (only rendered
+      // inside that form) isn't a reliable place to surface this -- an
+      // alert is blunt, but guaranteed visible regardless of what's open.
+      window.alert(err instanceof Error ? err.message : 'Failed to delete page')
+    } finally {
+      setDeletingName(null)
+    }
   }
 
   // A [[Page]] link inside rendered content may reference a page by its
@@ -439,11 +470,21 @@ function WikiPage() {
                     <button
                       type="button"
                       onClick={() => startEditingNamedPage(p.name, p.title)}
-                      className="mr-1 flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
+                      className="flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
                       aria-label={`Edit ${p.title || p.name}`}
                       title={`Edit ${p.title || p.name}`}
                     >
                       <Pencil size={11} />
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => deletePage(p.name, p.title)}
+                      disabled={deletingName === p.name}
+                      className="mr-1 flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-destructive/10 hover:text-destructive focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive group-hover:opacity-100 active:scale-90 cursor-pointer disabled:opacity-50"
+                      aria-label={`Delete ${p.title || p.name}`}
+                      title={`Delete ${p.title || p.name}`}
+                    >
+                      {deletingName === p.name ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
                     </button>
                   </div>
                 ))}
@@ -479,6 +520,16 @@ function WikiPage() {
                 >
                   <Pencil size={11} />
                   Edit
+                </button>
+                <button
+                  type="button"
+                  onClick={() => activeName && deletePage(activeName, contentTitle)}
+                  disabled={deletingName === activeName}
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-primary hover:bg-destructive/10 hover:text-destructive active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-destructive cursor-pointer disabled:opacity-50"
+                  aria-label={`Delete ${contentTitle}`}
+                >
+                  {deletingName === activeName ? <Loader2 size={11} className="animate-spin" /> : <Trash2 size={11} />}
+                  Delete
                 </button>
               </div>
             )}

@@ -1,6 +1,6 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { listWikiPages, readWikiPage, publishWikiPage, WikiNameError, type WikiPageSummary, type WikiPage } from "../models && skills/core/wiki-store.js";
+import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError, type WikiPageSummary, type WikiPage } from "../models && skills/core/wiki-store.js";
 
 /**
  * WikiPlugin — the AI's own hands for docs/SKILL_ACQUISITION_LOOP.md's
@@ -50,6 +50,11 @@ export class WikiPlugin extends BasePlugin {
     return publishWikiPage(name, title, content);
   }
 
+  /** deleteWikiPage() already refuses a curated wiki/ name; this just forwards. */
+  async remove(name: string): Promise<void> {
+    return deleteWikiPage(name);
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = String(message).trim();
 
@@ -90,6 +95,19 @@ export class WikiPlugin extends BasePlugin {
         return `[Wiki] Saved changes to "${page.title}" (wiki/bot/${page.name}.md).`;
       } catch (err) {
         const detail = err instanceof WikiNameError ? err.message : "Failed to save changes.";
+        return `[Wiki] ${detail}`;
+      }
+    }
+
+    // wiki delete <name>
+    const deleteMatch = input.match(/^wiki\s+delete\s+(\S+)/i);
+    if (deleteMatch?.[1]) {
+      const name = deleteMatch[1];
+      try {
+        await this.remove(name);
+        return `[Wiki] Deleted wiki/bot/${name}.md.`;
+      } catch (err) {
+        const detail = err instanceof WikiNameError ? err.message : "Failed to delete.";
         return `[Wiki] ${detail}`;
       }
     }
