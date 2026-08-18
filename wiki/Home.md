@@ -45,6 +45,9 @@ Welcome to the comprehensive wiki for NeuroClaw. NeuroClaw is the agent; it's po
 - [[Pipeline Flow|Pipeline]] - Data flow through the system
 - [[Chrome Apps|Chrome-Apps]] - Service connections via Chrome applications
 
+### Development & Repo Operations
+- [[Automated Bots|Bots]] - The Bolt/Sentinel/Palette/Jules PR bots that work on this repo, and the concurrent-corruption failure mode their overlapping PRs have caused more than once
+
 ### Self-Improvement & Legal
 - [[Self-Improvement|Self-Improvement]] - `npm run server`'s autonomous training loop, direct peer-to-peer sync, and startup diagnostics — read this before running it
 - [[Privacy Policy|Privacy-Policy]] - Exactly what data leaves your machine, and when
