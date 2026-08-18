@@ -137,6 +137,17 @@ export function publishWikiPage(name: string, title: string, content: string): W
   assertSafeName(name);
   if (!title.trim()) throw new WikiNameError("A wiki page needs a non-empty title.");
   if (!content.trim()) throw new WikiNameError("A wiki page needs non-empty content.");
+  // Without this check, publishing under a name that collides with a
+  // curated page would still succeed -- it just writes an unreachable file
+  // into wiki/bot/, since readWikiPage() always resolves that name to the
+  // curated page first (see its own doc comment). That's a silent no-op
+  // from the caller's point of view: a "publish"/"edit" that reports
+  // success but is never actually visible anywhere. Fail loudly instead.
+  if (existsSync(path.join(wikiDir(), `${name}.md`))) {
+    throw new WikiNameError(
+      `"${name}" is already a curated wiki page and can't be overwritten here -- pick a different name.`
+    );
+  }
   const dir = botWikiDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const hasHeading = /^\s*#\s+.+/.test(content);

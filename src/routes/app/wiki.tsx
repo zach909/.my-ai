@@ -4,7 +4,7 @@ import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Bot, BookOpen, Loader2, Plus, Search, X } from 'lucide-react'
+import { Bot, BookOpen, Loader2, Pencil, Plus, Search, X } from 'lucide-react'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 
 interface WikiSearch {
@@ -49,6 +49,13 @@ function WikiPage() {
   const [contentError, setContentError] = useState<string | null>(null)
   const [query, setQuery] = useState('')
   const [creating, setCreating] = useState(false)
+  // Set to the page's name while editing an existing bot-published page
+  // (as opposed to creating a brand new one) -- publishWikiPage() already
+  // overwrites a same-named file unconditionally, so "edit" and "publish"
+  // are the same backend call; this only changes what the form shows and
+  // keeps the name field locked so an edit can never accidentally become a
+  // second page under a different name, orphaning the original.
+  const [editingName, setEditingName] = useState<string | null>(null)
   const [newName, setNewName] = useState('')
   const [newTitle, setNewTitle] = useState('')
   const [newContent, setNewContent] = useState('')
@@ -165,6 +172,7 @@ function WikiPage() {
       setContentTitle(data.title)
       setContentSource('bot')
       setCreating(false)
+      setEditingName(null)
       setNewName('')
       setNewTitle('')
       setNewContent('')
@@ -173,6 +181,29 @@ function WikiPage() {
     } finally {
       setPublishLoading(false)
     }
+  }
+
+  // Opens the same form pre-filled with the currently-viewed bot page's own
+  // content -- "edit" is just "publish again with the same name", which
+  // publishWikiPage() already treats as an overwrite (see models &&
+  // skills/core/wiki-store.ts), so no separate PUT endpoint is needed.
+  const startEditingPage = () => {
+    if (!activeName || contentSource !== 'bot' || content == null) return
+    setEditingName(activeName)
+    setNewName(activeName)
+    setNewTitle(contentTitle)
+    setNewContent(content)
+    setPublishError(null)
+    setCreating(true)
+  }
+
+  const cancelForm = () => {
+    setCreating(false)
+    setEditingName(null)
+    setNewName('')
+    setNewTitle('')
+    setNewContent('')
+    setPublishError(null)
   }
 
   // A [[Page]] link inside rendered content may reference a page by its
@@ -224,11 +255,19 @@ function WikiPage() {
             variant="outline"
             size="sm"
             onClick={() => {
-              setCreating(v => !v)
-              setPublishError(null)
+              if (creating) {
+                cancelForm()
+              } else {
+                setEditingName(null)
+                setNewName('')
+                setNewTitle('')
+                setNewContent('')
+                setCreating(true)
+                setPublishError(null)
+              }
             }}
             className="mb-2 w-full gap-1.5 text-xs active:scale-95 transition-all duration-150"
-            aria-label={creating ? 'Cancel new wiki page' : 'Create a new wiki page'}
+            aria-label={creating ? 'Cancel' : 'Create a new wiki page'}
             aria-expanded={creating}
           >
             {creating ? <X size={13} /> : <Plus size={13} />}
@@ -236,6 +275,9 @@ function WikiPage() {
           </Button>
           {creating && (
             <div className="mb-3 space-y-2 rounded-md border border-border p-2.5">
+              <p className="text-[11px] font-medium text-foreground">
+                {editingName ? `Editing "${editingName}"` : 'New bot-published page'}
+              </p>
               <div className="space-y-1">
                 <Label htmlFor="wiki-new-name" className="text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
                   Page name (file stem)
@@ -246,7 +288,8 @@ function WikiPage() {
                   onChange={e => setNewName(e.target.value)}
                   placeholder="e.g. My-New-Page"
                   className="h-7 text-xs"
-                  disabled={publishLoading}
+                  disabled={publishLoading || !!editingName}
+                  title={editingName ? "Renaming isn't supported here -- publish under a new name instead if you need a different one." : undefined}
                   aria-label="New page name"
                 />
               </div>
@@ -290,10 +333,10 @@ function WikiPage() {
                 onClick={publishPage}
                 disabled={publishLoading}
                 className="w-full gap-1.5 text-xs active:scale-95 transition-all duration-150"
-                aria-label="Publish new wiki page"
+                aria-label={editingName ? 'Save changes to this wiki page' : 'Publish new wiki page'}
               >
-                {publishLoading ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />}
-                {publishLoading ? 'Publishing...' : 'Publish'}
+                {publishLoading ? <Loader2 size={13} className="animate-spin" /> : editingName ? <Pencil size={13} /> : <Plus size={13} />}
+                {publishLoading ? (editingName ? 'Saving...' : 'Publishing...') : editingName ? 'Save Changes' : 'Publish'}
               </Button>
             </div>
           )}
@@ -376,9 +419,18 @@ function WikiPage() {
         {!contentLoading && !contentError && content && (
           <article aria-label={contentTitle}>
             {contentSource === 'bot' && (
-              <div className="mb-4 flex items-center gap-1.5 rounded-md border border-dashed border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary w-fit">
+              <div className="mb-4 flex items-center gap-2 rounded-md border border-dashed border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary w-fit">
                 <Bot size={13} />
                 Bot-published — not part of the curated wiki
+                <button
+                  type="button"
+                  onClick={startEditingPage}
+                  className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-primary hover:bg-primary/10 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                  aria-label={`Edit ${contentTitle}`}
+                >
+                  <Pencil size={11} />
+                  Edit
+                </button>
               </div>
             )}
             {renderWikiMarkdown(content, { onWikiLink: resolveAndNavigate })}
