@@ -250,7 +250,21 @@ export class BrowserPlugin extends BasePlugin {
   private isPrivateHost(hostname: string): boolean {
     // Exact matches for common local hosts
     // Note: url.hostname for [::1] returns "[::1]", but dns.lookup returns "::1"
-    const host = hostname.replace(/^\[|\]$/g, "");
+    let host = hostname.replace(/^\[|\]$/g, "").toLowerCase();
+
+    // Security: Normalize IPv4-mapped/compatible IPv6 addresses (e.g. ::ffff:127.0.0.1 or ::ffff:7f00:1) to IPv4
+    const mappedDotted = host.match(/^(?:::ffff:|::ffff:0:|0:0:0:0:0:(?:0|ffff):)(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})$/);
+    if (mappedDotted) {
+      host = mappedDotted[1];
+    } else {
+      const mappedHex = host.match(/^(?:::ffff:|0:0:0:0:0:ffff:)([0-9a-f]{1,4}):([0-9a-f]{1,4})$/);
+      if (mappedHex) {
+        const h1 = parseInt(mappedHex[1], 16);
+        const h2 = parseInt(mappedHex[2], 16);
+        host = `${(h1 >> 8) & 0xff}.${h1 & 0xff}.${(h2 >> 8) & 0xff}.${h2 & 0xff}`;
+      }
+    }
+
     if (
       host === "localhost" ||
       host === "127.0.0.1" ||
