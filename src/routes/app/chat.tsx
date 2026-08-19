@@ -150,6 +150,39 @@ function ChatPage() {
     }
   }, [])
 
+  // Arriving from the Wiki page's "Chat" button (?page=<name>) fetches that
+  // page's real, current content (not whatever the wiki tab last had
+  // loaded -- this is a fresh navigation) and opens the conversation with
+  // it already in context, so the first message doesn't have to be "here's
+  // a page, let me paste it in" -- the AI can discuss it or (for a
+  // bot-published page) actually go fix it via WikiPlugin.edit() right
+  // there in the same conversation.
+  useEffect(() => {
+    const pageParam = new URLSearchParams(window.location.search).get('page')
+    if (!pageParam) return
+    window.history.replaceState({}, '', window.location.pathname)
+    ;(async () => {
+      try {
+        const res = await fetch(`/api/wiki/${encodeURIComponent(pageParam)}`)
+        if (!res.ok) throw new Error(`Page "${pageParam}" not found`)
+        const page: { name: string; title: string; source: 'human' | 'bot'; content: string } = await res.json()
+        const editableNote =
+          page.source === 'bot'
+            ? `It's a bot-published page (wiki/bot/${page.name}.md) -- if we land on a fix, I can go make it on the Wiki page's own Edit form.`
+            : `It's a curated page (wiki/${page.name}.md), so any fix needs a real commit rather than an in-app edit.`
+        await sendMessage(
+          `Let's talk about the wiki page "${page.title}". ${editableNote}\n\nCurrent content:\n\n${page.content}`,
+        )
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : `Failed to load wiki page "${pageParam}"`)
+      }
+    })()
+    // Deliberately empty deps -- this is a one-time "arrived with a page to
+    // discuss" action, same as the ?thread= effect above, not something
+    // that should re-run as chat state changes.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
+
   // Keyboard shortcut (Alt+I) to toggle Incognito mode
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {

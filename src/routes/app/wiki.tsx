@@ -1,10 +1,10 @@
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useEffect, useMemo, useState } from 'react'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
-import { Bot, BookOpen, Loader2, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
+import { Bot, BookOpen, Loader2, MessageSquare, Pencil, Plus, Search, Trash2, X } from 'lucide-react'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 
 interface WikiSearch {
@@ -417,20 +417,33 @@ function WikiPage() {
                   Wiki
                 </p>
                 {curatedPages.map(p => (
-                  <button
+                  <div
                     key={p.name}
-                    type="button"
-                    onClick={() => setActiveName(p.name)}
-                    aria-current={activeName === p.name ? 'page' : undefined}
-                    className={`w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
-                      activeName === p.name
-                        ? 'bg-primary/10 text-primary font-medium'
-                        : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                    className={`group flex items-center gap-0.5 rounded-md transition-colors ${
+                      activeName === p.name ? 'bg-primary/10' : 'hover:bg-muted/60'
                     }`}
-                    title={p.description}
                   >
-                    {p.title || p.name}
-                  </button>
+                    <button
+                      type="button"
+                      onClick={() => setActiveName(p.name)}
+                      aria-current={activeName === p.name ? 'page' : undefined}
+                      className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                        activeName === p.name ? 'text-primary font-medium' : 'text-muted-foreground group-hover:text-foreground'
+                      }`}
+                      title={p.description}
+                    >
+                      {p.title || p.name}
+                    </button>
+                    <Link
+                      to="/app/chat"
+                      search={{ page: p.name }}
+                      className="mr-1 flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
+                      aria-label={`Discuss ${p.title || p.name} in AI Chat`}
+                      title={`Discuss ${p.title || p.name} in AI Chat`}
+                    >
+                      <MessageSquare size={11} />
+                    </Link>
+                  </div>
                 ))}
                 {curatedPages.length === 0 && (
                   <p className="px-2 py-1.5 text-xs text-muted-foreground">No pages match "{query}".</p>
@@ -475,6 +488,15 @@ function WikiPage() {
                     >
                       {p.title || p.name}
                     </button>
+                    <Link
+                      to="/app/chat"
+                      search={{ page: p.name }}
+                      className="flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
+                      aria-label={`Discuss ${p.title || p.name} in AI Chat`}
+                      title={`Discuss ${p.title || p.name} in AI Chat`}
+                    >
+                      <MessageSquare size={11} />
+                    </Link>
                     <button
                       type="button"
                       onClick={() => startEditingNamedPage(p.name, p.title)}
@@ -524,16 +546,38 @@ function WikiPage() {
               <div className="mb-4 flex items-center gap-2 rounded-md border border-border bg-muted/40 px-2.5 py-1.5 text-[11px] text-muted-foreground w-fit">
                 <BookOpen size={13} />
                 Curated wiki page — not editable in the app; changes go through a real commit to wiki/
+                {activeName && (
+                  <Link
+                    to="/app/chat"
+                    search={{ page: activeName }}
+                    className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-muted active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                    aria-label={`Discuss ${contentTitle} in AI Chat`}
+                  >
+                    <MessageSquare size={11} />
+                    Chat
+                  </Link>
+                )}
               </div>
             )}
             {contentSource === 'bot' && (
               <div className="mb-4 flex items-center gap-2 rounded-md border border-dashed border-primary/30 bg-primary/5 px-2.5 py-1.5 text-[11px] text-primary w-fit">
                 <Bot size={13} />
                 Bot-published — not part of the curated wiki
+                {activeName && (
+                  <Link
+                    to="/app/chat"
+                    search={{ page: activeName }}
+                    className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-primary hover:bg-primary/10 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                    aria-label={`Discuss ${contentTitle} in AI Chat`}
+                  >
+                    <MessageSquare size={11} />
+                    Chat
+                  </Link>
+                )}
                 <button
                   type="button"
                   onClick={startEditingPage}
-                  className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-primary hover:bg-primary/10 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
+                  className="flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-primary hover:bg-primary/10 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
                   aria-label={`Edit ${contentTitle}`}
                 >
                   <Pencil size={11} />
