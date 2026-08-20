@@ -25,6 +25,7 @@ import {
   Folder,
   TrendingUp,
   BookOpen,
+  Upload,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -49,6 +50,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: '/app/self-improvement', icon: <TrendingUp className="h-4 w-4" />, label: 'Self-Improvement' },
   { href: '/app/planning', icon: <Goal className="h-4 w-4" />, label: 'Planning' },
   { href: '/app/wiki', icon: <BookOpen className="h-4 w-4" />, label: 'Wiki' },
+  { href: '/app/skill-uploads', icon: <Upload className="h-4 w-4" />, label: 'Skill Uploads' },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {

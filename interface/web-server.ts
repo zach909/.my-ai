@@ -8,6 +8,17 @@ import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
 import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError } from '../models && skills/core/wiki-store.js';
+import {
+  listSkillUploads,
+  readSkillUpload,
+  readSkillUploadFile,
+  saveSkillUpload,
+  deleteSkillUpload,
+  SkillUploadError,
+  SKILL_UPLOAD_SLOTS,
+  type SkillUploadSlot,
+  type SkillUploadFile,
+} from '../models && skills/core/skill-upload-store.js';
 
 type PyTorchTrainResult =
   { ok: true; torchVersion: string; epochsRun: number; converged: boolean; sampleLosses: number[]; sampleConverged: boolean[]; W: number[][]; b: number[][] }
@@ -1220,6 +1231,93 @@ export class WebServer {
         const status = err instanceof WikiNameError ? 400 : 500;
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
       }
+      return;
+    }
+
+    // GET /api/skill-uploads — every skill package under
+    // extension-builder/extensions/*/, with which of the five slots
+    // (plugin/sourceSkill/binarySkill/algorithm/rsiTest) each one has
+    // filled in so the /app/skill-uploads UI can show completeness at a
+    // glance without fetching every file.
+    if (pathname === '/api/skill-uploads' && method === 'GET') {
+      this.sendJson(res, { packages: listSkillUploads() });
+      return;
+    }
+
+    // POST /api/skill-uploads — create a package or add/replace slots on an
+    // existing one. Body: { name: string, plugin?/sourceSkill?/binarySkill?/
+    // algorithm?/rsiTest?: { filename: string, content: string } }. Only
+    // the slots present in the body are written; the rest of an existing
+    // package's slots are left exactly as they were.
+    if (pathname === '/api/skill-uploads' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as Record<string, unknown> | null;
+        if (typeof body?.name !== 'string') {
+          this.sendJson(res, { error: 'Expected a "name" string field' }, 400);
+          return;
+        }
+        const files: Partial<Record<SkillUploadSlot, SkillUploadFile>> = {};
+        for (const slot of SKILL_UPLOAD_SLOTS) {
+          const raw = body[slot];
+          if (raw === undefined || raw === null) continue;
+          if (
+            typeof raw !== 'object' ||
+            typeof (raw as Record<string, unknown>).filename !== 'string' ||
+            typeof (raw as Record<string, unknown>).content !== 'string'
+          ) {
+            this.sendJson(res, { error: `"${slot}" must be { filename: string, content: string }` }, 400);
+            return;
+          }
+          files[slot] = raw as SkillUploadFile;
+        }
+        const pkg = saveSkillUpload(body.name, files);
+        this.sendJson(res, pkg, 201);
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/skill-uploads/:name — one package's manifest (which slots it has, not their content).
+    const skillUploadMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)$/);
+    if (skillUploadMatch && method === 'GET') {
+      const pkg = readSkillUpload(skillUploadMatch[1]);
+      if (!pkg) {
+        this.sendJson(res, { error: `No skill package named "${skillUploadMatch[1]}"` }, 404);
+        return;
+      }
+      this.sendJson(res, pkg);
+      return;
+    }
+
+    // DELETE /api/skill-uploads/:name — remove the whole package (all slots + manifest together).
+    if (skillUploadMatch && method === 'DELETE') {
+      try {
+        deleteSkillUpload(skillUploadMatch[1]);
+        this.sendJson(res, { name: skillUploadMatch[1], deleted: true });
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/skill-uploads/:name/:slot — one slot's raw file content, for
+    // the UI's "view" affordance on an already-uploaded file.
+    const skillUploadFileMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/([A-Za-z]+)$/);
+    if (skillUploadFileMatch && method === 'GET') {
+      const [, name, slotParam] = skillUploadFileMatch;
+      if (!(SKILL_UPLOAD_SLOTS as readonly string[]).includes(slotParam)) {
+        this.sendJson(res, { error: `"${slotParam}" is not a valid slot` }, 400);
+        return;
+      }
+      const file = readSkillUploadFile(name, slotParam as SkillUploadSlot);
+      if (!file) {
+        this.sendJson(res, { error: `No "${slotParam}" file uploaded for "${name}"` }, 404);
+        return;
+      }
+      this.sendJson(res, file);
       return;
     }
 
