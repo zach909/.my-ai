@@ -20,13 +20,20 @@
  *                    applying/training this skill actually leave the
  *                    system better, not just different
  *
- * Every slot is optional independently -- a package can start with just a
- * source skill and gain the rest later via repeated uploads under the same
- * name (each upload only overwrites the slots it includes).
+ * Plus one open-ended slot: extra files -- anything that doesn't fit the
+ * five above (reference data, a README, a sample input, ...). Unlike the
+ * five named slots (each holds exactly one file, replaced wholesale on
+ * re-upload), extra files accumulate: uploading a new one adds it, and
+ * re-uploading the same filename replaces just that one file.
+ *
+ * Every named slot is optional independently -- a package can start with
+ * just a source skill and gain the rest later via repeated uploads under
+ * the same name (each upload only overwrites the slots it includes).
  *
  * Layout on disk: extension-builder/extensions/<name>/ containing a real
- * file per uploaded slot (original filename preserved) plus manifest.json
- * recording which slot each file belongs to and when it was uploaded.
+ * file per uploaded slot (original filename preserved), an extra-files/
+ * subdirectory for the open-ended slot, and manifest.json recording which
+ * slot each file belongs to and when it was uploaded.
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
@@ -56,9 +63,13 @@ export interface SkillUploadManifestEntry {
   bytes: number;
 }
 
-export interface SkillUploadSummary {
-  name: string;
+export interface SkillUploadManifest {
   slots: Partial<Record<SkillUploadSlot, SkillUploadManifestEntry>>;
+  extraFiles: SkillUploadManifestEntry[];
+}
+
+export interface SkillUploadSummary extends SkillUploadManifest {
+  name: string;
 }
 
 function extensionsDir(): string {
@@ -67,6 +78,10 @@ function extensionsDir(): string {
 
 function packageDir(name: string): string {
   return path.join(extensionsDir(), name);
+}
+
+function extraFilesDir(name: string): string {
+  return path.join(packageDir(name), "extra-files");
 }
 
 function manifestPath(name: string): string {
@@ -85,14 +100,25 @@ function assertSafeFilename(filename: string): void {
   }
 }
 
-function readManifest(name: string): Partial<Record<SkillUploadSlot, SkillUploadManifestEntry>> {
+function readManifest(name: string): SkillUploadManifest {
   const file = manifestPath(name);
-  if (!existsSync(file)) return {};
+  if (!existsSync(file)) return { slots: {}, extraFiles: [] };
   try {
-    return JSON.parse(readFileSync(file, "utf8"));
+    const raw = JSON.parse(readFileSync(file, "utf8"));
+    // Tolerates the original flat { [slot]: entry } shape (before extra
+    // files existed) alongside the current { slots, extraFiles } one, so an
+    // old manifest on disk doesn't need a migration step.
+    if (raw && typeof raw === "object" && ("slots" in raw || "extraFiles" in raw)) {
+      return { slots: raw.slots ?? {}, extraFiles: Array.isArray(raw.extraFiles) ? raw.extraFiles : [] };
+    }
+    return { slots: raw ?? {}, extraFiles: [] };
   } catch {
-    return {};
+    return { slots: {}, extraFiles: [] };
   }
+}
+
+function writeManifest(name: string, manifest: SkillUploadManifest): void {
+  writeFileSync(manifestPath(name), JSON.stringify(manifest, null, 2), "utf8");
 }
 
 export function listSkillUploads(): SkillUploadSummary[] {
@@ -100,31 +126,41 @@ export function listSkillUploads(): SkillUploadSummary[] {
   if (!existsSync(dir)) return [];
   return readdirSync(dir, { withFileTypes: true })
     .filter((entry) => entry.isDirectory())
-    .map((entry) => ({ name: entry.name, slots: readManifest(entry.name) }))
+    .map((entry) => ({ name: entry.name, ...readManifest(entry.name) }))
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
 export function readSkillUpload(name: string): SkillUploadSummary | null {
   assertSafeName(name);
   if (!existsSync(packageDir(name))) return null;
-  return { name, slots: readManifest(name) };
+  return { name, ...readManifest(name) };
 }
 
 export function readSkillUploadFile(name: string, slot: SkillUploadSlot): SkillUploadFile | null {
   assertSafeName(name);
-  const manifest = readManifest(name);
-  const entry = manifest[slot];
+  const entry = readManifest(name).slots[slot];
   if (!entry) return null;
   const file = path.join(packageDir(name), entry.filename);
   if (!existsSync(file)) return null;
   return { filename: entry.filename, content: readFileSync(file, "utf8") };
 }
 
+export function readSkillUploadExtraFile(name: string, filename: string): SkillUploadFile | null {
+  assertSafeName(name);
+  const manifest = readManifest(name);
+  if (!manifest.extraFiles.some((f) => f.filename === filename)) return null;
+  const file = path.join(extraFilesDir(name), filename);
+  if (!existsSync(file)) return null;
+  return { filename, content: readFileSync(file, "utf8") };
+}
+
 /**
- * Save one or more slots into a package, creating it if it doesn't exist
- * yet. Only the slots present in `files` are written/overwritten -- an
- * upload that only includes an updated algorithm, say, leaves the other
- * four slots (and their manifest entries) untouched.
+ * Save one or more of the five named slots into a package, creating it if
+ * it doesn't exist yet. Only the slots present in `files` are
+ * written/overwritten -- an upload that only includes an updated
+ * algorithm, say, leaves the other four slots (and their manifest
+ * entries) untouched. Existing extra files are always left alone by this
+ * function; use saveSkillUploadExtraFiles() for those.
  */
 export function saveSkillUpload(name: string, files: Partial<Record<SkillUploadSlot, SkillUploadFile>>): SkillUploadSummary {
   assertSafeName(name);
@@ -141,13 +177,56 @@ export function saveSkillUpload(name: string, files: Partial<Record<SkillUploadS
       throw new SkillUploadError(`"${file.filename}" (${slot}) is empty.`);
     }
     writeFileSync(path.join(dir, file.filename), file.content, "utf8");
-    manifest[slot] = { filename: file.filename, uploadedAt: Date.now(), bytes: Buffer.byteLength(file.content, "utf8") };
+    manifest.slots[slot] = { filename: file.filename, uploadedAt: Date.now(), bytes: Buffer.byteLength(file.content, "utf8") };
   }
-  writeFileSync(manifestPath(name), JSON.stringify(manifest, null, 2), "utf8");
-  return { name, slots: manifest };
+  writeManifest(name, manifest);
+  return { name, ...manifest };
 }
 
-/** Removes the whole package -- all uploaded slots and the manifest together, not one slot at a time. */
+/**
+ * Add (or, for a filename already present, replace) one or more open-ended
+ * "extra files" -- the slot for anything that doesn't fit the five named
+ * ones. Unlike saveSkillUpload()'s named slots, these accumulate rather
+ * than each holding a single file.
+ */
+export function saveSkillUploadExtraFiles(name: string, files: SkillUploadFile[]): SkillUploadSummary {
+  assertSafeName(name);
+  if (files.length === 0) {
+    throw new SkillUploadError("Provide at least one file to upload.");
+  }
+  const dir = extraFilesDir(name);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const manifest = readManifest(name);
+  for (const file of files) {
+    assertSafeFilename(file.filename);
+    if (!file.content) {
+      throw new SkillUploadError(`"${file.filename}" is empty.`);
+    }
+    writeFileSync(path.join(dir, file.filename), file.content, "utf8");
+    const entry: SkillUploadManifestEntry = { filename: file.filename, uploadedAt: Date.now(), bytes: Buffer.byteLength(file.content, "utf8") };
+    const existingIndex = manifest.extraFiles.findIndex((f) => f.filename === file.filename);
+    if (existingIndex >= 0) manifest.extraFiles[existingIndex] = entry;
+    else manifest.extraFiles.push(entry);
+  }
+  writeManifest(name, manifest);
+  return { name, ...manifest };
+}
+
+/** Removes one extra file by name, leaving the rest of the package (including other extra files) untouched. */
+export function deleteSkillUploadExtraFile(name: string, filename: string): void {
+  assertSafeName(name);
+  const manifest = readManifest(name);
+  const index = manifest.extraFiles.findIndex((f) => f.filename === filename);
+  if (index === -1) {
+    throw new SkillUploadError(`No extra file named "${filename}" in "${name}".`);
+  }
+  const file = path.join(extraFilesDir(name), filename);
+  if (existsSync(file)) rmSync(file, { force: true });
+  manifest.extraFiles.splice(index, 1);
+  writeManifest(name, manifest);
+}
+
+/** Removes the whole package -- all uploaded slots, extra files, and the manifest together, not one file at a time. */
 export function deleteSkillUpload(name: string): void {
   assertSafeName(name);
   const dir = packageDir(name);
