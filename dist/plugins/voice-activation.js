@@ -66,6 +66,15 @@ export class VoiceActivationPlugin extends BasePlugin {
     }
     get isListening() { return this.listening; }
     async processTranscript(transcript) {
+        if (typeof transcript !== "string") {
+            throw new Error("Security Error: Transcript must be a string.");
+        }
+        if (transcript.trim() === "") {
+            throw new Error("Security Error: Transcript cannot be empty.");
+        }
+        if (transcript.length > 1000) {
+            throw new Error("Security Error: Transcript exceeds maximum length limit.");
+        }
         const lower = transcript.toLowerCase();
         const confidence = lower.includes(this.wakeWord.toLowerCase()) ? 0.9 : 0.3;
         let action;

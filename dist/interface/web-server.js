@@ -1,6 +1,6 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import path from 'node:path';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
@@ -295,6 +295,33 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 </body>
 </html>`;
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
+/**
+ * Pull a title and one-line description out of a wiki/*.md page's raw text:
+ * the title is the first `# ` heading (falling back to the page name if a
+ * page somehow has none), and the description is the first non-empty,
+ * non-heading, non-table-row paragraph line after it -- every page in
+ * wiki/*.md follows exactly this shape (see wiki/Home.md, wiki/Builder.md,
+ * ...), so this is a real extraction of real page structure, not a guess.
+ */
+function extractWikiSummary(raw) {
+    const lines = raw.split('\n');
+    let title = '';
+    let description = '';
+    for (const line of lines) {
+        const trimmed = line.trim();
+        if (!title) {
+            const h1 = trimmed.match(/^#\s+(.+)$/);
+            if (h1)
+                title = h1[1].trim();
+            continue;
+        }
+        if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('|') || trimmed.startsWith('```'))
+            continue;
+        description = trimmed;
+        break;
+    }
+    return { title, description };
+}
 /**
  * A single password check, kept only in memory for the lifetime of one
  * running server process -- never written to disk, never persisted across
@@ -1119,6 +1146,46 @@ export class WebServer {
                 activeCount: active.size,
                 skillCount: registry.getSkillCount(),
             });
+            return;
+        }
+        // GET /api/wiki — every real page under wiki/*.md (the same content
+        // GitHub's wiki tab renders), lightweight summaries only (name/title/
+        // description) so /app/wiki can list them without fetching 31 full
+        // files. Reads the actual repo directory on every call rather than
+        // caching, matching this project's "wiki is a living doc, not a build
+        // artifact" convention (see docs/SHARED_WIKI_SYSTEM.md) — a page
+        // edited on disk while the server is running shows up on next load.
+        if (pathname === '/api/wiki' && method === 'GET') {
+            const dir = path.resolve(process.cwd(), 'wiki');
+            let pages = [];
+            if (existsSync(dir)) {
+                pages = readdirSync(dir)
+                    .filter(f => f.endsWith('.md'))
+                    .map(f => {
+                    const name = f.slice(0, -3);
+                    const raw = readFileSync(path.join(dir, f), 'utf8');
+                    return { name, ...extractWikiSummary(raw) };
+                })
+                    .sort((a, b) => a.title.localeCompare(b.title));
+            }
+            this.sendJson(res, { pages, total: pages.length });
+            return;
+        }
+        // GET /api/wiki/:name — one page's raw markdown. `name` must be a bare
+        // filename stem (letters/digits/-/_ only, matching the page names
+        // [[WikiLink]] syntax already uses throughout wiki/*.md) so this can
+        // never escape the wiki/ directory — no `.`/`/` is accepted at all,
+        // which rules out both `..` traversal and an absolute-path override.
+        const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)$/);
+        if (wikiMatch && method === 'GET') {
+            const dir = path.resolve(process.cwd(), 'wiki');
+            const file = path.join(dir, `${wikiMatch[1]}.md`);
+            if (!existsSync(file)) {
+                this.sendJson(res, { error: `No wiki page named "${wikiMatch[1]}"` }, 404);
+                return;
+            }
+            const content = readFileSync(file, 'utf8');
+            this.sendJson(res, { name: wikiMatch[1], content, ...extractWikiSummary(content) });
             return;
         }
         // POST /api/extension/register — persist a project built in the *visual*
