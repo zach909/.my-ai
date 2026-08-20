@@ -7,7 +7,7 @@ import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
 import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
-import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUpload, saveSkillUploadExtraFiles, deleteSkillUpload, deleteSkillUploadExtraFile, linkSkillUploadWiki, unlinkSkillUploadWiki, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
+import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUpload, saveSkillUploadExtraFiles, deleteSkillUpload, deleteSkillUploadExtraFile, linkSkillUploadWiki, unlinkSkillUploadWiki, recordSkillUploadRsiPass, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
 /**
  * Keeps exactly one `extension-builder/pytorch_trainer.py` subprocess alive
  * for the life of the server instead of spawning (and re-importing torch
@@ -646,6 +646,43 @@ export class WebServer {
             }
         }
         return { remembered };
+    }
+    /** Parses a skill file's { neurons: [...] } JSON, the shape install-skill and run-rsi-test both need. Throws a plain Error with a message safe to send straight to the client. */
+    parseSkillNeuronsFile(file) {
+        let parsed;
+        try {
+            parsed = JSON.parse(file.content);
+        }
+        catch {
+            throw new Error(`"${file.filename}" isn't valid JSON -- expected { neurons: [...] }`);
+        }
+        const neurons = Array.isArray(parsed?.neurons) ? parsed.neurons : [];
+        if (neurons.length === 0) {
+            throw new Error(`"${file.filename}" has no neurons array to install`);
+        }
+        return neurons;
+    }
+    /**
+     * Dynamically imports an uploaded skill package's .js/.mjs file (the same
+     * genuine code-execution path install-plugin uses) and returns its
+     * default export (or, failing that, its first exported function) as a
+     * callable. Used by run-algorithm and run-rsi-test, which both need to
+     * actually execute an uploaded script rather than just read it.
+     */
+    async importSkillUploadScript(name, file) {
+        if (!/\.(mjs|js)$/i.test(file.filename)) {
+            throw new Error(`"${file.filename}" is not a .js/.mjs file -- no TypeScript compiler is available at runtime to run a .ts file this way.`);
+        }
+        const path = await import('node:path');
+        const { pathToFileURL } = await import('node:url');
+        const filePath = path.resolve(process.cwd(), 'extension-builder', 'extensions', name, file.filename);
+        const moduleUrl = `${pathToFileURL(filePath).href}?t=${Date.now()}`;
+        const mod = await import(/* @vite-ignore */ moduleUrl);
+        const candidate = mod.default ?? Object.values(mod).find((v) => typeof v === 'function');
+        if (typeof candidate !== 'function') {
+            throw new Error(`"${file.filename}" doesn't export a function (checked default export and named exports)`);
+        }
+        return candidate;
     }
     async loadSavedExtensions() {
         try {
@@ -1442,17 +1479,12 @@ export class WebServer {
                     this.sendJson(res, { error: `"${name}" has no binarySkill or sourceSkill file to install` }, 400);
                     return;
                 }
-                let parsed;
+                let neurons;
                 try {
-                    parsed = JSON.parse(file.content);
+                    neurons = this.parseSkillNeuronsFile(file);
                 }
-                catch {
-                    this.sendJson(res, { error: `"${file.filename}" isn't valid JSON -- expected { neurons: [...] }` }, 400);
-                    return;
-                }
-                const neurons = Array.isArray(parsed?.neurons) ? parsed.neurons : [];
-                if (neurons.length === 0) {
-                    this.sendJson(res, { error: `"${file.filename}" has no neurons array to install` }, 400);
+                catch (err) {
+                    this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
                     return;
                 }
                 const { remembered } = await this.installSkillProject(name, neurons);
@@ -1574,6 +1606,97 @@ export class WebServer {
             catch (err) {
                 const status = err instanceof SkillUploadError ? 400 : 500;
                 this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+            }
+            return;
+        }
+        // POST /api/skill-uploads/:name/run-algorithm — genuinely executes a
+        // package's uploaded improvement-algorithm file (.js/.mjs only, same
+        // dynamic-import path install-plugin uses) against the live
+        // NeuroclawSystem. The function is called as
+        // `fn({ system, packageName })` and whatever it returns is sent back
+        // verbatim (JSON-stringified) -- unlike install-skill/run-rsi-test,
+        // there's no fixed "what running an algorithm means" contract beyond
+        // "it's given the live system and can do real things to it", since
+        // skill-upload-store.ts's own doc comment describes this slot as an
+        // arbitrary recorded recipe (hyperparameters, which variations were
+        // kept, ...), not a fixed shape.
+        const skillUploadRunAlgorithmMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/run-algorithm$/);
+        if (skillUploadRunAlgorithmMatch && method === 'POST') {
+            const name = skillUploadRunAlgorithmMatch[1];
+            try {
+                const file = readSkillUploadFile(name, 'algorithm');
+                if (!file) {
+                    this.sendJson(res, { error: `"${name}" has no algorithm file to run` }, 400);
+                    return;
+                }
+                const fn = await this.importSkillUploadScript(name, file);
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const result = await fn({ system, packageName: name });
+                this.sendJson(res, { ok: true, ranFrom: file.filename, result: result === undefined ? null : result });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+            }
+            return;
+        }
+        // POST /api/skill-uploads/:name/run-rsi-test — genuinely executes a
+        // package's uploaded RSI test file (.js/.mjs only) against the live
+        // system, same as run-algorithm. The function is called as
+        // `fn({ system, packageName })` and its return value is normalized
+        // into pass/fail: a plain boolean, or an object with a `passed`
+        // field (optionally `message`/`score`). A pass does two real things,
+        // not just record a flag:
+        //   1. recordSkillUploadRsiPass() -- what the UI shows as "Published"
+        //   2. if the package also has a binarySkill/sourceSkill file, installs
+        //      it into live memory via the same installSkillProject() path
+        //      install-skill uses -- "the test passed" and "the skill is
+        //      installed" are the same real action here, not two separate
+        //      steps the user has to remember to do in order.
+        // A fail does neither -- the package's files (and any previous
+        // rsiPassed record) are left exactly as they were.
+        const skillUploadRunRsiTestMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/run-rsi-test$/);
+        if (skillUploadRunRsiTestMatch && method === 'POST') {
+            const name = skillUploadRunRsiTestMatch[1];
+            try {
+                const file = readSkillUploadFile(name, 'rsiTest');
+                if (!file) {
+                    this.sendJson(res, { error: `"${name}" has no rsiTest file to run` }, 400);
+                    return;
+                }
+                const fn = await this.importSkillUploadScript(name, file);
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const raw = await fn({ system, packageName: name });
+                const passed = typeof raw === 'boolean' ? raw : !!raw?.passed;
+                const message = typeof raw === 'object' && raw !== null && typeof raw.message === 'string'
+                    ? raw.message
+                    : undefined;
+                const score = typeof raw === 'object' && raw !== null && typeof raw.score === 'number'
+                    ? raw.score
+                    : undefined;
+                if (!passed) {
+                    this.sendJson(res, { ok: true, passed: false, message, score, ranFrom: file.filename });
+                    return;
+                }
+                recordSkillUploadRsiPass(name, message);
+                let installed = null;
+                const skillFile = readSkillUploadFile(name, 'binarySkill') ?? readSkillUploadFile(name, 'sourceSkill');
+                if (skillFile) {
+                    try {
+                        const neurons = this.parseSkillNeuronsFile(skillFile);
+                        installed = await this.installSkillProject(name, neurons);
+                    }
+                    catch {
+                        // The RSI test passed and is recorded regardless -- a
+                        // malformed/missing skill file just means nothing to install,
+                        // not a reason to discard a real, already-passed test result.
+                    }
+                }
+                this.sendJson(res, { ok: true, passed: true, message, score, ranFrom: file.filename, installed });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
             }
             return;
         }

@@ -1,29 +1,38 @@
 /**
- * Wiki & Skills — one page, two tabs sharing real cross-links: browsing
- * wiki/*.md and wiki/bot/*.md (see models && skills/core/wiki-store.ts),
- * and managing Skill Uploads packages (models && skills/core/
- * skill-upload-store.ts) that can point at a bot wiki page as their
- * documentation. They used to be two separate nav entries/routes
- * (/app/wiki and /app/skill-uploads); combined here because the two
- * already reference each other (a skill package's Bot Wiki row links
- * straight into the Wiki tab, and this page's own Chat buttons send you to
- * /app/shared-chat) and a single page makes that round trip one click
- * instead of a sidebar hop each way.
+ * Bot Wiki — one page, three tabs, one service instead of three separate
+ * ones (/app/wiki, /app/skill-uploads, /app/shared-chat used to each be
+ * their own nav entry/route):
  *
- * Every bot-published page also gets its own inline "Files & Install"
- * panel (WikiPageFilesPanel below) right on the page -- the plugin,
- * source/binary skill, algorithm, RSI test, and extra-files uploads, plus
- * the real Install Skill/Install Plugin actions, scoped to a skill package
- * named after the page itself. That's the same package the Skill Uploads
- * tab's "link a bot wiki page" picker points at (skill-upload-store.ts's
- * `wikiPage` field) -- uploading here self-links automatically, so a
- * package created this way needs no separate manual linking step, while
- * the Skill Uploads tab still exists for packages that don't share a name
- * with any wiki page.
+ *  - Wiki: research pages the bot (or a human) publishes -- wiki/*.md and
+ *    wiki/bot/*.md, see models && skills/core/wiki-store.ts. Anyone can
+ *    edit a bot-published page.
+ *  - Skill Uploads: the plugin/source-skill/binary-skill/algorithm/
+ *    RSI-test packages a published page can be backed by, see models &&
+ *    skills/core/skill-upload-store.ts. A package can link to a bot wiki
+ *    page as its documentation, and every bot-published page also gets
+ *    its own inline "Files & Install" panel (WikiPageFilesPanel below)
+ *    for a same-named package, so uploading/installing/running a page's
+ *    files never requires leaving the page.
+ *  - Chat: the shared room (ChatPanel below, models && skills/core/
+ *    shared-chat-store.ts) anyone with this app can post into and discuss
+ *    any page in, with the bot as one participant rather than the
+ *    exclusive other side of the conversation.
+ *
+ * One-click actions on a package's files, all real (see
+ * interface/web-server.ts's POST /api/skill-uploads/:name/... routes):
+ *  - Install Skill / Install Plugin: wire a binary/source skill into live
+ *    memory, or genuinely execute an uploaded plugin file.
+ *  - Run (algorithm): genuinely executes the uploaded improvement-recipe
+ *    script against the live system.
+ *  - Run (RSI test): genuinely executes the uploaded test script; a pass
+ *    both records "Published" (SkillUploadManifest's `rsiPassed`) and
+ *    installs the package's skill files in the same step -- recursive
+ *    self-improvement gated on the test's own judgment that applying the
+ *    skill left the system better, not just different.
  */
 
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Button } from '@/components/ui/button'
@@ -43,21 +52,25 @@ import {
   MessageSquare,
   Paperclip,
   Pencil,
+  Play,
   Plus,
   Puzzle,
   RefreshCw,
   Search,
+  Send,
   Sparkles,
   Trash2,
   Upload,
+  Users,
   X,
   Zap,
 } from 'lucide-react'
+import { toast } from 'sonner'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 
 interface WikiSearch {
   page?: string
-  tab?: 'wiki' | 'skills'
+  tab?: 'wiki' | 'skills' | 'chat'
 }
 
 export const Route = createFileRoute('/app/wiki')({
@@ -67,31 +80,41 @@ export const Route = createFileRoute('/app/wiki')({
   // /app/wiki?tab=skills instead of landing on the Wiki tab every time.
   validateSearch: (search: Record<string, unknown>): WikiSearch => ({
     page: typeof search.page === 'string' ? search.page : undefined,
-    tab: search.tab === 'skills' ? 'skills' : undefined,
+    tab: search.tab === 'skills' || search.tab === 'chat' ? search.tab : undefined,
   }),
   head: () => ({
     meta: [
-      { title: 'Wiki & Skills · ASI Architect' },
-      { name: 'description', content: 'Browse the project wiki and manage Skill Uploads packages without leaving the app.' },
+      { title: 'Bot Wiki · ASI Architect' },
+      { name: 'description', content: 'Research pages the bot publishes, the skill packages backing them (one-click install/run), and the shared chat to discuss them -- all in one place.' },
     ],
   }),
-  component: WikiAndSkillsPage,
+  component: BotWikiPage,
 })
 
-function WikiAndSkillsPage() {
+function BotWikiPage() {
   const { tab: requestedTab } = Route.useSearch()
-  const [tab, setTab] = useState<'wiki' | 'skills'>(requestedTab ?? 'wiki')
+  const [tab, setTab] = useState<'wiki' | 'skills' | 'chat'>(requestedTab ?? 'wiki')
+  // Set by a page's "Discuss in Chat" button so the Chat tab can pre-fill
+  // its composer -- lifted up here (rather than each panel navigating
+  // independently) since switching tabs is now just local state, not a
+  // route change, and ChatPanel needs to know what to pre-fill with.
+  const [chatTopic, setChatTopic] = useState<string | null>(null)
+
+  const openChatAbout = (topic: string) => {
+    setChatTopic(topic)
+    setTab('chat')
+  }
 
   return (
     <div className="flex h-full flex-col gap-4 p-4 animate-fade-in">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-foreground">
           <BookOpen className="h-6 w-6 text-primary" />
-          Wiki & Skills
+          Bot Wiki
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Architecture notes and design docs, plus the plugin/skill/algorithm/RSI-test packages that implement
-          them — a skill package can link to a bot wiki page as its documentation.
+          Research pages the bot publishes, the plugin/skill/algorithm/RSI-test packages backing them (one-click
+          install and run), and a shared chat to discuss any of it -- one service, not three.
         </p>
         <div className="mt-3 flex gap-1 border-b border-border">
           <button
@@ -116,11 +139,24 @@ function WikiAndSkillsPage() {
             <Upload size={14} />
             Skill Uploads
           </button>
+          <button
+            type="button"
+            onClick={() => setTab('chat')}
+            className={`flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
+              tab === 'chat' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
+            }`}
+            aria-current={tab === 'chat' ? 'page' : undefined}
+          >
+            <Users size={14} />
+            Chat
+          </button>
         </div>
       </div>
 
       <div className="min-h-0 flex-1">
-        {tab === 'wiki' ? <WikiPanel /> : <SkillUploadsPanel />}
+        {tab === 'wiki' && <WikiPanel onOpenChat={openChatAbout} />}
+        {tab === 'skills' && <SkillUploadsPanel />}
+        {tab === 'chat' && <ChatPanel topic={chatTopic} onTopicConsumed={() => setChatTopic(null)} />}
       </div>
     </div>
   )
@@ -135,7 +171,7 @@ interface WikiPageSummary {
   source: WikiSource
 }
 
-function WikiPanel() {
+function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
   const { page: requestedPage } = Route.useSearch()
   const [pages, setPages] = useState<WikiPageSummary[]>([])
   const [pagesLoading, setPagesLoading] = useState(true)
@@ -529,15 +565,15 @@ function WikiPanel() {
                     >
                       {p.title || p.name}
                     </button>
-                    <Link
-                      to="/app/shared-chat"
-                      search={{ topic: p.title || p.name }}
+                    <button
+                      type="button"
+                      onClick={() => onOpenChat(p.title || p.name)}
                       className="mr-1 flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
-                      aria-label={`Discuss ${p.title || p.name} in Shared Chat`}
-                      title={`Discuss ${p.title || p.name} in Shared Chat`}
+                      aria-label={`Discuss ${p.title || p.name} in Chat`}
+                      title={`Discuss ${p.title || p.name} in Chat`}
                     >
                       <MessageSquare size={11} />
-                    </Link>
+                    </button>
                   </div>
                 ))}
                 {curatedPages.length === 0 && (
@@ -583,15 +619,15 @@ function WikiPanel() {
                     >
                       {p.title || p.name}
                     </button>
-                    <Link
-                      to="/app/shared-chat"
-                      search={{ topic: p.title || p.name }}
+                    <button
+                      type="button"
+                      onClick={() => onOpenChat(p.title || p.name)}
                       className="flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
-                      aria-label={`Discuss ${p.title || p.name} in Shared Chat`}
-                      title={`Discuss ${p.title || p.name} in Shared Chat`}
+                      aria-label={`Discuss ${p.title || p.name} in Chat`}
+                      title={`Discuss ${p.title || p.name} in Chat`}
                     >
                       <MessageSquare size={11} />
-                    </Link>
+                    </button>
                     <button
                       type="button"
                       onClick={() => startEditingNamedPage(p.name, p.title)}
@@ -642,15 +678,15 @@ function WikiPanel() {
                 <BookOpen size={13} />
                 Curated wiki page — not editable in the app; changes go through a real commit to wiki/
                 {activeName && (
-                  <Link
-                    to="/app/shared-chat"
-                    search={{ topic: contentTitle }}
+                  <button
+                    type="button"
+                    onClick={() => onOpenChat(contentTitle)}
                     className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-muted active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
-                    aria-label={`Discuss ${contentTitle} in Shared Chat`}
+                    aria-label={`Discuss ${contentTitle} in Chat`}
                   >
                     <MessageSquare size={11} />
                     Chat
-                  </Link>
+                  </button>
                 )}
               </div>
             )}
@@ -659,15 +695,15 @@ function WikiPanel() {
                 <Bot size={13} />
                 Bot-published — not part of the curated wiki
                 {activeName && (
-                  <Link
-                    to="/app/shared-chat"
-                    search={{ topic: contentTitle }}
+                  <button
+                    type="button"
+                    onClick={() => onOpenChat(contentTitle)}
                     className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-primary hover:bg-primary/10 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
-                    aria-label={`Discuss ${contentTitle} in Shared Chat`}
+                    aria-label={`Discuss ${contentTitle} in Chat`}
                   >
                     <MessageSquare size={11} />
                     Chat
-                  </Link>
+                  </button>
                 )}
                 <button
                   type="button"
@@ -729,6 +765,7 @@ interface SkillPackage {
   slots: Partial<Record<SlotKey, ManifestEntry>>
   extraFiles: ManifestEntry[]
   wikiPage?: string
+  rsiPassed?: { at: number; message?: string }
 }
 
 interface BotWikiPageSummary {
@@ -779,7 +816,7 @@ function WikiPageFilesPanel({ pageName }: { pageName: string }) {
   const [extraFiles, setExtraFiles] = useState<File[]>([])
   const [uploading, setUploading] = useState(false)
   const [uploadError, setUploadError] = useState<string | null>(null)
-  const [installingKey, setInstallingKey] = useState<'skill' | 'plugin' | null>(null)
+  const [installingKey, setInstallingKey] = useState<'skill' | 'plugin' | 'algorithm' | 'rsiTest' | null>(null)
 
   const load = () => {
     setLoading(true)
@@ -887,11 +924,55 @@ function WikiPageFilesPanel({ pageName }: { pageName: string }) {
     }
   }
 
+  // Run buttons -- genuinely execute the uploaded .js/.mjs file against
+  // the live system (see interface/web-server.ts's run-algorithm/
+  // run-rsi-test routes), same code-execution risk as Install Plugin so
+  // both are gated behind the same kind of confirm() warning.
+  const runAlgorithm = async () => {
+    if (!window.confirm(`Run "${pageName}"'s improvement algorithm? This runs its code directly against the live system.`)) return
+    setInstallingKey('algorithm')
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/run-algorithm`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to run algorithm')
+      window.alert(`Ran "${data.ranFrom}". Result: ${JSON.stringify(data.result)}`)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to run algorithm')
+    } finally {
+      setInstallingKey(null)
+    }
+  }
+
+  const runRsiTest = async () => {
+    if (!window.confirm(`Run "${pageName}"'s RSI test? This runs its code directly against the live system, and a pass installs its skill files and publishes it.`)) return
+    setInstallingKey('rsiTest')
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/run-rsi-test`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to run RSI test')
+      if (data.passed) {
+        window.alert(
+          `RSI test passed${data.message ? `: ${data.message}` : ''}. Published.` +
+            (data.installed ? ` Installed (${data.installed.remembered} remembered into live memory).` : ''),
+        )
+      } else {
+        window.alert(`RSI test did not pass${data.message ? `: ${data.message}` : '.'}`)
+      }
+      load()
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to run RSI test')
+    } finally {
+      setInstallingKey(null)
+    }
+  }
+
   if (loading || !pkg) return null
 
   const fileCount = Object.keys(pkg.slots).length + pkg.extraFiles.length
   const hasSkillFile = !!(pkg.slots.binarySkill || pkg.slots.sourceSkill)
   const hasPluginFile = !!pkg.slots.plugin
+  const hasRunnableAlgorithm = !!pkg.slots.algorithm && /\.(mjs|js)$/i.test(pkg.slots.algorithm.filename)
+  const hasRunnableRsiTest = !!pkg.slots.rsiTest && /\.(mjs|js)$/i.test(pkg.slots.rsiTest.filename)
 
   return (
     <Card className="mb-4 p-3">
@@ -907,6 +988,15 @@ function WikiPageFilesPanel({ pageName }: { pageName: string }) {
           {fileCount > 0 && (
             <span className="font-normal text-muted-foreground">
               ({fileCount} file{fileCount !== 1 ? 's' : ''})
+            </span>
+          )}
+          {pkg.rsiPassed && (
+            <span
+              className="flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+              title={`RSI test passed ${new Date(pkg.rsiPassed.at).toLocaleString()}${pkg.rsiPassed.message ? ` -- ${pkg.rsiPassed.message}` : ''}`}
+            >
+              <Check size={10} />
+              Published
             </span>
           )}
         </span>
@@ -1061,6 +1151,36 @@ function WikiPageFilesPanel({ pageName }: { pageName: string }) {
               >
                 {installingKey === 'plugin' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
                 Install Plugin
+              </Button>
+            )}
+            {hasRunnableAlgorithm && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={runAlgorithm}
+                disabled={installingKey === 'algorithm'}
+                className="h-6 gap-1 px-2 text-[11px] active:scale-95 transition-all"
+                aria-label={`Run ${pageName} improvement algorithm`}
+                title="Runs this algorithm's code directly against the live system"
+              >
+                {installingKey === 'algorithm' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                Run Algorithm
+              </Button>
+            )}
+            {hasRunnableRsiTest && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={runRsiTest}
+                disabled={installingKey === 'rsiTest'}
+                className="h-6 gap-1 px-2 text-[11px] active:scale-95 transition-all"
+                aria-label={`Run ${pageName} RSI test`}
+                title="Runs this test's code directly against the live system -- a pass installs the skill and publishes it"
+              >
+                {installingKey === 'rsiTest' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                Run RSI Test
               </Button>
             )}
           </div>
@@ -1231,6 +1351,44 @@ function SkillUploadsPanel() {
     }
   }
 
+  const runAlgorithm = async (pkgName: string) => {
+    if (!window.confirm(`Run "${pkgName}"'s improvement algorithm? This runs its code directly against the live system.`)) return
+    setInstallingKey(`${pkgName}:algorithm`)
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pkgName)}/run-algorithm`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to run algorithm')
+      window.alert(`Ran "${data.ranFrom}". Result: ${JSON.stringify(data.result)}`)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to run algorithm')
+    } finally {
+      setInstallingKey(null)
+    }
+  }
+
+  const runRsiTest = async (pkgName: string) => {
+    if (!window.confirm(`Run "${pkgName}"'s RSI test? This runs its code directly against the live system, and a pass installs its skill files and publishes it.`)) return
+    setInstallingKey(`${pkgName}:rsiTest`)
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pkgName)}/run-rsi-test`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to run RSI test')
+      if (data.passed) {
+        window.alert(
+          `RSI test passed${data.message ? `: ${data.message}` : ''}. Published.` +
+            (data.installed ? ` Installed (${data.installed.remembered} remembered into live memory).` : ''),
+        )
+      } else {
+        window.alert(`RSI test did not pass${data.message ? `: ${data.message}` : '.'}`)
+      }
+      loadPackages()
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to run RSI test')
+    } finally {
+      setInstallingKey(null)
+    }
+  }
+
   const linkWiki = async (pkgName: string) => {
     const wikiPage = wikiChoice[pkgName]
     if (!wikiPage) return
@@ -1381,10 +1539,23 @@ function SkillUploadsPanel() {
           {packages.map(pkg => {
             const hasSkillFile = !!(pkg.slots.binarySkill || pkg.slots.sourceSkill)
             const hasPluginFile = !!pkg.slots.plugin
+            const hasRunnableAlgorithm = !!pkg.slots.algorithm && /\.(mjs|js)$/i.test(pkg.slots.algorithm.filename)
+            const hasRunnableRsiTest = !!pkg.slots.rsiTest && /\.(mjs|js)$/i.test(pkg.slots.rsiTest.filename)
             return (
               <Card key={pkg.name} className="p-3">
                 <CardHeader className="flex flex-row items-center justify-between p-0 pb-2">
-                  <CardTitle className="text-sm font-medium">{pkg.name}</CardTitle>
+                  <CardTitle className="flex items-center gap-1.5 text-sm font-medium">
+                    {pkg.name}
+                    {pkg.rsiPassed && (
+                      <span
+                        className="flex items-center gap-0.5 rounded-full bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary"
+                        title={`RSI test passed ${new Date(pkg.rsiPassed.at).toLocaleString()}${pkg.rsiPassed.message ? ` -- ${pkg.rsiPassed.message}` : ''}`}
+                      >
+                        <Check size={10} />
+                        Published
+                      </span>
+                    )}
+                  </CardTitle>
                   <Button
                     type="button"
                     variant="ghost"
@@ -1516,7 +1687,7 @@ function SkillUploadsPanel() {
                     )}
                   </div>
 
-                  {(hasSkillFile || hasPluginFile) && (
+                  {(hasSkillFile || hasPluginFile || hasRunnableAlgorithm || hasRunnableRsiTest) && (
                     <div className="flex flex-wrap gap-1.5 border-t border-border pt-2 mt-2">
                       {hasSkillFile && (
                         <Button
@@ -1547,6 +1718,36 @@ function SkillUploadsPanel() {
                           Install Plugin
                         </Button>
                       )}
+                      {hasRunnableAlgorithm && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => runAlgorithm(pkg.name)}
+                          disabled={installingKey === `${pkg.name}:algorithm`}
+                          className="h-6 gap-1 px-2 text-[11px] active:scale-95 transition-all"
+                          aria-label={`Run ${pkg.name} improvement algorithm`}
+                          title="Runs this algorithm's code directly against the live system"
+                        >
+                          {installingKey === `${pkg.name}:algorithm` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                          Run Algorithm
+                        </Button>
+                      )}
+                      {hasRunnableRsiTest && (
+                        <Button
+                          type="button"
+                          size="sm"
+                          variant="outline"
+                          onClick={() => runRsiTest(pkg.name)}
+                          disabled={installingKey === `${pkg.name}:rsiTest`}
+                          className="h-6 gap-1 px-2 text-[11px] active:scale-95 transition-all"
+                          aria-label={`Run ${pkg.name} RSI test`}
+                          title="Runs this test's code directly against the live system -- a pass installs the skill and publishes it"
+                        >
+                          {installingKey === `${pkg.name}:rsiTest` ? <Loader2 className="h-3 w-3 animate-spin" /> : <Play className="h-3 w-3" />}
+                          Run RSI Test
+                        </Button>
+                      )}
                     </div>
                   )}
                 </CardContent>
@@ -1556,5 +1757,220 @@ function SkillUploadsPanel() {
         </div>
       </div>
     </div>
+  )
+}
+
+interface SharedMessage {
+  id: string
+  author: string
+  text: string
+  isBot: boolean
+  time: number
+}
+
+const CHAT_NAME_KEY = 'shared_chat_display_name'
+const CHAT_POLL_MS = 3000
+
+function formatChatTime(ts: number): string {
+  return new Date(ts).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
+/**
+ * The Chat tab -- one room every visitor to this app reads and posts into,
+ * with the bot as one participant rather than the exclusive other side of
+ * the conversation. Backed by /api/shared-chat[/ask] and models &&
+ * skills/core/shared-chat-store.ts. Was its own route (/app/shared-chat);
+ * now just the third tab of this page (see the module doc comment).
+ *
+ * Different from the two other chat surfaces elsewhere in the app:
+ *  - /app/chat ("AI Chat") is always exactly one human talking to the bot,
+ *    in a private thread only that browser ever sees.
+ *  - /app/chat-groups is multiple AI *agent* personas collaborating with
+ *    each other -- no humans in the room at all.
+ *  - This tab is real people, in one flat log everyone who opens it sees.
+ *    The bot never auto-replies to a plain message -- it only speaks when
+ *    summoned with "Ask the bot", so it doesn't own the conversation the
+ *    way /app/chat's bot does.
+ *
+ * `topic`/`onTopicConsumed`: a page's "Discuss in Chat" button
+ * (WikiPanel's onOpenChat) sets a pending topic in the parent BotWikiPage
+ * and switches to this tab; this effect pre-fills the composer with it
+ * once and reports back so the parent clears it (otherwise switching away
+ * and back would re-fill the composer, clobbering whatever the person had
+ * typed).
+ */
+function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicConsumed: () => void }) {
+  const [name, setName] = useState('')
+  const [nameDraft, setNameDraft] = useState('')
+  const [messages, setMessages] = useState<SharedMessage[]>([])
+  const [draft, setDraft] = useState('')
+  const [sending, setSending] = useState(false)
+  const [asking, setAsking] = useState(false)
+  const lastIdRef = useRef<string | undefined>(undefined)
+  const messagesEndRef = useRef<HTMLDivElement>(null)
+  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+
+  useEffect(() => {
+    const stored = localStorage.getItem(CHAT_NAME_KEY)
+    if (stored) setName(stored)
+  }, [])
+
+  useEffect(() => {
+    if (!topic) return
+    setDraft(`Let's talk about the wiki page "${topic}" -- `)
+    onTopicConsumed()
+    // Only re-run when a new topic actually arrives, not on every parent
+    // re-render (onTopicConsumed is a fresh closure each render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic])
+
+  const fetchNew = useCallback(async () => {
+    try {
+      const url = lastIdRef.current
+        ? `/api/shared-chat?since=${encodeURIComponent(lastIdRef.current)}`
+        : '/api/shared-chat'
+      const res = await fetch(url)
+      if (!res.ok) return
+      const data: { messages: SharedMessage[] } = await res.json()
+      if (data.messages.length === 0) return
+      lastIdRef.current = data.messages[data.messages.length - 1].id
+      setMessages(prev => [...prev, ...data.messages])
+    } catch {
+      // Polling failure is silent -- the next tick tries again, and there's
+      // nothing actionable for the user to do about one missed poll.
+    }
+  }, [])
+
+  useEffect(() => {
+    if (!name) return
+    fetchNew()
+    pollRef.current = setInterval(fetchNew, CHAT_POLL_MS)
+    return () => {
+      if (pollRef.current) clearInterval(pollRef.current)
+    }
+  }, [name, fetchNew])
+
+  useEffect(() => {
+    messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
+  }, [messages])
+
+  const chooseName = () => {
+    const trimmed = nameDraft.trim().slice(0, 40)
+    if (!trimmed) return
+    localStorage.setItem(CHAT_NAME_KEY, trimmed)
+    setName(trimmed)
+  }
+
+  const post = async (endpoint: '/api/shared-chat' | '/api/shared-chat/ask') => {
+    const text = draft.trim()
+    if (!text) return
+    const setBusy = endpoint === '/api/shared-chat/ask' ? setAsking : setSending
+    setBusy(true)
+    try {
+      const res = await fetch(endpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ author: name, text }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data?.error ?? 'Failed to send message')
+      setDraft('')
+      await fetchNew()
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to send message')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!name) {
+    return (
+      <div className="flex h-full flex-col items-center justify-center p-6">
+        <Card className="w-full max-w-sm p-5 space-y-3">
+          <div className="flex items-center gap-2">
+            <Users className="h-4 w-4 text-muted-foreground" />
+            <h2 className="font-semibold text-sm">Join Chat</h2>
+          </div>
+          <p className="text-xs text-muted-foreground">
+            Pick a display name. It's remembered on this browser only -- there's no account system.
+          </p>
+          <Input
+            value={nameDraft}
+            onChange={e => setNameDraft(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && chooseName()}
+            placeholder="Display name"
+            autoFocus
+          />
+          <Button className="w-full" onClick={chooseName} disabled={!nameDraft.trim()}>
+            Join
+          </Button>
+        </Card>
+      </div>
+    )
+  }
+
+  return (
+    <Card className="flex h-full flex-col overflow-hidden p-0">
+      <div className="shrink-0 border-b border-border px-4 py-3 flex items-center gap-2">
+        <Users className="h-4 w-4 text-muted-foreground" />
+        <div>
+          <h2 className="font-semibold text-sm">Chat</h2>
+          <p className="text-[11px] text-muted-foreground">
+            Posting as <span className="font-medium text-foreground">{name}</span> -- everyone with this app sees this room.
+          </p>
+        </div>
+      </div>
+
+      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2">
+        {messages.length === 0 && (
+          <p className="text-xs text-muted-foreground text-center py-8">
+            No messages yet -- say something.
+          </p>
+        )}
+        {messages.map(m => (
+          <div key={m.id} className="flex gap-2 items-start">
+            <div
+              className={`shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
+                m.isBot ? 'bg-primary text-primary-foreground' : 'bg-muted'
+              }`}
+            >
+              {m.isBot ? <Bot size={12} /> : m.author.slice(0, 1).toUpperCase()}
+            </div>
+            <div className="min-w-0">
+              <div className="flex items-baseline gap-2">
+                <span className="text-xs font-medium">{m.author}</span>
+                <span className="text-[10px] text-muted-foreground">{formatChatTime(m.time)}</span>
+              </div>
+              <p className="text-sm whitespace-pre-wrap break-words">{m.text}</p>
+            </div>
+          </div>
+        ))}
+        <div ref={messagesEndRef} />
+      </div>
+
+      <div className="shrink-0 border-t border-border p-3 space-y-2">
+        <div className="flex gap-2">
+          <Input
+            value={draft}
+            onChange={e => setDraft(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && post('/api/shared-chat')}
+            placeholder="Message the room..."
+            disabled={sending || asking}
+          />
+          <Button onClick={() => post('/api/shared-chat')} disabled={!draft.trim() || sending || asking}>
+            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+          </Button>
+          <Button
+            variant="outline"
+            onClick={() => post('/api/shared-chat/ask')}
+            disabled={!draft.trim() || sending || asking}
+            title="Send this to the room and ask the bot to reply, visible to everyone"
+          >
+            {asking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+            <span className="ml-1.5 hidden sm:inline">Ask the bot</span>
+          </Button>
+        </div>
+      </div>
+    </Card>
   )
 }
