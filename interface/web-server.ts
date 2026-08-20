@@ -8,6 +8,7 @@ import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
 import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError } from '../models && skills/core/wiki-store.js';
+import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import {
   listSkillUploads,
   readSkillUpload,
@@ -1272,6 +1273,70 @@ export class WebServer {
         this.sendJson(res, { name: wikiMatch[1], deleted: true });
       } catch (err) {
         const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/shared-chat?since=<id> — the room's messages, oldest first.
+    // Unlike /api/chat and /api/chat/messages (both always exactly one
+    // human talking to the bot) this is one shared log every visitor to
+    // /app/shared-chat reads and posts into -- see shared-chat-store.ts's
+    // doc comment. `since` (a message id the client already has) returns
+    // only what's newer, which is what the page's poll loop sends on every
+    // request after the first so it isn't re-fetching the whole room.
+    if (pathname === '/api/shared-chat' && method === 'GET') {
+      const since = parsedUrl.searchParams.get('since') ?? undefined;
+      this.sendJson(res, { messages: getSharedChatStore().list(since) });
+      return;
+    }
+
+    // POST /api/shared-chat — post a message as a human participant. Body:
+    // { author: string, text: string }. The bot never appears here; it only
+    // ever posts via /api/shared-chat/ask below (summoned) or when
+    // something it did elsewhere chooses to announce itself in the room, so
+    // it's always one voice among the room's participants, never the
+    // implicit other half of every message.
+    if (pathname === '/api/shared-chat' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { author?: string; text?: string } | null;
+        if (typeof body?.author !== 'string' || typeof body?.text !== 'string') {
+          this.sendJson(res, { error: 'Expected { author, text } (both strings)' }, 400);
+          return;
+        }
+        const message = getSharedChatStore().post(body.author, body.text, false);
+        this.sendJson(res, message, 201);
+      } catch (err) {
+        const status = err instanceof SharedChatError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // POST /api/shared-chat/ask — summon the bot into the room. Posts the
+    // asker's own message first (so everyone else in the room sees the
+    // question, not just the answer), then generates and posts the bot's
+    // reply under isBot: true. This is the only path that makes the bot
+    // speak here -- there's no per-message auto-reply, matching "the bot
+    // can talk and publish stuff to the chat but it won't be you
+    // exclusively with the bot."
+    if (pathname === '/api/shared-chat/ask' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { author?: string; text?: string } | null;
+        if (typeof body?.author !== 'string' || typeof body?.text !== 'string') {
+          this.sendJson(res, { error: 'Expected { author, text } (both strings)' }, 400);
+          return;
+        }
+        const store = getSharedChatStore();
+        const asked = store.post(body.author, body.text, false);
+        const { getBot } = await import('../src/server/bot-service.js');
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const bot = await getBot(await getNeuroclawSystem());
+        const reply = await bot.processMessage(body.text);
+        const answered = store.post('Bot', reply.message, true);
+        this.sendJson(res, { asked, answered }, 201);
+      } catch (err) {
+        const status = err instanceof SharedChatError ? 400 : 500;
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
       }
       return;

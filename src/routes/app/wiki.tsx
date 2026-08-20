@@ -435,11 +435,11 @@ function WikiPage() {
                       {p.title || p.name}
                     </button>
                     <Link
-                      to="/app/chat"
-                      search={{ page: p.name }}
+                      to="/app/shared-chat"
+                      search={{ topic: p.title || p.name }}
                       className="mr-1 flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
-                      aria-label={`Discuss ${p.title || p.name} in AI Chat`}
-                      title={`Discuss ${p.title || p.name} in AI Chat`}
+                      aria-label={`Discuss ${p.title || p.name} in Shared Chat`}
+                      title={`Discuss ${p.title || p.name} in Shared Chat`}
                     >
                       <MessageSquare size={11} />
                     </Link>
@@ -489,11 +489,11 @@ function WikiPage() {
                       {p.title || p.name}
                     </button>
                     <Link
-                      to="/app/chat"
-                      search={{ page: p.name }}
+                      to="/app/shared-chat"
+                      search={{ topic: p.title || p.name }}
                       className="flex shrink-0 items-center justify-center rounded p-1 text-muted-foreground opacity-0 transition-all hover:bg-muted hover:text-foreground focus-visible:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary group-hover:opacity-100 active:scale-90 cursor-pointer"
-                      aria-label={`Discuss ${p.title || p.name} in AI Chat`}
-                      title={`Discuss ${p.title || p.name} in AI Chat`}
+                      aria-label={`Discuss ${p.title || p.name} in Shared Chat`}
+                      title={`Discuss ${p.title || p.name} in Shared Chat`}
                     >
                       <MessageSquare size={11} />
                     </Link>
@@ -548,10 +548,10 @@ function WikiPage() {
                 Curated wiki page — not editable in the app; changes go through a real commit to wiki/
                 {activeName && (
                   <Link
-                    to="/app/chat"
-                    search={{ page: activeName }}
+                    to="/app/shared-chat"
+                    search={{ topic: contentTitle }}
                     className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-foreground hover:bg-muted active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
-                    aria-label={`Discuss ${contentTitle} in AI Chat`}
+                    aria-label={`Discuss ${contentTitle} in Shared Chat`}
                   >
                     <MessageSquare size={11} />
                     Chat
@@ -565,10 +565,10 @@ function WikiPage() {
                 Bot-published — not part of the curated wiki
                 {activeName && (
                   <Link
-                    to="/app/chat"
-                    search={{ page: activeName }}
+                    to="/app/shared-chat"
+                    search={{ topic: contentTitle }}
                     className="ml-1 flex items-center gap-1 rounded px-1.5 py-0.5 font-medium text-primary hover:bg-primary/10 active:scale-95 transition-all focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary cursor-pointer"
-                    aria-label={`Discuss ${contentTitle} in AI Chat`}
+                    aria-label={`Discuss ${contentTitle} in Shared Chat`}
                   >
                     <MessageSquare size={11} />
                     Chat

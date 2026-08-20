@@ -26,6 +26,7 @@ import {
   TrendingUp,
   BookOpen,
   Upload,
+  Globe,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -40,6 +41,7 @@ interface NavItemDef {
 const NAV_ITEMS: NavItemDef[] = [
   { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
   { href: '/app/chat', icon: <MessageSquare className="h-4 w-4" />, label: 'AI Chat' },
+  { href: '/app/shared-chat', icon: <Globe className="h-4 w-4" />, label: 'Shared Chat' },
   { href: '/app/chat-groups', icon: <Users className="h-4 w-4" />, label: 'Chat Groups' },
   { href: '/app/chat-history', icon: <Folder className="h-4 w-4" />, label: 'Chat History' },
   { href: '/builder', icon: <Blocks className="h-4 w-4" />, label: 'Extension Builder' },
