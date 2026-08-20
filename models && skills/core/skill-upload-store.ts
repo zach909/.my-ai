@@ -66,6 +66,18 @@ export interface SkillUploadManifestEntry {
 export interface SkillUploadManifest {
   slots: Partial<Record<SkillUploadSlot, SkillUploadManifestEntry>>;
   extraFiles: SkillUploadManifestEntry[];
+  /**
+   * Name of a bot-published wiki page (see wiki-store.ts) documenting this
+   * skill -- e.g. what it does, how it was trained, known limitations.
+   * Stored as just the name, not a copy of the content: the page keeps
+   * living in wiki/bot/, stays editable there (including by the AI), and a
+   * skill package can be repointed at a different page (or unlinked)
+   * without touching the wiki at all. Optional, and only ever a *bot*
+   * page -- linking a curated wiki/ page here would let a skill upload
+   * imply an editorial page is "about" it, which isn't this feature's
+   * call to make.
+   */
+  wikiPage?: string;
 }
 
 export interface SkillUploadSummary extends SkillUploadManifest {
@@ -108,8 +120,13 @@ function readManifest(name: string): SkillUploadManifest {
     // Tolerates the original flat { [slot]: entry } shape (before extra
     // files existed) alongside the current { slots, extraFiles } one, so an
     // old manifest on disk doesn't need a migration step.
-    if (raw && typeof raw === "object" && ("slots" in raw || "extraFiles" in raw)) {
-      return { slots: raw.slots ?? {}, extraFiles: Array.isArray(raw.extraFiles) ? raw.extraFiles : [] };
+    if (raw && typeof raw === "object" && ("slots" in raw || "extraFiles" in raw || "wikiPage" in raw)) {
+      const manifest: SkillUploadManifest = {
+        slots: raw.slots ?? {},
+        extraFiles: Array.isArray(raw.extraFiles) ? raw.extraFiles : [],
+      };
+      if (typeof raw.wikiPage === "string") manifest.wikiPage = raw.wikiPage;
+      return manifest;
     }
     return { slots: raw ?? {}, extraFiles: [] };
   } catch {
@@ -208,6 +225,39 @@ export function saveSkillUploadExtraFiles(name: string, files: SkillUploadFile[]
     if (existingIndex >= 0) manifest.extraFiles[existingIndex] = entry;
     else manifest.extraFiles.push(entry);
   }
+  writeManifest(name, manifest);
+  return { name, ...manifest };
+}
+
+/**
+ * Point a package at a bot wiki page as its documentation, replacing
+ * whatever it was linked to before. Creates the package (with no slots or
+ * extra files yet) if `name` doesn't already exist -- same as
+ * saveSkillUpload(), a package can start from just a wiki link and gain
+ * real artifacts later. Whether `wikiPageName` actually names an existing
+ * *bot* wiki page is the caller's job (web-server.ts checks via
+ * wiki-store.ts before calling this) -- this store only persists the
+ * name, the same separation saveSkillUpload() keeps from the plugin
+ * registry it feeds.
+ */
+export function linkSkillUploadWiki(name: string, wikiPageName: string): SkillUploadSummary {
+  assertSafeName(name);
+  const dir = packageDir(name);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const manifest = readManifest(name);
+  manifest.wikiPage = wikiPageName;
+  writeManifest(name, manifest);
+  return { name, ...manifest };
+}
+
+/** Unlinks the package's wiki page, if any. Leaves the wiki page itself untouched -- this only ever removes the pointer. */
+export function unlinkSkillUploadWiki(name: string): SkillUploadSummary {
+  assertSafeName(name);
+  if (!existsSync(packageDir(name))) {
+    throw new SkillUploadError(`No skill package named "${name}".`);
+  }
+  const manifest = readManifest(name);
+  delete manifest.wikiPage;
   writeManifest(name, manifest);
   return { name, ...manifest };
 }

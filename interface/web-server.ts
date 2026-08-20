@@ -18,6 +18,8 @@ import {
   saveSkillUploadExtraFiles,
   deleteSkillUpload,
   deleteSkillUploadExtraFile,
+  linkSkillUploadWiki,
+  unlinkSkillUploadWiki,
   SkillUploadError,
   SKILL_UPLOAD_SLOTS,
   type SkillUploadSlot,
@@ -1580,6 +1582,55 @@ export class WebServer {
         this.sendJson(res, { ok: true, installedFrom: file.filename, pluginId: name });
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // POST /api/skill-uploads/:name/wiki — link a package to a bot wiki
+    // page as its documentation. Body: { wikiPage: string }. Only a *bot*
+    // page (wiki/bot/*.md) can be linked -- a curated wiki/ page is
+    // reviewed, general-purpose documentation, not something a skill
+    // upload should be able to claim as "about" it, so this checks the
+    // page's source the same way deleteWikiPage()/WikiPlugin.edit() refuse
+    // to touch a curated page.
+    const skillUploadWikiMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/wiki$/);
+    if (skillUploadWikiMatch && method === 'POST') {
+      const name = skillUploadWikiMatch[1];
+      try {
+        const body = await this.parseBody(req) as { wikiPage?: string } | null;
+        if (typeof body?.wikiPage !== 'string' || !body.wikiPage) {
+          this.sendJson(res, { error: 'Expected a "wikiPage" string field' }, 400);
+          return;
+        }
+        const page = readWikiPage(body.wikiPage);
+        if (!page) {
+          this.sendJson(res, { error: `No wiki page named "${body.wikiPage}"` }, 404);
+          return;
+        }
+        if (page.source !== 'bot') {
+          this.sendJson(res, { error: `"${body.wikiPage}" is a curated wiki page -- only a bot-published page can be linked to a skill upload` }, 400);
+          return;
+        }
+        const summary = linkSkillUploadWiki(name, body.wikiPage);
+        this.sendJson(res, summary);
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // DELETE /api/skill-uploads/:name/wiki — unlink the package's wiki
+    // page, if any. The wiki page itself is untouched; this only removes
+    // the pointer skill-upload-store.ts keeps in the package's manifest.
+    if (skillUploadWikiMatch && method === 'DELETE') {
+      const name = skillUploadWikiMatch[1];
+      try {
+        const summary = unlinkSkillUploadWiki(name);
+        this.sendJson(res, summary);
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
       }
       return;
     }
