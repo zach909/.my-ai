@@ -1,3 +1,7 @@
+## 2026-09-24 - [Tactile Clear Query Trigger with Focus Preservation on Search Inputs]
+**Learning:** Adding an inline clear button (`X`) inside query/search inputs (such as on the Knowledge & Reasoning page) drastically lowers input reset friction. Equipping the clear trigger with a React `inputRef` focus restoration handler, tactile press scaling (`active:scale-95`), focus-visible rings (`focus-visible:ring-2 focus-visible:ring-primary`), and descriptive ARIA descriptors (`aria-label="Clear search query"` and `title="Clear search query"`) ensures a seamless, highly intuitive, and accessible input interaction.
+**Action:** When designing search or filter inputs, always complement them with a conditional inline reset button (`X`) that restores active focus to the text input field.
+
 ## 2026-09-24 - [Real-time Search Filter with Live Status Announcements on Topic Views]
 **Learning:** Adding a real-time search filter input to auto-organized history or folder views lowers search friction for users with large topic collections. Linking the input with an accessible label (`<Label htmlFor="...">`), a quick reset button (`X`), focus rings, tactile press scaling (`active:scale-95`), and a live ARIA announcement region (`role="status" aria-live="polite"`) delivers immediate feedback for both visual and screen-reader users.
 **Action:** When displaying grouped lists or conversation history, integrate an accessible filter input paired with a reset button and live status announcements.
