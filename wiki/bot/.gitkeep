@@ -1,0 +1,9 @@
+This directory holds pages published through POST /api/wiki (the /app/wiki
+"New Page" form, or plugins/wiki.ts's WikiPlugin acting on the AI's own
+behalf) -- see models && skills/core/wiki-store.ts. Kept separate from the
+curated pages one level up so a self-published page can never be confused
+with, or silently overwrite, hand-reviewed documentation.
+
+This file exists only so git tracks the empty directory before any page has
+been published into it; it is not itself a wiki page (it isn't a .md file,
+so listWikiPages() ignores it).

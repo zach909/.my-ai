@@ -202,28 +202,6 @@ function ChatHistoryPage() {
           : `${totalChats} total chat${totalChats !== 1 ? 's' : ''} available`}
       </div>
 
-      <div className="flex items-center justify-between">
-  const cleanQuery = searchQuery.trim().toLowerCase()
-
-  const filteredGroups = groups
-    .map((g) => {
-      const matchesGroupHeader = g.name.toLowerCase().includes(cleanQuery)
-      const matchingThreads = g.threads.filter(
-        (t) => matchesGroupHeader || (t.title || 'untitled').toLowerCase().includes(cleanQuery)
-      )
-      return { ...g, threads: matchingThreads }
-    })
-    .filter((g) => g.threads.length > 0)
-
-  const filteredUngrouped = ungrouped.filter((t) =>
-    (t.title || 'untitled').toLowerCase().includes(cleanQuery)
-  )
-
-  const filteredTotalChats =
-    filteredGroups.reduce((s, g) => s + g.threads.length, 0) + filteredUngrouped.length
-
-  return (
-    <div className="space-y-4 p-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div>
           <h1 className="text-lg font-semibold">Chat History</h1>
@@ -275,42 +253,10 @@ function ChatHistoryPage() {
               </Button>
             )}
           </div>
-          <p role="status" aria-live="polite" className="sr-only">
-            {cleanQuery ? `Showing ${filteredTotalChats} matching chat${filteredTotalChats !== 1 ? 's' : ''}` : `Showing all ${totalChats} chats`}
-          </p>
         </div>
       )}
 
       {error && <p className="text-xs text-destructive" role="alert">{error}</p>}
-
-      {!loading && totalChats > 0 && (
-        <div className="relative max-w-sm">
-          <Label htmlFor="search-history-input" className="sr-only">
-            Filter chat history by title or group
-          </Label>
-          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
-          <Input
-            id="search-history-input"
-            type="text"
-            value={searchQuery}
-            onChange={(e) => setSearchQuery(e.target.value)}
-            placeholder="Filter past chats or topic groups..."
-            className="pl-8 pr-8 h-8 text-xs focus-visible:ring-2 focus-visible:ring-primary"
-            aria-label="Filter chat history by title or group"
-          />
-          {searchQuery && (
-            <button
-              type="button"
-              onClick={() => setSearchQuery('')}
-              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xs p-0.5 text-muted-foreground hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
-              aria-label="Clear filter query"
-              title="Clear filter query"
-            >
-              <X size={13} />
-            </button>
-          )}
-        </div>
-      )}
 
       {!loading && totalChats === 0 && !error && (
         <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border p-8 text-center max-w-md mx-auto my-6 space-y-4">
@@ -353,38 +299,17 @@ function ChatHistoryPage() {
             aria-label="Clear search query filter"
           >
             Clear Filter
-      {!loading && totalChats > 0 && filteredTotalChats === 0 && (
-        <div className="flex flex-col items-center justify-center rounded-xl border border-dashed border-border/80 bg-card/40 p-8 text-center max-w-md mx-auto my-6 space-y-3">
-          <div className="flex h-10 w-10 items-center justify-center rounded-full bg-muted text-muted-foreground">
-            <Search className="h-5 w-5" />
-          </div>
-          <div className="space-y-1">
-            <h3 className="font-semibold text-foreground text-sm">No matching chats found</h3>
-            <p className="text-xs text-muted-foreground leading-relaxed">
-              No chat threads or groups match &ldquo;{searchQuery}&rdquo;. Try adjusting your filter terms.
-            </p>
-          </div>
-          <Button
-            size="sm"
-            variant="outline"
-            onClick={() => setSearchQuery('')}
-            className="active:scale-95 transition-all duration-150"
-            aria-label="Clear search filter"
-          >
-            Clear Search Filter
           </Button>
         </div>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {filteredData.groups.map((g) => (
-        {filteredGroups.map((g) => (
           <GroupCard key={g.id} group={g} />
         ))}
       </div>
 
       {filteredData.ungrouped.length > 0 && (
-      {filteredUngrouped.length > 0 && (
         <Card className="space-y-2 p-4">
           <div className="flex items-center gap-2 text-sm font-medium text-muted-foreground">
             <Folder size={14} />
@@ -392,7 +317,6 @@ function ChatHistoryPage() {
           </div>
           <div className="space-y-1.5">
             {filteredData.ungrouped.map((t) => (
-            {filteredUngrouped.map((t) => (
               <ThreadRow key={t.id} thread={t} />
             ))}
           </div>

@@ -29,6 +29,7 @@ export const PLUGIN_LIST: string[] = [
   "Video Generation",
   "Game Development",
   "Multi Input",
+  "Wiki",
 ];
 
 export const LANGUAGE_SKILLS: string[] = [
