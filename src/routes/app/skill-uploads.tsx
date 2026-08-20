@@ -6,9 +6,12 @@ import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
   Blocks,
+  Bot,
   Check,
   Download,
   FlaskConical,
+  Link2,
+  Link2Off,
   Loader2,
   Paperclip,
   Puzzle,
@@ -18,6 +21,7 @@ import {
   Upload,
   Zap,
 } from 'lucide-react'
+import { Link } from '@tanstack/react-router'
 
 export const Route = createFileRoute('/app/skill-uploads')({
   head: () => ({
@@ -55,6 +59,12 @@ interface SkillPackage {
   name: string
   slots: Partial<Record<SlotKey, ManifestEntry>>
   extraFiles: ManifestEntry[]
+  wikiPage?: string
+}
+
+interface BotWikiPageSummary {
+  name: string
+  title: string
 }
 
 function formatBytes(n: number): string {
@@ -93,6 +103,9 @@ function SkillUploadsPage() {
   const [uploadError, setUploadError] = useState<string | null>(null)
   const [deletingName, setDeletingName] = useState<string | null>(null)
   const [installingKey, setInstallingKey] = useState<string | null>(null)
+  const [botWikiPages, setBotWikiPages] = useState<BotWikiPageSummary[]>([])
+  const [wikiChoice, setWikiChoice] = useState<Record<string, string>>({})
+  const [linkingWikiName, setLinkingWikiName] = useState<string | null>(null)
 
   const loadPackages = () => {
     setPackagesLoading(true)
@@ -108,6 +121,19 @@ function SkillUploadsPage() {
 
   useEffect(() => {
     loadPackages()
+    // Only the bot-published half of the wiki can be linked here (see the
+    // /api/skill-uploads/:name/wiki route's own reasoning) -- the curated
+    // pages are filtered out client-side too so the picker doesn't even
+    // offer one it would just reject.
+    fetch('/api/wiki')
+      .then(res => res.json())
+      .then((data: { pages: Array<{ name: string; title: string; source: 'human' | 'bot' }> }) => {
+        setBotWikiPages((data.pages ?? []).filter(p => p.source === 'bot').map(p => ({ name: p.name, title: p.title || p.name })))
+      })
+      .catch(() => {
+        // Non-critical: the picker just shows as empty, same as "no bot
+        // pages published yet" -- worth neither a toast nor blocking load.
+      })
   }, [])
 
   const filledSlotCount = Object.values(files).filter(Boolean).length
@@ -224,6 +250,40 @@ function SkillUploadsPage() {
       window.alert(err instanceof Error ? err.message : 'Failed to install plugin')
     } finally {
       setInstallingKey(null)
+    }
+  }
+
+  const linkWiki = async (pkgName: string) => {
+    const wikiPage = wikiChoice[pkgName]
+    if (!wikiPage) return
+    setLinkingWikiName(pkgName)
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pkgName)}/wiki`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wikiPage }),
+      })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to link wiki page')
+      setPackages(prev => prev.map(p => (p.name === pkgName ? { ...p, wikiPage: data.wikiPage } : p)))
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to link wiki page')
+    } finally {
+      setLinkingWikiName(null)
+    }
+  }
+
+  const unlinkWiki = async (pkgName: string) => {
+    setLinkingWikiName(pkgName)
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pkgName)}/wiki`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to unlink wiki page')
+      setPackages(prev => prev.map(p => (p.name === pkgName ? { ...p, wikiPage: undefined } : p)))
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to unlink wiki page')
+    } finally {
+      setLinkingWikiName(null)
     }
   }
 
@@ -433,6 +493,68 @@ function SkillUploadsPage() {
                       ))}
                     </div>
                   )}
+
+                  <div className="border-t border-border pt-1.5 mt-1.5">
+                    {pkg.wikiPage ? (
+                      <div className="flex items-center justify-between gap-1.5 text-[11px]">
+                        <Link
+                          to="/app/wiki"
+                          search={{ page: pkg.wikiPage }}
+                          className="flex items-center gap-1 min-w-0 text-primary hover:underline"
+                          title={`View "${pkg.wikiPage}" in the Wiki`}
+                        >
+                          <Bot className="h-3 w-3 shrink-0" />
+                          <span className="truncate">
+                            {botWikiPages.find(w => w.name === pkg.wikiPage)?.title || pkg.wikiPage}
+                          </span>
+                        </Link>
+                        <button
+                          type="button"
+                          onClick={() => unlinkWiki(pkg.name)}
+                          disabled={linkingWikiName === pkg.name}
+                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-destructive/10 hover:text-destructive active:scale-90 transition-all cursor-pointer"
+                          aria-label={`Unlink wiki page from ${pkg.name}`}
+                          title="Unlink wiki page"
+                        >
+                          {linkingWikiName === pkg.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2Off className="h-3 w-3" />}
+                        </button>
+                      </div>
+                    ) : botWikiPages.length > 0 ? (
+                      <div className="flex items-center gap-1.5">
+                        <select
+                          value={wikiChoice[pkg.name] ?? ''}
+                          onChange={e => setWikiChoice(prev => ({ ...prev, [pkg.name]: e.target.value }))}
+                          className="min-w-0 flex-1 rounded-md border border-border bg-transparent px-1.5 py-1 text-[11px] text-foreground"
+                          aria-label={`Link a bot wiki page to ${pkg.name}`}
+                        >
+                          <option value="">Link a bot wiki page...</option>
+                          {botWikiPages.map(w => (
+                            <option key={w.name} value={w.name}>
+                              {w.title}
+                            </option>
+                          ))}
+                        </select>
+                        <button
+                          type="button"
+                          onClick={() => linkWiki(pkg.name)}
+                          disabled={!wikiChoice[pkg.name] || linkingWikiName === pkg.name}
+                          className="shrink-0 rounded p-1 text-muted-foreground hover:bg-muted hover:text-foreground active:scale-90 transition-all cursor-pointer disabled:opacity-40"
+                          aria-label={`Link wiki page to ${pkg.name}`}
+                          title="Link"
+                        >
+                          {linkingWikiName === pkg.name ? <Loader2 className="h-3 w-3 animate-spin" /> : <Link2 className="h-3 w-3" />}
+                        </button>
+                      </div>
+                    ) : (
+                      <p className="text-[11px] text-muted-foreground">
+                        No bot wiki pages to link yet -- publish one from the{' '}
+                        <Link to="/app/wiki" className="text-primary hover:underline">
+                          Wiki
+                        </Link>{' '}
+                        page.
+                      </p>
+                    )}
+                  </div>
 
                   {(hasSkillFile || hasPluginFile) && (
                     <div className="flex flex-wrap gap-1.5 border-t border-border pt-2 mt-2">
