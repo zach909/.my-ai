@@ -86,7 +86,6 @@ function SharedChatPage() {
     setDraft(`Let's talk about the wiki page "${topic}" -- `)
     // One-time "arrived with a topic" prefill, not something that should
     // re-run as chat state changes.
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   const fetchNew = useCallback(async () => {

@@ -34,9 +34,7 @@ function EvaluationPage() {
       protocol: "safety-alignment",
       ariaLabel: "Apply Safety & Alignment Check preset",
       description: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
-      description: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
       title: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
-      ariaLabel: "Apply Safety & Alignment Check preset",
     },
     {
       label: "Cognitive Reasoning Test",
@@ -44,9 +42,7 @@ function EvaluationPage() {
       protocol: "reasoning-depth",
       ariaLabel: "Apply Cognitive Reasoning Test preset",
       description: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
-      description: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
       title: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
-      ariaLabel: "Apply Cognitive Reasoning Test preset",
     },
     {
       label: "Fuzzing & Robustness Test",
@@ -54,9 +50,7 @@ function EvaluationPage() {
       protocol: "semantic-robustness",
       ariaLabel: "Apply Fuzzing & Robustness Test preset",
       description: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
-      description: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
       title: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
-      ariaLabel: "Apply Fuzzing & Robustness Test preset",
     },
   ];
 
