@@ -9,6 +9,17 @@
  * straight into the Wiki tab, and this page's own Chat buttons send you to
  * /app/shared-chat) and a single page makes that round trip one click
  * instead of a sidebar hop each way.
+ *
+ * Every bot-published page also gets its own inline "Files & Install"
+ * panel (WikiPageFilesPanel below) right on the page -- the plugin,
+ * source/binary skill, algorithm, RSI test, and extra-files uploads, plus
+ * the real Install Skill/Install Plugin actions, scoped to a skill package
+ * named after the page itself. That's the same package the Skill Uploads
+ * tab's "link a bot wiki page" picker points at (skill-upload-store.ts's
+ * `wikiPage` field) -- uploading here self-links automatically, so a
+ * package created this way needs no separate manual linking step, while
+ * the Skill Uploads tab still exists for packages that don't share a name
+ * with any wiki page.
  */
 
 import { createFileRoute, Link } from '@tanstack/react-router'
@@ -22,6 +33,8 @@ import {
   Bot,
   BookOpen,
   Check,
+  ChevronDown,
+  ChevronUp,
   Download,
   FlaskConical,
   Link2,
@@ -672,6 +685,7 @@ function WikiPanel() {
                 </button>
               </div>
             )}
+            {contentSource === 'bot' && activeName && <WikiPageFilesPanel pageName={activeName} />}
             {renderWikiMarkdown(content, { onWikiLink: resolveAndNavigate })}
           </article>
         )}
@@ -740,6 +754,315 @@ async function downloadFile(url: string, fallbackName: string) {
   a.click()
   a.remove()
   URL.revokeObjectURL(objectUrl)
+}
+
+/**
+ * Inline "Files & Install" panel shown on every bot-published wiki page --
+ * uploads and installs a skill package named after the page itself
+ * (`pageName`), so a page can carry its own plugin/skill/algorithm/RSI
+ * test/extra files with no separate trip to the Skill Uploads tab. A
+ * successful upload also self-links the package's wikiPage back to this
+ * same page (POST /api/skill-uploads/:name/wiki), so it shows up linked
+ * in the Skill Uploads tab automatically -- see this file's module doc
+ * comment.
+ */
+function WikiPageFilesPanel({ pageName }: { pageName: string }) {
+  const [pkg, setPkg] = useState<SkillPackage | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [expanded, setExpanded] = useState(false)
+  const [files, setFiles] = useState<Partial<Record<SlotKey, File>>>({})
+  const [extraFiles, setExtraFiles] = useState<File[]>([])
+  const [uploading, setUploading] = useState(false)
+  const [uploadError, setUploadError] = useState<string | null>(null)
+  const [installingKey, setInstallingKey] = useState<'skill' | 'plugin' | null>(null)
+
+  const load = () => {
+    setLoading(true)
+    fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}`)
+      .then(res => (res.ok ? res.json() : { name: pageName, slots: {}, extraFiles: [] }))
+      .then((data: SkillPackage) => setPkg(data))
+      .finally(() => setLoading(false))
+  }
+
+  useEffect(() => {
+    load()
+    setFiles({})
+    setExtraFiles([])
+    setExpanded(false)
+    // pageName only -- reload whenever the panel is attached to a
+    // different page, not on every render.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pageName])
+
+  const chosenCount = Object.values(files).filter(Boolean).length + extraFiles.length
+
+  const upload = async () => {
+    if (chosenCount === 0) return
+    setUploading(true)
+    setUploadError(null)
+    try {
+      const slotEntries = Object.entries(files).filter(([, f]) => f) as [SlotKey, File][]
+      if (slotEntries.length > 0) {
+        const body: Record<string, unknown> = { name: pageName }
+        for (const [slot, file] of slotEntries) body[slot] = { filename: file.name, content: await file.text() }
+        const res = await fetch('/api/skill-uploads', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Failed to upload')
+      }
+      if (extraFiles.length > 0) {
+        const body = { files: await Promise.all(extraFiles.map(async f => ({ filename: f.name, content: await f.text() }))) }
+        const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/files`, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(body),
+        })
+        const data = await res.json()
+        if (!res.ok) throw new Error(data.error || 'Failed to upload extra files')
+      }
+      // Self-link, best-effort -- the package now exists (the calls above
+      // succeeded), so this only fails if the wiki page itself vanished in
+      // the meantime, which isn't worth blocking the upload over.
+      await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/wiki`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ wikiPage: pageName }),
+      }).catch(() => {})
+      setFiles({})
+      setExtraFiles([])
+      load()
+    } catch (err) {
+      setUploadError(err instanceof Error ? err.message : 'Failed to upload')
+    } finally {
+      setUploading(false)
+    }
+  }
+
+  const deleteExtraFile = async (filename: string) => {
+    if (!window.confirm(`Delete "${filename}"?`)) return
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/files/${encodeURIComponent(filename)}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to delete file')
+      load()
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to delete file')
+    }
+  }
+
+  const installSkill = async () => {
+    setInstallingKey('skill')
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/install-skill`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to install skill')
+      window.alert(`Installed "${pageName}": ${data.neuronCount} neuron(s), ${data.remembered} remembered into live memory.`)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to install skill')
+    } finally {
+      setInstallingKey(null)
+    }
+  }
+
+  const installPlugin = async () => {
+    if (!window.confirm(`Install "${pageName}"'s plugin file? This runs its code directly in the live server process.`)) return
+    setInstallingKey('plugin')
+    try {
+      const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/install-plugin`, { method: 'POST' })
+      const data = await res.json()
+      if (!res.ok) throw new Error(data.error || 'Failed to install plugin')
+      window.alert(`Installed and activated "${data.pluginId}" from ${data.installedFrom}.`)
+    } catch (err) {
+      window.alert(err instanceof Error ? err.message : 'Failed to install plugin')
+    } finally {
+      setInstallingKey(null)
+    }
+  }
+
+  if (loading || !pkg) return null
+
+  const fileCount = Object.keys(pkg.slots).length + pkg.extraFiles.length
+  const hasSkillFile = !!(pkg.slots.binarySkill || pkg.slots.sourceSkill)
+  const hasPluginFile = !!pkg.slots.plugin
+
+  return (
+    <Card className="mb-4 p-3">
+      <button
+        type="button"
+        onClick={() => setExpanded(e => !e)}
+        className="flex w-full items-center justify-between text-left cursor-pointer"
+        aria-expanded={expanded}
+      >
+        <span className="flex items-center gap-1.5 text-xs font-medium text-foreground">
+          <Puzzle className="h-3.5 w-3.5 text-primary" />
+          Files & Install
+          {fileCount > 0 && (
+            <span className="font-normal text-muted-foreground">
+              ({fileCount} file{fileCount !== 1 ? 's' : ''})
+            </span>
+          )}
+        </span>
+        {expanded ? <ChevronUp size={14} className="text-muted-foreground" /> : <ChevronDown size={14} className="text-muted-foreground" />}
+      </button>
+      {expanded && (
+        <div className="mt-3 space-y-3">
+          <p className="text-[11px] text-muted-foreground">
+            Attach this page's plugin, source/binary skill, improvement algorithm, RSI test, or any extra files --
+            stored as the "{pageName}" skill package (same one the Skill Uploads tab shows) and kept linked back to
+            this page automatically.
+          </p>
+          <div className="grid gap-2 sm:grid-cols-2">
+            {SLOTS.map(slot => {
+              const Icon = slot.icon
+              const entry = pkg.slots[slot.key]
+              const chosen = files[slot.key]
+              return (
+                <div key={slot.key} className="space-y-1 rounded-md border border-border p-2">
+                  <Label className="flex items-center gap-1.5 text-[11px] font-medium text-foreground" title={slot.hint}>
+                    <Icon className="h-3 w-3 text-primary" />
+                    {slot.label}
+                  </Label>
+                  {entry && (
+                    <div className="flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
+                      <span className="truncate" title={entry.filename}>
+                        {entry.filename} ({formatBytes(entry.bytes)})
+                      </span>
+                      <button
+                        type="button"
+                        onClick={() => downloadFile(`/api/skill-uploads/${encodeURIComponent(pageName)}/${slot.key}`, entry.filename)}
+                        className="shrink-0 rounded p-0.5 hover:bg-muted hover:text-foreground active:scale-90 transition-all cursor-pointer"
+                        aria-label={`Download ${entry.filename}`}
+                        title="Download"
+                      >
+                        <Download className="h-3 w-3" />
+                      </button>
+                    </div>
+                  )}
+                  <input
+                    type="file"
+                    disabled={uploading}
+                    onChange={e => setFiles(prev => ({ ...prev, [slot.key]: e.target.files?.[0] }))}
+                    className="block w-full text-[10px] text-muted-foreground file:mr-1.5 file:rounded file:border-0 file:bg-primary/10 file:px-1.5 file:py-0.5 file:text-[10px] file:font-medium file:text-primary hover:file:bg-primary/20 cursor-pointer disabled:opacity-50"
+                    aria-label={`${slot.label} file for ${pageName}`}
+                  />
+                  {chosen && (
+                    <p className="flex items-center gap-1 text-[10px] text-primary">
+                      <Check className="h-2.5 w-2.5" />
+                      {chosen.name}
+                    </p>
+                  )}
+                </div>
+              )
+            })}
+          </div>
+
+          <div className="space-y-1 rounded-md border border-dashed border-border p-2">
+            <Label className="flex items-center gap-1.5 text-[11px] font-medium text-foreground">
+              <Paperclip className="h-3 w-3 text-primary" />
+              Extra Files
+            </Label>
+            {pkg.extraFiles.length > 0 && (
+              <div className="space-y-1">
+                {pkg.extraFiles.map(f => (
+                  <div key={f.filename} className="flex items-center justify-between gap-1 text-[10px] text-muted-foreground">
+                    <span className="truncate" title={f.filename}>
+                      {f.filename} ({formatBytes(f.bytes)})
+                    </span>
+                    <span className="flex shrink-0 items-center gap-0.5">
+                      <button
+                        type="button"
+                        onClick={() => downloadFile(`/api/skill-uploads/${encodeURIComponent(pageName)}/files/${encodeURIComponent(f.filename)}`, f.filename)}
+                        className="rounded p-0.5 hover:bg-muted hover:text-foreground active:scale-90 transition-all cursor-pointer"
+                        aria-label={`Download ${f.filename}`}
+                        title="Download"
+                      >
+                        <Download className="h-3 w-3" />
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => deleteExtraFile(f.filename)}
+                        className="rounded p-0.5 hover:bg-destructive/10 hover:text-destructive active:scale-90 transition-all cursor-pointer"
+                        aria-label={`Delete ${f.filename}`}
+                        title="Delete"
+                      >
+                        <Trash2 className="h-3 w-3" />
+                      </button>
+                    </span>
+                  </div>
+                ))}
+              </div>
+            )}
+            <input
+              type="file"
+              multiple
+              disabled={uploading}
+              onChange={e => setExtraFiles(Array.from(e.target.files ?? []))}
+              className="block w-full text-[10px] text-muted-foreground file:mr-1.5 file:rounded file:border-0 file:bg-primary/10 file:px-1.5 file:py-0.5 file:text-[10px] file:font-medium file:text-primary hover:file:bg-primary/20 cursor-pointer disabled:opacity-50"
+              aria-label={`Extra files for ${pageName}`}
+            />
+            {extraFiles.length > 0 && (
+              <p className="flex items-center gap-1 text-[10px] text-primary">
+                <Check className="h-2.5 w-2.5" />
+                {extraFiles.length} file{extraFiles.length !== 1 ? 's' : ''} chosen
+              </p>
+            )}
+          </div>
+
+          {uploadError && (
+            <p role="alert" className="text-[11px] text-destructive">
+              {uploadError}
+            </p>
+          )}
+
+          <div className="flex flex-wrap items-center gap-1.5">
+            <Button
+              type="button"
+              size="sm"
+              onClick={upload}
+              disabled={uploading || chosenCount === 0}
+              className="h-6 gap-1 px-2 text-[11px] active:scale-95 transition-all"
+              aria-label={`Upload files for ${pageName}`}
+            >
+              {uploading ? <Loader2 className="h-3 w-3 animate-spin" /> : <Upload className="h-3 w-3" />}
+              Upload{chosenCount > 0 ? ` (${chosenCount})` : ''}
+            </Button>
+            {hasSkillFile && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={installSkill}
+                disabled={installingKey === 'skill'}
+                className="h-6 gap-1 px-2 text-[11px] active:scale-95 transition-all"
+                aria-label={`Install ${pageName} skill`}
+              >
+                {installingKey === 'skill' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                Install Skill
+              </Button>
+            )}
+            {hasPluginFile && (
+              <Button
+                type="button"
+                size="sm"
+                variant="outline"
+                onClick={installPlugin}
+                disabled={installingKey === 'plugin'}
+                className="h-6 gap-1 px-2 text-[11px] active:scale-95 transition-all"
+                aria-label={`Install ${pageName} plugin`}
+                title="Runs this plugin's code directly in the live server process"
+              >
+                {installingKey === 'plugin' ? <Loader2 className="h-3 w-3 animate-spin" /> : <Zap className="h-3 w-3" />}
+                Install Plugin
+              </Button>
+            )}
+          </div>
+        </div>
+      )}
+    </Card>
+  )
 }
 
 function SkillUploadsPanel() {
