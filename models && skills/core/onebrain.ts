@@ -3278,15 +3278,17 @@ export class HyperDimensionalEngine {
       }
     }
 
+    const hasVale = vale !== undefined && vale.size > 0;
     const vs = this.vsScratch;
     const hasV = this.hasVScratch;
-    hasV.fill(0);
-
-    for (let i = 0; i < N; i++) {
-      const v = vale?.get(i);
-      if (v !== undefined) {
-        vs[i] = v;
-        hasV[i] = 1;
+    if (hasVale) {
+      hasV.fill(0);
+      for (let i = 0; i < N; i++) {
+        const v = vale.get(i);
+        if (v !== undefined) {
+          vs[i] = v;
+          hasV[i] = 1;
+        }
       }
     }
 
@@ -3329,52 +3331,100 @@ export class HyperDimensionalEngine {
       }
 
       // Handle non-driven neurons using loop-swapping to hoist dimension/state/weight views
-      for (let d = 0; d < D; d++) {
-        const sjRow = stateViews[d];
-        const srcD = (d - 1 + D) % D;
-        const sjShiftRow = stateViews[srcD];
-        const dn = d * N;
+      // BOLT OPTIMIZATION: Fast branch-free path when vale gating is inactive (the common case).
+      if (!hasVale) {
+        for (let d = 0; d < D; d++) {
+          const sjRow = stateViews[d];
+          const srcD = (d - 1 + D) % D;
+          const sjShiftRow = stateViews[srcD];
+          const dn = d * N;
 
-        for (let idx = 0; idx < nonDrivenCount; idx++) {
-          const i = nonDrivenIndices[idx];
+          for (let idx = 0; idx < nonDrivenCount; idx++) {
+            const i = nonDrivenIndices[idx];
 
-          const biasOffset = i * D;
-          const rowOffset = i * DN + dn;
+            const biasOffset = i * D;
+            const rowOffset = i * DN + dn;
 
-          let dotDiag = 0;
-          let dotShift = 0;
-          // Direct indexing with cached arrays completely avoids subarray allocation overhead
-          // Unrolled by 8x for cache-friendly fast computation
-          let j = 0;
-          const limit = N - 7;
-          for (; j < limit; j += 8) {
-            dotDiag += sjRow[j] * connDiag[rowOffset + j]
-                     + sjRow[j + 1] * connDiag[rowOffset + j + 1]
-                     + sjRow[j + 2] * connDiag[rowOffset + j + 2]
-                     + sjRow[j + 3] * connDiag[rowOffset + j + 3]
-                     + sjRow[j + 4] * connDiag[rowOffset + j + 4]
-                     + sjRow[j + 5] * connDiag[rowOffset + j + 5]
-                     + sjRow[j + 6] * connDiag[rowOffset + j + 6]
-                     + sjRow[j + 7] * connDiag[rowOffset + j + 7];
-            dotShift += sjShiftRow[j] * connShift[rowOffset + j]
-                      + sjShiftRow[j + 1] * connShift[rowOffset + j + 1]
-                      + sjShiftRow[j + 2] * connShift[rowOffset + j + 2]
-                      + sjShiftRow[j + 3] * connShift[rowOffset + j + 3]
-                      + sjShiftRow[j + 4] * connShift[rowOffset + j + 4]
-                      + sjShiftRow[j + 5] * connShift[rowOffset + j + 5]
-                      + sjShiftRow[j + 6] * connShift[rowOffset + j + 6]
-                      + sjShiftRow[j + 7] * connShift[rowOffset + j + 7];
+            let dotDiag = 0;
+            let dotShift = 0;
+            let j = 0;
+            const limit = N - 7;
+            for (; j < limit; j += 8) {
+              dotDiag += sjRow[j] * connDiag[rowOffset + j]
+                       + sjRow[j + 1] * connDiag[rowOffset + j + 1]
+                       + sjRow[j + 2] * connDiag[rowOffset + j + 2]
+                       + sjRow[j + 3] * connDiag[rowOffset + j + 3]
+                       + sjRow[j + 4] * connDiag[rowOffset + j + 4]
+                       + sjRow[j + 5] * connDiag[rowOffset + j + 5]
+                       + sjRow[j + 6] * connDiag[rowOffset + j + 6]
+                       + sjRow[j + 7] * connDiag[rowOffset + j + 7];
+              dotShift += sjShiftRow[j] * connShift[rowOffset + j]
+                        + sjShiftRow[j + 1] * connShift[rowOffset + j + 1]
+                        + sjShiftRow[j + 2] * connShift[rowOffset + j + 2]
+                        + sjShiftRow[j + 3] * connShift[rowOffset + j + 3]
+                        + sjShiftRow[j + 4] * connShift[rowOffset + j + 4]
+                        + sjShiftRow[j + 5] * connShift[rowOffset + j + 5]
+                        + sjShiftRow[j + 6] * connShift[rowOffset + j + 6]
+                        + sjShiftRow[j + 7] * connShift[rowOffset + j + 7];
+            }
+            for (; j < N; j++) {
+              dotDiag += sjRow[j] * connDiag[rowOffset + j];
+              dotShift += sjShiftRow[j] * connShift[rowOffset + j];
+            }
+
+            const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
+            nextStates[i * D + d] = computedState;
+            if (d > 0) {
+              currentTotalContentEnergy += computedState * computedState;
+            }
           }
-          for (; j < N; j++) {
-            dotDiag += sjRow[j] * connDiag[rowOffset + j];
-            dotShift += sjShiftRow[j] * connShift[rowOffset + j];
-          }
+        }
+      } else {
+        for (let d = 0; d < D; d++) {
+          const sjRow = stateViews[d];
+          const srcD = (d - 1 + D) % D;
+          const sjShiftRow = stateViews[srcD];
+          const dn = d * N;
 
-          const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
-          const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
-          nextStates[i * D + d] = finalVal;
-          if (d > 0) {
-            currentTotalContentEnergy += finalVal * finalVal;
+          for (let idx = 0; idx < nonDrivenCount; idx++) {
+            const i = nonDrivenIndices[idx];
+
+            const biasOffset = i * D;
+            const rowOffset = i * DN + dn;
+
+            let dotDiag = 0;
+            let dotShift = 0;
+            let j = 0;
+            const limit = N - 7;
+            for (; j < limit; j += 8) {
+              dotDiag += sjRow[j] * connDiag[rowOffset + j]
+                       + sjRow[j + 1] * connDiag[rowOffset + j + 1]
+                       + sjRow[j + 2] * connDiag[rowOffset + j + 2]
+                       + sjRow[j + 3] * connDiag[rowOffset + j + 3]
+                       + sjRow[j + 4] * connDiag[rowOffset + j + 4]
+                       + sjRow[j + 5] * connDiag[rowOffset + j + 5]
+                       + sjRow[j + 6] * connDiag[rowOffset + j + 6]
+                       + sjRow[j + 7] * connDiag[rowOffset + j + 7];
+              dotShift += sjShiftRow[j] * connShift[rowOffset + j]
+                        + sjShiftRow[j + 1] * connShift[rowOffset + j + 1]
+                        + sjShiftRow[j + 2] * connShift[rowOffset + j + 2]
+                        + sjShiftRow[j + 3] * connShift[rowOffset + j + 3]
+                        + sjShiftRow[j + 4] * connShift[rowOffset + j + 4]
+                        + sjShiftRow[j + 5] * connShift[rowOffset + j + 5]
+                        + sjShiftRow[j + 6] * connShift[rowOffset + j + 6]
+                        + sjShiftRow[j + 7] * connShift[rowOffset + j + 7];
+            }
+            for (; j < N; j++) {
+              dotDiag += sjRow[j] * connDiag[rowOffset + j];
+              dotShift += sjShiftRow[j] * connShift[rowOffset + j];
+            }
+
+            const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
+            const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
+            nextStates[i * D + d] = finalVal;
+            if (d > 0) {
+              currentTotalContentEnergy += finalVal * finalVal;
+            }
           }
         }
       }
