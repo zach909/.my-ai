@@ -14,7 +14,6 @@ import { Route as BuilderRouteImport } from './routes/builder'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
-import { Route as AppSkillUploadsRouteImport } from './routes/app/skill-uploads'
 import { Route as AppSharedChatRouteImport } from './routes/app/shared-chat'
 import { Route as AppWikiRouteImport } from './routes/app/wiki'
 import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
@@ -55,11 +54,6 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppWikiRoute = AppWikiRouteImport.update({
   id: '/wiki',
   path: '/wiki',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppSkillUploadsRoute = AppSkillUploadsRouteImport.update({
-  id: '/skill-uploads',
-  path: '/skill-uploads',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSharedChatRoute = AppSharedChatRouteImport.update({
@@ -128,7 +122,6 @@ export interface FileRoutesByFullPath {
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/shared-chat': typeof AppSharedChatRoute
-  '/app/skill-uploads': typeof AppSkillUploadsRoute
   '/app/wiki': typeof AppWikiRoute
   '/app/': typeof AppIndexRoute
 }
@@ -146,7 +139,6 @@ export interface FileRoutesByTo {
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/shared-chat': typeof AppSharedChatRoute
-  '/app/skill-uploads': typeof AppSkillUploadsRoute
   '/app/wiki': typeof AppWikiRoute
   '/app': typeof AppIndexRoute
 }
@@ -166,7 +158,6 @@ export interface FileRoutesById {
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/shared-chat': typeof AppSharedChatRoute
-  '/app/skill-uploads': typeof AppSkillUploadsRoute
   '/app/wiki': typeof AppWikiRoute
   '/app/': typeof AppIndexRoute
 }
@@ -187,7 +178,6 @@ export interface FileRouteTypes {
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/shared-chat'
-    | '/app/skill-uploads'
     | '/app/wiki'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
@@ -205,7 +195,6 @@ export interface FileRouteTypes {
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/shared-chat'
-    | '/app/skill-uploads'
     | '/app/wiki'
     | '/app'
   id:
@@ -224,7 +213,6 @@ export interface FileRouteTypes {
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/shared-chat'
-    | '/app/skill-uploads'
     | '/app/wiki'
     | '/app/'
   fileRoutesById: FileRoutesById
@@ -278,13 +266,6 @@ declare module '@tanstack/react-router' {
       path: '/wiki'
       fullPath: '/app/wiki'
       preLoaderRoute: typeof AppWikiRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/skill-uploads': {
-      id: '/app/skill-uploads'
-      path: '/skill-uploads'
-      fullPath: '/app/skill-uploads'
-      preLoaderRoute: typeof AppSkillUploadsRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/shared-chat': {
@@ -371,7 +352,6 @@ interface AppRouteChildren {
   AppPlanningRoute: typeof AppPlanningRoute
   AppSelfImprovementRoute: typeof AppSelfImprovementRoute
   AppSharedChatRoute: typeof AppSharedChatRoute
-  AppSkillUploadsRoute: typeof AppSkillUploadsRoute
   AppWikiRoute: typeof AppWikiRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -387,7 +367,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppPlanningRoute: AppPlanningRoute,
   AppSelfImprovementRoute: AppSelfImprovementRoute,
   AppSharedChatRoute: AppSharedChatRoute,
-  AppSkillUploadsRoute: AppSkillUploadsRoute,
   AppWikiRoute: AppWikiRoute,
   AppIndexRoute: AppIndexRoute,
 }
