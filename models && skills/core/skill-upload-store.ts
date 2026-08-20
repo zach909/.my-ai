@@ -78,6 +78,18 @@ export interface SkillUploadManifest {
    * call to make.
    */
   wikiPage?: string;
+  /**
+   * Set once the package's rsiTest file has actually been run and passed
+   * (see interface/web-server.ts's POST .../run-rsi-test) -- "recursive
+   * self-improvement" per docs/SELF_IMPROVEMENT_IMPLEMENTATION_PLAN.md,
+   * i.e. the test's own judgment that applying this skill genuinely left
+   * the system better, not just different. A passing run also installs
+   * the package's skill files (same path as install-skill), so this flag
+   * is what the UI shows as "Published" rather than a separate publish
+   * step -- there's no meaningfully different action to take after a
+   * passing RSI test.
+   */
+  rsiPassed?: { at: number; message?: string };
 }
 
 export interface SkillUploadSummary extends SkillUploadManifest {
@@ -126,6 +138,9 @@ function readManifest(name: string): SkillUploadManifest {
         extraFiles: Array.isArray(raw.extraFiles) ? raw.extraFiles : [],
       };
       if (typeof raw.wikiPage === "string") manifest.wikiPage = raw.wikiPage;
+      if (raw.rsiPassed && typeof raw.rsiPassed === "object" && typeof raw.rsiPassed.at === "number") {
+        manifest.rsiPassed = { at: raw.rsiPassed.at, message: typeof raw.rsiPassed.message === "string" ? raw.rsiPassed.message : undefined };
+      }
       return manifest;
     }
     return { slots: raw ?? {}, extraFiles: [] };
@@ -258,6 +273,18 @@ export function unlinkSkillUploadWiki(name: string): SkillUploadSummary {
   }
   const manifest = readManifest(name);
   delete manifest.wikiPage;
+  writeManifest(name, manifest);
+  return { name, ...manifest };
+}
+
+/** Records that the package's RSI test has passed -- see SkillUploadManifest's `rsiPassed` doc comment. */
+export function recordSkillUploadRsiPass(name: string, message?: string): SkillUploadSummary {
+  assertSafeName(name);
+  if (!existsSync(packageDir(name))) {
+    throw new SkillUploadError(`No skill package named "${name}".`);
+  }
+  const manifest = readManifest(name);
+  manifest.rsiPassed = { at: Date.now(), message };
   writeManifest(name, manifest);
   return { name, ...manifest };
 }
