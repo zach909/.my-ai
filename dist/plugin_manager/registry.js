@@ -98,7 +98,7 @@ export class PluginRegistry {
         const intentToPlugins = {
             ...{
                 command: ['self-heal', 'terminal', 'file-system'],
-                creation: ['skill-maker', 'plugin-maker', 'file-system', 'browser'],
+                creation: ['skill-maker', 'plugin-maker', 'wiki', 'file-system', 'browser'],
                 // skill-maker always succeeds (even on empty input, it returns a
                 // usage message rather than null), so the generic "creation" bucket
                 // above can never actually reach plugin-maker regardless of caller
@@ -107,6 +107,13 @@ export class PluginRegistry {
                 // wants a way to actually reach it.
                 "skill-creation": ['skill-maker', 'file-system', 'browser'],
                 "extension-creation": ['plugin-maker', 'file-system', 'browser'],
+                // Same reasoning as the two buckets above: 'wiki' placed after
+                // skill-maker/plugin-maker in the generic "creation" bucket would
+                // never actually be reached, since skill-maker always returns a
+                // non-null usage message even on unrelated input. A caller that
+                // wants docs/SKILL_ACQUISITION_LOOP.md's "push the wiki page" step
+                // specifically needs its own intent to actually reach WikiPlugin.
+                documentation: ['wiki', 'file-system', 'browser'],
                 exploration: ['browser', 'file-system'],
                 analysis: ['file-system', 'browser'],
                 query: ['browser'],

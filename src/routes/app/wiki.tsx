@@ -189,6 +189,11 @@ function WikiPanel() {
     return () => {
       cancelled = true
     }
+    // Deliberately empty deps -- this only reads requestedPage to pick the
+    // initial page on first load, not something that should re-run and
+    // hijack the user's current selection every time the ?page= search
+    // param happens to still be present.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   useEffect(() => {
