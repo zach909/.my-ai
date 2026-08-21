@@ -1,8 +1,8 @@
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
-import { MoERouter } from "./core/moe-router.js";
-import { NeuronMesh } from "./core/mesh.js";
-import { HyperDimensionalEngine } from "./core/hyperdimensional.js";
+import { MoERouter } from "./core/onebrain.js";
+import { NeuronMesh } from "./core/onebrain.js";
+import { HyperDimensionalEngine } from "./core/onebrain.js";
 import { ValueRangeAllocator } from "./core/value-range.js";
 import { UnifiedBrain, type BrainSnapshot } from "./core/unified-brain.js";
 import { NeuroPipeline } from "./core/pipeline.js";

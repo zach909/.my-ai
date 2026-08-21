@@ -24,10 +24,10 @@
  */
 
 import { ValueRangeAllocator, type ValueRangeConfig } from './value-range.js';
-import { MoERouter, type MoEConfig } from './moe-router.js';
-import { NeuronMesh, type MeshConfig, type MeshTopology } from './mesh.js';
-import { HyperDimensionalEngine, type HyperConfig, type HyperNeuron } from './hyperdimensional.js';
-import { QuantumNeuralNet, type QuantumState } from './quantum-net.js';
+import { MoERouter, type MoEConfig } from './onebrain.js';
+import { NeuronMesh, type MeshConfig, type MeshTopology } from './onebrain.js';
+import { HyperDimensionalEngine, type HyperConfig, type HyperNeuron } from './onebrain.js';
+import { QuantumNeuralNet, type QuantumState } from './onebrain.js';
 import { ZipIOSystem } from './zip-io.js';
 import { pluginExtensions } from '../../plugins/index.js';
 import { PROGRAMMING_SKILLS } from '../programming-skills.js';

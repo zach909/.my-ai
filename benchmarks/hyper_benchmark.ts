@@ -1,4 +1,4 @@
-import { HyperDimensionalEngine } from '../models && skills/core/hyperdimensional.js';
+import { HyperDimensionalEngine } from '../models && skills/core/onebrain.js';
 
 function benchmark() {
   const config = {

@@ -22,7 +22,7 @@
  * arbitrary JavaScript.
  */
 
-import type { HyperDimensionalEngine } from './hyperdimensional.js';
+import type { HyperDimensionalEngine } from './onebrain.js';
 
 // ---------------------------------------------------------------------------
 // Arithmetic / Algebra: safe expression evaluation (+ - * / ^, parentheses,

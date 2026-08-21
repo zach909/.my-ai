@@ -33,7 +33,7 @@ function embedding(dim, seed) {
 }
 
 async function testMoE() {
-  const { MoERouter } = await load('models && skills/core/moe-router.js');
+  const { MoERouter } = await load('models && skills/core/onebrain.js');
   const cfg = { numExperts: 8, topK: 2, inputDim: 32, outputDim: 32, expertHiddenDim: 32, loadBalancingLoss: 0.01 };
   const base = new MoERouter(cfg);
   const baseOut = Array.from(base.forward(embedding(32, 1), 0).output);
@@ -297,7 +297,7 @@ async function testProductionConfigAndEdges() {
 }
 
 async function testHyperdimensional() {
-  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const hd = new HyperDimensionalEngine({ dimensions: 8, neuronCount: 12 });
   const a = hd.process(Array.from({ length: 8 }, (_, i) => Math.sin(i)));
   check(allFinite(a.outputVector) && a.selfModelSurprise === 0, 'Hyper first tick finite, surprise=0');
@@ -318,7 +318,7 @@ async function testHyperdimensionalCapacity() {
   // a recency-decay time constant, not an entry limit. `history` has zero
   // readers anywhere in the file; only a neuron's *last* transition is ever
   // read, so trimming from the front is always safe.
-  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const hd = new HyperDimensionalEngine({ neuronCount: 20, dimensions: 8, historyLength: 1000, energyThreshold: 0.001 });
   for (let i = 0; i < 6000; i++) {
     hd.process(new Array(20).fill(0).map(() => Math.random() * 2 - 1));
@@ -331,7 +331,7 @@ async function testHyperdimensionalCapacity() {
 }
 
 async function testInputFlagSelfModelLiveCorrection() {
-  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
 
   // Section 3.1: exclusive input is exactly one neuron's flag hot. Confirm
   // it via the engine's own formalization rather than reading private state.
@@ -390,8 +390,8 @@ async function testInputFlagSelfModelLiveCorrection() {
 
 async function testValeGating() {
   const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
-  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
-  const { NeuronMesh } = await load('models && skills/core/mesh.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
+  const { NeuronMesh } = await load('models && skills/core/onebrain.js');
 
   // Zero-sum conservation: many updates/decays must never move the total
   // away from totalPoints (redistribution, not independent clamping).
@@ -449,7 +449,7 @@ async function testValeGating() {
 }
 
 async function testSymbolicTrace() {
-  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, crossInfluenceStrength: 0.3, propagationSteps: 30, convergenceThreshold: 0.01 });
   // Drive only neuron 0, so neurons 1..9 settle purely via tanh(W·S) and their traces are faithful.
   hd.process([0.4, -0.2, 0.7, -0.5, 0.1, 0.9], undefined, new Set([0]));
@@ -472,7 +472,7 @@ async function testSymbolicTrace() {
 }
 
 async function testDefinitionTraining() {
-  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const mk = () => new HyperDimensionalEngine({ dimensions: 4, neuronCount: 8, propagationSteps: 12, convergenceThreshold: 0.01 });
 
   // A satisfiable definishon converges and reports its readout satisfied.
@@ -549,7 +549,7 @@ async function testDefinitionTraining() {
 
 async function testNeuroLangLiveWiring() {
   const { NeuroLangInterpreter, NeuroLangRuntime } = await load('models && skills/core/neuro-lang.js');
-  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
 
   const mkEngine = () => new HyperDimensionalEngine({ dimensions: 6, neuronCount: 10, propagationSteps: 12, convergenceThreshold: 0.01 });
@@ -613,7 +613,7 @@ async function testNeuroLangLiveWiring() {
 }
 
 async function testQuantum() {
-  const { QuantumNeuralNet } = await load('models && skills/core/quantum-net.js');
+  const { QuantumNeuralNet } = await load('models && skills/core/onebrain.js');
   const q = new QuantumNeuralNet();
   q.addNeuron('a', 0.3); q.addNeuron('b', -0.6);
   q.createSuperposition('a', [0.3, 0.4, 0.2]); q.createSuperposition('b', [-0.6, -0.5, -0.7]);
@@ -748,7 +748,7 @@ async function testMoESharedMesh() {
 }
 
 async function testMeshStability() {
-  const { NeuronMesh } = await load('models && skills/core/mesh.js');
+  const { NeuronMesh } = await load('models && skills/core/onebrain.js');
   const mesh = new NeuronMesh({ nodeCount: 24, connectionDensity: 1.0, propagationSteps: 15, convergenceThreshold: 0.01, activationFn: 'tanh', learningRate: 0.01, initialConnectionWeight: 0.01, dampingFactor: 0.85, seed: 7 });
   let ok = true;
   for (let t = 0; t < 10; t++) {
@@ -828,14 +828,14 @@ async function testNumberSystems() {
   check(near(th.der, 1 - Math.tanh(0.5) ** 2), 'Dual: tanh carries derivative 1-tanh²');
 
   // QIL uses the complex substrate; interference is |zA + zB|.
-  const { QuantumNeuralNet } = await load('models && skills/core/quantum-net.js');
+  const { QuantumNeuralNet } = await load('models && skills/core/onebrain.js');
   const q = new QuantumNeuralNet();
   q.addNeuron('a', 0.5); q.addNeuron('b', 0.5);
   check(q.getComplexAmplitude('a') && typeof q.getComplexAmplitude('a').re === 'number', 'QIL exposes genuine complex amplitude');
   check(Number.isFinite(q.interfere('a', 'b')), 'QIL interfere() (complex |zA+zB|) is finite');
 
   // Self-model derivative in one pass matches finite difference.
-  const { HyperDimensionalEngine } = await load('models && skills/core/hyperdimensional.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
   hd.process([0.2, -0.3, 0.5, 0.1, -0.4, 0.6]);
   const base = [0.2, -0.3, 0.5, 0.1, -0.4, 0.6];
@@ -4465,7 +4465,7 @@ async function testCompressionSummary() {
 }
 
 async function testZipLoopInterface() {
-  const { HyperDimensionalEngine, ZipLoopInterface } = await load('models && skills/core/hyperdimensional.js');
+  const { HyperDimensionalEngine, ZipLoopInterface } = await load('models && skills/core/onebrain.js');
 
   // Section "Zip Loop Neural Data Interface": exactly two dedicated input
   // neurons (bit-0/bit-1) and two dedicated output neurons (bit-0/bit-1) --
