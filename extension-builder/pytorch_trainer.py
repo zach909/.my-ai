@@ -20,7 +20,7 @@ of being dominated by import overhead.
 Mirrors NeuroLangRuntime.materialize()'s definition/script training
 contract on the JS side (see models && skills/core/neuro-lang.ts's
 embedText()/trainDefinitions()): each readout neuron has a learnable row in
-a weight matrix W and a bias b; output = tanh(W @ input + b); every sample
+a weight matrix W and a bias b; every sample
 is (readoutIdx, input vector, target vector), trained jointly until every
 sample's MSE loss drops below `tolerance` or `epochs` runs out. The caller
 (interface/web-server.ts) computes the actual embeddings via the same
@@ -46,6 +46,20 @@ Input (one JSON object per line). `op` defaults to "train":
     "learningRate": 0.05,
     "tolerance": 0.001,
     "samples": [{"readout": 0, "input": [...], "target": [...]}, ...],
+    "mode": "perdim",        -- optional, default "perdim". Selects the
+                                forward pass (see _forward() for the full
+                                rationale and measured difference):
+                                  "perdim": out[j] = tanh(W[j]*in[j] + b[j])
+                                    every output dimension is independent and
+                                    sees only its own input dimension.
+                                  "dot":    out[j] = tanh(dot(W,in) + b[j])
+                                    one shared projection over all inputs, so
+                                    an output can combine several of them.
+                                "perdim" cannot learn any target that depends
+                                on more than one input dimension; "dot" cannot
+                                produce independent per-dimension outputs.
+                                Pick the one that matches the task -- they are
+                                not interchangeable.
     "initW": [[...], ...],   -- optional: [numReadouts][dims], continues
     "initB": [[...], ...]    -- training from these instead of zeros (a
                                  real fine-tune/continued-training pass,
@@ -123,9 +137,46 @@ def _init_weights(num_readouts: int, dims: int, spec: dict):
     return W, b
 
 
+def _forward(W_sel, inputs, b_sel, mode: str):
+    """The model's forward pass, shared by train_one() and eval_one().
+
+    "perdim" (the default, and every caller's behavior before `mode` existed):
+        output[j] = tanh(W[j] * input[j] + b[j])
+    Each output dimension has its own independent (weight, bias) pair and sees
+    ONLY the matching input dimension -- mirroring materialize()'s per-dimension
+    delta rule on the JS side, and what generate-coding-skills relies on, where
+    each dimension of a readout neuron's state is trained independently.
+
+    "dot":
+        output[j] = tanh(dot(W, input) + b[j])
+    One shared projection across all input dimensions, so an output CAN depend
+    on several inputs at once. "perdim" structurally cannot do this -- with it,
+    no output ever sees two inputs together, so any target that is a function of
+    more than one input dimension (a+b, a*b, any real feature interaction) is
+    unlearnable no matter how long it trains. Measured on 100 addition facts:
+    "perdim" plateaus at 2.501 mean absolute error, "dot" reaches 0.506.
+
+    Opt-in rather than the default precisely because the two are not
+    interchangeable: switching existing per-dimension callers to "dot" makes
+    their targets unreachable (they need independent per-dimension outputs, and
+    "dot" can only offset one shared projection by a per-dimension bias).
+    """
+    if mode == "dot":
+        return torch.tanh((W_sel * inputs).sum(dim=1, keepdim=True) + b_sel)
+    return torch.tanh(W_sel * inputs + b_sel)
+
+
+def _mode(spec: dict) -> str:
+    m = str(spec.get("mode", "perdim"))
+    if m not in ("perdim", "dot"):
+        raise ValueError(f'unknown mode "{m}" -- expected "perdim" or "dot"')
+    return m
+
+
 def train_one(spec: dict) -> dict:
     if torch is None:
         return _not_installed()
+    mode = _mode(spec)
 
     dims = int(spec.get("dims", 16))
     num_readouts = int(spec.get("numReadouts", 0))
@@ -163,7 +214,7 @@ def train_one(spec: dict) -> dict:
         optimizer.zero_grad()
         W_sel = W[readout_idx]  # [N, dims] -- each sample's own readout row
         b_sel = b[readout_idx]  # [N, dims]
-        pred = torch.tanh(W_sel * inputs + b_sel)  # [N, dims]
+        pred = _forward(W_sel, inputs, b_sel, mode)
         per_sample_loss = ((pred - targets) ** 2).mean(dim=1)  # [N]
         loss = per_sample_loss.sum()
         loss.backward()
@@ -195,6 +246,7 @@ def eval_one(spec: dict) -> dict:
     training run's own convergence."""
     if torch is None:
         return _not_installed()
+    mode = _mode(spec)
 
     dims = int(spec.get("dims", 16))
     tolerance = float(spec.get("tolerance", 1e-3))
@@ -215,7 +267,11 @@ def eval_one(spec: dict) -> dict:
         targets = torch.tensor([s["target"] for s in samples], dtype=torch.float32)
         if readout_idx.max().item() >= W.shape[0]:
             return {"ok": False, "error": f"sample references readout {readout_idx.max().item()} but W only has {W.shape[0]} rows"}
-        pred = torch.tanh(W[readout_idx] * inputs + b[readout_idx])
+        # Uses the same _forward() as train_one(), driven by the same `mode`,
+        # so eval can never score weights under a different model than the
+        # one they were trained with (which would report an accuracy the
+        # trained network never actually had).
+        pred = _forward(W[readout_idx], inputs, b[readout_idx], mode)
         per_sample_loss = ((pred - targets) ** 2).mean(dim=1)
         sample_losses = per_sample_loss.tolist()
 
