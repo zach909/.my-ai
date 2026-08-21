@@ -4570,6 +4570,17 @@ async function testNoDuplicateJsxAttributes() {
 }
 
 async function main() {
+  // Several suites below (autonomousTask, hive delegation, self-authored
+  // skills inventory, ...) exercise real skill-maker/plugin-maker
+  // creation. Those now write into generated/ (repo-relative, not
+  // homedir -- see plugins/extensions/index.ts's generatedDir() and its
+  // own comment for why: self-authored content is meant to be genuinely
+  // public/committable). Redirecting to a real scratch directory for this
+  // whole run keeps a plain `npm run test:smoke` from littering the
+  // working tree with dozens of throwaway skill files every time it's run.
+  const generatedScratchDir = mkdtempSync(join(tmpdir(), 'neuroclaw-smoke-generated-'));
+  process.env.NEUROCLAW_GENERATED_DIR = generatedScratchDir;
+
   const suites = [
     ['MoE router', testMoE],
     ['Pipeline', testPipeline],
@@ -4684,6 +4695,7 @@ async function main() {
   }
   console.log(results.join('\n'));
   console.log(`\n${passed} passed, ${failed} failed`);
+  rmSync(generatedScratchDir, { recursive: true, force: true });
   process.exit(failed === 0 ? 0 : 1);
 }
 

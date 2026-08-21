@@ -4,11 +4,14 @@
  *
  * SkillMakerExtension (plugins/extensions/index.ts) writes each
  * self-authored skill to disk as a pair: a `.neuri` source under
- * ~/.neuroclaw/skills/ and a companion wiki report under
- * ~/.neuroclaw/skills-wiki/ recording its description and the sources/info
- * that went into it. That directory pair is already a shared local library:
- * every NeuroclawSystem instance running on the same machine -- including
- * separate hive-mind agents (Section 8) -- reads and writes the same paths.
+ * generated/skills/ and a companion wiki report under
+ * generated/skills-wiki/ recording its description and the sources/info
+ * that went into it -- repo-relative, not homedir-relative, so a
+ * self-authored skill is genuinely public (committed/pushed like any other
+ * repo change) rather than living only in an ephemeral local sandbox. That
+ * directory pair is already a shared local library: every NeuroclawSystem
+ * instance running on the same machine -- including separate hive-mind
+ * agents (Section 8) -- reads and writes the same paths.
  *
  * SkillLibrary is the search/read side of that library: find a
  * previously-built skill by keyword against its wiki report, then load its
@@ -18,7 +21,6 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import type { NeuroLangInterpreter, NeuriNeuron } from "./neuro-lang.js";
 
@@ -61,8 +63,9 @@ export class SkillLibrary {
   private readonly wikiDir: string;
 
   constructor(skillsDir?: string, wikiDir?: string) {
-    this.skillsDir = skillsDir ?? join(homedir(), ".neuroclaw", "skills");
-    this.wikiDir = wikiDir ?? join(homedir(), ".neuroclaw", "skills-wiki");
+    const base = process.env.NEUROCLAW_GENERATED_DIR || join(process.cwd(), "generated");
+    this.skillsDir = skillsDir ?? join(base, "skills");
+    this.wikiDir = wikiDir ?? join(base, "skills-wiki");
   }
 
   /** Every skill with a wiki report, parsed back into structured form. */

@@ -4,24 +4,35 @@
  * reuse a previously-built skill instead of recreating it.
  */
 
-import { mkdtempSync, rmSync } from 'node:fs';
+import { rmSync } from 'node:fs';
 import { join } from 'node:path';
-import { tmpdir } from 'node:os';
 import { SkillMakerExtension } from '../../plugins/extensions/index.js';
 import { SkillLibrary } from '../../models && skills/core/skill-library.js';
 import { NeuroLangInterpreter } from '../../models && skills/core/neuro-lang.js';
 
+// SkillMakerExtension writes self-authored skills under generatedDir(),
+// which resolves from NEUROCLAW_GENERATED_DIR (set for this whole vitest
+// run by vitest.config.ts, to a real scratch directory) or, unset,
+// process.cwd() -- either way, not something this test file chdir's to
+// fake: process.cwd() is genuinely process-wide state, and chdir'ing it
+// for a test's duration previously leaked into *other* test files running
+// concurrently in the same worker (a real failure this caused:
+// research-security.test.ts's default-cwd test started scanning whatever
+// directory a concurrently-running chdir had switched to, and hung). A
+// distinctively-named, per-suite-run prefix keeps this test's own skills
+// unambiguous regardless of whatever else lands in the same directory.
+const GENERATED_BASE = process.env.NEUROCLAW_GENERATED_DIR || join(process.cwd(), 'generated');
+const RUN_ID = `${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+const SUMMARIZE_DESC = `zzz test fixture ${RUN_ID} summarize meeting notes`;
+const TRANSLATE_DESC = `zzz test fixture ${RUN_ID} translate documents`;
+const SUMMARIZE_NAME = SUMMARIZE_DESC.replace(/\s+/g, '-').toLowerCase();
+const TRANSLATE_NAME = TRANSLATE_DESC.replace(/\s+/g, '-').toLowerCase();
+
 describe('SkillLibrary', () => {
-  let fakeHome: string;
-  let originalHome: string | undefined;
   let skillMaker: SkillMakerExtension;
   let library: SkillLibrary;
 
   beforeEach(async () => {
-    fakeHome = mkdtempSync(join(tmpdir(), 'neuroclaw-skill-library-test-'));
-    originalHome = process.env.HOME;
-    process.env.HOME = fakeHome;
-
     skillMaker = new SkillMakerExtension({
       id: 'skill-maker',
       name: 'Skill Maker',
@@ -30,47 +41,52 @@ describe('SkillLibrary', () => {
     });
 
     // Build the library against the SAME directories SkillMakerExtension
-    // just wrote to (both default to ~/.neuroclaw/... which now resolves
-    // under fakeHome).
+    // just wrote to.
     library = new SkillLibrary(
-      join(fakeHome, '.neuroclaw', 'skills'),
-      join(fakeHome, '.neuroclaw', 'skills-wiki'),
+      join(GENERATED_BASE, 'skills'),
+      join(GENERATED_BASE, 'skills-wiki'),
     );
 
-    await skillMaker.onMessage('summarize meeting notes :: NetSearch hit on summarization patterns; a prior memory of meeting summaries');
-    await skillMaker.onMessage('translate documents');
+    await skillMaker.onMessage(`${SUMMARIZE_DESC} :: NetSearch hit on summarization patterns; a prior memory of meeting summaries`);
+    await skillMaker.onMessage(TRANSLATE_DESC);
   });
 
   afterEach(() => {
-    process.env.HOME = originalHome;
-    rmSync(fakeHome, { recursive: true, force: true });
+    for (const name of [SUMMARIZE_NAME, TRANSLATE_NAME]) {
+      rmSync(join(GENERATED_BASE, 'skills', `${name}.neuri`), { force: true });
+      rmSync(join(GENERATED_BASE, 'skills-wiki', `${name}.md`), { force: true });
+    }
   });
 
   test('list() finds every skill with a wiki report', () => {
-    const entries = library.list();
-    expect(entries.map(e => e.name).sort()).toEqual(['summarize-meeting-notes', 'translate-documents']);
+    // Inclusion, not exact equality: generated/skills-wiki/ is this repo's
+    // real directory (no chdir isolation -- see the file-level comment
+    // above), so nothing here assumes it's empty of anything else.
+    const names = library.list().map(e => e.name);
+    expect(names).toContain(SUMMARIZE_NAME);
+    expect(names).toContain(TRANSLATE_NAME);
   });
 
   test('parses description, sources, and neuron names back out of the wiki report', () => {
-    const entry = library.get('summarize-meeting-notes');
+    const entry = library.get(SUMMARIZE_NAME);
     expect(entry).toBeDefined();
-    expect(entry!.description).toBe('summarize meeting notes');
+    expect(entry!.description).toBe(SUMMARIZE_DESC);
     expect(entry!.sources).toEqual([
       'NetSearch hit on summarization patterns',
       'a prior memory of meeting summaries',
     ]);
-    expect(entry!.neuronNames).toContain('summarize-meeting-notes_perceive');
+    expect(entry!.neuronNames).toContain(`${SUMMARIZE_NAME}_perceive`);
   });
 
   test('a skill built with no sources parses back to an empty sources list, not a fabricated one', () => {
-    const entry = library.get('translate-documents');
+    const entry = library.get(TRANSLATE_NAME);
     expect(entry!.sources).toEqual([]);
   });
 
   test('search() ranks a skill matching the query terms above one that does not', () => {
     const hits = library.search('summarize notes');
     expect(hits.length).toBeGreaterThan(0);
-    expect(hits[0].entry.name).toBe('summarize-meeting-notes');
+    expect(hits[0].entry.name).toBe(SUMMARIZE_NAME);
   });
 
   test('search() returns nothing for a query with no overlap at all', () => {
@@ -78,8 +94,8 @@ describe('SkillLibrary', () => {
   });
 
   test('loadSource() returns the raw .neuri text for a known skill', () => {
-    const source = library.loadSource('translate-documents');
-    expect(source).toContain('translate-documents_perceive');
+    const source = library.loadSource(TRANSLATE_NAME);
+    expect(source).toContain(`${TRANSLATE_NAME}_perceive`);
   });
 
   test('loadSource() returns null for an unknown skill rather than throwing', () => {
@@ -88,9 +104,9 @@ describe('SkillLibrary', () => {
 
   test('install() actually parses and instantiates the skill through a real NeuroLangInterpreter', async () => {
     const interpreter = new NeuroLangInterpreter();
-    const neurons = await library.install('translate-documents', interpreter);
+    const neurons = await library.install(TRANSLATE_NAME, interpreter);
     expect(neurons).not.toBeNull();
-    expect(neurons!.has('translate-documents_perceive')).toBe(true);
+    expect(neurons!.has(`${TRANSLATE_NAME}_perceive`)).toBe(true);
   });
 
   test('install() returns null for a skill with no source on disk', async () => {
@@ -101,13 +117,13 @@ describe('SkillLibrary', () => {
 
   test('installWithIOLayers() splits a real self-authored skill into its perceive/respond input/output layer', async () => {
     const interpreter = new NeuroLangInterpreter();
-    const result = await library.installWithIOLayers('translate-documents', interpreter);
+    const result = await library.installWithIOLayers(TRANSLATE_NAME, interpreter);
     expect(result).not.toBeNull();
-    expect(result!.io.inputs.map(n => n.name)).toEqual(['translate-documents_perceive']);
-    expect(result!.io.outputs.map(n => n.name)).toEqual(['translate-documents_respond']);
+    expect(result!.io.inputs.map(n => n.name)).toEqual([`${TRANSLATE_NAME}_perceive`]);
+    expect(result!.io.outputs.map(n => n.name)).toEqual([`${TRANSLATE_NAME}_respond`]);
     // Still an ordinary, all-to-all-connected neuron in the same map -- the
     // role tag is a label, not a wiring boundary.
-    expect(result!.neurons.get('translate-documents_perceive')!.connections.size).toBeGreaterThan(0);
+    expect(result!.neurons.get(`${TRANSLATE_NAME}_perceive`)!.connections.size).toBeGreaterThan(0);
   });
 
   test('installWithIOLayers() returns null for a skill with no source on disk', async () => {

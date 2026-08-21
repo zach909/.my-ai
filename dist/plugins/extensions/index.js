@@ -1,10 +1,30 @@
 import { execSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BasePlugin } from "../../plugin_manager/sdk.js";
 import { ExtensionBuilder } from "../../extension-builder/builder.js";
 import { MixtureOfExperts } from "../../models && skills/moe.js";
+/**
+ * Self-authored, meant-to-be-public content (skills/plugins the AI or a
+ * user generates, plus their wiki reports) used to live under
+ * homedir()/.neuroclaw/... -- outside the git repository entirely, so it
+ * was never actually "public" (visible on GitHub, backed up by a commit)
+ * and would vanish the moment an ephemeral sandbox/container was torn
+ * down. "public" here means "committed to the repo": generated/ is a
+ * repo-relative directory, deliberately separate from plugins/'s own
+ * hand-reviewed source files, so self-authored output can be committed
+ * and pushed the same way every other change in this repo is, and never
+ * gets confused with (or silently overwrites) reviewed plugin source.
+ */
+function generatedDir(...segments) {
+    // NEUROCLAW_GENERATED_DIR lets a test suite (or any short-lived process
+    // that shouldn't leave real files behind) redirect this to a scratch
+    // directory instead of the live repo tree -- unset in normal operation,
+    // where "generated" really does mean this repo's generated/ folder.
+    const base = process.env.NEUROCLAW_GENERATED_DIR || join(process.cwd(), 'generated');
+    return join(base, ...segments);
+}
 // Helper functions for parameter validation and sanitization
 function isSafePath(path) {
     // Safe path must be non-empty and only contain alphanumeric, dots, slashes, dashes, or underscores.
@@ -460,7 +480,7 @@ export class SkillMakerExtension extends BasePlugin {
             ? sourcesPart.split(';').map(s => s.trim()).filter(Boolean)
             : [];
         const name = description.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9_-]/g, '');
-        const skillDir = join(homedir(), '.neuroclaw', 'skills');
+        const skillDir = generatedDir('skills');
         if (!existsSync(skillDir))
             mkdirSync(skillDir, { recursive: true });
         const words = description.toLowerCase().split(/\s+/);
@@ -470,7 +490,7 @@ export class SkillMakerExtension extends BasePlugin {
         // Every self-authored skill gets a wiki entry alongside it recording what
         // it does AND what informed it -- a provenance trail, not just the
         // generated neuron code itself.
-        const wikiDir = join(homedir(), '.neuroclaw', 'skills-wiki');
+        const wikiDir = generatedDir('skills-wiki');
         if (!existsSync(wikiDir))
             mkdirSync(wikiDir, { recursive: true });
         const neuronNames = this.extractNeuronNames(skillContent);
@@ -565,7 +585,7 @@ export class PluginMakerExtension extends BasePlugin {
         if (!input)
             return { type: 'plugin-maker', message: 'Provide plugin description to generate a plugin file' };
         const name = input.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9_-]/g, '');
-        const pluginDir = join(homedir(), '.neuroclaw', 'plugins');
+        const pluginDir = generatedDir('plugins');
         if (!existsSync(pluginDir))
             mkdirSync(pluginDir, { recursive: true });
         const capabilities = this.extractCapabilities(input);
@@ -575,11 +595,11 @@ export class PluginMakerExtension extends BasePlugin {
         writeFileSync(join(pluginDir, `${name}.manifest.json`), manifestContent, 'utf-8');
         // Every self-authored plugin gets a wiki entry alongside it, the same
         // shared-library pattern SkillMakerExtension already uses for skills
-        // (~/.neuroclaw/skills-wiki) -- PluginLibrary (models && skills/core/
+        // (generated/skills-wiki) -- PluginLibrary (models && skills/core/
         // plugin-library.ts) is the read side, so a plugin one instance builds
         // is discoverable and reusable by another instead of being silently
         // stuck as an unshared file only this instance knows about.
-        const wikiDir = join(homedir(), '.neuroclaw', 'plugins-wiki');
+        const wikiDir = generatedDir('plugins-wiki');
         if (!existsSync(wikiDir))
             mkdirSync(wikiDir, { recursive: true });
         const wikiContent = this.generateWikiDoc(name, input, capabilities);
@@ -761,7 +781,7 @@ export class UniversalLanguageSkill extends BasePlugin {
         if (code)
             this.builder.addCodeNet(project.id, `${name}_runner`, code);
         const neuroLang = this.builder.exportToNeuroLang(project.id);
-        const skillDir = join(homedir(), '.neuroclaw', 'skills');
+        const skillDir = generatedDir('skills');
         if (!existsSync(skillDir))
             mkdirSync(skillDir, { recursive: true });
         writeFileSync(join(skillDir, `${name}.neuri`), neuroLang, 'utf-8');

@@ -1,7 +1,6 @@
 import { realpathSync } from "node:fs";
 import { writeFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
@@ -197,7 +196,7 @@ export class NeuroclawSystem {
     // duplicating their logic.
     this.critic = new Critic({ knowledge: this.knowledge, math: this.math, mistakes: this.mistakes });
     // Skill library: search/load skills SkillMakerExtension has already
-    // written to disk (~/.neuroclaw/skills + skills-wiki), so a skill one
+    // written to disk (generated/skills + skills-wiki), so a skill one
     // instance built is discoverable and loadable by another instead of
     // being recreated from scratch.
     this.skillLibrary = new SkillLibrary();
@@ -1949,7 +1948,7 @@ export class NeuroclawSystem {
   /**
    * ASI §9/§12: "which skills it has" / "use learning to create skills, use
    * skills to solve problems" — every skill `learn()` creates via the real
-   * skill-maker plugin is written to `~/.neuroclaw/skills/*.neuri` and then
+   * skill-maker plugin is written to `generated/skills/*.neuri` and then
    * never read back by anything: there was no live inventory of what the
    * system has actually taught itself. This gives the self-model that
    * inventory (name + description parsed from each file's own header),
@@ -1960,7 +1959,14 @@ export class NeuroclawSystem {
    * does not attempt to solve in one step.
    */
   async selfAuthoredSkills(): Promise<Array<{ name: string; description: string; path: string }>> {
-    const skillDir = join(homedir(), ".neuroclaw", "skills");
+    // Matching SkillMakerExtension's generatedDir('skills') (plugins/
+    // extensions/index.ts), NEUROCLAW_GENERATED_DIR override included --
+    // this used to point at homedir()/.neuroclaw/skills, a stale path from
+    // before self-authored skills moved into the repo (generated/) so
+    // they're genuinely public/committable instead of living only in an
+    // ephemeral local sandbox; left unfixed, selfAuthoredSkills() would
+    // silently see nothing a real skill-maker run had just created.
+    const skillDir = join(process.env.NEUROCLAW_GENERATED_DIR || join(process.cwd(), "generated"), "skills");
     let entries: string[];
     try {
       entries = await readdir(skillDir);
