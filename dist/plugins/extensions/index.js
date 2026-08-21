@@ -520,6 +520,14 @@ export class SkillMakerExtension extends BasePlugin {
         lines.push(`"${name}_perceive"@definition="Perception neuron for ${description}"`);
         lines.push(`"${name}_analyze"@definition="Analysis neuron for ${description}"`);
         lines.push(`"${name}_respond"@definition="Response neuron for ${description}"`);
+        // Tag this skill's dedicated input/output layer (SkillLibrary.
+        // installWithIOLayers() reads these back) -- perceive is where a
+        // caller feeds the skill data, respond is what they read back. They're
+        // still wired all-to-all into the rest of the skill's own neurons
+        // below, and into the shared mesh once installed -- @role is a label,
+        // not a separate subnetwork.
+        lines.push(`"${name}_perceive"@role="input"`);
+        lines.push(`"${name}_respond"@role="output"`);
         const relevant = words.filter(w => w.length > 3).slice(0, 5);
         for (let i = 0; i < relevant.length; i++) {
             lines.push(`name="${name}_key_${relevant[i]}"`);

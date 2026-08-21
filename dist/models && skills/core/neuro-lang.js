@@ -8,12 +8,22 @@
  *   "name"@connections=".other*0.5+.third*0.3"  — set connections (alias: @conections=)
  *   "name"@definition="text"                   — set definition (alias: @definishon=)
  *   "name"@code="code"                         — attach code
+ *   "name"@role="input"                        — tag as this skill's input layer (alias: "output")
  *   code@name="calc"                           — create code-to-net neuron
  *   "netsearch"@name="idx"                     — create/select a netsearch neuron
  *   "netsearch"@corpus="text..."               — attach its training corpus
  *   "netsearch"@query="find x"                 — attach its search query text
  *   "netsearch"@net="location"                 — attach its search location
  *   print "name"                               — print neuron info
+ *
+ * @role tags a neuron as belonging to a skill's dedicated input or output
+ * layer. It changes nothing about wiring — a tagged neuron is still an
+ * ordinary neuron with ordinary default all-to-all connections into the
+ * rest of the map (and, once installed, the rest of the shared mesh) — it
+ * is purely a role label, the same pattern MoE experts already use
+ * (models && skills/moe.ts's Expert.neuronIds). SkillLibrary.getIOLayers()
+ * reads it back after install() to hand a skill's caller its input/output
+ * neurons without needing to know their names in advance.
  *
  * @conections= and @definishon= are the DSL's canonical (deliberately
  * non-standard) spellings from the original neurolang.py; @connections=/
@@ -225,6 +235,26 @@ export class NeuroLangInterpreter {
         return out;
     }
     /**
+     * A skill's dedicated input/output neuron layers -- every neuron tagged
+     * `@role="input"`/`"output"` in the given map, split accordingly. The
+     * neurons themselves are unremarkable: still wired all-to-all into the
+     * rest of the map by evaluate() like everything else, so this is a
+     * read-back of role labels, not a separate wiring boundary -- the same
+     * "grouping is a label, not a wiring restriction" pattern MoE experts
+     * use (models && skills/moe.ts).
+     */
+    getIOLayers(neurons) {
+        const inputs = [];
+        const outputs = [];
+        for (const n of neurons.values()) {
+            if (n.role === 'input')
+                inputs.push(n);
+            else if (n.role === 'output')
+                outputs.push(n);
+        }
+        return { inputs, outputs };
+    }
+    /**
      * Serialise a neuron map to JSON.
      */
     toJSON(neurons) {
@@ -241,6 +271,7 @@ export class NeuroLangInterpreter {
                 corpus: n.corpus,
                 query: n.query,
                 isCodeNet: n.isCodeNet,
+                role: n.role,
             });
         }
         return JSON.stringify(serialized, null, 2);
@@ -279,6 +310,7 @@ export class NeuroLangInterpreter {
                 corpus: typeof sn.corpus === 'string' ? sn.corpus : '',
                 query: typeof sn.query === 'string' ? sn.query : '',
                 isCodeNet: Boolean(sn.isCodeNet),
+                role: sn.role === 'input' || sn.role === 'output' ? sn.role : undefined,
             };
             neurons.set(neuron.name, neuron);
         }
@@ -389,6 +421,17 @@ export class NeuroLangInterpreter {
                     throw new Error(`Invalid vale "${m[2]}" for neuron "${name}"`);
                 const neuron = neurons.get(name) ?? this.defaultNeuron(name);
                 neuron.vale = Math.max(0, Math.min(1, val));
+                neurons.set(name, neuron);
+                return;
+            }
+        }
+        // ── "X"@role="input"|"output" — tag as a skill I/O layer neuron ────────
+        {
+            const m = line.match(/^"([^"]+)"\s*@\s*role\s*=\s*"(input|output)"$/);
+            if (m) {
+                const name = m[1];
+                const neuron = neurons.get(name) ?? this.defaultNeuron(name);
+                neuron.role = m[2];
                 neurons.set(name, neuron);
                 return;
             }
@@ -555,6 +598,8 @@ export class NeuroLangInterpreter {
             flags.push('code-net');
         if (n.isNetSearch)
             flags.push(`netsearch:${n.netLocation}`);
+        if (n.role)
+            flags.push(`role:${n.role}`);
         return (`[Neuron "${n.name}"] ` +
             `value=${n.value} ` +
             `connections=[${connStr || 'none'}] ` +
