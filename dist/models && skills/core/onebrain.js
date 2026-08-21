@@ -2078,6 +2078,8 @@ export class HyperDimensionalEngine {
         this.emaEnergy = 0;
         this.hasEma = false;
         this.sustainedDivergence = 0;
+        /** |shared wave pool value| from the most recent settle() iteration -- genuinely observable evidence the wave mechanism ran, surfaced on HyperDimensionalOutput. */
+        this.lastWaveEnergy = 0;
         this.config = {
             neuronCount: config.neuronCount ?? 100,
             dimensions: config.dimensions ?? config.hyperDimensions ?? 64,
@@ -2092,6 +2094,14 @@ export class HyperDimensionalEngine {
             selfModelRank: config.selfModelRank ?? 4,
             divergenceTolerance: config.divergenceTolerance ?? 0.05,
             sustainedDivergenceTicks: config.sustainedDivergenceTicks ?? 3,
+            // Defaults to 0 (fully inert, byte-for-byte the same settle() math as
+            // before this existed) rather than a small nonzero value: existing
+            // callers rely on exact pre-activation-sum invariants (see the
+            // "symbolic trace" tests in test/core/onebrain.test.ts) and on
+            // specific training-convergence behavior that a nonzero wave term
+            // measurably perturbs. Pass waveGain explicitly to opt a given
+            // engine instance into it.
+            waveGain: config.waveGain ?? 0,
         };
         const N = this.config.neuronCount;
         const D = this.config.dimensions + 1;
@@ -2146,6 +2156,19 @@ export class HyperDimensionalEngine {
         this.hasVScratch = new Uint8Array(N);
         this.ratesScratch = new Float32Array(N);
         this.deltaSumsScratch = new Float32Array(N);
+        // Wave pool state -- see waveGain's doc comment on HyperConfig. Frequencies
+        // are spread deterministically (not randomly) across [0.05, 0.5) radians/iteration
+        // via a golden-ratio sequence, so N neurons don't cluster into just a few
+        // distinct frequencies the way i % smallK would, and two engines built with
+        // the same neuronCount get the same frequency assignment (reproducible).
+        const GOLDEN_ANGLE = 0.6180339887498949;
+        this.wavePhase = new Float32Array(N);
+        this.waveFreq = new Float32Array(N);
+        for (let i = 0; i < N; i++) {
+            const frac = (i * GOLDEN_ANGLE) % 1;
+            this.waveFreq[i] = 0.05 + frac * 0.45;
+        }
+        this.waveAmpScratch = new Float32Array(N);
     }
     /**
      * Run one tick: settle the mesh to convergence for the given input, apply
@@ -2242,6 +2265,7 @@ export class HyperDimensionalEngine {
             selfModelSurprise,
             liveCorrections,
             inputTopography,
+            waveEnergy: this.lastWaveEnergy,
             settleIterations: iterations,
         };
     }
@@ -2696,7 +2720,35 @@ export class HyperDimensionalEngine {
             drivenEnergyContribution += val * val;
         }
         const totalDrivenEnergyContribution = drivenCount * drivenEnergyContribution;
+        const waveGain = this.config.waveGain;
+        const wavePhase = this.wavePhase;
+        const waveFreq = this.waveFreq;
+        const waveAmp = this.waveAmpScratch;
+        const TWO_PI = Math.PI * 2;
         for (; iterations < this.config.propagationSteps; iterations++) {
+            // Wave pool (see HyperConfig.waveGain's doc comment): O(N) per iteration,
+            // computed from each neuron's *pre-update* state (the same state the
+            // dotDiag/dotShift terms below read from this iteration) so every
+            // neuron's wave contribution and its connDiag/connShift contribution
+            // are drawn from the same consistent snapshot. Every neuron's own
+            // current content energy sets its wave's amplitude; every neuron's
+            // wave sums into one shared scalar every other neuron reads back from
+            // equally this iteration -- genuine constructive/destructive
+            // interference, not a per-connection weight.
+            let poolWave = 0;
+            if (waveGain !== 0) {
+                for (let i = 0; i < N; i++) {
+                    const s = this.neurons[i].state;
+                    let energy = 0;
+                    for (let d = 1; d < D; d++)
+                        energy += s[d] * s[d];
+                    const amp = Math.sqrt(energy);
+                    waveAmp[i] = amp;
+                    poolWave += amp * Math.sin(wavePhase[i]);
+                }
+                this.lastWaveEnergy = Math.abs(poolWave);
+            }
+            const waveTerm = waveGain * poolWave;
             // Initialize content energy with the pre-calculated constant driven energy contribution.
             let currentTotalContentEnergy = totalDrivenEnergyContribution;
             // Fill driven neurons state vectors into nextStates.
@@ -2749,7 +2801,7 @@ export class HyperDimensionalEngine {
                             dotDiag += sjRow[j] * connDiag[rowOffset + j];
                             dotShift += sjShiftRow[j] * connShift[rowOffset + j];
                         }
-                        const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
+                        const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength + waveTerm);
                         nextStates[i * D + d] = computedState;
                         if (d > 0) {
                             currentTotalContentEnergy += computedState * computedState;
@@ -2793,13 +2845,25 @@ export class HyperDimensionalEngine {
                             dotDiag += sjRow[j] * connDiag[rowOffset + j];
                             dotShift += sjShiftRow[j] * connShift[rowOffset + j];
                         }
-                        const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
+                        const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength + waveTerm);
                         const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
                         nextStates[i * D + d] = finalVal;
                         if (d > 0) {
                             currentTotalContentEnergy += finalVal * finalVal;
                         }
                     }
+                }
+            }
+            // Advance every neuron's own wave phase once per iteration -- this is
+            // what makes the pool genuinely oscillatory across settle() calls
+            // rather than a static per-neuron constant: two consecutive process()
+            // calls read the wave pool at different phase offsets.
+            if (waveGain !== 0) {
+                for (let i = 0; i < N; i++) {
+                    let p = wavePhase[i] + waveFreq[i];
+                    if (p >= TWO_PI)
+                        p -= TWO_PI;
+                    wavePhase[i] = p;
                 }
             }
             const actualEnergy = currentTotalContentEnergy / (N * dims);
