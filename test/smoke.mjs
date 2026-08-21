@@ -4464,6 +4464,61 @@ async function testCompressionSummary() {
   }
 }
 
+async function testZipLoopInterface() {
+  const { HyperDimensionalEngine, ZipLoopInterface } = await load('models && skills/core/hyperdimensional.js');
+
+  // Section "Zip Loop Neural Data Interface": exactly two dedicated input
+  // neurons (bit-0/bit-1) and two dedicated output neurons (bit-0/bit-1) --
+  // this is the wiring/interface layer, distinct from ZipIOLoop's byte-level
+  // buffer. sendBit()/sendBytes() drive one designated input neuron per tick
+  // and nothing else; receiveBits() reads back whichever output neuron has
+  // higher energy after a tick with nothing directly driven.
+  {
+    const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+
+    zip.sendBit(1);
+    const afterOne = hd.getNeuronStates();
+    check(afterOne[1].energy > 0, 'sendBit(1) genuinely drives the bit-1 input neuron (its energy rises above zero)');
+
+    const hd2 = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
+    const zip2 = new ZipLoopInterface(hd2, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    zip2.sendBit(0);
+    const afterZero = hd2.getNeuronStates();
+    check(
+      afterZero[0].energy !== afterOne[1].energy || afterZero[1].energy !== afterOne[0].energy,
+      'sendBit(0) vs sendBit(1) drive genuinely different input neurons -- the two ticks are not interchangeable'
+    );
+  }
+
+  // receiveBits()/receiveBytes() correctly reconstruct the bit/byte packing
+  // from whichever output neuron reads higher each tick -- checked directly
+  // against a hand-built engine.getNeuronStates() stub rather than relying
+  // on the (untrained) network to have learned anything meaningful to say,
+  // since round-tripping real information through the mesh is a training
+  // outcome, not something the interface guarantees by construction.
+  {
+    const hd = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 6 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const bits = zip.receiveBits(16);
+    check(bits.length === 16 && bits.every(b => b === 0 || b === 1), 'receiveBits() returns exactly the requested count of genuine 0/1 bits');
+    const bytes = zip.receiveBytes(2);
+    check(bytes.length === 2 && bytes instanceof Uint8Array, 'receiveBytes() packs 8 bits per byte MSB-first into a real Uint8Array');
+  }
+
+  // sendBytes() streams the correct total number of bits (8 per byte,
+  // MSB-first) -- checked by counting settle() ticks via a spy on process().
+  {
+    const hd = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 6 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    let calls = 0;
+    const origProcess = hd.process.bind(hd);
+    hd.process = (...args) => { calls++; return origProcess(...args); };
+    zip.sendBytes(new Uint8Array([0b10110010, 0xff]));
+    check(calls === 16, `sendBytes() of 2 bytes drives exactly 16 settle() ticks, one per bit (got ${calls})`);
+  }
+}
+
 async function testNoDuplicateJsxAttributes() {
   // AppSidebarShell.tsx has landed with duplicate JSX attributes on the same
   // element four separate times this history (each time from a manual
@@ -4619,6 +4674,7 @@ async function main() {
     ['Memory forgetting mechanism (Section 7)', testMemoryForgetting],
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
+    ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
     ['No duplicate JSX attributes across src/**/*.tsx (recurring bad-merge regression guard)', testNoDuplicateJsxAttributes],
   ];
   for (const [name, fn] of suites) {

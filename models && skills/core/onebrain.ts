@@ -4207,6 +4207,100 @@ export class HyperDimensionalEngine {
 }
 
 // ============================================================================
+// zip-loop-interface.ts (Section: "Zip Loop Neural Data Interface")
+// ============================================================================
+
+/**
+ * Zip Loop Neural Data Interface — a minimal binary serial doorway into an
+ * all-connected HyperDimensionalEngine mesh: exactly two dedicated input
+ * neurons (bit-0 / bit-1) and two dedicated output neurons (bit-0 / bit-1).
+ * Data streams in and out one bit at a time rather than as one big vector.
+ *
+ * This is deliberately NOT the same thing as ZipIOLoop (zip-io-loop.ts) --
+ * that is a byte-level circular buffer that compresses and stores context
+ * outside the mesh. This is the literal neuron-level interface: driving one
+ * of two input neurons per settle() tick (the "wait" the source description
+ * asks for is exactly settle()'s own iterative convergence, already real),
+ * and reading back whichever of the two output neurons has higher energy.
+ * The mesh's own recurrent state is the temporary context between bits --
+ * ZipLoopInterface holds no buffer of its own beyond the bits collected so
+ * far in the current send/receive call.
+ *
+ * What this class gives you is the wiring, not learned behavior: like any
+ * other four neurons in the mesh, the two output neurons only encode
+ * something meaningful once something (trainDefinitions(), gradient
+ * learning, or Hebbian delta-rule updates -- all real, see
+ * ElasticCoreBlock/HyperDimensionalEngine above) has actually taught the
+ * network to route information there. Round-tripping arbitrary bytes
+ * correctly is a training outcome, not something this interface guarantees
+ * by construction -- consistent with the source material's own framing of
+ * the Zip Loop as "a serial communication interface", not a memory device.
+ */
+export interface ZipLoopNeuronIds {
+  bit0In: number;
+  bit1In: number;
+  bit0Out: number;
+  bit1Out: number;
+}
+
+/** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
+const ZIP_LOOP_PULSE = 1;
+
+export class ZipLoopInterface {
+  constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds) {}
+
+  /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
+  sendBytes(bytes: Uint8Array): void {
+    for (const byte of bytes) {
+      for (let b = 7; b >= 0; b--) {
+        this.sendBit(((byte >> b) & 1) as 0 | 1);
+      }
+    }
+  }
+
+  /** Drives exactly one of the two input neurons (bit0In for 0, bit1In for 1) for one settle() tick; the other stays undriven. */
+  sendBit(bit: 0 | 1): void {
+    const dims = this.engine.getDimensions();
+    const pulse = new Array(dims).fill(ZIP_LOOP_PULSE);
+    const driven = new Set([bit === 1 ? this.ids.bit1In : this.ids.bit0In]);
+    this.engine.process(pulse, undefined, driven);
+  }
+
+  /**
+   * Reads `count` bits back off the two output neurons, one settle() tick
+   * each, with nothing directly driven -- the network keeps evolving under
+   * its own recurrent dynamics between reads, exactly the "temporary
+   * context" the source description asks for. Whichever output neuron has
+   * higher energy after a tick is read as that tick's bit.
+   */
+  receiveBits(count: number): Array<0 | 1> {
+    const bits: Array<0 | 1> = [];
+    const dims = this.engine.getDimensions();
+    const idle = new Array(dims).fill(0);
+    for (let i = 0; i < count; i++) {
+      this.engine.process(idle, undefined, new Set());
+      const states = this.engine.getNeuronStates();
+      const e0 = states.find(n => n.id === this.ids.bit0Out)?.energy ?? 0;
+      const e1 = states.find(n => n.id === this.ids.bit1Out)?.energy ?? 0;
+      bits.push(e1 > e0 ? 1 : 0);
+    }
+    return bits;
+  }
+
+  /** Reads `byteCount` bytes back, packing each 8 bits MSB-first. */
+  receiveBytes(byteCount: number): Uint8Array {
+    const bits = this.receiveBits(byteCount * 8);
+    const out = new Uint8Array(byteCount);
+    for (let i = 0; i < byteCount; i++) {
+      let byte = 0;
+      for (let b = 0; b < 8; b++) byte = (byte << 1) | bits[i * 8 + b];
+      out[i] = byte;
+    }
+    return out;
+  }
+}
+
+// ============================================================================
 // quantum-net.ts
 // ============================================================================
 
