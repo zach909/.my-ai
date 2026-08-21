@@ -704,6 +704,17 @@ export class NeuroclawSystem {
 
   private async learnImpl(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
     const result = this.learner.learn(information, opts);
+    // Actually teach the language model the text it was just given.
+    // Previously learn() recorded the information in the learner/memory but
+    // never fed it to the prose predictor, so the thing generating replies
+    // had genuinely never seen it -- teaching a fact could not change a
+    // single word of any future answer. learnText() (not trainOnText())
+    // because the latter rebuilds the model from only this one string,
+    // erasing every earlier lesson; see NeuroclawTrainer.learnText().
+    // Non-fatal: a training failure must not lose the learned record above.
+    try {
+      await this.llm.learnText(information);
+    } catch { /* keep the recorded knowledge even if retraining fails */ }
     if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
       // ASI §3/§10/§13/§23: gate the real side effect through the same
       // AlignmentVeto safety layer every other action-taking entry point

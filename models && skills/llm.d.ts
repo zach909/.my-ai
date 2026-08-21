@@ -65,6 +65,10 @@ export declare class NeuroclawLLM {
     build(code?: string): Promise<void>;
     buildFromCode(code: string): Promise<void>;
     trainOnText(text: string): Promise<void>;
+    /** Teach the prose predictor new text WITHOUT erasing prior lessons (trainOnText rebuilds from scratch and erases). */
+    learnText(text: string): Promise<void>;
+    /** Characters of accumulated teaching material behind the prose predictor. */
+    getLearnedCorpusSize(): number;
     generate(prompt: string, options?: Partial<GenerateOptions>): Promise<string>;
     private generateTokens;
     runAutonomous(

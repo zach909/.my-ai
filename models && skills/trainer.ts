@@ -43,6 +43,9 @@ const TRAINING_CORPUS = "the quick brown fox jumps over the lazy dog the cat sat
 
 /** How many inner-loop iterations run before yielding to the event loop once. */
 const YIELD_EVERY_CHARS = 2000;
+
+/** Cap on learnText()'s accumulated corpus. Each training pass is O(corpus length), so an uncapped corpus makes every successive lesson slower than the last; oldest text is dropped first. */
+const MAX_ACCUMULATED_CORPUS_CHARS = 200_000;
 /** Cooperative yield: hands control back to Node so other pending work (an HTTP request, a CLI prompt) can run before the next batch of training iterations. */
 function yieldToEventLoop(): Promise<void> {
   return new Promise(resolve => setImmediate(resolve));
@@ -55,6 +58,18 @@ export class NeuroclawTrainer {
   private charToId: Map<string, number>;
   private idToChar: Map<number, string>;
   private elasticCore: ElasticCoreBlock | null = null;
+  /**
+   * Everything this trainer has ever been taught, concatenated.
+   *
+   * train() rebuilds every table from scratch (buildNGramTables() opens with
+   * `this.weights.ngramTables = []`), so calling it twice does not teach the
+   * model two things -- the second call ERASES the first. That makes
+   * incremental teaching impossible by construction: the model can only ever
+   * know the most recent text it was trained on. Retaining the corpus here
+   * lets learnText() below retrain over everything accumulated so far, so
+   * teaching genuinely adds capability instead of overwriting it.
+   */
+  private corpus = "";
   /**
    * Serializes train() calls. Now that training yields to the event loop
    * mid-run (see YIELD_EVERY_CHARS), a second call arriving while one is
@@ -96,6 +111,39 @@ export class NeuroclawTrainer {
    * live: a 100KB POST body froze /api/status for 15+ seconds; the 1MB
    * request-body limit alone would allow ~2 minutes of total freeze).
    */
+  /**
+   * Teach the model something new WITHOUT discarding what it already knows.
+   *
+   * train() alone cannot do this -- it rebuilds all tables from the single
+   * string it is handed, so each call erases the last. This appends to the
+   * retained corpus and retrains over the accumulation, which is what makes
+   * "tell it a fact, then ask about that fact" actually work.
+   *
+   * The accumulated corpus is capped (oldest text dropped first) because
+   * every training pass is O(corpus length) -- an uncapped corpus would make
+   * each successive lesson slower than the last until teaching became
+   * unusably slow. Dropping the oldest text is a real, deliberate forgetting
+   * policy, not an unbounded-memory pretence.
+   */
+  async learnText(text: string): Promise<void> {
+    const addition = String(text ?? "").trim();
+    if (!addition) return;
+    // Seed from the bootstrap corpus on the first lesson so basic word
+    // statistics survive, rather than the model knowing only this one fact.
+    const base = this.corpus || TRAINING_CORPUS;
+    let merged = `${base} ${addition}`;
+    if (merged.length > MAX_ACCUMULATED_CORPUS_CHARS) {
+      merged = merged.slice(merged.length - MAX_ACCUMULATED_CORPUS_CHARS);
+    }
+    this.corpus = merged;
+    return this.train(merged);
+  }
+
+  /** Total characters this trainer has accumulated across every learnText() call. */
+  getCorpusSize(): number {
+    return this.corpus.length;
+  }
+
   async train(text?: string): Promise<void> {
     const run = async () => {
       const corpus = text ?? TRAINING_CORPUS;
