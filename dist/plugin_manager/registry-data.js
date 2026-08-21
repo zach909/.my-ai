@@ -27,6 +27,7 @@ export const PLUGIN_LIST = [
     "Video Generation",
     "Game Development",
     "Multi Input",
+    "Wiki",
 ];
 export const LANGUAGE_SKILLS = [
     "ABAP", "ActionScript", "Ada", "Agda", "Alloy", "AMPL", "ANTLR", "ApacheConf", "Apex",

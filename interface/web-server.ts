@@ -1,12 +1,31 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import type { ChildProcessWithoutNullStreams } from 'node:child_process';
 import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
+import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError } from '../models && skills/core/wiki-store.js';
+import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
+import {
+  listSkillUploads,
+  readSkillUpload,
+  readSkillUploadFile,
+  readSkillUploadExtraFile,
+  saveSkillUpload,
+  saveSkillUploadExtraFiles,
+  deleteSkillUpload,
+  deleteSkillUploadExtraFile,
+  linkSkillUploadWiki,
+  unlinkSkillUploadWiki,
+  recordSkillUploadRsiPass,
+  SkillUploadError,
+  SKILL_UPLOAD_SLOTS,
+  type SkillUploadSlot,
+  type SkillUploadFile,
+} from '../models && skills/core/skill-upload-store.js';
 
 type PyTorchTrainResult =
   { ok: true; torchVersion: string; epochsRun: number; converged: boolean; sampleLosses: number[]; sampleConverged: boolean[]; W: number[][]; b: number[][] }
@@ -300,32 +319,6 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 const LOCAL_HOSTS = new Set(['127.0.0.1', 'localhost', '::1']);
 
 /**
- * Pull a title and one-line description out of a wiki/*.md page's raw text:
- * the title is the first `# ` heading (falling back to the page name if a
- * page somehow has none), and the description is the first non-empty,
- * non-heading, non-table-row paragraph line after it -- every page in
- * wiki/*.md follows exactly this shape (see wiki/Home.md, wiki/Builder.md,
- * ...), so this is a real extraction of real page structure, not a guess.
- */
-function extractWikiSummary(raw: string): { title: string; description: string } {
-  const lines = raw.split('\n');
-  let title = '';
-  let description = '';
-  for (const line of lines) {
-    const trimmed = line.trim();
-    if (!title) {
-      const h1 = trimmed.match(/^#\s+(.+)$/);
-      if (h1) title = h1[1].trim();
-      continue;
-    }
-    if (!trimmed || trimmed.startsWith('#') || trimmed.startsWith('|') || trimmed.startsWith('```')) continue;
-    description = trimmed;
-    break;
-  }
-  return { title, description };
-}
-
-/**
  * A single password check, kept only in memory for the lifetime of one
  * running server process -- never written to disk, never persisted across
  * restarts. Compares with crypto.timingSafeEqual over a PBKDF2 hash (a
@@ -480,7 +473,7 @@ export class WebServer {
 
   private setSecurityHeaders(res: http.ServerResponse): void {
     // Security: Restricted CORS and standard security headers
-    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Methods', 'GET, POST, DELETE, OPTIONS');
     res.setHeader('Access-Control-Allow-Headers', 'Content-Type');
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.setHeader('X-Frame-Options', 'DENY');
@@ -647,6 +640,88 @@ export class WebServer {
     extName: string,
   ): void {
     system.memory.remember(userSays, { importance: 0.7, tags: ['skill-script', extName], payload: response });
+  }
+
+  /**
+   * The actual "install a skill into the live system" logic -- wiring a
+   * project's neuron definitions/scripts into this process's live
+   * NeuroclawSystem memory, exactly as POST /api/extension/register has
+   * done for a project built in the visual editor. Extracted so
+   * POST /api/skill-uploads/:name/install-skill (a package's uploaded
+   * binarySkill/sourceSkill file) goes through the identical real path
+   * instead of a second, easy-to-drift copy of the same logic.
+   */
+  private async installSkillProject(
+    name: string,
+    neurons: Array<{ name?: string; value?: number; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }>,
+  ): Promise<{ remembered: number }> {
+    const { getNeuroclawSystem } = await import('../src/index.js');
+    const system = await getNeuroclawSystem();
+    let remembered = 0;
+    for (const n of neurons) {
+      if (!n.name) continue;
+      const def = (n.definition ?? '').trim();
+      if (def) {
+        system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
+        remembered++;
+      }
+      // Scripts are equally real recallable knowledge -- "when asked X,
+      // the trained response is Y" is exactly what train()'s
+      // trainDefinitions() pass shapes the mesh toward; recall() should
+      // be able to surface it the same way a @definishon can. Also
+      // reachable via bot-service.ts's live skill-match fast path
+      // (see rememberSkillScript()'s own doc comment).
+      for (const s of n.scripts ?? []) {
+        const userSays = (s.userSays ?? '').trim();
+        const response = (s.response ?? '').trim();
+        if (!userSays || !response) continue;
+        this.rememberSkillScript(system, userSays, response, name);
+        remembered++;
+      }
+    }
+    return { remembered };
+  }
+
+  /** Parses a skill file's { neurons: [...] } JSON, the shape install-skill and run-rsi-test both need. Throws a plain Error with a message safe to send straight to the client. */
+  private parseSkillNeuronsFile(
+    file: { filename: string; content: string },
+  ): Array<{ name?: string; value?: number; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> {
+    let parsed: { neurons?: unknown };
+    try {
+      parsed = JSON.parse(file.content);
+    } catch {
+      throw new Error(`"${file.filename}" isn't valid JSON -- expected { neurons: [...] }`);
+    }
+    const neurons = Array.isArray(parsed?.neurons) ? parsed.neurons : [];
+    if (neurons.length === 0) {
+      throw new Error(`"${file.filename}" has no neurons array to install`);
+    }
+    return neurons;
+  }
+
+  /**
+   * Dynamically imports an uploaded skill package's .js/.mjs file (the same
+   * genuine code-execution path install-plugin uses) and returns its
+   * default export (or, failing that, its first exported function) as a
+   * callable. Used by run-algorithm and run-rsi-test, which both need to
+   * actually execute an uploaded script rather than just read it.
+   */
+  private async importSkillUploadScript(name: string, file: { filename: string }): Promise<(...args: unknown[]) => unknown> {
+    if (!/\.(mjs|js)$/i.test(file.filename)) {
+      throw new Error(
+        `"${file.filename}" is not a .js/.mjs file -- no TypeScript compiler is available at runtime to run a .ts file this way.`,
+      );
+    }
+    const path = await import('node:path');
+    const { pathToFileURL } = await import('node:url');
+    const filePath = path.resolve(process.cwd(), 'extension-builder', 'extensions', name, file.filename);
+    const moduleUrl = `${pathToFileURL(filePath).href}?t=${Date.now()}`;
+    const mod = await import(/* @vite-ignore */ moduleUrl);
+    const candidate = mod.default ?? Object.values(mod).find((v) => typeof v === 'function');
+    if (typeof candidate !== 'function') {
+      throw new Error(`"${file.filename}" doesn't export a function (checked default export and named exports)`);
+    }
+    return candidate as (...args: unknown[]) => unknown;
   }
 
   private async loadSavedExtensions(): Promise<{ files: number; remembered: number }> {
@@ -1185,25 +1260,36 @@ export class WebServer {
 
     // GET /api/wiki — every real page under wiki/*.md (the same content
     // GitHub's wiki tab renders), lightweight summaries only (name/title/
-    // description) so /app/wiki can list them without fetching 31 full
-    // files. Reads the actual repo directory on every call rather than
+    // description) so /app/wiki can list them without fetching every full
+    // file. Reads the actual repo directory on every call rather than
     // caching, matching this project's "wiki is a living doc, not a build
     // artifact" convention (see docs/SHARED_WIKI_SYSTEM.md) — a page
-    // edited on disk while the server is running shows up on next load.
+    // edited on disk (by a human, or by WikiPlugin.publish() below) shows
+    // up on next load.
     if (pathname === '/api/wiki' && method === 'GET') {
-      const dir = path.resolve(process.cwd(), 'wiki');
-      let pages: { name: string; title: string; description: string }[] = [];
-      if (existsSync(dir)) {
-        pages = readdirSync(dir)
-          .filter(f => f.endsWith('.md'))
-          .map(f => {
-            const name = f.slice(0, -3);
-            const raw = readFileSync(path.join(dir, f), 'utf8');
-            return { name, ...extractWikiSummary(raw) };
-          })
-          .sort((a, b) => a.title.localeCompare(b.title));
-      }
+      const pages = listWikiPages();
       this.sendJson(res, { pages, total: pages.length });
+      return;
+    }
+
+    // POST /api/wiki — create or overwrite a page. This is the human-facing
+    // half of docs/SKILL_ACQUISITION_LOOP.md's "push the wiki page" step;
+    // the AI-facing half is plugins/wiki.ts's WikiPlugin.publish(), which
+    // calls the exact same wiki-store.ts helper so a page looks identical
+    // regardless of who published it.
+    if (pathname === '/api/wiki' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { name?: string; title?: string; content?: string } | null;
+        if (typeof body?.name !== 'string' || typeof body?.title !== 'string' || typeof body?.content !== 'string') {
+          this.sendJson(res, { error: 'Expected { name, title, content } (all strings)' }, 400);
+          return;
+        }
+        const page = publishWikiPage(body.name, body.title, body.content);
+        this.sendJson(res, page, 201);
+      } catch (err) {
+        const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
       return;
     }
 
@@ -1214,14 +1300,466 @@ export class WebServer {
     // which rules out both `..` traversal and an absolute-path override.
     const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)$/);
     if (wikiMatch && method === 'GET') {
-      const dir = path.resolve(process.cwd(), 'wiki');
-      const file = path.join(dir, `${wikiMatch[1]}.md`);
-      if (!existsSync(file)) {
+      const page = readWikiPage(wikiMatch[1]);
+      if (!page) {
         this.sendJson(res, { error: `No wiki page named "${wikiMatch[1]}"` }, 404);
         return;
       }
-      const content = readFileSync(file, 'utf8');
-      this.sendJson(res, { name: wikiMatch[1], content, ...extractWikiSummary(content) });
+      this.sendJson(res, page);
+      return;
+    }
+
+    // DELETE /api/wiki/:name — remove a bot-published page. Same name rule
+    // and route shape as the GET above; deleteWikiPage() itself refuses a
+    // curated wiki/ name, so this can never touch the reviewed pages.
+    if (wikiMatch && method === 'DELETE') {
+      try {
+        deleteWikiPage(wikiMatch[1]);
+        this.sendJson(res, { name: wikiMatch[1], deleted: true });
+      } catch (err) {
+        const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/shared-chat?since=<id> — the room's messages, oldest first.
+    // Unlike /api/chat and /api/chat/messages (both always exactly one
+    // human talking to the bot) this is one shared log every visitor to
+    // /app/shared-chat reads and posts into -- see shared-chat-store.ts's
+    // doc comment. `since` (a message id the client already has) returns
+    // only what's newer, which is what the page's poll loop sends on every
+    // request after the first so it isn't re-fetching the whole room.
+    if (pathname === '/api/shared-chat' && method === 'GET') {
+      const since = parsedUrl.searchParams.get('since') ?? undefined;
+      this.sendJson(res, { messages: getSharedChatStore().list(since) });
+      return;
+    }
+
+    // POST /api/shared-chat — post a message as a human participant. Body:
+    // { author: string, text: string }. The bot never appears here; it only
+    // ever posts via /api/shared-chat/ask below (summoned) or when
+    // something it did elsewhere chooses to announce itself in the room, so
+    // it's always one voice among the room's participants, never the
+    // implicit other half of every message.
+    if (pathname === '/api/shared-chat' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { author?: string; text?: string } | null;
+        if (typeof body?.author !== 'string' || typeof body?.text !== 'string') {
+          this.sendJson(res, { error: 'Expected { author, text } (both strings)' }, 400);
+          return;
+        }
+        const message = getSharedChatStore().post(body.author, body.text, false);
+        this.sendJson(res, message, 201);
+      } catch (err) {
+        const status = err instanceof SharedChatError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // POST /api/shared-chat/ask — summon the bot into the room. Posts the
+    // asker's own message first (so everyone else in the room sees the
+    // question, not just the answer), then generates and posts the bot's
+    // reply under isBot: true. This is the only path that makes the bot
+    // speak here -- there's no per-message auto-reply, matching "the bot
+    // can talk and publish stuff to the chat but it won't be you
+    // exclusively with the bot."
+    if (pathname === '/api/shared-chat/ask' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { author?: string; text?: string } | null;
+        if (typeof body?.author !== 'string' || typeof body?.text !== 'string') {
+          this.sendJson(res, { error: 'Expected { author, text } (both strings)' }, 400);
+          return;
+        }
+        const store = getSharedChatStore();
+        const asked = store.post(body.author, body.text, false);
+        const { getBot } = await import('../src/server/bot-service.js');
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const bot = await getBot(await getNeuroclawSystem());
+        const reply = await bot.processMessage(body.text);
+        const answered = store.post('Bot', reply.message, true);
+        this.sendJson(res, { asked, answered }, 201);
+      } catch (err) {
+        const status = err instanceof SharedChatError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/skill-uploads — every skill package under
+    // extension-builder/extensions/*/, with which of the five slots
+    // (plugin/sourceSkill/binarySkill/algorithm/rsiTest) each one has
+    // filled in so the /app/skill-uploads UI can show completeness at a
+    // glance without fetching every file.
+    if (pathname === '/api/skill-uploads' && method === 'GET') {
+      this.sendJson(res, { packages: listSkillUploads() });
+      return;
+    }
+
+    // POST /api/skill-uploads — create a package or add/replace slots on an
+    // existing one. Body: { name: string, plugin?/sourceSkill?/binarySkill?/
+    // algorithm?/rsiTest?: { filename: string, content: string } }. Only
+    // the slots present in the body are written; the rest of an existing
+    // package's slots are left exactly as they were.
+    if (pathname === '/api/skill-uploads' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as Record<string, unknown> | null;
+        if (typeof body?.name !== 'string') {
+          this.sendJson(res, { error: 'Expected a "name" string field' }, 400);
+          return;
+        }
+        const files: Partial<Record<SkillUploadSlot, SkillUploadFile>> = {};
+        for (const slot of SKILL_UPLOAD_SLOTS) {
+          const raw = body[slot];
+          if (raw === undefined || raw === null) continue;
+          if (
+            typeof raw !== 'object' ||
+            typeof (raw as Record<string, unknown>).filename !== 'string' ||
+            typeof (raw as Record<string, unknown>).content !== 'string'
+          ) {
+            this.sendJson(res, { error: `"${slot}" must be { filename: string, content: string }` }, 400);
+            return;
+          }
+          files[slot] = raw as SkillUploadFile;
+        }
+        const pkg = saveSkillUpload(body.name, files);
+        this.sendJson(res, pkg, 201);
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/skill-uploads/:name — one package's manifest (which slots it has, not their content).
+    const skillUploadMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)$/);
+    if (skillUploadMatch && method === 'GET') {
+      const pkg = readSkillUpload(skillUploadMatch[1]);
+      if (!pkg) {
+        this.sendJson(res, { error: `No skill package named "${skillUploadMatch[1]}"` }, 404);
+        return;
+      }
+      this.sendJson(res, pkg);
+      return;
+    }
+
+    // DELETE /api/skill-uploads/:name — remove the whole package (all slots + manifest together).
+    if (skillUploadMatch && method === 'DELETE') {
+      try {
+        deleteSkillUpload(skillUploadMatch[1]);
+        this.sendJson(res, { name: skillUploadMatch[1], deleted: true });
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/skill-uploads/:name/:slot — one slot's raw file content, for
+    // the UI's "view" affordance on an already-uploaded file.
+    const skillUploadFileMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/([A-Za-z]+)$/);
+    if (skillUploadFileMatch && method === 'GET') {
+      const [, name, slotParam] = skillUploadFileMatch;
+      if (!(SKILL_UPLOAD_SLOTS as readonly string[]).includes(slotParam)) {
+        this.sendJson(res, { error: `"${slotParam}" is not a valid slot` }, 400);
+        return;
+      }
+      const file = readSkillUploadFile(name, slotParam as SkillUploadSlot);
+      if (!file) {
+        this.sendJson(res, { error: `No "${slotParam}" file uploaded for "${name}"` }, 404);
+        return;
+      }
+      this.sendJson(res, file);
+      return;
+    }
+
+    // POST /api/skill-uploads/:name/files — the open-ended "extra files"
+    // slot: anything that doesn't fit the five named ones. Body:
+    // { files: [{ filename, content }, ...] }. Unlike the named slots,
+    // these accumulate -- re-uploading an existing filename replaces just
+    // that one file, everything else in the package is untouched.
+    const skillUploadExtraFilesMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files$/);
+    if (skillUploadExtraFilesMatch && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { files?: unknown } | null;
+        if (!Array.isArray(body?.files) || body.files.length === 0) {
+          this.sendJson(res, { error: 'Expected a non-empty "files" array of { filename, content }' }, 400);
+          return;
+        }
+        const files: SkillUploadFile[] = [];
+        for (const raw of body.files) {
+          if (typeof raw !== 'object' || raw === null || typeof (raw as Record<string, unknown>).filename !== 'string' || typeof (raw as Record<string, unknown>).content !== 'string') {
+            this.sendJson(res, { error: 'Every file needs { filename: string, content: string }' }, 400);
+            return;
+          }
+          files.push(raw as SkillUploadFile);
+        }
+        const pkg = saveSkillUploadExtraFiles(skillUploadExtraFilesMatch[1], files);
+        this.sendJson(res, pkg, 201);
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/skill-uploads/:name/files/:filename — one extra file's raw content.
+    // DELETE /api/skill-uploads/:name/files/:filename — remove just that one extra file.
+    const skillUploadExtraFileMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files\/([A-Za-z0-9_.-]+)$/);
+    if (skillUploadExtraFileMatch && method === 'GET') {
+      const [, name, filename] = skillUploadExtraFileMatch;
+      const file = readSkillUploadExtraFile(name, decodeURIComponent(filename));
+      if (!file) {
+        this.sendJson(res, { error: `No extra file named "${filename}" in "${name}"` }, 404);
+        return;
+      }
+      this.sendJson(res, file);
+      return;
+    }
+    if (skillUploadExtraFileMatch && method === 'DELETE') {
+      const [, name, filename] = skillUploadExtraFileMatch;
+      try {
+        deleteSkillUploadExtraFile(name, decodeURIComponent(filename));
+        this.sendJson(res, { name, filename, deleted: true });
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // POST /api/skill-uploads/:name/install-skill — the real "Install"
+    // action for a package's skill files: parses its binarySkill (falling
+    // back to sourceSkill if no binary was uploaded) as a { neurons: [...] }
+    // project and wires it into this process's live NeuroclawSystem memory
+    // through the exact same installSkillProject() path
+    // POST /api/extension/register already uses -- not a second,
+    // easy-to-drift implementation of "install".
+    const skillUploadInstallSkillMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/install-skill$/);
+    if (skillUploadInstallSkillMatch && method === 'POST') {
+      const name = skillUploadInstallSkillMatch[1];
+      try {
+        const file = readSkillUploadFile(name, 'binarySkill') ?? readSkillUploadFile(name, 'sourceSkill');
+        if (!file) {
+          this.sendJson(res, { error: `"${name}" has no binarySkill or sourceSkill file to install` }, 400);
+          return;
+        }
+        let neurons: ReturnType<WebServer['parseSkillNeuronsFile']>;
+        try {
+          neurons = this.parseSkillNeuronsFile(file);
+        } catch (err) {
+          this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+          return;
+        }
+        const { remembered } = await this.installSkillProject(name, neurons);
+        this.sendJson(res, { ok: true, installedFrom: file.filename, neuronCount: neurons.length, remembered });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // POST /api/skill-uploads/:name/install-plugin — the real "Install"
+    // action for a package's plugin file. This genuinely executes the
+    // uploaded file as code (a real dynamic import()), so it only ever
+    // proceeds for a plain .js/.mjs ES module -- a .ts file is refused
+    // outright with a clear reason (no TypeScript compiler is available at
+    // runtime here; add it to plugins/index.ts and rebuild instead) rather
+    // than silently doing nothing. The loaded module's default export (or,
+    // failing that, its first exported function) is instantiated with a
+    // minimal PluginDefinition and must implement onActivate(context) --
+    // BasePlugin's own contract (plugin_manager/sdk.ts) -- checked before
+    // it's registered into the live PluginRegistry the same way
+    // interface/main.ts's registerRealPlugins() wires every built-in
+    // plugin.
+    const skillUploadInstallPluginMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/install-plugin$/);
+    if (skillUploadInstallPluginMatch && method === 'POST') {
+      const name = skillUploadInstallPluginMatch[1];
+      try {
+        const file = readSkillUploadFile(name, 'plugin');
+        if (!file) {
+          this.sendJson(res, { error: `"${name}" has no plugin file to install` }, 400);
+          return;
+        }
+        if (!/\.(mjs|js)$/i.test(file.filename)) {
+          this.sendJson(res, {
+            error: `"${file.filename}" is not a .js/.mjs file -- no TypeScript compiler is available at runtime to install a .ts plugin this way. Add it to plugins/index.ts and rebuild instead.`,
+          }, 400);
+          return;
+        }
+        const path = await import('node:path');
+        const { pathToFileURL } = await import('node:url');
+        const filePath = path.resolve(process.cwd(), 'extension-builder', 'extensions', name, file.filename);
+        // The cache-busting query string is deliberate: plain
+        // import(filePath) would serve Node's cached module on a
+        // reinstall after editing the same file, silently ignoring the
+        // new content.
+        const moduleUrl = `${pathToFileURL(filePath).href}?t=${Date.now()}`;
+        const mod = await import(/* @vite-ignore */ moduleUrl);
+        const Candidate = mod.default ?? Object.values(mod).find((v) => typeof v === 'function');
+        if (typeof Candidate !== 'function') {
+          this.sendJson(res, { error: `"${file.filename}" doesn't export a class/function (checked default export and named exports)` }, 400);
+          return;
+        }
+        const definition = { id: name, name, type: 'api-connection' as const, capabilities: [] as string[] };
+        let instance: { onActivate?: (context: unknown) => Promise<void> };
+        try {
+          instance = new Candidate(definition);
+        } catch (err) {
+          this.sendJson(res, { error: `Failed to construct the plugin: ${err instanceof Error ? err.message : String(err)}` }, 400);
+          return;
+        }
+        if (typeof instance.onActivate !== 'function') {
+          this.sendJson(res, { error: `"${file.filename}"'s exported class doesn't implement onActivate(context) -- not a valid BasePlugin subclass` }, 400);
+          return;
+        }
+        const registry = this.runner.getPluginRegistry();
+        registry.register(definition, instance as unknown as Parameters<typeof registry.register>[1]);
+        await registry.activate(name);
+        this.sendJson(res, { ok: true, installedFrom: file.filename, pluginId: name });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // POST /api/skill-uploads/:name/wiki — link a package to a bot wiki
+    // page as its documentation. Body: { wikiPage: string }. Only a *bot*
+    // page (wiki/bot/*.md) can be linked -- a curated wiki/ page is
+    // reviewed, general-purpose documentation, not something a skill
+    // upload should be able to claim as "about" it, so this checks the
+    // page's source the same way deleteWikiPage()/WikiPlugin.edit() refuse
+    // to touch a curated page.
+    const skillUploadWikiMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/wiki$/);
+    if (skillUploadWikiMatch && method === 'POST') {
+      const name = skillUploadWikiMatch[1];
+      try {
+        const body = await this.parseBody(req) as { wikiPage?: string } | null;
+        if (typeof body?.wikiPage !== 'string' || !body.wikiPage) {
+          this.sendJson(res, { error: 'Expected a "wikiPage" string field' }, 400);
+          return;
+        }
+        const page = readWikiPage(body.wikiPage);
+        if (!page) {
+          this.sendJson(res, { error: `No wiki page named "${body.wikiPage}"` }, 404);
+          return;
+        }
+        if (page.source !== 'bot') {
+          this.sendJson(res, { error: `"${body.wikiPage}" is a curated wiki page -- only a bot-published page can be linked to a skill upload` }, 400);
+          return;
+        }
+        const summary = linkSkillUploadWiki(name, body.wikiPage);
+        this.sendJson(res, summary);
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // DELETE /api/skill-uploads/:name/wiki — unlink the package's wiki
+    // page, if any. The wiki page itself is untouched; this only removes
+    // the pointer skill-upload-store.ts keeps in the package's manifest.
+    if (skillUploadWikiMatch && method === 'DELETE') {
+      const name = skillUploadWikiMatch[1];
+      try {
+        const summary = unlinkSkillUploadWiki(name);
+        this.sendJson(res, summary);
+      } catch (err) {
+        const status = err instanceof SkillUploadError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // POST /api/skill-uploads/:name/run-algorithm — genuinely executes a
+    // package's uploaded improvement-algorithm file (.js/.mjs only, same
+    // dynamic-import path install-plugin uses) against the live
+    // NeuroclawSystem. The function is called as
+    // `fn({ system, packageName })` and whatever it returns is sent back
+    // verbatim (JSON-stringified) -- unlike install-skill/run-rsi-test,
+    // there's no fixed "what running an algorithm means" contract beyond
+    // "it's given the live system and can do real things to it", since
+    // skill-upload-store.ts's own doc comment describes this slot as an
+    // arbitrary recorded recipe (hyperparameters, which variations were
+    // kept, ...), not a fixed shape.
+    const skillUploadRunAlgorithmMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/run-algorithm$/);
+    if (skillUploadRunAlgorithmMatch && method === 'POST') {
+      const name = skillUploadRunAlgorithmMatch[1];
+      try {
+        const file = readSkillUploadFile(name, 'algorithm');
+        if (!file) {
+          this.sendJson(res, { error: `"${name}" has no algorithm file to run` }, 400);
+          return;
+        }
+        const fn = await this.importSkillUploadScript(name, file);
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const result = await fn({ system, packageName: name });
+        this.sendJson(res, { ok: true, ranFrom: file.filename, result: result === undefined ? null : result });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    // POST /api/skill-uploads/:name/run-rsi-test — genuinely executes a
+    // package's uploaded RSI test file (.js/.mjs only) against the live
+    // system, same as run-algorithm. The function is called as
+    // `fn({ system, packageName })` and its return value is normalized
+    // into pass/fail: a plain boolean, or an object with a `passed`
+    // field (optionally `message`/`score`). A pass does two real things,
+    // not just record a flag:
+    //   1. recordSkillUploadRsiPass() -- what the UI shows as "Published"
+    //   2. if the package also has a binarySkill/sourceSkill file, installs
+    //      it into live memory via the same installSkillProject() path
+    //      install-skill uses -- "the test passed" and "the skill is
+    //      installed" are the same real action here, not two separate
+    //      steps the user has to remember to do in order.
+    // A fail does neither -- the package's files (and any previous
+    // rsiPassed record) are left exactly as they were.
+    const skillUploadRunRsiTestMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/run-rsi-test$/);
+    if (skillUploadRunRsiTestMatch && method === 'POST') {
+      const name = skillUploadRunRsiTestMatch[1];
+      try {
+        const file = readSkillUploadFile(name, 'rsiTest');
+        if (!file) {
+          this.sendJson(res, { error: `"${name}" has no rsiTest file to run` }, 400);
+          return;
+        }
+        const fn = await this.importSkillUploadScript(name, file);
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const raw = await fn({ system, packageName: name });
+        const passed = typeof raw === 'boolean' ? raw : !!(raw as { passed?: unknown } | null)?.passed;
+        const message = typeof raw === 'object' && raw !== null && typeof (raw as { message?: unknown }).message === 'string'
+          ? (raw as { message: string }).message
+          : undefined;
+        const score = typeof raw === 'object' && raw !== null && typeof (raw as { score?: unknown }).score === 'number'
+          ? (raw as { score: number }).score
+          : undefined;
+        if (!passed) {
+          this.sendJson(res, { ok: true, passed: false, message, score, ranFrom: file.filename });
+          return;
+        }
+        recordSkillUploadRsiPass(name, message);
+        let installed: { remembered: number } | null = null;
+        const skillFile = readSkillUploadFile(name, 'binarySkill') ?? readSkillUploadFile(name, 'sourceSkill');
+        if (skillFile) {
+          try {
+            const neurons = this.parseSkillNeuronsFile(skillFile);
+            installed = await this.installSkillProject(name, neurons);
+          } catch {
+            // The RSI test passed and is recorded regardless -- a
+            // malformed/missing skill file just means nothing to install,
+            // not a reason to discard a real, already-passed test result.
+          }
+        }
+        this.sendJson(res, { ok: true, passed: true, message, score, ranFrom: file.filename, installed });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
       return;
     }
 
@@ -1255,30 +1793,7 @@ export class WebServer {
         const filename = `${safe}_${Date.now()}.ext.json`;
         await fs.writeFile(path.join(dir, filename), JSON.stringify({ name, neurons }, null, 2), 'utf8');
 
-        const { getNeuroclawSystem } = await import('../src/index.js');
-        const system = await getNeuroclawSystem();
-        let remembered = 0;
-        for (const n of neurons) {
-          if (!n.name) continue;
-          const def = (n.definition ?? '').trim();
-          if (def) {
-            system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
-            remembered++;
-          }
-          // Scripts are equally real recallable knowledge -- "when asked X,
-          // the trained response is Y" is exactly what train()'s
-          // trainDefinitions() pass shapes the mesh toward; recall() should
-          // be able to surface it the same way a @definishon can. Also
-          // reachable via bot-service.ts's live skill-match fast path
-          // (see rememberSkillScript()'s own doc comment).
-          for (const s of n.scripts ?? []) {
-            const userSays = (s.userSays ?? '').trim();
-            const response = (s.response ?? '').trim();
-            if (!userSays || !response) continue;
-            this.rememberSkillScript(system, userSays, response, name);
-            remembered++;
-          }
-        }
+        const { remembered } = await this.installSkillProject(name, neurons);
 
         this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered });
       } catch (err) {

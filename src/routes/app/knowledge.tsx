@@ -1,10 +1,10 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState } from 'react'
+import { useState, useRef } from 'react'
 import { Card, CardContent, CardDescription, CardHeader, CardTitle } from '@/components/ui/card'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Brain, Search, Sparkles, ArrowRight, Loader2, Copy, Check } from 'lucide-react'
+import { Brain, Search, Sparkles, ArrowRight, Loader2, Copy, Check, X } from 'lucide-react'
 
 export const Route = createFileRoute('/app/knowledge')({
   head: () => ({
@@ -53,6 +53,13 @@ function KnowledgePage() {
   const [query, setQuery] = useState('')
   const [status, setStatus] = useState('Idle. Ready to query knowledge base.')
   const [loading, setLoading] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleClearQuery = () => {
+    setQuery('')
+    setStatus('Idle. Ready to query knowledge base.')
+    inputRef.current?.focus()
+  }
 
   const executeSearch = (searchText: string) => {
     setLoading(true)
@@ -107,15 +114,31 @@ function KnowledgePage() {
                 Semantic Rule Search
               </Label>
               <div className="flex gap-2">
-                <Input
-                  id="semantic-query"
-                  type="text"
-                  value={query}
-                  onChange={(e) => setQuery(e.target.value)}
-                  placeholder="e.g. containment, consensus..."
-                  disabled={loading}
-                  className="flex-1 focus-visible:ring-2 focus-visible:ring-primary"
-                />
+                <div className="relative flex-1 flex items-center">
+                  <Input
+                    id="semantic-query"
+                    ref={inputRef}
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="e.g. containment, consensus..."
+                    disabled={loading}
+                    className="flex-1 pr-9 focus-visible:ring-2 focus-visible:ring-primary"
+                  />
+                  {query && !loading && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleClearQuery}
+                      className="absolute right-1 h-7 w-7 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                      aria-label="Clear search query"
+                      title="Clear search query"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
                 <Button
                   type="submit"
                   disabled={loading || !query.trim()}

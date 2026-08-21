@@ -26,6 +26,20 @@ export class TasksPlugin extends BasePlugin {
         this.load();
     }
     async create(title, opts) {
+        if (typeof title !== "string" || !title.trim() || title.length > 200) {
+            throw new Error("Security Error: Invalid task title.");
+        }
+        if (opts && typeof opts === "object") {
+            if (opts.description !== undefined && (typeof opts.description !== "string" || opts.description.length > 2000)) {
+                throw new Error("Security Error: Invalid task description.");
+            }
+            if (opts.priority !== undefined && !["low", "medium", "high"].includes(opts.priority)) {
+                throw new Error("Security Error: Invalid task priority.");
+            }
+            if (opts.tags !== undefined && (!Array.isArray(opts.tags) || opts.tags.some(t => typeof t !== "string" || t.length > 50))) {
+                throw new Error("Security Error: Invalid task tags.");
+            }
+        }
         const task = {
             id: `task-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`,
             title, completed: false, priority: "medium", createdAt: Date.now(),
@@ -36,6 +50,14 @@ export class TasksPlugin extends BasePlugin {
         return task;
     }
     async list(filter) {
+        if (filter && typeof filter === "object") {
+            if (filter.priority !== undefined && !["low", "medium", "high"].includes(filter.priority)) {
+                throw new Error("Security Error: Invalid filter priority.");
+            }
+            if (filter.tag !== undefined && (typeof filter.tag !== "string" || filter.tag.length > 50)) {
+                throw new Error("Security Error: Invalid filter tag.");
+            }
+        }
         let result = [...this.tasks];
         if (filter?.completed !== undefined)
             result = result.filter(t => t.completed === filter.completed);
@@ -46,6 +68,7 @@ export class TasksPlugin extends BasePlugin {
         return result.sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
     }
     async complete(id) {
+        this.validateId(id);
         const t = this.tasks.find(task => task.id === id);
         if (!t)
             return false;
@@ -54,12 +77,18 @@ export class TasksPlugin extends BasePlugin {
         return true;
     }
     async remove(id) {
+        this.validateId(id);
         const idx = this.tasks.findIndex(t => t.id === id);
         if (idx === -1)
             return false;
         this.tasks.splice(idx, 1);
         this.save();
         return true;
+    }
+    validateId(id) {
+        if (typeof id !== "string" || !id.trim() || id.length > 100) {
+            throw new Error("Security Error: Invalid task ID.");
+        }
     }
     load() {
         try {

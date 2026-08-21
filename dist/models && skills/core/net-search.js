@@ -56,9 +56,10 @@ class RelevanceNet {
         this.w2 = new Float32Array(hiddenDim);
         for (let i = 0; i < hiddenDim; i++)
             this.w2[i] = rand() * Math.sqrt(2 / hiddenDim);
+        this.hScratch = new Float32Array(hiddenDim);
     }
     hiddenActivations(x) {
-        const h = new Float32Array(this.hiddenDim);
+        const h = this.hScratch;
         for (let i = 0; i < this.hiddenDim; i++) {
             let sum = this.b1[i];
             const row = i * this.dim;
@@ -68,12 +69,34 @@ class RelevanceNet {
         }
         return h;
     }
-    /** Forward pass: real relevance score in [0,1]. */
+    /** Forward pass: real relevance score in [0,1]. Zero allocations. */
     score(x) {
-        const h = this.hiddenActivations(x);
         let z2 = this.b2;
-        for (let i = 0; i < this.hiddenDim; i++)
-            z2 += this.w2[i] * h[i];
+        for (let i = 0; i < this.hiddenDim; i++) {
+            let sum = this.b1[i];
+            const row = i * this.dim;
+            for (let j = 0; j < this.dim; j++)
+                sum += this.w1[row + j] * x[j];
+            if (sum > 0)
+                z2 += this.w2[i] * sum; // ReLU inline
+        }
+        return 1 / (1 + Math.exp(-z2));
+    }
+    /**
+     * BOLT OPTIMIZATION: Zero-allocation forward pass over element-wise vector product (a[j] * b[j]).
+     * Completely bypasses allocating intermediate elementwise product arrays and hidden activation arrays.
+     */
+    scoreProduct(a, b) {
+        let z2 = this.b2;
+        for (let i = 0; i < this.hiddenDim; i++) {
+            let sum = this.b1[i];
+            const row = i * this.dim;
+            for (let j = 0; j < this.dim; j++) {
+                sum += this.w1[row + j] * (a[j] * b[j]);
+            }
+            if (sum > 0)
+                z2 += this.w2[i] * sum; // ReLU inline
+        }
         return 1 / (1 + Math.exp(-z2));
     }
     /** One real backprop step (binary cross-entropy loss) toward `target` for input `x`. */
@@ -102,6 +125,8 @@ class RelevanceNet {
 export class NetSearchEngine {
     constructor(dim = 64) {
         this.index = new Map();
+        // BOLT OPTIMIZATION: Cache tokenized representations, sets, and embeddings to eliminate redundant string parsing and memory allocations on search.
+        this.cached = new Map();
         /** Learned associations for neural mode: token → (structure name → weight). Also drives reverseSearch(). */
         this.assoc = new Map();
         /** Named external corpora bound via `"netsearch"@net="location"`. */
@@ -111,6 +136,17 @@ export class NetSearchEngine {
     }
     addStructure(s) {
         this.index.set(s.name, s);
+        const tokens = tokenize(`${s.name} ${s.definition ?? ""}`);
+        const tokenSet = new Set(tokens);
+        const embedding = this.embed(tokens);
+        this.cached.set(s.name, {
+            s,
+            tokens,
+            tokenSet,
+            embedding,
+            lowerName: s.name.toLowerCase(),
+            lowerDef: (s.definition ?? "").toLowerCase(),
+        });
     }
     addMany(list) {
         for (const s of list)
@@ -118,6 +154,7 @@ export class NetSearchEngine {
     }
     clear() {
         this.index.clear();
+        this.cached.clear();
     }
     size() {
         return this.index.size;
@@ -159,7 +196,7 @@ export class NetSearchEngine {
             if (!target || qTokens.length === 0)
                 continue;
             const qEmb = this.embed(qTokens);
-            const posEmb = this.embed(tokenize(`${target.name} ${target.definition ?? ""}`));
+            const posEmb = this.cached.get(name)?.embedding ?? this.embed(tokenize(`${target.name} ${target.definition ?? ""}`));
             this.relevanceNet.trainStep(elementwiseProduct(qEmb, posEmb), 1, lr);
             // Negative sampling: a couple of other indexed structures, if any exist.
             let sampled = 0;
@@ -169,7 +206,7 @@ export class NetSearchEngine {
                 const other = this.index.get(otherName);
                 if (!other)
                     continue;
-                const negEmb = this.embed(tokenize(`${other.name} ${other.definition ?? ""}`));
+                const negEmb = this.cached.get(otherName)?.embedding ?? this.embed(tokenize(`${other.name} ${other.definition ?? ""}`));
                 this.relevanceNet.trainStep(elementwiseProduct(qEmb, negEmb), 0, lr);
                 if (++sampled >= 2)
                     break;
@@ -221,11 +258,11 @@ export class NetSearchEngine {
         if (!q)
             return [];
         const out = [];
-        for (const s of this.index.values()) {
-            if (s.name.toLowerCase().includes(q))
-                out.push({ name: s.name, score: 1, mode: "exact", matchedOn: "name" });
-            else if ((s.definition ?? "").toLowerCase().includes(q))
-                out.push({ name: s.name, score: 0.8, mode: "exact", matchedOn: "definition" });
+        for (const item of this.cached.values()) {
+            if (item.lowerName.includes(q))
+                out.push({ name: item.s.name, score: 1, mode: "exact", matchedOn: "name" });
+            else if (item.lowerDef.includes(q))
+                out.push({ name: item.s.name, score: 0.8, mode: "exact", matchedOn: "definition" });
         }
         return out;
     }
@@ -233,12 +270,20 @@ export class NetSearchEngine {
         const q = tokenize(query);
         if (q.length === 0)
             return [];
+        const qSet = new Set(q);
+        const qNorm = Math.sqrt(qSet.size);
         const out = [];
-        for (const s of this.index.values()) {
-            const text = tokenize(`${s.name} ${s.definition ?? ""}`);
-            const score = cosineTokens(q, text);
+        for (const item of this.cached.values()) {
+            if (item.tokenSet.size === 0)
+                continue;
+            let overlap = 0;
+            for (const t of qSet) {
+                if (item.tokenSet.has(t))
+                    overlap++;
+            }
+            const score = overlap / (qNorm * Math.sqrt(item.tokenSet.size));
             if (score > 0)
-                out.push({ name: s.name, score, mode: "semantic", matchedOn: "name+definition" });
+                out.push({ name: item.s.name, score, mode: "semantic", matchedOn: "name+definition" });
         }
         return out;
     }
@@ -246,28 +291,29 @@ export class NetSearchEngine {
         const q = tokenize(query);
         if (q.length === 0)
             return [];
+        const qSet = new Set(q);
+        const qNorm = Math.sqrt(qSet.size);
         const qEmb = this.embed(q);
         const out = [];
-        for (const s of this.index.values()) {
-            const sTokens = tokenize(`${s.name} ${s.definition ?? ""}`);
-            const sEmb = this.embed(sTokens);
-            // Three real signals, never a hard/literal match: bag-of-words cosine
-            // (works immediately, no training needed), the backprop-trained
-            // network's forward pass (starts near-zero via a strong negative bias,
-            // sharpens with real training -- see RelevanceNet), and the learned
-            // co-occurrence table (also real: it's what train() actually updates,
-            // and what lets a query with *zero* lexical overlap with its target,
-            // like "chlorophyll" -> "photosynthesis", still retrieve it after a
-            // single real training call).
-            const embSim = cosineTokens(q, sTokens);
-            const trained = this.relevanceNet.score(elementwiseProduct(qEmb, sEmb));
+        for (const item of this.cached.values()) {
+            // BOLT OPTIMIZATION: Zero-allocation cosine calculation using pre-cached token sets
+            let overlap = 0;
+            if (qNorm > 0 && item.tokenSet.size > 0) {
+                for (const t of qSet) {
+                    if (item.tokenSet.has(t))
+                        overlap++;
+                }
+            }
+            const embSim = (qNorm === 0 || item.tokenSet.size === 0) ? 0 : overlap / (qNorm * Math.sqrt(item.tokenSet.size));
+            // BOLT OPTIMIZATION: Zero-allocation scoreProduct using pre-cached embeddings
+            const trained = this.relevanceNet.scoreProduct(qEmb, item.embedding);
             let assocBoost = 0;
             for (const t of q)
-                assocBoost += this.assoc.get(t)?.get(s.name) ?? 0;
+                assocBoost += this.assoc.get(t)?.get(item.s.name) ?? 0;
             const score = 0.5 * embSim + 0.5 * trained + assocBoost;
             if (score > 0.05) {
                 const matchedOn = assocBoost > 0 ? "trained+co-occurrence" : embSim > 0 ? "trained+embedding" : "trained";
-                out.push({ name: s.name, score, mode: "neural", matchedOn });
+                out.push({ name: item.s.name, score, mode: "neural", matchedOn });
             }
         }
         return out;

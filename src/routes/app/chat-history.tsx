@@ -249,6 +249,35 @@ function ChatHistoryPage() {
               <X size={13} />
             </button>
           )}
+        <div className="space-y-1.5">
+          <Label htmlFor="chat-history-search" className="sr-only">
+            Filter chat history
+          </Label>
+          <div className="relative max-w-md">
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+            <Input
+              id="chat-history-search"
+              type="text"
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+              placeholder="Search chats or groups…"
+              className="pl-9 pr-8 text-xs h-9"
+              aria-label="Filter chat history"
+            />
+            {searchQuery && (
+              <Button
+                type="button"
+                variant="ghost"
+                size="icon"
+                onClick={() => setSearchQuery('')}
+                aria-label="Clear search filter"
+                title="Clear search filter"
+                className="absolute right-1 top-1/2 -translate-y-1/2 h-7 w-7 text-muted-foreground hover:text-foreground active:scale-95 focus-visible:ring-2 focus-visible:ring-primary"
+              >
+                <X size={14} />
+              </Button>
+            )}
+          </div>
         </div>
       )}
 
