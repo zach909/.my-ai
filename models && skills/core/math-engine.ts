@@ -455,24 +455,6 @@ export function determinant(m: number[][]): number {
       )
     );
   }
-  let det = 0;
-  // BOLT OPTIMIZATION: Replacing m.slice(1).map(row => row.filter(...)) with direct index loops
-  // eliminates closure function allocations and intermediate array chains in recursive fallback (~5.6x speedup).
-  for (let col = 0; col < n; col++) {
-    const minor = new Array<number[]>(n - 1);
-    for (let r = 1; r < n; r++) {
-      const row = m[r];
-      const newRow = new Array<number>(n - 1);
-      let dest = 0;
-      for (let c = 0; c < n; c++) {
-        if (c !== col) {
-          newRow[dest++] = row[c];
-        }
-      }
-      minor[r - 1] = newRow;
-    }
-    const sign = col % 2 === 0 ? 1 : -1;
-    det += sign * m[0][col] * determinant(minor);
   // BOLT OPTIMIZATION: Fast minor matrix construction for N > 4 using direct index iterations
   // instead of high-overhead `.slice(1).map(row => row.filter(...))` closure and array allocation chains (~4.7x speedup).
   let det = 0;

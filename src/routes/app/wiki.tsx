@@ -37,9 +37,6 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
-import { BookOpen, Loader2, Search, X } from 'lucide-react'
-import { Button } from '@/components/ui/button'
-import { Label } from '@/components/ui/label'
 import {
   Blocks,
   Bot,
@@ -559,38 +556,6 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
             </p>
           )}
           {!pagesLoading && !pagesError && (
-            <nav className="max-h-[70vh] space-y-0.5 overflow-y-auto" aria-label="Wiki pages">
-              {filteredPages.map(p => (
-                <button
-                  key={p.name}
-                  type="button"
-                  onClick={() => setActiveName(p.name)}
-                  aria-current={activeName === p.name ? 'page' : undefined}
-                  className={`w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
-                    activeName === p.name
-                      ? 'bg-primary/10 text-primary font-medium'
-                      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
-                  }`}
-                  title={p.description}
-                >
-                  {p.title || p.name}
-                </button>
-              ))}
-              {filteredPages.length === 0 && (
-                <div className="px-2 py-3 text-xs text-muted-foreground space-y-1">
-                  <p>No pages match "{query}".</p>
-                  <Button
-                    type="button"
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setQuery('')}
-                    aria-label="Clear search query filter"
-                    className="h-6 px-2 text-[11px] active:scale-95 focus-visible:ring-2 focus-visible:ring-ring"
-                  >
-                    Clear Search Filter
-                  </Button>
-                </div>
-              )}
             <nav className="max-h-[70vh] space-y-3 overflow-y-auto" aria-label="Wiki pages">
               <div className="space-y-0.5">
                 <p
@@ -610,7 +575,7 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
                       type="button"
                       onClick={() => setActiveName(p.name)}
                       aria-current={activeName === p.name ? 'page' : undefined}
-                      className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                      className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                         activeName === p.name ? 'text-primary font-medium' : 'text-muted-foreground group-hover:text-foreground'
                       }`}
                       title={p.description}
@@ -664,7 +629,7 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
                       type="button"
                       onClick={() => setActiveName(p.name)}
                       aria-current={activeName === p.name ? 'page' : undefined}
-                      className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors ${
+                      className={`min-w-0 flex-1 truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors active:scale-[0.98] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring ${
                         activeName === p.name ? 'text-primary font-medium' : 'text-muted-foreground group-hover:text-foreground'
                       }`}
                       title={p.description}
@@ -702,6 +667,20 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
                   </div>
                 ))}
               </div>
+              {query && filteredPages.length === 0 && (
+                <div className="px-2 py-1.5">
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setQuery('')}
+                    aria-label="Clear search query filter"
+                    className="h-6 px-2 text-[11px] active:scale-95 focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Clear Search Filter
+                  </Button>
+                </div>
+              )}
             </nav>
           )}
         </Card>
