@@ -2,6 +2,10 @@ import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError, type WikiPageSummary, type WikiPage } from "../models && skills/core/wiki-store.js";
 
+function tokenize(text: string): string[] {
+  return text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
 /**
  * WikiPlugin — the AI's own hands for docs/SKILL_ACQUISITION_LOOP.md's
  * "push the wiki page" step: list()/read() let it check what's already
@@ -95,6 +99,30 @@ export class WikiPlugin extends BasePlugin {
     return deleteWikiPage(name);
   }
 
+  /**
+   * Deterministic, local keyword-overlap search over every page's title +
+   * description (both curated wiki/ and self-authored wiki/bot/) -- no
+   * embeddings service, the same overlapScore() pattern SkillLibrary.
+   * search() (models && skills/core/skill-library.ts) already uses for
+   * skills. "wiki search" had no implementation at all before this --
+   * list()/read() let a caller browse by exact name, but there was no way
+   * to actually find a relevant page by topic.
+   */
+  async search(query: string, topK = 5): Promise<Array<{ page: WikiPageSummary; score: number }>> {
+    const queryTokens = tokenize(query);
+    if (queryTokens.length === 0) return [];
+    const pages = await this.list();
+    const hits: Array<{ page: WikiPageSummary; score: number }> = [];
+    for (const page of pages) {
+      const docTokens = tokenize(`${page.title} ${page.description}`);
+      const docSet = new Set(docTokens);
+      const matches = queryTokens.filter(t => docSet.has(t)).length;
+      const score = matches / queryTokens.length;
+      if (score > 0) hits.push({ page, score });
+    }
+    return hits.sort((a, b) => b.score - a.score).slice(0, topK);
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = String(message).trim();
 
@@ -103,6 +131,14 @@ export class WikiPlugin extends BasePlugin {
       const pages = await this.list();
       if (pages.length === 0) return `[Wiki] No pages yet.`;
       return `[Wiki] ${pages.length} page(s): ${pages.map(p => p.title || p.name).join(", ")}`;
+    }
+
+    // wiki search <query>
+    const searchMatch = input.match(/^wiki\s+search\s+(.+)$/i);
+    if (searchMatch?.[1]) {
+      const hits = await this.search(searchMatch[1]);
+      if (hits.length === 0) return `[Wiki] No pages matching "${searchMatch[1]}".`;
+      return `[Wiki] ${hits.length} match(es): ${hits.map(h => `${h.page.title || h.page.name} (${Math.round(h.score * 100)}%)`).join(", ")}`;
     }
 
     // wiki read <name>
