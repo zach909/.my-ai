@@ -7,7 +7,7 @@ import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
-import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError } from '../models && skills/core/wiki-store.js';
+import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import {
   listSkillUploads,
@@ -344,6 +344,29 @@ class PasswordLock {
     if (!suppliedHash || suppliedHash.length !== this.hash!.length) return false;
     return crypto.timingSafeEqual(suppliedHash, this.hash!);
   }
+}
+
+/**
+ * Which requests bypass the blanket remoteAccessLock gate to reach a route
+ * handler directly, without a password, even on a non-localhost bind:
+ * reading the wiki (any GET under /api/wiki), and *creating* a new wiki
+ * page (POST /api/wiki -- the handler itself still re-checks auth if the
+ * named page already exists, since only creation is meant to be public).
+ * Exported as a pure, path/method-only predicate specifically so it's
+ * directly testable without standing up a real server -- the one thing
+ * that must never accidentally widen is exactly this set: DELETE
+ * /api/wiki/:name, POST /api/wiki/:name/restore, and every route outside
+ * /api/wiki (file-system, terminal-adjacent app launching, skill uploads,
+ * ...) must always return false here.
+ */
+export function isWikiPublicRoute(pathname: string, method: string): boolean {
+  if (method === 'GET') {
+    return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+$/.test(pathname);
+  }
+  if (method === 'POST') {
+    return pathname === '/api/wiki';
+  }
+  return false;
 }
 
 export class WebServer {
@@ -811,7 +834,21 @@ export class WebServer {
       return;
     }
 
-    if (!(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
+    // Wiki reads (and, in the POST handler below, *creating a new* page)
+    // are exempt from remoteAccessLock, same reasoning as the OPTIONS
+    // preflight above but for a different property: the wiki is meant to
+    // be shared knowledge ("Public Shared AI Knowledge Database") anyone
+    // should be able to read AND contribute to, not one of the sensitive
+    // capabilities (terminal-adjacent app launching, file/extension
+    // writes, ...) start()'s own doc comment says the password exists to
+    // protect. This is deliberately narrower than "all wiki writes":
+    // DELETE, and a POST that would *overwrite an existing* page, still go
+    // through the normal gate -- letting anyone contribute a brand-new
+    // page must never mean letting anyone deface or destroy what's already
+    // there. The POST handler itself enforces the create-vs-overwrite
+    // split (it needs to inspect the request body first); this exemption
+    // only lets the request past the blanket gate to reach that check.
+    if (!isWikiPublicRoute(pathname, method) && !(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
       this.requireAuth(res);
       return;
     }
@@ -1284,6 +1321,18 @@ export class WebServer {
           this.sendJson(res, { error: 'Expected { name, title, content } (all strings)' }, 400);
           return;
         }
+        // Reaching here bypassed the blanket remoteAccessLock gate above
+        // (isWikiPublicCreateRoute) precisely so a brand-new page can be
+        // contributed without a password -- but overwriting a page that
+        // already exists (bot- or curated-named) is an edit/replace, not a
+        // contribution, and must still require it. A caller who *is*
+        // authorized (has the password, or is on localhost where none is
+        // required) can overwrite as before; this only blocks an
+        // unauthenticated, non-local caller from replacing existing content.
+        if (readWikiPage(body.name) && !(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
+          this.requireAuth(res);
+          return;
+        }
         const page = publishWikiPage(body.name, body.title, body.content);
         this.sendJson(res, page, 201);
       } catch (err) {
@@ -1312,10 +1361,49 @@ export class WebServer {
     // DELETE /api/wiki/:name — remove a bot-published page. Same name rule
     // and route shape as the GET above; deleteWikiPage() itself refuses a
     // curated wiki/ name, so this can never touch the reviewed pages.
+    // Backed up first (wiki-store.ts's backupBeforeChange()), so this is no
+    // longer unrecoverable the way it was before.
     if (wikiMatch && method === 'DELETE') {
       try {
         deleteWikiPage(wikiMatch[1]);
         this.sendJson(res, { name: wikiMatch[1], deleted: true });
+      } catch (err) {
+        const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // GET /api/wiki/:name/backups — every snapshot backupBeforeChange() has
+    // taken of this bot-published page (before each overwrite/edit/delete),
+    // oldest first, so a caller can see what's recoverable before choosing
+    // one to restore.
+    const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)\/backups$/);
+    if (backupsMatch && method === 'GET') {
+      try {
+        const backups = listWikiBackups(backupsMatch[1]);
+        this.sendJson(res, { backups, total: backups.length });
+      } catch (err) {
+        const status = err instanceof WikiNameError ? 400 : 500;
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
+      }
+      return;
+    }
+
+    // POST /api/wiki/:name/restore — bring back a page's content from one
+    // of its own backups (body: { timestamp }). A write, not a read, so
+    // (unlike the routes above) this still goes through the normal
+    // remoteAccessLock gate.
+    const restoreMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)\/restore$/);
+    if (restoreMatch && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { timestamp?: string } | null;
+        if (typeof body?.timestamp !== 'string') {
+          this.sendJson(res, { error: 'Expected { timestamp }' }, 400);
+          return;
+        }
+        const page = restoreWikiBackup(restoreMatch[1], body.timestamp);
+        this.sendJson(res, page);
       } catch (err) {
         const status = err instanceof WikiNameError ? 400 : 500;
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);

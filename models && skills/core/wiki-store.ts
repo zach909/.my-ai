@@ -61,6 +61,45 @@ function botWikiDir(): string {
   return path.join(wikiDir(), "bot");
 }
 
+function backupsDir(name: string): string {
+  return path.join(botWikiDir(), ".backups", name);
+}
+
+/**
+ * Snapshot a bot-published page's current on-disk content before it's about
+ * to be overwritten or deleted. wiki/bot/ had no backup/versioning at all --
+ * publishWikiPage()'s overwrite and deleteWikiPage()'s unlink were both
+ * unconditional, permanent, and unrecoverable. Now that wiki reads are
+ * exempt from the server's remote-access password (interface/web-server.ts,
+ * "Public Shared AI Knowledge Database" -- bot-published content is meant
+ * to be openly readable), losing it to an accidental overwrite/delete is a
+ * real, higher-stakes risk than when it was loopback-only. No-op if the
+ * page doesn't exist yet -- nothing to back up for a brand-new page.
+ */
+function backupBeforeChange(name: string): void {
+  const file = path.join(botWikiDir(), `${name}.md`);
+  if (!existsSync(file)) return;
+  const dir = backupsDir(name);
+  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const content = readFileSync(file, "utf8");
+  // Colon-free so the stamp is a valid filename stem on every OS (Windows
+  // rejects ':' in filenames); still lexicographically sortable, which is
+  // all listWikiBackups() below needs to return oldest-first. Millisecond
+  // resolution alone isn't enough -- two edits landing in the same
+  // millisecond (a realistic case: a scripted restore immediately
+  // followed by another write) would collide on the same filename and
+  // silently overwrite one backup with the other. A numeric suffix,
+  // incremented until the name is free, guarantees every real backup gets
+  // its own file regardless of timing.
+  const base = new Date().toISOString().replace(/[:.]/g, "-");
+  let stamp = base;
+  let suffix = 1;
+  while (existsSync(path.join(dir, `${stamp}.md`))) {
+    stamp = `${base}-${suffix++}`;
+  }
+  writeFileSync(path.join(dir, `${stamp}.md`), content, "utf8");
+}
+
 /** Pull a title and one-line description out of a page's raw markdown -- every page in wiki/*.md and wiki/bot/*.md follows the `# Title` + paragraph shape this extracts. */
 export function extractWikiSummary(raw: string): { title: string; description: string } {
   const lines = raw.split("\n");
@@ -148,6 +187,7 @@ export function publishWikiPage(name: string, title: string, content: string): W
       `"${name}" is already a curated wiki page and can't be overwritten here -- pick a different name.`
     );
   }
+  backupBeforeChange(name);
   const dir = botWikiDir();
   if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
   const hasHeading = /^\s*#\s+.+/.test(content);
@@ -184,5 +224,51 @@ export function deleteWikiPage(name: string): void {
   if (!existsSync(file)) {
     throw new WikiNameError(`No bot-published page named "${name}" to delete.`);
   }
+  backupBeforeChange(name);
   unlinkSync(file);
+}
+
+export interface WikiBackupSummary {
+  name: string;
+  /** The ISO-ish stamp used as the backup's filename stem -- pass back into readWikiBackup()/restoreWikiBackup(). */
+  timestamp: string;
+}
+
+const SAFE_TIMESTAMP = /^[0-9A-Za-z-]+$/;
+
+/** Every backed-up snapshot of a bot-published page, oldest first. Empty for a page with no backups (never edited/deleted, or never existed). */
+export function listWikiBackups(name: string): WikiBackupSummary[] {
+  assertSafeName(name);
+  const dir = backupsDir(name);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir)
+    .filter((f) => f.endsWith(".md"))
+    .map((f) => ({ name, timestamp: f.slice(0, -3) }))
+    .sort((a, b) => a.timestamp.localeCompare(b.timestamp));
+}
+
+/** Raw markdown of one backed-up snapshot, or null if that page/timestamp has no backup. */
+export function readWikiBackup(name: string, timestamp: string): string | null {
+  assertSafeName(name);
+  if (!SAFE_TIMESTAMP.test(timestamp)) {
+    throw new WikiNameError(`"${timestamp}" is not a valid backup timestamp.`);
+  }
+  const file = path.join(backupsDir(name), `${timestamp}.md`);
+  if (!existsSync(file)) return null;
+  return readFileSync(file, "utf8");
+}
+
+/**
+ * Restore a bot-published page from one of its own backups. Goes back
+ * through publishWikiPage(), which itself calls backupBeforeChange() first
+ * -- so restoring is never itself an unrecoverable action: the content
+ * being replaced by the restore gets its own new backup snapshot too.
+ */
+export function restoreWikiBackup(name: string, timestamp: string): WikiPage {
+  const raw = readWikiBackup(name, timestamp);
+  if (raw === null) {
+    throw new WikiNameError(`No backup of "${name}" at "${timestamp}".`);
+  }
+  const { title } = extractWikiSummary(raw);
+  return publishWikiPage(name, title || name, raw);
 }
