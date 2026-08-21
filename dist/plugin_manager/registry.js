@@ -1,20 +1,47 @@
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
+import { MixtureOfExperts } from "../models && skills/moe.js";
 /** Strips anything but alphanumerics/hyphen/underscore, so the id can never contain a path separator or "..". */
 function sanitizePluginIdForPath(pluginId) {
     return pluginId.replace(/[^a-zA-Z0-9_-]+/g, "_") || "unknown";
 }
 export class PluginRegistry {
-    constructor() {
+    constructor(moe) {
         this.plugins = new Map();
         this.definitions = new Map();
         this.skills = new Map();
         this.skillPluginMap = new Map();
         this.activePlugins = new Set();
         this.intentMap = {};
+        /** Each registered plugin's neuron ids in `moe`'s shared mesh, set once in register(). */
+        this.pluginNeuronIds = new Map();
+        this.moe = moe ?? new MixtureOfExperts();
+    }
+    /** The shared neural mesh every registered plugin's neurons live in. */
+    getMoE() {
+        return this.moe;
+    }
+    /** A registered plugin's real neuron ids in the shared mesh, if any (absent for an id that was never register()'d). */
+    getPluginNeuronIds(pluginId) {
+        return this.pluginNeuronIds.get(pluginId);
     }
     register(definition, instance) {
         this.definitions.set(definition.id, definition);
         this.plugins.set(definition.id, instance);
+        // Give the plugin real neurons in the shared mesh, wired all-to-all into
+        // everything else already there (addExpert() -> NeuronMesh.addNode()).
+        // skill-expert plugins get a full MoE expert group (multiple neurons,
+        // scored by the router); api-connection plugins (file system, email,
+        // browser, ...) get one presence neuron -- lighter, since their actual
+        // capability genuinely can't be reduced to neuron weights (reading a
+        // file or sending an email requires executing real I/O, not a weighted
+        // sum), but their *activity* still becomes a real, wired part of the
+        // mesh's propagation once dispatch() actually uses them (see
+        // firePluginNeurons() below), not just a side-channel log entry.
+        if (!this.moe.getExpert(definition.id)) {
+            const neuronCount = definition.type === "skill-expert" ? 4 : 1;
+            const expert = this.moe.addExpert(definition.id, definition.name, definition.capabilities[0] ?? definition.id, neuronCount);
+            this.pluginNeuronIds.set(definition.id, expert.neuronIds);
+        }
     }
     async activate(pluginId) {
         const plugin = this.plugins.get(pluginId);
@@ -132,13 +159,32 @@ export class PluginRegistry {
             if (plugin && this.activePlugins.has(pluginId)) {
                 try {
                     const result = await plugin.onMessage?.(input);
-                    if (result != null)
+                    if (result != null) {
+                        this.firePluginNeurons(pluginId);
                         return typeof result === "string" ? result : JSON.stringify(result);
+                    }
                 }
                 catch { /* plugin failed, try next */ }
             }
         }
         return null;
+    }
+    /**
+     * Drives a plugin's real mesh neurons to a fired state and propagates the
+     * shared mesh -- so a plugin actually being used becomes a genuine part
+     * of the neural system's dynamics (it can influence, and be influenced
+     * by, every other neuron already wired into the same mesh), not just a
+     * log line about which plugin ran. No-op for a pluginId register() never
+     * gave neurons to.
+     */
+    firePluginNeurons(pluginId) {
+        const neuronIds = this.pluginNeuronIds.get(pluginId);
+        if (!neuronIds || neuronIds.length === 0)
+            return;
+        const meshInputs = new Map();
+        for (const id of neuronIds)
+            meshInputs.set(id, 1);
+        this.moe.getMesh().propagate(meshInputs);
     }
     async healthCheck() {
         const results = new Map();

@@ -3493,6 +3493,61 @@ export class HyperDimensionalEngine {
         return `hd_${hash}`;
     }
 }
+/** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
+const ZIP_LOOP_PULSE = 1;
+export class ZipLoopInterface {
+    constructor(engine, ids) {
+        this.engine = engine;
+        this.ids = ids;
+    }
+    /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
+    sendBytes(bytes) {
+        for (const byte of bytes) {
+            for (let b = 7; b >= 0; b--) {
+                this.sendBit(((byte >> b) & 1));
+            }
+        }
+    }
+    /** Drives exactly one of the two input neurons (bit0In for 0, bit1In for 1) for one settle() tick; the other stays undriven. */
+    sendBit(bit) {
+        const dims = this.engine.getDimensions();
+        const pulse = new Array(dims).fill(ZIP_LOOP_PULSE);
+        const driven = new Set([bit === 1 ? this.ids.bit1In : this.ids.bit0In]);
+        this.engine.process(pulse, undefined, driven);
+    }
+    /**
+     * Reads `count` bits back off the two output neurons, one settle() tick
+     * each, with nothing directly driven -- the network keeps evolving under
+     * its own recurrent dynamics between reads, exactly the "temporary
+     * context" the source description asks for. Whichever output neuron has
+     * higher energy after a tick is read as that tick's bit.
+     */
+    receiveBits(count) {
+        const bits = [];
+        const dims = this.engine.getDimensions();
+        const idle = new Array(dims).fill(0);
+        for (let i = 0; i < count; i++) {
+            this.engine.process(idle, undefined, new Set());
+            const states = this.engine.getNeuronStates();
+            const e0 = states.find(n => n.id === this.ids.bit0Out)?.energy ?? 0;
+            const e1 = states.find(n => n.id === this.ids.bit1Out)?.energy ?? 0;
+            bits.push(e1 > e0 ? 1 : 0);
+        }
+        return bits;
+    }
+    /** Reads `byteCount` bytes back, packing each 8 bits MSB-first. */
+    receiveBytes(byteCount) {
+        const bits = this.receiveBits(byteCount * 8);
+        const out = new Uint8Array(byteCount);
+        for (let i = 0; i < byteCount; i++) {
+            let byte = 0;
+            for (let b = 0; b < 8; b++)
+                byte = (byte << 1) | bits[i * 8 + b];
+            out[i] = byte;
+        }
+        return out;
+    }
+}
 // ============================================================================
 // quantum-net.ts
 // ============================================================================

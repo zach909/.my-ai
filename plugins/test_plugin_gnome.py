@@ -182,5 +182,28 @@ class TestLaunchOnDesktopBlocksDestructiveCommands(unittest.TestCase):
         mock_popen.assert_called_once()
 
 
+class TestGnomePluginIsAutoDiscovered(unittest.TestCase):
+    """GnomePlugin used to be written as a standalone `class GnomePlugin:`
+    that duplicated Plugin's shape (tools/call/__init__) without actually
+    subclassing it. PluginManager.discover()'s `issubclass(obj, Plugin)`
+    check silently skipped it as a result -- the whole, fully-implemented
+    file was never registered/reachable through the plugin manager despite
+    having zero import errors. Confirms both the isinstance/issubclass
+    check the real discover() loop makes, and the full discover() call end
+    to end."""
+
+    def test_issubclass_of_the_shared_plugin_base(self):
+        from plugins.plugin_base import Plugin
+        self.assertTrue(issubclass(GnomePlugin, Plugin))
+
+    def test_discover_registers_gnome_desktop(self):
+        from plugin_manager.manager import PluginManager
+        pm = PluginManager()
+        pm.discover()
+        self.assertIn("gnome_desktop", pm._plugins)
+        self.assertIsInstance(pm._plugins["gnome_desktop"], GnomePlugin)
+        self.assertEqual(pm._plugins["gnome_desktop"].status()["name"], "gnome_desktop")
+
+
 if __name__ == "__main__":
     unittest.main()

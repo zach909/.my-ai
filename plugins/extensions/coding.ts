@@ -1,5 +1,16 @@
 import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/types.js";
 import { SkillPlugin } from "../../plugin_manager/sdk.js";
+import { createContext, Script } from "node:vm";
+
+/** Result of a single runSandboxed() call. */
+export interface SandboxRunResult {
+  result: unknown;
+  error: string | null;
+  ms: number;
+}
+
+/** Hard ceiling on a single sandboxed run -- this is meant for quick calculation/data-shaping, not a general job runner. */
+const SANDBOX_TIMEOUT_MS = 1000;
 
 interface CodeAnalysis {
   lines: number;
@@ -19,6 +30,48 @@ interface CodeAnalysis {
 export class CodingExtension extends SkillPlugin {
   constructor(definition: PluginDefinition, skillDefinition: SkillDefinition) {
     super(definition, skillDefinition);
+  }
+
+  /**
+   * onMessage was never overridden here, so BasePlugin's default (echo the
+   * input back) is what dispatch() actually called -- execute()'s real
+   * static-analysis logic below had no live call site anywhere in the
+   * system despite being fully implemented. This connects it, and adds the
+   * one real capability that was still missing entirely: actually running
+   * a snippet (not just analyzing it) via runSandboxed() below, for a
+   * caller that says "run:"/"execute:"/"calculate:"/"eval:" up front.
+   * Anything else still goes through the existing analysis path.
+   */
+  override async onMessage(message: unknown): Promise<unknown> {
+    const input = typeof message === "string" ? message : String(message ?? "");
+    const m = input.match(/^(run|execute|calculate|eval)\s*:\s*([\s\S]+)$/i);
+    if (m) return this.runSandboxed(m[2]);
+    return this.execute(input);
+  }
+
+  /**
+   * Runs a JS snippet in a genuinely isolated vm context: no `require`, no
+   * `process`, no filesystem, no network, no access to this process's own
+   * globals -- `createContext({})` starts from nothing, and `Script.
+   * runInContext`'s `timeout` kills a snippet that hangs or loops forever
+   * rather than blocking the caller indefinitely. This is deliberately
+   * scoped to quick, pure computation (arithmetic, string/array/JSON
+   * manipulation) -- the "calculate things" a math-engine.ts fixed
+   * function set can't cover, not a general job runner. Consistent with
+   * the project's NO EXTERNAL APIS constraint: nothing network-capable is
+   * ever exposed inside the sandbox, so it cannot reach out even if asked to.
+   */
+  runSandboxed(code: string): SandboxRunResult {
+    const start = Date.now();
+    try {
+      const sandbox = createContext({}); // fresh, empty global object -- no ambient access to this process
+      const script = new Script(code, { filename: "sandboxed-snippet.js" });
+      const result = script.runInContext(sandbox, { timeout: SANDBOX_TIMEOUT_MS });
+      return { result, error: null, ms: Date.now() - start };
+    } catch (err: unknown) {
+      const msg = err instanceof Error ? err.message : String(err);
+      return { result: undefined, error: msg, ms: Date.now() - start };
+    }
   }
 
   async execute(input: unknown): Promise<unknown> {

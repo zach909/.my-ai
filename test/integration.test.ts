@@ -17,6 +17,10 @@ import { PluginRegistry } from '../plugin_manager/registry.js';
 import { BrowserPlugin } from '../plugins/browser.js';
 import { LocationPlugin } from '../plugins/location.js';
 import { NotificationsPlugin } from '../plugins/notifications.js';
+import { CodingExtension } from '../plugins/extensions/coding.js';
+import { TerminalPlugin, isBlockedCommand } from '../plugins/terminal.js';
+import { HyperDimensionalEngine } from '../models && skills/core/hyperdimensional.js';
+import { generateArithmeticFacts, scaleForFacts, trainArithmetic, askArithmetic } from '../models && skills/core/math-engine.js';
 import { ScreenshotsPlugin } from '../plugins/screenshots.js';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -229,6 +233,267 @@ describe('Neuroclaw Integration Tests', () => {
       const context = plugins.createContext('../../../../tmp/pwned');
       expect(context.dataDir).not.toContain('..');
       expect(context.dataDir.startsWith('./data/')).toBe(true);
+    });
+  });
+
+  describe('Plugins as fused neurons (Section "Plugins")', () => {
+    // register() gives every plugin real neurons in the shared MoE mesh,
+    // wired all-to-all into everything else already there -- "plugins
+    // become part of the neural system rather than simply being separate
+    // programs the AI talks to", not just a definitions/instance pair in
+    // two Maps.
+    it('register() allocates real, non-overlapping mesh neurons for each plugin', () => {
+      plugins.register(
+        { id: 'notify-test', name: 'Notify', type: 'api-connection', capabilities: ['notifications'] },
+        new NotificationsPlugin({ id: 'notify-test', name: 'Notify', type: 'api-connection', capabilities: ['notifications'] })
+      );
+      plugins.register(
+        { id: 'browser-test', name: 'Browser', type: 'api-connection', capabilities: ['browser'] },
+        new BrowserPlugin({ id: 'browser-test', name: 'Browser', type: 'api-connection', capabilities: ['browser'] })
+      );
+      const notifyIds = plugins.getPluginNeuronIds('notify-test');
+      const browserIds = plugins.getPluginNeuronIds('browser-test');
+      expect(notifyIds?.length).toBeGreaterThan(0);
+      expect(browserIds?.length).toBeGreaterThan(0);
+      // Distinct neurons, not the same ones relabeled.
+      expect(notifyIds!.some(id => browserIds!.includes(id))).toBe(false);
+      // Genuinely present in the shared mesh's expert roster, not just a
+      // local bookkeeping map -- same MixtureOfExperts a skill-expert uses.
+      expect(plugins.getMoE().getExpert('notify-test')?.neuronIds).toEqual(notifyIds);
+    });
+
+    it('a skill-expert plugin gets a full multi-neuron expert group; an api-connection plugin gets one presence neuron', () => {
+      plugins.register(
+        { id: 'coder-test', name: 'Coder', type: 'skill-expert', capabilities: ['coding'] },
+        new NotificationsPlugin({ id: 'coder-test', name: 'Coder', type: 'skill-expert', capabilities: ['coding'] })
+      );
+      plugins.register(
+        { id: 'notify-test2', name: 'Notify', type: 'api-connection', capabilities: ['notifications'] },
+        new NotificationsPlugin({ id: 'notify-test2', name: 'Notify', type: 'api-connection', capabilities: ['notifications'] })
+      );
+      expect(plugins.getPluginNeuronIds('coder-test')?.length).toBe(4);
+      expect(plugins.getPluginNeuronIds('notify-test2')?.length).toBe(1);
+    });
+
+    it('dispatching to a plugin that actually answers genuinely propagates the shared mesh with that plugin\'s own neurons driven', async () => {
+      const def = { id: 'notify-fire', name: 'Notify', type: 'api-connection' as const, capabilities: ['notifications'] };
+      plugins.register(def, new NotificationsPlugin(def));
+      await plugins.activate('notify-fire');
+      plugins.setIntentMap({ 'test-intent': ['notify-fire'] });
+
+      const neuronIds = plugins.getPluginNeuronIds('notify-fire')!;
+      const mesh = plugins.getMoE().getMesh();
+      const propagateSpy = vi.spyOn(mesh, 'propagate');
+
+      const result = await plugins.dispatch('list my notifications', 'test-intent');
+
+      // The default BasePlugin.onMessage() echoes the input back (never
+      // null), so this real dispatch should have reached firePluginNeurons()
+      // -- confirmed by inspecting the actual call it made to the real
+      // mesh, not a mock standing in for it.
+      expect(result).not.toBeNull();
+      expect(propagateSpy).toHaveBeenCalledTimes(1);
+      const drivenArg = propagateSpy.mock.calls[0][0] as Map<number, number>;
+      expect(Array.from(drivenArg.keys()).sort()).toEqual([...neuronIds].sort());
+      for (const id of neuronIds) expect(drivenArg.get(id)).toBe(1);
+    });
+  });
+
+  describe('CodingExtension: sandboxed execution + live dispatch wiring', () => {
+    let coding: CodingExtension;
+
+    beforeEach(() => {
+      const def = { id: 'coding', name: 'Coding Skill', type: 'skill-expert' as const, capabilities: ['coding'] };
+      const skillDef = { id: 'coding', name: 'Coding Skill', description: 'coding', expertIndex: 0, specialization: 'coding', selfAuthored: false };
+      coding = new CodingExtension(def, skillDef);
+    });
+
+    it('runSandboxed() actually executes JS and returns the real computed result', () => {
+      const out = coding.runSandboxed('2 + 2');
+      expect(out.error).toBeNull();
+      expect(out.result).toBe(4);
+      expect(out.ms).toBeGreaterThanOrEqual(0);
+    });
+
+    it('runSandboxed() has no access to this process -- require/process are undefined inside it', () => {
+      const out = coding.runSandboxed('typeof require + "," + typeof process');
+      expect(out.error).toBeNull();
+      expect(out.result).toBe('undefined,undefined');
+    });
+
+    it('runSandboxed() reports a syntax/runtime error instead of throwing out to the caller', () => {
+      const out = coding.runSandboxed('this is not valid js (((');
+      expect(out.error).not.toBeNull();
+      expect(out.result).toBeUndefined();
+    });
+
+    it('runSandboxed() is killed by the timeout rather than hanging forever on an infinite loop', () => {
+      const out = coding.runSandboxed('while (true) {}');
+      expect(out.error).not.toBeNull();
+      expect(out.ms).toBeLessThan(2000);
+    }, 3000);
+
+    it('onMessage() with a "run:"/"calculate:" prefix reaches runSandboxed() through the live dispatch path (previously unreachable)', async () => {
+      const out = await coding.onMessage('calculate: 6 * 7') as { result: unknown; error: string | null };
+      expect(out.error).toBeNull();
+      expect(out.result).toBe(42);
+    });
+
+    it('onMessage() without an execution prefix still reaches execute()\'s real analysis (also previously unreachable via dispatch)', async () => {
+      const out = await coding.onMessage('function add(a, b) { return a + b; }') as { analysis: { functionCount: number } };
+      expect(out.analysis.functionCount).toBe(1);
+    });
+  });
+
+  describe('TerminalPlugin: real shell execution + destructive-command guardrail', () => {
+    let terminal: TerminalPlugin;
+
+    beforeEach(() => {
+      terminal = new TerminalPlugin({ id: 'terminal', name: 'Terminal', type: 'api-connection', capabilities: ['terminal'] });
+    });
+
+    it('run() actually executes a real command and captures its real stdout', async () => {
+      const out = await terminal.run('echo hello-from-terminal-plugin');
+      expect(out.error).toBeUndefined();
+      expect(out.stdout.trim()).toBe('hello-from-terminal-plugin');
+      expect(out.returncode).toBe(0);
+    });
+
+    it('run() reports a non-zero returncode for a real failing command instead of throwing', async () => {
+      const out = await terminal.run('exit 7');
+      expect(out.returncode).toBe(7);
+    });
+
+    it('run() is killed by its timeout on a real hanging command', async () => {
+      const out = await terminal.run('sleep 5', { timeoutMs: 200 });
+      expect(out.error).toMatch(/Timeout/);
+    }, 3000);
+
+    it('which() finds a real binary that genuinely exists on PATH', () => {
+      expect(terminal.which('node')).not.toBeNull();
+    });
+
+    it('which() returns null (not a throw) for a binary that does not exist', () => {
+      expect(terminal.which('definitely-not-a-real-binary-xyz123')).toBeNull();
+    });
+
+    it('env() blocks a sensitive variable name and redacts sensitive keys from the full listing', () => {
+      process.env.SOME_TEST_API_TOKEN = 'shh';
+      try {
+        expect(() => terminal.env('SOME_TEST_API_TOKEN')).toThrow('Security Error');
+        const all = terminal.env();
+        expect(all.SOME_TEST_API_TOKEN).toBeUndefined();
+      } finally {
+        delete process.env.SOME_TEST_API_TOKEN;
+      }
+    });
+
+    // isBlockedCommand() ported directly from plugin_terminal.py's already-
+    // tested _is_blocked() -- same permutation-proof rm -rf detection.
+    it.each([
+      'rm -rf /',
+      'rm -rf /*',
+      'rm -fr /',
+      'rm -r -f /',
+      'rm --recursive --force /',
+      ':(){ :|:& };:',
+      'mkfs.ext4 /dev/sda1',
+      'shutdown -h now',
+      'dd if=/dev/zero of=/dev/sda',
+    ])('isBlockedCommand() blocks %s', (cmd) => {
+      expect(isBlockedCommand(cmd)).toBe(true);
+    });
+
+    it.each([
+      'echo hello',
+      'ls -la',
+      'rm somefile.txt',
+      'git status',
+    ])('isBlockedCommand() does not block an ordinary command: %s', (cmd) => {
+      expect(isBlockedCommand(cmd)).toBe(false);
+    });
+
+    it('run() actually refuses a destructive command rather than executing it', async () => {
+      const out = await terminal.run('rm -rf /');
+      expect(out.error).toContain('Blocked');
+    });
+
+    it('runBg() throws (does not spawn) for a blocked command', () => {
+      expect(() => terminal.runBg('rm -rf /')).toThrow('Blocked');
+    });
+
+    it('onMessage() with a "run:" prefix reaches real execution through the live dispatch path', async () => {
+      const out = await terminal.onMessage('run: echo dispatched') as { stdout: string };
+      expect(out.stdout.trim()).toBe('dispatched');
+    });
+
+    it('onMessage() without an execution prefix does not attempt to execute the input as a shell command', async () => {
+      const out = await terminal.onMessage('just chatting, not a command');
+      expect(out).toBe('just chatting, not a command');
+    });
+  });
+
+  describe('Training the neural mesh to do arithmetic (real weight learning, not the exact evaluator)', () => {
+    // Deliberately distinct from MathEngine.verify()/evaluateExpression()
+    // (the exact, deterministic path already wired into the mathematician
+    // hive agent in src/index.ts) -- this trains HyperDimensionalEngine's
+    // own connDiag/bias weights via its real trainDefinitions() delta rule
+    // to *approximate* arithmetic, so "the network learns math" is a
+    // checkable claim (measurable error reduction from real weight
+    // updates) rather than an assertion. A small mesh trained for a
+    // handful of epochs will never be as accurate as the exact evaluator --
+    // that's expected and consistent with math-engine.ts's own stated
+    // philosophy that neural predictions shouldn't be trusted for exact
+    // math. What's tested is that real training measurably improves it.
+
+    it('generateArithmeticFacts() computes real results, not fabricated targets', () => {
+      const facts = generateArithmeticFacts(4, ['+', '-', '*']);
+      expect(facts.length).toBe(5 * 5 * 3);
+      for (const f of facts) {
+        const expected = f.op === '+' ? f.a + f.b : f.op === '-' ? f.a - f.b : f.a * f.b;
+        expect(f.result).toBe(expected);
+      }
+    });
+
+    it('trainArithmetic() genuinely reduces prediction error versus the untrained network, via real weight updates', () => {
+      const facts = generateArithmeticFacts(4, ['+']); // 25 facts, a,b in 0..4 -- small/fast, still a real training run
+      const scale = scaleForFacts(facts);
+      const driveId = 0, readoutId = 1;
+      const engine = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 12 });
+
+      const meanAbsError = () => {
+        let err = 0;
+        for (const f of facts) err += Math.abs(askArithmetic(engine, f.a, f.b, f.op, driveId, readoutId, scale) - f.result);
+        return err / facts.length;
+      };
+
+      const before = meanAbsError();
+      const report = trainArithmetic(engine, facts, driveId, readoutId, scale, { epochs: 300, learningRate: 0.25 });
+      const after = meanAbsError();
+
+      expect(report.factCount).toBe(facts.length);
+      // Real, measurable improvement from real training -- not asserting
+      // near-perfect accuracy, which a mesh this small over this few
+      // epochs genuinely won't reach.
+      expect(after).toBeLessThan(before * 0.75);
+    });
+
+    it('askArithmetic() does not keep drifting further from the trained answer across repeated calls (connDiag/bias are pinned to zero learning rate; only the unrelated self-model prediction step still updates)', () => {
+      const facts = generateArithmeticFacts(3, ['+']);
+      const scale = scaleForFacts(facts);
+      const driveId = 0, readoutId = 1;
+      const engine = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 10 });
+      trainArithmetic(engine, facts, driveId, readoutId, scale, { epochs: 150 });
+
+      const first = askArithmetic(engine, 2, 2, '+', driveId, readoutId, scale);
+      const second = askArithmetic(engine, 2, 2, '+', driveId, readoutId, scale);
+      const third = askArithmetic(engine, 2, 2, '+', driveId, readoutId, scale);
+      // Small drift is expected (process() still runs its own unrelated
+      // self-model prediction training step every call), but it must stay
+      // small relative to the answer itself -- the arithmetic weights
+      // (connDiag/connShift/bias) genuinely are frozen by the zero-rate map.
+      expect(Math.abs(second - first)).toBeLessThan(Math.abs(first) * 0.05 + 0.1);
+      expect(Math.abs(third - second)).toBeLessThan(Math.abs(second) * 0.05 + 0.1);
     });
   });
 
