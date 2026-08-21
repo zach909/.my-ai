@@ -19,6 +19,8 @@ import { LocationPlugin } from '../plugins/location.js';
 import { NotificationsPlugin } from '../plugins/notifications.js';
 import { CodingExtension } from '../plugins/extensions/coding.js';
 import { TerminalPlugin, isBlockedCommand } from '../plugins/terminal.js';
+import { HyperDimensionalEngine } from '../models && skills/core/hyperdimensional.js';
+import { generateArithmeticFacts, scaleForFacts, trainArithmetic, askArithmetic } from '../models && skills/core/math-engine.js';
 import { ScreenshotsPlugin } from '../plugins/screenshots.js';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -428,6 +430,70 @@ describe('Neuroclaw Integration Tests', () => {
     it('onMessage() without an execution prefix does not attempt to execute the input as a shell command', async () => {
       const out = await terminal.onMessage('just chatting, not a command');
       expect(out).toBe('just chatting, not a command');
+    });
+  });
+
+  describe('Training the neural mesh to do arithmetic (real weight learning, not the exact evaluator)', () => {
+    // Deliberately distinct from MathEngine.verify()/evaluateExpression()
+    // (the exact, deterministic path already wired into the mathematician
+    // hive agent in src/index.ts) -- this trains HyperDimensionalEngine's
+    // own connDiag/bias weights via its real trainDefinitions() delta rule
+    // to *approximate* arithmetic, so "the network learns math" is a
+    // checkable claim (measurable error reduction from real weight
+    // updates) rather than an assertion. A small mesh trained for a
+    // handful of epochs will never be as accurate as the exact evaluator --
+    // that's expected and consistent with math-engine.ts's own stated
+    // philosophy that neural predictions shouldn't be trusted for exact
+    // math. What's tested is that real training measurably improves it.
+
+    it('generateArithmeticFacts() computes real results, not fabricated targets', () => {
+      const facts = generateArithmeticFacts(4, ['+', '-', '*']);
+      expect(facts.length).toBe(5 * 5 * 3);
+      for (const f of facts) {
+        const expected = f.op === '+' ? f.a + f.b : f.op === '-' ? f.a - f.b : f.a * f.b;
+        expect(f.result).toBe(expected);
+      }
+    });
+
+    it('trainArithmetic() genuinely reduces prediction error versus the untrained network, via real weight updates', () => {
+      const facts = generateArithmeticFacts(4, ['+']); // 25 facts, a,b in 0..4 -- small/fast, still a real training run
+      const scale = scaleForFacts(facts);
+      const driveId = 0, readoutId = 1;
+      const engine = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 12 });
+
+      const meanAbsError = () => {
+        let err = 0;
+        for (const f of facts) err += Math.abs(askArithmetic(engine, f.a, f.b, f.op, driveId, readoutId, scale) - f.result);
+        return err / facts.length;
+      };
+
+      const before = meanAbsError();
+      const report = trainArithmetic(engine, facts, driveId, readoutId, scale, { epochs: 300, learningRate: 0.25 });
+      const after = meanAbsError();
+
+      expect(report.factCount).toBe(facts.length);
+      // Real, measurable improvement from real training -- not asserting
+      // near-perfect accuracy, which a mesh this small over this few
+      // epochs genuinely won't reach.
+      expect(after).toBeLessThan(before * 0.75);
+    });
+
+    it('askArithmetic() does not keep drifting further from the trained answer across repeated calls (connDiag/bias are pinned to zero learning rate; only the unrelated self-model prediction step still updates)', () => {
+      const facts = generateArithmeticFacts(3, ['+']);
+      const scale = scaleForFacts(facts);
+      const driveId = 0, readoutId = 1;
+      const engine = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 10 });
+      trainArithmetic(engine, facts, driveId, readoutId, scale, { epochs: 150 });
+
+      const first = askArithmetic(engine, 2, 2, '+', driveId, readoutId, scale);
+      const second = askArithmetic(engine, 2, 2, '+', driveId, readoutId, scale);
+      const third = askArithmetic(engine, 2, 2, '+', driveId, readoutId, scale);
+      // Small drift is expected (process() still runs its own unrelated
+      // self-model prediction training step every call), but it must stay
+      // small relative to the answer itself -- the arithmetic weights
+      // (connDiag/connShift/bias) genuinely are frozen by the zero-rate map.
+      expect(Math.abs(second - first)).toBeLessThan(Math.abs(first) * 0.05 + 0.1);
+      expect(Math.abs(third - second)).toBeLessThan(Math.abs(second) * 0.05 + 0.1);
     });
   });
 
