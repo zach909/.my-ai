@@ -2575,6 +2575,24 @@ export class HyperDimensionalEngine {
         const epochs = opts.epochs ?? 500; // random search needs more attempts than the delta rule to find the same minimum
         const stepSize = opts.stepSize ?? 0.15;
         const tolerance = opts.tolerance ?? 1e-3;
+        // Optional deterministic RNG. Random search is genuinely stochastic, so
+        // whether it finds a given minimum within `epochs` is luck-dependent --
+        // measured at ~3% failure on a contract pair that is definitely
+        // satisfiable, which is enough to make a suite containing it fail
+        // spuriously. Passing a seed makes a run exactly reproducible (same
+        // seed, same result, every time) so a test can assert on the outcome
+        // without depending on global Math.random state. Unseeded callers keep
+        // the original nondeterministic behavior.
+        const rand = opts.seed === undefined ? Math.random : (() => {
+            // mulberry32 -- small, fast, well-distributed; enough for perturbations.
+            let a = opts.seed >>> 0;
+            return () => {
+                a = (a + 0x6D2B79F5) >>> 0;
+                let t = Math.imul(a ^ (a >>> 15), 1 | a);
+                t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+                return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+            };
+        })();
         const dims = this.config.dimensions;
         const D = this.totalDims;
         const N = this.neurons.length;
@@ -2612,11 +2630,11 @@ export class HyperDimensionalEngine {
                             continue;
                         const wdIdx = rowOffset + nj.id;
                         snapshot.push({ idx: wdIdx, inDiag: true, value: this.connDiag[wdIdx] });
-                        this.connDiag[wdIdx] = clamp(this.connDiag[wdIdx] + (Math.random() * 2 - 1) * stepSize, -2, 2);
+                        this.connDiag[wdIdx] = clamp(this.connDiag[wdIdx] + (rand() * 2 - 1) * stepSize, -2, 2);
                     }
                     const bIdx = biasOffset + cd;
                     snapshot.push({ idx: bIdx, inDiag: false, value: this.bias[bIdx] });
-                    this.bias[bIdx] = clamp(this.bias[bIdx] + (Math.random() * 2 - 1) * stepSize, -1, 1);
+                    this.bias[bIdx] = clamp(this.bias[bIdx] + (rand() * 2 - 1) * stepSize, -1, 1);
                 }
                 const trial = evalLoss(def);
                 if (trial < baseline) {

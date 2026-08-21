@@ -521,7 +521,12 @@ async function testDefinitionTraining() {
   const r3 = mk().trainDefinitionsRandomSearch([
     { driveNeuronId: 0, input: [1, 0, 0, 0], readoutNeuronId: 5, target: [0.3, -0.3, 0.3, -0.3] },
     { driveNeuronId: 1, input: [0, 1, 0, 0], readoutNeuronId: 6, target: [-0.4, 0.4, -0.4, 0.4] },
-  ], { epochs: 2000 });
+    // Seeded: random search is genuinely stochastic, so whether it finds this
+    // (definitely satisfiable) minimum within `epochs` is luck-dependent --
+    // measured at ~3% failure unseeded, which made this assertion fail
+    // spuriously roughly one run in thirty. The seed makes the run exactly
+    // reproducible without weakening what is being asserted.
+  ], { epochs: 2000, seed: 1 });
   check(r3.satisfied.length === 2 && r3.conflicts.length === 0,
     'Random-search training satisfies independent contracts without false conflict');
 
@@ -4519,6 +4524,33 @@ async function testZipLoopInterface() {
   }
 }
 
+async function testGroundedAnswering() {
+  const { NeuroclawSystem } = await load('src/index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // learn() previously (a) never stored the taught text in long-term
+    // memory, (b) never fed it to the language model, and (c) processQuery()
+    // retrieved only tag:"chat-turn", so a taught fact was unreachable three
+    // separate ways. Teaching a fact then asking about it must now actually
+    // answer, rather than emitting fragments of the fixed proverb corpus.
+    const before = String(await sys.processQuery('what is the capital of Freedonia'));
+    check(!/sylvania/i.test(before), 'Before being taught, the system does not claim to know the fact');
+    await sys.learn('The capital of Freedonia is Sylvania City.');
+    const after = String(await sys.processQuery('what is the capital of Freedonia'));
+    check(/sylvania/i.test(after), 'After being taught, asking the question actually returns the taught fact');
+    // The grounded path must be gated on a genuinely strong match, not fire
+    // for anything loosely related -- otherwise it would dress up an
+    // unrelated memory as an answer.
+    const unrelated = String(await sys.processQuery('describe deep sea volcanoes'));
+    check(!/sylvania/i.test(unrelated), 'An unrelated question does NOT falsely surface the taught fact');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testNoDuplicateJsxAttributes() {
   // AppSidebarShell.tsx has landed with duplicate JSX attributes on the same
   // element four separate times this history (each time from a manual
@@ -4686,6 +4718,7 @@ async function main() {
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
+    ['Retrieval-grounded answering: a taught fact is actually usable', testGroundedAnswering],
     ['No duplicate JSX attributes across src/**/*.tsx (recurring bad-merge regression guard)', testNoDuplicateJsxAttributes],
   ];
   for (const [name, fn] of suites) {

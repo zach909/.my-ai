@@ -57,6 +57,15 @@ import type { SkillDefinition } from "../plugin_manager/types.js";
  * - EmpathyEngine: tracks user emotion and alignment
  * - PluginRegistry: manages all plugins and skills
  */
+/**
+ * How similar a taught fact must be to the question before processQuery()
+ * answers from it directly instead of falling through to generation.
+ * Deliberately well above the 0.1 floor used for merely *contextual*
+ * retrieval: this gates giving a stored fact AS the answer, so a weak or
+ * incidental match must not qualify.
+ */
+const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
+
 export class NeuroclawSystem {
   llm: NeuroclawLLM;
   pipeline: NeuroPipeline;
@@ -575,6 +584,14 @@ export class NeuroclawSystem {
     const priorHistory = this.memory
       .retrieve(input, { topK: 3, tag: "chat-turn" })
       .filter(h => h.similarity >= 0.1);
+    // Taught facts are tagged "knowledge", NOT "chat-turn", so the
+    // conversation-history retrieve above can never surface them -- asking
+    // about something the system was explicitly taught searched only the
+    // chat transcript and found nothing. Retrieved separately here so a
+    // lesson can actually inform the answer.
+    const knownFacts = this.memory
+      .retrieve(input, { topK: 3, tag: "knowledge" })
+      .filter(h => h.similarity >= 0.1);
     this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
 
     // 2b. Section 3's *other* alignment veto: EmpathyEngine.shouldVeto() asks
@@ -636,6 +653,34 @@ export class NeuroclawSystem {
     if (route.capability === "recall" && priorHistory.length > 0) {
       const recalled = priorHistory.map(h => `• ${h.item.content}`).join("\n");
       return this.respondDirect(`From our earlier conversation, here's what's relevant:\n${recalled}`, turnImportance);
+    }
+
+    // 5b. Retrieval-grounded answering. When the system has actually been
+    // TAUGHT something that closely matches the question, answer from that
+    // instead of falling through to generation.
+    //
+    // This is not a shortcut around the neural path -- it is a correction of
+    // a real failure. The prose predictor is a character-level n-gram over a
+    // ~270-word hardcoded corpus (models && skills/trainer.ts's
+    // TRAINING_CORPUS), so generation cannot reproduce a fact it was taught
+    // no matter how well the fact was stored; it emits fragments of that
+    // fixed corpus. Returning what the system genuinely knows is strictly
+    // more truthful than sampling noise that ignores it.
+    //
+    // Deliberately gated on a strong match (weak/ambiguous matches still
+    // fall through to generation below) so this answers only when the system
+    // really was told something relevant, rather than dressing up every
+    // loosely-related memory as an answer.
+    const bestFact = knownFacts[0];
+    if (bestFact && bestFact.similarity >= GROUNDED_ANSWER_MIN_SIMILARITY) {
+      const supporting = knownFacts
+        .filter(h => h.similarity >= GROUNDED_ANSWER_MIN_SIMILARITY)
+        .map(h => `• ${h.item.content}`)
+        .join("\n");
+      return this.respondDirect(
+        `From what I've been taught:\n${supporting}`,
+        turnImportance,
+      );
     }
 
     // 6. Run the query through the real neural runner (THORNS intent →
@@ -704,6 +749,13 @@ export class NeuroclawSystem {
 
   private async learnImpl(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
     const result = this.learner.learn(information, opts);
+    // Make the taught information RETRIEVABLE. learn() previously handed the
+    // text to the learner (and, above, the language model) but never put it
+    // in long-term memory, so nothing could ever look it up again -- the one
+    // store processQuery() actually searches when answering had no record
+    // that the lesson happened. Tagged "knowledge" to distinguish a taught
+    // fact from the "chat-turn" transcript of a conversation.
+    this.memory.remember(information, { tags: ["knowledge"], importance: 0.85 });
     // Actually teach the language model the text it was just given.
     // Previously learn() recorded the information in the learner/memory but
     // never fed it to the prose predictor, so the thing generating replies
