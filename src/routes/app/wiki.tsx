@@ -35,6 +35,9 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
+import { Label } from '@/components/ui/label'
+import { Button } from '@/components/ui/button'
+import { BookOpen, Loader2, Search, X } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { Label } from '@/components/ui/label'
 import {
@@ -427,15 +430,32 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
       <div>
         <Card className="p-3">
           <div className="relative mb-2">
+            <Label htmlFor="wiki-search-input" className="sr-only">
+              Search wiki pages
+            </Label>
             <Search className="pointer-events-none absolute left-2 top-1/2 h-3.5 w-3.5 -translate-y-1/2 text-muted-foreground" />
             <Input
+              id="wiki-search-input"
               value={query}
               onChange={e => setQuery(e.target.value)}
               placeholder="Search pages..."
               disabled={pagesLoading}
-              className="h-8 pl-7 text-xs"
-              aria-label="Search wiki pages"
+              className="h-8 pl-7 pr-7 text-xs focus-visible:ring-2 focus-visible:ring-ring"
             />
+            {query && (
+              <button
+                type="button"
+                onClick={() => setQuery('')}
+                aria-label="Clear search filter"
+                title="Clear search filter"
+                className="absolute right-2 top-1/2 -translate-y-1/2 text-muted-foreground hover:text-foreground active:scale-95 transition-transform focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none rounded-sm p-0.5"
+              >
+                <X className="h-3.5 w-3.5" />
+              </button>
+            )}
+          </div>
+          <div role="status" aria-live="polite" className="sr-only">
+            {!pagesLoading && !pagesError && `${filteredPages.length} wiki ${filteredPages.length === 1 ? 'page' : 'pages'} found.`}
           </div>
           <Button
             type="button"
@@ -539,6 +559,38 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
             </p>
           )}
           {!pagesLoading && !pagesError && (
+            <nav className="max-h-[70vh] space-y-0.5 overflow-y-auto" aria-label="Wiki pages">
+              {filteredPages.map(p => (
+                <button
+                  key={p.name}
+                  type="button"
+                  onClick={() => setActiveName(p.name)}
+                  aria-current={activeName === p.name ? 'page' : undefined}
+                  className={`w-full rounded-md px-2 py-1.5 text-left text-xs transition-colors active:scale-[0.98] focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none ${
+                    activeName === p.name
+                      ? 'bg-primary/10 text-primary font-medium'
+                      : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
+                  }`}
+                  title={p.description}
+                >
+                  {p.title || p.name}
+                </button>
+              ))}
+              {filteredPages.length === 0 && (
+                <div className="px-2 py-3 text-xs text-muted-foreground space-y-1">
+                  <p>No pages match "{query}".</p>
+                  <Button
+                    type="button"
+                    variant="ghost"
+                    size="sm"
+                    onClick={() => setQuery('')}
+                    aria-label="Clear search query filter"
+                    className="h-6 px-2 text-[11px] active:scale-95 focus-visible:ring-2 focus-visible:ring-ring"
+                  >
+                    Clear Search Filter
+                  </Button>
+                </div>
+              )}
             <nav className="max-h-[70vh] space-y-3 overflow-y-auto" aria-label="Wiki pages">
               <div className="space-y-0.5">
                 <p
