@@ -22,6 +22,11 @@ import { homedir } from "node:os";
 import { join } from "node:path";
 import type { NeuroLangInterpreter, NeuriNeuron } from "./neuro-lang.js";
 
+export interface SkillIOLayers {
+  inputs: NeuriNeuron[];
+  outputs: NeuriNeuron[];
+}
+
 export interface SkillWikiEntry {
   name: string;
   description: string;
@@ -113,6 +118,25 @@ export class SkillLibrary {
       throw new Error(`Skill "${name}" failed to parse: ${parsed.errors.join("; ")}`);
     }
     return interpreter.evaluate(parsed);
+  }
+
+  /**
+   * Install a skill and split its neurons into dedicated input/output
+   * layers (any neuron the skill's own `.neuri` source tagged
+   * `@role="input"`/`"output"`), the same way MoE experts are a labeled
+   * subset of one shared mesh rather than a separate network -- a caller
+   * that just wants "feed this skill X, read back Y" doesn't need to know
+   * the skill's internal neuron names. Neurons with no `@role` tag are
+   * still installed and still connected; they're just interior, not I/O.
+   * Returns null if the skill has no source on disk (same as install()).
+   */
+  async installWithIOLayers(
+    name: string,
+    interpreter: NeuroLangInterpreter
+  ): Promise<{ neurons: Map<string, NeuriNeuron>; io: SkillIOLayers } | null> {
+    const neurons = await this.install(name, interpreter);
+    if (!neurons) return null;
+    return { neurons, io: interpreter.getIOLayers(neurons) };
   }
 
   /** Parse a wiki report back into structured form. Matches the exact

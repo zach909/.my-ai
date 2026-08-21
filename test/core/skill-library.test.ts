@@ -98,4 +98,62 @@ describe('SkillLibrary', () => {
     const result = await library.install('does-not-exist', interpreter);
     expect(result).toBeNull();
   });
+
+  test('installWithIOLayers() splits a real self-authored skill into its perceive/respond input/output layer', async () => {
+    const interpreter = new NeuroLangInterpreter();
+    const result = await library.installWithIOLayers('translate-documents', interpreter);
+    expect(result).not.toBeNull();
+    expect(result!.io.inputs.map(n => n.name)).toEqual(['translate-documents_perceive']);
+    expect(result!.io.outputs.map(n => n.name)).toEqual(['translate-documents_respond']);
+    // Still an ordinary, all-to-all-connected neuron in the same map -- the
+    // role tag is a label, not a wiring boundary.
+    expect(result!.neurons.get('translate-documents_perceive')!.connections.size).toBeGreaterThan(0);
+  });
+
+  test('installWithIOLayers() returns null for a skill with no source on disk', async () => {
+    const interpreter = new NeuroLangInterpreter();
+    const result = await library.installWithIOLayers('does-not-exist', interpreter);
+    expect(result).toBeNull();
+  });
+});
+
+describe('NeuroLangInterpreter @role= / getIOLayers()', () => {
+  test('"X"@role="input"/"output" tags neurons that still get ordinary default connections', async () => {
+    const interpreter = new NeuroLangInterpreter();
+    const source = [
+      'name="in"',
+      'name="mid"',
+      'name="out"',
+      '"in"@role="input"',
+      '"out"@role="output"',
+    ].join('\n');
+    const parsed = await interpreter.parse(source);
+    expect(parsed.errors).toEqual([]);
+    const neurons = await interpreter.evaluate(parsed);
+
+    expect(neurons.get('in')!.role).toBe('input');
+    expect(neurons.get('out')!.role).toBe('output');
+    expect(neurons.get('mid')!.role).toBeUndefined();
+    // Role is a label, not a wiring boundary: the input neuron still has a
+    // default connection into the untagged interior neuron.
+    expect(neurons.get('in')!.connections.has('mid')).toBe(true);
+
+    const io = interpreter.getIOLayers(neurons);
+    expect(io.inputs.map(n => n.name)).toEqual(['in']);
+    expect(io.outputs.map(n => n.name)).toEqual(['out']);
+  });
+
+  test('@role= round-trips through toJSON()/fromJSON()', async () => {
+    const interpreter = new NeuroLangInterpreter();
+    const parsed = await interpreter.parse('name="in"\n"in"@role="input"');
+    const json = interpreter.toJSON(parsed.neurons);
+    const restored = interpreter.fromJSON(json);
+    expect(restored.neurons.get('in')!.role).toBe('input');
+  });
+
+  test('an invalid @role= value is rejected as unrecognised syntax rather than silently accepted', async () => {
+    const interpreter = new NeuroLangInterpreter();
+    const parsed = await interpreter.parse('name="in"\n"in"@role="sideways"');
+    expect(parsed.errors.length).toBeGreaterThan(0);
+  });
 });
