@@ -1,9 +1,9 @@
-import { MoERouter } from './moe-router.js';
-import { NeuronMesh } from './mesh.js';
-import { HyperDimensionalEngine } from './hyperdimensional.js';
+import { MoERouter } from './onebrain.js';
+import { NeuronMesh } from './onebrain.js';
+import { HyperDimensionalEngine } from './onebrain.js';
 import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
-import { QuantumNeuralNet } from './quantum-net.js';
+import { QuantumNeuralNet } from './onebrain.js';
 import { ZipIOSystem } from './zip-io.js';
 import { AlignmentVeto, type VetoDecision } from './alignment-veto.js';
 import { ElasticCoreBlock } from './elastic-core.js';

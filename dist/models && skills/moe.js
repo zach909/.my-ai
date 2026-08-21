@@ -1,5 +1,5 @@
-import { MoERouter as CoreMoERouter } from './core/moe-router.js';
-import { NeuronMesh } from './core/mesh.js';
+import { MoERouter as CoreMoERouter } from './core/onebrain.js';
+import { NeuronMesh } from './core/onebrain.js';
 export { CoreMoERouter as MoERouter };
 export class MixtureOfExperts {
     constructor(topK = 2, mesh) {

@@ -34,7 +34,7 @@
  * connection is specified.
  */
 
-import type { HyperDimensionalEngine } from './hyperdimensional.js';
+import type { HyperDimensionalEngine } from './onebrain.js';
 import type { ValueRangeAllocator } from './value-range.js';
 import type { ElasticCoreBlock, DefinitionCheckResult } from './elastic-core.js';
 import { CodeToNetCompiler, CodeNet } from './code-to-net.js';

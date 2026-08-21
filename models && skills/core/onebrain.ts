@@ -2863,8 +2863,49 @@ export class HyperDimensionalEngine {
     }));
   }
 
+  /**
+   * Full defensive snapshot of every neuron -- an object spread plus a fresh
+   * Float32Array per neuron, so it is O(N) allocations. Correct when a caller
+   * genuinely needs the whole network's state, but callers that only want one
+   * or two scalars should use getNeuronEnergy()/readNeuronContent() below
+   * instead: reading two output neurons per bit through this was allocating
+   * 2N objects and N typed arrays per bit, then linear-scanning for the two
+   * that mattered.
+   */
   getNeuronStates(): HyperNeuron[] {
     return this.neurons.map(n => ({ ...n, state: new Float32Array(n.state) }));
+  }
+
+  /**
+   * One neuron's current energy, in O(1) with zero allocation. Neuron ids are
+   * dense and assigned in construction order (`id: i`), so the id is also the
+   * array index -- verified rather than assumed, and asserted below so this
+   * silently degrades to a scan rather than returning the wrong neuron if that
+   * ever stops holding.
+   */
+  getNeuronEnergy(id: number): number {
+    return this.neuronById(id)?.energy ?? 0;
+  }
+
+  /**
+   * Copies one neuron's content dimensions (indices 1..dimensions -- index 0 is
+   * the reserved input flag) into `out`, returning how many were written. Lets a
+   * caller read a neuron repeatedly through a single reused buffer instead of
+   * allocating a fresh snapshot per read.
+   */
+  readNeuronContent(id: number, out: Float32Array): number {
+    const neuron = this.neuronById(id);
+    if (!neuron) return 0;
+    const count = Math.min(out.length, neuron.state.length - 1);
+    for (let d = 0; d < count; d++) out[d] = neuron.state[d + 1];
+    return count;
+  }
+
+  /** O(1) id->neuron via dense-index fast path, falling back to a scan if ids ever stop matching indices. */
+  private neuronById(id: number): HyperNeuron | undefined {
+    const direct = this.neurons[id];
+    if (direct !== undefined && direct.id === id) return direct;
+    return this.neurons.find(n => n.id === id);
   }
 
   /** Total configured neuron count (fixed at construction). */
@@ -4246,8 +4287,21 @@ export interface ZipLoopNeuronIds {
 /** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
 const ZIP_LOOP_PULSE = 1;
 
+/** Shared "nothing is externally driven this tick" set for receiveBits(). Safe to share because process()/settle() only ever read the driven set -- nothing on that path adds to or clears it. */
+const ZIP_LOOP_NO_DRIVEN: Set<number> = new Set<number>();
+
 export class ZipLoopInterface {
-  constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds) {}
+  /** Constant per-interface drive sets, built once instead of per bit (see sendBit()). */
+  private readonly drivenBit0: Set<number>;
+  private readonly drivenBit1: Set<number>;
+  /** Reused input vectors; engine dimensions are fixed at construction, so these never need rebuilding. */
+  private pulseScratch: number[] | null = null;
+  private idleScratch: number[] | null = null;
+
+  constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds) {
+    this.drivenBit0 = new Set([ids.bit0In]);
+    this.drivenBit1 = new Set([ids.bit1In]);
+  }
 
   /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
   sendBytes(bytes: Uint8Array): void {
@@ -4258,12 +4312,25 @@ export class ZipLoopInterface {
     }
   }
 
-  /** Drives exactly one of the two input neurons (bit0In for 0, bit1In for 1) for one settle() tick; the other stays undriven. */
+  /**
+   * Drives exactly one of the two input neurons (bit0In for 0, bit1In for 1)
+   * for one settle() tick; the other stays undriven.
+   *
+   * The pulse vector and both single-id driven Sets are built once per
+   * interface and reused, rather than reallocated per bit: streaming a 1KB
+   * payload is 8192 sendBit() calls, and every one of them was allocating a
+   * fresh `dims`-length array plus a fresh Set for values that never change.
+   */
   sendBit(bit: 0 | 1): void {
-    const dims = this.engine.getDimensions();
-    const pulse = new Array(dims).fill(ZIP_LOOP_PULSE);
-    const driven = new Set([bit === 1 ? this.ids.bit1In : this.ids.bit0In]);
-    this.engine.process(pulse, undefined, driven);
+    this.engine.process(this.pulseVector(), undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0);
+  }
+
+  /** Lazily built (engine dimensions are fixed at construction) and reused by every sendBit(). */
+  private pulseVector(): number[] {
+    if (!this.pulseScratch) {
+      this.pulseScratch = new Array(this.engine.getDimensions()).fill(ZIP_LOOP_PULSE);
+    }
+    return this.pulseScratch;
   }
 
   /**
@@ -4274,15 +4341,20 @@ export class ZipLoopInterface {
    * higher energy after a tick is read as that tick's bit.
    */
   receiveBits(count: number): Array<0 | 1> {
-    const bits: Array<0 | 1> = [];
-    const dims = this.engine.getDimensions();
-    const idle = new Array(dims).fill(0);
+    const bits: Array<0 | 1> = new Array(count);
+    // Idle vector and the empty driven-set are constant across every tick, and
+    // each bit only needs two scalars back -- previously this rebuilt both per
+    // iteration and called getNeuronStates(), which deep-copies every neuron
+    // (object spread + fresh Float32Array each), then linear-scanned that
+    // throwaway snapshot twice. That made reading K bits O(K*N) allocations to
+    // recover 2K numbers; getNeuronEnergy() reads each in O(1) with none.
+    if (!this.idleScratch) this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
+    const idle = this.idleScratch;
+    const bit0Out = this.ids.bit0Out;
+    const bit1Out = this.ids.bit1Out;
     for (let i = 0; i < count; i++) {
-      this.engine.process(idle, undefined, new Set());
-      const states = this.engine.getNeuronStates();
-      const e0 = states.find(n => n.id === this.ids.bit0Out)?.energy ?? 0;
-      const e1 = states.find(n => n.id === this.ids.bit1Out)?.energy ?? 0;
-      bits.push(e1 > e0 ? 1 : 0);
+      this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN);
+      bits[i] = this.engine.getNeuronEnergy(bit1Out) > this.engine.getNeuronEnergy(bit0Out) ? 1 : 0;
     }
     return bits;
   }

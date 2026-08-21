@@ -19,7 +19,7 @@ import { LocationPlugin } from '../plugins/location.js';
 import { NotificationsPlugin } from '../plugins/notifications.js';
 import { CodingExtension } from '../plugins/extensions/coding.js';
 import { TerminalPlugin, isBlockedCommand } from '../plugins/terminal.js';
-import { HyperDimensionalEngine } from '../models && skills/core/hyperdimensional.js';
+import { HyperDimensionalEngine } from '../models && skills/core/onebrain.js';
 import { generateArithmeticFacts, scaleForFacts, trainArithmetic, askArithmetic } from '../models && skills/core/math-engine.js';
 import { ScreenshotsPlugin } from '../plugins/screenshots.js';
 import { WikiPlugin } from '../plugins/wiki.js';
