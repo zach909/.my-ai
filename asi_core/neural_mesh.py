@@ -231,6 +231,14 @@ class NeuralMesh:
         """Create all-to-all connections excluding self-connections."""
         scale = 1.0 / math.sqrt(self.n_neurons * self.n_dimensions)
         
+        # Incoming-connection index: target_id -> list of source_ids.
+        # Lets compute_neuron_input iterate a target's incoming sources
+        # directly instead of scanning all N neurons and rebuilding
+        # (source, target) tuple keys in the hot loop.
+        self._incoming_by_target: Dict[int, List[int]] = {
+            tid: [] for tid in range(self.n_neurons)
+        }
+
         for source_id in range(self.n_neurons):
             for target_id in range(self.n_neurons):
                 if source_id != target_id:  # No self-connections
@@ -241,6 +249,8 @@ class NeuralMesh:
                     )
                     conn.initialize_weights(self.n_dimensions, scale, rng=self._rng)
                     self.connections[(source_id, target_id)] = conn
+                    self._incoming_by_target[target_id].append(source_id)
+
     
     def redistribute_vale(self, changes: Dict[int, float]):
         """
@@ -288,10 +298,19 @@ class NeuralMesh:
             if i in self.neurons:
                 neuron = self.neurons[i]
                 neuron.set_input_driven(True)
-                # Set content dimensions (skip dimension 0 which is the flag)
-                for d in range(1, min(len(neuron.state_vector), len(input_pattern) + 1)):
-                    if d <= len(input_pattern):
-                        neuron.state_vector[d] = input_pattern[d - 1] if d - 1 < len(input_pattern) else 0
+                # Set content dimensions (skip dimension 0 which is the flag).
+                # Content dims are state_vector[1:]. We write the provided
+                # input values into the leading content dims and *zero* any
+                # remaining content dims so a short input does not leak
+                # stale random-init noise into the unset dimensions.
+                sv = neuron.state_vector
+                n_provided = len(input_pattern)
+                for d in range(1, len(sv)):
+                    idx = d - 1  # index into input_pattern
+                    if idx < n_provided:
+                        sv[d] = input_pattern[idx]
+                    else:
+                        sv[d] = 0.0
     
     def compute_neuron_input(self, neuron_id: int, active_mask: Optional[Set[int]] = None) -> List[float]:
         """
@@ -304,43 +323,61 @@ class NeuralMesh:
         Returns:
             List of input values for each dimension
         """
-        result = [0.0] * self.n_dimensions
+        nd = self.n_dimensions
+        result = [0.0] * nd
         
         # Check if neuron is active (for expert routing)
         if active_mask is not None and neuron_id not in active_mask:
             return result  # Dormant neuron receives no update
         
         neuron = self.neurons.get(neuron_id)
-        if not neuron:
+        if neuron is None:
             return result
         
-        # Sum contributions from all source neurons
-        for source_id in range(self.n_neurons):
-            if source_id == neuron_id:
-                continue  # Skip self-connection
-            
-            if active_mask is not None and source_id not in active_mask:
+        # Hot-loop locals: avoid repeated attribute lookups. The incoming
+        # index (_incoming_by_target) lets us iterate only this target's
+        # actual sources instead of scanning all N neurons and rebuilding
+        # (source_id, neuron_id) tuple keys each iteration.
+        neurons = self.neurons
+        connections = self.connections
+        sources = self._incoming_by_target.get(neuron_id, ())
+        active_check = active_mask is not None
+        if active_check:
+            am = active_mask  # local alias
+        
+        for source_id in sources:
+            if active_check and source_id not in am:
                 continue  # Skip inactive sources
             
-            source = self.neurons.get(source_id)
-            if not source:
+            source = neurons.get(source_id)
+            if source is None:
                 continue
             
-            conn = self.connections.get((source_id, neuron_id))
-            if not conn:
+            conn = connections.get((source_id, neuron_id))
+            if conn is None:
                 continue
             
-            # Matrix-vector multiplication: result[d] += sum(W[d][s] * source_state[s])
-            for target_d in range(self.n_dimensions):
-                for source_d in range(self.n_dimensions):
-                    if source_d < len(source.state_vector):
-                        result[target_d] += conn.weight_matrix[target_d][source_d] * source.state_vector[source_d]
+            sv = source.state_vector
+            wm = conn.weight_matrix
+            n_src = len(sv)
+            # Matrix-vector multiplication: result[d] += sum(W[d][s] * sv[s]).
+            # The weight matrix is nd x nd; source state may be shorter only
+            # if dimensions changed after construction (defensive min).
+            lim = nd if nd <= n_src else n_src
+            for target_d in range(nd):
+                wrow = wm[target_d]
+                acc = 0.0
+                for source_d in range(lim):
+                    acc += wrow[source_d] * sv[source_d]
+                result[target_d] += acc
         
-        # Add bias (stored as connection from a virtual bias neuron)
-        # For simplicity, we add a small constant bias, plus any explicit
-        # DSL-declared bias for this neuron (see NeuronState.dsl_bias).
+        # Add bias. Dimension 0 is the input flag and is overwritten in
+        # _settle, so adding bias there is wasted work -- only apply bias
+        # to the content dimensions (1..nd-1). The constant 0.01 plus any
+        # explicit DSL-declared bias (see NeuronState.dsl_bias) acts as a
+        # virtual bias-neuron contribution.
         total_bias = 0.01 + neuron.dsl_bias
-        for d in range(self.n_dimensions):
+        for d in range(1, nd):
             result[d] += total_bias
 
         return result
@@ -420,6 +457,8 @@ class NeuralMesh:
             # Update each neuron
             new_states: Dict[int, List[float]] = {}
             max_divergence = 0.0
+            nd = self.n_dimensions
+            tanh = math.tanh
             
             for neuron_id, neuron in self.neurons.items():
                 if active_mask is not None and neuron_id not in active_mask:
@@ -429,27 +468,31 @@ class NeuralMesh:
                 
                 # Compute input from all other neurons
                 neuron_input = self.compute_neuron_input(neuron_id, active_mask)
+                ni_len = len(neuron_input)
                 
-                # Apply nonlinearity (tanh) to each dimension
-                new_state = []
-                for d in range(self.n_dimensions):
-                    if d == 0:
-                        # Dimension 0 is the input flag - maintain it
-                        new_state.append(neuron.input_flag)
-                    else:
-                        # Content dimensions - apply tanh
-                        total_input = neuron_input[d] if d < len(neuron_input) else 0
-                        activated = math.tanh(total_input)
-                        new_state.append(activated)
+                # Apply nonlinearity (tanh) to each dimension. Dimension 0
+                # is the input flag and is carried through unchanged; content
+                # dimensions get tanh(total_input).
+                new_state = [0.0] * nd
+                new_state[0] = neuron.input_flag
+                prev_sv = prev_state[neuron_id]
+                sq_sum = 0.0
+                for d in range(1, nd):
+                    total_input = neuron_input[d] if d < ni_len else 0.0
+                    v = tanh(total_input)
+                    new_state[d] = v
+                    diff = v - prev_sv[d]
+                    sq_sum += diff * diff
                 
                 new_states[neuron_id] = new_state
                 
-                # Calculate divergence from previous state
-                divergence = sum(
-                    (new_state[d] - prev_state[neuron_id][d]) ** 2
-                    for d in range(min(len(new_state), len(prev_state[neuron_id])))
-                ) ** 0.5
-                max_divergence = max(max_divergence, divergence)
+                # Divergence (L2 norm of the state delta) -- folded into the
+                # same pass that builds new_state instead of a second loop.
+                # Dim 0 is identical (input_flag is constant within a settle),
+                # so it contributes 0 and can be skipped.
+                divergence = sq_sum ** 0.5
+                if divergence > max_divergence:
+                    max_divergence = divergence
                 
                 # Track consecutive divergence for live correction
                 if divergence > self.divergence_tolerance:
@@ -472,9 +515,12 @@ class NeuralMesh:
                 consecutive_high_divergence = 0
             
             # Update neuron states
+            denom = nd - 1 if nd > 1 else 1
             for neuron_id, new_state in new_states.items():
-                self.neurons[neuron_id].state_vector = new_state
-                self.neurons[neuron_id].activation = sum(new_state[1:]) / max(1, len(new_state) - 1)
+                neuron = self.neurons[neuron_id]
+                neuron.state_vector = new_state
+                # Mean of content dims (1..nd-1); denom is constant per mesh.
+                neuron.activation = sum(new_state[1:]) / denom
             
             prev_state = new_states
         
@@ -587,6 +633,9 @@ class NeuralMesh:
             neuron = NeuronState(neuron_id=nid, role=NeuronRole.HIDDEN, group=new_group_id, vale=0.0)
             neuron.initialize_state(self.n_dimensions, rng=self._rng)
             self.neurons[nid] = neuron
+            # Ensure the new neuron has an incoming-source bucket so
+            # compute_neuron_input can index it.
+            self._incoming_by_target.setdefault(nid, [])
 
         scale = 1.0 / math.sqrt(self.n_neurons * self.n_dimensions)
 
@@ -594,6 +643,7 @@ class NeuralMesh:
             conn = SynapticConnection(source_id=source_id, target_id=target_id, base_learning_rate=0.01)
             conn.initialize_weights(self.n_dimensions, scale, rng=self._rng)
             self.connections[(source_id, target_id)] = conn
+            self._incoming_by_target.setdefault(target_id, []).append(source_id)
 
         for nid in new_ids:
             for other in existing_ids:
@@ -659,13 +709,22 @@ class NeuralMesh:
             
             # Three-factor learning: pre * post * reward
             delta = effective_lr * pre_act * post_act * reward_signal * dt
-            
-            # Update weight matrix (simplified: scale all weights uniformly)
-            for d1 in range(self.n_dimensions):
-                for d2 in range(self.n_dimensions):
-                    conn.weight_matrix[d1][d2] += delta * 0.01  # Small per-weight adjustment
-                    # Clamp weights
-                    conn.weight_matrix[d1][d2] = max(-1.0, min(1.0, conn.weight_matrix[d1][d2]))
+
+            # Update weight matrix (simplified: scale all weights uniformly).
+            # NOTE: the delta above is already scaled by effective_lr (~0.01),
+            # the activations, reward, and dt (~0.001). The previous code
+            # multiplied by an *extra* 0.01 here, which collapsed the per-step
+            # weight change to ~1e-7 -- so learning was effectively dead
+            # (~10^7 steps to move a weight by 1.0). That extra factor has been
+            # removed so the three-factor Hebbian rule actually updates weights.
+            wm = conn.weight_matrix
+            nd = self.n_dimensions
+            for d1 in range(nd):
+                row = wm[d1]
+                for d2 in range(nd):
+                    v = row[d2] + delta
+                    # Clamp weights to [-1, 1]
+                    row[d2] = -1.0 if v < -1.0 else (1.0 if v > 1.0 else v)
     
     def step_continuous(self, input_vector: List[float]) -> List[float]:
         """
