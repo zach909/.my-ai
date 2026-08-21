@@ -14,6 +14,7 @@ The plugin auto-detects which methods are available and chains fallbacks.
 from __future__ import annotations
 import subprocess, shutil, os, json, time, re
 from typing import Any, Dict, List, Optional, Tuple
+from .plugin_base import Plugin
 from .plugin_terminal import _is_blocked
 
 
@@ -130,7 +131,7 @@ def _get_xinput_devices() -> List[dict]:
     return devices
 
 
-class GnomePlugin:
+class GnomePlugin(Plugin):
     """GNOME workspace management for AI multi-desktop isolation.
 
     The AI gets:
@@ -145,19 +146,28 @@ class GnomePlugin:
       plugin.focus_ai()
       # AI does its work...
       plugin.focus_user()
+
+    Subclasses the shared `Plugin` base (plugin_base.py) like every other
+    plugin here -- it previously duplicated Plugin's tools/call/__init__
+    shape without actually inheriting from it, which meant PluginManager.
+    discover()'s `issubclass(obj, Plugin)` check silently skipped this file
+    entirely: it was never auto-registered, despite being fully implemented.
     """
 
     name = "gnome_desktop"
     description = "GNOME workspace management for AI multi-desktop isolation."
 
     def __init__(self) -> None:
-        self.tools: Dict[str, callable] = {}
+        # Plugin.__init__() calls self._setup() immediately, so this state
+        # must exist before that runs -- set here, then hand off to the
+        # base class for the rest (self.tools = {}, self._setup(), self.
+        # _active = True).
         self._ai_ws: int = -1
         self._user_ws: int = 0
         self._virtual_pointer_id: Optional[int] = None
         self._virtual_keyboard_id: Optional[int] = None
         self._floated_devices: List[dict] = []
-        self._setup()
+        super().__init__()
 
     def _setup(self) -> None:
         self.tools = {
@@ -179,12 +189,6 @@ class GnomePlugin:
             "status":                   self._status,
             "ai_workspace_idx":         lambda: self._ai_ws,
         }
-        self._active = True
-
-    def call(self, tool: str, *args, **kwargs):
-        if tool not in self.tools:
-            raise KeyError(f"Plugin {self.name!r} has no tool {tool!r}")
-        return self.tools[tool](*args, **kwargs)
 
     def status(self):
         return {

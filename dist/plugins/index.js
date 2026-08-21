@@ -24,6 +24,7 @@ import { CodingExtension } from "./extensions/coding.js";
 import { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
 import { ResearchPlugin } from "./research.js";
 import { WikiPlugin } from "./wiki.js";
+import { TerminalPlugin } from "./terminal.js";
 export { LocationPlugin } from "./location.js";
 export { CameraPlugin } from "./camera.js";
 export { MicrophonePlugin } from "./microphone.js";
@@ -50,6 +51,7 @@ export { CodingExtension } from "./extensions/coding.js";
 export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
 export { ResearchPlugin } from "./research.js";
 export { WikiPlugin } from "./wiki.js";
+export { TerminalPlugin } from "./terminal.js";
 export function createPluginInstance(name, definition, skillDefinition) {
     const lower = name.toLowerCase();
     if (lower === "location")
@@ -116,6 +118,8 @@ export function createPluginInstance(name, definition, skillDefinition) {
         return new ResearchPlugin(definition);
     if (lower === "wiki")
         return new WikiPlugin(definition);
+    if (lower === "terminal")
+        return new TerminalPlugin(definition);
     throw new Error(`Unknown plugin: ${name}`);
 }
 const pluginExtensions = {
@@ -151,6 +155,11 @@ const pluginExtensions = {
     "universal-language-skill": { id: "universal-language-skill", name: "Universal Language Skill", type: "skill-expert", capabilities: ["language-support", "code-detection", "neuron-clusters"] },
     research: { id: "research", name: "Research", type: "api-connection", capabilities: ["memory-search", "drive-search", "web-search"] },
     wiki: { id: "wiki", name: "Wiki", type: "api-connection", capabilities: ["wiki"] },
+    // Already referenced as a dispatch candidate in plugin_manager/registry.ts's
+    // intentToPlugins `command` bucket (['self-heal', 'terminal', 'file-system'])
+    // but never actually implemented/registered on the TS side -- 'terminal'
+    // could never be reached even though the routing already named it.
+    terminal: { id: "terminal", name: "Terminal", type: "api-connection", capabilities: ["terminal", "shell"] },
 };
 const allExtensions = Object.entries(pluginExtensions).map(([key, def]) => ({
     id: def.id,

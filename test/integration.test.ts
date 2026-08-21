@@ -17,6 +17,8 @@ import { PluginRegistry } from '../plugin_manager/registry.js';
 import { BrowserPlugin } from '../plugins/browser.js';
 import { LocationPlugin } from '../plugins/location.js';
 import { NotificationsPlugin } from '../plugins/notifications.js';
+import { CodingExtension } from '../plugins/extensions/coding.js';
+import { TerminalPlugin, isBlockedCommand } from '../plugins/terminal.js';
 import { ScreenshotsPlugin } from '../plugins/screenshots.js';
 import { existsSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
@@ -292,6 +294,140 @@ describe('Neuroclaw Integration Tests', () => {
       const drivenArg = propagateSpy.mock.calls[0][0] as Map<number, number>;
       expect(Array.from(drivenArg.keys()).sort()).toEqual([...neuronIds].sort());
       for (const id of neuronIds) expect(drivenArg.get(id)).toBe(1);
+    });
+  });
+
+  describe('CodingExtension: sandboxed execution + live dispatch wiring', () => {
+    let coding: CodingExtension;
+
+    beforeEach(() => {
+      const def = { id: 'coding', name: 'Coding Skill', type: 'skill-expert' as const, capabilities: ['coding'] };
+      const skillDef = { id: 'coding', name: 'Coding Skill', description: 'coding', expertIndex: 0, specialization: 'coding', selfAuthored: false };
+      coding = new CodingExtension(def, skillDef);
+    });
+
+    it('runSandboxed() actually executes JS and returns the real computed result', () => {
+      const out = coding.runSandboxed('2 + 2');
+      expect(out.error).toBeNull();
+      expect(out.result).toBe(4);
+      expect(out.ms).toBeGreaterThanOrEqual(0);
+    });
+
+    it('runSandboxed() has no access to this process -- require/process are undefined inside it', () => {
+      const out = coding.runSandboxed('typeof require + "," + typeof process');
+      expect(out.error).toBeNull();
+      expect(out.result).toBe('undefined,undefined');
+    });
+
+    it('runSandboxed() reports a syntax/runtime error instead of throwing out to the caller', () => {
+      const out = coding.runSandboxed('this is not valid js (((');
+      expect(out.error).not.toBeNull();
+      expect(out.result).toBeUndefined();
+    });
+
+    it('runSandboxed() is killed by the timeout rather than hanging forever on an infinite loop', () => {
+      const out = coding.runSandboxed('while (true) {}');
+      expect(out.error).not.toBeNull();
+      expect(out.ms).toBeLessThan(2000);
+    }, 3000);
+
+    it('onMessage() with a "run:"/"calculate:" prefix reaches runSandboxed() through the live dispatch path (previously unreachable)', async () => {
+      const out = await coding.onMessage('calculate: 6 * 7') as { result: unknown; error: string | null };
+      expect(out.error).toBeNull();
+      expect(out.result).toBe(42);
+    });
+
+    it('onMessage() without an execution prefix still reaches execute()\'s real analysis (also previously unreachable via dispatch)', async () => {
+      const out = await coding.onMessage('function add(a, b) { return a + b; }') as { analysis: { functionCount: number } };
+      expect(out.analysis.functionCount).toBe(1);
+    });
+  });
+
+  describe('TerminalPlugin: real shell execution + destructive-command guardrail', () => {
+    let terminal: TerminalPlugin;
+
+    beforeEach(() => {
+      terminal = new TerminalPlugin({ id: 'terminal', name: 'Terminal', type: 'api-connection', capabilities: ['terminal'] });
+    });
+
+    it('run() actually executes a real command and captures its real stdout', async () => {
+      const out = await terminal.run('echo hello-from-terminal-plugin');
+      expect(out.error).toBeUndefined();
+      expect(out.stdout.trim()).toBe('hello-from-terminal-plugin');
+      expect(out.returncode).toBe(0);
+    });
+
+    it('run() reports a non-zero returncode for a real failing command instead of throwing', async () => {
+      const out = await terminal.run('exit 7');
+      expect(out.returncode).toBe(7);
+    });
+
+    it('run() is killed by its timeout on a real hanging command', async () => {
+      const out = await terminal.run('sleep 5', { timeoutMs: 200 });
+      expect(out.error).toMatch(/Timeout/);
+    }, 3000);
+
+    it('which() finds a real binary that genuinely exists on PATH', () => {
+      expect(terminal.which('node')).not.toBeNull();
+    });
+
+    it('which() returns null (not a throw) for a binary that does not exist', () => {
+      expect(terminal.which('definitely-not-a-real-binary-xyz123')).toBeNull();
+    });
+
+    it('env() blocks a sensitive variable name and redacts sensitive keys from the full listing', () => {
+      process.env.SOME_TEST_API_TOKEN = 'shh';
+      try {
+        expect(() => terminal.env('SOME_TEST_API_TOKEN')).toThrow('Security Error');
+        const all = terminal.env();
+        expect(all.SOME_TEST_API_TOKEN).toBeUndefined();
+      } finally {
+        delete process.env.SOME_TEST_API_TOKEN;
+      }
+    });
+
+    // isBlockedCommand() ported directly from plugin_terminal.py's already-
+    // tested _is_blocked() -- same permutation-proof rm -rf detection.
+    it.each([
+      'rm -rf /',
+      'rm -rf /*',
+      'rm -fr /',
+      'rm -r -f /',
+      'rm --recursive --force /',
+      ':(){ :|:& };:',
+      'mkfs.ext4 /dev/sda1',
+      'shutdown -h now',
+      'dd if=/dev/zero of=/dev/sda',
+    ])('isBlockedCommand() blocks %s', (cmd) => {
+      expect(isBlockedCommand(cmd)).toBe(true);
+    });
+
+    it.each([
+      'echo hello',
+      'ls -la',
+      'rm somefile.txt',
+      'git status',
+    ])('isBlockedCommand() does not block an ordinary command: %s', (cmd) => {
+      expect(isBlockedCommand(cmd)).toBe(false);
+    });
+
+    it('run() actually refuses a destructive command rather than executing it', async () => {
+      const out = await terminal.run('rm -rf /');
+      expect(out.error).toContain('Blocked');
+    });
+
+    it('runBg() throws (does not spawn) for a blocked command', () => {
+      expect(() => terminal.runBg('rm -rf /')).toThrow('Blocked');
+    });
+
+    it('onMessage() with a "run:" prefix reaches real execution through the live dispatch path', async () => {
+      const out = await terminal.onMessage('run: echo dispatched') as { stdout: string };
+      expect(out.stdout.trim()).toBe('dispatched');
+    });
+
+    it('onMessage() without an execution prefix does not attempt to execute the input as a shell command', async () => {
+      const out = await terminal.onMessage('just chatting, not a command');
+      expect(out).toBe('just chatting, not a command');
     });
   });
 
