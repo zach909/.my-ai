@@ -174,7 +174,7 @@ function ChatHistoryPage() {
     const filteredGroups = groups
       .map((g) => {
         const groupNameMatches = g.name.toLowerCase().includes(q)
-        const matchingThreads = g.threads.filter((t) => t.title.toLowerCase().includes(q))
+        const matchingThreads = g.threads.filter((t) => (t.title || 'untitled').toLowerCase().includes(q))
         if (groupNameMatches) {
           return g
         }
@@ -185,7 +185,7 @@ function ChatHistoryPage() {
       })
       .filter((g): g is GroupWithThreads => g !== null)
 
-    const filteredUngrouped = ungrouped.filter((t) => t.title.toLowerCase().includes(q))
+    const filteredUngrouped = ungrouped.filter((t) => (t.title || 'untitled').toLowerCase().includes(q))
 
     const totalFilteredChats =
       filteredGroups.reduce((s, g) => s + g.threads.length, 0) + filteredUngrouped.length
@@ -224,6 +224,31 @@ function ChatHistoryPage() {
       </div>
 
       {totalChats > 0 && (
+        <div className="relative max-w-sm">
+          <Label htmlFor="search-history-input" className="sr-only">
+            Filter chat history by title or group
+          </Label>
+          <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
+          <Input
+            id="search-history-input"
+            type="text"
+            value={searchQuery}
+            onChange={(e) => setSearchQuery(e.target.value)}
+            placeholder="Filter past chats or topic groups..."
+            className="pl-8 pr-8 h-8 text-xs focus-visible:ring-2 focus-visible:ring-primary"
+            aria-label="Filter chat history by title or group"
+          />
+          {searchQuery && (
+            <button
+              type="button"
+              onClick={() => setSearchQuery('')}
+              className="absolute right-2 top-1/2 -translate-y-1/2 rounded-xs p-0.5 text-muted-foreground hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+              aria-label="Clear filter query"
+              title="Clear filter query"
+            >
+              <X size={13} />
+            </button>
+          )}
         <div className="space-y-1.5">
           <Label htmlFor="chat-history-search" className="sr-only">
             Filter chat history
