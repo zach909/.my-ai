@@ -232,6 +232,69 @@ describe('Neuroclaw Integration Tests', () => {
     });
   });
 
+  describe('Plugins as fused neurons (Section "Plugins")', () => {
+    // register() gives every plugin real neurons in the shared MoE mesh,
+    // wired all-to-all into everything else already there -- "plugins
+    // become part of the neural system rather than simply being separate
+    // programs the AI talks to", not just a definitions/instance pair in
+    // two Maps.
+    it('register() allocates real, non-overlapping mesh neurons for each plugin', () => {
+      plugins.register(
+        { id: 'notify-test', name: 'Notify', type: 'api-connection', capabilities: ['notifications'] },
+        new NotificationsPlugin({ id: 'notify-test', name: 'Notify', type: 'api-connection', capabilities: ['notifications'] })
+      );
+      plugins.register(
+        { id: 'browser-test', name: 'Browser', type: 'api-connection', capabilities: ['browser'] },
+        new BrowserPlugin({ id: 'browser-test', name: 'Browser', type: 'api-connection', capabilities: ['browser'] })
+      );
+      const notifyIds = plugins.getPluginNeuronIds('notify-test');
+      const browserIds = plugins.getPluginNeuronIds('browser-test');
+      expect(notifyIds?.length).toBeGreaterThan(0);
+      expect(browserIds?.length).toBeGreaterThan(0);
+      // Distinct neurons, not the same ones relabeled.
+      expect(notifyIds!.some(id => browserIds!.includes(id))).toBe(false);
+      // Genuinely present in the shared mesh's expert roster, not just a
+      // local bookkeeping map -- same MixtureOfExperts a skill-expert uses.
+      expect(plugins.getMoE().getExpert('notify-test')?.neuronIds).toEqual(notifyIds);
+    });
+
+    it('a skill-expert plugin gets a full multi-neuron expert group; an api-connection plugin gets one presence neuron', () => {
+      plugins.register(
+        { id: 'coder-test', name: 'Coder', type: 'skill-expert', capabilities: ['coding'] },
+        new NotificationsPlugin({ id: 'coder-test', name: 'Coder', type: 'skill-expert', capabilities: ['coding'] })
+      );
+      plugins.register(
+        { id: 'notify-test2', name: 'Notify', type: 'api-connection', capabilities: ['notifications'] },
+        new NotificationsPlugin({ id: 'notify-test2', name: 'Notify', type: 'api-connection', capabilities: ['notifications'] })
+      );
+      expect(plugins.getPluginNeuronIds('coder-test')?.length).toBe(4);
+      expect(plugins.getPluginNeuronIds('notify-test2')?.length).toBe(1);
+    });
+
+    it('dispatching to a plugin that actually answers genuinely propagates the shared mesh with that plugin\'s own neurons driven', async () => {
+      const def = { id: 'notify-fire', name: 'Notify', type: 'api-connection' as const, capabilities: ['notifications'] };
+      plugins.register(def, new NotificationsPlugin(def));
+      await plugins.activate('notify-fire');
+      plugins.setIntentMap({ 'test-intent': ['notify-fire'] });
+
+      const neuronIds = plugins.getPluginNeuronIds('notify-fire')!;
+      const mesh = plugins.getMoE().getMesh();
+      const propagateSpy = vi.spyOn(mesh, 'propagate');
+
+      const result = await plugins.dispatch('list my notifications', 'test-intent');
+
+      // The default BasePlugin.onMessage() echoes the input back (never
+      // null), so this real dispatch should have reached firePluginNeurons()
+      // -- confirmed by inspecting the actual call it made to the real
+      // mesh, not a mock standing in for it.
+      expect(result).not.toBeNull();
+      expect(propagateSpy).toHaveBeenCalledTimes(1);
+      const drivenArg = propagateSpy.mock.calls[0][0] as Map<number, number>;
+      expect(Array.from(drivenArg.keys()).sort()).toEqual([...neuronIds].sort());
+      for (const id of neuronIds) expect(drivenArg.get(id)).toBe(1);
+    });
+  });
+
   describe('Browser Plugin Security', () => {
     let browserPlugin: BrowserPlugin;
 
