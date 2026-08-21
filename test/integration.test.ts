@@ -23,9 +23,11 @@ import { HyperDimensionalEngine } from '../models && skills/core/hyperdimensiona
 import { generateArithmeticFacts, scaleForFacts, trainArithmetic, askArithmetic } from '../models && skills/core/math-engine.js';
 import { ScreenshotsPlugin } from '../plugins/screenshots.js';
 import { WikiPlugin } from '../plugins/wiki.js';
+import { publishWikiPage, deleteWikiPage, listWikiBackups, restoreWikiBackup, readWikiPage } from '../models && skills/core/wiki-store.js';
+import { isWikiPublicRoute } from '../interface/web-server.js';
 import { SelfHealExtension, SkillMakerExtension } from '../plugins/extensions/index.js';
 import { FileSystemPlugin } from '../plugins/file-system.js';
-import { existsSync, rmSync, mkdtempSync } from 'node:fs';
+import { existsSync, rmSync, mkdtempSync, mkdirSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -390,6 +392,124 @@ describe('Neuroclaw Integration Tests', () => {
       const target = pages[0];
       const result = await plugin.onMessage(`wiki search ${target.title || target.name}`) as string;
       expect(result).toContain('match');
+    });
+  });
+
+  describe('Wiki public-access safety boundary: read + create-new only, never destroy', () => {
+    // "make bot wiki accessible for everyone... if I still want them to be
+    // able to upload their things [but] I don't want them to have admin
+    // access to the whole thing and I don't want them to be able to
+    // delete everything" -- isWikiPublicRoute() is the exact predicate
+    // interface/web-server.ts's handleRequest() uses to decide which
+    // requests skip the password gate on a non-localhost bind. Testing it
+    // directly (rather than via a live server) covers exactly what must
+    // never accidentally widen.
+    it('exempts reading the wiki list and an individual page', () => {
+      expect(isWikiPublicRoute('/api/wiki', 'GET')).toBe(true);
+      expect(isWikiPublicRoute('/api/wiki/some-page', 'GET')).toBe(true);
+    });
+
+    it('exempts creating via POST /api/wiki (the handler itself still re-checks auth for an existing name)', () => {
+      expect(isWikiPublicRoute('/api/wiki', 'POST')).toBe(true);
+    });
+
+    it('never exempts deleting a page -- "I don\'t want them to be able to delete everything"', () => {
+      expect(isWikiPublicRoute('/api/wiki/some-page', 'DELETE')).toBe(false);
+    });
+
+    it('never exempts restoring a backup (a write, gated like any other)', () => {
+      expect(isWikiPublicRoute('/api/wiki/some-page/restore', 'POST')).toBe(false);
+    });
+
+    it('never exempts listing backups (history of an existing page, not public read-the-current-page)', () => {
+      expect(isWikiPublicRoute('/api/wiki/some-page/backups', 'GET')).toBe(false);
+    });
+
+    it('never exempts any non-wiki route -- "I don\'t want them to have admin access to the whole thing"', () => {
+      expect(isWikiPublicRoute('/api/status', 'GET')).toBe(false);
+      expect(isWikiPublicRoute('/api/plugins', 'GET')).toBe(false);
+      expect(isWikiPublicRoute('/api/skill-uploads', 'GET')).toBe(false);
+      expect(isWikiPublicRoute('/api/skill-uploads/some-package/install-skill', 'POST')).toBe(false);
+      expect(isWikiPublicRoute('/api/query', 'POST')).toBe(false);
+    });
+
+    it('rejects a path-traversal-shaped wiki name the same as an ordinary GET (SAFE_NAME still applies downstream)', () => {
+      // isWikiPublicRoute() itself only recognizes the safe-name shape, so
+      // "/api/wiki/../secret" simply doesn't match either GET pattern and
+      // falls through to the normal auth gate instead of being treated as
+      // a public wiki read.
+      expect(isWikiPublicRoute('/api/wiki/../secret', 'GET')).toBe(false);
+    });
+  });
+
+  describe('Wiki backups: overwriting/deleting a bot page is no longer unrecoverable', () => {
+    let originalCwd: string;
+    let tmpRepoRoot: string;
+
+    beforeEach(() => {
+      originalCwd = process.cwd();
+      tmpRepoRoot = mkdtempSync(join(tmpdir(), 'neuroclaw-wiki-backup-test-'));
+      mkdirSync(join(tmpRepoRoot, 'wiki'), { recursive: true });
+      // wiki-store.ts resolves its directories from process.cwd() with no
+      // injectable override (a pre-existing gap, not something this test
+      // works around by mocking) -- chdir for the duration of each test,
+      // always restored in afterEach even if an assertion throws.
+      process.chdir(tmpRepoRoot);
+    });
+
+    afterEach(() => {
+      process.chdir(originalCwd);
+      rmSync(tmpRepoRoot, { recursive: true, force: true });
+    });
+
+    it('publishing a page for the first time creates zero backups (nothing existed to back up)', () => {
+      publishWikiPage('greeting', 'Hello', 'First version.');
+      expect(listWikiBackups('greeting')).toEqual([]);
+    });
+
+    it('overwriting an existing page backs up the content it replaces', () => {
+      publishWikiPage('greeting', 'Hello', 'First version.');
+      publishWikiPage('greeting', 'Hello', 'Second version.');
+      const backups = listWikiBackups('greeting');
+      expect(backups.length).toBe(1);
+      const raw = readFileSync(
+        join(tmpRepoRoot, 'wiki', 'bot', '.backups', 'greeting', `${backups[0].timestamp}.md`),
+        'utf8'
+      );
+      expect(raw).toContain('First version.');
+      // The live page is the new content, not the backup.
+      expect(readWikiPage('greeting')!.content).toContain('Second version.');
+    });
+
+    it('deleting a page backs it up first -- the delete is no longer unrecoverable', () => {
+      publishWikiPage('greeting', 'Hello', 'Will be deleted.');
+      deleteWikiPage('greeting');
+      expect(readWikiPage('greeting')).toBeNull();
+      const backups = listWikiBackups('greeting');
+      expect(backups.length).toBe(1);
+    });
+
+    it('restoreWikiBackup() brings the page back with its backed-up content', () => {
+      publishWikiPage('greeting', 'Hello', 'Original content.');
+      publishWikiPage('greeting', 'Hello', 'Overwritten content.');
+      const [backup] = listWikiBackups('greeting');
+      const restored = restoreWikiBackup('greeting', backup.timestamp);
+      expect(restored.content).toContain('Original content.');
+      expect(readWikiPage('greeting')!.content).toContain('Original content.');
+    });
+
+    it('restoreWikiBackup() itself backs up what it replaces -- a restore is never itself unrecoverable', () => {
+      publishWikiPage('greeting', 'Hello', 'Version A.');
+      publishWikiPage('greeting', 'Hello', 'Version B.');
+      const [backupA] = listWikiBackups('greeting');
+      restoreWikiBackup('greeting', backupA.timestamp); // page is back to "Version A."
+      const backupsAfterRestore = listWikiBackups('greeting');
+      expect(backupsAfterRestore.length).toBe(2); // Version A's own backup, plus Version B backed up by the restore
+    });
+
+    it('a page that was never edited/deleted has no backups', () => {
+      publishWikiPage('untouched', 'Untouched', 'Never modified.');
+      expect(listWikiBackups('untouched')).toEqual([]);
     });
   });
 
