@@ -305,19 +305,12 @@ describe('Neuroclaw Integration Tests', () => {
   });
 
   describe('dispatch() routing fixes: greedy plugins no longer silently block their neighbors', () => {
-    let fakeHome: string;
-    let originalHome: string | undefined;
-
-    beforeEach(() => {
-      fakeHome = mkdtempSync(join(tmpdir(), 'neuroclaw-dispatch-routing-test-'));
-      originalHome = process.env.HOME;
-      process.env.HOME = fakeHome;
-    });
-
-    afterEach(() => {
-      process.env.HOME = originalHome;
-      rmSync(fakeHome, { recursive: true, force: true });
-    });
+    // SkillMakerExtension/PluginMakerExtension write self-authored output
+    // via generatedDir() (plugins/extensions/index.ts), which resolves
+    // under NEUROCLAW_GENERATED_DIR -- a real scratch directory vitest.
+    // config.ts sets for this whole run -- so the one test below that
+    // actually creates a skill needs no cleanup of its own; nothing here
+    // touches this repo's real generated/.
 
     it("self-heal no longer swallows every 'command'-intent message -- it returns null for anything that isn't literally heal/status", async () => {
       const def = { id: 'self-heal', name: 'Self Heal', type: 'api-connection' as const, capabilities: ['self-heal'] };
@@ -443,73 +436,86 @@ describe('Neuroclaw Integration Tests', () => {
   });
 
   describe('Wiki backups: overwriting/deleting a bot page is no longer unrecoverable', () => {
-    let originalCwd: string;
-    let tmpRepoRoot: string;
+    // wiki-store.ts resolves wiki/bot/ from process.cwd() with no
+    // injectable override, and process.cwd() is genuinely process-wide
+    // state -- chdir'ing it for a test's duration previously leaked into
+    // *other* test files running concurrently in the same worker (a real
+    // failure this caused: research-security.test.ts's default-cwd test
+    // started scanning whatever directory a concurrently-running chdir
+    // had switched to, and hung). No chdir anywhere here: each test uses
+    // a distinctively-named page written into (and precisely deleted
+    // from) this repo's own real wiki/bot/, via exact known paths only --
+    // never a directory-wide wipe that could touch real content.
+    const testPageNames: string[] = [];
 
-    beforeEach(() => {
-      originalCwd = process.cwd();
-      tmpRepoRoot = mkdtempSync(join(tmpdir(), 'neuroclaw-wiki-backup-test-'));
-      mkdirSync(join(tmpRepoRoot, 'wiki'), { recursive: true });
-      // wiki-store.ts resolves its directories from process.cwd() with no
-      // injectable override (a pre-existing gap, not something this test
-      // works around by mocking) -- chdir for the duration of each test,
-      // always restored in afterEach even if an assertion throws.
-      process.chdir(tmpRepoRoot);
-    });
+    function freshName(): string {
+      const name = `zzz-test-wiki-backup-fixture-${Date.now()}-${Math.floor(Math.random() * 1e6)}`;
+      testPageNames.push(name);
+      return name;
+    }
 
     afterEach(() => {
-      process.chdir(originalCwd);
-      rmSync(tmpRepoRoot, { recursive: true, force: true });
+      while (testPageNames.length > 0) {
+        const name = testPageNames.pop()!;
+        try { deleteWikiPage(name); } catch { /* already gone */ }
+        rmSync(join(process.cwd(), 'wiki', 'bot', '.backups', name), { recursive: true, force: true });
+      }
     });
 
     it('publishing a page for the first time creates zero backups (nothing existed to back up)', () => {
-      publishWikiPage('greeting', 'Hello', 'First version.');
-      expect(listWikiBackups('greeting')).toEqual([]);
+      const name = freshName();
+      publishWikiPage(name, 'Hello', 'First version.');
+      expect(listWikiBackups(name)).toEqual([]);
     });
 
     it('overwriting an existing page backs up the content it replaces', () => {
-      publishWikiPage('greeting', 'Hello', 'First version.');
-      publishWikiPage('greeting', 'Hello', 'Second version.');
-      const backups = listWikiBackups('greeting');
+      const name = freshName();
+      publishWikiPage(name, 'Hello', 'First version.');
+      publishWikiPage(name, 'Hello', 'Second version.');
+      const backups = listWikiBackups(name);
       expect(backups.length).toBe(1);
       const raw = readFileSync(
-        join(tmpRepoRoot, 'wiki', 'bot', '.backups', 'greeting', `${backups[0].timestamp}.md`),
+        join(process.cwd(), 'wiki', 'bot', '.backups', name, `${backups[0].timestamp}.md`),
         'utf8'
       );
       expect(raw).toContain('First version.');
       // The live page is the new content, not the backup.
-      expect(readWikiPage('greeting')!.content).toContain('Second version.');
+      expect(readWikiPage(name)!.content).toContain('Second version.');
     });
 
     it('deleting a page backs it up first -- the delete is no longer unrecoverable', () => {
-      publishWikiPage('greeting', 'Hello', 'Will be deleted.');
-      deleteWikiPage('greeting');
-      expect(readWikiPage('greeting')).toBeNull();
-      const backups = listWikiBackups('greeting');
+      const name = freshName();
+      publishWikiPage(name, 'Hello', 'Will be deleted.');
+      deleteWikiPage(name);
+      expect(readWikiPage(name)).toBeNull();
+      const backups = listWikiBackups(name);
       expect(backups.length).toBe(1);
     });
 
     it('restoreWikiBackup() brings the page back with its backed-up content', () => {
-      publishWikiPage('greeting', 'Hello', 'Original content.');
-      publishWikiPage('greeting', 'Hello', 'Overwritten content.');
-      const [backup] = listWikiBackups('greeting');
-      const restored = restoreWikiBackup('greeting', backup.timestamp);
+      const name = freshName();
+      publishWikiPage(name, 'Hello', 'Original content.');
+      publishWikiPage(name, 'Hello', 'Overwritten content.');
+      const [backup] = listWikiBackups(name);
+      const restored = restoreWikiBackup(name, backup.timestamp);
       expect(restored.content).toContain('Original content.');
-      expect(readWikiPage('greeting')!.content).toContain('Original content.');
+      expect(readWikiPage(name)!.content).toContain('Original content.');
     });
 
     it('restoreWikiBackup() itself backs up what it replaces -- a restore is never itself unrecoverable', () => {
-      publishWikiPage('greeting', 'Hello', 'Version A.');
-      publishWikiPage('greeting', 'Hello', 'Version B.');
-      const [backupA] = listWikiBackups('greeting');
-      restoreWikiBackup('greeting', backupA.timestamp); // page is back to "Version A."
-      const backupsAfterRestore = listWikiBackups('greeting');
+      const name = freshName();
+      publishWikiPage(name, 'Hello', 'Version A.');
+      publishWikiPage(name, 'Hello', 'Version B.');
+      const [backupA] = listWikiBackups(name);
+      restoreWikiBackup(name, backupA.timestamp); // page is back to "Version A."
+      const backupsAfterRestore = listWikiBackups(name);
       expect(backupsAfterRestore.length).toBe(2); // Version A's own backup, plus Version B backed up by the restore
     });
 
     it('a page that was never edited/deleted has no backups', () => {
-      publishWikiPage('untouched', 'Untouched', 'Never modified.');
-      expect(listWikiBackups('untouched')).toEqual([]);
+      const name = freshName();
+      publishWikiPage(name, 'Untouched', 'Never modified.');
+      expect(listWikiBackups(name)).toEqual([]);
     });
   });
 

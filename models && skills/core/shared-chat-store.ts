@@ -23,6 +23,15 @@
  * createdAt/lastMessageAt) and <rootDir>/rooms/<id>/messages.json (one
  * room's message log) -- same directory-per-thing convention as
  * skill-upload-store.ts's extension-builder/extensions/<name>/.
+ *
+ * Deliberately homedir-relative, NOT under generated/ alongside skills/
+ * plugins/prompts/wiki: those are static, self-authored artifacts meant
+ * to be committed and published like any other repo change. This is live,
+ * ephemeral conversation between real people talking to each other and to
+ * the AI on one running server -- "it is just people talking", not a
+ * generated artifact meant for git history. "Public" for chat means
+ * "anyone who reaches this server sees the same room" (remoteAccessLock
+ * still governs who that is), not "committed to GitHub".
  */
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
