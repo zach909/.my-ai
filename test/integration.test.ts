@@ -22,7 +22,10 @@ import { TerminalPlugin, isBlockedCommand } from '../plugins/terminal.js';
 import { HyperDimensionalEngine } from '../models && skills/core/hyperdimensional.js';
 import { generateArithmeticFacts, scaleForFacts, trainArithmetic, askArithmetic } from '../models && skills/core/math-engine.js';
 import { ScreenshotsPlugin } from '../plugins/screenshots.js';
-import { existsSync, rmSync } from 'node:fs';
+import { WikiPlugin } from '../plugins/wiki.js';
+import { SelfHealExtension, SkillMakerExtension } from '../plugins/extensions/index.js';
+import { FileSystemPlugin } from '../plugins/file-system.js';
+import { existsSync, rmSync, mkdtempSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 
@@ -299,6 +302,97 @@ describe('Neuroclaw Integration Tests', () => {
     });
   });
 
+  describe('dispatch() routing fixes: greedy plugins no longer silently block their neighbors', () => {
+    let fakeHome: string;
+    let originalHome: string | undefined;
+
+    beforeEach(() => {
+      fakeHome = mkdtempSync(join(tmpdir(), 'neuroclaw-dispatch-routing-test-'));
+      originalHome = process.env.HOME;
+      process.env.HOME = fakeHome;
+    });
+
+    afterEach(() => {
+      process.env.HOME = originalHome;
+      rmSync(fakeHome, { recursive: true, force: true });
+    });
+
+    it("self-heal no longer swallows every 'command'-intent message -- it returns null for anything that isn't literally heal/status", async () => {
+      const def = { id: 'self-heal', name: 'Self Heal', type: 'api-connection' as const, capabilities: ['self-heal'] };
+      const plugin = new SelfHealExtension(def);
+      expect(await plugin.onMessage('run: echo hi')).toBeNull();
+      expect(await plugin.onMessage('make a skill for sorting')).toBeNull();
+      expect(await plugin.onMessage('heal')).not.toBeNull();
+      expect(await plugin.onMessage('status')).not.toBeNull();
+    });
+
+    it("dispatch('run: echo through-command-bucket', 'command') actually reaches TerminalPlugin now that self-heal correctly declines", async () => {
+      const registry = new PluginRegistry();
+      const selfHealDef = { id: 'self-heal', name: 'Self Heal', type: 'api-connection' as const, capabilities: ['self-heal'] };
+      const terminalDef = { id: 'terminal', name: 'Terminal', type: 'api-connection' as const, capabilities: ['terminal'] };
+      const fsDef = { id: 'file-system', name: 'File System', type: 'api-connection' as const, capabilities: ['file-system'] };
+      registry.register(selfHealDef, new SelfHealExtension(selfHealDef));
+      registry.register(terminalDef, new TerminalPlugin(terminalDef));
+      registry.register(fsDef, new FileSystemPlugin(fsDef));
+      await registry.activate('self-heal');
+      await registry.activate('terminal');
+      await registry.activate('file-system');
+
+      const result = await registry.dispatch('run: echo through-command-bucket', 'command');
+      expect(result).toContain('through-command-bucket');
+    });
+
+    it("a message explicitly naming 'skill' reaches skill-maker even from the generic 'command' intent (where skill-maker isn't even a listed candidate)", async () => {
+      const registry = new PluginRegistry();
+      const skillDef = { id: 'skill-maker', name: 'Skill Maker', type: 'api-connection' as const, capabilities: ['skill-maker'] };
+      registry.register(skillDef, new SkillMakerExtension(skillDef));
+      await registry.activate('skill-maker');
+
+      const result = await registry.dispatch('make a skill for sorting numbers', 'command');
+      expect(result).not.toBeNull();
+      expect(result).toContain('skill-maker');
+      expect(result).toContain('make-a-skill-for-sorting-numbers');
+    });
+
+    it("a message explicitly naming 'wiki' never reaches skill-maker, even from the 'creation' intent where skill-maker is normally first and always succeeds", async () => {
+      const registry = new PluginRegistry();
+      const skillDef = { id: 'skill-maker', name: 'Skill Maker', type: 'api-connection' as const, capabilities: ['skill-maker'] };
+      const wikiDef = { id: 'wiki', name: 'Wiki', type: 'api-connection' as const, capabilities: ['wiki'] };
+      registry.register(skillDef, new SkillMakerExtension(skillDef));
+      registry.register(wikiDef, new WikiPlugin(wikiDef));
+      await registry.activate('skill-maker');
+      await registry.activate('wiki');
+
+      // No exact "wiki publish ..." syntax here, so WikiPlugin itself
+      // declines too -- the point is that skill-maker, despite being first
+      // in the 'creation' bucket and always succeeding, must NOT be the one
+      // that answers a wiki-directed message.
+      const result = await registry.dispatch('write a wiki page about dogs', 'creation');
+      expect(result).toBeNull();
+    });
+
+    it('WikiPlugin.search() finds a real existing wiki page by keyword overlap (read-only against the repo\'s real wiki/ content)', async () => {
+      const wikiDef = { id: 'wiki', name: 'Wiki', type: 'api-connection' as const, capabilities: ['wiki'] };
+      const plugin = new WikiPlugin(wikiDef);
+      const pages = await plugin.list();
+      expect(pages.length).toBeGreaterThan(0);
+      // Search using a real page's own title as the query -- it must be its own top hit.
+      const target = pages[0];
+      const hits = await plugin.search(target.title || target.name);
+      expect(hits.length).toBeGreaterThan(0);
+      expect(hits[0].page.name).toBe(target.name);
+    });
+
+    it('"wiki search <query>" reaches WikiPlugin.search() through onMessage()', async () => {
+      const wikiDef = { id: 'wiki', name: 'Wiki', type: 'api-connection' as const, capabilities: ['wiki'] };
+      const plugin = new WikiPlugin(wikiDef);
+      const pages = await plugin.list();
+      const target = pages[0];
+      const result = await plugin.onMessage(`wiki search ${target.title || target.name}`) as string;
+      expect(result).toContain('match');
+    });
+  });
+
   describe('CodingExtension: sandboxed execution + live dispatch wiring', () => {
     let coding: CodingExtension;
 
@@ -427,9 +521,14 @@ describe('Neuroclaw Integration Tests', () => {
       expect(out.stdout.trim()).toBe('dispatched');
     });
 
-    it('onMessage() without an execution prefix does not attempt to execute the input as a shell command', async () => {
+    it('onMessage() also accepts "run <cmd>" with no colon', async () => {
+      const out = await terminal.onMessage('run echo no-colon-needed') as { stdout: string };
+      expect(out.stdout.trim()).toBe('no-colon-needed');
+    });
+
+    it('onMessage() without an execution prefix returns null so dispatch() falls through to the next plugin, rather than swallowing the message', async () => {
       const out = await terminal.onMessage('just chatting, not a command');
-      expect(out).toBe('just chatting, not a command');
+      expect(out).toBeNull();
     });
   });
 

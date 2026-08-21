@@ -98,11 +98,20 @@ export class TerminalPlugin extends BasePlugin {
         }
         return safeEnv;
     }
+    /**
+     * Colon is optional -- "run: ls -la" and "run ls -la" both work, so
+     * "you say run and then you say [the] command" (however it's punctuated)
+     * reaches real execution. Returns null (not the echoed input) when the
+     * message isn't actually a run-prefixed command, so dispatch()'s
+     * 'command' bucket correctly falls through to the next candidate
+     * (skill-maker/wiki/etc for "make a skill"-shaped messages) instead of
+     * this plugin trivially "succeeding" on everything routed to it.
+     */
     async onMessage(message) {
         const input = typeof message === "string" ? message : String(message ?? "");
-        const m = input.match(/^(run|exec|execute|shell|terminal)\s*:\s*([\s\S]+)$/i);
+        const m = input.match(/^(run|exec|execute|shell|terminal)\s*:?\s+([\s\S]+)$/i);
         if (!m)
-            return input;
+            return null;
         return this.run(m[2]);
     }
     async onHealthCheck() {

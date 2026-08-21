@@ -391,13 +391,27 @@ export class GameExtension extends BasePlugin {
     async onHealthCheck() { return true; }
 }
 export class SelfHealExtension extends BasePlugin {
+    /**
+     * Registry.dispatch()'s 'command' intent bucket lists candidates in a
+     * fixed order (['self-heal', 'terminal', 'file-system']) and stops at
+     * the first non-null onMessage() result. Returning a generic "heal or
+     * status" message for literally any unrecognized input -- the previous
+     * behavior -- meant self-heal, being first, silently swallowed every
+     * "command"-intent message (including a real "run: <shell command>",
+     * THORNS classifies both "run" and "self-heal"'s own verbs the same
+     * way): 'terminal'/'file-system' could never actually be reached. Same
+     * disease as the skill-maker-always-succeeds bug documented on
+     * registry.ts's dispatch() -- returning null for anything that isn't
+     * genuinely a heal/status request lets dispatch() fall through to the
+     * next real candidate instead.
+     */
     async onMessage(message) {
         const input = String(message ?? '').trim().toLowerCase();
         if (input === 'heal' || input === 'self-heal' || input === 'self heal')
             return this.heal();
         if (input === 'status' || input === 'health')
             return this.getHealthStatus();
-        return { type: 'self-heal', message: 'heal or status' };
+        return null;
     }
     async heal() {
         const actions = [];

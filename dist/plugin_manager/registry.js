@@ -153,7 +153,38 @@ export class PluginRegistry {
         };
         // Unmapped intents (plain conversation) get no plugin candidates — the
         // runner falls through to full neural generation instead of a web search.
-        const candidates = intentToPlugins[intent] ?? [];
+        const baseCandidates = intentToPlugins[intent] ?? [];
+        // THORNS' 'command'/'creation' intents come from generic verbs ("make",
+        // "create", "write", ...) with no sense of WHAT is being made -- e.g.
+        // "make a skill for X" lands as 'command' intent, where skill-maker
+        // isn't even a candidate, so it could never be reached from that
+        // ordinary phrasing (only from the dedicated 'skill-creation' intent a
+        // different, non-chat call site uses). Reading the message's own
+        // explicit target noun ("skill"/"plugin"/"extension"/"wiki") lets a
+        // plain chat message reach the right one-shot creator without needing
+        // the caller to already know which specific intent string to pass.
+        // "wiki" takes priority and *excludes* skill-maker/plugin-maker
+        // entirely when present: both are unconditionally greedy (return
+        // non-null for literally any input, by design, for their own dedicated
+        // intents -- see the skill-creation/extension-creation comment above),
+        // so a wiki-directed message reaching either of them first would
+        // silently create a bogus skill/plugin file instead of falling through
+        // to WikiPlugin (or, failing its exact syntax, to null/neural
+        // generation) -- returning nothing is a far smaller error than
+        // fabricating an unwanted file on disk.
+        let candidates = baseCandidates;
+        if (intent === 'command' || intent === 'creation') {
+            const lower = input.toLowerCase();
+            if (/\bwiki\b/.test(lower)) {
+                candidates = ['wiki', ...baseCandidates.filter(c => c !== 'skill-maker' && c !== 'plugin-maker')];
+            }
+            else if (/\bplugin\b|\bextension\b/.test(lower)) {
+                candidates = ['plugin-maker', ...baseCandidates.filter(c => c !== 'skill-maker')];
+            }
+            else if (/\bskill\b/.test(lower)) {
+                candidates = ['skill-maker', ...baseCandidates];
+            }
+        }
         for (const pluginId of candidates) {
             const plugin = this.plugins.get(pluginId);
             if (plugin && this.activePlugins.has(pluginId)) {
