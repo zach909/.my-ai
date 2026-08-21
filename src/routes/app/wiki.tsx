@@ -1768,6 +1768,13 @@ interface SharedMessage {
   time: number
 }
 
+interface SharedChatRoom {
+  id: string
+  name: string
+  createdAt: number
+  lastMessageAt: number | null
+}
+
 const CHAT_NAME_KEY = 'shared_chat_display_name'
 const CHAT_POLL_MS = 3000
 
@@ -1792,16 +1799,28 @@ function formatChatTime(ts: number): string {
  *    summoned with "Ask the bot", so it doesn't own the conversation the
  *    way /app/chat's bot does.
  *
- * `topic`/`onTopicConsumed`: a page's "Discuss in Chat" button
- * (WikiPanel's onOpenChat) sets a pending topic in the parent BotWikiPage
- * and switches to this tab; this effect pre-fills the composer with it
- * once and reports back so the parent clears it (otherwise switching away
- * and back would re-fill the composer, clobbering whatever the person had
- * typed).
+ * Multiple named rooms (models && skills/core/shared-chat-store.ts),
+ * not one flat feed -- a "General" room always exists, and a page's
+ * "Discuss in Chat" button (WikiPanel's onOpenChat) finds-or-creates a
+ * room named after that page and switches straight to it, so discussion
+ * of different pages doesn't all pile into one undifferentiated log. Chat
+ * history is local to this device only (see shared-chat-store.ts's doc
+ * comment) -- there's no cloud backup and nothing here is exposed beyond
+ * whatever can already reach this server (interface/web-server.ts's
+ * remoteAccessLock).
+ *
+ * `topic`/`onTopicConsumed`: BotWikiPage sets a pending topic and
+ * switches to this tab; the effect below turns that into an ensure-room
+ * call and reports back so the parent clears it (otherwise switching away
+ * and back would re-open the same room every time).
  */
 function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicConsumed: () => void }) {
   const [name, setName] = useState('')
   const [nameDraft, setNameDraft] = useState('')
+  const [rooms, setRooms] = useState<SharedChatRoom[]>([])
+  const [roomId, setRoomId] = useState<string>('general')
+  const [creatingRoom, setCreatingRoom] = useState(false)
+  const [newRoomName, setNewRoomName] = useState('')
   const [messages, setMessages] = useState<SharedMessage[]>([])
   const [draft, setDraft] = useState('')
   const [sending, setSending] = useState(false)
@@ -1815,20 +1834,52 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
     if (stored) setName(stored)
   }, [])
 
-  useEffect(() => {
-    if (!topic) return
-    setDraft(`Let's talk about the wiki page "${topic}" -- `)
-    onTopicConsumed()
-    // Only re-run when a new topic actually arrives, not on every parent
-    // re-render (onTopicConsumed is a fresh closure each render).
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [topic])
+  const loadRooms = useCallback(async () => {
+    try {
+      const res = await fetch('/api/shared-chat/rooms')
+      const data: { rooms: SharedChatRoom[] } = await res.json()
+      setRooms(data.rooms ?? [])
+    } catch {
+      // Non-critical -- the room list just doesn't refresh this tick.
+    }
+  }, [])
 
-  const fetchNew = useCallback(async () => {
+  useEffect(() => {
+    if (!name) return
+    loadRooms()
+  }, [name, loadRooms])
+
+  // A page's "Discuss in Chat" click -- find-or-create a room named after
+  // it and switch straight there.
+  useEffect(() => {
+    if (!topic || !name) return
+    ;(async () => {
+      try {
+        const res = await fetch('/api/shared-chat/rooms', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ name: topic }),
+        })
+        const room: SharedChatRoom = await res.json()
+        if (!res.ok) throw new Error((room as unknown as { error?: string }).error ?? 'Failed to open room')
+        await loadRooms()
+        switchRoom(room.id)
+      } catch (err) {
+        toast.error(err instanceof Error ? err.message : 'Failed to open chat room')
+      } finally {
+        onTopicConsumed()
+      }
+    })()
+    // Only re-run when a new topic actually arrives, not on every parent
+    // re-render (onTopicConsumed/loadRooms are fresh closures each render).
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [topic, name])
+
+  const fetchNew = useCallback(async (forRoomId: string) => {
     try {
       const url = lastIdRef.current
-        ? `/api/shared-chat?since=${encodeURIComponent(lastIdRef.current)}`
-        : '/api/shared-chat'
+        ? `/api/shared-chat/rooms/${encodeURIComponent(forRoomId)}/messages?since=${encodeURIComponent(lastIdRef.current)}`
+        : `/api/shared-chat/rooms/${encodeURIComponent(forRoomId)}/messages`
       const res = await fetch(url)
       if (!res.ok) return
       const data: { messages: SharedMessage[] } = await res.json()
@@ -1843,16 +1894,23 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
 
   useEffect(() => {
     if (!name) return
-    fetchNew()
-    pollRef.current = setInterval(fetchNew, CHAT_POLL_MS)
+    fetchNew(roomId)
+    pollRef.current = setInterval(() => fetchNew(roomId), CHAT_POLL_MS)
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [name, fetchNew])
+  }, [name, roomId, fetchNew])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
+
+  const switchRoom = (id: string) => {
+    if (id === roomId) return
+    lastIdRef.current = undefined
+    setMessages([])
+    setRoomId(id)
+  }
 
   const chooseName = () => {
     const trimmed = nameDraft.trim().slice(0, 40)
@@ -1861,13 +1919,35 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
     setName(trimmed)
   }
 
-  const post = async (endpoint: '/api/shared-chat' | '/api/shared-chat/ask') => {
+  const createRoom = async () => {
+    const trimmed = newRoomName.trim()
+    if (!trimmed) return
+    setCreatingRoom(true)
+    try {
+      const res = await fetch('/api/shared-chat/rooms', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name: trimmed }),
+      })
+      const room: SharedChatRoom = await res.json()
+      if (!res.ok) throw new Error((room as unknown as { error?: string }).error ?? 'Failed to create room')
+      setNewRoomName('')
+      await loadRooms()
+      switchRoom(room.id)
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : 'Failed to create room')
+    } finally {
+      setCreatingRoom(false)
+    }
+  }
+
+  const post = async (kind: 'messages' | 'ask') => {
     const text = draft.trim()
     if (!text) return
-    const setBusy = endpoint === '/api/shared-chat/ask' ? setAsking : setSending
+    const setBusy = kind === 'ask' ? setAsking : setSending
     setBusy(true)
     try {
-      const res = await fetch(endpoint, {
+      const res = await fetch(`/api/shared-chat/rooms/${encodeURIComponent(roomId)}/${kind}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ author: name, text }),
@@ -1875,7 +1955,8 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
       const data = await res.json()
       if (!res.ok) throw new Error(data?.error ?? 'Failed to send message')
       setDraft('')
-      await fetchNew()
+      await fetchNew(roomId)
+      loadRooms()
     } catch (err) {
       toast.error(err instanceof Error ? err.message : 'Failed to send message')
     } finally {
@@ -1892,7 +1973,8 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
             <h2 className="font-semibold text-sm">Join Chat</h2>
           </div>
           <p className="text-xs text-muted-foreground">
-            Pick a display name. It's remembered on this browser only -- there's no account system.
+            Pick a display name. It's remembered on this browser only -- there's no account system, and chat history
+            stays local to this device (no cloud backup).
           </p>
           <Input
             value={nameDraft}
@@ -1909,68 +1991,116 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
     )
   }
 
+  const activeRoom = rooms.find(r => r.id === roomId)
+
   return (
-    <Card className="flex h-full flex-col overflow-hidden p-0">
-      <div className="shrink-0 border-b border-border px-4 py-3 flex items-center gap-2">
-        <Users className="h-4 w-4 text-muted-foreground" />
-        <div>
-          <h2 className="font-semibold text-sm">Chat</h2>
-          <p className="text-[11px] text-muted-foreground">
-            Posting as <span className="font-medium text-foreground">{name}</span> -- everyone with this app sees this room.
-          </p>
-        </div>
-      </div>
-
-      <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2">
-        {messages.length === 0 && (
-          <p className="text-xs text-muted-foreground text-center py-8">
-            No messages yet -- say something.
-          </p>
-        )}
-        {messages.map(m => (
-          <div key={m.id} className="flex gap-2 items-start">
-            <div
-              className={`shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
-                m.isBot ? 'bg-primary text-primary-foreground' : 'bg-muted'
+    <div className="grid h-full grid-cols-1 gap-4 md:grid-cols-[200px_1fr]">
+      <Card className="flex flex-col overflow-hidden p-2">
+        <p className="px-1.5 pb-1.5 pt-0.5 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
+          Rooms
+        </p>
+        <nav className="flex-1 min-h-0 space-y-0.5 overflow-y-auto" aria-label="Chat rooms">
+          {rooms.map(r => (
+            <button
+              key={r.id}
+              type="button"
+              onClick={() => switchRoom(r.id)}
+              aria-current={r.id === roomId ? 'page' : undefined}
+              className={`block w-full truncate rounded-md px-2 py-1.5 text-left text-xs transition-colors cursor-pointer ${
+                r.id === roomId ? 'bg-primary/10 text-primary font-medium' : 'text-muted-foreground hover:bg-muted/60 hover:text-foreground'
               }`}
+              title={r.name}
             >
-              {m.isBot ? <Bot size={12} /> : m.author.slice(0, 1).toUpperCase()}
-            </div>
-            <div className="min-w-0">
-              <div className="flex items-baseline gap-2">
-                <span className="text-xs font-medium">{m.author}</span>
-                <span className="text-[10px] text-muted-foreground">{formatChatTime(m.time)}</span>
-              </div>
-              <p className="text-sm whitespace-pre-wrap break-words">{m.text}</p>
-            </div>
-          </div>
-        ))}
-        <div ref={messagesEndRef} />
-      </div>
-
-      <div className="shrink-0 border-t border-border p-3 space-y-2">
-        <div className="flex gap-2">
+              {r.name}
+            </button>
+          ))}
+        </nav>
+        <div className="mt-1.5 space-y-1 border-t border-border pt-1.5">
           <Input
-            value={draft}
-            onChange={e => setDraft(e.target.value)}
-            onKeyDown={e => e.key === 'Enter' && !e.shiftKey && post('/api/shared-chat')}
-            placeholder="Message the room..."
-            disabled={sending || asking}
+            value={newRoomName}
+            onChange={e => setNewRoomName(e.target.value)}
+            onKeyDown={e => e.key === 'Enter' && createRoom()}
+            placeholder="New room name..."
+            disabled={creatingRoom}
+            className="h-7 text-xs"
+            aria-label="New room name"
           />
-          <Button onClick={() => post('/api/shared-chat')} disabled={!draft.trim() || sending || asking}>
-            {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
-          </Button>
           <Button
+            type="button"
+            size="sm"
             variant="outline"
-            onClick={() => post('/api/shared-chat/ask')}
-            disabled={!draft.trim() || sending || asking}
-            title="Send this to the room and ask the bot to reply, visible to everyone"
+            onClick={createRoom}
+            disabled={creatingRoom || !newRoomName.trim()}
+            className="h-6 w-full gap-1 px-2 text-[11px] active:scale-95 transition-all"
           >
-            {asking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
-            <span className="ml-1.5 hidden sm:inline">Ask the bot</span>
+            {creatingRoom ? <Loader2 className="h-3 w-3 animate-spin" /> : <Plus className="h-3 w-3" />}
+            New Room
           </Button>
         </div>
-      </div>
-    </Card>
+      </Card>
+
+      <Card className="flex min-h-0 flex-col overflow-hidden p-0">
+        <div className="shrink-0 border-b border-border px-4 py-3 flex items-center gap-2">
+          <Users className="h-4 w-4 text-muted-foreground" />
+          <div>
+            <h2 className="font-semibold text-sm">{activeRoom?.name ?? 'Chat'}</h2>
+            <p className="text-[11px] text-muted-foreground">
+              Posting as <span className="font-medium text-foreground">{name}</span> -- everyone with this app sees this room. Local to this device, no cloud backup.
+            </p>
+          </div>
+        </div>
+
+        <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 space-y-2">
+          {messages.length === 0 && (
+            <p className="text-xs text-muted-foreground text-center py-8">
+              No messages yet -- say something.
+            </p>
+          )}
+          {messages.map(m => (
+            <div key={m.id} className="flex gap-2 items-start">
+              <div
+                className={`shrink-0 h-6 w-6 rounded-full flex items-center justify-center text-[10px] font-medium ${
+                  m.isBot ? 'bg-primary text-primary-foreground' : 'bg-muted'
+                }`}
+              >
+                {m.isBot ? <Bot size={12} /> : m.author.slice(0, 1).toUpperCase()}
+              </div>
+              <div className="min-w-0">
+                <div className="flex items-baseline gap-2">
+                  <span className="text-xs font-medium">{m.author}</span>
+                  <span className="text-[10px] text-muted-foreground">{formatChatTime(m.time)}</span>
+                </div>
+                <p className="text-sm whitespace-pre-wrap break-words">{m.text}</p>
+              </div>
+            </div>
+          ))}
+          <div ref={messagesEndRef} />
+        </div>
+
+        <div className="shrink-0 border-t border-border p-3 space-y-2">
+          <div className="flex gap-2">
+            <Input
+              value={draft}
+              onChange={e => setDraft(e.target.value)}
+              onKeyDown={e => e.key === 'Enter' && !e.shiftKey && post('messages')}
+              placeholder={`Message ${activeRoom?.name ?? 'the room'}...`}
+              disabled={sending || asking}
+            />
+            <Button onClick={() => post('messages')} disabled={!draft.trim() || sending || asking}>
+              {sending ? <Loader2 className="h-4 w-4 animate-spin" /> : <Send className="h-4 w-4" />}
+            </Button>
+            <Button
+              variant="outline"
+              onClick={() => post('ask')}
+              disabled={!draft.trim() || sending || asking}
+              title="Send this to the room and ask the bot to reply, visible to everyone"
+            >
+              {asking ? <Loader2 className="h-4 w-4 animate-spin" /> : <Sparkles className="h-4 w-4" />}
+              <span className="ml-1.5 hidden sm:inline">Ask the bot</span>
+            </Button>
+          </div>
+        </div>
+      </Card>
+    </div>
   )
 }
