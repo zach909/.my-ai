@@ -4545,7 +4545,15 @@ async function testGroundedAnswering() {
     // for anything loosely related -- otherwise it would dress up an
     // unrelated memory as an answer.
     const unrelated = String(await sys.processQuery('describe deep sea volcanoes'));
-    check(!/sylvania/i.test(unrelated), 'An unrelated question does NOT falsely surface the taught fact');
+    // Assert on the grounded path's own marker, not on the fact's text
+    // appearing anywhere in the reply. learn() also folds the taught text into
+    // the character n-gram corpus (that is the point -- the model genuinely
+    // learns it), so the stochastic prose generator can sample fragments of it
+    // for any prompt; measured at ~1 run in 30, and unrelated to whether the
+    // retrieval gate fired. What must never happen is the *grounded answering*
+    // path dressing up a weak match as a real answer.
+    check(!/From what I've been taught/i.test(unrelated),
+      'An unrelated question does NOT trigger the grounded-answer path');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }

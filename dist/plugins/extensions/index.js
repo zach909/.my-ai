@@ -681,13 +681,22 @@ export class PluginMakerExtension extends BasePlugin {
  * neuron groups and coordinates their activation/deactivation based on detected language.
  */
 export class UniversalLanguageSkill extends BasePlugin {
-    constructor(definition) {
+    /**
+     * `sharedMesh` is the agent's one NeuronMesh. Without it this plugin builds
+     * its own mesh, and the all-to-all wiring the comment in
+     * initializeLanguageSkills() describes is real only *among the language
+     * neurons* -- a walled-off second network inside a single agent. Passing the
+     * shared mesh in (see createPluginInstance) puts every language op-neuron in
+     * the same mesh as the language brain and every other plugin. The parameter
+     * stays optional so a standalone construction still works.
+     */
+    constructor(definition, sharedMesh) {
         super(definition);
         /** Language -> node ids in the shared mesh (models && skills/core/mesh.ts). */
         this.languageNeurons = new Map();
         this.activeLanguages = new Set();
         this.builder = new ExtensionBuilder();
-        this.moe = new MixtureOfExperts(4);
+        this.moe = new MixtureOfExperts(4, sharedMesh);
         this.initializeLanguageSkills();
     }
     initializeLanguageSkills() {

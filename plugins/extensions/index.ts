@@ -8,6 +8,7 @@ import { BasePlugin } from "../../plugin_manager/sdk.js";
 import { CodingExtension } from "./coding.js";
 import { ExtensionBuilder } from "../../extension-builder/builder.js";
 import { MixtureOfExperts } from "../../models && skills/moe.js";
+import type { NeuronMesh } from "../../models && skills/core/onebrain.js";
 
 /**
  * Self-authored, meant-to-be-public content (skills/plugins the AI or a
@@ -668,10 +669,19 @@ export class UniversalLanguageSkill extends BasePlugin {
   private languageNeurons: Map<string, number[]> = new Map();
   private activeLanguages: Set<string> = new Set();
 
-  constructor(definition: PluginDefinition) {
+  /**
+   * `sharedMesh` is the agent's one NeuronMesh. Without it this plugin builds
+   * its own mesh, and the all-to-all wiring the comment in
+   * initializeLanguageSkills() describes is real only *among the language
+   * neurons* -- a walled-off second network inside a single agent. Passing the
+   * shared mesh in (see createPluginInstance) puts every language op-neuron in
+   * the same mesh as the language brain and every other plugin. The parameter
+   * stays optional so a standalone construction still works.
+   */
+  constructor(definition: PluginDefinition, sharedMesh?: NeuronMesh) {
     super(definition);
     this.builder = new ExtensionBuilder();
-    this.moe = new MixtureOfExperts(4);
+    this.moe = new MixtureOfExperts(4, sharedMesh);
     this.initializeLanguageSkills();
   }
 

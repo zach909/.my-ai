@@ -13,6 +13,7 @@ import { CapabilitiesRegistry } from "./capabilities.js";
 import { CLI } from "./cli.js";
 import { NeuroclawRunner } from "./runner.js";
 import { WebServer } from "./web-server.js";
+import { MixtureOfExperts } from "../models && skills/moe.js";
 
 /**
  * Composition root. cli.ts, runner.ts and web-server.ts only export classes —
@@ -57,7 +58,7 @@ async function registerRealPlugins(pluginRegistry: PluginRegistry): Promise<void
           }
         : undefined;
     try {
-      const instance = createPluginInstance(def.name, def, skillDef);
+      const instance = createPluginInstance(def.name, def, skillDef, pluginRegistry.getMoE().getMesh());
       pluginRegistry.register(def, instance);
       if (skillDef) pluginRegistry.registerSkill(skillDef, def.id);
     } catch (e) {
@@ -85,7 +86,10 @@ async function registerRealPlugins(pluginRegistry: PluginRegistry): Promise<void
 async function buildCore() {
   const llm = new NeuroclawLLM();
   const pipeline = new NeuroPipeline();
-  const pluginRegistry = new PluginRegistry();
+  // One brain here too: back the plugin MoE with the language brain's own
+  // mesh so this boot path doesn't rebuild the fracture src/index.ts closes --
+  // plugin neurons and language neurons belong to the same all-to-all network.
+  const pluginRegistry = new PluginRegistry(new MixtureOfExperts(2, llm.mesh));
   // bootstrap() only seeds placeholder PluginDefinitions/SkillDefinitions
   // (id/name pairs, no BasePlugin instance) from the static catalogs in
   // plugin_manager/registry-data.ts, purely so `plugins`/`skills` listings

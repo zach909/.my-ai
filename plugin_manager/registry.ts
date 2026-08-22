@@ -60,7 +60,7 @@ export class PluginRegistry {
       const expert = this.moe.addExpert(
         definition.id,
         definition.name,
-        definition.capabilities[0] ?? definition.id,
+        definition.capabilities?.[0] ?? definition.id,
         neuronCount
       );
       this.pluginNeuronIds.set(definition.id, expert.neuronIds);

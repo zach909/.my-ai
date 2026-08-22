@@ -52,7 +52,9 @@ export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, Skill
 export { ResearchPlugin } from "./research.js";
 export { WikiPlugin } from "./wiki.js";
 export { TerminalPlugin } from "./terminal.js";
-export function createPluginInstance(name, definition, skillDefinition) {
+export function createPluginInstance(name, definition, skillDefinition, 
+/** The agent's one shared NeuronMesh, for plugins that allocate their own neurons. */
+sharedMesh) {
     const lower = name.toLowerCase();
     if (lower === "location")
         return new LocationPlugin(definition);
@@ -113,7 +115,7 @@ export function createPluginInstance(name, definition, skillDefinition) {
     if (lower === "multi-input" || lower === "multi input" || lower === "multiinput" || lower.includes("desktop"))
         return new MultiInputPlugin(definition);
     if (lower.includes("language") || lower.includes("universal-language"))
-        return new UniversalLanguageSkill(definition);
+        return new UniversalLanguageSkill(definition, sharedMesh);
     if (lower === "research")
         return new ResearchPlugin(definition);
     if (lower === "wiki")
