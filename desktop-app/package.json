@@ -87,7 +87,16 @@
       "maintainer": "zach909 <zach909@users.noreply.github.com>",
       "syncDesktopName": true
     },
-    "publish": null
+    "publish": null,
+    "extraResources": [
+      {
+        "from": "../dist",
+        "to": "dist",
+        "filter": [
+          "**/*"
+        ]
+      }
+    ]
   },
   "homepage": "https://github.com/zach909/.my-ai",
   "desktopName": "neuroclaw.desktop"
