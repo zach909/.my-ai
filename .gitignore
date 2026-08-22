@@ -76,3 +76,7 @@ htmlcov/
 # Runtime clone state written by SelfReplicatePlugin (plugins/self_replicate.ts) —
 # per-run artifacts, not source.
 clones/
+
+# electron-builder output (packaged installers, ~100-130 MB each)
+desktop-app/dist/
+desktop-app/node_modules/

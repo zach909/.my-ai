@@ -1,7 +1,7 @@
 {
-  "name": "cross-platform-desktop-app",
+  "name": "neuroclaw-desktop",
   "version": "1.0.0",
-  "description": "Native cross-platform desktop application for macOS, Windows, and Linux",
+  "description": "NeuroClaw \u2014 local-first AI agent, powered by the OneBrain neural mesh",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
@@ -17,15 +17,18 @@
     "desktop",
     "cross-platform"
   ],
-  "author": "",
+  "author": {
+    "name": "zach909",
+    "email": "zach909@users.noreply.github.com"
+  },
   "license": "MIT",
   "devDependencies": {
     "electron": "^43.2.0",
     "electron-builder": "^26.15.3"
   },
   "build": {
-    "appId": "com.example.desktopapp",
-    "productName": "DesktopApp",
+    "appId": "com.neuroclaw.app",
+    "productName": "NeuroClaw",
     "directories": {
       "output": "dist"
     },
@@ -73,12 +76,19 @@
         }
       ],
       "icon": "assets/icon.png",
-      "category": "Utility",
+      "category": "Development",
       "desktop": {
-        "Name": "DesktopApp",
-        "Comment": "Native cross-platform desktop application",
-        "Categories": "Utility;"
-      }
-    }
-  }
+        "entry": {
+          "Name": "NeuroClaw",
+          "Comment": "Local-first AI agent powered by the OneBrain neural mesh",
+          "Categories": "Development;Science;Utility;"
+        }
+      },
+      "maintainer": "zach909 <zach909@users.noreply.github.com>",
+      "syncDesktopName": true
+    },
+    "publish": null
+  },
+  "homepage": "https://github.com/zach909/.my-ai",
+  "desktopName": "neuroclaw.desktop"
 }
