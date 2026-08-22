@@ -609,29 +609,90 @@ export class NeuroLangInterpreter {
     }
 }
 /**
- * Deterministic text -> unit vector, so the same definition text always
- * produces the same training target (and different text a different one)
- * without needing an external embedding model. Each dimension gets its own
- * running hash seeded by its index and folded over every character (not
- * just one or two fixed character positions), so short or low-diversity
- * strings (e.g. a single repeated character) still disperse across
- * dimensions instead of collapsing every dimension to the same value —
- * and, in turn, so two different definitions reliably land on genuinely
- * different targets rather than risking an accidental collision.
+ * Deterministic text -> vector, so the same text always produces the same
+ * training target without needing an external embedding model.
+ *
+ * This hashes overlapping character n-grams (n = 3..5, with start/end
+ * markers) into dimensions with signed accumulation, rather than hashing the
+ * whole string once per dimension. The distinction matters: a whole-string
+ * hash is a content-addressed *random point*, so the vector carries no
+ * geometry at all -- measured on the previous implementation, cos("cat",
+ * "cats") was 0.02 and cos("king", "queen") was -0.13, i.e. related text
+ * landed no closer than unrelated text and only exact identity scored. Every
+ * consumer that compares or trains on these vectors (interface/runner.ts
+ * feeds one straight into the brain as the live input representation) was
+ * therefore working in a space where distance meant nothing.
+ *
+ * Sharing n-grams now genuinely places text closer together, so distance is
+ * a real signal about relatedness. This is surface/morphological geometry,
+ * not learned semantic geometry -- "king" and "queen" share no n-grams and
+ * stay far apart. Meaning-level structure has to come from the mesh's own
+ * training on top of this; the point here is that the input space has usable
+ * structure for that training to build on instead of being noise.
+ *
+ * Two properties of the old implementation are deliberately preserved:
+ * short or low-diversity strings still disperse across dimensions rather
+ * than collapsing, and distinct text still lands on distinct targets. The
+ * output is scaled so per-component RMS matches the old uniform-[-1,1)
+ * distribution (1/sqrt(3)), keeping magnitudes in the range existing
+ * definition-training tolerances were tuned against; scaling cannot affect
+ * cosine similarity, so the geometry above is unchanged by it.
  */
 export function embedText(text, dims) {
     const vec = new Array(dims).fill(0);
-    if (text.length === 0)
+    if (text.length === 0 || dims === 0)
         return vec;
-    for (let d = 0; d < dims; d++) {
-        let h = 2166136261 ^ (d * 2654435761); // FNV-1a offset basis, salted per dimension
-        for (let i = 0; i < text.length; i++) {
-            h ^= text.charCodeAt(i);
-            h = Math.imul(h, 16777619);
+    // Boundary markers so a prefix/suffix is distinguishable from an interior
+    // match ("cat" at the start of a word is not the same feature as "cat" in
+    // the middle of "concatenate").
+    const marked = `\u0002${text}\u0003`;
+    for (let n = 3; n <= 5; n++) {
+        if (n > marked.length)
+            break;
+        for (let i = 0; i + n <= marked.length; i++) {
+            let h = 2166136261;
+            for (let k = i; k < i + n; k++) {
+                h ^= marked.charCodeAt(k);
+                h = Math.imul(h, 16777619);
+            }
+            const u = h >>> 0;
+            // Signed accumulation (the standard hashing-trick sign bit) keeps
+            // collisions from systematically inflating a dimension.
+            vec[u % dims] += (u & 0x80000000) !== 0 ? -1 : 1;
         }
-        // Unsigned 32-bit -> [-1, 1)
-        vec[d] = ((h >>> 0) / 0xffffffff) * 2 - 1;
     }
+    let norm = 0;
+    for (let d = 0; d < dims; d++)
+        norm += vec[d] * vec[d];
+    if (norm === 0) {
+        // Every n-gram cancelled out, or the text was shorter than the smallest
+        // n-gram. Fall back to a whole-string hash so distinct text still gets a
+        // distinct, non-zero vector -- the one property the old version did have.
+        for (let d = 0; d < dims; d++) {
+            let h = 2166136261 ^ Math.imul(d, 2654435761);
+            for (let i = 0; i < text.length; i++) {
+                h ^= text.charCodeAt(i);
+                h = Math.imul(h, 16777619);
+            }
+            vec[d] = ((h >>> 0) / 0xffffffff) * 2 - 1;
+        }
+        return vec;
+    }
+    // Unit-normalize, then scale back up toward the old per-component RMS of
+    // 1/sqrt(3) -- but never past the point where any component would exceed 1.
+    // Readout neurons are tanh-bounded to [-1, 1], so a target outside that
+    // range is unreachable and training against it can never converge. Short
+    // text concentrates its few n-grams into few dimensions, and scaling that
+    // for RMS parity alone pushed peak components to 4.6 for a 2-character
+    // string. The cap only ever shrinks the vector uniformly, so the cosine
+    // geometry above is unaffected.
+    const invNorm = 1 / Math.sqrt(norm);
+    let maxAbsUnit = 0;
+    for (let d = 0; d < dims; d++)
+        maxAbsUnit = Math.max(maxAbsUnit, Math.abs(vec[d]) * invNorm);
+    const scale = Math.min(Math.sqrt(dims / 3), 1 / maxAbsUnit) * invNorm;
+    for (let d = 0; d < dims; d++)
+        vec[d] *= scale;
     return vec;
 }
 /** A fixed, concept-agnostic "recall your definition" drive vector shared by
