@@ -1,5 +1,5 @@
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
-import { MixtureOfExperts } from "../models && skills/moe.js";
+import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
 /** Strips anything but alphanumerics/hyphen/underscore, so the id can never contain a path separator or "..". */
 function sanitizePluginIdForPath(pluginId) {
     return pluginId.replace(/[^a-zA-Z0-9_-]+/g, "_") || "unknown";

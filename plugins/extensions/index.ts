@@ -7,7 +7,7 @@ import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/typ
 import { BasePlugin } from "../../plugin_manager/sdk.js";
 import { CodingExtension } from "./coding.js";
 import { ExtensionBuilder } from "../../extension-builder/builder.js";
-import { MixtureOfExperts } from "../../models && skills/moe.js";
+import { MixtureOfExperts } from "../../models && skills/core/onebrain.js";
 import type { NeuronMesh } from "../../models && skills/core/onebrain.js";
 
 /**

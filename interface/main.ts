@@ -13,7 +13,7 @@ import { CapabilitiesRegistry } from "./capabilities.js";
 import { CLI } from "./cli.js";
 import { NeuroclawRunner } from "./runner.js";
 import { WebServer } from "./web-server.js";
-import { MixtureOfExperts } from "../models && skills/moe.js";
+import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
 
 /**
  * Composition root. cli.ts, runner.ts and web-server.ts only export classes —

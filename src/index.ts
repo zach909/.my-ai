@@ -5,7 +5,7 @@ import { join } from "node:path";
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
-import { MixtureOfExperts } from "../models && skills/moe.js";
+import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
 import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";

@@ -1,7 +1,7 @@
 import type { PluginDefinition, SkillDefinition } from "./types.js";
 import type { BasePlugin, PluginContext, PluginLogger } from "./sdk.js";
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
-import { MixtureOfExperts } from "../models && skills/moe.js";
+import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
 
 /** Strips anything but alphanumerics/hyphen/underscore, so the id can never contain a path separator or "..". */
 function sanitizePluginIdForPath(pluginId: string): string {
@@ -21,7 +21,7 @@ export class PluginRegistry {
    * the core system and the plugin operate as one larger neural structure,
    * rather than the plugin remaining a separate program the AI only talks
    * to. Reuses the same MixtureOfExperts/NeuronMesh machinery
-   * skill-experts already use (models && skills/moe.ts) -- a plugin here is
+   * skill-experts already use (models && skills/core/onebrain.ts) -- a plugin here is
    * simply another expert group in the same shared mesh.
    */
   private readonly moe: MixtureOfExperts;
