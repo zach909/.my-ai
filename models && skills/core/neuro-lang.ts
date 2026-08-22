@@ -21,7 +21,7 @@
  * ordinary neuron with ordinary default all-to-all connections into the
  * rest of the map (and, once installed, the rest of the shared mesh) — it
  * is purely a role label, the same pattern MoE experts already use
- * (models && skills/moe.ts's Expert.neuronIds). SkillLibrary.getIOLayers()
+ * (models && skills/core/onebrain.ts's Expert.neuronIds). SkillLibrary.getIOLayers()
  * reads it back after install() to hand a skill's caller its input/output
  * neurons without needing to know their names in advance.
  *
@@ -300,7 +300,7 @@ export class NeuroLangInterpreter {
    * rest of the map by evaluate() like everything else, so this is a
    * read-back of role labels, not a separate wiring boundary -- the same
    * "grouping is a label, not a wiring restriction" pattern MoE experts
-   * use (models && skills/moe.ts).
+   * use (models && skills/core/onebrain.ts).
    */
   getIOLayers(neurons: Map<string, NeuriNeuron>): { inputs: NeuriNeuron[]; outputs: NeuriNeuron[] } {
     const inputs: NeuriNeuron[] = [];

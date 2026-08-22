@@ -694,7 +694,7 @@ async function testExpertRegistrationCompleteness() {
 }
 
 async function testMoESharedMesh() {
-  const { MixtureOfExperts } = await load('models && skills/moe.js');
+  const { MixtureOfExperts } = await load('models && skills/core/onebrain.js');
 
   // Two skills with overlapping neuron ranges wired into the same mesh at
   // density 1.0 (Section 2.1's verification scenario).

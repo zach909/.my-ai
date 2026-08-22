@@ -4,7 +4,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BasePlugin } from "../../plugin_manager/sdk.js";
 import { ExtensionBuilder } from "../../extension-builder/builder.js";
-import { MixtureOfExperts } from "../../models && skills/moe.js";
+import { MixtureOfExperts } from "../../models && skills/core/onebrain.js";
 /**
  * Self-authored, meant-to-be-public content (skills/plugins the AI or a
  * user generates, plus their wiki reports) used to live under
