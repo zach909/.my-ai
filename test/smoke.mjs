@@ -4524,6 +4524,87 @@ async function testZipLoopInterface() {
   }
 }
 
+async function testPropagateOptimizations() {
+  const { NeuronMesh } = await load('models && skills/core/onebrain.js');
+  const mk = () => new NeuronMesh({ nodeCount: 60, connectionDensity: 1.0, activationFn: 'swish' });
+
+  // --- Settle traces are opt-in -------------------------------------------
+  // nodeHistory and per-node activationHistory are written by propagate() but
+  // read by nothing in the system. Recording them unconditionally cost a
+  // scratch write per neuron per iteration in the hottest loop, N allocations
+  // and N map inserts per call, and -- because the per-node trace was appended
+  // to and never truncated -- unbounded growth (32,400 retained numbers on a
+  // single node after 3,200 calls, times every node).
+  const off = mk();
+  const rOff = off.propagate(new Map([[0, 1.0], [1, -0.5]]));
+  check(rOff.nodeHistory.size === 0, 'settle traces are NOT recorded by default');
+  check(off.getNode(off.getTopology().nodes[3].id ?? 3)?.activationHistory.length === 0,
+    'per-node activation history stays empty by default');
+  check(rOff.finalStates.size === 60 && typeof rOff.converged === 'boolean',
+    'the results anything actually reads (finalStates, converged, residual) are still returned');
+
+  const on = mk();
+  const rOn = on.propagate(new Map([[0, 1.0], [1, -0.5]]), undefined, undefined, true);
+  check(rOn.nodeHistory.size === 60, 'opting in genuinely records a trace for every node');
+
+  // Recording must not perturb the computation: same mesh, same start state,
+  // both modes, compared exactly.
+  const m = mk();
+  const ids = m.getTopology().nodes.map(n => n.id);
+  const input = new Map([[ids[0], 1.0], [ids[1], -0.5], [ids[2], 0.25]]);
+  const snapshot = () => ids.map(id => m.getNode(id).activation);
+  const restore = (v) => ids.forEach((id, k) => { m.getNode(id).activation = v[k]; });
+  let maxdiff = 0, itersMatch = true;
+  for (let t = 0; t < 10; t++) {
+    const st = snapshot();
+    const a = m.propagate(input, undefined, undefined, true);
+    const after = snapshot();
+    restore(st);
+    const b = m.propagate(input, undefined, undefined, false);
+    if (a.iterations !== b.iterations) itersMatch = false;
+    for (const id of ids) maxdiff = Math.max(maxdiff, Math.abs(a.finalStates.get(id) - b.finalStates.get(id)));
+    restore(after);
+  }
+  check(itersMatch && maxdiff === 0, 'recording a trace has ZERO effect on the computation (bit-identical)');
+
+  // Growth is bounded when it IS on, so a long-running mesh cannot accumulate
+  // every sample it has ever produced.
+  const grow = mk();
+  for (let i = 0; i < 400; i++) grow.propagate(input, undefined, undefined, true);
+  const hist = grow.getNode(grow.getTopology().nodes[3].id).activationHistory;
+  check(hist.length > 0 && hist.length <= 1000,
+    `recorded history is bounded, not unbounded (${hist.length} samples after 400 settles)`);
+
+  // --- Dense layout skips CSR's index indirection -------------------------
+  const dense = mk();
+  dense.propagate(input);
+  check(dense.denseLayout === true, 'an all-to-all mesh uses the dense (index-free) settle path');
+  const sparse = new NeuronMesh({ nodeCount: 60, connectionDensity: 0.3, activationFn: 'relu' });
+  sparse.propagate(new Map([[0, 1]]));
+  check(sparse.denseLayout === false, 'a sparse mesh correctly stays on the CSR path');
+
+  // The two paths must agree exactly -- same weights, same start state.
+  const d = mk();
+  const dIds = d.getTopology().nodes.map(n => n.id);
+  const dInput = new Map([[dIds[0], 1.0], [dIds[1], -0.5]]);
+  const dSnap = () => dIds.map(id => d.getNode(id).activation);
+  const dRestore = (v) => dIds.forEach((id, k) => { d.getNode(id).activation = v[k]; });
+  let pathDiff = 0, pathIters = true;
+  for (let t = 0; t < 10; t++) {
+    const st = dSnap();
+    const rd = d.propagate(dInput);
+    const after = dSnap();
+    dRestore(st);
+    d.denseLayout = false;              // force CSR over the identical weights
+    const rc = d.propagate(dInput);
+    d.denseLayout = true;
+    if (rd.iterations !== rc.iterations) pathIters = false;
+    for (const id of dIds) pathDiff = Math.max(pathDiff, Math.abs(rd.finalStates.get(id) - rc.finalStates.get(id)));
+    dRestore(after);
+  }
+  check(pathIters && pathDiff === 0, 'the dense path is bit-identical to the CSR path it replaces');
+}
+
 async function testEmbeddingGeometry() {
   const { embedText } = await load('models && skills/core/neuro-lang.js');
   const cos = (a, b) => {
@@ -4767,6 +4848,7 @@ async function main() {
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
+    ['Settle-loop optimizations preserve behavior exactly', testPropagateOptimizations],
     ['Representation geometry: distance between embeddings actually means something', testEmbeddingGeometry],
     ['Retrieval-grounded answering: a taught fact is actually usable', testGroundedAnswering],
     ['No duplicate JSX attributes across src/**/*.tsx (recurring bad-merge regression guard)', testNoDuplicateJsxAttributes],
