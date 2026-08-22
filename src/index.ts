@@ -5,6 +5,7 @@ import { join } from "node:path";
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
+import { MixtureOfExperts } from "../models && skills/moe.js";
 import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";
@@ -57,6 +58,63 @@ import type { SkillDefinition } from "../plugin_manager/types.js";
  * - EmpathyEngine: tracks user emotion and alignment
  * - PluginRegistry: manages all plugins and skills
  */
+/**
+ * How similar a taught fact must be to the question before processQuery()
+ * answers from it directly instead of falling through to generation.
+ * Deliberately well above the 0.1 floor used for merely *contextual*
+ * retrieval: this gates giving a stored fact AS the answer, so a weak or
+ * incidental match must not qualify.
+ */
+const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
+
+/**
+ * Pull a standalone arithmetic expression out of free text and evaluate it
+ * exactly, or return null if the text does not contain one.
+ *
+ * Shared by processQuery() and the "mathematician" hive agent so the two can
+ * never drift into disagreeing about what counts as arithmetic. Uses
+ * evaluateExpression() (math-engine.ts's recursive-descent parser -- NOT
+ * eval()/Function(), so a hostile string cannot execute code) which is exact,
+ * unlike the prose predictor, whose character n-gram cannot compute anything.
+ */
+function tryExactArithmetic(text: string): string | null {
+  // Take the longest run of characters that could form an expression, rather
+  // than anchoring the match on a digit. Anchoring on a digit silently
+  // answered a DIFFERENT question than the one asked: "(8 + 4) / 3" matched
+  // only the inner "8 + 4" and confidently replied "8 + 4 = 12", dropping
+  // both the parenthesis and the division. A wrong answer stated confidently
+  // is worse than falling through to generation.
+  const spans = text.match(/[-+*/^()\d.\s]+/g);
+  if (!spans) return null;
+  const candidates = spans
+    .map(s => s.trim())
+    .filter(s => /\d/.test(s) && /[-+*/^]/.test(s))
+    .sort((a, b) => b.length - a.length);
+  for (const raw of candidates) {
+    // Trim characters off either end until the parentheses balance, so a
+    // trailing "(" swept up from surrounding prose cannot fail the whole match.
+    let expr = raw;
+    while (expr.length > 0) {
+      let depth = 0;
+      let balanced = true;
+      for (const ch of expr) {
+        if (ch === "(") depth++;
+        else if (ch === ")" && --depth < 0) { balanced = false; break; }
+      }
+      if (balanced && depth === 0) break;
+      expr = depth > 0 ? expr.slice(0, expr.lastIndexOf("(")).trim()
+                       : expr.slice(expr.indexOf(")") + 1).trim();
+    }
+    if (!expr || !/\d/.test(expr) || !/[-+*/^]/.test(expr)) continue;
+    try {
+      return `${expr} = ${evaluateExpression(expr)}`;
+    } catch {
+      // Not actually a valid expression -- try the next candidate.
+    }
+  }
+  return null;
+}
+
 export class NeuroclawSystem {
   llm: NeuroclawLLM;
   pipeline: NeuroPipeline;
@@ -143,7 +201,14 @@ export class NeuroclawSystem {
     this.pipeline = new NeuroPipeline({
       zipPersistDir: this.zipPersistDir ? join(this.zipPersistDir, "pipeline") : undefined,
     });
-    this.pluginRegistry = new PluginRegistry();
+    // ONE brain, not one per subsystem. PluginRegistry defaults to building
+    // its own MixtureOfExperts (and therefore its own NeuronMesh), which left
+    // every plugin's neurons wired all-to-all among *themselves* but severed
+    // from the language brain's neurons -- two disconnected networks in one
+    // agent. Handing it a MoE backed by UnifiedBrain's own mesh puts plugin
+    // neurons in the same all-to-all mesh as everything else, so a plugin
+    // firing genuinely propagates into the rest of the network.
+    this.pluginRegistry = new PluginRegistry(new MixtureOfExperts(2, this.llm.mesh));
     this.veto = new AlignmentVeto();
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     this.empathy = new EmpathyEngine();
@@ -433,7 +498,7 @@ export class NeuroclawSystem {
             }
           : undefined;
       try {
-        const instance = createPluginInstance(def.name, def, skillDef);
+        const instance = createPluginInstance(def.name, def, skillDef, this.pluginRegistry.getMoE().getMesh());
         this.pluginRegistry.register(def, instance);
         if (skillDef) this.pluginRegistry.registerSkill(skillDef, def.id);
       } catch (e) {
@@ -575,6 +640,14 @@ export class NeuroclawSystem {
     const priorHistory = this.memory
       .retrieve(input, { topK: 3, tag: "chat-turn" })
       .filter(h => h.similarity >= 0.1);
+    // Taught facts are tagged "knowledge", NOT "chat-turn", so the
+    // conversation-history retrieve above can never surface them -- asking
+    // about something the system was explicitly taught searched only the
+    // chat transcript and found nothing. Retrieved separately here so a
+    // lesson can actually inform the answer.
+    const knownFacts = this.memory
+      .retrieve(input, { topK: 3, tag: "knowledge" })
+      .filter(h => h.similarity >= 0.1);
     this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
 
     // 2b. Section 3's *other* alignment veto: EmpathyEngine.shouldVeto() asks
@@ -636,6 +709,44 @@ export class NeuroclawSystem {
     if (route.capability === "recall" && priorHistory.length > 0) {
       const recalled = priorHistory.map(h => `• ${h.item.content}`).join("\n");
       return this.respondDirect(`From our earlier conversation, here's what's relevant:\n${recalled}`, turnImportance);
+    }
+
+    // 5a. Exact arithmetic. The system contains a real, tested expression
+    // evaluator (math-engine.ts) and already used it for the "mathematician"
+    // hive agent -- but plain chat never reached it, so asking "what is 2 + 2"
+    // fell through to the prose predictor, whose character n-gram over a fixed
+    // proverb corpus cannot compute anything and answered with proverb
+    // fragments. Routing here makes a capability the system already had
+    // actually reachable, and the answer is exact rather than predicted.
+    const exactMath = tryExactArithmetic(input);
+    if (exactMath) return this.respondDirect(exactMath, turnImportance);
+
+    // 5b. Retrieval-grounded answering. When the system has actually been
+    // TAUGHT something that closely matches the question, answer from that
+    // instead of falling through to generation.
+    //
+    // This is not a shortcut around the neural path -- it is a correction of
+    // a real failure. The prose predictor is a character-level n-gram over a
+    // ~270-word hardcoded corpus (models && skills/trainer.ts's
+    // TRAINING_CORPUS), so generation cannot reproduce a fact it was taught
+    // no matter how well the fact was stored; it emits fragments of that
+    // fixed corpus. Returning what the system genuinely knows is strictly
+    // more truthful than sampling noise that ignores it.
+    //
+    // Deliberately gated on a strong match (weak/ambiguous matches still
+    // fall through to generation below) so this answers only when the system
+    // really was told something relevant, rather than dressing up every
+    // loosely-related memory as an answer.
+    const bestFact = knownFacts[0];
+    if (bestFact && bestFact.similarity >= GROUNDED_ANSWER_MIN_SIMILARITY) {
+      const supporting = knownFacts
+        .filter(h => h.similarity >= GROUNDED_ANSWER_MIN_SIMILARITY)
+        .map(h => `• ${h.item.content}`)
+        .join("\n");
+      return this.respondDirect(
+        `From what I've been taught:\n${supporting}`,
+        turnImportance,
+      );
     }
 
     // 6. Run the query through the real neural runner (THORNS intent →
@@ -704,6 +815,24 @@ export class NeuroclawSystem {
 
   private async learnImpl(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
     const result = this.learner.learn(information, opts);
+    // Make the taught information RETRIEVABLE. learn() previously handed the
+    // text to the learner (and, above, the language model) but never put it
+    // in long-term memory, so nothing could ever look it up again -- the one
+    // store processQuery() actually searches when answering had no record
+    // that the lesson happened. Tagged "knowledge" to distinguish a taught
+    // fact from the "chat-turn" transcript of a conversation.
+    this.memory.remember(information, { tags: ["knowledge"], importance: 0.85 });
+    // Actually teach the language model the text it was just given.
+    // Previously learn() recorded the information in the learner/memory but
+    // never fed it to the prose predictor, so the thing generating replies
+    // had genuinely never seen it -- teaching a fact could not change a
+    // single word of any future answer. learnText() (not trainOnText())
+    // because the latter rebuilds the model from only this one string,
+    // erasing every earlier lesson; see NeuroclawTrainer.learnText().
+    // Non-fatal: a training failure must not lose the learned record above.
+    try {
+      await this.llm.learnText(information);
+    } catch { /* keep the recorded knowledge even if retraining fails */ }
     if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
       // ASI §3/§10/§13/§23: gate the real side effect through the same
       // AlignmentVeto safety layer every other action-taking entry point
@@ -1579,15 +1708,8 @@ export class NeuroclawSystem {
         // §13: "verify reasoning rather than relying only on neural
         // predictions" -- when the task actually contains a standalone
         // arithmetic expression, compute it for real instead of guessing.
-        const candidate = prompt.match(/-?\d+(?:\.\d+)?(?:\s*[-+*/^()]\s*-?\d+(?:\.\d+)?)+/);
-        if (candidate) {
-          try {
-            const value = evaluateExpression(candidate[0]);
-            return `${candidate[0].trim()} = ${value}`;
-          } catch {
-            // Matched text wasn't actually a valid expression -- fall through.
-          }
-        }
+        const exact = tryExactArithmetic(prompt);
+        if (exact) return exact;
         return this.runner.generate(prompt);
       },
     });

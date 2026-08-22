@@ -73,3 +73,6 @@ htmlcov/
 
 # Claude Code agent worktrees (isolated scratch checkouts for background subagents)
 .claude/worktrees/
+# Runtime clone state written by SelfReplicatePlugin (plugins/self_replicate.ts) —
+# per-run artifacts, not source.
+clones/

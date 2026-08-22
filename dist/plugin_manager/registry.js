@@ -39,7 +39,7 @@ export class PluginRegistry {
         // firePluginNeurons() below), not just a side-channel log entry.
         if (!this.moe.getExpert(definition.id)) {
             const neuronCount = definition.type === "skill-expert" ? 4 : 1;
-            const expert = this.moe.addExpert(definition.id, definition.name, definition.capabilities[0] ?? definition.id, neuronCount);
+            const expert = this.moe.addExpert(definition.id, definition.name, definition.capabilities?.[0] ?? definition.id, neuronCount);
             this.pluginNeuronIds.set(definition.id, expert.neuronIds);
         }
     }

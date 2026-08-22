@@ -1,3 +1,4 @@
+import type { NeuronMesh } from "../models && skills/core/onebrain.js";
 import type { PluginDefinition, ExtensionManifest, SkillDefinition } from "../plugin_manager/types.js";
 import { LocationPlugin } from "./location.js";
 import { CameraPlugin } from "./camera.js";
@@ -60,6 +61,8 @@ export function createPluginInstance(
   name: string,
   definition: PluginDefinition,
   skillDefinition?: SkillDefinition,
+  /** The agent's one shared NeuronMesh, for plugins that allocate their own neurons. */
+  sharedMesh?: NeuronMesh,
 ): BasePlugin {
   const lower = name.toLowerCase();
   if (lower === "location") return new LocationPlugin(definition);
@@ -91,7 +94,7 @@ export function createPluginInstance(
   if (lower.includes("skill maker") || lower.includes("skill-maker")) return new SkillMakerExtension(definition);
   if (lower.includes("plugin maker") || lower.includes("plugin-maker")) return new PluginMakerExtension(definition);
   if (lower === "multi-input" || lower === "multi input" || lower === "multiinput" || lower.includes("desktop")) return new MultiInputPlugin(definition);
-  if (lower.includes("language") || lower.includes("universal-language")) return new UniversalLanguageSkill(definition);
+  if (lower.includes("language") || lower.includes("universal-language")) return new UniversalLanguageSkill(definition, sharedMesh);
   if (lower === "research") return new ResearchPlugin(definition);
   if (lower === "wiki") return new WikiPlugin(definition);
   if (lower === "terminal") return new TerminalPlugin(definition);
