@@ -4524,6 +4524,47 @@ async function testZipLoopInterface() {
   }
 }
 
+async function testEmbeddingGeometry() {
+  const { embedText } = await load('models && skills/core/neuro-lang.js');
+  const cos = (a, b) => {
+    let d = 0, x = 0, y = 0;
+    for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; }
+    return d / (Math.sqrt(x) * Math.sqrt(y));
+  };
+  const D = 64;
+  // embedText was a whole-string hash: a content-addressed random point with
+  // no geometry, where cos("cat","cats") measured 0.02 and cos("king","queen")
+  // measured -0.13 -- related text landed no closer than unrelated text, so
+  // distance in the representation space carried no information. Every
+  // consumer comparing or training on these vectors (interface/runner.ts feeds
+  // one into the brain as the live input representation) was working in noise.
+  check(cos(embedText('cat', D), embedText('cats', D)) > 0.3,
+    'related text is genuinely CLOSE in the representation space (a hash would score ~0)');
+  check(cos(embedText('the cat sat', D), embedText('the cat sat down', D)) > 0.5,
+    'a sentence and its extension are closer still');
+  const relatedQ = cos(embedText('what is the capital of France', D), embedText('what is the capital of Spain', D));
+  const unrelatedQ = cos(embedText('what is the capital of France', D), embedText('describe deep sea volcanoes', D));
+  check(relatedQ > unrelatedQ + 0.5,
+    `similar questions outrank unrelated ones by a usable margin (${relatedQ.toFixed(2)} vs ${unrelatedQ.toFixed(2)})`);
+  // Readout neurons are tanh-bounded, so any target outside [-1, 1] is
+  // unreachable and training against it can never converge. Short text
+  // concentrates few n-grams into few dimensions and is the case that breaks.
+  for (const t of ['ok', 'yes', 'hello', 'a short definition']) {
+    const mx = Math.max(...embedText(t, D).map(Math.abs));
+    check(mx <= 1 + 1e-9, `embedText("${t}") stays inside the tanh-reachable range (max ${mx.toFixed(3)})`);
+  }
+  // Properties the previous implementation had, which must survive.
+  check(JSON.stringify(embedText('aa', 8)) !== JSON.stringify(embedText('bb', 8)),
+    'distinct text still lands on distinct vectors (no collision)');
+  check(new Set(embedText('aaaa', 16).map(x => x.toFixed(3))).size > 1,
+    'a low-diversity string still disperses across dimensions instead of collapsing');
+  check(embedText('a', 8).some(x => x !== 0),
+    'text shorter than the smallest n-gram still gets a non-zero vector');
+  check(embedText('', 8).every(x => x === 0), 'empty text is the zero vector');
+  check(JSON.stringify(embedText('x y z', 32)) === JSON.stringify(embedText('x y z', 32)),
+    'embedding is deterministic -- the same text always trains toward the same target');
+}
+
 async function testGroundedAnswering() {
   const { NeuroclawSystem } = await load('src/index.js');
   const sys = new NeuroclawSystem();
@@ -4726,6 +4767,7 @@ async function main() {
     ['ZipIO persistence across restart (Section 1.10/7)', testZipIOPersistence],
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
+    ['Representation geometry: distance between embeddings actually means something', testEmbeddingGeometry],
     ['Retrieval-grounded answering: a taught fact is actually usable', testGroundedAnswering],
     ['No duplicate JSX attributes across src/**/*.tsx (recurring bad-merge regression guard)', testNoDuplicateJsxAttributes],
   ];
