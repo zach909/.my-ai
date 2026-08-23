@@ -4605,6 +4605,62 @@ async function testPropagateOptimizations() {
   check(pathIters && pathDiff === 0, 'the dense path is bit-identical to the CSR path it replaces');
 }
 
+async function testToolsPlugin() {
+  const { ToolsPlugin } = await load('plugins/tools.js');
+  const t = new ToolsPlugin({ id: 'tools', name: 'Tools', type: 'api-connection', capabilities: ['tools'] });
+
+  // Exactness is the entire point: these are the jobs a language model gets
+  // plausibly wrong and a function gets right.
+  const calc = await t.onMessage('calc 8347 * 219');
+  check(calc?.result === '8347 * 219 = 1827993', 'calc computes exactly, rather than plausibly');
+  const paren = await t.onMessage('calc (8 + 4) / 3');
+  check(paren?.result === '(8 + 4) / 3 = 4', 'calc respects parentheses');
+
+  const h = await t.onMessage('hash sha256 hello');
+  check(h?.result === '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
+    'sha256 matches the known digest of "hello"');
+
+  const enc = await t.onMessage('encode base64 hello');
+  check(enc?.result === 'aGVsbG8=', 'base64 encode');
+  const dec = await t.onMessage('decode base64 aGVsbG8=');
+  check(dec?.result === 'hello', 'base64 decode round-trips');
+  // Buffer.from(.., 'base64') silently discards invalid characters instead of
+  // throwing, so without the round-trip check this would return mojibake and
+  // claim success.
+  const badB64 = await t.onMessage('decode base64 !!!not-base64!!!');
+  check(/not valid base64/i.test(String(badB64?.result)), 'invalid base64 is rejected, not silently mangled');
+
+  const conv = await t.onMessage('convert 100 c to f');
+  check(conv?.result === '100 c = 212 f', 'temperature conversion');
+  const km = await t.onMessage('convert 12 km to mi');
+  check(String(km?.result).startsWith('12 km = 7.4564543'), 'length conversion');
+  // Refusing beats answering: a number here would be confidently wrong.
+  const cross = await t.onMessage('convert 5 kg to m');
+  check(/different kinds of unit/i.test(String(cross?.result)),
+    'a mass-to-length conversion is refused rather than answered wrongly');
+
+  const days = await t.onMessage('days between 2026-01-01 and 2026-03-01');
+  check(days?.result === '59 day(s)', 'date difference (2026 is not a leap year)');
+
+  const badJson = await t.onMessage('json {oops');
+  check(/not valid JSON/i.test(String(badJson?.result)), 'invalid JSON is reported, not guessed at');
+
+  const uuid = await t.onMessage('uuid');
+  check(/^[0-9a-f-]{36}$/.test(String(uuid?.result)), 'uuid returns a v4 UUID');
+
+  const list = await t.onMessage('tools');
+  check(String(list?.result).includes('calc') && String(list?.result).includes('convert'),
+    'the plugin can list what it provides');
+
+  // The non-greedy contract. skill-maker returns non-null for ANY input, which
+  // is why it can never share a bucket safely; this plugin must not behave that
+  // way, or placing it first in the query/analysis/command buckets would block
+  // every other candidate.
+  check(await t.onMessage('write me a poem') === null, 'non-tool input returns null so dispatch falls through');
+  check(await t.onMessage('') === null, 'empty input returns null');
+  check(await t.onMessage('what is the weather') === null, 'an ordinary question is not absorbed');
+}
+
 async function testEmbeddingGeometry() {
   const { embedText } = await load('models && skills/core/neuro-lang.js');
   const cos = (a, b) => {
@@ -4849,6 +4905,7 @@ async function main() {
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
     ['Settle-loop optimizations preserve behavior exactly', testPropagateOptimizations],
+    ['Tools plugin: exact local utilities, and a non-greedy dispatch contract', testToolsPlugin],
     ['Representation geometry: distance between embeddings actually means something', testEmbeddingGeometry],
     ['Retrieval-grounded answering: a taught fact is actually usable', testGroundedAnswering],
     ['No duplicate JSX attributes across src/**/*.tsx (recurring bad-merge regression guard)', testNoDuplicateJsxAttributes],
