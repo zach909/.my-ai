@@ -10,6 +10,7 @@ const fs = require('fs');
 const http = require('http');
 const { spawn, exec, execFileSync } = require('child_process');
 const crypto = require('crypto');
+const selfsigned = require('selfsigned');
 const { startAppServer, DESKTOP_TOKEN_HEADER } = require('./app-server');
 
 /**
@@ -66,6 +67,39 @@ const SKIP_BACKEND = process.env.DESKTOP_APP_SKIP_BACKEND === '1';
  * and never persisted, so there is nothing to leak between runs.
  */
 const DESKTOP_TOKEN = crypto.randomBytes(32).toString('hex');
+
+/**
+ * The certificate this launch serves the window over, and its fingerprint.
+ * Generated in memory at startup and never written to disk, so there is no key
+ * file to leak or to go stale, and every run is a fresh identity.
+ */
+let tlsCert = null;
+let tlsFingerprint = null;
+
+/** Generate the per-launch self-signed certificate for 127.0.0.1. */
+async function createTlsCert() {
+  const pems = await selfsigned.generate(
+    [{ name: 'commonName', value: '127.0.0.1' }],
+    {
+      days: 1,
+      keySize: 2048,
+      algorithm: 'sha256',
+      // Modern TLS clients ignore commonName entirely and match on SAN, so a
+      // cert without this is rejected outright by Chromium.
+      extensions: [
+        {
+          name: 'subjectAltName',
+          altNames: [
+            { type: 7, ip: '127.0.0.1' },
+            { type: 2, value: 'localhost' },
+          ],
+        },
+      ],
+    }
+  );
+  const x509 = new crypto.X509Certificate(pems.cert);
+  return { key: pems.private, cert: pems.cert, fingerprint: x509.fingerprint256 };
+}
 
 /**
  * Build whichever half of the app (backend JS / frontend static site) is
@@ -134,7 +168,7 @@ function createWindow() {
   // SKIP_BACKEND there is no server to authenticate to.
   if (!SKIP_BACKEND) {
     session.defaultSession.webRequest.onBeforeSendHeaders(
-      { urls: [`http://127.0.0.1:${APP_PORT}/*`] },
+      { urls: [`https://127.0.0.1:${APP_PORT}/*`] },
       (details, callback) => {
         callback({ requestHeaders: { ...details.requestHeaders, [DESKTOP_TOKEN_HEADER]: DESKTOP_TOKEN } });
       }
@@ -155,7 +189,7 @@ function createWindow() {
   if (SKIP_BACKEND) {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   } else {
-    mainWindow.loadURL(`http://127.0.0.1:${APP_PORT}`);
+    mainWindow.loadURL(`https://127.0.0.1:${APP_PORT}`);
   }
 
   // Open DevTools in development (optional)
@@ -185,11 +219,15 @@ async function startNeuroclaw() {
 
   await waitForBackend(BACKEND_PORT);
 
+  tlsCert = await createTlsCert();
+  tlsFingerprint = tlsCert.fingerprint;
+
   appServer = await startAppServer({
     distDir: path.join(REPO_ROOT, 'dist'),
     backendPort: BACKEND_PORT,
     port: APP_PORT,
     authToken: DESKTOP_TOKEN,
+    tls: { key: tlsCert.key, cert: tlsCert.cert },
   });
 }
 
@@ -228,6 +266,40 @@ if (!SKIP_BACKEND && typeof app.on === 'function') {
     mainWindow.show();
     mainWindow.focus();
   });
+}
+
+/**
+ * The window's certificate is self-signed, so Chromium rejects it by default.
+ * Rather than disabling verification (which would accept ANY certificate,
+ * including one presented by something else that grabbed the port first), this
+ * accepts exactly one: the certificate this launch generated, matched on its
+ * SHA-256 fingerprint. That is strictly stronger than ordinary CA trust here --
+ * a public CA would vouch for any holder of a cert for this name, whereas this
+ * accepts only the key pair created in this process a moment ago.
+ */
+if (!SKIP_BACKEND && typeof app.on === 'function') {
+  app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+    const expected = tlsFingerprint;
+    const presented = certificate && certificate.fingerprint;
+    // Electron reports fingerprints as "sha256/<base64>"; node's X509 gives
+    // colon-separated hex. Compare on the raw bytes so the formats cannot
+    // silently fail to match and quietly fall through to a rejection.
+    if (expected && presented && normalizeFingerprint(presented) === normalizeFingerprint(expected)) {
+      event.preventDefault();
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+}
+
+/** "sha256/<base64>" or "AA:BB:.." -> lowercase hex, for format-independent comparison. */
+function normalizeFingerprint(fp) {
+  if (typeof fp !== 'string') return ''
+  if (fp.startsWith('sha256/')) {
+    return Buffer.from(fp.slice('sha256/'.length), 'base64').toString('hex').toLowerCase();
+  }
+  return fp.replace(/:/g, '').toLowerCase();
 }
 
 app.whenReady().then(async () => {
