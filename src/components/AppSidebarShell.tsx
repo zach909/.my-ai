@@ -26,6 +26,7 @@ import {
   Folder,
   TrendingUp,
   BookOpen,
+  Store,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -49,7 +50,12 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: '/app/evaluation', icon: <Gauge className="h-4 w-4" />, label: 'Evaluation' },
   { href: '/app/self-improvement', icon: <TrendingUp className="h-4 w-4" />, label: 'Self-Improvement' },
   { href: '/app/planning', icon: <Goal className="h-4 w-4" />, label: 'Planning' },
-  { href: '/app/wiki', icon: <BookOpen className="h-4 w-4" />, label: 'Bot Wiki' },
+  // The Store replaces the separate Bot Wiki and Skill Uploads entries: both
+  // are things people publish, and the store is where published things live.
+  // The wiki/uploads page itself is not deleted -- it holds the editor and the
+  // packaging UI, and is linked from the Store.
+  { href: '/app/store', icon: <Store className="h-4 w-4" />, label: 'Store' },
+  { href: '/app/wiki', icon: <BookOpen className="h-4 w-4" />, label: 'Wiki & Uploads' },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {
