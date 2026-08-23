@@ -2,7 +2,6 @@ import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { NeuroclawMark } from '@/components/NeuroclawMark'
-import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -17,7 +16,6 @@ import {
   Brain,
   Gauge,
   Goal,
-  LogOut,
   PanelLeft,
   MessageSquare,
   Users,
@@ -152,76 +150,6 @@ export function AppSidebarShell() {
           ))}
         </div>
 
-        {/* ── Footer ─────────────────────────────────────── */}
-        <div
-          className={cn(
-            'shrink-0 border-t border-border',
-            collapsed ? 'flex flex-col items-center gap-1 p-2' : 'p-3 space-y-1'
-          )}
-        >
-          {/* User row */}
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <button
-                  type="button"
-                  className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.95]"
-                  aria-label="User profile details"
-                >
-                  <Avatar className="h-6 w-6 shrink-0">
-                    <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
-                  </Avatar>
-                </button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Researcher · researcher@asi.architect</TooltipContent>
-            </Tooltip>
-          ) : (
-            <button
-              type="button"
-              className="flex items-center gap-2 rounded-md hover:bg-accent transition-all duration-150 cursor-pointer w-full px-2 py-1.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.98]"
-              aria-label="User profile details"
-            >
-              <Avatar className="h-6 w-6 shrink-0">
-                <AvatarFallback className="text-[10px] bg-muted">R</AvatarFallback>
-              </Avatar>
-              <div className="flex-1 min-w-0 text-left">
-                <p className="text-xs font-medium leading-tight truncate">Researcher</p>
-                <p className="text-[10px] text-muted-foreground leading-tight truncate">
-                  researcher@asi.architect
-                </p>
-              </div>
-            </button>
-          )}
-
-          {/* Sign out */}
-          {collapsed ? (
-            <Tooltip>
-              <TooltipTrigger asChild>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  size="sm"
-                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                  aria-label="Sign out"
-                >
-                  <LogOut className="h-4 w-4 shrink-0" />
-                </Button>
-              </TooltipTrigger>
-              <TooltipContent side="right">Sign out</TooltipContent>
-            </Tooltip>
-          ) : (
-            <Button
-              type="button"
-              variant="ghost"
-              size="sm"
-              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground active:scale-[0.98] transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-              aria-label="Sign out"
-            >
-              <LogOut className="h-4 w-4 shrink-0" />
-              Sign out
-            </Button>
-          )}
-        </div>
       </div>
     </TooltipProvider>
   )
