@@ -22,6 +22,7 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Send, Zap, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'lucide-react'
 import { toast } from 'sonner'
+import { VoiceInput } from '@/components/VoiceInput'
 
 export const Route = createFileRoute('/app/chat')({
   head: () => ({
@@ -456,6 +457,15 @@ function ChatPage() {
             disabled={loading}
             autoFocus
             className="flex-1"
+          />
+          <VoiceInput
+            disabled={loading}
+            onTranscript={(text) => {
+              // Append rather than replace: a user may have typed part of the
+              // message already, and losing it would be worse than a bad join.
+              setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+              inputRef.current?.focus()
+            }}
           />
           <Button
             onClick={() => handleSendMessage()}

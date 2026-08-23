@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { NeuroclawMark } from '@/components/NeuroclawMark'
+import { AppTour, hasSeenTour } from '@/components/AppTour'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -17,6 +18,7 @@ import {
   Gauge,
   Goal,
   PanelLeft,
+  HelpCircle,
   MessageSquare,
   Users,
   Blocks,
@@ -80,6 +82,15 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
 }
 
 export function AppSidebarShell() {
+  const [tourOpen, setTourOpen] = useState(false)
+
+  // Open the tour once on a first visit, so a new user is shown around instead
+  // of having to discover the button. Reading localStorage is deferred to an
+  // effect because it does not exist during server-side prerendering.
+  useEffect(() => {
+    if (!hasSeenTour()) setTourOpen(true)
+  }, [])
+
   const [collapsed, setCollapsed] = useState(false)
   useEffect(() => {
     if (localStorage.getItem(SIDEBAR_KEY) === 'true') setCollapsed(true)
@@ -121,6 +132,21 @@ export function AppSidebarShell() {
                 variant="ghost"
                 size="sm"
                 className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                onClick={() => setTourOpen(true)}
+                aria-label="Take the tour"
+              >
+                <HelpCircle className="h-4 w-4" />
+              </Button>
+            </TooltipTrigger>
+            <TooltipContent side="right">Take the tour</TooltipContent>
+          </Tooltip>
+
+          <Tooltip>
+            <TooltipTrigger asChild>
+              <Button
+                variant="ghost"
+                size="sm"
+                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
                 onClick={toggle}
                 aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               >
@@ -151,6 +177,8 @@ export function AppSidebarShell() {
         </div>
 
       </div>
+
+      <AppTour open={tourOpen} onClose={() => setTourOpen(false)} />
     </TooltipProvider>
   )
 }

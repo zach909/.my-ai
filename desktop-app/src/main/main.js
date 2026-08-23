@@ -189,7 +189,9 @@ function createWindow() {
   if (SKIP_BACKEND) {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   } else {
-    mainWindow.loadURL(`https://127.0.0.1:${APP_PORT}`);
+    // The boot screen: instant, self-contained, no server needed. Replaced
+    // with the real app by whenReady() once startNeuroclaw() resolves.
+    mainWindow.loadFile(path.join(__dirname, '../renderer/loading.html'));
   }
 
   // Open DevTools in development (optional)
@@ -303,14 +305,36 @@ function normalizeFingerprint(fp) {
 }
 
 app.whenReady().then(async () => {
+  // Window first, backend second. The other order meant the user clicked the
+  // icon and got nothing at all for as long as the backend took to boot
+  // (measured at 13-18s), which is indistinguishable from a failed launch.
+  // The window now appears immediately showing the boot screen, and swaps to
+  // the app once the server is actually up.
+  createWindow();
+
   if (!SKIP_BACKEND) {
     try {
       await startNeuroclaw();
+      // Only now does the real URL exist to load.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(`https://127.0.0.1:${APP_PORT}`);
+      }
     } catch (error) {
       console.error('[desktop-app] failed to start Neuroclaw:', error);
+      // Leave the boot screen up and say what went wrong, rather than sitting
+      // on "Starting..." forever or dropping the user on a blank window.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const message = String(error && error.message ? error.message : error);
+        mainWindow.webContents.executeJavaScript(
+          `(() => { const d = document.getElementById('detail');
+             if (d) { d.className = 'detail error';
+               d.textContent = ${JSON.stringify('NeuroClaw could not start: ' + message)}; }
+             const m = document.querySelector('.mark');
+             if (m) m.style.animation = 'none'; })()`
+        ).catch(() => { /* window may have closed */ });
+      }
     }
   }
-  createWindow();
 
   app.on('activate', () => {
     // On macOS, re-create window when dock icon is clicked
