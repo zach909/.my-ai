@@ -15,6 +15,7 @@
 
 import { useMemo, useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
+import { usePageVisible } from '@/hooks/usePageVisible'
 import * as THREE from 'three'
 import { buildTwistedStripGeometry, STRIP_MATERIAL } from './twisted-strip-geometry'
 
@@ -54,6 +55,7 @@ export function TwistedStripSpinner({
   size?: number
   label?: string
 }) {
+  const visible = usePageVisible()
   return (
     <div
       style={{ width: size, height: size }}
@@ -62,6 +64,10 @@ export function TwistedStripSpinner({
       aria-label={label}
     >
       <Canvas
+        // Stop rendering entirely when the window is hidden. A WebGL loop that
+        // keeps drawing behind another window is pure GPU and battery cost for
+        // frames nobody sees.
+        frameloop={visible ? 'always' : 'never'}
         // Far enough back that the loop stays fully in frame through a whole
         // turn -- at 4.1 the strip clipped the canvas edge at some angles.
         camera={{ position: [0, 0.45, 5.6], fov: 40 }}

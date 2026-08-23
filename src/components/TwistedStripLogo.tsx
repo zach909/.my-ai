@@ -14,6 +14,7 @@
 
 import { useMemo, useRef } from 'react'
 import { Canvas, useFrame } from '@react-three/fiber'
+import { usePageVisible } from '@/hooks/usePageVisible'
 import { OrbitControls } from '@react-three/drei'
 import * as THREE from 'three'
 import { buildTwistedStripGeometry, STRIP_MATERIAL } from './twisted-strip-geometry'
@@ -47,9 +48,12 @@ function StripMesh() {
  * scene) -- see Desktop.tsx's background layer for where it's mounted.
  */
 export function TwistedStripLogo({ size = 220 }: { size?: number }) {
+  const visible = usePageVisible()
   return (
     <div style={{ width: size, height: size }} aria-hidden="true">
-      <Canvas camera={{ position: [0, 1.25, 4], fov: 40 }} gl={{ alpha: true, antialias: true }}>
+      <Canvas
+        frameloop={visible ? 'always' : 'never'}
+        camera={{ position: [0, 1.25, 4], fov: 40 }} gl={{ alpha: true, antialias: true }}>
         <hemisphereLight args={[0xffffff, 0x555555, 1.1]} />
         <directionalLight position={[3, 5, 4]} intensity={0.9} />
         <directionalLight position={[-3, -2, -4]} intensity={0.4} />

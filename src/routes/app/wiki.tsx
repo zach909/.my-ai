@@ -67,6 +67,7 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
+import { usePageVisible } from '@/hooks/usePageVisible'
 
 interface WikiSearch {
   page?: string
@@ -1923,14 +1924,20 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
     }
   }, [])
 
+  // Gated on visibility for the same reason as the chat status poll: a room
+  // fetch every few seconds while the window is minimised spends processor,
+  // battery and network on messages nobody is reading. It fetches immediately
+  // on becoming visible again, so returning to the window shows current
+  // messages rather than waiting out the remainder of an interval.
+  const pageVisible = usePageVisible()
   useEffect(() => {
-    if (!name) return
+    if (!name || !pageVisible) return
     fetchNew(roomId)
     pollRef.current = setInterval(() => fetchNew(roomId), CHAT_POLL_MS)
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [name, roomId, fetchNew])
+  }, [name, roomId, fetchNew, pageVisible])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
