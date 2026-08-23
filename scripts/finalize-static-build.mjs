@@ -16,7 +16,7 @@
  * a clean temp dir avoids that entirely; here we only COPY into `dist/` (never delete),
  * so a pre-existing read-only `_redirects` is tolerated.
  */
-import { cpSync, existsSync, mkdirSync, readdirSync, rmSync } from 'node:fs'
+import { cpSync, existsSync, mkdirSync, readdirSync, readFileSync, rmSync, statSync, writeFileSync } from 'node:fs'
 import { join } from 'node:path'
 
 const SRC = '.vite-out/client'
@@ -41,6 +41,84 @@ mkdirSync(DEST, { recursive: true })
 // nothing but build output ever lands in assets/. A file that cannot be
 // removed is warned about rather than fatal, since a leftover is wasteful but
 // harmless, whereas failing the build here would not be.
+// Stale route HTML from earlier builds is the same problem as stale assets,
+// but it cannot be fixed by clearing dist/ wholesale: dist/ also holds the
+// BACKEND build output (interface/, plugins/, models && skills/, src/, ...),
+// which this script never produced and must never delete.
+//
+// So record exactly which top-level entries the frontend build emitted, and on
+// the next run delete only the ones that are no longer emitted. A route that
+// was deleted from src/routes stops being generated and is then removed here,
+// instead of being served forever -- which is how a deleted preview route was
+// still shipping, still referencing a script that had been taken out of the
+// app.
+const MANIFEST_FILE = join(DEST, '.frontend-build-manifest.json')
+const currentEntries = readdirSync(SRC)
+let previousEntries = []
+try {
+  if (existsSync(MANIFEST_FILE)) {
+    const parsed = JSON.parse(readFileSync(MANIFEST_FILE, 'utf8'))
+    if (Array.isArray(parsed?.entries)) previousEntries = parsed.entries.filter(e => typeof e === 'string')
+  }
+} catch (e) {
+  // A corrupt manifest must not fail the build; the worst case is that one
+  // generation of stale files survives until the next successful write.
+  console.warn(`[finalize] could not read the previous build manifest: ${e.code || e.message}`)
+}
+
+// The manifest only knows what it has recorded, so entries left behind BEFORE
+// it existed would survive forever. Seed it by detecting them: a prerendered
+// route is a directory containing index.html, and no backend output directory
+// in dist/ (interface/, plugins/, src/, models && skills/, plugin_manager/,
+// extension-builder/, extension_system/) has one -- verified against the real
+// build output before relying on it.
+if (previousEntries.length === 0) {
+  for (const entry of readdirSync(DEST)) {
+    if (entry === 'assets' || entry === '_redirects') continue
+    try {
+      if (existsSync(join(DEST, entry, 'index.html'))) previousEntries.push(entry)
+    } catch { /* unreadable entry -- leave it alone */ }
+  }
+  if (previousEntries.length > 0) {
+    console.log(`[finalize] first run: adopted ${previousEntries.length} existing route entr(ies) for tracking`)
+  }
+}
+
+const nowEmitted = new Set(currentEntries)
+let staleRoutes = 0
+for (const previous of previousEntries) {
+  if (nowEmitted.has(previous)) continue
+  // Never touch the platform's pre-injected redirect, and never walk outside
+  // dist/ via a manifest entry that somehow contains a path separator.
+  if (previous === '_redirects' || previous.includes('/') || previous.includes('\\') || previous.includes('..')) continue
+  try {
+    rmSync(join(DEST, previous), { recursive: true, force: true })
+    staleRoutes++
+  } catch (e) {
+    console.warn(`[finalize] could not remove stale entry ${previous}: ${e.code || e.message}`)
+  }
+}
+if (staleRoutes > 0) console.log(`[finalize] removed ${staleRoutes} stale route entr(ies) no longer produced by the build`)
+
+// cpSync MERGES into an existing directory, so a nested route that is no
+// longer prerendered survives inside a parent that still is -- app/ is still
+// emitted, so app/shared-chat/ from an older build stayed and kept serving
+// stale HTML. Route directories are entirely build output, so replace each one
+// wholesale rather than copying over the top of it.
+for (const entry of currentEntries) {
+  if (entry === 'assets' || entry === '_redirects') continue
+  const target = join(DEST, entry)
+  if (!existsSync(target)) continue
+  // Only directories this build is about to re-emit, never backend output.
+  try {
+    if (existsSync(join(SRC, entry)) && statSync(join(SRC, entry)).isDirectory()) {
+      rmSync(target, { recursive: true, force: true })
+    }
+  } catch (e) {
+    console.warn(`[finalize] could not replace ${entry}: ${e.code || e.message}`)
+  }
+}
+
 const ASSETS = join(DEST, 'assets')
 if (existsSync(ASSETS)) {
   let cleared = 0
@@ -71,6 +149,10 @@ for (const entry of readdirSync(SRC)) {
     }
   }
 }
+
+// Written only after every entry copied successfully, so a failed build never
+// leaves a manifest claiming files that are not actually there.
+writeFileSync(MANIFEST_FILE, JSON.stringify({ entries: currentEntries }, null, 2) + '\n')
 
 rmSync('.vite-out', { recursive: true, force: true })
 
