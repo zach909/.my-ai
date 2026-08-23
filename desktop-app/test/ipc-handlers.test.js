@@ -100,7 +100,7 @@ const mainPath = path.join(__dirname, '..', 'src', 'main', 'main.js');
 delete require.cache[require.resolve(mainPath)];
 require(mainPath);
 
-const { resolveStaticFile } = require(path.join(__dirname, '..', 'src', 'main', 'app-server.js'));
+const { resolveStaticFile, startAppServer, DESKTOP_TOKEN_HEADER } = require(path.join(__dirname, '..', 'src', 'main', 'app-server.js'));
 
 const FAKE_EVENT = { sender: {} }; // stands in for Electron's IpcMainInvokeEvent
 
@@ -212,6 +212,60 @@ async function main() {
   const traversalResult = resolveStaticFile(traversalDistDir, traversalUrl.pathname);
   check(traversalResult === null,
     'resolveStaticFile refuses to serve a file from a sibling directory that merely shares a name prefix with distDir');
+
+  // ── The app runs in its own window, not in a browser ────────────────────
+  // Both servers bind 127.0.0.1, so nothing was ever reachable off the
+  // machine -- but any browser ON the machine could open the app-server port
+  // and drive the whole agent, backend API included, with no credential.
+  const http = require('http');
+  const tokenDist = fs.mkdtempSync(path.join(os.tmpdir(), 'app-server-token-dist-'));
+  fs.writeFileSync(path.join(tokenDist, 'index.html'), '<html>app</html>');
+  const TOKEN = 'test-token-abc123';
+  const guarded = await startAppServer({ distDir: tokenDist, backendPort: 1, port: 0, authToken: TOKEN });
+  const guardedPort = guarded.address().port;
+
+  const get = (headers) => new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port: guardedPort, path: '/', headers }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+  });
+
+  const noToken = await get({});
+  check(noToken.status === 403,
+    'a request with no desktop token is refused (a browser cannot open the app)');
+  check(/NeuroClaw runs in its own window/.test(noToken.body),
+    'the refusal tells the user where to actually open the app');
+
+  const wrongToken = await get({ [DESKTOP_TOKEN_HEADER]: 'not-the-token' });
+  check(wrongToken.status === 403, 'a request with the wrong token is refused');
+
+  const rightToken = await get({ [DESKTOP_TOKEN_HEADER]: TOKEN });
+  check(rightToken.status === 200 && rightToken.body.includes('<html>app</html>'),
+    'the app window, which stamps the real token, is served normally');
+
+  // The gate must cover the proxied backend API too, not just static files --
+  // /api/* is the half that can actually drive the agent.
+  const apiNoToken = await new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port: guardedPort, path: '/api/status', headers: {} }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+    });
+  });
+  check(apiNoToken === 403, 'the /api proxy is behind the same gate, not just the static files');
+
+  guarded.close();
+
+  // Opting out (no authToken) must still work: that is how the suite above
+  // and any non-Electron embedding use this server.
+  const openSrv = await startAppServer({ distDir: tokenDist, backendPort: 1, port: 0 });
+  const openPort = openSrv.address().port;
+  const openRes = await new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port: openPort, path: '/' }, (res) => { res.resume(); resolve(res.statusCode); });
+  });
+  check(openRes === 200, 'omitting authToken leaves the server open, as documented');
+  openSrv.close();
 
   console.log(`\n${_passed} passed, ${_failed} failed`);
   process.exit(_failed === 0 ? 0 : 1);

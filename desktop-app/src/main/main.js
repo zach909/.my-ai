@@ -4,12 +4,13 @@
  * It handles native OS interactions, file system access, and process management.
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn, exec, execFileSync } = require('child_process');
-const { startAppServer } = require('./app-server');
+const crypto = require('crypto');
+const { startAppServer, DESKTOP_TOKEN_HEADER } = require('./app-server');
 
 /**
  * Best-effort blocklist for the most common catastrophic-accident shell
@@ -58,6 +59,13 @@ const APP_PORT = 4173;
 // handlers below via a fake Electron shell and must not spawn a real
 // backend process or block on ensureBuilt()/waitForBackend().
 const SKIP_BACKEND = process.env.DESKTOP_APP_SKIP_BACKEND === '1';
+
+/**
+ * Per-launch secret proving a request came from this app's own window rather
+ * than a browser pointed at the same localhost port. Regenerated every start
+ * and never persisted, so there is nothing to leak between runs.
+ */
+const DESKTOP_TOKEN = crypto.randomBytes(32).toString('hex');
 
 /**
  * Build whichever half of the app (backend JS / frontend static site) is
@@ -119,6 +127,20 @@ function waitForBackend(port, timeoutMs = 15000) {
  * template's demo HTML page.
  */
 function createWindow() {
+  // Stamp the per-launch token on every request this window makes -- the page,
+  // its assets, and its /api calls all go through here. A browser opening the
+  // same URL sends no such header and gets 403.
+  // Only when we actually started the token-protected app-server; with
+  // SKIP_BACKEND there is no server to authenticate to.
+  if (!SKIP_BACKEND) {
+    session.defaultSession.webRequest.onBeforeSendHeaders(
+      { urls: [`http://127.0.0.1:${APP_PORT}/*`] },
+      (details, callback) => {
+        callback({ requestHeaders: { ...details.requestHeaders, [DESKTOP_TOKEN_HEADER]: DESKTOP_TOKEN } });
+      }
+    );
+  }
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -167,6 +189,7 @@ async function startNeuroclaw() {
     distDir: path.join(REPO_ROOT, 'dist'),
     backendPort: BACKEND_PORT,
     port: APP_PORT,
+    authToken: DESKTOP_TOKEN,
   });
 }
 
@@ -184,6 +207,29 @@ function stopNeuroclaw() {
 /**
  * Application lifecycle events
  */
+/**
+ * One running copy per machine. Clicking the desktop icon while NeuroClaw is
+ * already open used to launch a second process, which would then race the
+ * first for ports 7861/4173 and fail -- the icon appeared to do nothing. The
+ * second instance now hands off to the first, which raises and focuses its
+ * window, so the icon always means "show me NeuroClaw".
+ *
+ * Not applied under SKIP_BACKEND: the IPC test suite loads this file directly
+ * with a fake Electron whose app has no lock methods, and must not exit.
+ */
+if (!SKIP_BACKEND && typeof app.requestSingleInstanceLock === 'function' && !app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+
+if (!SKIP_BACKEND && typeof app.on === 'function') {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
 app.whenReady().then(async () => {
   if (!SKIP_BACKEND) {
     try {
@@ -362,3 +408,5 @@ ipcMain.handle('show-in-folder', async (event, filePath) => {
 console.log('Desktop App initialized successfully!');
 console.log(`Platform: ${process.platform}`);
 console.log(`Architecture: ${process.arch}`);
+
+} // end single-instance guard
