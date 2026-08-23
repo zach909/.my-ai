@@ -1379,7 +1379,7 @@ export class WebServer {
         }
         // GET /api/wiki — every real page under wiki/*.md (the same content
         // GitHub's wiki tab renders), lightweight summaries only (name/title/
-        // description) so /app/wiki can list them without fetching every full
+        // description) so /app/store can list them without fetching every full
         // file. Reads the actual repo directory on every call rather than
         // caching, matching this project's "wiki is a living doc, not a build
         // artifact" convention (see docs/SHARED_WIKI_SYSTEM.md) — a page

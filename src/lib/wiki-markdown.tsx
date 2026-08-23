@@ -13,7 +13,7 @@ import type { ReactNode } from 'react'
  * models && skills/core/neuro-lang.ts) is hand-rolled for the same reason.
  *
  * `onWikiLink` is called instead of a real navigation for `[[Page]]`
- * links, so the caller (src/routes/app/wiki.tsx) can switch pages
+ * links, so the caller (src/routes/app/store.tsx) can switch pages
  * in-app via TanStack Router state instead of a full page reload.
  */
 

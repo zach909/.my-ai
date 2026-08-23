@@ -2,7 +2,8 @@ import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { NeuroclawMark } from '@/components/NeuroclawMark'
-import { AppTour, hasSeenTour } from '@/components/AppTour'
+import { AppTour } from '@/components/AppTour'
+import { hasSeenTour } from '@/lib/tour-seen'
 import { useAgentRunning } from '@/hooks/useAgentRunning'
 import { Button } from '@/components/ui/button'
 import {
@@ -25,7 +26,6 @@ import {
   Blocks,
   Folder,
   TrendingUp,
-  BookOpen,
   Store,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
@@ -50,12 +50,10 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: '/app/evaluation', icon: <Gauge className="h-4 w-4" />, label: 'Evaluation' },
   { href: '/app/self-improvement', icon: <TrendingUp className="h-4 w-4" />, label: 'Self-Improvement' },
   { href: '/app/planning', icon: <Goal className="h-4 w-4" />, label: 'Planning' },
-  // The Store replaces the separate Bot Wiki and Skill Uploads entries: both
-  // are things people publish, and the store is where published things live.
-  // The wiki/uploads page itself is not deleted -- it holds the editor and the
-  // packaging UI, and is linked from the Store.
+  // One entry, not four: the catalogue, the wiki, the upload packager and the
+  // shared chat are tabs of /app/store, because they are all the same activity
+  // -- publishing things and reading what other people published.
   { href: '/app/store', icon: <Store className="h-4 w-4" />, label: 'Store' },
-  { href: '/app/wiki', icon: <BookOpen className="h-4 w-4" />, label: 'Wiki & Uploads' },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {

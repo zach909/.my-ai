@@ -19,12 +19,12 @@
  *                   "bot". This is the concrete implementation of
  *                   docs/SKILL_ACQUISITION_LOOP.md's "push the wiki page"
  *                   step: the AI (via plugins/wiki.ts's WikiPlugin) and a
- *                   human using the /app/wiki "New Page" form both publish
+ *                   human using the /app/store "New Page" form both publish
  *                   here, through the same function -- neither one can
  *                   write into the curated collection.
  *
  * listWikiPages()/readWikiPage() merge both collections and tag every page
- * with which one it came from, so callers (the /app/wiki UI) can render
+ * with which one it came from, so callers (the /app/store UI) can render
  * them as two visibly distinct sections instead of one undifferentiated
  * list.
  */
@@ -162,7 +162,7 @@ export function readWikiPage(name: string): WikiPage | null {
 
 /**
  * Create or overwrite a page in the bot-published collection (wiki/bot/) --
- * used by both POST /api/wiki (a human, via the /app/wiki "New Page" form)
+ * used by both POST /api/wiki (a human, via the /app/store "New Page" form)
  * and WikiPlugin.publish() (the AI itself, as a plugin action). Neither
  * caller can reach the curated wiki/ directory through this function; that
  * collection only changes through a real commit to the repo.

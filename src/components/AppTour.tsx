@@ -16,10 +16,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Link } from '@tanstack/react-router'
 import { Button } from '@/components/ui/button'
 import { NeuroclawMark } from '@/components/NeuroclawMark'
+import { markTourSeen } from '@/lib/tour-seen'
 
-/** Bumped when the tour content changes enough that returning users should see it again. */
-const TOUR_VERSION = 1
-const SEEN_KEY = `neuroclaw.tour.seen.v${TOUR_VERSION}`
 
 interface TourStep {
   title: string
@@ -99,7 +97,7 @@ const STEPS: TourStep[] = [
       'The shared knowledge base. Pages can be read and created freely, and every edit or delete snapshots a backup first, so nothing is unrecoverable.',
     mesh:
       'Deleting and restoring are privileged — public access can add knowledge but cannot destroy it.',
-    href: '/app/wiki',
+    href: '/app/store',
     linkLabel: 'Open Bot Wiki',
   },
   {
@@ -111,30 +109,13 @@ const STEPS: TourStep[] = [
   },
 ]
 
-function markSeen() {
-  try {
-    localStorage.setItem(SEEN_KEY, '1')
-  } catch {
-    // Private windows and blocked site data throw here. The tour simply
-    // reappears next launch, which is a far better failure than not opening.
-  }
-}
-
-export function hasSeenTour(): boolean {
-  try {
-    return localStorage.getItem(SEEN_KEY) === '1'
-  } catch {
-    return false
-  }
-}
-
 export function AppTour({ open, onClose }: { open: boolean; onClose: () => void }) {
   const [step, setStep] = useState(0)
   const dialogRef = useRef<HTMLDivElement>(null)
   const last = STEPS.length - 1
 
   const close = useCallback(() => {
-    markSeen()
+    markTourSeen()
     onClose()
   }, [onClose])
 
