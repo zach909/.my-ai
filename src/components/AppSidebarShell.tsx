@@ -3,6 +3,7 @@ import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { NeuroclawMark } from '@/components/NeuroclawMark'
 import { AppTour, hasSeenTour } from '@/components/AppTour'
+import { useAgentRunning } from '@/hooks/useAgentRunning'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -83,6 +84,8 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
 
 export function AppSidebarShell() {
   const [tourOpen, setTourOpen] = useState(false)
+  // Drives the mark's wave: it breathes from circle to star while the agent works.
+  const agentRunning = useAgentRunning()
 
   // Open the tour once on a first visit, so a new user is shown around instead
   // of having to discover the button. Reading localStorage is deferred to an
@@ -122,7 +125,7 @@ export function AppSidebarShell() {
         >
           {!collapsed && (
             <>
-              <NeuroclawMark size={28} />
+              <NeuroclawMark size={28} active={agentRunning} />
               <span className="flex-1 font-semibold text-sm truncate">ASI Architect</span>
             </>
           )}

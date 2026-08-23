@@ -4605,6 +4605,56 @@ async function testPropagateOptimizations() {
   check(pathIters && pathDiff === 0, 'the dense path is bit-identical to the CSR path it replaces');
 }
 
+async function testMarkWaveAnimation() {
+  const fsp = await import('node:fs');
+  const src = fsp.readFileSync('src/components/NeuroclawMark.tsx', 'utf8');
+
+  // The mark's three amplitudes: circle (A=0), resting (A=17), star (A=42).
+  const paths = [...src.matchAll(/const RING_(CIRCLE|CALM|STAR) =\s*\n\s*'([^']+)'/g)]
+    .map(m => ({ name: m[1], d: m[2] }));
+  check(paths.length === 3, `all three wave amplitudes are defined (found ${paths.length})`);
+
+  // Path interpolation only works when every path shares an identical command
+  // sequence. These do by construction -- same sampler, same segment count --
+  // but an edit that regenerated one at a different resolution would break the
+  // animation silently, with the shape simply snapping instead of morphing.
+  const shape = (d) => d.replace(/-?[\d.]+/g, '#');
+  const shapes = new Set(paths.map(p => shape(p.d)));
+  check(shapes.size === 1,
+    'every amplitude has an identical command structure, which is what makes them interpolatable');
+
+  const segments = paths.map(p => (p.d.match(/ C /g) || []).length);
+  check(new Set(segments).size === 1 && segments[0] > 0,
+    `every amplitude has the same segment count (${segments[0]})`);
+
+  // The shapes must actually differ, or the animation would run and show
+  // nothing. Compare the widest horizontal extent: the star reaches further
+  // out than the circle by construction.
+  const extent = (d) => {
+    const xs = [...d.matchAll(/(-?[\d.]+)\s+(-?[\d.]+)/g)].map(m => parseFloat(m[1]));
+    return Math.max(...xs) - Math.min(...xs);
+  };
+  const circle = paths.find(p => p.name === 'CIRCLE');
+  const star = paths.find(p => p.name === 'STAR');
+  // Proportional, not a fixed pixel margin: with six lobes the widest points
+  // do not fall on the x-axis, so the horizontal extent grows by noticeably
+  // less than 2*(R+A). Measured 304 -> 342, which is a plainly visible change.
+  const grew = extent(star.d) / extent(circle.d);
+  check(grew > 1.1,
+    `the star genuinely extends beyond the circle (${Math.round(extent(circle.d))} -> ${Math.round(extent(star.d))}, ${((grew - 1) * 100).toFixed(0)}% wider)`);
+
+  // Driven by CSS, not SMIL. SMIL's clock does not advance under headless
+  // Chromium, so a SMIL version could never be verified here.
+  check(/@keyframes neuroclaw-wave/.test(src), 'the morph is a CSS keyframe animation');
+  check(!/<animate\b/.test(src), 'no SMIL animation is used, since it cannot be verified in this environment');
+  check(/prefers-reduced-motion/.test(src),
+    'a viewer who asked for less motion gets opacity instead of a morphing shape');
+
+  // Off unless the agent is working.
+  check(/active \? 'neuroclaw-wave-active' : undefined/.test(src),
+    'the animation only runs when the agent is actually working');
+}
+
 async function testPublicStore() {
   const os = await import('node:os');
   const fsp = await import('node:fs');
@@ -4985,6 +5035,7 @@ async function main() {
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
     ['Settle-loop optimizations preserve behavior exactly', testPropagateOptimizations],
+    ['Mark wave: circle to star while the agent works', testMarkWaveAnimation],
     ['Public store: shared via the repo, open to publish, gated on destroy', testPublicStore],
     ['Tools plugin: exact local utilities, and a non-greedy dispatch contract', testToolsPlugin],
     ['Representation geometry: distance between embeddings actually means something', testEmbeddingGeometry],
