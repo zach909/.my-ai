@@ -70,10 +70,28 @@ function resolveStaticFile(distDir, pathname) {
  * Start the combined static+proxy server.
  * @returns {Promise<http.Server>}
  */
-function startAppServer({ distDir, backendPort, port }) {
+/** Header the desktop window stamps on every request; see `authToken` below. */
+const DESKTOP_TOKEN_HEADER = 'x-neuroclaw-desktop';
+
+/**
+ * @param authToken Per-launch secret. The server binds to 127.0.0.1, so it was
+ *   never reachable off the machine -- but any browser ON the machine could
+ *   open http://127.0.0.1:<port> and drive the whole agent, backend API
+ *   included, with no credential at all. The Electron window stamps this token
+ *   on every request it makes (main.js, onBeforeSendHeaders); a browser cannot
+ *   know it, because it is random per launch and never written down. Omit to
+ *   leave the server open, which is what the tests do.
+ */
+function startAppServer({ distDir, backendPort, port, authToken }) {
   return new Promise((resolve, reject) => {
     const server = http.createServer((req, res) => {
       const url = new URL(req.url || '/', 'http://internal');
+
+      if (authToken && req.headers[DESKTOP_TOKEN_HEADER] !== authToken) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('NeuroClaw runs in its own window. Open the NeuroClaw app.');
+        return;
+      }
 
       if (url.pathname.startsWith('/api/')) {
         const proxyReq = http.request(
@@ -118,4 +136,4 @@ function startAppServer({ distDir, backendPort, port }) {
   });
 }
 
-module.exports = { startAppServer, resolveStaticFile };
+module.exports = { startAppServer, resolveStaticFile, DESKTOP_TOKEN_HEADER };

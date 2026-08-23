@@ -1,6 +1,7 @@
 import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
+import { NeuroclawMark } from '@/components/NeuroclawMark'
 import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
@@ -18,7 +19,6 @@ import {
   Goal,
   LogOut,
   PanelLeft,
-  Cpu,
   MessageSquare,
   Users,
   Blocks,
@@ -113,9 +113,7 @@ export function AppSidebarShell() {
         >
           {!collapsed && (
             <>
-              <div className="flex items-center justify-center h-7 w-7 rounded-md bg-primary text-primary-foreground text-xs font-bold shrink-0">
-                <Cpu className="h-3.5 w-3.5" />
-              </div>
+              <NeuroclawMark size={28} />
               <span className="flex-1 font-semibold text-sm truncate">ASI Architect</span>
             </>
           )}

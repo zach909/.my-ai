@@ -1,5 +1,6 @@
 import { createRouter as createTanStackRouter } from '@tanstack/react-router'
 import { routeTree } from './routeTree.gen'
+import { LoadingScreen } from './components/LoadingScreen'
 
 /**
  * TanStack Start entry — the framework imports this `createRouter` factory.
@@ -11,6 +12,14 @@ export function createRouter() {
     routeTree,
     defaultPreload: 'intent',
     scrollRestoration: true,
+    // The twisted-strip loading screen covers every navigation that has to
+    // wait, including first paint when the desktop app opens -- the longest
+    // wait the user actually sees.
+    defaultPendingComponent: () => <LoadingScreen />,
+    // Show it promptly rather than flashing in late on a slow route, but not
+    // so eagerly that a fast navigation blinks a loading screen on and off.
+    defaultPendingMs: 300,
+    defaultPendingMinMs: 400,
   })
 }
 
