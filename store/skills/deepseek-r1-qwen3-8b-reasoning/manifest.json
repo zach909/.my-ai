@@ -1,0 +1,9 @@
+{
+  "kind": "skills",
+  "name": "deepseek-r1-qwen3-8b-reasoning",
+  "title": "DeepSeek-R1 (Qwen3-8B distill) — reasoning expert (OPEN, unofficial)",
+  "description": "MIT-licensed community skill, not affiliated with DeepSeek. Attaches deepseek-ai/DeepSeek-R1-0528-Qwen3-8B (8.19B, qwen3) to OneBrain as a reasoning expert. Chosen as the runnable counterpart to the 17.8B Nemotron skill: 8B fits a consumer GPU and is usable on CPU, and MIT means genuinely open. Separates the model's <think> working from its answer. Bridge and recipe only — the ~16GB of weights download to your own machine.",
+  "author": "community (unofficial)",
+  "publishedAt": "2026-08-23T19:09:39.702Z",
+  "updatedAt": "2026-08-23T19:09:39.702Z"
+}
