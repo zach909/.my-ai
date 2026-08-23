@@ -42,6 +42,19 @@ export interface MemoryItem {
    * computed from `content` only, never from `payload`.
    */
   payload?: string;
+  /**
+   * Exempt from capacity eviction. Set for knowledge that was *installed*
+   * rather than merely observed -- an extension's neuron definitions and
+   * skill scripts, which the user deliberately added and expects to still
+   * be there. Without this, boot-loading more skills than `capacity`
+   * silently discarded some of them: every boot memory is written with the
+   * same importance, at the same instant, with accessCount 0, so their
+   * retention scores are identical and the stable sort simply drops
+   * whichever files `readdir` happened to return first. A skill vanishing
+   * because of its filename's position in the alphabet is not a retention
+   * policy.
+   */
+  pinned?: boolean;
 }
 
 export interface RememberOptions {
@@ -50,6 +63,8 @@ export interface RememberOptions {
   id?: string;
   /** See MemoryItem.payload. */
   payload?: string;
+  /** See MemoryItem.pinned. */
+  pinned?: boolean;
 }
 
 export interface RetrieveOptions {
@@ -119,6 +134,7 @@ export class LongTermMemory {
       accessCount: 0,
       lastAccess: now,
       ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
+      ...(opts.pinned ? { pinned: true } : {}),
     };
     this.items.set(id, item);
     // Cache precomputed sparse vector for fast $O(\text{nonZeros})$ retrieval
@@ -241,13 +257,21 @@ export class LongTermMemory {
   private evictIfNeeded(): void {
     if (this.items.size <= this.capacity) return;
     const now = Date.now();
-    const ranked = this.all().map(item => {
+    // Pinned memories are installed knowledge, not observations, so they
+    // are never candidates. Capacity therefore bounds what the system
+    // picked up on its own -- which is the thing that grows without limit
+    // -- and never silently deletes something the user installed.
+    const evictable = this.all().filter(item => !item.pinned);
+    const ranked = evictable.map(item => {
       const recency = Math.exp(-(now - item.lastAccess) / (1000 * 60 * 60 * 24));
       const retention = item.importance * 0.6 + recency * 0.25 + Math.min(1, item.accessCount / 10) * 0.15;
       return { item, retention };
     });
     ranked.sort((a, b) => a.retention - b.retention);
-    const toRemove = this.items.size - this.capacity;
+    // Capped at what is actually evictable: when pinned items alone reach
+    // capacity the store is allowed to exceed it rather than start
+    // deleting them.
+    const toRemove = Math.min(this.items.size - this.capacity, ranked.length);
     for (let i = 0; i < toRemove; i++) {
       const removeId = ranked[i].item.id;
       this.items.delete(removeId);

@@ -645,13 +645,17 @@ export class WebServer {
      * around it, AND there was no way to recover the exact response
      * without re-parsing the flattened sentence. Both are fixed here.
      *
+     * Pinned, because an installed skill is knowledge the user deliberately
+     * added: capacity eviction may drop what the system merely observed, but
+     * never what someone installed.
+     *
      * Tagged 'skill-script' (plus the source extension's name) so
      * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
      * there) can query this exact tag rather than mixing skill triggers in
      * with ordinary chat-turn memories.
      */
     rememberSkillScript(system, userSays, response, extName) {
-        system.memory.remember(userSays, { importance: 0.7, tags: ['skill-script', extName], payload: response });
+        system.memory.remember(userSays, { importance: 0.7, tags: ['skill-script', extName], payload: response, pinned: true });
     }
     /**
      * The actual "install a skill into the live system" logic -- wiring a
@@ -671,7 +675,7 @@ export class WebServer {
                 continue;
             const def = (n.definition ?? '').trim();
             if (def) {
-                system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
+                system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name], pinned: true });
                 remembered++;
             }
             // Scripts are equally real recallable knowledge -- "when asked X,
@@ -772,7 +776,7 @@ export class WebServer {
                         continue;
                     const def = (n.definition ?? '').trim();
                     if (def) {
-                        system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', extName] });
+                        system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', extName], pinned: true });
                         remembered++;
                     }
                     for (const s of n.scripts ?? []) {
