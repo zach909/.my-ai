@@ -8,7 +8,19 @@
  * longest wait the user sees.
  */
 
-import { TwistedStripSpinner } from './TwistedStripSpinner'
+import { Suspense, lazy } from 'react'
+import { RingSpinner } from './RingSpinner'
+
+/**
+ * The 3D strip is code-split. Importing it directly pulled three.js and
+ * react-three-fiber into the entry chunk (measured at 1.35 MB), which meant
+ * the loading screen could not paint until a 3D engine had downloaded — the
+ * exact opposite of what a loading screen is for. It is now fetched in the
+ * background behind the instant SVG ring, and swapped in when it arrives.
+ */
+const TwistedStripSpinner = lazy(() =>
+  import('./TwistedStripSpinner').then(m => ({ default: m.TwistedStripSpinner }))
+)
 
 export function LoadingScreen({
   /** Optional line under the wordmark, e.g. what is being waited on. */
@@ -31,7 +43,9 @@ export function LoadingScreen({
       {/* The spinner carries its own aria-label; silence it here so screen
           readers announce this region once, not twice. */}
       <div aria-hidden="true">
-        <TwistedStripSpinner size={140} />
+        <Suspense fallback={<RingSpinner size={140} />}>
+          <TwistedStripSpinner size={140} />
+        </Suspense>
       </div>
 
       <div className="flex flex-col items-center gap-2">

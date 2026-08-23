@@ -29,6 +29,32 @@ if (!existsSync(SRC)) {
 
 mkdirSync(DEST, { recursive: true })
 
+// Clear dist/assets before copying. Asset filenames are content-hashed, so a
+// rebuild writes NEW names and leaves the previous ones behind forever --
+// dist/assets had grown to 33 MB across 308 files, of which a clean build
+// produces 2.4 MB across 58. The rest was dead chunks from earlier builds,
+// including fifteen separate 900 KB copies of three.js, and the desktop app
+// packages all of dist/, so every one of them shipped to users.
+//
+// Only assets/ is cleared, not dist/ as a whole: the never-delete rule exists
+// for the platform's pre-injected read-only _redirects at the top level, and
+// nothing but build output ever lands in assets/. A file that cannot be
+// removed is warned about rather than fatal, since a leftover is wasteful but
+// harmless, whereas failing the build here would not be.
+const ASSETS = join(DEST, 'assets')
+if (existsSync(ASSETS)) {
+  let cleared = 0
+  for (const stale of readdirSync(ASSETS)) {
+    try {
+      rmSync(join(ASSETS, stale), { recursive: true, force: true })
+      cleared++
+    } catch (e) {
+      console.warn(`[finalize] could not remove stale asset ${stale}: ${e.code || e.message}`)
+    }
+  }
+  if (cleared > 0) console.log(`[finalize] cleared ${cleared} stale asset(s) from dist/assets`)
+}
+
 for (const entry of readdirSync(SRC)) {
   try {
     cpSync(join(SRC, entry), join(DEST, entry), { recursive: true, force: true })
