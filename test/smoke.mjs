@@ -4605,6 +4605,86 @@ async function testPropagateOptimizations() {
   check(pathIters && pathDiff === 0, 'the dense path is bit-identical to the CSR path it replaces');
 }
 
+async function testPublicStore() {
+  const os = await import('node:os');
+  const fsp = await import('node:fs');
+  const pathm = await import('node:path');
+  const dir = fsp.mkdtempSync(pathm.join(os.tmpdir(), 'neuroclaw-store-'));
+  const prev = process.env.NEUROCLAW_STORE_DIR;
+  process.env.NEUROCLAW_STORE_DIR = dir;
+  try {
+    const store = await load('models && skills/core/store.js');
+    const { isStorePublicRoute } = await load('interface/web-server.js');
+
+    // --- Publishing and reading back -------------------------------------
+    const pub = store.publishItem({
+      kind: 'skills', name: 'greet', title: 'Greeter',
+      description: 'says hello', author: 'someone',
+      files: [{ filename: 'skill.json', content: '{"greet":true}' }],
+    });
+    check(pub.name === 'greet' && pub.files.length === 1, 'an item can be published');
+    check(typeof pub.files[0].sha256 === 'string' && pub.files[0].sha256.length === 64,
+      'each file records a sha256, so a puller can tell whether it changed');
+
+    // Binary content must survive the round trip byte-for-byte -- binary
+    // skills are a first-class kind here, not an afterthought.
+    const bytes = Buffer.from([0, 1, 2, 250, 255]);
+    store.publishItem({
+      kind: 'binaries', name: 'weights', files: [{ filename: 'model.bin', content: bytes.toString('base64'), encoding: 'base64' }],
+    });
+    check(store.readItemFile('binaries', 'weights', 'model.bin').equals(bytes),
+      'binary files round-trip through base64 without corruption');
+
+    // An update must not silently drop the files it did not mention.
+    store.publishItem({ kind: 'skills', name: 'greet', files: [{ filename: 'README.md', content: '# hi' }] });
+    const updated = store.readItem('skills', 'greet');
+    check(updated.files.length === 2, 'updating adds a file without discarding the existing ones');
+    check(updated.publishedAt !== '' && updated.updatedAt >= updated.publishedAt,
+      'first-published and last-updated are both tracked');
+
+    const cat = store.listCatalog();
+    check(cat.skills.length === 1 && cat.binaries.length === 1, 'the catalogue is derived from the files on disk');
+
+    // --- Names are attacker-controlled -----------------------------------
+    // Anyone can publish, so a name that escapes its folder would let one
+    // publish overwrite files in every clone of the repository.
+    for (const bad of ['../escape', 'a/b', '..', '', 'x'.repeat(80)]) {
+      let rejected = false;
+      try { store.publishItem({ kind: 'skills', name: bad, files: [{ filename: 'x', content: 'y' }] }); }
+      catch { rejected = true; }
+      check(rejected, `a publish named ${JSON.stringify(bad.slice(0, 12))} is rejected`);
+    }
+    let badFile = false;
+    try { store.publishItem({ kind: 'skills', name: 'ok', files: [{ filename: '../../etc/passwd', content: 'x' }] }); }
+    catch { badFile = true; }
+    check(badFile, 'a filename containing a path traversal is rejected');
+    let badKind = false;
+    try { store.publishItem({ kind: 'not-a-kind', name: 'ok', files: [{ filename: 'x', content: 'y' }] }); }
+    catch { badKind = true; }
+    check(badKind, 'an unknown store section is rejected');
+
+    // --- Who may do what --------------------------------------------------
+    // Reading and publishing are open on purpose: that is what makes the
+    // store shared. Deletion is not, for the same reason the wiki gates it.
+    check(isStorePublicRoute('/api/store', 'GET'), 'browsing the catalogue needs no credential');
+    check(isStorePublicRoute('/api/store', 'POST'), 'publishing needs no credential');
+    check(isStorePublicRoute('/api/store/skills/greet', 'GET'), 'viewing an item needs no credential');
+    check(isStorePublicRoute('/api/store/skills/greet/file/skill.json', 'GET'),
+      'downloading a file needs no credential');
+    check(!isStorePublicRoute('/api/store/skills/greet', 'DELETE'),
+      'DELETE is NOT public -- anyone may add to the store, only an authorised caller may destroy');
+    check(!isStorePublicRoute('/api/store/../../etc/passwd', 'GET'),
+      'a traversal path is not treated as a public store route');
+
+    check(store.deleteItem('skills', 'greet') === true, 'an item can be removed');
+    check(store.readItem('skills', 'greet') === null, 'a removed item is gone');
+  } finally {
+    if (prev === undefined) delete process.env.NEUROCLAW_STORE_DIR;
+    else process.env.NEUROCLAW_STORE_DIR = prev;
+    fsp.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testToolsPlugin() {
   const { ToolsPlugin } = await load('plugins/tools.js');
   const t = new ToolsPlugin({ id: 'tools', name: 'Tools', type: 'api-connection', capabilities: ['tools'] });
@@ -4905,6 +4985,7 @@ async function main() {
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
     ['Settle-loop optimizations preserve behavior exactly', testPropagateOptimizations],
+    ['Public store: shared via the repo, open to publish, gated on destroy', testPublicStore],
     ['Tools plugin: exact local utilities, and a non-greedy dispatch contract', testToolsPlugin],
     ['Representation geometry: distance between embeddings actually means something', testEmbeddingGeometry],
     ['Retrieval-grounded answering: a taught fact is actually usable', testGroundedAnswering],
