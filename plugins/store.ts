@@ -23,7 +23,7 @@ import {
   STORE_KINDS,
   STORE_KIND_LABELS,
   listCatalog,
-  publishItem,
+  publishAndSync,
   readItem,
   readItemFile,
   type StoreKind,
@@ -43,7 +43,10 @@ export class StorePlugin extends BasePlugin {
     author?: string;
     files: Array<{ filename: string; content: string; encoding?: "utf8" | "base64" }>;
   }) {
-    return publishItem({ ...input, author: input.author ?? "neuroclaw-agent" });
+    // Commits and pushes, so a skill the agent publishes survives this
+    // machine and reaches everyone else's clone. The returned `sync` says
+    // whether it really left the device.
+    return publishAndSync({ ...input, author: input.author ?? "neuroclaw-agent" });
   }
 
   /** Everything published, grouped by section. */
@@ -73,7 +76,7 @@ export class StorePlugin extends BasePlugin {
     if (!existing) {
       throw new Error(`No "${name}" in ${kind} to edit. Publish it first.`);
     }
-    return publishItem({ kind, name, files: [{ filename, content }] });
+    return publishAndSync({ kind, name, files: [{ filename, content }] });
   }
 
   override async onMessage(message: unknown): Promise<unknown> {

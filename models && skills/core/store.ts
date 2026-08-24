@@ -19,6 +19,7 @@
 import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync, rmSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
+import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 
 /** What kinds of thing the store holds. Each is a folder under `store/`. */
 export const STORE_KINDS = ["skills", "plugins", "binaries", "source", "files", "wiki"] as const;
@@ -189,6 +190,54 @@ export function publishItem(input: {
   };
   writeFileSync(path.join(dir, MANIFEST), JSON.stringify(manifest, null, 2) + "\n");
   return readItem(kind, input.name)!;
+}
+
+/**
+ * Publish, then actually share it.
+ *
+ * publishItem() alone only writes files into a working copy -- which is as
+ * device-local as not publishing at all. This commits and pushes the item's
+ * own folder so every other clone gets it on the next pull, and reports what
+ * really happened rather than assuming it worked. The item is returned either
+ * way: the files are on disk before the sync is attempted, so a machine with
+ * no network still publishes locally and says so.
+ */
+export async function publishAndSync(input: {
+  kind: string;
+  name: string;
+  title?: string;
+  description?: string;
+  author?: string;
+  files: StoreFile[];
+}): Promise<{ item: StoreItem; sync: StoreSyncResult }> {
+  const item = publishItem(input);
+  const sync = await syncStorePaths(
+    [itemDir(item.kind, item.name)],
+    `store: publish ${item.kind}/${item.name}`,
+    { storeDir: storeRoot() },
+  );
+  return { item, sync };
+}
+
+/**
+ * Delete, then propagate the deletion.
+ *
+ * Without this an unpublish is undone by the next `git pull`, which would
+ * make removal look like it worked and then silently reverse it. Deletion is
+ * already the privileged operation (see the route gate); this only makes it
+ * mean what it says.
+ */
+export async function deleteAndSync(
+  kind: string,
+  name: string,
+): Promise<{ deleted: boolean; sync?: StoreSyncResult }> {
+  assertKind(kind);
+  assertSafeName(name);
+  const dir = itemDir(kind, name);
+  const deleted = deleteItem(kind, name);
+  if (!deleted) return { deleted: false };
+  const sync = await syncStorePaths([dir], `store: remove ${kind}/${name}`, { storeDir: storeRoot() });
+  return { deleted: true, sync };
 }
 
 /** Read one item, or null when it does not exist. */

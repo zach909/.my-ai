@@ -7,17 +7,17 @@ import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
-import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
+import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import {
   STORE_KINDS,
   STORE_KIND_LABELS,
   StoreError,
   listCatalog,
-  publishItem,
+  publishAndSync,
   readItem,
   readItemFile,
-  deleteItem,
+  deleteAndSync,
   type StoreFile,
 } from '../models && skills/core/store.js';
 import {
@@ -25,9 +25,9 @@ import {
   readSkillUpload,
   readSkillUploadFile,
   readSkillUploadExtraFile,
-  saveSkillUpload,
-  saveSkillUploadExtraFiles,
-  deleteSkillUpload,
+  saveSkillUploadAndSync,
+  saveSkillUploadExtraFilesAndSync,
+  deleteSkillUploadAndSync,
   deleteSkillUploadExtraFile,
   linkSkillUploadWiki,
   unlinkSkillUploadWiki,
@@ -971,7 +971,11 @@ export class WebServer {
           this.sendJson(res, { error: 'Expected "kind" and "name" strings.' }, 400);
           return;
         }
-        const item = publishItem({
+        // publishAndSync, not publishItem: writing the files is only half a
+        // publish. The response carries the real sync outcome so the UI can
+        // say "shared with everyone" or "saved on this device only" truthfully
+        // rather than implying the item reached GitHub when it did not.
+        const { item, sync } = await publishAndSync({
           kind: body.kind,
           name: body.name,
           title: typeof body.title === 'string' ? body.title : undefined,
@@ -979,7 +983,7 @@ export class WebServer {
           author: typeof body.author === 'string' ? body.author : undefined,
           files: Array.isArray(body.files) ? (body.files as StoreFile[]) : [],
         });
-        this.sendJson(res, item, 201);
+        this.sendJson(res, { ...item, sync }, 201);
       } catch (err) {
         this.sendJson(
           res,
@@ -1031,8 +1035,9 @@ export class WebServer {
     // authorised caller may destroy.
     if (itemMatch && method === 'DELETE') {
       try {
-        const ok = deleteItem(itemMatch[1], itemMatch[2]);
-        this.sendJson(res, { deleted: ok }, ok ? 200 : 404);
+        // Pushed too, or the next pull would silently resurrect it.
+        const { deleted, sync } = await deleteAndSync(itemMatch[1], itemMatch[2]);
+        this.sendJson(res, { deleted, sync }, deleted ? 200 : 404);
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
       }
@@ -1501,8 +1506,10 @@ export class WebServer {
           this.requireAuth(res);
           return;
         }
-        const page = publishWikiPage(body.name, body.title, body.content);
-        this.sendJson(res, page, 201);
+        // ...AndSync: writing the file is only half a publish -- it has to
+        // reach every other clone to mean anything.
+        const { page, sync } = await publishWikiPageAndSync(body.name, body.title, body.content);
+        this.sendJson(res, { ...page, sync }, 201);
       } catch (err) {
         const status = err instanceof WikiNameError ? 400 : 500;
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
@@ -1533,7 +1540,7 @@ export class WebServer {
     // longer unrecoverable the way it was before.
     if (wikiMatch && method === 'DELETE') {
       try {
-        deleteWikiPage(wikiMatch[1]);
+        await deleteWikiPageAndSync(wikiMatch[1]);
         this.sendJson(res, { name: wikiMatch[1], deleted: true });
       } catch (err) {
         const status = err instanceof WikiNameError ? 400 : 500;
@@ -1718,8 +1725,8 @@ export class WebServer {
           }
           files[slot] = raw as SkillUploadFile;
         }
-        const pkg = saveSkillUpload(body.name, files);
-        this.sendJson(res, pkg, 201);
+        const { pkg, sync } = await saveSkillUploadAndSync(body.name, files);
+        this.sendJson(res, { ...pkg, sync }, 201);
       } catch (err) {
         const status = err instanceof SkillUploadError ? 400 : 500;
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);
@@ -1742,7 +1749,7 @@ export class WebServer {
     // DELETE /api/skill-uploads/:name — remove the whole package (all slots + manifest together).
     if (skillUploadMatch && method === 'DELETE') {
       try {
-        deleteSkillUpload(skillUploadMatch[1]);
+        await deleteSkillUploadAndSync(skillUploadMatch[1]);
         this.sendJson(res, { name: skillUploadMatch[1], deleted: true });
       } catch (err) {
         const status = err instanceof SkillUploadError ? 400 : 500;
@@ -1790,8 +1797,8 @@ export class WebServer {
           }
           files.push(raw as SkillUploadFile);
         }
-        const pkg = saveSkillUploadExtraFiles(skillUploadExtraFilesMatch[1], files);
-        this.sendJson(res, pkg, 201);
+        const { pkg, sync } = await saveSkillUploadExtraFilesAndSync(skillUploadExtraFilesMatch[1], files);
+        this.sendJson(res, { ...pkg, sync }, 201);
       } catch (err) {
         const status = err instanceof SkillUploadError ? 400 : 500;
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, status);

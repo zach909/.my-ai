@@ -31,6 +31,7 @@
 
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 
 // Matches the same rule interface/web-server.ts's GET /api/wiki/:name
 // already enforced: a bare filename stem, no '.' or '/' at all, so this can
@@ -271,4 +272,35 @@ export function restoreWikiBackup(name: string, timestamp: string): WikiPage {
   }
   const { title } = extractWikiSummary(raw);
   return publishWikiPage(name, title || name, raw);
+}
+
+
+/**
+ * Publish a wiki page and actually share it.
+ *
+ * publishWikiPage() writes into `wiki/bot/` and stops, which leaves the page
+ * exactly as device-local as not publishing it -- it dies with the machine
+ * and no other clone ever sees it. This commits and pushes the page so a
+ * `git pull` anywhere else picks it up, and reports honestly when it could
+ * not (see store-sync.ts).
+ */
+export async function publishWikiPageAndSync(
+  name: string,
+  title: string,
+  content: string,
+): Promise<{ page: WikiPage; sync: StoreSyncResult }> {
+  const page = publishWikiPage(name, title, content);
+  const sync = await syncStorePaths(
+    [path.join(botWikiDir(), `${name}.md`)],
+    `wiki: publish ${name}`,
+    { storeDir: wikiDir() },
+  );
+  return { page, sync };
+}
+
+/** Delete a bot-published page and propagate the removal, so a pull cannot resurrect it. */
+export async function deleteWikiPageAndSync(name: string): Promise<StoreSyncResult> {
+  const file = path.join(botWikiDir(), `${name}.md`);
+  deleteWikiPage(name);
+  return syncStorePaths([file], `wiki: remove ${name}`, { storeDir: wikiDir() });
 }
