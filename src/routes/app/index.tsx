@@ -19,9 +19,9 @@ const MODULES = [
   { title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.', icon: Network, href: '/app/architecture' },
   { title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.', icon: Brain, href: '/app/knowledge' },
   { title: 'ASI Core', description: 'Monitor compute, memory, and core metrics across the platform.', icon: Cpu, href: '/app' },
-  // Deep-links straight into the real wiki/Bots.md page (see /app/wiki's
+  // Deep-links straight into the real wiki/Bots.md page (see /app/store's
   // validateSearch) instead of dropping the user on Home to go find it.
-  { title: 'Automated Bots', description: 'Which bots (Bolt, Sentinel, Palette, Jules) work on this repo, and the concurrent-PR corruption bug their overlapping PRs cause.', icon: Bot, href: '/app/wiki', search: { page: 'Bots' } },
+  { title: 'Automated Bots', description: 'Which bots (Bolt, Sentinel, Palette, Jules) work on this repo, and the concurrent-PR corruption bug their overlapping PRs cause.', icon: Bot, href: '/app/store', search: { page: 'Bots' } },
 ]
 
 function DashboardHome() {

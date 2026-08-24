@@ -292,5 +292,18 @@ export default defineConfig({
     // pre-injects a read-only _redirects the sandbox user can't unlink.
     outDir: '.vite-out',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // three.js and react-three-fiber were being emitted into fifteen
+        // separate route chunks -- 15 MB, half the built site, and all of it
+        // the same library. The prerender pass builds a per-route entry, and
+        // without an explicit shared chunk each one inlines its own copy.
+        // Naming them here forces a single shared chunk that every route
+        // references instead.
+        manualChunks(id) {
+          if (/node_modules\/(three|@react-three)\//.test(id)) return 'three';
+        },
+      },
+    },
   },
 });

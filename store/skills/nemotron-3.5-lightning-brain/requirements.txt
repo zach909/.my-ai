@@ -1,0 +1,9 @@
+# Minimum to load and run the model locally. Deliberately unpinned beyond the
+# floors that matter: nemotron_h needs a recent transformers, and NVFP4 needs
+# modelopt to dequantise on hardware without native FP4.
+transformers>=4.48
+torch>=2.4
+accelerate>=0.34
+safetensors>=0.4
+nvidia-modelopt>=0.19 ; platform_system != "Darwin"
+huggingface_hub>=0.26

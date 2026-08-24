@@ -1,8 +1,9 @@
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, unlinkSync } from 'node:fs';
+import { existsSync, unlinkSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { BasePlugin } from "../plugin_manager/sdk.js";
+import { transcribeAudio } from '../models && skills/core/speech-to-text.js';
 export class VoiceActivationPlugin extends BasePlugin {
     constructor(definition) {
         super(definition);
@@ -43,7 +44,7 @@ export class VoiceActivationPlugin extends BasePlugin {
         this.micProcess = spawn(cmd, [...args, outPath], { stdio: 'ignore', detached: false });
         this.micProcess.on('exit', (code) => {
             if (code === 0 && existsSync(outPath)) {
-                const transcript = this.simulateSTT(outPath);
+                const transcript = this.transcribe(outPath);
                 if (transcript)
                     this.processTranscript(transcript);
                 try {
@@ -118,15 +119,23 @@ export class VoiceActivationPlugin extends BasePlugin {
         }
         return null;
     }
-    simulateSTT(wavPath) {
+    /**
+     * Transcribe a captured clip with a locally installed speech recogniser.
+     *
+     * This used to be simulateSTT(), which measured the clip's DURATION with
+     * ffprobe and returned a synthetic string ("<wake word> audio-captured
+     * duration-3s"). That is worse than returning nothing: processTranscript()
+     * feeds the result straight into command matching, so the agent could act on
+     * words nobody ever said. It now returns null when no recogniser is
+     * installed, and the caller simply does not fire a command.
+     */
+    transcribe(wavPath) {
         try {
-            const info = execSync(`ffprobe -v error -show_entries format=duration "${wavPath}" 2>/dev/null || soxi -D "${wavPath}" 2>/dev/null || echo 0`, { timeout: 3000, encoding: 'utf8' });
-            const dur = parseFloat(info.match(/[\d.]+/)?.[0] ?? '0');
-            if (dur > 0) {
-                return `${this.wakeWord} audio-captured duration-${Math.round(dur)}s`;
-            }
+            const result = transcribeAudio(readFileSync(wavPath));
+            return result.text;
         }
-        catch { /* ignore */ }
-        return null;
+        catch {
+            return null;
+        }
     }
 }

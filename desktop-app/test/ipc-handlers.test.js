@@ -267,6 +267,66 @@ async function main() {
   check(openRes === 200, 'omitting authToken leaves the server open, as documented');
   openSrv.close();
 
+  // ── The window's connection is TLS, with a pinned certificate ───────────
+  const https = require('https');
+  const selfsigned = require('selfsigned');
+  const { X509Certificate } = require('crypto');
+
+  const pems = await selfsigned.generate(
+    [{ name: 'commonName', value: '127.0.0.1' }],
+    {
+      days: 1, keySize: 2048, algorithm: 'sha256',
+      extensions: [{ name: 'subjectAltName', altNames: [{ type: 7, ip: '127.0.0.1' }] }],
+    }
+  );
+  const x509 = new X509Certificate(pems.cert);
+  // Chromium matches on SAN and ignores commonName outright, so a cert without
+  // an IP SAN for 127.0.0.1 would be rejected and the window would never load.
+  check(/IP Address:127\.0\.0\.1/.test(x509.subjectAltName || ''),
+    'the generated certificate carries an IP SAN for 127.0.0.1, which is what TLS clients actually match on');
+
+  const tlsSrv = await startAppServer({
+    distDir: tokenDist, backendPort: 1, port: 0,
+    authToken: TOKEN, tls: { key: pems.private, cert: pems.cert },
+  });
+  const tlsPort = tlsSrv.address().port;
+
+  const tlsGet = (opts) => new Promise((resolve) => {
+    const req = https.get(
+      { host: '127.0.0.1', port: tlsPort, path: '/', headers: { [DESKTOP_TOKEN_HEADER]: TOKEN }, ...opts },
+      (res) => {
+        // Grab the peer certificate while the socket is still attached: it is
+        // detached by the time 'end' fires.
+        const cert = res.socket && typeof res.socket.getPeerCertificate === 'function'
+          ? res.socket.getPeerCertificate()
+          : null;
+        let b = '';
+        res.on('data', (c) => { b += c; });
+        res.on('end', () => resolve({ status: res.statusCode, body: b, cert }));
+      }
+    );
+    req.on('error', (e) => resolve({ error: e }));
+  });
+
+  const overTls = await tlsGet({ rejectUnauthorized: false });
+  check(overTls.status === 200 && overTls.body.includes('<html>app</html>'),
+    'the app is served over a real TLS connection, not plaintext');
+
+  // Pinning: the presented certificate must be exactly the one we generated.
+  const presented = overTls.cert && overTls.cert.fingerprint256;
+  const norm = (f) => String(f || '').replace(/:/g, '').toLowerCase();
+  check(norm(presented) === norm(x509.fingerprint256),
+    'the server presents exactly the certificate this launch generated (this is what main.js pins on)');
+
+  // A plaintext request to a TLS port must fail rather than silently downgrade.
+  const plaintext = await new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: tlsPort, path: '/' }, (res) => { res.resume(); resolve({ status: res.statusCode }); });
+    req.on('error', () => resolve({ error: true }));
+  });
+  check(plaintext.error === true, 'a plaintext http request to the TLS port fails instead of downgrading');
+
+  tlsSrv.close();
+
   console.log(`\n${_passed} passed, ${_failed} failed`);
   process.exit(_failed === 0 ? 0 : 1);
 }

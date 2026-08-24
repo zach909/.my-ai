@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 
 describe("Wiki Page Micro-UX & Accessibility Enhancements", () => {
-  const filePath = path.resolve(process.cwd(), "src/routes/app/wiki.tsx");
+  const filePath = path.resolve(process.cwd(), "src/routes/app/store.tsx");
   const fileContent = fs.readFileSync(filePath, "utf-8");
 
   it("associates search input with an accessible label element", () => {

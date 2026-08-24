@@ -124,7 +124,7 @@ export class PluginRegistry {
     async dispatch(input, intent) {
         const intentToPlugins = {
             ...{
-                command: ['self-heal', 'terminal', 'file-system'],
+                command: ['tools', 'self-heal', 'terminal', 'file-system'],
                 creation: ['skill-maker', 'plugin-maker', 'wiki', 'file-system', 'browser'],
                 // skill-maker always succeeds (even on empty input, it returns a
                 // usage message rather than null), so the generic "creation" bucket
@@ -142,12 +142,19 @@ export class PluginRegistry {
                 // specifically needs its own intent to actually reach WikiPlugin.
                 documentation: ['wiki', 'file-system', 'browser'],
                 exploration: ['browser', 'file-system'],
-                analysis: ['file-system', 'browser'],
-                query: ['browser'],
                 desktop: ['multi-input'],
                 input: ['multi-input'],
                 workspace: ['multi-input'],
                 terminal: ['terminal'],
+                // ToolsPlugin is strictly non-greedy: onMessage() returns null unless
+                // the text actually names one of its tools, so unlike skill-maker it
+                // can sit FIRST in a bucket without absorbing everything routed there.
+                // It is listed ahead of the others precisely because when it does
+                // match, an exact computed answer beats anything further down the
+                // list improvising one.
+                tools: ['tools'],
+                query: ['tools', 'browser'],
+                analysis: ['tools', 'file-system', 'browser'],
             },
             ...this.intentMap,
         };

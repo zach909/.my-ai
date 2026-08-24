@@ -23,6 +23,8 @@ function findProjectRoot(startDir) {
         dir = parent;
     }
 }
+/** How many clone state files to retain on disk. */
+const MAX_CLONE_STATE_FILES = 50;
 export class SelfReplicatePlugin {
     constructor() {
         this.name = "self_replicate";
@@ -248,6 +250,35 @@ When relevant, mention your clone ID and specialization.
         };
     }
     /**
+     * Keep only the most recent MAX_CLONE_STATE_FILES state files.
+     *
+     * Every clone wrote a state file that was never removed, so the directory
+     * grew for the lifetime of the install -- a slow disk leak of small files
+     * that nothing ever read back beyond the newest ones. Pruning by mtime on
+     * write keeps the useful history and bounds the rest. Failures here are
+     * ignored deliberately: not being able to delete an old state file is no
+     * reason to fail the save of a new one.
+     */
+    pruneCloneStates() {
+        try {
+            const files = fs
+                .readdirSync(this.cloneDir)
+                .filter(f => f.endsWith('.state.json'))
+                .map(f => {
+                const full = path.join(this.cloneDir, f);
+                return { full, mtime: fs.statSync(full).mtimeMs };
+            })
+                .sort((a, b) => b.mtime - a.mtime);
+            for (const stale of files.slice(MAX_CLONE_STATE_FILES)) {
+                try {
+                    fs.unlinkSync(stale.full);
+                }
+                catch { /* already gone */ }
+            }
+        }
+        catch { /* directory unreadable -- saving the new state still matters more */ }
+    }
+    /**
      * Save clone state to disk.
      */
     saveCloneState(clone) {
@@ -268,6 +299,9 @@ When relevant, mention your clone ID and specialization.
                 }
                 catch { }
             }
+            // After the write, so the directory settles at exactly the retention
+            // limit rather than the limit plus the file just added.
+            this.pruneCloneStates();
         }
         catch (error) {
             clone.outputLog.push({

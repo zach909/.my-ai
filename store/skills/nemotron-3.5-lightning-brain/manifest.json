@@ -1,0 +1,9 @@
+{
+  "kind": "skills",
+  "name": "nemotron-3.5-lightning-brain",
+  "title": "Nemotron 3.5 Lightning — external brain (UNOFFICIAL)",
+  "description": "Community skill, not official and not affiliated with NVIDIA. Attaches nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (17.8B params, ~3B active) to OneBrain as an extra expert. Contains the bridge and the recipe only — the ~10GB of weights are downloaded to your own machine under NVIDIA's licence, never redistributed here. Falls back to the mesh if absent or unloadable.",
+  "author": "community (unofficial)",
+  "publishedAt": "2026-08-23T17:44:43.039Z",
+  "updatedAt": "2026-08-23T17:44:43.039Z"
+}

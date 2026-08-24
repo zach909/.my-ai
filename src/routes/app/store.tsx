@@ -1,22 +1,30 @@
 /**
- * Bot Wiki — one page, three tabs, one service instead of three separate
- * ones (/app/wiki, /app/skill-uploads, /app/shared-chat used to each be
- * their own nav entry/route):
+ * The Store — the single front door for everything published, and the place
+ * you publish from.
  *
+ * This one page replaces what used to be four separate nav entries and routes
+ * (/app/store, /app/wiki, /app/skill-uploads, /app/shared-chat). They were all
+ * the same activity seen from different sides — publishing things and reading
+ * what other people published — so they are four tabs of one page now:
+ *
+ *  - Store: the shared catalogue, read from `store/` in the repository, so it
+ *    is identical for anyone who clones or pulls. No account, no server anyone
+ *    has to keep running. Downloading never runs anything, and nothing
+ *    installs on its own.
  *  - Wiki: research pages the bot (or a human) publishes -- wiki/*.md and
- *    wiki/bot/*.md, see models && skills/core/wiki-store.ts. Anyone can
- *    edit a bot-published page.
- *  - Skill Uploads: the plugin/source-skill/binary-skill/algorithm/
- *    RSI-test packages a published page can be backed by, see models &&
- *    skills/core/skill-upload-store.ts. A package can link to a bot wiki
- *    page as its documentation, and every bot-published page also gets
- *    its own inline "Files & Install" panel (WikiPageFilesPanel below)
- *    for a same-named package, so uploading/installing/running a page's
- *    files never requires leaving the page.
+ *    wiki/bot/*.md, see models && skills/core/wiki-store.ts. Anyone can edit a
+ *    bot-published page.
+ *  - Uploads: the plugin/source-skill/binary-skill/algorithm/RSI-test packages
+ *    a published page can be backed by, see models && skills/core/
+ *    skill-upload-store.ts. A package can link to a bot wiki page as its
+ *    documentation, and every bot-published page also gets its own inline
+ *    "Files & Install" panel (WikiPageFilesPanel below) for a same-named
+ *    package, so uploading/installing/running a page's files never requires
+ *    leaving the page.
  *  - Chat: the shared room (ChatPanel below, models && skills/core/
- *    shared-chat-store.ts) anyone with this app can post into and discuss
- *    any page in, with the bot as one participant rather than the
- *    exclusive other side of the conversation.
+ *    shared-chat-store.ts) anyone with this app can post into and discuss any
+ *    page in, with the bot as one participant rather than the exclusive other
+ *    side of the conversation.
  *
  * One-click actions on a package's files, all real (see
  * interface/web-server.ts's POST /api/skill-uploads/:name/... routes):
@@ -24,11 +32,11 @@
  *    memory, or genuinely execute an uploaded plugin file.
  *  - Run (algorithm): genuinely executes the uploaded improvement-recipe
  *    script against the live system.
- *  - Run (RSI test): genuinely executes the uploaded test script; a pass
- *    both records "Published" (SkillUploadManifest's `rsiPassed`) and
- *    installs the package's skill files in the same step -- recursive
- *    self-improvement gated on the test's own judgment that applying the
- *    skill left the system better, not just different.
+ *  - Run (RSI test): genuinely executes the uploaded test script; a pass both
+ *    records "Published" (SkillUploadManifest's `rsiPassed`) and installs the
+ *    package's skill files in the same step -- recursive self-improvement
+ *    gated on the test's own judgment that applying the skill left the system
+ *    better, not just different.
  */
 
 import { createFileRoute, Link } from '@tanstack/react-router'
@@ -37,7 +45,9 @@ import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Button } from '@/components/ui/button'
+import { StoreItemMark } from '@/components/StoreItemMark'
 import {
+  ArrowLeft,
   Blocks,
   Bot,
   BookOpen,
@@ -45,11 +55,13 @@ import {
   ChevronDown,
   ChevronUp,
   Download,
+  FileText,
   FlaskConical,
   Link2,
   Link2Off,
   Loader2,
   MessageSquare,
+  Package,
   Paperclip,
   Pencil,
   Play,
@@ -67,37 +79,57 @@ import {
 } from 'lucide-react'
 import { toast } from 'sonner'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
+import { usePageVisible } from '@/hooks/usePageVisible'
 
-interface WikiSearch {
+type StoreTab = 'store' | 'wiki' | 'skills' | 'chat'
+
+interface StoreSearch {
   page?: string
-  tab?: 'wiki' | 'skills' | 'chat'
+  tab?: StoreTab
 }
 
-export const Route = createFileRoute('/app/wiki')({
+export const Route = createFileRoute('/app/store')({
   // Lets a link elsewhere in the app (e.g. the Dashboard's "Automated Bots"
-  // shortcut, or a Skill Uploads package's own Bot Wiki link) deep-link
-  // straight to one page or tab via /app/wiki?page=Bots or
-  // /app/wiki?tab=skills instead of landing on the Wiki tab every time.
-  validateSearch: (search: Record<string, unknown>): WikiSearch => ({
+  // shortcut, or an Uploads package's own wiki link) deep-link straight to one
+  // page or tab via /app/store?page=Bots or /app/store?tab=skills instead of
+  // landing on the catalogue every time.
+  validateSearch: (search: Record<string, unknown>): StoreSearch => ({
     page: typeof search.page === 'string' ? search.page : undefined,
-    tab: search.tab === 'skills' || search.tab === 'chat' ? search.tab : undefined,
+    tab:
+      search.tab === 'wiki' || search.tab === 'skills' || search.tab === 'chat' || search.tab === 'store'
+        ? search.tab
+        : undefined,
   }),
   head: () => ({
     meta: [
-      { title: 'Bot Wiki · ASI Architect' },
-      { name: 'description', content: 'Research pages the bot publishes, the skill packages backing them (one-click install/run), and the shared chat to discuss them -- all in one place.' },
+      { title: 'Store · ASI Architect' },
+      {
+        name: 'description',
+        content:
+          'Browse, download and publish skills, plugins, binaries, source and files, write wiki pages, and discuss any of it — all shared through the repository itself.',
+      },
     ],
   }),
-  component: BotWikiPage,
+  component: StorePage,
 })
 
-function BotWikiPage() {
-  const { tab: requestedTab } = Route.useSearch()
-  const [tab, setTab] = useState<'wiki' | 'skills' | 'chat'>(requestedTab ?? 'wiki')
-  // Set by a page's "Discuss in Chat" button so the Chat tab can pre-fill
-  // its composer -- lifted up here (rather than each panel navigating
-  // independently) since switching tabs is now just local state, not a
-  // route change, and ChatPanel needs to know what to pre-fill with.
+const STORE_TABS: { key: StoreTab; label: string; icon: typeof Package }[] = [
+  { key: 'store', label: 'Store', icon: Package },
+  { key: 'wiki', label: 'Wiki', icon: BookOpen },
+  { key: 'skills', label: 'Uploads', icon: Upload },
+  { key: 'chat', label: 'Chat', icon: Users },
+]
+
+function StorePage() {
+  const { page: requestedPage, tab: requestedTab } = Route.useSearch()
+  // A ?page= deep link is asking for a wiki page, so it implies the Wiki tab
+  // even when no ?tab= was given -- otherwise the link would land on the
+  // catalogue and silently drop what was asked for.
+  const [tab, setTab] = useState<StoreTab>(requestedTab ?? (requestedPage ? 'wiki' : 'store'))
+  // Set by a page's "Discuss in Chat" button so the Chat tab can pre-fill its
+  // composer -- lifted up here (rather than each panel navigating
+  // independently) since switching tabs is now just local state, not a route
+  // change, and ChatPanel needs to know what to pre-fill with.
   const [chatTopic, setChatTopic] = useState<string | null>(null)
 
   const openChatAbout = (topic: string) => {
@@ -109,55 +141,273 @@ function BotWikiPage() {
     <div className="flex h-full flex-col gap-4 p-4 animate-fade-in">
       <div>
         <h1 className="flex items-center gap-2 text-2xl font-semibold tracking-tight text-foreground">
-          <BookOpen className="h-6 w-6 text-primary" />
-          Bot Wiki
+          <Package className="h-6 w-6 text-primary" />
+          Store
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Research pages the bot publishes, the plugin/skill/algorithm/RSI-test packages backing them (one-click
-          install and run), and a shared chat to discuss any of it -- one service, not three.
+          Skills, plugins and tools, binary skills, source and files, the wiki pages documenting
+          them, and a shared chat to discuss any of it — published into the repository itself, so
+          anyone who clones or pulls gets the whole catalogue. Nothing installs on its own.
         </p>
         <div className="mt-3 flex gap-1 border-b border-border">
-          <button
-            type="button"
-            onClick={() => setTab('wiki')}
-            className={`flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
-              tab === 'wiki' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-            aria-current={tab === 'wiki' ? 'page' : undefined}
-          >
-            <BookOpen size={14} />
-            Wiki
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('skills')}
-            className={`flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
-              tab === 'skills' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-            aria-current={tab === 'skills' ? 'page' : undefined}
-          >
-            <Upload size={14} />
-            Skill Uploads
-          </button>
-          <button
-            type="button"
-            onClick={() => setTab('chat')}
-            className={`flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
-              tab === 'chat' ? 'border-primary text-foreground' : 'border-transparent text-muted-foreground hover:text-foreground'
-            }`}
-            aria-current={tab === 'chat' ? 'page' : undefined}
-          >
-            <Users size={14} />
-            Chat
-          </button>
+          {STORE_TABS.map(({ key, label, icon: Icon }) => (
+            <button
+              key={key}
+              type="button"
+              onClick={() => setTab(key)}
+              className={`flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
+                tab === key
+                  ? 'border-primary text-foreground'
+                  : 'border-transparent text-muted-foreground hover:text-foreground'
+              }`}
+              aria-current={tab === key ? 'page' : undefined}
+            >
+              <Icon size={14} />
+              {label}
+            </button>
+          ))}
         </div>
       </div>
 
       <div className="min-h-0 flex-1">
+        {tab === 'store' && <StoreCatalogPanel onOpenUploads={() => setTab('skills')} />}
         {tab === 'wiki' && <WikiPanel onOpenChat={openChatAbout} />}
         {tab === 'skills' && <SkillUploadsPanel />}
         {tab === 'chat' && <ChatPanel topic={chatTopic} onTopicConsumed={() => setChatTopic(null)} />}
       </div>
+    </div>
+  )
+}
+
+interface StoreFileInfo {
+  filename: string
+  bytes: number
+  sha256: string
+}
+
+interface StoreItem {
+  kind: string
+  name: string
+  title: string
+  description: string
+  author: string
+  publishedAt: string
+  updatedAt: string
+  files: StoreFileInfo[]
+  totalBytes: number
+}
+
+interface Catalog {
+  kinds: string[]
+  labels: Record<string, string>
+  catalog: Record<string, StoreItem[]>
+}
+
+function StoreCatalogPanel({ onOpenUploads }: { onOpenUploads: () => void }) {
+  const [data, setData] = useState<Catalog | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<StoreItem | null>(null)
+  const [section, setSection] = useState<string>('all')
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/store')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setData(await res.json())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => {
+    void load()
+  }, [load])
+
+  const kinds = data?.kinds ?? []
+  const shown = kinds.filter(k => section === 'all' || k === section)
+  const total = kinds.reduce((n, k) => n + (data?.catalog[k]?.length ?? 0), 0)
+
+  if (selected) {
+    return <ItemDetail item={selected} onBack={() => setSelected(null)} />
+  }
+
+  return (
+    <div className="h-full space-y-6 overflow-y-auto pb-6">
+      <div className="flex flex-wrap items-center justify-between gap-2">
+        {/* Section filter */}
+        <div className="flex flex-wrap gap-2">
+          <button
+            type="button"
+            onClick={() => setSection('all')}
+            className={
+              'rounded-full border px-3 py-1 text-xs transition-colors ' +
+              (section === 'all' ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-accent')
+            }
+          >
+            Everything ({total})
+          </button>
+          {kinds.map(k => (
+            <button
+              key={k}
+              type="button"
+              onClick={() => setSection(k)}
+              className={
+                'rounded-full border px-3 py-1 text-xs transition-colors ' +
+                (section === k ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-accent')
+              }
+            >
+              {data?.labels[k] ?? k} ({data?.catalog[k]?.length ?? 0})
+            </button>
+          ))}
+        </div>
+        <div className="flex shrink-0 gap-2">
+          <Button variant="outline" size="sm" onClick={() => void load()} className="gap-2">
+            <RefreshCw className="h-4 w-4" />
+            Refresh
+          </Button>
+          <Button size="sm" onClick={onOpenUploads} className="gap-2">
+            <Upload className="h-4 w-4" />
+            Publish
+          </Button>
+        </div>
+      </div>
+
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Reading the catalogue…
+        </div>
+      )}
+
+      {error && (
+        <Card className="p-4 border-destructive/40">
+          <p className="text-sm text-destructive">Could not read the store: {error}</p>
+        </Card>
+      )}
+
+      {!loading && !error && total === 0 && (
+        <Card className="p-8 text-center">
+          <p className="text-sm text-muted-foreground">
+            Nothing published yet. Anything added to <code className="text-xs">store/</code> and pushed
+            appears here for everyone who pulls.
+          </p>
+        </Card>
+      )}
+
+      {shown.map(kind => {
+        const items = data?.catalog[kind] ?? []
+        if (items.length === 0) return null
+        return (
+          <section key={kind} className="space-y-3">
+            <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+              {data?.labels[kind] ?? kind}
+            </h2>
+            <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+              {items.map(item => (
+                <button
+                  key={`${item.kind}/${item.name}`}
+                  type="button"
+                  onClick={() => setSelected(item)}
+                  className="text-left"
+                >
+                  <Card className="p-4 h-full flex gap-3 hover:border-primary/60 transition-colors active:scale-[0.99]">
+                    <div className="shrink-0">
+                      <StoreItemMark name={item.name} kind={item.kind} size={56} />
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="font-medium text-sm leading-tight truncate">{item.title}</p>
+                      <p className="text-[11px] text-muted-foreground mt-0.5 truncate">
+                        by {item.author}
+                      </p>
+                      <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">
+                        {item.description || 'No description.'}
+                      </p>
+                      <p className="text-[11px] text-muted-foreground mt-2">
+                        {item.files.length} file{item.files.length === 1 ? '' : 's'} ·{' '}
+                        {formatBytes(item.totalBytes)}
+                      </p>
+                    </div>
+                  </Card>
+                </button>
+              ))}
+            </div>
+          </section>
+        )
+      })}
+    </div>
+  )
+}
+
+function ItemDetail({ item, onBack }: { item: StoreItem; onBack: () => void }) {
+  return (
+    <div className="h-full max-w-3xl space-y-5 overflow-y-auto pb-6">
+      <Button variant="ghost" size="sm" onClick={onBack} className="gap-2 -ml-2">
+        <ArrowLeft className="h-4 w-4" />
+        Back to the store
+      </Button>
+
+      <div className="flex gap-4 items-start">
+        <StoreItemMark name={item.name} kind={item.kind} size={96} />
+        <div className="min-w-0">
+          <h1 className="text-xl font-bold leading-tight">{item.title}</h1>
+          <p className="text-sm text-muted-foreground mt-1">
+            {item.kind}/{item.name} · by {item.author}
+          </p>
+          {item.updatedAt && (
+            <p className="text-xs text-muted-foreground mt-0.5">
+              updated {new Date(item.updatedAt).toLocaleString()}
+            </p>
+          )}
+        </div>
+      </div>
+
+      {item.description && (
+        <Card className="p-4">
+          <p className="text-sm whitespace-pre-wrap leading-relaxed">{item.description}</p>
+        </Card>
+      )}
+
+      <section className="space-y-2">
+        <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+          Files
+        </h2>
+        <div className="space-y-2">
+          {item.files.map(f => (
+            <Card key={f.filename} className="p-3 flex items-center gap-3">
+              <FileText className="h-4 w-4 shrink-0 text-muted-foreground" />
+              <div className="min-w-0 flex-1">
+                <p className="text-sm font-medium truncate">{f.filename}</p>
+                {/* The digest is shown because it is what tells you whether the
+                    copy you pulled is the copy you looked at. */}
+                <p className="text-[11px] text-muted-foreground font-mono truncate">
+                  {formatBytes(f.bytes)} · {f.sha256.slice(0, 16)}…
+                </p>
+              </div>
+              <Button asChild variant="outline" size="sm" className="gap-2 shrink-0">
+                <a
+                  href={`/api/store/${item.kind}/${item.name}/file/${f.filename}`}
+                  download={f.filename}
+                >
+                  <Download className="h-4 w-4" />
+                  Download
+                </a>
+              </Button>
+            </Card>
+          ))}
+        </div>
+      </section>
+
+      <Card className="p-4">
+        <p className="text-xs text-muted-foreground">
+          Downloading never runs anything. Read what you downloaded before you install it — that
+          is the whole reason publishing here is open and installing is not automatic.
+        </p>
+      </Card>
     </div>
   )
 }
@@ -1666,8 +1916,8 @@ function SkillUploadsPanel() {
                     {pkg.wikiPage ? (
                       <div className="flex items-center justify-between gap-1.5 text-[11px]">
                         <Link
-                          to="/app/wiki"
-                          search={{ page: pkg.wikiPage }}
+                          to="/app/store"
+                          search={{ tab: 'wiki', page: pkg.wikiPage }}
                           className="flex items-center gap-1 min-w-0 text-primary hover:underline"
                           title={`View "${pkg.wikiPage}" in the Wiki tab`}
                         >
@@ -1923,14 +2173,20 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
     }
   }, [])
 
+  // Gated on visibility for the same reason as the chat status poll: a room
+  // fetch every few seconds while the window is minimised spends processor,
+  // battery and network on messages nobody is reading. It fetches immediately
+  // on becoming visible again, so returning to the window shows current
+  // messages rather than waiting out the remainder of an interval.
+  const pageVisible = usePageVisible()
   useEffect(() => {
-    if (!name) return
+    if (!name || !pageVisible) return
     fetchNew(roomId)
     pollRef.current = setInterval(() => fetchNew(roomId), CHAT_POLL_MS)
     return () => {
       if (pollRef.current) clearInterval(pollRef.current)
     }
-  }, [name, roomId, fetchNew])
+  }, [name, roomId, fetchNew, pageVisible])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })

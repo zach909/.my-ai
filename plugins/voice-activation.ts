@@ -1,9 +1,10 @@
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, writeFileSync, unlinkSync } from 'node:fs';
+import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
+import { transcribeAudio } from '../models && skills/core/speech-to-text.js';
 
 export interface VoiceCommand {
   transcript: string;
@@ -58,7 +59,7 @@ export class VoiceActivationPlugin extends BasePlugin {
 
     this.micProcess.on('exit', (code) => {
       if (code === 0 && existsSync(outPath)) {
-        const transcript = this.simulateSTT(outPath);
+        const transcript = this.transcribe(outPath);
         if (transcript) this.processTranscript(transcript);
         try { unlinkSync(outPath); } catch { /* ignore */ }
       }
@@ -128,14 +129,22 @@ export class VoiceActivationPlugin extends BasePlugin {
     return null;
   }
 
-  private simulateSTT(wavPath: string): string | null {
+  /**
+   * Transcribe a captured clip with a locally installed speech recogniser.
+   *
+   * This used to be simulateSTT(), which measured the clip's DURATION with
+   * ffprobe and returned a synthetic string ("<wake word> audio-captured
+   * duration-3s"). That is worse than returning nothing: processTranscript()
+   * feeds the result straight into command matching, so the agent could act on
+   * words nobody ever said. It now returns null when no recogniser is
+   * installed, and the caller simply does not fire a command.
+   */
+  private transcribe(wavPath: string): string | null {
     try {
-      const info = execSync(`ffprobe -v error -show_entries format=duration "${wavPath}" 2>/dev/null || soxi -D "${wavPath}" 2>/dev/null || echo 0`, { timeout: 3000, encoding: 'utf8' });
-      const dur = parseFloat(info.match(/[\d.]+/)?.[0] ?? '0');
-      if (dur > 0) {
-        return `${this.wakeWord} audio-captured duration-${Math.round(dur)}s`;
-      }
-    } catch { /* ignore */ }
-    return null;
+      const result = transcribeAudio(readFileSync(wavPath));
+      return result.text;
+    } catch {
+      return null;
+    }
   }
 }

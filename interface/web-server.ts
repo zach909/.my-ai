@@ -10,6 +10,17 @@ import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat
 import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import {
+  STORE_KINDS,
+  STORE_KIND_LABELS,
+  StoreError,
+  listCatalog,
+  publishItem,
+  readItem,
+  readItemFile,
+  deleteItem,
+  type StoreFile,
+} from '../models && skills/core/store.js';
+import {
   listSkillUploads,
   readSkillUpload,
   readSkillUploadFile,
@@ -369,6 +380,30 @@ export function isWikiPublicRoute(pathname: string, method: string): boolean {
   return false;
 }
 
+/**
+ * Which store routes need no credential.
+ *
+ * The store's purpose is that anyone can read what has been shared and anyone
+ * can contribute to it, so browsing, downloading and publishing are all open.
+ * DELETE is deliberately absent: publishing is open precisely so that
+ * destroying cannot be. This mirrors the wiki's split — add freely, remove
+ * only with authority.
+ */
+export function isStorePublicRoute(pathname: string, method: string): boolean {
+  if (method === 'GET') {
+    // /api/store, /api/store/:kind/:name, /api/store/:kind/:name/file/:filename
+    return (
+      pathname === '/api/store' ||
+      /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+$/.test(pathname) ||
+      /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+\/file\/[A-Za-z0-9._-]+$/.test(pathname)
+    );
+  }
+  if (method === 'POST') {
+    return pathname === '/api/store';
+  }
+  return false;
+}
+
 export class WebServer {
   private runner: NeuroclawRunner;
   private launcher: AppLauncher;
@@ -651,18 +686,22 @@ export class WebServer {
    * around it, AND there was no way to recover the exact response
    * without re-parsing the flattened sentence. Both are fixed here.
    *
+   * Pinned, because an installed skill is knowledge the user deliberately
+   * added: capacity eviction may drop what the system merely observed, but
+   * never what someone installed.
+   *
    * Tagged 'skill-script' (plus the source extension's name) so
    * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
    * there) can query this exact tag rather than mixing skill triggers in
    * with ordinary chat-turn memories.
    */
   private rememberSkillScript(
-    system: { memory: { remember: (content: string, opts: { importance?: number; tags?: string[]; payload?: string }) => unknown } },
+    system: { memory: { remember: (content: string, opts: { importance?: number; tags?: string[]; payload?: string; pinned?: boolean }) => unknown } },
     userSays: string,
     response: string,
     extName: string,
   ): void {
-    system.memory.remember(userSays, { importance: 0.7, tags: ['skill-script', extName], payload: response });
+    system.memory.remember(userSays, { importance: 0.7, tags: ['skill-script', extName], payload: response, pinned: true });
   }
 
   /**
@@ -685,7 +724,7 @@ export class WebServer {
       if (!n.name) continue;
       const def = (n.definition ?? '').trim();
       if (def) {
-        system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name] });
+        system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', name], pinned: true });
         remembered++;
       }
       // Scripts are equally real recallable knowledge -- "when asked X,
@@ -788,7 +827,7 @@ export class WebServer {
           if (!n.name) continue;
           const def = (n.definition ?? '').trim();
           if (def) {
-            system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', extName] });
+            system.memory.remember(`${n.name}: ${def}`, { importance: 0.7, tags: ['extension', extName], pinned: true });
             remembered++;
           }
           for (const s of n.scripts ?? []) {
@@ -848,7 +887,11 @@ export class WebServer {
     // there. The POST handler itself enforces the create-vs-overwrite
     // split (it needs to inspect the request body first); this exemption
     // only lets the request past the blanket gate to reach that check.
-    if (!isWikiPublicRoute(pathname, method) && !(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
+    if (
+      !isWikiPublicRoute(pathname, method) &&
+      !isStorePublicRoute(pathname, method) &&
+      !(await this.isAuthorizedBasic(req, this.remoteAccessLock))
+    ) {
       this.requireAuth(res);
       return;
     }
@@ -868,6 +911,131 @@ export class WebServer {
 
     if (pathname === '/' && method === 'GET') {
       this.sendHtml(res, HTML_TEMPLATE);
+      return;
+    }
+
+    // Voice input: raw recorded audio in, recognised text out. Transcription
+    // runs entirely on this machine (see speech-to-text.ts for why the
+    // browser's SpeechRecognition API is deliberately not used), so the audio
+    // reaches this loopback endpoint and goes no further.
+    if (pathname === '/api/voice/transcribe' && method === 'POST') {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      // A minute of 16kHz mono is well under this; the cap is only here so a
+      // malformed or hostile request cannot grow the buffer without bound.
+      const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
+      let tooLarge = false;
+      await new Promise<void>((resolve) => {
+        req.on('data', (chunk: Buffer) => {
+          total += chunk.length;
+          if (total > MAX_AUDIO_BYTES) {
+            tooLarge = true;
+            req.destroy();
+            resolve();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        req.on('end', () => resolve());
+        req.on('error', () => resolve());
+      });
+      if (tooLarge) {
+        this.sendJson(res, { error: 'Recording too large.' }, 413);
+        return;
+      }
+      const { transcribeAudio } = await import('../models && skills/core/speech-to-text.js');
+      const result = transcribeAudio(Buffer.concat(chunks));
+      if (result.error) {
+        this.sendJson(res, { error: result.error, engine: result.engine }, 503);
+        return;
+      }
+      this.sendJson(res, { text: result.text, engine: result.engine });
+      return;
+    }
+
+    // ── The public store ────────────────────────────────────────────────
+    // Everything published lives in `store/` at the repo root and travels with
+    // the repository, so anyone who clones or pulls has the whole catalogue
+    // without an account, a server, or access to the publisher's machine.
+
+    if (pathname === '/api/store' && method === 'GET') {
+      this.sendJson(res, { kinds: STORE_KINDS, labels: STORE_KIND_LABELS, catalog: listCatalog() });
+      return;
+    }
+
+    // Publish or update an item. Open, like wiki creation.
+    if (pathname === '/api/store' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as Record<string, unknown> | null;
+        if (!body || typeof body.kind !== 'string' || typeof body.name !== 'string') {
+          this.sendJson(res, { error: 'Expected "kind" and "name" strings.' }, 400);
+          return;
+        }
+        const item = publishItem({
+          kind: body.kind,
+          name: body.name,
+          title: typeof body.title === 'string' ? body.title : undefined,
+          description: typeof body.description === 'string' ? body.description : undefined,
+          author: typeof body.author === 'string' ? body.author : undefined,
+          files: Array.isArray(body.files) ? (body.files as StoreFile[]) : [],
+        });
+        this.sendJson(res, item, 201);
+      } catch (err) {
+        this.sendJson(
+          res,
+          { error: err instanceof Error ? err.message : String(err) },
+          err instanceof StoreError ? 400 : 500
+        );
+      }
+      return;
+    }
+
+    // Download one published file. Served as an attachment so a click saves it
+    // rather than rendering a binary into the page.
+    const fileMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)\/file\/([A-Za-z0-9._-]+)$/);
+    if (fileMatch && method === 'GET') {
+      try {
+        const buf = readItemFile(fileMatch[1], fileMatch[2], fileMatch[3]);
+        if (!buf) {
+          this.sendJson(res, { error: 'No such file.' }, 404);
+          return;
+        }
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': buf.length,
+          'Content-Disposition': `attachment; filename="${fileMatch[3]}"`,
+        });
+        res.end(buf);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    const itemMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)$/);
+    if (itemMatch && method === 'GET') {
+      try {
+        const item = readItem(itemMatch[1], itemMatch[2]);
+        if (!item) {
+          this.sendJson(res, { error: 'Not found.' }, 404);
+          return;
+        }
+        this.sendJson(res, item);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    // Removal is NOT public (see isStorePublicRoute): anyone may add, only an
+    // authorised caller may destroy.
+    if (itemMatch && method === 'DELETE') {
+      try {
+        const ok = deleteItem(itemMatch[1], itemMatch[2]);
+        this.sendJson(res, { deleted: ok }, ok ? 200 : 404);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
       return;
     }
 
@@ -1297,7 +1465,7 @@ export class WebServer {
 
     // GET /api/wiki — every real page under wiki/*.md (the same content
     // GitHub's wiki tab renders), lightweight summaries only (name/title/
-    // description) so /app/wiki can list them without fetching every full
+    // description) so /app/store can list them without fetching every full
     // file. Reads the actual repo directory on every call rather than
     // caching, matching this project's "wiki is a living doc, not a build
     // artifact" convention (see docs/SHARED_WIKI_SYSTEM.md) — a page

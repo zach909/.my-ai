@@ -27,6 +27,8 @@ import { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, Skill
 import { ResearchPlugin } from "./research.js";
 import { WikiPlugin } from "./wiki.js";
 import { TerminalPlugin } from "./terminal.js";
+import { ToolsPlugin } from "./tools.js";
+import { StorePlugin } from "./store.js";
 import type { BasePlugin } from "../plugin_manager/sdk.js";
 
 export { LocationPlugin } from "./location.js";
@@ -56,6 +58,8 @@ export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, Skill
 export { ResearchPlugin } from "./research.js";
 export { WikiPlugin } from "./wiki.js";
 export { TerminalPlugin } from "./terminal.js";
+export { ToolsPlugin } from "./tools.js";
+export { StorePlugin } from "./store.js";
 
 export function createPluginInstance(
   name: string,
@@ -98,6 +102,8 @@ export function createPluginInstance(
   if (lower === "research") return new ResearchPlugin(definition);
   if (lower === "wiki") return new WikiPlugin(definition);
   if (lower === "terminal") return new TerminalPlugin(definition);
+  if (lower === "tools") return new ToolsPlugin(definition);
+  if (lower === "store") return new StorePlugin(definition);
   throw new Error(`Unknown plugin: ${name}`);
 }
 
@@ -139,6 +145,8 @@ const pluginExtensions: Record<string, PluginDefinition> = {
   // but never actually implemented/registered on the TS side -- 'terminal'
   // could never be reached even though the routing already named it.
   terminal: { id: "terminal", name: "Terminal", type: "api-connection", capabilities: ["terminal", "shell"] },
+  store: { id: "store", name: "Store", type: "api-connection", capabilities: ["store", "publish", "share"] },
+  tools: { id: "tools", name: "Tools", type: "api-connection", capabilities: ["tools", "calculator", "hashing", "encoding", "units"] },
 };
 
 const allExtensions: ExtensionManifest[] = Object.entries(pluginExtensions).map(([key, def]) => ({

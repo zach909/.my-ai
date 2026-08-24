@@ -4605,6 +4605,192 @@ async function testPropagateOptimizations() {
   check(pathIters && pathDiff === 0, 'the dense path is bit-identical to the CSR path it replaces');
 }
 
+async function testMarkWaveAnimation() {
+  const fsp = await import('node:fs');
+  const src = fsp.readFileSync('src/components/NeuroclawMark.tsx', 'utf8');
+
+  // The mark's three amplitudes: circle (A=0), resting (A=17), star (A=42).
+  const paths = [...src.matchAll(/const RING_(CIRCLE|CALM|STAR) =\s*\n\s*'([^']+)'/g)]
+    .map(m => ({ name: m[1], d: m[2] }));
+  check(paths.length === 3, `all three wave amplitudes are defined (found ${paths.length})`);
+
+  // Path interpolation only works when every path shares an identical command
+  // sequence. These do by construction -- same sampler, same segment count --
+  // but an edit that regenerated one at a different resolution would break the
+  // animation silently, with the shape simply snapping instead of morphing.
+  const shape = (d) => d.replace(/-?[\d.]+/g, '#');
+  const shapes = new Set(paths.map(p => shape(p.d)));
+  check(shapes.size === 1,
+    'every amplitude has an identical command structure, which is what makes them interpolatable');
+
+  const segments = paths.map(p => (p.d.match(/ C /g) || []).length);
+  check(new Set(segments).size === 1 && segments[0] > 0,
+    `every amplitude has the same segment count (${segments[0]})`);
+
+  // The shapes must actually differ, or the animation would run and show
+  // nothing. Compare the widest horizontal extent: the star reaches further
+  // out than the circle by construction.
+  const extent = (d) => {
+    const xs = [...d.matchAll(/(-?[\d.]+)\s+(-?[\d.]+)/g)].map(m => parseFloat(m[1]));
+    return Math.max(...xs) - Math.min(...xs);
+  };
+  const circle = paths.find(p => p.name === 'CIRCLE');
+  const star = paths.find(p => p.name === 'STAR');
+  // Proportional, not a fixed pixel margin: with six lobes the widest points
+  // do not fall on the x-axis, so the horizontal extent grows by noticeably
+  // less than 2*(R+A). Measured 304 -> 342, which is a plainly visible change.
+  const grew = extent(star.d) / extent(circle.d);
+  check(grew > 1.1,
+    `the star genuinely extends beyond the circle (${Math.round(extent(circle.d))} -> ${Math.round(extent(star.d))}, ${((grew - 1) * 100).toFixed(0)}% wider)`);
+
+  // Driven by CSS, not SMIL. SMIL's clock does not advance under headless
+  // Chromium, so a SMIL version could never be verified here.
+  check(/@keyframes neuroclaw-wave/.test(src), 'the morph is a CSS keyframe animation');
+  check(!/<animate\b/.test(src), 'no SMIL animation is used, since it cannot be verified in this environment');
+  check(/prefers-reduced-motion/.test(src),
+    'a viewer who asked for less motion gets opacity instead of a morphing shape');
+
+  // Off unless the agent is working.
+  check(/active \? 'neuroclaw-wave-active' : undefined/.test(src),
+    'the animation only runs when the agent is actually working');
+}
+
+async function testPublicStore() {
+  const os = await import('node:os');
+  const fsp = await import('node:fs');
+  const pathm = await import('node:path');
+  const dir = fsp.mkdtempSync(pathm.join(os.tmpdir(), 'neuroclaw-store-'));
+  const prev = process.env.NEUROCLAW_STORE_DIR;
+  process.env.NEUROCLAW_STORE_DIR = dir;
+  try {
+    const store = await load('models && skills/core/store.js');
+    const { isStorePublicRoute } = await load('interface/web-server.js');
+
+    // --- Publishing and reading back -------------------------------------
+    const pub = store.publishItem({
+      kind: 'skills', name: 'greet', title: 'Greeter',
+      description: 'says hello', author: 'someone',
+      files: [{ filename: 'skill.json', content: '{"greet":true}' }],
+    });
+    check(pub.name === 'greet' && pub.files.length === 1, 'an item can be published');
+    check(typeof pub.files[0].sha256 === 'string' && pub.files[0].sha256.length === 64,
+      'each file records a sha256, so a puller can tell whether it changed');
+
+    // Binary content must survive the round trip byte-for-byte -- binary
+    // skills are a first-class kind here, not an afterthought.
+    const bytes = Buffer.from([0, 1, 2, 250, 255]);
+    store.publishItem({
+      kind: 'binaries', name: 'weights', files: [{ filename: 'model.bin', content: bytes.toString('base64'), encoding: 'base64' }],
+    });
+    check(store.readItemFile('binaries', 'weights', 'model.bin').equals(bytes),
+      'binary files round-trip through base64 without corruption');
+
+    // An update must not silently drop the files it did not mention.
+    store.publishItem({ kind: 'skills', name: 'greet', files: [{ filename: 'README.md', content: '# hi' }] });
+    const updated = store.readItem('skills', 'greet');
+    check(updated.files.length === 2, 'updating adds a file without discarding the existing ones');
+    check(updated.publishedAt !== '' && updated.updatedAt >= updated.publishedAt,
+      'first-published and last-updated are both tracked');
+
+    const cat = store.listCatalog();
+    check(cat.skills.length === 1 && cat.binaries.length === 1, 'the catalogue is derived from the files on disk');
+
+    // --- Names are attacker-controlled -----------------------------------
+    // Anyone can publish, so a name that escapes its folder would let one
+    // publish overwrite files in every clone of the repository.
+    for (const bad of ['../escape', 'a/b', '..', '', 'x'.repeat(80)]) {
+      let rejected = false;
+      try { store.publishItem({ kind: 'skills', name: bad, files: [{ filename: 'x', content: 'y' }] }); }
+      catch { rejected = true; }
+      check(rejected, `a publish named ${JSON.stringify(bad.slice(0, 12))} is rejected`);
+    }
+    let badFile = false;
+    try { store.publishItem({ kind: 'skills', name: 'ok', files: [{ filename: '../../etc/passwd', content: 'x' }] }); }
+    catch { badFile = true; }
+    check(badFile, 'a filename containing a path traversal is rejected');
+    let badKind = false;
+    try { store.publishItem({ kind: 'not-a-kind', name: 'ok', files: [{ filename: 'x', content: 'y' }] }); }
+    catch { badKind = true; }
+    check(badKind, 'an unknown store section is rejected');
+
+    // --- Who may do what --------------------------------------------------
+    // Reading and publishing are open on purpose: that is what makes the
+    // store shared. Deletion is not, for the same reason the wiki gates it.
+    check(isStorePublicRoute('/api/store', 'GET'), 'browsing the catalogue needs no credential');
+    check(isStorePublicRoute('/api/store', 'POST'), 'publishing needs no credential');
+    check(isStorePublicRoute('/api/store/skills/greet', 'GET'), 'viewing an item needs no credential');
+    check(isStorePublicRoute('/api/store/skills/greet/file/skill.json', 'GET'),
+      'downloading a file needs no credential');
+    check(!isStorePublicRoute('/api/store/skills/greet', 'DELETE'),
+      'DELETE is NOT public -- anyone may add to the store, only an authorised caller may destroy');
+    check(!isStorePublicRoute('/api/store/../../etc/passwd', 'GET'),
+      'a traversal path is not treated as a public store route');
+
+    check(store.deleteItem('skills', 'greet') === true, 'an item can be removed');
+    check(store.readItem('skills', 'greet') === null, 'a removed item is gone');
+  } finally {
+    if (prev === undefined) delete process.env.NEUROCLAW_STORE_DIR;
+    else process.env.NEUROCLAW_STORE_DIR = prev;
+    fsp.rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+async function testToolsPlugin() {
+  const { ToolsPlugin } = await load('plugins/tools.js');
+  const t = new ToolsPlugin({ id: 'tools', name: 'Tools', type: 'api-connection', capabilities: ['tools'] });
+
+  // Exactness is the entire point: these are the jobs a language model gets
+  // plausibly wrong and a function gets right.
+  const calc = await t.onMessage('calc 8347 * 219');
+  check(calc?.result === '8347 * 219 = 1827993', 'calc computes exactly, rather than plausibly');
+  const paren = await t.onMessage('calc (8 + 4) / 3');
+  check(paren?.result === '(8 + 4) / 3 = 4', 'calc respects parentheses');
+
+  const h = await t.onMessage('hash sha256 hello');
+  check(h?.result === '2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824',
+    'sha256 matches the known digest of "hello"');
+
+  const enc = await t.onMessage('encode base64 hello');
+  check(enc?.result === 'aGVsbG8=', 'base64 encode');
+  const dec = await t.onMessage('decode base64 aGVsbG8=');
+  check(dec?.result === 'hello', 'base64 decode round-trips');
+  // Buffer.from(.., 'base64') silently discards invalid characters instead of
+  // throwing, so without the round-trip check this would return mojibake and
+  // claim success.
+  const badB64 = await t.onMessage('decode base64 !!!not-base64!!!');
+  check(/not valid base64/i.test(String(badB64?.result)), 'invalid base64 is rejected, not silently mangled');
+
+  const conv = await t.onMessage('convert 100 c to f');
+  check(conv?.result === '100 c = 212 f', 'temperature conversion');
+  const km = await t.onMessage('convert 12 km to mi');
+  check(String(km?.result).startsWith('12 km = 7.4564543'), 'length conversion');
+  // Refusing beats answering: a number here would be confidently wrong.
+  const cross = await t.onMessage('convert 5 kg to m');
+  check(/different kinds of unit/i.test(String(cross?.result)),
+    'a mass-to-length conversion is refused rather than answered wrongly');
+
+  const days = await t.onMessage('days between 2026-01-01 and 2026-03-01');
+  check(days?.result === '59 day(s)', 'date difference (2026 is not a leap year)');
+
+  const badJson = await t.onMessage('json {oops');
+  check(/not valid JSON/i.test(String(badJson?.result)), 'invalid JSON is reported, not guessed at');
+
+  const uuid = await t.onMessage('uuid');
+  check(/^[0-9a-f-]{36}$/.test(String(uuid?.result)), 'uuid returns a v4 UUID');
+
+  const list = await t.onMessage('tools');
+  check(String(list?.result).includes('calc') && String(list?.result).includes('convert'),
+    'the plugin can list what it provides');
+
+  // The non-greedy contract. skill-maker returns non-null for ANY input, which
+  // is why it can never share a bucket safely; this plugin must not behave that
+  // way, or placing it first in the query/analysis/command buckets would block
+  // every other candidate.
+  check(await t.onMessage('write me a poem') === null, 'non-tool input returns null so dispatch falls through');
+  check(await t.onMessage('') === null, 'empty input returns null');
+  check(await t.onMessage('what is the weather') === null, 'an ordinary question is not absorbed');
+}
+
 async function testEmbeddingGeometry() {
   const { embedText } = await load('models && skills/core/neuro-lang.js');
   const cos = (a, b) => {
@@ -4849,6 +5035,9 @@ async function main() {
     ['Pipeline ZipIO persistence across restart (Section 1.10/7)', testPipelineZipIOPersistence],
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
     ['Settle-loop optimizations preserve behavior exactly', testPropagateOptimizations],
+    ['Mark wave: circle to star while the agent works', testMarkWaveAnimation],
+    ['Public store: shared via the repo, open to publish, gated on destroy', testPublicStore],
+    ['Tools plugin: exact local utilities, and a non-greedy dispatch contract', testToolsPlugin],
     ['Representation geometry: distance between embeddings actually means something', testEmbeddingGeometry],
     ['Retrieval-grounded answering: a taught fact is actually usable', testGroundedAnswering],
     ['No duplicate JSX attributes across src/**/*.tsx (recurring bad-merge regression guard)', testNoDuplicateJsxAttributes],

@@ -22,6 +22,8 @@ import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Send, Zap, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'lucide-react'
 import { toast } from 'sonner'
+import { VoiceInput } from '@/components/VoiceInput'
+import { usePageVisible } from '@/hooks/usePageVisible'
 
 export const Route = createFileRoute('/app/chat')({
   head: () => ({
@@ -118,7 +120,14 @@ function ChatPage() {
     contextItemsHeld?: { input: number; output: number }
   } | null>(null)
 
+  // Gated on visibility: this is a purely informational status readout, and a
+  // request every three seconds forever while the window is minimised costs
+  // the processor, the battery and the network for something nobody can see.
+  // It polls immediately on becoming visible again, so the display is current
+  // the moment it matters rather than up to three seconds stale.
+  const pageVisible = usePageVisible()
   useEffect(() => {
+    if (!pageVisible) return
     let cancelled = false
     const poll = async () => {
       try {
@@ -135,7 +144,7 @@ function ChatPage() {
       cancelled = true
       clearInterval(id)
     }
-  }, [])
+  }, [pageVisible])
 
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
@@ -456,6 +465,15 @@ function ChatPage() {
             disabled={loading}
             autoFocus
             className="flex-1"
+          />
+          <VoiceInput
+            disabled={loading}
+            onTranscript={(text) => {
+              // Append rather than replace: a user may have typed part of the
+              // message already, and losing it would be worse than a bad join.
+              setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
+              inputRef.current?.focus()
+            }}
           />
           <Button
             onClick={() => handleSendMessage()}

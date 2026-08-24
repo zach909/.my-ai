@@ -14,7 +14,7 @@ import { Route as BuilderRouteImport } from './routes/builder'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
-import { Route as AppWikiRouteImport } from './routes/app/wiki'
+import { Route as AppStoreRouteImport } from './routes/app/store'
 import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
 import { Route as AppPlanningRouteImport } from './routes/app/planning'
 import { Route as AppKnowledgeRouteImport } from './routes/app/knowledge'
@@ -50,9 +50,9 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
-const AppWikiRoute = AppWikiRouteImport.update({
-  id: '/wiki',
-  path: '/wiki',
+const AppStoreRoute = AppStoreRouteImport.update({
+  id: '/store',
+  path: '/store',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSelfImprovementRoute = AppSelfImprovementRouteImport.update({
@@ -115,7 +115,7 @@ export interface FileRoutesByFullPath {
   '/app/knowledge': typeof AppKnowledgeRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
-  '/app/wiki': typeof AppWikiRoute
+  '/app/store': typeof AppStoreRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
@@ -131,7 +131,7 @@ export interface FileRoutesByTo {
   '/app/knowledge': typeof AppKnowledgeRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
-  '/app/wiki': typeof AppWikiRoute
+  '/app/store': typeof AppStoreRoute
   '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
@@ -149,7 +149,7 @@ export interface FileRoutesById {
   '/app/knowledge': typeof AppKnowledgeRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
-  '/app/wiki': typeof AppWikiRoute
+  '/app/store': typeof AppStoreRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
@@ -168,7 +168,7 @@ export interface FileRouteTypes {
     | '/app/knowledge'
     | '/app/planning'
     | '/app/self-improvement'
-    | '/app/wiki'
+    | '/app/store'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
   to:
@@ -184,7 +184,7 @@ export interface FileRouteTypes {
     | '/app/knowledge'
     | '/app/planning'
     | '/app/self-improvement'
-    | '/app/wiki'
+    | '/app/store'
     | '/app'
   id:
     | '__root__'
@@ -201,7 +201,7 @@ export interface FileRouteTypes {
     | '/app/knowledge'
     | '/app/planning'
     | '/app/self-improvement'
-    | '/app/wiki'
+    | '/app/store'
     | '/app/'
   fileRoutesById: FileRoutesById
 }
@@ -249,11 +249,11 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/wiki': {
-      id: '/app/wiki'
-      path: '/wiki'
-      fullPath: '/app/wiki'
-      preLoaderRoute: typeof AppWikiRouteImport
+    '/app/store': {
+      id: '/app/store'
+      path: '/store'
+      fullPath: '/app/store'
+      preLoaderRoute: typeof AppStoreRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/self-improvement': {
@@ -332,7 +332,7 @@ interface AppRouteChildren {
   AppKnowledgeRoute: typeof AppKnowledgeRoute
   AppPlanningRoute: typeof AppPlanningRoute
   AppSelfImprovementRoute: typeof AppSelfImprovementRoute
-  AppWikiRoute: typeof AppWikiRoute
+  AppStoreRoute: typeof AppStoreRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
@@ -346,7 +346,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppKnowledgeRoute: AppKnowledgeRoute,
   AppPlanningRoute: AppPlanningRoute,
   AppSelfImprovementRoute: AppSelfImprovementRoute,
-  AppWikiRoute: AppWikiRoute,
+  AppStoreRoute: AppStoreRoute,
   AppIndexRoute: AppIndexRoute,
 }
 
