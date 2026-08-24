@@ -4684,6 +4684,72 @@ async function testMarkWaveAnimation() {
     'the animation only runs when the agent is actually working');
 }
 
+async function testPromptingSkills() {
+  const { isStorePublicRoute } = await load('interface/web-server.js');
+  const {
+    PROMPTING_CATEGORIES,
+    builtInPromptingSkills,
+    parsePromptingSkill,
+  } = await load('models && skills/core/prompting-skills.js');
+  const { runAgentLoop } = await load('models && skills/core/agent-loop.js');
+  const { PromptingSkillRegistry } = await load('models && skills/core/prompting-skills.js');
+  const { STORE_KINDS, STORE_KIND_LABELS } = await load('models && skills/core/store.js');
+
+  check(STORE_KINDS.includes('prompting'),
+    `prompting skills are a real store section, so they travel like everything else (kinds: ${STORE_KINDS.join(', ')})`);
+  check(STORE_KIND_LABELS.prompting === 'Prompting Skills', 'the section has a human label');
+
+  check(PROMPTING_CATEGORIES.length === 3 &&
+    ['perception', 'cognitive', 'action'].every(c => PROMPTING_CATEGORIES.includes(c)),
+    `the three categories exist: ${PROMPTING_CATEGORIES.join(', ')}`);
+
+  // A fresh install must have a working loop rather than three empty steps.
+  const builtIns = builtInPromptingSkills();
+  for (const category of PROMPTING_CATEGORIES) {
+    check(builtIns.some(s => s.category === category),
+      `a fresh install already has a ${category} skill, so no step of the loop starts empty`);
+  }
+
+  // Publishing is open (it shares a document); installing changes how this
+  // machine's agent behaves and must NOT be open.
+  check(isStorePublicRoute('/api/prompting-skills/publish', 'POST'),
+    'publishing a prompting skill is open, like every other publish');
+  check(!isStorePublicRoute('/api/prompting-skills/install', 'POST'),
+    'installing one is NOT open -- publishing shares a document, installing changes how the agent runs');
+  check(!isStorePublicRoute('/api/prompting-skills/anything', 'DELETE'),
+    'uninstalling is not open either');
+
+  // Declarative, so installing a stranger's skill cannot execute their code.
+  const doc = parsePromptingSkill({ name: 'p', category: 'action', plugin: 'tools', input: '{goal}' });
+  check(typeof doc.plugin === 'string' && !('code' in doc) && !('script' in doc),
+    'a prompting skill names a plugin rather than carrying code, so installing one runs nothing on its own');
+
+  // The loop genuinely calls the installed skills, in order.
+  const seen = [];
+  const registry = new PromptingSkillRegistry();
+  registry.install(parsePromptingSkill({ name: 'see', category: 'perception', source: 'memory' }));
+  registry.install(parsePromptingSkill({ name: 'plan', category: 'cognitive', strategy: 'decompose' }));
+  registry.install(parsePromptingSkill({ name: 'act', category: 'action', plugin: 'tools' }));
+  const result = await runAgentLoop('reach the goal', registry, {
+    recall: () => { seen.push('perceive'); return ['a fact']; },
+    decompose: () => { seen.push('think'); return ['step one']; },
+    callPlugin: () => { seen.push('act'); return 'done'; },
+    isGoalMet: (_g, obs) => obs.includes('done'),
+  });
+  check(seen.join(' -> ') === 'perceive -> think -> act',
+    `the loop runs the skills in perceive-think-act order (${seen.join(' -> ')})`);
+  check(result.outcome === 'goal-met' && result.iterations === 1,
+    `it stops when the goal is met rather than burning iterations (${result.outcome}, ${result.iterations} iteration)`);
+
+  // Termination is always explained.
+  const stuck = await runAgentLoop('impossible', registry, { recall: () => ['x'], callPlugin: () => 'no', isGoalMet: () => false }, { maxIterations: 2 });
+  check(stuck.outcome === 'max-iterations' && stuck.iterations === 2,
+    'a loop that cannot finish stops at its ceiling and says so, instead of hanging');
+  const dead = await runAgentLoop('nothing wired up', registry, {}, { maxIterations: 9 });
+  check(dead.outcome === 'dead-end' && dead.iterations === 1,
+    'a loop with nothing to try stops immediately and reports a dead end, rather than looping to look busy');
+}
+
 async function testPublicStore() {
   const os = await import('node:os');
   const fsp = await import('node:fs');
@@ -5065,6 +5131,7 @@ async function main() {
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
     ['Settle-loop optimizations preserve behavior exactly', testPropagateOptimizations],
     ['Mark wave: circle to star while the agent works', testMarkWaveAnimation],
+    ['Prompting skills: the perceive-think-act loop', testPromptingSkills],
     ['Public store: shared via the repo, open to publish, gated on destroy', testPublicStore],
     ['Tools plugin: exact local utilities, and a non-greedy dispatch contract', testToolsPlugin],
     ['Representation geometry: distance between embeddings actually means something', testEmbeddingGeometry],

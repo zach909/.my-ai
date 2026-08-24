@@ -18,6 +18,12 @@
  */
 
 import type { PluginDefinition } from "../plugin_manager/types.js";
+import {
+  installPromptingSkill,
+  listInstalled,
+  loadRegistry,
+  publishPromptingSkill,
+} from "../models && skills/core/prompting-skill-store.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import {
   STORE_KINDS,
@@ -77,6 +83,32 @@ export class StorePlugin extends BasePlugin {
       throw new Error(`No "${name}" in ${kind} to edit. Publish it first.`);
     }
     return publishAndSync({ kind, name, files: [{ filename, content }] });
+  }
+
+  /**
+   * Publish a prompting skill -- one of the modular functions the agent calls
+   * inside its own perceive-think-act loop.
+   *
+   * This is the agent writing down how it works so other people's agents can
+   * work that way too. Publishing shares the document with everyone who pulls;
+   * it does not install it on anyone's machine, including this one.
+   */
+  publishPromptingSkill(skill: unknown) {
+    return publishPromptingSkill(skill);
+  }
+
+  /**
+   * Install (or edit) a prompting skill on THIS machine, changing how this
+   * agent's own loop behaves from the next iteration on. Re-installing under
+   * an existing name is how an edit takes effect.
+   */
+  installPromptingSkill(skill: unknown) {
+    return installPromptingSkill(skill);
+  }
+
+  /** Every prompting skill this agent is currently running with, in run order. */
+  promptingSkills() {
+    return { installed: listInstalled(), active: loadRegistry().all() };
   }
 
   override async onMessage(message: unknown): Promise<unknown> {

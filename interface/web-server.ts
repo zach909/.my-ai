@@ -7,6 +7,17 @@ import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
+import {
+  installFromStore,
+  installPromptingSkill,
+  listInstalled,
+  loadRegistry,
+  publishPromptingSkill,
+  readPublishedPromptingSkill,
+  uninstallPromptingSkill,
+  isBuiltIn,
+} from '../models && skills/core/prompting-skill-store.js';
+import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import {
@@ -399,7 +410,11 @@ export function isStorePublicRoute(pathname: string, method: string): boolean {
     );
   }
   if (method === 'POST') {
-    return pathname === '/api/store';
+    // Publishing a prompting skill is a publish like any other, so it is open.
+    // Installing one is deliberately NOT here: publishing shares a document,
+    // installing changes how this machine's agent actually behaves, and those
+    // are not the same permission.
+    return pathname === '/api/store' || pathname === '/api/prompting-skills/publish';
   }
   return false;
 }
@@ -1025,6 +1040,106 @@ export class WebServer {
           return;
         }
         this.sendJson(res, item);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    // ── Prompting skills ────────────────────────────────────────────────
+    // The modular functions the agent calls inside its own perceive-think-act
+    // loop. Publishing is open (it shares a document); installing is gated,
+    // because it changes how this machine's agent actually behaves.
+
+    if (pathname === '/api/prompting-skills' && method === 'GET') {
+      const installed = listInstalled();
+      const installedNames = new Set(installed.map(s => s.name));
+      this.sendJson(res, {
+        categories: PROMPTING_CATEGORIES,
+        labels: PROMPTING_CATEGORY_LABELS,
+        // The built-ins are reported separately so the UI can show that a
+        // fresh install already has a working loop rather than three empty
+        // steps -- and can mark which of them the user has since replaced.
+        builtIn: builtInPromptingSkills().map(s => ({ ...s, replaced: installedNames.has(s.name) })),
+        installed,
+        active: loadRegistry().all(),
+      });
+      return;
+    }
+
+    const promptingMatch = pathname.match(/^\/api\/prompting-skills\/([A-Za-z0-9._-]+)$/);
+    if (promptingMatch && method === 'GET') {
+      try {
+        const published = readPublishedPromptingSkill(promptingMatch[1]);
+        if (!published) {
+          this.sendJson(res, { error: 'No such published prompting skill.' }, 404);
+          return;
+        }
+        this.sendJson(res, published);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    // Publish: open, and pushed like every other publish so everyone who pulls
+    // gets it.
+    if (pathname === '/api/prompting-skills/publish' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req);
+        const { item, sync, skill } = await publishPromptingSkill(body);
+        this.sendJson(res, { ...item, skill, sync }, 201);
+      } catch (err) {
+        this.sendJson(
+          res,
+          { error: err instanceof Error ? err.message : String(err) },
+          err instanceof PromptingSkillError ? 400 : 500,
+        );
+      }
+      return;
+    }
+
+    // Install: from the store by name, or straight from a document the user or
+    // the agent just wrote. Same endpoint, because both mean "the loop should
+    // use this from now on" -- and re-installing under an existing name is how
+    // an edit takes effect.
+    if (pathname === '/api/prompting-skills/install' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as Record<string, unknown> | null;
+        if (!body) {
+          this.sendJson(res, { error: 'Expected a skill document or { "name": "..." }.' }, 400);
+          return;
+        }
+        const skill = typeof body.name === 'string' && body.category === undefined
+          ? installFromStore(body.name)
+          : installPromptingSkill(body);
+        this.sendJson(res, { installed: skill, active: loadRegistry().all() }, 201);
+      } catch (err) {
+        this.sendJson(
+          res,
+          { error: err instanceof Error ? err.message : String(err) },
+          err instanceof PromptingSkillError ? 400 : 500,
+        );
+      }
+      return;
+    }
+
+    if (promptingMatch && method === 'DELETE') {
+      try {
+        const name = promptingMatch[1];
+        const removed = uninstallPromptingSkill(name);
+        this.sendJson(
+          res,
+          {
+            uninstalled: removed,
+            // Removing an installed skill that shares a built-in's name
+            // restores the built-in rather than leaving a hole, so the UI can
+            // say so instead of the skill appearing to come back by itself.
+            restoredBuiltIn: removed && isBuiltIn(name),
+            active: loadRegistry().all(),
+          },
+          removed ? 200 : 404,
+        );
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
       }

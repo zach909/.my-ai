@@ -22,12 +22,16 @@ import { createHash } from "node:crypto";
 import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 
 /** What kinds of thing the store holds. Each is a folder under `store/`. */
-export const STORE_KINDS = ["skills", "plugins", "binaries", "source", "files", "wiki"] as const;
+export const STORE_KINDS = ["skills", "prompting", "plugins", "binaries", "source", "files", "wiki"] as const;
 export type StoreKind = (typeof STORE_KINDS)[number];
 
 /** Human labels, used by the UI so the names live in one place. */
 export const STORE_KIND_LABELS: Record<StoreKind, string> = {
   skills: "Skills",
+  // The modular functions the agent calls from inside its own perceive-think-
+  // act loop (see prompting-skills.ts). Listed right after Skills because they
+  // are the ones that change how the agent works rather than what it knows.
+  prompting: "Prompting Skills",
   plugins: "Plugins & Tools",
   binaries: "Binary Skills",
   source: "Source Code",
