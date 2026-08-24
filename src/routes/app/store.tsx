@@ -81,6 +81,34 @@ import { toast } from 'sonner'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 import { usePageVisible } from '@/hooks/usePageVisible'
 
+/**
+ * What the server reports about a publish actually reaching GitHub. The store
+ * only means anything if what you publish leaves your machine, so this is
+ * shown rather than assumed -- "saved" and "shared with everyone" are
+ * different outcomes and the UI must not blur them.
+ */
+interface SyncStatus {
+  committed: boolean
+  pushed: boolean
+  branch?: string
+  reason?: string
+}
+
+function reportSync(sync: SyncStatus | undefined, what: string): void {
+  if (!sync) return
+  if (sync.pushed) {
+    toast.success(`${what} — pushed${sync.branch ? ` to ${sync.branch}` : ''}`, {
+      description: 'Anyone who pulls the repository now gets it. It is no longer only on this device.',
+    })
+    return
+  }
+  // Deliberately not an error: the item IS saved, it just has not travelled
+  // yet. Saying "failed" would be as wrong as saying "shared".
+  toast.warning(`${what} — saved on this device only`, {
+    description: sync.reason ?? 'It has not reached anyone else yet.',
+  })
+}
+
 type StoreTab = 'store' | 'wiki' | 'skills' | 'chat'
 
 interface StoreSearch {
@@ -553,6 +581,7 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
       })
       const data = await res.json()
       if (!res.ok) throw new Error(data.error || 'Failed to publish page')
+      reportSync(data.sync as SyncStatus | undefined, `Wiki page "${name}" published`)
       // Always 'bot' -- publishWikiPage() (the function this endpoint and
       // WikiPlugin.publish() both call) only ever writes into wiki/bot/,
       // never the curated wiki/ directory, regardless of who submitted it.
@@ -1135,6 +1164,7 @@ function WikiPageFilesPanel({ pageName }: { pageName: string }) {
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Failed to upload')
+        reportSync(data.sync as SyncStatus | undefined, `Package "${pageName}" published`)
       }
       if (extraFiles.length > 0) {
         const body = { files: await Promise.all(extraFiles.map(async f => ({ filename: f.name, content: await f.text() }))) }
@@ -1145,6 +1175,7 @@ function WikiPageFilesPanel({ pageName }: { pageName: string }) {
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Failed to upload extra files')
+        reportSync(data.sync as SyncStatus | undefined, `Files added to "${pageName}"`)
       }
       // Self-link, best-effort -- the package now exists (the calls above
       // succeeded), so this only fails if the wiki page itself vanished in
@@ -1545,6 +1576,7 @@ function SkillUploadsPanel() {
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Failed to upload')
+        reportSync(data.sync as SyncStatus | undefined, `Package "${trimmedName}" published`)
       }
       if (extraFiles.length > 0) {
         const body = {
@@ -1557,6 +1589,7 @@ function SkillUploadsPanel() {
         })
         const data = await res.json()
         if (!res.ok) throw new Error(data.error || 'Failed to upload extra files')
+        reportSync(data.sync as SyncStatus | undefined, `Files added to "${trimmedName}"`)
       }
       setFiles({})
       setExtraFiles([])

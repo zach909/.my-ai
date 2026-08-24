@@ -38,6 +38,7 @@
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 
 const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
 // Same intent as wiki-store.ts's SAFE_NAME for page names -- but an
@@ -311,4 +312,44 @@ export function deleteSkillUpload(name: string): void {
     throw new SkillUploadError(`No skill package named "${name}".`);
   }
   rmSync(dir, { recursive: true, force: true });
+}
+
+
+/**
+ * Save a package's files and actually share it.
+ *
+ * saveSkillUpload() writes into the package's folder and stops, which leaves
+ * an uploaded plugin/source/binary skill device-local -- the exact thing the
+ * store exists to avoid. This commits and pushes the package folder so every
+ * other clone gets it on the next pull, and reports honestly when it could
+ * not (see store-sync.ts).
+ */
+export async function saveSkillUploadAndSync(
+  name: string,
+  files: Partial<Record<SkillUploadSlot, SkillUploadFile>>,
+): Promise<{ pkg: SkillUploadSummary; sync: StoreSyncResult }> {
+  const pkg = saveSkillUpload(name, files);
+  const sync = await syncStorePaths([packageDir(name)], `uploads: publish ${name}`, {
+    storeDir: extensionsDir(),
+  });
+  return { pkg, sync };
+}
+
+/** Same, for a package's extra files. */
+export async function saveSkillUploadExtraFilesAndSync(
+  name: string,
+  files: SkillUploadFile[],
+): Promise<{ pkg: SkillUploadSummary; sync: StoreSyncResult }> {
+  const pkg = saveSkillUploadExtraFiles(name, files);
+  const sync = await syncStorePaths([packageDir(name)], `uploads: add files to ${name}`, {
+    storeDir: extensionsDir(),
+  });
+  return { pkg, sync };
+}
+
+/** Delete a package and propagate the removal, so a pull cannot resurrect it. */
+export async function deleteSkillUploadAndSync(name: string): Promise<StoreSyncResult> {
+  const dir = packageDir(name);
+  deleteSkillUpload(name);
+  return syncStorePaths([dir], `uploads: remove ${name}`, { storeDir: extensionsDir() });
 }
