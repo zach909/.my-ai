@@ -150,10 +150,26 @@ const STORE_TABS: { key: StoreTab; label: string; icon: typeof Package }[] = [
 
 function StorePage() {
   const { page: requestedPage, tab: requestedTab } = Route.useSearch()
-  // A ?page= deep link is asking for a wiki page, so it implies the Wiki tab
-  // even when no ?tab= was given -- otherwise the link would land on the
-  // catalogue and silently drop what was asked for.
-  const [tab, setTab] = useState<StoreTab>(requestedTab ?? (requestedPage ? 'wiki' : 'store'))
+  // The first render must NOT depend on the query string. This route is
+  // prerendered to a single static file, and the prerenderer also crawls
+  // /app/store?page=Bots (the dashboard's "Automated Bots" shortcut) -- whose
+  // output overwrote the canonical page, baking the Wiki tab into the HTML
+  // every plain visit receives. The client then computed 'store', disagreed
+  // with the server, and React reported a hydration mismatch (#418) on this
+  // page and no other. One static file serves every query string, so deriving
+  // initial state from the query string cannot be right.
+  //
+  // The deep link still works: the effect below applies it immediately after
+  // mount, by which point there is no server render left to contradict.
+  const [tab, setTab] = useState<StoreTab>('store')
+
+  useEffect(() => {
+    // A ?page= deep link is asking for a wiki page, so it implies the Wiki tab
+    // even when no ?tab= was given -- otherwise the link would land on the
+    // catalogue and silently drop what was asked for.
+    const wanted = requestedTab ?? (requestedPage ? 'wiki' : undefined)
+    if (wanted) setTab(wanted)
+  }, [requestedTab, requestedPage])
   // Set by a page's "Discuss in Chat" button so the Chat tab can pre-fill its
   // composer -- lifted up here (rather than each panel navigating
   // independently) since switching tabs is now just local state, not a route
