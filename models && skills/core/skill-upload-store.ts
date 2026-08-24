@@ -353,3 +353,54 @@ export async function deleteSkillUploadAndSync(name: string): Promise<StoreSyncR
   deleteSkillUpload(name);
   return syncStorePaths([dir], `uploads: remove ${name}`, { storeDir: extensionsDir() });
 }
+
+
+/**
+ * The remaining package mutations, each followed by the same push.
+ *
+ * These change manifest.json rather than the uploaded files, and it would be
+ * easy to think that makes them local bookkeeping. It does not: "this package
+ * passed its RSI test" and "this package is documented by that wiki page" are
+ * exactly the facts someone else needs in order to judge whether to install
+ * it. Left unsynced, a package would arrive on everyone else's machine
+ * looking untested and undocumented no matter what its author recorded.
+ */
+export async function linkSkillUploadWikiAndSync(
+  name: string,
+  wikiPageName: string,
+): Promise<{ pkg: SkillUploadSummary; sync: StoreSyncResult }> {
+  const pkg = linkSkillUploadWiki(name, wikiPageName);
+  const sync = await syncStorePaths([packageDir(name)], `uploads: link ${name} to wiki/${wikiPageName}`, {
+    storeDir: extensionsDir(),
+  });
+  return { pkg, sync };
+}
+
+export async function unlinkSkillUploadWikiAndSync(
+  name: string,
+): Promise<{ pkg: SkillUploadSummary; sync: StoreSyncResult }> {
+  const pkg = unlinkSkillUploadWiki(name);
+  const sync = await syncStorePaths([packageDir(name)], `uploads: unlink ${name} from its wiki page`, {
+    storeDir: extensionsDir(),
+  });
+  return { pkg, sync };
+}
+
+/** A pass is the signal others use to decide whether to trust the package, so it has to travel. */
+export async function recordSkillUploadRsiPassAndSync(
+  name: string,
+  message?: string,
+): Promise<{ pkg: SkillUploadSummary; sync: StoreSyncResult }> {
+  const pkg = recordSkillUploadRsiPass(name, message);
+  const sync = await syncStorePaths([packageDir(name)], `uploads: ${name} passed its RSI test`, {
+    storeDir: extensionsDir(),
+  });
+  return { pkg, sync };
+}
+
+export async function deleteSkillUploadExtraFileAndSync(name: string, filename: string): Promise<StoreSyncResult> {
+  deleteSkillUploadExtraFile(name, filename);
+  return syncStorePaths([packageDir(name)], `uploads: remove ${filename} from ${name}`, {
+    storeDir: extensionsDir(),
+  });
+}

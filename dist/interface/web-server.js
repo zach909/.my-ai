@@ -8,7 +8,7 @@ import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { STORE_KINDS, STORE_KIND_LABELS, StoreError, listCatalog, publishAndSync, readItem, readItemFile, deleteAndSync, } from '../models && skills/core/store.js';
-import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFile, linkSkillUploadWiki, unlinkSkillUploadWiki, recordSkillUploadRsiPass, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
+import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFileAndSync, linkSkillUploadWikiAndSync, unlinkSkillUploadWikiAndSync, recordSkillUploadRsiPassAndSync, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
 /**
  * Keeps exactly one `extension-builder/pytorch_trainer.py` subprocess alive
  * for the life of the server instead of spawning (and re-importing torch
@@ -1733,7 +1733,7 @@ export class WebServer {
         if (skillUploadExtraFileMatch && method === 'DELETE') {
             const [, name, filename] = skillUploadExtraFileMatch;
             try {
-                deleteSkillUploadExtraFile(name, decodeURIComponent(filename));
+                await deleteSkillUploadExtraFileAndSync(name, decodeURIComponent(filename));
                 this.sendJson(res, { name, filename, deleted: true });
             }
             catch (err) {
@@ -1864,7 +1864,7 @@ export class WebServer {
                     this.sendJson(res, { error: `"${body.wikiPage}" is a curated wiki page -- only a bot-published page can be linked to a skill upload` }, 400);
                     return;
                 }
-                const summary = linkSkillUploadWiki(name, body.wikiPage);
+                const { pkg: summary } = await linkSkillUploadWikiAndSync(name, body.wikiPage);
                 this.sendJson(res, summary);
             }
             catch (err) {
@@ -1879,7 +1879,7 @@ export class WebServer {
         if (skillUploadWikiMatch && method === 'DELETE') {
             const name = skillUploadWikiMatch[1];
             try {
-                const summary = unlinkSkillUploadWiki(name);
+                const { pkg: summary } = await unlinkSkillUploadWikiAndSync(name);
                 this.sendJson(res, summary);
             }
             catch (err) {
@@ -1958,7 +1958,7 @@ export class WebServer {
                     this.sendJson(res, { ok: true, passed: false, message, score, ranFrom: file.filename });
                     return;
                 }
-                recordSkillUploadRsiPass(name, message);
+                await recordSkillUploadRsiPassAndSync(name, message);
                 let installed = null;
                 const skillFile = readSkillUploadFile(name, 'binarySkill') ?? readSkillUploadFile(name, 'sourceSkill');
                 if (skillFile) {

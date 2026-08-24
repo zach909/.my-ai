@@ -28,10 +28,10 @@ import {
   saveSkillUploadAndSync,
   saveSkillUploadExtraFilesAndSync,
   deleteSkillUploadAndSync,
-  deleteSkillUploadExtraFile,
-  linkSkillUploadWiki,
-  unlinkSkillUploadWiki,
-  recordSkillUploadRsiPass,
+  deleteSkillUploadExtraFileAndSync,
+  linkSkillUploadWikiAndSync,
+  unlinkSkillUploadWikiAndSync,
+  recordSkillUploadRsiPassAndSync,
   SkillUploadError,
   SKILL_UPLOAD_SLOTS,
   type SkillUploadSlot,
@@ -1822,7 +1822,7 @@ export class WebServer {
     if (skillUploadExtraFileMatch && method === 'DELETE') {
       const [, name, filename] = skillUploadExtraFileMatch;
       try {
-        deleteSkillUploadExtraFile(name, decodeURIComponent(filename));
+        await deleteSkillUploadExtraFileAndSync(name, decodeURIComponent(filename));
         this.sendJson(res, { name, filename, deleted: true });
       } catch (err) {
         const status = err instanceof SkillUploadError ? 400 : 500;
@@ -1951,7 +1951,7 @@ export class WebServer {
           this.sendJson(res, { error: `"${body.wikiPage}" is a curated wiki page -- only a bot-published page can be linked to a skill upload` }, 400);
           return;
         }
-        const summary = linkSkillUploadWiki(name, body.wikiPage);
+        const { pkg: summary } = await linkSkillUploadWikiAndSync(name, body.wikiPage);
         this.sendJson(res, summary);
       } catch (err) {
         const status = err instanceof SkillUploadError ? 400 : 500;
@@ -1966,7 +1966,7 @@ export class WebServer {
     if (skillUploadWikiMatch && method === 'DELETE') {
       const name = skillUploadWikiMatch[1];
       try {
-        const summary = unlinkSkillUploadWiki(name);
+        const { pkg: summary } = await unlinkSkillUploadWikiAndSync(name);
         this.sendJson(res, summary);
       } catch (err) {
         const status = err instanceof SkillUploadError ? 400 : 500;
@@ -2045,7 +2045,7 @@ export class WebServer {
           this.sendJson(res, { ok: true, passed: false, message, score, ranFrom: file.filename });
           return;
         }
-        recordSkillUploadRsiPass(name, message);
+        await recordSkillUploadRsiPassAndSync(name, message);
         let installed: { remembered: number } | null = null;
         const skillFile = readSkillUploadFile(name, 'binarySkill') ?? readSkillUploadFile(name, 'sourceSkill');
         if (skillFile) {
