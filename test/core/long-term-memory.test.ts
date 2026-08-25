@@ -85,6 +85,41 @@ describe('LongTermMemory payload', () => {
     const mem = new LongTermMemory();
     const a = mem.remember('same trigger', { payload: 'answer A', id: 'a' });
     const b = mem.remember('same trigger', { payload: 'a completely different answer B', id: 'b' });
-    expect(a.embedding).toEqual(b.embedding);
+    // Asserted on `sparse`, which is what items actually carry. The dense
+    // `embedding` field is only present on memories loaded from an older save,
+    // so comparing it here would compare undefined to undefined and pass
+    // without testing anything.
+    expect(a.sparse).toBeDefined();
+    expect(a.sparse).toEqual(b.sparse);
+  });
+
+  it('a memory saved before the sparse change still loads and is still findable', () => {
+    const mem = new LongTermMemory();
+    mem.remember('the quick brown fox jumps');
+    // Rebuild the old on-disk shape: a dense array, no sparse field.
+    const dense = new Array(512).fill(0);
+    for (const [k, idx] of (mem.all()[0].sparse!.indices).entries()) {
+      dense[idx] = mem.all()[0].sparse!.values[k];
+    }
+    const legacy = JSON.stringify({
+      dim: 512,
+      capacity: 2000,
+      items: [{ ...mem.all()[0], sparse: undefined, embedding: dense }],
+    });
+    expect(LongTermMemory.deserialize(legacy).retrieve('quick brown fox').length).toBeGreaterThan(0);
+  });
+
+  it('a memory carrying neither vector is re-embedded from its content rather than crashing', () => {
+    // The old code read item.embedding.length unconditionally, so an item
+    // missing it took down the whole search.
+    const broken = JSON.stringify({
+      dim: 512,
+      capacity: 2000,
+      items: [{
+        id: 'x', content: 'neural network memory', timestamp: Date.now(),
+        importance: 0.5, tags: [], accessCount: 0, lastAccess: Date.now(),
+      }],
+    });
+    expect(LongTermMemory.deserialize(broken).retrieve('neural network').length).toBe(1);
   });
 });

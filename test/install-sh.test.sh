@@ -28,6 +28,29 @@ check() {
     fi
 }
 
+# --- sourcing the installer must have NO side effects ---
+#
+# The bug this pins: `git clone` sat bare at line 5 of install.sh, above
+# `set -e` and outside any function, so merely sourcing the script -- which is
+# exactly what this test does -- ran a real clone into the current directory
+# and printed "destination path already exists" on every `npm test`. Because
+# it was above `set -e`, its failure was ignored and the install continued.
+_src_out="$(source scripts/install.sh 2>&1 >/dev/null)"
+[ -z "$_src_out" ]
+check $? "sourcing install.sh prints nothing -- no side effects at source time"
+
+# Column zero, deliberately: the clone inside fetch_source() is indented, and
+# the thing being forbidden is an unindented statement at file scope.
+! grep -qE '^git clone' scripts/install.sh
+check $? "install.sh has no top-level git clone (it belongs in a function)"
+
+grep -q 'fetch_source' scripts/install.sh
+check $? "install.sh fetches its source through a named function"
+
+# The clone must be reachable from main(), or the installer downloads nothing.
+grep -A3 '^main() {' scripts/install.sh | grep -q 'fetch_source'
+check $? "main() actually calls fetch_source"
+
 # --- color variables must be real ANSI escapes, not literal hex strings ---
 source scripts/install.sh > /dev/null
 

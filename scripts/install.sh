@@ -2,8 +2,6 @@
 # NeuroClaw — OneBrain Installer
 # Modern one-click installer with desktop integration
 
-git clone https://github.com/zach909/.my-ai.git
-
 set -e
 
 # Modern color palette (tech/AI themed). These must be real ANSI escape
@@ -437,6 +435,8 @@ create_start_script() {
 # Neuroclaw icon should open a separate app, not add a tab to whatever
 # browser happens to be running.
 
+REPO_URL="${NEUROCLAW_REPO_URL:-https://github.com/zach909/.my-ai.git}"
+REPO_DIR="${NEUROCLAW_REPO_DIR:-.my-ai}"
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 cd "$SCRIPT_DIR/desktop-app"
 
@@ -480,7 +480,45 @@ show_completion() {
 }
 
 # Main installation flow
+# Get the source, when it is not already here.
+#
+# This used to be a bare `git clone` on line 5 of this file: outside any
+# function, above `set -e`, and unconditional. That meant it ran merely
+# because the file was SOURCED -- so `npm test`, which sources this script to
+# test its functions, printed a clone failure on every run -- it cloned into
+# whatever the current directory happened to be, it re-cloned for anyone
+# running the installer from inside the repository, and because it sat above
+# `set -e` its failure was ignored and the install carried on regardless.
+fetch_source() {
+    # Already in a checkout: nothing to fetch. Checked by looking for the
+    # repository's own marker files rather than the directory name, since the
+    # folder can be called anything.
+    if [ -f "package.json" ] && [ -d ".git" ]; then
+        echo -e "    ${GRAY}→ Using the checkout already in $(pwd)${NC}"
+        return 0
+    fi
+
+    if [ -d "$REPO_DIR" ]; then
+        echo -e "    ${GRAY}→ $REPO_DIR already exists — updating instead of cloning${NC}"
+        git -C "$REPO_DIR" pull --ff-only || {
+            echo -e "    ${YELLOW}Could not update $REPO_DIR. Continuing with what is there.${NC}"
+        }
+    else
+        echo -e "    ${CYAN}→ Downloading the source into $REPO_DIR${NC}"
+        # Not silenced, and not ignored: a failed clone means there is nothing
+        # to install, and continuing past it only produces a confusing error
+        # further down.
+        git clone "$REPO_URL" "$REPO_DIR" || {
+            echo -e "    ${RED}Could not download the source from $REPO_URL${NC}"
+            echo -e "    ${GRAY}Check the network connection, then run this again.${NC}"
+            exit 1
+        }
+    fi
+    cd "$REPO_DIR"
+}
+
 main() {
+    fetch_source
     install_dependencies
     generate_system_profile
     build_app
