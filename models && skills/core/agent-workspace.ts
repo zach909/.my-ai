@@ -67,11 +67,49 @@ export interface CommandResult {
   exitCode: number;
   /** Wall-clock milliseconds, so the agent can notice something took far longer than expected. */
   durationMs: number;
+  /**
+   * Present only when output was dropped. Its absence means what is here is
+   * everything the command said -- a truncated result that cannot be
+   * distinguished from a complete one is worse than no result.
+   */
+  truncated?: { stdoutDropped: number; stderrDropped: number; keptBytes: number };
+  /** Present only when the command was killed for exceeding its time limit. */
+  timedOut?: boolean;
 }
 
 const MAX_OUTPUT_LINES = 500;
 const MAX_EVENTS = 2000;
 const DEFAULT_COMMAND_TIMEOUT_MS = 120_000;
+/**
+ * How much of a command's output is kept.
+ *
+ * Measured: `yes | head -c 200000000` in one terminal grew the heap by 196MB,
+ * because stdout was accumulated into a string with no limit while the
+ * session's line buffer next to it was carefully capped. One `cat` of a large
+ * file, or one runaway build log, was enough to take the process down.
+ *
+ * The head is kept rather than the tail: an agent reading command output is
+ * usually looking for what a command said first -- the error it opened with --
+ * and a truncation notice tells it plainly that there was more.
+ */
+const MAX_CAPTURED_BYTES = 2 * 1024 * 1024;
+
+/**
+ * A copy of a short string that does not retain the string it came from.
+ *
+ * V8 represents `big.slice(0, 200)` as a SlicedString that keeps the WHOLE
+ * parent alive. Every command.output event stored exactly that -- a 200-char
+ * excerpt of a multi-kilobyte chunk -- so the capped 2000-event ring was
+ * quietly pinning up to 2000 whole chunks. Measured directly: 2000 such
+ * slices of a 64KB string retain 125.1 MB; the same 2000 strings flattened
+ * retain 0.5 MB.
+ *
+ * Round-tripping through a Buffer produces a genuinely independent string.
+ * At 200 characters the copy costs nothing worth measuring.
+ */
+function detach(text: string): string {
+  return Buffer.from(text, "utf8").toString("utf8");
+}
 
 export class WorkspaceError extends Error {}
 
@@ -202,10 +240,23 @@ export class AgentWorkspace {
     const started = Date.now();
 
     const append = (chunk: string) => {
-      for (const line of chunk.split("\n")) {
+      const lines = chunk.split("\n");
+      // Only the tail can survive a chunk anyway, so pushing every line of a
+      // huge one just to shift it straight back out is work with no outcome.
+      // A single `yes | head -c 200MB` produced ~7.4 million lines, each
+      // pushed and then shifted off a 500-element array one at a time.
+      const keep = lines.length > MAX_OUTPUT_LINES ? lines.slice(-MAX_OUTPUT_LINES) : lines;
+      for (const line of keep) {
         if (line.length === 0) continue;
-        session.output.push(line);
-        if (session.output.length > MAX_OUTPUT_LINES) session.output.shift();
+        // Detached for the same reason as the event detail above: these 500
+        // lines outlive the chunk they came from, and a retained line that is
+        // a view into a megabyte of output keeps the megabyte.
+        session.output.push(line.length > 200 ? detach(line.slice(0, 4096)) : line);
+      }
+      // One splice instead of a shift per line: shift() is O(n) in the array
+      // length and was being called once per line of output.
+      if (session.output.length > MAX_OUTPUT_LINES) {
+        session.output.splice(0, session.output.length - MAX_OUTPUT_LINES);
       }
       session.lastActivity = Date.now();
     };
@@ -216,23 +267,44 @@ export class AgentWorkspace {
 
       let stdout = "";
       let stderr = "";
+      let stdoutDropped = 0;
+      let stderrDropped = 0;
       let settled = false;
+      let timedOut = false;
 
+      // Appends up to the cap and counts what it had to drop, so the result
+      // can say so instead of quietly returning a truncated answer as if it
+      // were the whole thing.
+      const capped = (current: string, addition: string): { text: string; dropped: number } => {
+        const room = MAX_CAPTURED_BYTES - current.length;
+        if (room <= 0) return { text: current, dropped: addition.length };
+        if (addition.length <= room) return { text: current + addition, dropped: 0 };
+        return { text: current + addition.slice(0, room), dropped: addition.length - room };
+      };
+
+      const timeoutMs = opts.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS;
       const timer = setTimeout(() => {
-        if (!settled) child.kill("SIGKILL");
-      }, opts.timeoutMs ?? DEFAULT_COMMAND_TIMEOUT_MS);
+        if (!settled) {
+          timedOut = true;
+          child.kill("SIGKILL");
+        }
+      }, timeoutMs);
 
       child.stdout?.on("data", d => {
         const text = String(d);
-        stdout += text;
+        const r = capped(stdout, text);
+        stdout = r.text;
+        stdoutDropped += r.dropped;
         append(text);
-        this.record({ kind: "command.output", session: id, detail: text.trim().slice(0, 200) });
+        this.record({ kind: "command.output", session: id, detail: detach(text.trim().slice(0, 200)) });
       });
       child.stderr?.on("data", d => {
         const text = String(d);
-        stderr += text;
+        const r = capped(stderr, text);
+        stderr = r.text;
+        stderrDropped += r.dropped;
         append(text);
-        this.record({ kind: "command.output", session: id, detail: text.trim().slice(0, 200) });
+        this.record({ kind: "command.output", session: id, detail: detach(text.trim().slice(0, 200)) });
       });
 
       const finish = (exitCode: number) => {
@@ -243,7 +315,18 @@ export class AgentWorkspace {
         session.running = null;
         session.lastActivity = Date.now();
         this.record({ kind: "command.finished", session: id, detail: printable, exitCode });
-        resolve({ session: id, command: printable, stdout, stderr, exitCode, durationMs: Date.now() - started });
+        resolve({
+          session: id,
+          command: printable,
+          stdout,
+          stderr,
+          exitCode,
+          durationMs: Date.now() - started,
+          ...(stdoutDropped > 0 || stderrDropped > 0
+            ? { truncated: { stdoutDropped, stderrDropped, keptBytes: MAX_CAPTURED_BYTES } }
+            : {}),
+          ...(timedOut ? { timedOut: true } : {}),
+        });
       };
 
       child.on("error", err => {

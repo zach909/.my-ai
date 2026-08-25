@@ -28,7 +28,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { readItem, readItemFile, type StoreItem, type StoreKind } from "./store.js";
+import { assertKind, assertSafeName, readItem, readItemFile, type StoreItem, type StoreKind } from "./store.js";
 import { fetchItemFile } from "./store-fetch.js";
 
 export class StoreInstallError extends Error {}
@@ -54,13 +54,27 @@ export interface InstalledRecord {
 
 const RECORD = "installed.json";
 
+/** How many files to download at once. Enough to hide latency, few enough not to look like a scraper. */
+const DOWNLOAD_CONCURRENCY = 4;
+
 function itemInstallDir(kind: string, name: string): string {
-  const dir = path.resolve(installedRoot(), kind, name);
+  // Validated here rather than relying on a caller having done it. installItem
+  // reached this through readItem(), which validates -- but uninstallItem did
+  // not, and `uninstallItem("skills", "..")` resolved to the installed root
+  // itself, passed a containment check that allowed `dir === root`, and
+  // rm -rf'd every installed item on the machine. It was reachable from the
+  // uninstall route and from "store uninstall skills .." in chat, since the
+  // command's own name pattern allows dots.
+  assertKind(kind);
+  assertSafeName(name);
+
   const root = path.resolve(installedRoot());
-  // The store's own name/kind validation runs first, but this path is built
-  // from catalogue data and a containment check costs nothing.
-  if (dir !== root && !dir.startsWith(root + path.sep)) {
-    throw new StoreInstallError(`Refusing to install outside the installed directory.`);
+  const dir = path.resolve(root, kind, name);
+  // Strictly BELOW the root, never equal to it: an item lives two levels down,
+  // so a path that resolves to the root (or above) is not an item at all and
+  // deleting it would take everything else with it.
+  if (dir === root || !dir.startsWith(root + path.sep)) {
+    throw new StoreInstallError(`"${kind}/${name}" is not a valid installed item path.`);
   }
   return dir;
 }
@@ -96,7 +110,7 @@ export async function installItem(kind: string, name: string): Promise<InstallRe
   const missing: Array<{ filename: string; reason: string }> = [];
   const written: InstalledRecord["files"] = [];
 
-  for (const entry of item.files) {
+  const fetchOne = async (entry: (typeof item.files)[number]): Promise<void> => {
     let buf = readItemFile(item.kind, item.name, entry.filename);
     if (!buf) {
       try {
@@ -104,14 +118,30 @@ export async function installItem(kind: string, name: string): Promise<InstallRe
         downloaded.push(entry.filename);
       } catch (err) {
         missing.push({ filename: entry.filename, reason: err instanceof Error ? err.message : String(err) });
-        continue;
+        return;
       }
     }
     const target = path.join(dir, entry.filename);
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, buf);
     written.push({ filename: entry.filename, bytes: buf.length, sha256: sha256(buf) });
-  }
+  };
+
+  // A worker pool rather than a sequential loop: every missing file is its own
+  // round trip to GitHub, and doing twelve of them one after another spends
+  // twelve latencies where four would do. Bounded rather than unbounded --
+  // opening a socket per file would be a good way to get rate-limited, and an
+  // install is not the place to discover that.
+  const queue = [...item.files];
+  const workers = Array.from({ length: Math.min(DOWNLOAD_CONCURRENCY, queue.length) }, async () => {
+    for (let next = queue.shift(); next; next = queue.shift()) await fetchOne(next);
+  });
+  await Promise.all(workers);
+  // Order is not guaranteed by a pool, and a record whose file list reshuffles
+  // between installs would make every diff of it noise.
+  written.sort((a, b) => a.filename.localeCompare(b.filename));
+  downloaded.sort();
+  missing.sort((a, b) => a.filename.localeCompare(b.filename));
 
   if (written.length === 0) {
     throw new StoreInstallError(
