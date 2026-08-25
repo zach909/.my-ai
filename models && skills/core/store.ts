@@ -62,6 +62,15 @@ export interface StoreFileInfo {
   bytes: number;
   /** SHA-256, so a consumer can tell whether a pulled file changed. */
   sha256: string;
+  /**
+   * Whether the bytes are on THIS device right now.
+   *
+   * The catalogue lists everything anyone published; the payloads are fetched
+   * when someone asks for them. So a file is normally listed, sized and
+   * checksummed long before it exists locally, and the UI needs to be able to
+   * say which -- "download" and "already here" are different offers.
+   */
+  local: boolean;
 }
 
 export interface StoreItem {
@@ -224,6 +233,10 @@ export function publishItem(input: {
 
   mkdirSync(dir, { recursive: true });
   const itemRoot = path.resolve(dir);
+  // Files the item already had, so a publish that adds one file does not drop
+  // the entries for the others.
+  const carried = new Map<string, StoreFileInfo>();
+  for (const f of existing?.files ?? []) carried.set(f.filename, { ...f, local: true });
   for (const d of decoded) {
     const target = path.resolve(dir, d.filename);
     // Belt and braces after assertSafeFilename: this path is attacker-supplied,
@@ -234,7 +247,14 @@ export function publishItem(input: {
     }
     mkdirSync(path.dirname(target), { recursive: true });
     writeFileSync(target, d.buf);
+    carried.set(d.filename, { filename: d.filename, bytes: d.buf.length, sha256: sha256(d.buf), local: true });
   }
+  // Stored without `local`: whether a file is on a given device is a fact
+  // about that device, not about the published item, and baking one machine's
+  // answer into a manifest everyone pulls would be wrong everywhere else.
+  const manifestFiles = [...carried.values()]
+    .map(({ filename, bytes, sha256: hash }) => ({ filename, bytes, sha256: hash }))
+    .sort((a, b) => a.filename.localeCompare(b.filename));
 
   const now = new Date().toISOString();
   const manifest = {
@@ -245,6 +265,12 @@ export function publishItem(input: {
     author: (input.author ?? existing?.author ?? "anonymous").slice(0, 100),
     publishedAt: existing?.publishedAt ?? now,
     updatedAt: now,
+    // The file list lives IN the manifest, which is what lets a device show
+    // the whole catalogue without holding a single payload byte. Deriving it
+    // by scanning the folder (as this used to) silently required every file
+    // to be present, so a device that had not downloaded an item could not
+    // even see that it existed.
+    files: manifestFiles,
   };
   writeFileSync(path.join(dir, MANIFEST), JSON.stringify(manifest, null, 2) + "\n");
   return readItem(kind, input.name)!;
@@ -318,23 +344,47 @@ export function readItem(kind: string, name: string): StoreItem | null {
   // Walks subdirectories, because a real skill is a folder: SKILL.md next to
   // scripts/, references/, assets/. Listing only the top level would report a
   // published skill as one file and hide everything that makes it work.
-  const files: StoreFileInfo[] = [];
-  const walk = (current: string, prefix: string): void => {
-    for (const entry of readdirSync(current)) {
-      const full = path.join(current, entry);
-      const rel = prefix ? `${prefix}/${entry}` : entry;
-      if (rel === MANIFEST) continue;
-      const stat = statSync(full);
-      if (stat.isDirectory()) {
-        walk(full, rel);
-        continue;
-      }
-      if (!stat.isFile()) continue;
-      const buf = readFileSync(full);
-      files.push({ filename: rel, bytes: buf.length, sha256: sha256(buf) });
-    }
+  // The manifest is the catalogue. Reading it -- not the payload bytes -- is
+  // what lets a device list every published item while holding none of them.
+  const indexed = Array.isArray(manifest.files) ? (manifest.files as StoreFileInfo[]) : null;
+  const isHere = (filename: string): boolean => {
+    const full = path.resolve(dir, filename);
+    return full.startsWith(path.resolve(dir) + path.sep) && existsSync(full) && statSync(full).isFile();
   };
-  walk(dir, "");
+
+  let files: StoreFileInfo[];
+  if (indexed) {
+    files = indexed
+      .filter(f => typeof f?.filename === "string")
+      .map(f => ({
+        filename: f.filename,
+        bytes: Number(f.bytes) || 0,
+        sha256: String(f.sha256 ?? ""),
+        local: isHere(f.filename),
+      }));
+  } else {
+    // Items published before the manifest carried an index, and anything a
+    // person dropped into the folder by hand. Scanning still works and still
+    // needs the bytes -- which is exactly the limitation the index removes --
+    // so this is a fallback, not the path.
+    files = [];
+    const walk = (current: string, prefix: string): void => {
+      for (const entry of readdirSync(current)) {
+        const full = path.join(current, entry);
+        const rel = prefix ? `${prefix}/${entry}` : entry;
+        if (rel === MANIFEST) continue;
+        const stat = statSync(full);
+        if (stat.isDirectory()) {
+          walk(full, rel);
+          continue;
+        }
+        if (!stat.isFile()) continue;
+        const buf = readFileSync(full);
+        files.push({ filename: rel, bytes: buf.length, sha256: sha256(buf), local: true });
+      }
+    };
+    walk(dir, "");
+  }
   files.sort((a, b) => a.filename.localeCompare(b.filename));
 
   return {
