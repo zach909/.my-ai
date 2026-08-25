@@ -718,7 +718,22 @@ function StoreCatalogPanel({ onOpenUploads }: { onOpenUploads: () => void }) {
   const total = kinds.reduce((n, k) => n + (data?.catalog[k]?.length ?? 0), 0)
 
   if (selected) {
-    return <ItemDetail item={selected} onBack={() => setSelected(null)} />
+    return (
+      <ItemDetail
+        item={selected}
+        onBack={() => setSelected(null)}
+        // An edit changes the catalogue, so the list behind the detail view
+        // has to be re-read -- otherwise going back shows the old title.
+        onChanged={async () => {
+          await load()
+          const res = await fetch('/api/store')
+          if (!res.ok) return
+          const fresh: Catalog = await res.json()
+          const updated = fresh.catalog[selected.kind]?.find(i => i.name === selected.name)
+          if (updated) setSelected(updated)
+        }}
+      />
+    )
   }
 
   return (
@@ -828,7 +843,16 @@ function StoreCatalogPanel({ onOpenUploads }: { onOpenUploads: () => void }) {
   )
 }
 
-function ItemDetail({ item, onBack }: { item: StoreItem; onBack: () => void }) {
+function ItemDetail({
+  item,
+  onBack,
+  onChanged,
+}: {
+  item: StoreItem
+  onBack: () => void
+  onChanged: () => void | Promise<void>
+}) {
+  const [editing, setEditing] = useState(false)
   return (
     <div className="h-full max-w-3xl space-y-5 overflow-y-auto pb-6">
       <Button variant="ghost" size="sm" onClick={onBack} className="gap-2 -ml-2">
@@ -851,11 +875,25 @@ function ItemDetail({ item, onBack }: { item: StoreItem; onBack: () => void }) {
         </div>
       </div>
 
+      <InstallControl item={item} />
+
       {item.description && (
         <Card className="p-4">
           <p className="text-sm whitespace-pre-wrap leading-relaxed">{item.description}</p>
         </Card>
       )}
+
+      <div className="flex items-center gap-2">
+        <Button variant="outline" size="sm" className="gap-2" onClick={() => setEditing(v => !v)}>
+          <Pencil className="h-4 w-4" />
+          {editing ? 'Done editing' : 'Edit this item'}
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Anyone can edit what is published here — the same rule as publishing.
+        </p>
+      </div>
+
+      {editing && <EditItem item={item} onChanged={onChanged} />}
 
       <section className="space-y-2">
         <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
@@ -909,6 +947,222 @@ function ItemDetail({ item, onBack }: { item: StoreItem; onBack: () => void }) {
         </p>
       </Card>
     </div>
+  )
+}
+
+/**
+ * Install, and say honestly what installing did.
+ *
+ * The store shows everything and holds only what someone asked for, so
+ * installing an item is a real fetch of its files, not a flag being set. This
+ * reports what came down and what could not be got, because a partial install
+ * that looks complete is how the missing piece is discovered at the worst
+ * possible moment.
+ */
+function InstallControl({ item }: { item: StoreItem }) {
+  const [state, setState] = useState<{ installed: boolean; outdated: boolean } | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch('/api/store/installed')
+      if (!res.ok) return
+      const body = await res.json()
+      setState({
+        installed: (body.installed ?? []).some(
+          (r: { kind: string; name: string }) => r.kind === item.kind && r.name === item.name,
+        ),
+        outdated: (body.outdated ?? []).some(
+          (r: { kind: string; name: string }) => r.kind === item.kind && r.name === item.name,
+        ),
+      })
+    } catch { /* leave the control in its unknown state rather than lying */ }
+  }, [item.kind, item.name])
+
+  useEffect(() => { void refresh() }, [refresh])
+
+  const act = async (path: 'install' | 'uninstall') => {
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/store/${path}`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: item.kind, name: item.name }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || `Could not ${path} it`)
+      if (path === 'uninstall') {
+        toast.success(body.removed ? 'Removed from this device' : 'It was not installed here', {
+          description: 'It is still published for everyone else.',
+        })
+      } else {
+        const downloaded: string[] = body.downloaded ?? []
+        const missing: Array<{ filename: string }> = body.missing ?? []
+        toast.success(`Installed ${item.kind}/${item.name}`, {
+          description:
+            (downloaded.length ? `Downloaded ${downloaded.length} file(s). ` : 'Everything was already here. ') +
+            (missing.length ? `Could not get: ${missing.map(m => m.filename).join(', ')}.` : ''),
+        })
+      }
+      await refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="flex flex-wrap items-center gap-3 p-3">
+      <Package className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">
+          {state?.installed ? 'Installed on this device' : 'Not installed'}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {state?.installed
+            ? state.outdated
+              ? 'The published version has changed since you installed it.'
+              : 'Its files are on this machine. Installing never ran anything.'
+            : 'Installing downloads its files onto this machine. It does not run them.'}
+        </p>
+      </div>
+      {state?.installed && state.outdated && (
+        <Button size="sm" disabled={busy} onClick={() => void act('install')}>
+          Update
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant={state?.installed ? 'outline' : 'default'}
+        disabled={busy}
+        onClick={() => void act(state?.installed ? 'uninstall' : 'install')}
+      >
+        {busy ? 'Working…' : state?.installed ? 'Uninstall' : 'Install'}
+      </Button>
+    </Card>
+  )
+}
+
+/**
+ * Changing what is already published: the description, an existing file, or a
+ * new file added to it.
+ *
+ * A file is loaded through the same download route the rest of the page uses,
+ * so editing something this device never downloaded fetches it first. Without
+ * that, only the handful of files that happened to be local would be editable,
+ * which is not what "you can edit the store" should mean.
+ */
+function EditItem({ item, onChanged }: { item: StoreItem; onChanged: () => void | Promise<void> }) {
+  const [title, setTitle] = useState(item.title)
+  const [description, setDescription] = useState(item.description)
+  const [filename, setFilename] = useState(item.files[0]?.filename ?? '')
+  const [content, setContent] = useState('')
+  const [loadingFile, setLoadingFile] = useState(false)
+  const [saving, setSaving] = useState(false)
+
+  const loadFile = useCallback(async (name: string) => {
+    if (!name) return
+    setLoadingFile(true)
+    setContent('')
+    try {
+      const res = await fetch(`/api/store/${item.kind}/${item.name}/file/${name}`)
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setContent(await res.text())
+    } catch (e) {
+      toast.error(`Could not read ${name}: ${e instanceof Error ? e.message : String(e)}`)
+    } finally {
+      setLoadingFile(false)
+    }
+  }, [item.kind, item.name])
+
+  useEffect(() => { void loadFile(filename) }, [filename, loadFile])
+
+  const save = async (files: Array<{ filename: string; content: string }>) => {
+    setSaving(true)
+    try {
+      const res = await fetch('/api/store', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ kind: item.kind, name: item.name, title, description, files }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || 'Could not save it')
+      // The same honest reporting the rest of the page uses: saved and shared
+      // are different outcomes.
+      reportSync(body.sync, files.length ? `Saved ${files[0].filename}` : 'Saved the description')
+      await onChanged()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setSaving(false)
+    }
+  }
+
+  return (
+    <Card className="space-y-4 p-4">
+      <div className="space-y-2">
+        <p className="text-sm font-semibold">Title and description</p>
+        <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Title" />
+        <textarea
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="What is this, and what is it for?"
+          rows={3}
+          aria-label="Description"
+          className="flex w-full min-w-0 rounded-md border border-input bg-transparent px-2 py-1.5 text-xs shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50"
+        />
+        <Button size="sm" disabled={saving} onClick={() => void save([])}>
+          {saving ? 'Saving…' : 'Save description'}
+        </Button>
+      </div>
+
+      <div className="space-y-2 border-t border-border pt-4">
+        <p className="text-sm font-semibold">Files</p>
+        <div className="flex flex-wrap gap-1.5">
+          {item.files.map(f => (
+            <button
+              key={f.filename}
+              type="button"
+              onClick={() => setFilename(f.filename)}
+              className={
+                'rounded border px-2 py-1 font-mono text-xs transition-colors ' +
+                (filename === f.filename
+                  ? 'border-primary bg-primary text-primary-foreground'
+                  : 'border-border hover:bg-accent')
+              }
+            >
+              {f.filename}
+            </button>
+          ))}
+        </div>
+        <Input
+          value={filename}
+          onChange={e => setFilename(e.target.value)}
+          placeholder="filename — type a new one to add a file"
+          className="font-mono text-xs"
+        />
+        <textarea
+          value={content}
+          onChange={e => setContent(e.target.value)}
+          placeholder={loadingFile ? 'Reading…' : 'File contents'}
+          rows={14}
+          aria-label="File contents"
+          className="flex w-full min-w-0 rounded-md border border-input bg-transparent px-2 py-1.5 text-xs shadow-xs outline-none transition-[color,box-shadow] focus-visible:border-ring focus-visible:ring-ring/50 focus-visible:ring-[3px] disabled:pointer-events-none disabled:cursor-not-allowed disabled:opacity-50 font-mono"
+        />
+        <Button
+          size="sm"
+          disabled={saving || !filename.trim()}
+          onClick={() => void save([{ filename: filename.trim(), content }])}
+        >
+          {saving ? 'Saving…' : `Save ${filename.trim() || 'file'}`}
+        </Button>
+        <p className="text-xs text-muted-foreground">
+          Saving a filename that is not in the list adds it. Publishing is open here, so an edit
+          reaches everyone who pulls — the same as a new upload.
+        </p>
+      </div>
+    </Card>
   )
 }
 

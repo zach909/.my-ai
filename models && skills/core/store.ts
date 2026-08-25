@@ -197,8 +197,8 @@ export function publishItem(input: {
   assertSafeName(input.name);
   const kind = input.kind;
 
-  if (!Array.isArray(input.files) || input.files.length === 0) {
-    throw new StoreError("A publish needs at least one file.");
+  if (!Array.isArray(input.files)) {
+    throw new StoreError("A publish needs a files array.");
   }
   if (input.files.length > MAX_FILES_PER_ITEM) {
     throw new StoreError(`Too many files (max ${MAX_FILES_PER_ITEM}).`);
@@ -206,6 +206,14 @@ export function publishItem(input: {
 
   const dir = itemDir(kind, input.name);
   const existing = existsSync(path.join(dir, MANIFEST)) ? readItem(kind, input.name) : null;
+
+  // A NEW item needs at least one file -- an empty entry in the catalogue is
+  // just noise. An item that already exists may be published with no files at
+  // all, which is how a title or description gets corrected without
+  // re-uploading every file to fix a typo in a sentence.
+  if (input.files.length === 0 && !existing) {
+    throw new StoreError("A new item needs at least one file.");
+  }
 
   const decoded: Array<{ filename: string; buf: Buffer }> = [];
   for (const f of input.files) {
