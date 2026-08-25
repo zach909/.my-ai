@@ -197,7 +197,9 @@ describe('the perceive-think-act loop', () => {
     )
     const result = await runAgentLoop('anything', registry, {}, { maxIterations: 1 })
     expect(result.steps.find(s => s.skill === 'wiki-look')?.detail).toBe('found nothing')
-    expect(result.outcome).toBe('max-iterations')
+    // 'dead-end', not 'max-iterations': with no action taken there is nothing
+    // to react to, so the loop stops rather than repeating an identical pass.
+    expect(result.outcome).toBe('dead-end')
   })
 })
 
@@ -301,9 +303,12 @@ describe('wiring the loop to a live system', () => {
     expect(run?.message).toBe('{"unexpected":"shape"}')
   })
 
-  it('does not engage at all when no action skill claims the message', async () => {
+  it('does not engage at all when no skill claims the message', async () => {
     // The gate is the installed skills themselves, not a separate heuristic.
-    expect(await runAgentLoopForMessage('tell me about the weather', hostWith({ result: 'x' }))).toBeNull()
+    // (This used to say "tell me about the weather", which stopped being a
+    // non-claiming message once the built-in web skill started firing on
+    // "weather" -- the premise changed, not the behaviour.)
+    expect(await runAgentLoopForMessage('tell me a story about a duck', hostWith({ result: 'x' }))).toBeNull()
   })
 
   it('reports not-answered when the plugin declines, so the caller can fall back', async () => {
@@ -327,5 +332,92 @@ describe('wiring the loop to a live system', () => {
     }
     const run = await runAgentLoopForMessage('calculate 1+1', host)
     expect(run?.answered).toBe(false)
+  })
+})
+
+describe('web search and past chats', () => {
+  let dir: string
+  let prev: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'prompting-web-'))
+    prev = process.env.NEUROCLAW_PROMPTING_DIR
+    process.env.NEUROCLAW_PROMPTING_DIR = dir
+  })
+  afterEach(() => {
+    if (prev === undefined) delete process.env.NEUROCLAW_PROMPTING_DIR
+    else process.env.NEUROCLAW_PROMPTING_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const registryWith = (...docs: unknown[]) => {
+    const r = new PromptingSkillRegistry()
+    for (const d of docs) r.install(parsePromptingSkill(d))
+    return r
+  }
+
+  it('reads the web through the capability, never on its own', async () => {
+    const asked: string[] = []
+    const registry = registryWith({ name: 'web', category: 'perception', source: 'web' })
+    const result = await runAgentLoop('what is the latest version', registry, {
+      searchWeb: q => { asked.push(q); return ['Node.js 24 — released today'] },
+    }, { maxIterations: 1 })
+    expect(asked).toEqual(['what is the latest version'])
+    expect(result.observations).toContain('Node.js 24 — released today')
+  })
+
+  it('a host with no web capability simply finds nothing, rather than failing', async () => {
+    // Someone running offline installs a web skill: it must degrade, not crash.
+    const registry = registryWith({ name: 'web', category: 'perception', source: 'web' })
+    const result = await runAgentLoop('anything', registry, {}, { maxIterations: 1 })
+    expect(result.steps.find(s => s.skill === 'web')?.detail).toBe('found nothing')
+  })
+
+  it('stops after one iteration when no action was taken', async () => {
+    // Perception and cognition are deterministic for a fixed goal, so a second
+    // pass would repeat the first exactly -- re-running every web search to
+    // reach the same place.
+    let searches = 0
+    const registry = registryWith({ name: 'web', category: 'perception', source: 'web' })
+    const result = await runAgentLoop('latest news', registry, {
+      searchWeb: () => { searches++; return ['a headline'] },
+    }, { maxIterations: 6 })
+    expect(result.iterations).toBe(1)
+    expect(searches).toBe(1)
+    expect(result.outcome).toBe('dead-end')
+  })
+
+  it('the built-in web skill fires on time-sensitive wording and not otherwise', () => {
+    const web = builtInPromptingSkills().find(s => s.name === 'search-the-web-when-it-is-current')!
+    expect(skillApplies(web, 'what is the LATEST version of node')).toBe(true)
+    expect(skillApplies(web, 'what is the weather today')).toBe(true)
+    expect(skillApplies(web, 'what is 2 + 2')).toBe(false)
+  })
+
+  it('the built-in past-chats skill only fires when the person refers to the past', () => {
+    // Without triggers this applied to every message, and because a chat
+    // search can answer on its own the loop hijacked the whole chat path --
+    // "what is the capital of France" came back as unrelated old turns.
+    const chats = builtInPromptingSkills().find(s => s.name === 'remember-our-past-chats')!
+    expect(chats.when.length).toBeGreaterThan(0)
+    expect(skillApplies(chats, 'what did we talk about earlier')).toBe(true)
+    expect(skillApplies(chats, 'remember when I asked about X')).toBe(true)
+    expect(skillApplies(chats, 'what is the capital of France')).toBe(false)
+  })
+
+  it('answers from web findings even though no action was taken', async () => {
+    const run = await runAgentLoopForMessage('what is the latest version of node', {
+      research: { searchWeb: async () => [{ title: 'Node 24', snippet: 'released', url: 'https://x' }] },
+    })
+    // Searching IS the useful work here; there is nothing to "do" afterwards,
+    // and discarding the findings would throw away the whole point of the run.
+    expect(run?.answered).toBe(true)
+    expect(run?.message).toContain('Node 24')
+  })
+
+  it('does not engage for an ordinary question with no time-sensitive wording', async () => {
+    expect(await runAgentLoopForMessage('what is the capital of France', {
+      research: { searchWeb: async () => [{ title: 'should not be called' }] },
+    })).toBeNull()
   })
 })

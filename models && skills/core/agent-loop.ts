@@ -37,6 +37,14 @@ export interface AgentCapabilities {
   searchWiki?: (query: string) => string[] | Promise<string[]>;
   /** Store catalogue search. */
   searchStore?: (query: string) => string[] | Promise<string[]>;
+  /** Earlier conversations. */
+  searchChats?: (query: string) => string[] | Promise<string[]>;
+  /**
+   * The web. The only capability here that leaves the machine, and the only
+   * reason it is safe to hand to a published skill is that the host decides
+   * whether to pass it at all -- a skill cannot reach the network on its own.
+   */
+  searchWeb?: (query: string) => string[] | Promise<string[]>;
   /** Invoke a plugin by id. Used by perception skills with source 'plugin', and by every action skill. */
   callPlugin?: (pluginId: string, input: string) => unknown | Promise<unknown>;
   /** Split a goal into subproblems (reasoning-engine). */
@@ -106,6 +114,10 @@ async function perceive(skill: PromptingSkill, goal: string, last: string | unde
       return caps.searchWiki ? [...(await caps.searchWiki(query))] : [];
     case "store":
       return caps.searchStore ? [...(await caps.searchStore(query))] : [];
+    case "chats":
+      return caps.searchChats ? [...(await caps.searchChats(query))] : [];
+    case "web":
+      return caps.searchWeb ? [...(await caps.searchWeb(query))] : [];
     case "plugin": {
       if (!caps.callPlugin || !skill.plugin) return [];
       const out = describe(await caps.callPlugin(skill.plugin, query));
@@ -253,10 +265,16 @@ export async function runAgentLoop(
       outcome = "goal-met";
       break;
     }
-    // Nothing perceived, nothing thought, nothing done -- going round again
-    // would produce byte-for-byte the same iteration. Stopping and saying so
-    // is honest; looping to the ceiling to look busy is not.
-    if (!acted && thoughts.length === 0 && observations.length === 0) {
+    // Iteration exists to react to what an action returned. With no action
+    // taken there is nothing to react to, and perception and cognition are
+    // deterministic for a fixed goal -- a second pass would repeat the first
+    // one exactly, re-running every web search to reach the same place. So
+    // this stops, whether or not anything was found.
+    //
+    // "dead-end" is the honest word for it: nothing further to TRY. It does
+    // not mean nothing was learned, and the caller can still use whatever the
+    // perception steps gathered.
+    if (!acted) {
       outcome = "dead-end";
       break;
     }

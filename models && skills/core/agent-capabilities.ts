@@ -26,11 +26,19 @@ import { decompose } from "./reasoning-engine.js";
 import { listWikiPages } from "./wiki-store.js";
 import { listCatalog, STORE_KINDS } from "./store.js";
 import { loadRegistry } from "./prompting-skill-store.js";
+import { readRecentConversationTurns } from "../../src/lib/conversation-log.js";
 
 /** The parts of the live system the loop's capabilities are built from. */
 export interface AgentHost {
   memory?: { retrieve: (q: string, opts?: { topK?: number; tag?: string }) => Array<{ item: { content: string; payload?: string } }> };
   mistakes?: { lessons: (task: string, topK?: number) => string[] };
+  /**
+   * The research plugin, when this machine has it. Named separately from
+   * `pluginRegistry` because web search is not invoked by message -- the
+   * plugin exposes searchWeb() directly and has no onMessage at all, which is
+   * exactly why the agent could never reach the web before this.
+   */
+  research?: { searchWeb: (query: string, maxResults?: number) => Promise<Array<{ title?: string; snippet?: string; url?: string }>> };
   pluginRegistry?: { getPluginInstance: (id: string) => { onMessage?: (m: unknown) => Promise<unknown> } | undefined };
 }
 
@@ -79,6 +87,17 @@ function matches(haystack: string, query: string): boolean {
  * a skill written on a fully-wired machine safe to install on a smaller one.
  */
 export function buildAgentCapabilities(host: AgentHost): AgentCapabilities {
+  // The research plugin is looked up from the registry when the caller did not
+  // pass one explicitly, so every existing call site gains web search without
+  // having to know the plugin exists.
+  if (!host.research && host.pluginRegistry) {
+    const instance = host.pluginRegistry.getPluginInstance("research") as
+      | { searchWeb?: (q: string, n?: number) => Promise<Array<{ title?: string; snippet?: string; url?: string }>> }
+      | undefined;
+    if (typeof instance?.searchWeb === "function") {
+      host = { ...host, research: { searchWeb: instance.searchWeb.bind(instance) } };
+    }
+  }
   // Records what the last plugin call actually returned, so `isGoalMet` can
   // ask the only question that matters -- did an action produce a result --
   // without the loop having to tell it, and without it guessing from text.
@@ -130,6 +149,42 @@ export function buildAgentCapabilities(host: AgentHost): AgentCapabilities {
       return [];
     }
   };
+
+  // Past conversations. This is what "search past chats" means concretely:
+  // the real local log, the same one the learning agent trains from.
+  caps.searchChats = (query: string) => {
+    try {
+      const words = query.toLowerCase().split(/\W+/).filter(w => w.length > 2);
+      return readRecentConversationTurns(200)
+        .filter(turn => {
+          const hay = `${turn.userMessage} ${turn.response}`.toLowerCase();
+          return words.length === 0 || words.some(w => hay.includes(w));
+        })
+        .slice(-PERCEPTION_LIMIT)
+        .map(turn => `earlier you asked "${turn.userMessage}" and the answer was: ${turn.response}`);
+    } catch {
+      return [];
+    }
+  };
+
+  if (host.research) {
+    // The only capability that leaves this machine. It is attached only when
+    // the host passes a research plugin, so an instance running offline simply
+    // has no web capability and a skill wanting one contributes nothing.
+    caps.searchWeb = async (query: string) => {
+      try {
+        const results = await host.research!.searchWeb(query, PERCEPTION_LIMIT);
+        return results
+          .map(r => [r.title, r.snippet, r.url].filter(Boolean).join(" — "))
+          .filter(line => line.trim().length > 0);
+      } catch {
+        // No network, a blocked request, a changed page: the web found
+        // nothing this run. That must not abandon the task, and it must never
+        // be reported as if it had found something.
+        return [];
+      }
+    };
+  }
 
   if (host.pluginRegistry) {
     caps.callPlugin = async (pluginId: string, input: string) => {
@@ -185,18 +240,52 @@ const CHAT_MAX_ITERATIONS = 4;
  * a shrug. The trace comes back either way, because a run that did work and
  * then declined to answer should still be inspectable.
  */
+/**
+ * Perception sources that reach information the ordinary pipeline cannot get
+ * at by itself. A skill using one of these is reason enough to run the loop
+ * even with no action to take -- searching the web IS the useful work for
+ * "what is the latest X", and there is nothing to "do" afterwards.
+ *
+ * `memory`, `wiki` and `store` are deliberately absent: the existing
+ * recall/solve path already reads those, so engaging the loop for them would
+ * duplicate work and change answers that were already fine.
+ */
+const REACHES_BEYOND: ReadonlySet<string> = new Set(["web", "chats"]);
+
 export async function runAgentLoopForMessage(
   userMessage: string,
   host: AgentHost,
 ): Promise<AgentRunSummary | null> {
   const registry = loadRegistry();
-  if (registry.forStep("action", userMessage).length === 0) return null;
+  const actions = registry.forStep("action", userMessage);
+  const reaching = registry
+    .forStep("perception", userMessage)
+    .filter(skill => REACHES_BEYOND.has(skill.source ?? ""));
+  if (actions.length === 0 && reaching.length === 0) return null;
 
   const result = await runAgentLoop(userMessage, registry, buildAgentCapabilities(host), {
     maxIterations: CHAT_MAX_ITERATIONS,
   });
 
-  const answered = result.outcome === "goal-met";
-  const last = result.observations[result.observations.length - 1] ?? "";
-  return { answered, message: answered ? last : "", result };
+  // An action that produced a result is the strongest outcome: the agent did
+  // the thing, and its result is the answer.
+  if (result.outcome === "goal-met") {
+    return { answered: true, message: result.observations[result.observations.length - 1] ?? "", result };
+  }
+
+  // No action, but a source that reaches beyond the pipeline found something.
+  // Those findings ARE the answer -- discarding them and falling back would
+  // throw away the only part of this run that the ordinary path could not have
+  // done, which is the whole reason the loop engaged.
+  if (reaching.length > 0) {
+    const found = result.steps
+      .filter(step => step.phase === "perceive" && reaching.some(r => r.name === step.skill))
+      .flatMap(step => (step.detail.startsWith("found ") ? [step.detail.replace(/^found \d+: /, "")] : []));
+    const text = found.join("\n").trim();
+    if (text.length > 0) return { answered: true, message: text, result };
+  }
+
+  // Nothing worth saying. The caller falls back to its existing behaviour
+  // rather than handing the user a shrug.
+  return { answered: false, message: "", result };
 }

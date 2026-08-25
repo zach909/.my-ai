@@ -41,8 +41,14 @@ export const PROMPTING_CATEGORY_LABELS: Record<PromptingCategory, string> = {
 /**
  * Where a perception skill may look. Every entry is a capability this system
  * already has; a skill cannot invent a new source, only choose among these.
+ *
+ * `chats` reads back real past conversations, and `web` is the only source
+ * that leaves the machine. Both are ordinary sources rather than special
+ * cases: a skill chooses one, and the host decides whether to expose it at
+ * all. Somebody running with no network simply has no `web` capability, and a
+ * skill that wanted it contributes nothing instead of failing.
  */
-export const PERCEPTION_SOURCES = ["memory", "wiki", "store", "plugin"] as const;
+export const PERCEPTION_SOURCES = ["memory", "wiki", "store", "chats", "web", "plugin"] as const;
 export type PerceptionSource = (typeof PERCEPTION_SOURCES)[number];
 
 /**
@@ -247,6 +253,45 @@ export function builtInPromptingSkills(): PromptingSkill[] {
       source: "memory",
       query: "{goal}",
       priority: 100,
+    }),
+    parsePromptingSkill({
+      name: "search-the-web-when-it-is-current",
+      category: "perception",
+      title: "Search the web when the answer has to be current",
+      description:
+        "Looks the question up on the web when it asks for something that changes over time -- today's news, a current price, the latest version. This is what makes web search automatic: the trigger list below IS the agent deciding it needs current information, and it is editable, so what counts as 'current' is not hard-coded in the engine.",
+      author: "neuroclaw",
+      source: "web",
+      query: "{goal}",
+      when: [
+        "today", "latest", "current", "currently", "right now", "this week", "this year",
+        "news", "recent", "recently", "price of", "weather", "who won", "release date",
+        "what version", "up to date", "as of",
+      ],
+      priority: 95,
+    }),
+    parsePromptingSkill({
+      name: "remember-our-past-chats",
+      category: "perception",
+      title: "Check what we said before",
+      description:
+        "Searches earlier conversations for anything about this, so a question that follows on from something you said last week does not start from nothing.",
+      author: "neuroclaw",
+      source: "chats",
+      query: "{goal}",
+      // Triggers matter here more than anywhere else. With no `when` this
+      // skill applies to every message, and because a chat search is one of
+      // the sources that can answer on its own, the loop then engaged for
+      // EVERY message and started replying with old conversation fragments --
+      // "what is the capital of France" came back as two unrelated past turns
+      // instead of Paris. Past chats are worth searching when the person is
+      // actually referring to the past.
+      when: [
+        "remember", "we talked", "we discussed", "you said", "i said", "i told you",
+        "earlier", "last time", "before", "previously", "we were", "did i ask",
+        "what did i", "what did we", "go back to",
+      ],
+      priority: 90,
     }),
     parsePromptingSkill({
       name: "break-it-down",

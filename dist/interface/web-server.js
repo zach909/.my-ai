@@ -976,6 +976,62 @@ export class WebServer {
             }
             return;
         }
+        // ── Memory files: what the agent remembers ──────────────────────────
+        // Reading is open (it is this instance's own knowledge, and the wiki and
+        // store are readable too). Forgetting is NOT -- it is destruction, and it
+        // is gated for the same reason wiki and store deletion are.
+        if (pathname === '/api/memory' && method === 'GET') {
+            try {
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const q = parsedUrl.searchParams.get('q')?.trim() ?? '';
+                const tag = parsedUrl.searchParams.get('tag')?.trim() ?? '';
+                const limit = Math.min(500, Math.max(1, Number(parsedUrl.searchParams.get('limit') ?? 100)));
+                const all = system.memory.all();
+                // Tag counts come from everything, not the filtered page, so the
+                // summary does not silently change meaning as you search.
+                const tagCounts = {};
+                for (const item of all)
+                    for (const t of item.tags)
+                        tagCounts[t] = (tagCounts[t] ?? 0) + 1;
+                const needle = q.toLowerCase();
+                const filtered = all
+                    .filter(item => !tag || item.tags.includes(tag))
+                    .filter(item => !needle || `${item.content} ${item.payload ?? ''}`.toLowerCase().includes(needle))
+                    .sort((a, b) => b.timestamp - a.timestamp)
+                    .slice(0, limit)
+                    .map(item => ({
+                    id: item.id,
+                    content: item.content,
+                    payload: item.payload,
+                    tags: item.tags,
+                    importance: item.importance,
+                    accessCount: item.accessCount,
+                    timestamp: item.timestamp,
+                    // Pinned items are installed knowledge and survive eviction; saying
+                    // so is the difference between "this will stay" and "this may go".
+                    pinned: item.pinned === true,
+                }));
+                this.sendJson(res, { total: all.length, capacityNote: 'pinned memories are exempt from eviction', tagCounts, memories: filtered });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
+        const memoryMatch = pathname.match(/^\/api\/memory\/([A-Za-z0-9._-]+)$/);
+        if (memoryMatch && method === 'DELETE') {
+            try {
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const forgotten = system.memory.forget(memoryMatch[1]);
+                this.sendJson(res, { forgotten }, forgotten ? 200 : 404);
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         // ── Prompting skills ────────────────────────────────────────────────
         // The modular functions the agent calls inside its own perceive-think-act
         // loop. Publishing is open (it shares a document); installing is gated,
