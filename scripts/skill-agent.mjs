@@ -376,8 +376,46 @@ export async function runOneCycle({ registryPath = REGISTRY_PATH, topic, rand = 
       )
     : { ok: false, skipped: true }
 
+  // The five artifacts above go to directories nobody browses. The store is
+  // what people actually look at, so the same work is published there too --
+  // otherwise a skill this agent taught itself is one nobody else can find.
+  // Publishing only; it never installs anything on anyone's machine, and it
+  // skips entirely when nothing changed, so a timer-driven agent does not fill
+  // the history with identical republishes.
+  let storeResult = { skipped: 'not-attempted' }
+  if (push && attempt.ok) {
+    try {
+      const { publishSkillToStore, describeAutonomousSkill } = await import(
+        '../dist/models && skills/core/store-autonomy.js'
+      )
+      storeResult = await publishSkillToStore({
+        name: slug,
+        title: chosenTopic,
+        description: describeAutonomousSkill(chosenTopic, resolved.verifiedCount),
+        artifacts: [
+          { filename: 'SKILL.md', content: resolved.wikiContent },
+          { filename: `${slug}.skill.json`, content: resolved.skillJson },
+          { filename: `${slug}.source.json`, content: resolved.sourceJson },
+          { filename: `${slug}.test.ts`, content: resolved.testContent },
+        ],
+      })
+      console.log(
+        storeResult.skipped
+          ? `[skill-agent] store: "${slug}" unchanged, nothing republished`
+          : `[skill-agent] store: published "${slug}" (${storeResult.changed.length} file(s), pushed: ${storeResult.sync?.pushed})`,
+      )
+    } catch (err) {
+      // A store publish failing must not lose the skill: the five artifacts
+      // are already committed by this point, and the agent's next cycle will
+      // try the store again.
+      console.log(`[skill-agent] store publish failed (skill itself is safe): ${err?.message ?? err}`)
+      storeResult = { skipped: 'failed', reason: String(err?.message ?? err) }
+    }
+  }
+
   registry.topics[slug] = {
     topic: chosenTopic,
+    store: storeResult.skipped ? storeResult.skipped : 'published',
     publishedAt: attempt.at,
     verifiedCount: resolved.verifiedCount,
     history: [...(registry.topics[slug]?.history ?? []).slice(-9), { ...attempt, verifiedCount: resolved.verifiedCount }],
