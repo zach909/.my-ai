@@ -695,15 +695,20 @@ function StoreCatalogPanel({ onOpenUploads }: { onOpenUploads: () => void }) {
   const [selected, setSelected] = useState<StoreItem | null>(null)
   const [section, setSection] = useState<string>('all')
 
-  const load = useCallback(async () => {
+  // Returns what it fetched, so a caller that needs the fresh catalogue does
+  // not have to request the same thing a second time.
+  const load = useCallback(async (): Promise<Catalog | null> => {
     setLoading(true)
     setError(null)
     try {
       const res = await fetch('/api/store')
       if (!res.ok) throw new Error(`HTTP ${res.status}`)
-      setData(await res.json())
+      const fresh: Catalog = await res.json()
+      setData(fresh)
+      return fresh
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e))
+      return null
     } finally {
       setLoading(false)
     }
@@ -725,11 +730,8 @@ function StoreCatalogPanel({ onOpenUploads }: { onOpenUploads: () => void }) {
         // An edit changes the catalogue, so the list behind the detail view
         // has to be re-read -- otherwise going back shows the old title.
         onChanged={async () => {
-          await load()
-          const res = await fetch('/api/store')
-          if (!res.ok) return
-          const fresh: Catalog = await res.json()
-          const updated = fresh.catalog[selected.kind]?.find(i => i.name === selected.name)
+          const fresh = await load()
+          const updated = fresh?.catalog[selected.kind]?.find(i => i.name === selected.name)
           if (updated) setSelected(updated)
         }}
       />
