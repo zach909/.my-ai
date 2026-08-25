@@ -25,6 +25,7 @@ import { Route as AppChatHistoryRouteImport } from './routes/app/chat-history'
 import { Route as AppChatGroupsRouteImport } from './routes/app/chat-groups'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppArchitectureRouteImport } from './routes/app/architecture'
+import { Route as AppAccessRouteImport } from './routes/app/access'
 
 const DesktopRoute = DesktopRouteImport.update({
   id: '/desktop',
@@ -106,12 +107,18 @@ const AppArchitectureRoute = AppArchitectureRouteImport.update({
   path: '/architecture',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAccessRoute = AppAccessRouteImport.update({
+  id: '/access',
+  path: '/access',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
+  '/app/access': typeof AppAccessRoute
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
+  '/app/access': typeof AppAccessRoute
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
@@ -148,6 +156,7 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
+  '/app/access': typeof AppAccessRoute
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
@@ -168,6 +177,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/builder'
     | '/desktop'
+    | '/app/access'
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
@@ -185,6 +195,7 @@ export interface FileRouteTypes {
     | '/'
     | '/builder'
     | '/desktop'
+    | '/app/access'
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
@@ -203,6 +214,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/builder'
     | '/desktop'
+    | '/app/access'
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
@@ -338,10 +350,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppArchitectureRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/access': {
+      id: '/app/access'
+      path: '/access'
+      fullPath: '/app/access'
+      preLoaderRoute: typeof AppAccessRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppAccessRoute: typeof AppAccessRoute
   AppArchitectureRoute: typeof AppArchitectureRoute
   AppChatRoute: typeof AppChatRoute
   AppChatGroupsRoute: typeof AppChatGroupsRoute
@@ -357,6 +377,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccessRoute: AppAccessRoute,
   AppArchitectureRoute: AppArchitectureRoute,
   AppChatRoute: AppChatRoute,
   AppChatGroupsRoute: AppChatGroupsRoute,

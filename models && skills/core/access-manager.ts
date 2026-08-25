@@ -87,16 +87,73 @@ export const CAPABILITY_MINIMUM: Record<Capability, AccessLevel> = {
   "network.configure": "privileged",
 };
 
+/**
+ * The off switches.
+ *
+ * Grants say what the agent *may* do. These say whether the whole thing is on
+ * at all, and they exist because "revoke sixteen capabilities one at a time"
+ * is not something anyone will do in the moment they want the agent to stop
+ * touching their computer. Turning a switch off refuses every capability
+ * underneath it without discarding the grants, so turning it back on restores
+ * exactly what was there before rather than a guess at it.
+ *
+ * "all" is the master switch and covers both halves. The other two match the
+ * two plug-ins: the GNOME graphical layer, and the non-graphical terminal and
+ * files layer. Being able to turn off the desktop half while keeping the
+ * terminal half is the common case -- an agent that may run builds but may not
+ * touch the screen.
+ */
+export const ACCESS_SWITCHES = ["all", "desktop", "workspace"] as const;
+export type AccessSwitch = (typeof ACCESS_SWITCHES)[number];
+
+export const SWITCH_LABEL: Record<AccessSwitch, string> = {
+  all: "All computer access",
+  desktop: "GNOME desktop access",
+  workspace: "Terminal and files access",
+};
+
+export const SWITCH_DESCRIPTION: Record<AccessSwitch, string> = {
+  all: "The master switch. Off means the agent cannot touch this computer at all, whatever else is granted.",
+  desktop: "Windows, screen, mouse, keyboard and application launching.",
+  workspace: "Terminals, commands, files, processes and system services.",
+};
+
+/** Which switch governs each capability. Every capability belongs to exactly one. */
+export const CAPABILITY_SWITCH: Record<Capability, Exclude<AccessSwitch, "all">> = {
+  "screen.observe": "desktop",
+  "user.observe": "desktop",
+  "mouse.control": "desktop",
+  "keyboard.control": "desktop",
+  "window.manage": "desktop",
+  "app.launch": "desktop",
+  "terminal.open": "workspace",
+  "terminal.execute": "workspace",
+  "files.read": "workspace",
+  "files.write": "workspace",
+  "files.delete": "workspace",
+  "process.manage": "workspace",
+  "system.info": "workspace",
+  "system.services": "workspace",
+  "device.access": "workspace",
+  "network.configure": "workspace",
+};
+
 export class AccessDenied extends Error {
   constructor(
     readonly capability: Capability,
     readonly needed: AccessLevel,
     readonly granted: AccessLevel | null,
+    /** Set when the refusal came from a switch being off rather than from a missing grant. */
+    readonly switchedOff?: AccessSwitch,
   ) {
     super(
-      granted === null
-        ? `"${capability}" is not granted. It needs at least "${needed}" access.`
-        : `"${capability}" is granted at "${granted}", but this needs "${needed}".`,
+      switchedOff === "all"
+        ? `Computer access is switched off, so "${capability}" is refused. Turn access back on to use it.`
+        : switchedOff
+          ? `The "${SWITCH_LABEL[switchedOff]}" switch is off, so "${capability}" is refused. Turn it back on to use it.`
+          : granted === null
+            ? `"${capability}" is not granted. It needs at least "${needed}" access.`
+            : `"${capability}" is granted at "${granted}", but this needs "${needed}".`,
     );
   }
 }
@@ -124,9 +181,47 @@ export interface AccessGrant {
  */
 export class AccessManager {
   private grants = new Map<Capability, AccessGrant>();
+  /** Every switch starts on; the grants themselves are what is restrictive by default. */
+  private switches: Record<AccessSwitch, boolean> = { all: true, desktop: true, workspace: true };
+  private listeners = new Set<(state: Record<AccessSwitch, boolean>) => void>();
 
-  constructor(grants: AccessGrant[] = []) {
+  constructor(grants: AccessGrant[] = [], switches?: Partial<Record<AccessSwitch, boolean>>) {
     for (const g of grants) this.grant(g);
+    if (switches) for (const [name, on] of Object.entries(switches)) this.switches[name as AccessSwitch] = on;
+  }
+
+  // -- the off switches -----------------------------------------------------
+
+  /**
+   * Turn a whole layer on or off.
+   *
+   * Deliberately does not touch the grants. Someone flipping this off in a
+   * hurry wants the agent to stop, not to lose the configuration they spent
+   * time on, and an off switch that quietly wipes state is one people learn
+   * not to use.
+   */
+  setSwitch(name: AccessSwitch, on: boolean): void {
+    if (this.switches[name] === on) return;
+    this.switches[name] = on;
+    const snapshot = this.switchState();
+    for (const listener of this.listeners) listener(snapshot);
+  }
+
+  switchState(): Record<AccessSwitch, boolean> {
+    return { ...this.switches };
+  }
+
+  /** Notified whenever a switch flips, so a caller can persist it without polling. */
+  onSwitchChange(listener: (state: Record<AccessSwitch, boolean>) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
+  /** Which switch is standing in the way, or null when none is. */
+  private blockedBy(capability: Capability): AccessSwitch | null {
+    if (!this.switches.all) return "all";
+    const group = CAPABILITY_SWITCH[capability];
+    return this.switches[group] ? null : group;
   }
 
   grant(grant: AccessGrant): void {
@@ -157,6 +252,7 @@ export class AccessManager {
 
   /** True when the capability is granted at or above the level it needs. */
   allows(capability: Capability, needed: AccessLevel = CAPABILITY_MINIMUM[capability]): boolean {
+    if (this.blockedBy(capability)) return false;
     const have = this.granted(capability);
     return have !== null && rank(have) >= rank(needed);
   }
@@ -164,7 +260,9 @@ export class AccessManager {
   /** Throws AccessDenied when not allowed. Used at the top of every operation. */
   require(capability: Capability, needed: AccessLevel = CAPABILITY_MINIMUM[capability]): void {
     if (!this.allows(capability, needed)) {
-      throw new AccessDenied(capability, needed, this.granted(capability));
+      // The reason matters: "you never granted this" and "you switched it off"
+      // lead to completely different next steps for whoever reads the error.
+      throw new AccessDenied(capability, needed, this.granted(capability), this.blockedBy(capability) ?? undefined);
     }
   }
 

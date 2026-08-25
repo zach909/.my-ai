@@ -991,6 +991,92 @@ export class WebServer {
             }
             return;
         }
+        // ── Computer access: the off switches ───────────────────────────────
+        // Everything here sits behind the blanket password gate, which is the
+        // right default for it: these routes decide what the agent may do to the
+        // machine. Turning access OFF is offered to the agent too (see
+        // plugins/computer-access.ts); turning it back ON is only ever here,
+        // because an agent that can restore its own access has no off switch.
+        if (pathname === '/api/access' && method === 'GET') {
+            try {
+                const { describeAccess, sharedAccessManager } = await import('../models && skills/core/access-settings.js');
+                this.sendJson(res, describeAccess(sharedAccessManager()));
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
+        if (pathname === '/api/access/switch' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const { ACCESS_SWITCHES } = await import('../models && skills/core/access-manager.js');
+                const { describeAccess, sharedAccessManager } = await import('../models && skills/core/access-settings.js');
+                if (!body || !ACCESS_SWITCHES.includes(String(body.name)) || typeof body.on !== 'boolean') {
+                    this.sendJson(res, { error: `Expected { name: ${ACCESS_SWITCHES.join('|')}, on: boolean }` }, 400);
+                    return;
+                }
+                const manager = sharedAccessManager();
+                manager.setSwitch(body.name, body.on);
+                this.sendJson(res, describeAccess(manager));
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
+        // Granting and revoking one capability at a time. A grant below the level
+        // a capability requires is refused rather than quietly raised, so this
+        // returns the AccessManager's own error text instead of inventing one.
+        if (pathname === '/api/access/capability' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const { CAPABILITIES, ACCESS_LEVELS } = await import('../models && skills/core/access-manager.js');
+                const { describeAccess, sharedAccessManager, saveSettings } = await import('../models && skills/core/access-settings.js');
+                if (!body || !CAPABILITIES.includes(String(body.capability))) {
+                    this.sendJson(res, { error: 'Expected { capability, level } where capability is a known capability.' }, 400);
+                    return;
+                }
+                const manager = sharedAccessManager();
+                const capability = body.capability;
+                if (body.level === null) {
+                    manager.revoke(capability);
+                }
+                else if (ACCESS_LEVELS.includes(String(body.level))) {
+                    manager.grant({
+                        capability,
+                        level: body.level,
+                        paths: Array.isArray(body.paths) ? body.paths : undefined,
+                    });
+                }
+                else {
+                    this.sendJson(res, { error: `level must be null or one of ${ACCESS_LEVELS.join(', ')}.` }, 400);
+                    return;
+                }
+                // Grants are only persisted on a switch flip otherwise, and a grant
+                // that vanishes at restart is the same broken promise as a switch
+                // that does.
+                saveSettings({ switches: manager.switchState(), grants: manager.list() });
+                this.sendJson(res, describeAccess(manager));
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+            }
+            return;
+        }
+        // What this machine can actually do graphically. Reports rather than
+        // pretends: no session, or a missing tool, comes back as plain text.
+        if (pathname === '/api/access/probe' && method === 'GET') {
+            try {
+                const { DesktopControl } = await import('../models && skills/core/desktop-control.js');
+                const { sharedAccessManager } = await import('../models && skills/core/access-settings.js');
+                this.sendJson(res, await new DesktopControl(sharedAccessManager()).probe());
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         // ── Auto-update ─────────────────────────────────────────────────────
         // Checking is safe and changes nothing, so it is open. Applying rewrites
         // the working tree and can move code out from under the running process,
