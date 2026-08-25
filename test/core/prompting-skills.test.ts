@@ -18,6 +18,7 @@ import {
   skillApplies,
 } from '../../models && skills/core/prompting-skills.js'
 import { runAgentLoop, type AgentCapabilities } from '../../models && skills/core/agent-loop.js'
+import { buildAgentCapabilities, runAgentLoopForMessage } from '../../models && skills/core/agent-capabilities.js'
 import {
   installPromptingSkill,
   listInstalled,
@@ -261,5 +262,70 @@ describe('installing', () => {
     })
     await runAgentLoop('inspect the reactor', loadRegistry(), caps, { maxIterations: 1 })
     expect(seen).toEqual(['reactor-tool'])
+  })
+})
+
+describe('wiring the loop to a live system', () => {
+  let dir: string
+  let prev: string | undefined
+
+  beforeEach(() => {
+    dir = mkdtempSync(path.join(tmpdir(), 'prompting-wire-'))
+    prev = process.env.NEUROCLAW_PROMPTING_DIR
+    process.env.NEUROCLAW_PROMPTING_DIR = dir
+  })
+  afterEach(() => {
+    if (prev === undefined) delete process.env.NEUROCLAW_PROMPTING_DIR
+    else process.env.NEUROCLAW_PROMPTING_DIR = prev
+    rmSync(dir, { recursive: true, force: true })
+  })
+
+  const hostWith = (reply: unknown) => ({
+    memory: { retrieve: () => [] },
+    pluginRegistry: {
+      getPluginInstance: (id: string) =>
+        id === 'tools' ? { onMessage: async () => reply } : undefined,
+    },
+  })
+
+  it('shows the plugin\'s answer, not its routing wrapper', async () => {
+    // The naive JSON.stringify put {"tool":"calc","result":"17 * 23 = 391"} in
+    // front of the user when the answer was the right-hand side of it.
+    const run = await runAgentLoopForMessage('calculate 17 * 23', hostWith({ tool: 'calc', result: '17 * 23 = 391' }))
+    expect(run?.answered).toBe(true)
+    expect(run?.message).toBe('17 * 23 = 391')
+  })
+
+  it('falls back to the raw value for a plugin that does not use { result }', async () => {
+    const run = await runAgentLoopForMessage('calculate something', hostWith({ unexpected: 'shape' }))
+    expect(run?.message).toBe('{"unexpected":"shape"}')
+  })
+
+  it('does not engage at all when no action skill claims the message', async () => {
+    // The gate is the installed skills themselves, not a separate heuristic.
+    expect(await runAgentLoopForMessage('tell me about the weather', hostWith({ result: 'x' }))).toBeNull()
+  })
+
+  it('reports not-answered when the plugin declines, so the caller can fall back', async () => {
+    const run = await runAgentLoopForMessage('calculate 2+2', hostWith(null))
+    expect(run).not.toBeNull()
+    expect(run?.answered).toBe(false)
+    expect(run?.result.outcome).not.toBe('goal-met')
+  })
+
+  it('never calls the goal met on perception and thinking alone', async () => {
+    // An agent that scored its own homework would declare victory on iteration
+    // one; only an action that actually returned something counts.
+    const caps = buildAgentCapabilities({ memory: { retrieve: () => [] } })
+    expect(caps.isGoalMet?.('anything', ['a thought', 'another thought'])).toBe(false)
+  })
+
+  it('a skill naming a plugin this machine lacks does not answer, and does not throw', async () => {
+    const host = {
+      memory: { retrieve: () => [] },
+      pluginRegistry: { getPluginInstance: () => undefined },
+    }
+    const run = await runAgentLoopForMessage('calculate 1+1', host)
+    expect(run?.answered).toBe(false)
   })
 })

@@ -406,7 +406,7 @@ export function isStorePublicRoute(pathname: string, method: string): boolean {
     return (
       pathname === '/api/store' ||
       /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+$/.test(pathname) ||
-      /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+\/file\/[A-Za-z0-9._-]+$/.test(pathname)
+      /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+\/file\/.+$/.test(pathname)
     );
   }
   if (method === 'POST') {
@@ -1011,7 +1011,10 @@ export class WebServer {
 
     // Download one published file. Served as an attachment so a click saves it
     // rather than rendering a binary into the page.
-    const fileMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)\/file\/([A-Za-z0-9._-]+)$/);
+    // The filename part accepts '/' so a nested file (scripts/run.py) is
+    // reachable. It is NOT trusted for being in the URL: assertSafeFilename
+    // and readItemFile's containment check are what actually guard it.
+    const fileMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)\/file\/(.+)$/);
     if (fileMatch && method === 'GET') {
       try {
         const buf = readItemFile(fileMatch[1], fileMatch[2], fileMatch[3]);

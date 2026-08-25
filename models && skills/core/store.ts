@@ -109,12 +109,55 @@ export function assertSafeName(name: string): void {
 }
 
 /** Same rules for filenames, plus an explicit rejection of any path separator. */
+/** How deep a published item may nest. Deep enough for a real skill, bounded so a publish cannot be a zip bomb of directories. */
+const MAX_PATH_DEPTH = 5;
+
+/**
+ * Validates a file path inside an item.
+ *
+ * Nested paths are allowed, because a real skill is a folder, not a flat pile
+ * of files: the Anthropic skill format is SKILL.md alongside `scripts/`,
+ * `references/`, `assets/` and `agents/`. A flat-only rule did not reject such
+ * a skill -- it accepted the SKILL.md and silently dropped everything else,
+ * which is the worst of both outcomes.
+ *
+ * The safety property is unchanged and is what the segment loop enforces: a
+ * path may descend into the item's own folder and nowhere else. Anyone can
+ * publish, so this is a whitelist per segment rather than a blacklist of bad
+ * shapes -- no absolute paths, no drive letters, no separators of either kind
+ * inside a segment, no `.` or `..`, and no empty segments (which is what
+ * catches a leading `/` and a doubled `//`). Callers additionally verify
+ * containment after joining, so an escape would have to defeat both.
+ */
 export function assertSafeFilename(filename: string): void {
-  if (filename.includes("/") || filename.includes("\\") || filename.includes("..")) {
-    throw new StoreError(`"${filename}" cannot contain a path separator or '..'.`);
+  if (typeof filename !== "string" || filename.length === 0 || filename.length > 512) {
+    throw new StoreError(`"${filename}" is not a valid path.`);
   }
-  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/.test(filename)) {
-    throw new StoreError(`"${filename}" is not a valid filename.`);
+  if (filename.includes("\\")) {
+    throw new StoreError(`"${filename}" must use '/' as its separator, not '\\'.`);
+  }
+  if (filename.startsWith("/")) {
+    throw new StoreError(`"${filename}" must be a relative path inside the item.`);
+  }
+  const segments = filename.split("/");
+  if (segments.length > MAX_PATH_DEPTH) {
+    throw new StoreError(`"${filename}" nests deeper than ${MAX_PATH_DEPTH} levels.`);
+  }
+  for (const segment of segments) {
+    if (segment === "" || segment === "." || segment === "..") {
+      throw new StoreError(`"${filename}" cannot contain an empty, '.' or '..' path segment.`);
+    }
+    // A leading underscore is allowed because Python packages require
+    // `__init__.py`, and the first real skill I tried to publish had one --
+    // rejecting it would have made the store unable to hold an ordinary
+    // Python-backed skill at all.
+    //
+    // A leading DOT stays refused, deliberately. It keeps hidden files out of
+    // published items, and more importantly it means a publish can never
+    // introduce a `.git` directory into everyone's clone.
+    if (!/^[A-Za-z0-9_][A-Za-z0-9._-]{0,127}$/.test(segment)) {
+      throw new StoreError(`"${segment}" in "${filename}" is not a valid file or folder name.`);
+    }
   }
 }
 
@@ -180,7 +223,18 @@ export function publishItem(input: {
   }
 
   mkdirSync(dir, { recursive: true });
-  for (const d of decoded) writeFileSync(path.join(dir, d.filename), d.buf);
+  const itemRoot = path.resolve(dir);
+  for (const d of decoded) {
+    const target = path.resolve(dir, d.filename);
+    // Belt and braces after assertSafeFilename: this path is attacker-supplied,
+    // and a write that escaped the item folder would land in everyone else's
+    // repository on the next pull.
+    if (!target.startsWith(itemRoot + path.sep)) {
+      throw new StoreError(`"${d.filename}" would write outside the item.`);
+    }
+    mkdirSync(path.dirname(target), { recursive: true });
+    writeFileSync(target, d.buf);
+  }
 
   const now = new Date().toISOString();
   const manifest = {
@@ -261,14 +315,26 @@ export function readItem(kind: string, name: string): StoreItem | null {
     return null;
   }
 
+  // Walks subdirectories, because a real skill is a folder: SKILL.md next to
+  // scripts/, references/, assets/. Listing only the top level would report a
+  // published skill as one file and hide everything that makes it work.
   const files: StoreFileInfo[] = [];
-  for (const entry of readdirSync(dir)) {
-    if (entry === MANIFEST) continue;
-    const full = path.join(dir, entry);
-    if (!statSync(full).isFile()) continue;
-    const buf = readFileSync(full);
-    files.push({ filename: entry, bytes: buf.length, sha256: sha256(buf) });
-  }
+  const walk = (current: string, prefix: string): void => {
+    for (const entry of readdirSync(current)) {
+      const full = path.join(current, entry);
+      const rel = prefix ? `${prefix}/${entry}` : entry;
+      if (rel === MANIFEST) continue;
+      const stat = statSync(full);
+      if (stat.isDirectory()) {
+        walk(full, rel);
+        continue;
+      }
+      if (!stat.isFile()) continue;
+      const buf = readFileSync(full);
+      files.push({ filename: rel, bytes: buf.length, sha256: sha256(buf) });
+    }
+  };
+  walk(dir, "");
   files.sort((a, b) => a.filename.localeCompare(b.filename));
 
   return {
@@ -315,8 +381,8 @@ export function readItemFile(kind: string, name: string, filename: string): Buff
   const full = path.join(itemDir(kind, name), filename);
   // Belt and braces: the name checks above should make this impossible, but a
   // containment check costs nothing and this path is attacker-influenced.
-  const root = path.normalize(itemDir(kind, name));
-  if (!path.normalize(full).startsWith(root)) return null;
+  const root = path.resolve(itemDir(kind, name));
+  if (!path.resolve(full).startsWith(root + path.sep)) return null;
   return existsSync(full) && statSync(full).isFile() ? readFileSync(full) : null;
 }
 

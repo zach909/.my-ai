@@ -353,7 +353,12 @@ export class ReasoningEngine {
 }
 
 /** Split a problem into subproblems on connectives; fall back to analyze/solve. */
-function decompose(problem: string, maxSub: number): string[] {
+/**
+ * Exported so the agent loop's `decompose` capability is the same splitter the
+ * reasoner itself uses -- a second, drifting copy of "how do you break a goal
+ * into steps" is exactly the kind of thing that quietly stops matching.
+ */
+export function decompose(problem: string, maxSub: number): string[] {
   const parts = problem
     .split(/\b(?:and then|then|and|;|,|\band\b)\b|\bfollowed by\b/gi)
     .map(p => p.trim())
