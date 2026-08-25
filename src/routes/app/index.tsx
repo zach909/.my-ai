@@ -5,8 +5,8 @@ import { Cpu, FlaskConical, Network, Brain, MessageSquare, Blocks, ArrowUpRight,
 export const Route = createFileRoute('/app/')({
   head: () => ({
     meta: [
-      { title: 'Dashboard · ASI Architect' },
-      { name: 'description', content: 'ASI Architect — Prototype & Evaluate Superintelligence Modules.' },
+      { title: 'Dashboard · Corona' },
+      { name: 'description', content: 'Corona — Prototype & Evaluate Superintelligence Modules.' },
     ],
   }),
   component: DashboardHome,
@@ -28,7 +28,7 @@ function DashboardHome() {
   return (
     <div className="space-y-6">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">ASI Architect</h1>
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground">Corona</h1>
         <p className="mt-1 text-sm text-muted-foreground">
           Prototype, integrate, and evaluate the essential modules for building an Artificial Superintelligence.
         </p>

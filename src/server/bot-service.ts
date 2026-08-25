@@ -23,10 +23,10 @@ export interface AppRoute {
 
 /** Every route in the app, so the bot can tell users where to go. */
 export const APP_ROUTES: AppRoute[] = [
-  { path: '/', title: 'ASI Architect', description: 'A full-stack platform for prototyping, integrating, and evaluating the essential modules required for building an Artificial Superintelligence.' },
+  { path: '/', title: 'Corona', description: 'A full-stack platform for prototyping, integrating, and evaluating the essential modules required for building an Artificial Superintelligence.' },
   { path: '/desktop', title: 'Desktop', description: 'Desktop application shell.' },
   { path: '/builder', title: 'Extension Builder', description: 'Build and manage extensions.' },
-  { path: '/app', title: 'Dashboard', description: 'ASI Architect — Prototype & Evaluate Superintelligence Modules.' },
+  { path: '/app', title: 'Dashboard', description: 'Corona — Prototype & Evaluate Superintelligence Modules.' },
   { path: '/app/chat', title: 'AI Chat', description: 'Talk to the AI assistant with agent-suggested follow-up prompts.' },
   { path: '/app/planning', title: 'Planning', description: 'Define goal hierarchies, task decomposition, and strategic planning for ASI agents.' },
   { path: '/app/architecture', title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.' },

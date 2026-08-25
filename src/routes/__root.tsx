@@ -55,14 +55,14 @@ export const Route = createRootRoute({
     meta: [
       { charSet: 'utf-8' },
       { name: 'viewport', content: 'width=device-width, initial-scale=1.0' },
-      { title: 'ASI Architect — Prototype & Evaluate Superintelligence Modules' },
+      { title: 'Corona — Prototype & Evaluate Superintelligence Modules' },
       { name: 'description', content: 'A full-stack platform for prototyping, integrating, and evaluating the essential modules required for building an Artificial Superintelligence.' },
       { name: 'theme-color', content: '#0b1120' },
       { property: 'og:type', content: 'website' },
-      { property: 'og:title', content: 'ASI Architect — Prototype & Evaluate Superintelligence Modules' },
+      { property: 'og:title', content: 'Corona — Prototype & Evaluate Superintelligence Modules' },
       { property: 'og:description', content: 'A full-stack platform for prototyping, integrating, and evaluating the essential modules required for building an Artificial Superintelligence.' },
       // Shared-shell SEO defaults — set these to the real brand/locale per app.
-      { property: 'og:site_name', content: 'ASI Architect' },
+      { property: 'og:site_name', content: 'Corona' },
       { property: 'og:locale', content: 'en_US' },
       { name: 'twitter:card', content: 'summary_large_image' },
     ],
@@ -94,8 +94,8 @@ function RootDocument({ children }: { children: ReactNode }) {
             __html: JSON.stringify({
               '@context': 'https://schema.org',
               '@graph': [
-                { '@type': 'WebSite', name: 'ASI Architect', url: '/' },
-                { '@type': 'Organization', name: 'ASI Architect', url: '/', sameAs: [] },
+                { '@type': 'WebSite', name: 'Corona', url: '/' },
+                { '@type': 'Organization', name: 'Corona', url: '/', sameAs: [] },
               ],
             }),
           }}

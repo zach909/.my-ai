@@ -33,7 +33,7 @@
   },
   "build": {
     "appId": "com.neuroclaw.app",
-    "productName": "NeuroClaw",
+    "productName": "Corona",
     "directories": {
       "output": "dist"
     },

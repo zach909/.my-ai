@@ -1,5 +1,5 @@
 /**
- * Guided tour: what each part of NeuroClaw is, and how the parts connect.
+ * Guided tour: what each part of Corona is, and how the parts connect.
  *
  * The tour's job is to explain the thing that is not obvious from the nav —
  * that these are not twelve separate tools, but twelve views onto one neural
@@ -33,7 +33,7 @@ const STEPS: TourStep[] = [
   {
     title: 'One brain, not twelve tools',
     body:
-      'Everything in NeuroClaw runs on a single neural mesh called OneBrain. The pages in the sidebar are not separate programs — they are views onto that one mesh, and onto the agent built from it.',
+      'Everything in Corona runs on a single neural mesh called OneBrain. The pages in the sidebar are not separate programs — they are views onto that one mesh, and onto the agent built from it.',
     mesh:
       'Every neuron lives in one all-to-all NeuronMesh. Language neurons, plugin neurons and skill neurons are all wired into the same network, so activity in one genuinely propagates to the rest.',
   },

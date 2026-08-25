@@ -131,7 +131,7 @@ export const Route = createFileRoute('/app/store')({
   }),
   head: () => ({
     meta: [
-      { title: 'Store · ASI Architect' },
+      { title: 'Store · Corona' },
       {
         name: 'description',
         content:

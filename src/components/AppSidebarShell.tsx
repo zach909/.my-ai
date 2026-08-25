@@ -133,7 +133,7 @@ export function AppSidebarShell() {
           {!collapsed && (
             <>
               <NeuroclawMark size={28} active={agentRunning} />
-              <span className="flex-1 font-semibold text-sm truncate">ASI Architect</span>
+              <span className="flex-1 font-semibold text-sm truncate">Corona</span>
             </>
           )}
           <Tooltip>

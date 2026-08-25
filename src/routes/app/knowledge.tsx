@@ -9,7 +9,7 @@ import { Brain, Search, Sparkles, ArrowRight, Loader2, Copy, Check, X } from 'lu
 export const Route = createFileRoute('/app/knowledge')({
   head: () => ({
     meta: [
-      { title: 'Knowledge & Reasoning · ASI Architect' },
+      { title: 'Knowledge & Reasoning · Corona' },
       { name: 'description', content: 'Build knowledge graphs and inference engines for ASI cognition.' },
     ],
   }),

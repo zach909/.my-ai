@@ -28,7 +28,7 @@ import { usePageVisible } from '@/hooks/usePageVisible'
 export const Route = createFileRoute('/app/chat')({
   head: () => ({
     meta: [
-      { title: 'AI Chat · ASI Architect' },
+      { title: 'AI Chat · Corona' },
       { name: 'description', content: 'Chat with the AI assistant and follow agent-suggested prompts.' },
     ],
   }),

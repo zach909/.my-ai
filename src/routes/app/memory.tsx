@@ -21,7 +21,7 @@ import { toast } from 'sonner'
 export const Route = createFileRoute('/app/memory')({
   head: () => ({
     meta: [
-      { title: 'Memory · ASI Architect' },
+      { title: 'Memory · Corona' },
       { name: 'description', content: 'View and manage what the agent remembers.' },
     ],
   }),

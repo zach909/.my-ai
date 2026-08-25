@@ -7,7 +7,7 @@ import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare, Loader2, Cop
 export const Route = createFileRoute('/app/planning')({
   head: () => ({
     meta: [
-      { title: 'Planning · ASI Architect' },
+      { title: 'Planning · Corona' },
       { name: 'description', content: 'Define goal hierarchies, task decomposition, and strategic planning for ASI agents.' },
     ],
   }),

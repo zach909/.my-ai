@@ -248,11 +248,11 @@ function stopNeuroclaw() {
  * Application lifecycle events
  */
 /**
- * One running copy per machine. Clicking the desktop icon while NeuroClaw is
+ * One running copy per machine. Clicking the desktop icon while Corona is
  * already open used to launch a second process, which would then race the
  * first for ports 7861/4173 and fail -- the icon appeared to do nothing. The
  * second instance now hands off to the first, which raises and focuses its
- * window, so the icon always means "show me NeuroClaw".
+ * window, so the icon always means "show me Corona".
  *
  * Not applied under SKIP_BACKEND: the IPC test suite loads this file directly
  * with a fake Electron whose app has no lock methods, and must not exit.
@@ -328,7 +328,7 @@ app.whenReady().then(async () => {
         mainWindow.webContents.executeJavaScript(
           `(() => { const d = document.getElementById('detail');
              if (d) { d.className = 'detail error';
-               d.textContent = ${JSON.stringify('NeuroClaw could not start: ' + message)}; }
+               d.textContent = ${JSON.stringify('Corona could not start: ' + message)}; }
              const m = document.querySelector('.mark');
              if (m) m.style.animation = 'none'; })()`
         ).catch(() => { /* window may have closed */ });

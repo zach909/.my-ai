@@ -8,7 +8,7 @@ import { toast } from 'sonner'
 export const Route = createFileRoute("/app/experiments")({
   head: () => ({
     meta: [
-      { title: "Experiments · ASI Architect" },
+      { title: "Experiments · Corona" },
       {
         name: "description",
         content:

@@ -1,5 +1,5 @@
 /**
- * NeuroClaw — Mesh Engine
+ * Corona — Mesh Engine
  *
  * The core computation engine. Every neuron connects to every other neuron
  * non-linearly, all the time. Each tick, every neuron's state vector is

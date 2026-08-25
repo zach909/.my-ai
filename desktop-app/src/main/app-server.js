@@ -90,7 +90,7 @@ function startAppServer({ distDir, backendPort, port, authToken, tls }) {
 
       if (authToken && req.headers[DESKTOP_TOKEN_HEADER] !== authToken) {
         res.writeHead(403, { 'Content-Type': 'text/plain' });
-        res.end('NeuroClaw runs in its own window. Open the NeuroClaw app.');
+        res.end('Corona runs in its own window. Open the Corona app.');
         return;
       }
 

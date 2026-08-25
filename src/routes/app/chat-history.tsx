@@ -27,7 +27,7 @@ import { Folder, MessageSquare, Users, RefreshCw, ChevronDown, Sparkles, ArrowRi
 export const Route = createFileRoute('/app/chat-history')({
   head: () => ({
     meta: [
-      { title: 'Chat History · ASI Architect' },
+      { title: 'Chat History · Corona' },
       { name: 'description', content: 'Past chats, automatically organized into topic groups.' },
     ],
   }),

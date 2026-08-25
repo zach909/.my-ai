@@ -58,7 +58,7 @@ import {
 export const Route = createFileRoute("/app/self-improvement")({
   head: () => ({
     meta: [
-      { title: "Self-Improvement · ASI Architect" },
+      { title: "Self-Improvement · Corona" },
       {
         name: "description",
         content:
