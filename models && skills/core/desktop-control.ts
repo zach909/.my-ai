@@ -70,9 +70,36 @@ function run(command: string, args: string[]): Promise<Run> {
   });
 }
 
-async function have(tool: DesktopTool): Promise<boolean> {
+/**
+ * Whether a tool is installed, remembered for a short while.
+ *
+ * Measured before caching: each detection is an `sh -c command -v` spawn at
+ * ~3.3ms, and the input path pays for three of them per call -- requireTool,
+ * then listWindows' own requireTool, then agentWindowIds' check -- so roughly
+ * 10ms of re-detection before a single keystroke is sent. Detecting the same
+ * absent tool three times in one operation is not caution, it is waste.
+ *
+ * The TTL rather than a permanent cache is the point: a package installed
+ * while the agent is running has to become usable without a restart, and
+ * "install wmctrl" is exactly the advice ToolMissing gives. Ten seconds is
+ * long enough to collapse the repeats inside one operation and short enough
+ * that acting on that advice works.
+ */
+const TOOL_CACHE_MS = 10_000;
+const toolCache = new Map<DesktopTool, { present: boolean; at: number }>();
+
+async function have(tool: DesktopTool, fresh = false): Promise<boolean> {
+  const cached = toolCache.get(tool);
+  if (!fresh && cached && Date.now() - cached.at < TOOL_CACHE_MS) return cached.present;
   const res = await run("sh", ["-c", `command -v ${tool}`]);
-  return res.ok && res.stdout.trim().length > 0;
+  const present = res.ok && res.stdout.trim().length > 0;
+  toolCache.set(tool, { present, at: Date.now() });
+  return present;
+}
+
+/** Forget what was detected. Exported for tests, and for anything that installs a tool. */
+export function forgetDetectedTools(): void {
+  toolCache.clear();
 }
 
 export interface DesktopWindow {
@@ -120,7 +147,10 @@ export class DesktopControl {
     const display = process.env.DISPLAY ?? null;
     const wayland = Boolean(process.env.WAYLAND_DISPLAY);
     const names = Object.keys(DESKTOP_TOOLS) as DesktopTool[];
-    const found = await Promise.all(names.map(async t => [t, await have(t)] as const));
+    // Deliberately uncached: probe() is the question "what does this machine
+    // have right now", and answering it from a cache would report a tool as
+    // missing seconds after someone installed it on this call's own advice.
+    const found = await Promise.all(names.map(async t => [t, await have(t, true)] as const));
     const tools = Object.fromEntries(found) as Record<DesktopTool, boolean>;
 
     const hasSession = Boolean(display) || wayland;

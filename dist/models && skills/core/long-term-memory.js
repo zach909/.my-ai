@@ -46,11 +46,13 @@ export class LongTermMemory {
     remember(content, opts = {}) {
         const id = opts.id ?? `mem-${Date.now()}-${++this.seq}`;
         const now = Date.now();
-        const embedding = this.embed(content);
+        // Built, used, and dropped: the dense vector is a step on the way to the
+        // sparse one, not something worth keeping 512 slots of when 13 are used.
+        const sparse = embedSparseFromDense(this.embed(content));
         const item = {
             id,
             content,
-            embedding,
+            sparse: { indices: Array.from(sparse.indices), values: Array.from(sparse.values), norm: sparse.norm },
             timestamp: now,
             importance: clamp01(opts.importance ?? 0.5),
             tags: opts.tags ?? [],
@@ -61,7 +63,7 @@ export class LongTermMemory {
         };
         this.items.set(id, item);
         // Cache precomputed sparse vector for fast $O(\text{nonZeros})$ retrieval
-        this.sparseMap.set(id, embedSparseFromDense(embedding));
+        this.sparseMap.set(id, sparse);
         this.evictIfNeeded();
         return item;
     }
@@ -87,7 +89,12 @@ export class LongTermMemory {
                 continue;
             let itemSparse = this.sparseMap.get(item.id);
             if (!itemSparse) {
-                itemSparse = embedSparseFromDense(item.embedding);
+                // Three sources, in order of preference: the item's own sparse form,
+                // a legacy dense array from an older save, or -- failing both -- the
+                // content re-embedded. The last is what makes a hand-edited or
+                // partially-written save still searchable instead of silently
+                // scoring zero against every query.
+                itemSparse = sparseOf(item) ?? embedSparseFromDense(this.embed(item.content));
                 this.sparseMap.set(item.id, itemSparse);
             }
             // Fast $O(\text{nonZeros})$ two-pointer sparse vector cosine similarity
@@ -151,8 +158,15 @@ export class LongTermMemory {
     static deserialize(json) {
         const data = JSON.parse(json);
         const mem = new LongTermMemory({ dim: data.dim, capacity: data.capacity });
-        for (const it of data.items)
+        for (const it of data.items) {
             mem.items.set(it.id, it);
+            // Warmed here rather than lazily in recall(): deserialize knows it is
+            // about to hold every item, and rebuilding during the first search made
+            // that one search pay for all of them.
+            const sparse = sparseOf(it);
+            if (sparse)
+                mem.sparseMap.set(it.id, sparse);
+        }
         return mem;
     }
     /**
@@ -217,6 +231,23 @@ function tokenize(text) {
         .toLowerCase()
         .split(/[^a-z0-9]+/)
         .filter(w => w.length > 1 && !STOPWORDS.has(w));
+}
+/**
+ * The sparse vector for an item, from whichever representation it carries.
+ * Returns null when it has neither, so the caller can decide what to do
+ * rather than being handed a zero vector that silently matches nothing.
+ */
+function sparseOf(item) {
+    if (item.sparse && Array.isArray(item.sparse.indices) && Array.isArray(item.sparse.values)) {
+        return {
+            indices: Int32Array.from(item.sparse.indices),
+            values: Float32Array.from(item.sparse.values),
+            norm: Number(item.sparse.norm) || 0,
+        };
+    }
+    if (Array.isArray(item.embedding))
+        return embedSparseFromDense(item.embedding);
+    return null;
 }
 /**
  * Converts a dense bag-of-words embedding vector into a sorted sparse vector representation with precomputed L2 norm.

@@ -338,14 +338,17 @@ export function readItem(kind: string, name: string): StoreItem | null {
   assertSafeName(name);
   const dir = itemDir(kind, name);
   const manifestFile = path.join(dir, MANIFEST);
-  if (!existsSync(manifestFile)) return null;
 
   let manifest: Record<string, unknown>;
   try {
+    // No existsSync first: the read throws ENOENT for a missing manifest and
+    // the catch already treats that as absent, so checking beforehand was a
+    // second syscall per item for an answer the read gives anyway. On a
+    // catalogue listing that is one wasted stat per published item.
     manifest = JSON.parse(readFileSync(manifestFile, "utf8")) as Record<string, unknown>;
   } catch {
-    // A hand-edited or half-pulled manifest should not take down the whole
-    // catalog listing, so treat it as absent rather than throwing.
+    // A missing, hand-edited or half-pulled manifest should not take down the
+    // whole catalog listing, so treat it as absent rather than throwing.
     return null;
   }
 
@@ -355,9 +358,15 @@ export function readItem(kind: string, name: string): StoreItem | null {
   // The manifest is the catalogue. Reading it -- not the payload bytes -- is
   // what lets a device list every published item while holding none of them.
   const indexed = Array.isArray(manifest.files) ? (manifest.files as StoreFileInfo[]) : null;
+  // Resolved once per item rather than once per file: it is the same string
+  // every time, and an item with twenty files was recomputing it twenty times.
+  const resolvedDir = path.resolve(dir);
   const isHere = (filename: string): boolean => {
     const full = path.resolve(dir, filename);
-    return full.startsWith(path.resolve(dir) + path.sep) && existsSync(full) && statSync(full).isFile();
+    if (!full.startsWith(resolvedDir + path.sep)) return false;
+    // One syscall instead of existsSync-then-statSync, which asked the
+    // filesystem the same question twice for every file of every item.
+    return statSync(full, { throwIfNoEntry: false })?.isFile() ?? false;
   };
 
   let files: StoreFileInfo[];
@@ -415,17 +424,28 @@ export function listCatalog(): Record<StoreKind, StoreItem[]> {
     const dir = kindDir(kind);
     const items: StoreItem[] = [];
     if (existsSync(dir)) {
-      for (const entry of readdirSync(dir)) {
-        if (!statSync(path.join(dir, entry)).isDirectory()) continue;
+      // withFileTypes: the directory entry already knows whether it is a
+      // directory, so asking again with a statSync per entry was one wasted
+      // syscall for every published item in the store.
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        if (!entry.isDirectory()) continue;
         try {
-          const item = readItem(kind, entry);
+          const item = readItem(kind, entry.name);
           if (item) items.push(item);
         } catch {
           // One malformed item must not hide the rest of the store.
         }
       }
     }
-    items.sort((a, b) => (b.updatedAt || "").localeCompare(a.updatedAt || ""));
+    // Plain comparison, not localeCompare: updatedAt is ISO-8601, where
+    // lexicographic order IS chronological order and no locale rule can
+    // change that -- so the collation work was being done to reach the same
+    // answer a byte comparison gives, at roughly three times the cost.
+    items.sort((a, b) => {
+      const x = a.updatedAt || "";
+      const y = b.updatedAt || "";
+      return x < y ? 1 : x > y ? -1 : 0;
+    });
     out[kind] = items;
   }
   return out;

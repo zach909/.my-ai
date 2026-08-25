@@ -181,6 +181,35 @@ describe('reading back what is installed', () => {
     expect(listInstalledItems()).toEqual([])
   })
 
+  it('refuses a name that resolves to the installed root itself', async () => {
+    // The bug: uninstallItem did no validation, so ("skills", "..") resolved
+    // to the installed ROOT, passed a containment check that permitted
+    // dir === root, and rm -rf'd every installed item on the machine. It was
+    // reachable from the uninstall route and from "store uninstall skills .."
+    // in chat, whose name pattern allows dots.
+    publish('survivor', [{ filename: 'a.txt', content: 'keep me' }])
+    await installItem('skills', 'survivor')
+
+    expect(() => uninstallItem('skills', '..')).toThrow()
+    expect(isInstalled('skills', 'survivor')).toBe(true)
+    expect(existsSync(installedRoot())).toBe(true)
+  })
+
+  it('refuses every shape of traversal on both install and uninstall', async () => {
+    const probes: Array<[string, string]> = [
+      ['../../etc', 'passwd'],
+      ['skills', '../../../etc'],
+      ['skills', '..'],
+      ['skills', 'a/../../b'],
+      ['/etc', 'passwd'],
+      ['skills', '.git'],
+    ]
+    for (const [kind, name] of probes) {
+      await expect(installItem(kind, name)).rejects.toThrow()
+      expect(() => uninstallItem(kind, name)).toThrow()
+    }
+  })
+
   it('refuses to read a file outside the item’s own directory', async () => {
     publish('confined', [{ filename: 'a.txt', content: 'hi' }])
     await installItem('skills', 'confined')
