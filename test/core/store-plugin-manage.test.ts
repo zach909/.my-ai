@@ -166,6 +166,36 @@ describe('the commands you would actually type', () => {
     expect(plugin.outdated()).toHaveLength(1)
   })
 
+  it('publishes a file straight from a message', async () => {
+    const out = await say('store publish skills typed-up notes.md\n# Hello\n\nSome content.')
+    expect(out).toMatch(/Published skills\/typed-up/)
+    expect(readItemFile('skills', 'typed-up', 'notes.md')?.toString()).toBe('# Hello\n\nSome content.')
+  })
+
+  it('says whether a publish actually left the device, rather than implying it did', async () => {
+    // Sync is disabled in these tests, so the honest answer is "this device only".
+    expect(await say('store publish skills local-only a.txt\nhi')).toMatch(/on this device only/)
+  })
+
+  it('adds a second file to an item without dropping the first', async () => {
+    await say('store publish skills two-files one.txt\nfirst')
+    await say('store publish skills two-files two.txt\nsecond')
+    expect(readItem('skills', 'two-files')!.files.map(f => f.filename).sort()).toEqual(['one.txt', 'two.txt'])
+  })
+
+  it('explains the shape instead of going silent when the command is nearly right', async () => {
+    const out = await say('store publish skills forgot-the-filename')
+    expect(out).toMatch(/store publish <kind> <name> <filename>/)
+    // The near-miss must not have created anything.
+    expect(readItem('skills', 'forgot-the-filename')).toBeNull()
+  })
+
+  it('changes a description from a message', async () => {
+    seed()
+    expect(await say('store describe skills demo a much better explanation')).toMatch(/Updated the description/)
+    expect(readItem('skills', 'demo')!.description).toBe('a much better explanation')
+  })
+
   it('reads a file back', async () => {
     seed()
     expect(await say('store read skills demo main.py')).toBe('print("v1")')

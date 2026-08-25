@@ -227,6 +227,59 @@ export class StorePlugin extends BasePlugin {
       };
     }
 
+    // Publishing from a message. The first line names where it goes, and
+    // everything after it is the file -- a store command language that cannot
+    // express file contents can only ever manage things somebody else
+    // uploaded, which is half a store.
+    const publishHead = input.match(/^store\s+publish\s+([a-z]+)\s+([A-Za-z0-9._-]+)\s+(\S+)\s*\n([\s\S]*)$/i);
+    if (publishHead) {
+      const [, kind, name, filename, content] = publishHead;
+      try {
+        const { item, sync } = await this.publish({
+          kind: kind.toLowerCase(),
+          name,
+          files: [{ filename, content }],
+        });
+        return {
+          tool: "store",
+          result:
+            `Published ${item.kind}/${item.name} — ${filename} (${content.length} bytes).\n` +
+            // Said plainly, because "saved" and "everyone has it" are
+            // different outcomes and only one of them is publishing.
+            (sync.pushed
+              ? `Pushed${sync.branch ? ` to ${sync.branch}` : ""}. Anyone who pulls now gets it.`
+              : `Saved on this device only — ${sync.reason ?? "it has not reached anyone else yet"}.`),
+        };
+      } catch (err) {
+        return { tool: "store", result: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
+    // The same shape without a filename is the mistake worth catching: it
+    // would otherwise fall through to null and look like the plug-in simply
+    // did not understand, when the request was nearly right.
+    if (/^store\s+publish\b/i.test(input) && !publishHead) {
+      return {
+        tool: "store",
+        result:
+          'To publish, put the file on the lines after the command:\n' +
+          'store publish <kind> <name> <filename>\n<the file contents>\n\n' +
+          `Kinds: ${(STORE_KINDS as readonly StoreKind[]).join(", ")}.`,
+      };
+    }
+
+    const describe = input.match(/^store\s+describe\s+([a-z]+)\s+([A-Za-z0-9._-]+)\s+([\s\S]+)$/i);
+    if (describe) {
+      try {
+        const { item } = await this.describe(describe[1].toLowerCase(), describe[2], {
+          description: describe[3].trim(),
+        });
+        return { tool: "store", result: `Updated the description of ${item.kind}/${item.name}.` };
+      } catch (err) {
+        return { tool: "store", result: err instanceof Error ? err.message : String(err) };
+      }
+    }
+
     // Installing is a real change to this machine, so it needs an explicit
     // sentence naming the item. Nothing here installs on a vague request.
     const install = input.match(/^store\s+install\s+([a-z]+)\s+([A-Za-z0-9._-]+)$/i);
