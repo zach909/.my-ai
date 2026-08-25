@@ -36,7 +36,7 @@ function Chip({ children, className = '' }: { children: ReactNode; className?: s
 export const Route = createFileRoute('/app/chat-groups')({
   head: () => ({
     meta: [
-      { title: 'Chat Groups · ASI Architect' },
+      { title: 'Chat Groups · Corona' },
       { name: 'description', content: 'Hive-mind agents collaborating on a task through a shared chat group.' },
     ],
   }),

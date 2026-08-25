@@ -31,7 +31,7 @@ export const Route = createFileRoute('/app')({
 
 function AppLayout() {
   return (
-    <SharedAppLayout appName="ASI Architect">
+    <SharedAppLayout appName="Corona">
       <Outlet />
     </SharedAppLayout>
   )

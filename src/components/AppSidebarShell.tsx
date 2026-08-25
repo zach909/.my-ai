@@ -27,6 +27,7 @@ import {
   Folder,
   TrendingUp,
   Store,
+  ShieldOff,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -54,6 +55,13 @@ const NAV_ITEMS: NavItemDef[] = [
   // shared chat are tabs of /app/store, because they are all the same activity
   // -- publishing things and reading what other people published.
   { href: '/app/store', icon: <Store className="h-4 w-4" />, label: 'Store' },
+  // Its own entry rather than a Store tab: what the agent remembers is not
+  // something anyone published, and it is not shared with anyone.
+  { href: '/app/memory', icon: <Brain className="h-4 w-4" />, label: 'Memory' },
+  // Last, and deliberately its own entry: the switches that decide what the
+  // agent may do to this computer. Somewhere findable in a hurry, not buried
+  // as a tab under something else.
+  { href: '/app/access', icon: <ShieldOff className="h-4 w-4" />, label: 'Access' },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {
@@ -130,7 +138,7 @@ export function AppSidebarShell() {
           {!collapsed && (
             <>
               <NeuroclawMark size={28} active={agentRunning} />
-              <span className="flex-1 font-semibold text-sm truncate">ASI Architect</span>
+              <span className="flex-1 font-semibold text-sm truncate">Corona</span>
             </>
           )}
           <Tooltip>

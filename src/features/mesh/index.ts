@@ -1,5 +1,5 @@
 /**
- * NeuroClaw — Mesh Feature
+ * Corona — Mesh Feature
  *
  * Barrel export for the core neural mesh engine.
  */

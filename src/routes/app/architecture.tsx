@@ -7,7 +7,7 @@ import { Network, Plus, Trash2, CheckCircle2, X } from 'lucide-react'
 export const Route = createFileRoute('/app/architecture')({
   head: () => ({
     meta: [
-      { title: 'Architecture · ASI Architect' },
+      { title: 'Architecture · Corona' },
       { name: 'description', content: 'Define and compose superintelligence subsystems and data flows.' },
     ],
   }),

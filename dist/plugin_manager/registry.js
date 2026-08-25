@@ -142,10 +142,16 @@ export class PluginRegistry {
                 // specifically needs its own intent to actually reach WikiPlugin.
                 documentation: ['wiki', 'file-system', 'browser'],
                 exploration: ['browser', 'file-system'],
-                desktop: ['multi-input'],
-                input: ['multi-input'],
-                workspace: ['multi-input'],
-                terminal: ['terminal'],
+                // 'computer-access' is strictly non-greedy (onMessage returns null
+                // unless the text names an access command), so it sits first in these
+                // buckets without absorbing everything routed here. It has to be
+                // reachable from ordinary phrasing: "turn off computer access" is the
+                // one sentence that must always work.
+                desktop: ['computer-access', 'multi-input'],
+                input: ['computer-access', 'multi-input'],
+                workspace: ['computer-access', 'multi-input'],
+                access: ['computer-access'],
+                terminal: ['computer-access', 'terminal'],
                 // ToolsPlugin is strictly non-greedy: onMessage() returns null unless
                 // the text actually names one of its tools, so unlike skill-maker it
                 // can sit FIRST in a bucket without absorbing everything routed there.

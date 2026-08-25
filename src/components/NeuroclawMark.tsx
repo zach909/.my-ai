@@ -1,5 +1,5 @@
 /**
- * NeuroClaw's mark: the wavy six-lobed ring, same curve as the app icon.
+ * Corona's mark: the wavy six-lobed ring, same curve as the app icon.
  *
  * The ring is the polar curve r(t) = R + A*cos(6t), so its whole character is
  * one number -- the wave amplitude. At A=0 it is a perfect circle; wind A up
@@ -105,7 +105,7 @@ export function NeuroclawMark({
       height={size}
       viewBox="0 0 512 512"
       role="img"
-      aria-label={active ? 'NeuroClaw, working' : 'NeuroClaw'}
+      aria-label={active ? 'Corona, working' : 'Corona'}
       focusable="false"
     >
       {active && <style>{WAVE_KEYFRAMES}</style>}

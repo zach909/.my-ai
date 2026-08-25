@@ -29,6 +29,7 @@ import { WikiPlugin } from "./wiki.js";
 import { TerminalPlugin } from "./terminal.js";
 import { ToolsPlugin } from "./tools.js";
 import { StorePlugin } from "./store.js";
+import { ComputerAccessPlugin } from "./computer-access.js";
 import type { BasePlugin } from "../plugin_manager/sdk.js";
 
 export { LocationPlugin } from "./location.js";
@@ -60,6 +61,7 @@ export { WikiPlugin } from "./wiki.js";
 export { TerminalPlugin } from "./terminal.js";
 export { ToolsPlugin } from "./tools.js";
 export { StorePlugin } from "./store.js";
+export { ComputerAccessPlugin } from "./computer-access.js";
 
 export function createPluginInstance(
   name: string,
@@ -104,6 +106,7 @@ export function createPluginInstance(
   if (lower === "terminal") return new TerminalPlugin(definition);
   if (lower === "tools") return new ToolsPlugin(definition);
   if (lower === "store") return new StorePlugin(definition);
+  if (lower === "computer access" || lower === "computer-access") return new ComputerAccessPlugin(definition);
   throw new Error(`Unknown plugin: ${name}`);
 }
 
@@ -145,6 +148,14 @@ const pluginExtensions: Record<string, PluginDefinition> = {
   // but never actually implemented/registered on the TS side -- 'terminal'
   // could never be reached even though the routing already named it.
   terminal: { id: "terminal", name: "Terminal", type: "api-connection", capabilities: ["terminal", "shell"] },
+  // The GNOME graphical layer and the terminal/file layer, behind one set
+  // of switches. Both modules existed before this entry; neither was reachable.
+  "computer-access": {
+    id: "computer-access",
+    name: "Computer Access",
+    type: "api-connection",
+    capabilities: ["desktop-control", "terminal", "file-system", "screen-observe"],
+  },
   store: { id: "store", name: "Store", type: "api-connection", capabilities: ["store", "publish", "share"] },
   tools: { id: "tools", name: "Tools", type: "api-connection", capabilities: ["tools", "calculator", "hashing", "encoding", "units"] },
 };

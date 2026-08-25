@@ -1,5 +1,5 @@
 /**
- * NeuroClaw — useElasticMesh hook
+ * Corona — useElasticMesh hook
  *
  * Manages the ElasticMesh instance lifecycle: creation, propagation loop,
  * stats polling, input injection, and learning. Uses requestAnimationFrame

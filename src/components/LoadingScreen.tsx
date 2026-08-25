@@ -50,7 +50,7 @@ export function LoadingScreen({
 
       <div className="flex flex-col items-center gap-2">
         <span className="text-sm font-medium tracking-[0.18em] text-white/80 uppercase">
-          NeuroClaw
+          Corona
         </span>
         {detail ? (
           <span className="text-xs text-white/45">{detail}</span>

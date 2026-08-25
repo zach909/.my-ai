@@ -17,6 +17,7 @@ import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppStoreRouteImport } from './routes/app/store'
 import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
 import { Route as AppPlanningRouteImport } from './routes/app/planning'
+import { Route as AppMemoryRouteImport } from './routes/app/memory'
 import { Route as AppKnowledgeRouteImport } from './routes/app/knowledge'
 import { Route as AppExperimentsRouteImport } from './routes/app/experiments'
 import { Route as AppEvaluationRouteImport } from './routes/app/evaluation'
@@ -24,6 +25,7 @@ import { Route as AppChatHistoryRouteImport } from './routes/app/chat-history'
 import { Route as AppChatGroupsRouteImport } from './routes/app/chat-groups'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppArchitectureRouteImport } from './routes/app/architecture'
+import { Route as AppAccessRouteImport } from './routes/app/access'
 
 const DesktopRoute = DesktopRouteImport.update({
   id: '/desktop',
@@ -65,6 +67,11 @@ const AppPlanningRoute = AppPlanningRouteImport.update({
   path: '/planning',
   getParentRoute: () => AppRoute,
 } as any)
+const AppMemoryRoute = AppMemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppKnowledgeRoute = AppKnowledgeRouteImport.update({
   id: '/knowledge',
   path: '/knowledge',
@@ -100,12 +107,18 @@ const AppArchitectureRoute = AppArchitectureRouteImport.update({
   path: '/architecture',
   getParentRoute: () => AppRoute,
 } as any)
+const AppAccessRoute = AppAccessRouteImport.update({
+  id: '/access',
+  path: '/access',
+  getParentRoute: () => AppRoute,
+} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
+  '/app/access': typeof AppAccessRoute
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
@@ -113,6 +126,7 @@ export interface FileRoutesByFullPath {
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/store': typeof AppStoreRoute
@@ -122,6 +136,7 @@ export interface FileRoutesByTo {
   '/': typeof IndexRoute
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
+  '/app/access': typeof AppAccessRoute
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
@@ -129,6 +144,7 @@ export interface FileRoutesByTo {
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/store': typeof AppStoreRoute
@@ -140,6 +156,7 @@ export interface FileRoutesById {
   '/app': typeof AppRouteWithChildren
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
+  '/app/access': typeof AppAccessRoute
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
@@ -147,6 +164,7 @@ export interface FileRoutesById {
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/store': typeof AppStoreRoute
@@ -159,6 +177,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/builder'
     | '/desktop'
+    | '/app/access'
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
@@ -166,6 +185,7 @@ export interface FileRouteTypes {
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
+    | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/store'
@@ -175,6 +195,7 @@ export interface FileRouteTypes {
     | '/'
     | '/builder'
     | '/desktop'
+    | '/app/access'
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
@@ -182,6 +203,7 @@ export interface FileRouteTypes {
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
+    | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/store'
@@ -192,6 +214,7 @@ export interface FileRouteTypes {
     | '/app'
     | '/builder'
     | '/desktop'
+    | '/app/access'
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
@@ -199,6 +222,7 @@ export interface FileRouteTypes {
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
+    | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/store'
@@ -270,6 +294,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPlanningRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/memory': {
+      id: '/app/memory'
+      path: '/memory'
+      fullPath: '/app/memory'
+      preLoaderRoute: typeof AppMemoryRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/knowledge': {
       id: '/app/knowledge'
       path: '/knowledge'
@@ -319,10 +350,18 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppArchitectureRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/access': {
+      id: '/app/access'
+      path: '/access'
+      fullPath: '/app/access'
+      preLoaderRoute: typeof AppAccessRouteImport
+      parentRoute: typeof AppRoute
+    }
   }
 }
 
 interface AppRouteChildren {
+  AppAccessRoute: typeof AppAccessRoute
   AppArchitectureRoute: typeof AppArchitectureRoute
   AppChatRoute: typeof AppChatRoute
   AppChatGroupsRoute: typeof AppChatGroupsRoute
@@ -330,6 +369,7 @@ interface AppRouteChildren {
   AppEvaluationRoute: typeof AppEvaluationRoute
   AppExperimentsRoute: typeof AppExperimentsRoute
   AppKnowledgeRoute: typeof AppKnowledgeRoute
+  AppMemoryRoute: typeof AppMemoryRoute
   AppPlanningRoute: typeof AppPlanningRoute
   AppSelfImprovementRoute: typeof AppSelfImprovementRoute
   AppStoreRoute: typeof AppStoreRoute
@@ -337,6 +377,7 @@ interface AppRouteChildren {
 }
 
 const AppRouteChildren: AppRouteChildren = {
+  AppAccessRoute: AppAccessRoute,
   AppArchitectureRoute: AppArchitectureRoute,
   AppChatRoute: AppChatRoute,
   AppChatGroupsRoute: AppChatGroupsRoute,
@@ -344,6 +385,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppEvaluationRoute: AppEvaluationRoute,
   AppExperimentsRoute: AppExperimentsRoute,
   AppKnowledgeRoute: AppKnowledgeRoute,
+  AppMemoryRoute: AppMemoryRoute,
   AppPlanningRoute: AppPlanningRoute,
   AppSelfImprovementRoute: AppSelfImprovementRoute,
   AppStoreRoute: AppStoreRoute,
