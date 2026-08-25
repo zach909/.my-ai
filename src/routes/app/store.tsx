@@ -227,6 +227,8 @@ interface StoreFileInfo {
   filename: string
   bytes: number
   sha256: string
+  /** Whether the bytes are on this device, or still a click away. */
+  local: boolean
 }
 
 interface StoreItem {
@@ -427,18 +429,33 @@ function ItemDetail({ item, onBack }: { item: StoreItem; onBack: () => void }) {
               <div className="min-w-0 flex-1">
                 <p className="text-sm font-medium truncate">{f.filename}</p>
                 {/* The digest is shown because it is what tells you whether the
-                    copy you pulled is the copy you looked at. */}
+                    copy you pulled is the copy you looked at -- and it is the
+                    same digest the download is checked against. */}
                 <p className="text-[11px] text-muted-foreground font-mono truncate">
                   {formatBytes(f.bytes)} · {f.sha256.slice(0, 16)}…
                 </p>
               </div>
+              {/* You can see everything in the catalogue; only what you click
+                  comes down. Saying which files are already here makes that
+                  visible rather than something you have to infer. */}
+              <span
+                className={
+                  'shrink-0 rounded-full border px-2 py-0.5 text-[10px] ' +
+                  (f.local
+                    ? 'border-border text-muted-foreground'
+                    : 'border-primary/40 text-primary')
+                }
+                title={f.local ? 'Already on this device' : 'Not downloaded yet — fetched when you click'}
+              >
+                {f.local ? 'on this device' : 'not downloaded'}
+              </span>
               <Button asChild variant="outline" size="sm" className="gap-2 shrink-0">
                 <a
                   href={`/api/store/${item.kind}/${item.name}/file/${f.filename}`}
                   download={f.filename}
                 >
                   <Download className="h-4 w-4" />
-                  Download
+                  {f.local ? 'Save' : 'Download'}
                 </a>
               </Button>
             </Card>

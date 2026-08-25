@@ -1017,7 +1017,21 @@ export class WebServer {
     const fileMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)\/file\/(.+)$/);
     if (fileMatch && method === 'GET') {
       try {
-        const buf = readItemFile(fileMatch[1], fileMatch[2], fileMatch[3]);
+        // Downloads on click. The catalogue lists everything published; the
+        // bytes come down only when someone actually asks for this file, and
+        // are cached afterwards so the device ends up holding exactly what its
+        // owner chose to use.
+        const { fetchItemFile } = await import('../models && skills/core/store-fetch.js');
+        let buf: Buffer;
+        try {
+          ({ buf } = await fetchItemFile(fileMatch[1], fileMatch[2], fileMatch[3]));
+        } catch (fetchErr) {
+          // Reported rather than flattened to "not found": "we could not reach
+          // GitHub" and "that file does not exist" are different problems and
+          // the person needs to know which one they have.
+          this.sendJson(res, { error: fetchErr instanceof Error ? fetchErr.message : String(fetchErr) }, 502);
+          return;
+        }
         if (!buf) {
           this.sendJson(res, { error: 'No such file.' }, 404);
           return;

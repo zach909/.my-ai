@@ -5,5 +5,22 @@
   "description": "Community skill, not official and not affiliated with NVIDIA. Attaches nvidia/NVIDIA-Nemotron-3.5-Lightning-30B-A3B-NVFP4 (17.8B params, ~3B active) to OneBrain as an extra expert. Contains the bridge and the recipe only — the ~10GB of weights are downloaded to your own machine under NVIDIA's licence, never redistributed here. Falls back to the mesh if absent or unloadable.",
   "author": "community (unofficial)",
   "publishedAt": "2026-08-23T17:44:43.039Z",
-  "updatedAt": "2026-08-23T17:44:43.039Z"
+  "updatedAt": "2026-08-25T13:08:25.856Z",
+  "files": [
+    {
+      "filename": "nemotron_bridge.py",
+      "bytes": 5557,
+      "sha256": "ebec9315e3bb2157a2ed447c59619d6f95340da05e92da140e125ffc914baa19"
+    },
+    {
+      "filename": "requirements.txt",
+      "bytes": 351,
+      "sha256": "e71f2dccd21e6354cc172f102eebeb48a1a8a97a512f8d54014f4122f9ead225"
+    },
+    {
+      "filename": "SKILL.md",
+      "bytes": 2991,
+      "sha256": "2bbf37ba96e560cf39e6f753700bebeae90272234064588136f246e05a2a1fbf"
+    }
+  ]
 }

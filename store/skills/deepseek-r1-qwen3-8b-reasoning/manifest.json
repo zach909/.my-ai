@@ -5,5 +5,22 @@
   "description": "MIT-licensed community skill, not affiliated with DeepSeek. Attaches deepseek-ai/DeepSeek-R1-0528-Qwen3-8B (8.19B, qwen3) to OneBrain as a reasoning expert. Chosen as the runnable counterpart to the 17.8B Nemotron skill: 8B fits a consumer GPU and is usable on CPU, and MIT means genuinely open. Separates the model's <think> working from its answer. Bridge and recipe only — the ~16GB of weights download to your own machine.",
   "author": "community (unofficial)",
   "publishedAt": "2026-08-23T19:09:39.702Z",
-  "updatedAt": "2026-08-23T19:09:39.702Z"
+  "updatedAt": "2026-08-25T13:08:25.854Z",
+  "files": [
+    {
+      "filename": "deepseek_bridge.py",
+      "bytes": 6633,
+      "sha256": "92b0c3e6a036ea8ca1e1bd94a9b64f131bea6ad75e95b4e418fe870de574a341"
+    },
+    {
+      "filename": "requirements.txt",
+      "bytes": 335,
+      "sha256": "ce7bdab73c341c6680f446cbba20d7b4704958e71fdfaa9fa7bd3963bf1b3fb8"
+    },
+    {
+      "filename": "SKILL.md",
+      "bytes": 3053,
+      "sha256": "4cacadaced8eeebd1c6b726587a34f607b36f721ac4b2111a69eb4441580c894"
+    }
+  ]
 }

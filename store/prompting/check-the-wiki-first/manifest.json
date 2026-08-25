@@ -5,5 +5,12 @@
   "description": "Reads the shared wiki for anything about the goal, so the agent uses what the community already wrote down instead of rediscovering it.",
   "author": "zach",
   "publishedAt": "2026-08-24T21:07:51.795Z",
-  "updatedAt": "2026-08-24T21:07:51.795Z"
+  "updatedAt": "2026-08-25T13:08:25.856Z",
+  "files": [
+    {
+      "filename": "skill.json",
+      "bytes": 374,
+      "sha256": "d2e0f8eeced393ac1b202a55940f044db73bf49eaa8d6e17e7ae0166b74da0dc"
+    }
+  ]
 }
