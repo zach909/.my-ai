@@ -936,6 +936,70 @@ export class WebServer {
             }
             return;
         }
+        // ── Installing store items on this device ───────────────────────────
+        // Publishing is open, because it shares something. Installing changes how
+        // THIS machine behaves, so it goes through the normal gate -- the same
+        // split prompting skills already draw. Nothing installs by being browsed.
+        if (pathname === '/api/store/installed' && method === 'GET') {
+            try {
+                const { listInstalledItems, outdatedInstalls } = await import('../models && skills/core/store-install.js');
+                this.sendJson(res, {
+                    installed: listInstalledItems(),
+                    outdated: outdatedInstalls().map(o => ({
+                        kind: o.record.kind,
+                        name: o.record.name,
+                        installedVersion: o.record.installedVersion,
+                        publishedVersion: o.published.updatedAt,
+                    })),
+                });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
+        if (pathname === '/api/store/install' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                if (typeof body?.kind !== 'string' || typeof body?.name !== 'string') {
+                    this.sendJson(res, { error: 'Expected { kind, name }.' }, 400);
+                    return;
+                }
+                const { installItem } = await import('../models && skills/core/store-install.js');
+                this.sendJson(res, await installItem(body.kind, body.name), 201);
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+            }
+            return;
+        }
+        // Uninstalling removes only this device's copy, so unlike deleting from
+        // the store it destroys nobody else's work.
+        if (pathname === '/api/store/uninstall' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                if (typeof body?.kind !== 'string' || typeof body?.name !== 'string') {
+                    this.sendJson(res, { error: 'Expected { kind, name }.' }, 400);
+                    return;
+                }
+                const { uninstallItem } = await import('../models && skills/core/store-install.js');
+                this.sendJson(res, { removed: uninstallItem(body.kind, body.name) });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+            }
+            return;
+        }
+        if (pathname === '/api/store/update' && method === 'POST') {
+            try {
+                const { updateInstalls } = await import('../models && skills/core/store-install.js');
+                this.sendJson(res, await updateInstalls());
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         // Download one published file. Served as an attachment so a click saves it
         // rather than rendering a binary into the page.
         // The filename part accepts '/' so a nested file (scripts/run.py) is
