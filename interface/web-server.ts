@@ -1063,6 +1063,32 @@ export class WebServer {
       return;
     }
 
+    // ── Auto-update ─────────────────────────────────────────────────────
+    // Checking is safe and changes nothing, so it is open. Applying rewrites
+    // the working tree and can move code out from under the running process,
+    // so it is gated like every other destructive operation here.
+
+    if (pathname === '/api/updates' && method === 'GET') {
+      try {
+        const { checkForUpdates } = await import('../models && skills/core/auto-update.js');
+        this.sendJson(res, await checkForUpdates());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/updates/apply' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { code?: boolean; store?: boolean } | null;
+        const { applyUpdates } = await import('../models && skills/core/auto-update.js');
+        this.sendJson(res, await applyUpdates(body ?? {}));
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
     // ── Memory files: what the agent remembers ──────────────────────────
     // Reading is open (it is this instance's own knowledge, and the wiki and
     // store are readable too). Forgetting is NOT -- it is destruction, and it

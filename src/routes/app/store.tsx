@@ -109,7 +109,7 @@ function reportSync(sync: SyncStatus | undefined, what: string): void {
   })
 }
 
-type StoreTab = 'store' | 'wiki' | 'skills' | 'chat'
+type StoreTab = 'store' | 'prompting' | 'wiki' | 'skills' | 'chat'
 
 interface StoreSearch {
   page?: string
@@ -124,7 +124,8 @@ export const Route = createFileRoute('/app/store')({
   validateSearch: (search: Record<string, unknown>): StoreSearch => ({
     page: typeof search.page === 'string' ? search.page : undefined,
     tab:
-      search.tab === 'wiki' || search.tab === 'skills' || search.tab === 'chat' || search.tab === 'store'
+      search.tab === 'wiki' || search.tab === 'skills' || search.tab === 'chat' ||
+      search.tab === 'store' || search.tab === 'prompting'
         ? search.tab
         : undefined,
   }),
@@ -143,6 +144,7 @@ export const Route = createFileRoute('/app/store')({
 
 const STORE_TABS: { key: StoreTab; label: string; icon: typeof Package }[] = [
   { key: 'store', label: 'Store', icon: Package },
+  { key: 'prompting', label: 'Prompting Skills', icon: Sparkles },
   { key: 'wiki', label: 'Wiki', icon: BookOpen },
   { key: 'skills', label: 'Uploads', icon: Upload },
   { key: 'chat', label: 'Chat', icon: Users },
@@ -215,11 +217,448 @@ function StorePage() {
 
       <div className="min-h-0 flex-1">
         {tab === 'store' && <StoreCatalogPanel onOpenUploads={() => setTab('skills')} />}
+        {tab === 'prompting' && <PromptingSkillsPanel />}
         {tab === 'wiki' && <WikiPanel onOpenChat={openChatAbout} />}
         {tab === 'skills' && <SkillUploadsPanel />}
         {tab === 'chat' && <ChatPanel topic={chatTopic} onTopicConsumed={() => setChatTopic(null)} />}
       </div>
     </div>
+  )
+}
+
+
+/**
+ * What the agent actually runs its perceive-think-act loop with.
+ *
+ * The skills existed and were live in chat for a while before this panel did,
+ * which meant the only way to see them was to call the API by hand -- a
+ * capability you cannot look at is very hard to trust or edit.
+ */
+interface PromptingSkillView {
+  name: string
+  category: 'perception' | 'cognitive' | 'action'
+  title: string
+  description: string
+  author: string
+  when: string[]
+  priority: number
+  source?: string
+  strategy?: string
+  plugin?: string
+  replaced?: boolean
+}
+
+const CATEGORY_BLURB: Record<string, string> = {
+  perception: 'What information to collect — the input to a loop iteration.',
+  cognitive: 'What to think about what was found — the strategy.',
+  action: 'How to move in the world — the output.',
+}
+
+function PromptingSkillsPanel() {
+  const [data, setData] = useState<{
+    categories: string[]
+    builtIn: PromptingSkillView[]
+    installed: PromptingSkillView[]
+    active: PromptingSkillView[]
+  } | null>(null)
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/prompting-skills')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      setData(await res.json())
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  const remove = async (name: string) => {
+    setBusy(name)
+    try {
+      const res = await fetch(`/api/prompting-skills/${encodeURIComponent(name)}`, { method: 'DELETE' })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || 'Could not remove it')
+      // Removing one that shadowed a built-in restores the built-in rather
+      // than leaving a hole, so say so instead of letting it look like a bug.
+      toast.success(
+        body.restoredBuiltIn ? `Removed "${name}" — the built-in is back` : `Removed "${name}"`,
+      )
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  const installedNames = new Set((data?.installed ?? []).map(s => s.name))
+
+  return (
+    <div className="h-full space-y-6 overflow-y-auto pb-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground max-w-3xl">
+          The modular functions the agent calls inside its own perceive → think → act loop. These
+          run on every message that a skill claims. Publishing one shares it with everyone who
+          pulls; installing one changes how <em>this</em> machine&apos;s agent behaves.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => void load()} className="gap-2 shrink-0">
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </Button>
+      </div>
+
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Reading the active skills…
+        </div>
+      )}
+      {error && (
+        <Card className="p-4 border-destructive/40">
+          <p className="text-sm text-destructive">Could not read the prompting skills: {error}</p>
+        </Card>
+      )}
+
+      {!loading && !error && (data?.categories ?? []).map(category => {
+        const skills = (data?.active ?? []).filter(s => s.category === category)
+        return (
+          <section key={category} className="space-y-2">
+            <div>
+              <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+                {category} ({skills.length})
+              </h2>
+              <p className="text-xs text-muted-foreground">{CATEGORY_BLURB[category]}</p>
+            </div>
+            {skills.length === 0 && (
+              <Card className="p-4">
+                <p className="text-xs text-muted-foreground">
+                  Nothing here — this step of the loop does nothing until a skill is installed.
+                </p>
+              </Card>
+            )}
+            <div className="grid gap-3 lg:grid-cols-2">
+              {skills.map(skill => {
+                const isInstalled = installedNames.has(skill.name)
+                return (
+                  <Card key={skill.name} className="p-4 space-y-2">
+                    <div className="flex items-start justify-between gap-2">
+                      <div className="min-w-0">
+                        <p className="text-sm font-medium leading-tight">{skill.title}</p>
+                        <p className="text-[11px] text-muted-foreground font-mono truncate">
+                          {skill.name} · by {skill.author}
+                        </p>
+                      </div>
+                      <span
+                        className={
+                          'shrink-0 rounded-full border px-2 py-0.5 text-[10px] ' +
+                          (isInstalled ? 'border-primary/40 text-primary' : 'border-border text-muted-foreground')
+                        }
+                        title={isInstalled ? 'Installed on this device' : 'Ships with the app'}
+                      >
+                        {isInstalled ? 'installed' : 'built in'}
+                      </span>
+                    </div>
+
+                    {skill.description && (
+                      <p className="text-xs text-muted-foreground leading-relaxed">{skill.description}</p>
+                    )}
+
+                    <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
+                      <span className="rounded border border-border px-1.5 py-0.5 font-mono">
+                        {skill.source ?? skill.strategy ?? skill.plugin}
+                      </span>
+                      <span className="text-muted-foreground">priority {skill.priority}</span>
+                    </div>
+
+                    {/* The triggers are the skill's own answer to "when is this
+                        mine?", so they are shown rather than hidden -- it is the
+                        part most worth editing. */}
+                    <p className="text-[11px] text-muted-foreground">
+                      {skill.when.length === 0
+                        ? 'runs on every message'
+                        : `runs when the message mentions: ${skill.when.slice(0, 8).join(', ')}${skill.when.length > 8 ? '…' : ''}`}
+                    </p>
+
+                    {isInstalled && (
+                      <Button
+                        variant="outline"
+                        size="sm"
+                        className="gap-2"
+                        disabled={busy === skill.name}
+                        onClick={() => void remove(skill.name)}
+                      >
+                        <Trash2 className="h-3.5 w-3.5" />
+                        {busy === skill.name ? 'Removing…' : 'Remove'}
+                      </Button>
+                    )}
+                  </Card>
+                )
+              })}
+            </div>
+          </section>
+        )
+      })}
+
+      {!loading && !error && <PublishedPromptingSkills onChanged={() => void load()} />}
+      {!loading && !error && <PublishPromptingSkill onPublished={() => void load()} />}
+    </div>
+  )
+}
+
+
+/**
+ * Prompting skills other people published, with a one-click install.
+ *
+ * This is the download half. They are ordinary store items, so they travel
+ * with the repository like everything else; what was missing was anywhere in
+ * the app to actually take one.
+ */
+function PublishedPromptingSkills({ onChanged }: { onChanged: () => void }) {
+  const [items, setItems] = useState<StoreItem[]>([])
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const load = useCallback(async () => {
+    try {
+      const res = await fetch('/api/store')
+      if (!res.ok) return
+      const data = (await res.json()) as Catalog
+      setItems(data.catalog?.prompting ?? [])
+    } catch {
+      // The published list is a convenience on top of the installed set; a
+      // failure here must not take the panel down.
+    }
+  }, [])
+  useEffect(() => { void load() }, [load])
+
+  const install = async (name: string) => {
+    setBusy(name)
+    try {
+      const res = await fetch('/api/prompting-skills/install', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || 'Could not install it')
+      toast.success(`Installed "${name}" — the agent uses it from the next message on`)
+      onChanged()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  if (items.length === 0) return null
+
+  return (
+    <section className="space-y-2">
+      <h2 className="text-sm font-semibold uppercase tracking-wider text-muted-foreground">
+        Published by others ({items.length})
+      </h2>
+      <div className="grid gap-3 lg:grid-cols-2">
+        {items.map(item => (
+          <Card key={item.name} className="p-4 flex gap-3">
+            <StoreItemMark name={item.name} kind="prompting" size={44} />
+            <div className="min-w-0 flex-1">
+              <p className="text-sm font-medium leading-tight truncate">{item.title}</p>
+              <p className="text-[11px] text-muted-foreground truncate">by {item.author}</p>
+              <p className="text-xs text-muted-foreground mt-1 line-clamp-2">{item.description}</p>
+              <Button
+                size="sm"
+                variant="outline"
+                className="gap-2 mt-2"
+                disabled={busy === item.name}
+                onClick={() => void install(item.name)}
+              >
+                <Download className="h-3.5 w-3.5" />
+                {busy === item.name ? 'Installing…' : 'Install'}
+              </Button>
+            </div>
+          </Card>
+        ))}
+      </div>
+    </section>
+  )
+}
+
+/**
+ * The upload half: write a prompting skill and publish it.
+ *
+ * The form is shaped by the category, because the three categories genuinely
+ * need different things -- a perception skill picks a source, a cognitive one
+ * picks a strategy, an action one names a plugin -- and offering all three at
+ * once would invite exactly the malformed documents the parser then rejects.
+ */
+function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [category, setCategory] = useState<'perception' | 'cognitive' | 'action'>('perception')
+  const [name, setName] = useState('')
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [author, setAuthor] = useState('')
+  const [target, setTarget] = useState('memory')
+  const [when, setWhen] = useState('')
+  const [busy, setBusy] = useState(false)
+
+  const targets =
+    category === 'perception'
+      ? ['memory', 'wiki', 'store', 'chats', 'web']
+      : category === 'cognitive'
+        ? ['decompose', 'recall-lessons', 'compare-options', 'plan-next-step']
+        : ['tools', 'terminal', 'file-system', 'research']
+
+  const publish = async (alsoInstall: boolean) => {
+    setBusy(true)
+    try {
+      const skill: Record<string, unknown> = {
+        name: name.trim(),
+        category,
+        title: title.trim() || name.trim(),
+        description: description.trim(),
+        author: author.trim() || 'anonymous',
+        when: when.split(',').map(w => w.trim()).filter(Boolean),
+        priority: 50,
+      }
+      if (category === 'perception') skill.source = target
+      else if (category === 'cognitive') skill.strategy = target
+      else skill.plugin = target
+
+      const res = await fetch('/api/prompting-skills/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(skill),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || 'Could not publish it')
+      reportSync(body.sync as SyncStatus | undefined, `Prompting skill "${skill.name}" published`)
+
+      if (alsoInstall) {
+        const ins = await fetch('/api/prompting-skills/install', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(skill),
+        })
+        if (!ins.ok) {
+          const insBody = await ins.json()
+          // Publishing succeeded even if installing did not -- saying so beats
+          // one blanket failure message that hides which half worked.
+          toast.error(`Published, but could not install here: ${insBody.error ?? ins.status}`)
+        } else {
+          toast.success(`Installed "${skill.name}" on this device`)
+        }
+      }
+      setName(''); setTitle(''); setDescription(''); setWhen('')
+      setOpen(false)
+      onPublished()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="gap-2" onClick={() => setOpen(true)}>
+        <Plus className="h-4 w-4" />
+        Write and publish a prompting skill
+      </Button>
+    )
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">New prompting skill</p>
+        <Button variant="ghost" size="sm" onClick={() => setOpen(false)}><X className="h-4 w-4" /></Button>
+      </div>
+
+      <div className="flex flex-wrap gap-1.5">
+        {(['perception', 'cognitive', 'action'] as const).map(c => (
+          <button
+            key={c}
+            type="button"
+            onClick={() => {
+              setCategory(c)
+              setTarget(c === 'perception' ? 'memory' : c === 'cognitive' ? 'decompose' : 'tools')
+            }}
+            className={
+              'rounded-full border px-3 py-1 text-xs transition-colors ' +
+              (category === c ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-accent')
+            }
+          >
+            {c}
+          </button>
+        ))}
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <Label className="text-xs">Name</Label>
+          <Input value={name} onChange={e => setName(e.target.value)} placeholder="check-the-news" />
+        </div>
+        <div>
+          <Label className="text-xs">Author</Label>
+          <Input value={author} onChange={e => setAuthor(e.target.value)} placeholder="you" />
+        </div>
+      </div>
+      <div>
+        <Label className="text-xs">Title</Label>
+        <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Check the news first" />
+      </div>
+      <div>
+        <Label className="text-xs">What it does</Label>
+        <Input value={description} onChange={e => setDescription(e.target.value)} placeholder="Why someone would install this" />
+      </div>
+      <div>
+        <Label className="text-xs">
+          {category === 'perception' ? 'Where to look' : category === 'cognitive' ? 'Strategy' : 'Which plugin to call'}
+        </Label>
+        <div className="flex flex-wrap gap-1.5 mt-1">
+          {targets.map(t => (
+            <button
+              key={t}
+              type="button"
+              onClick={() => setTarget(t)}
+              className={
+                'rounded border px-2 py-0.5 text-[11px] font-mono transition-colors ' +
+                (target === t ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-accent')
+              }
+            >
+              {t}
+            </button>
+          ))}
+        </div>
+      </div>
+      <div>
+        <Label className="text-xs">Trigger words, comma separated (blank = every message)</Label>
+        <Input value={when} onChange={e => setWhen(e.target.value)} placeholder="news, headline, today" />
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" disabled={busy || !name.trim()} onClick={() => void publish(true)} className="gap-2">
+          <Upload className="h-4 w-4" />
+          {busy ? 'Publishing…' : 'Publish and install here'}
+        </Button>
+        <Button size="sm" variant="outline" disabled={busy || !name.trim()} onClick={() => void publish(false)}>
+          Publish only
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Publishing shares it with everyone who pulls the repository. Installing changes how this
+        machine&apos;s agent behaves — they are deliberately separate.
+      </p>
+    </Card>
   )
 }
 

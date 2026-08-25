@@ -66,9 +66,27 @@ export class StorePlugin extends BasePlugin {
   }
 
   /** One published file's contents as text (null when absent or binary-unsafe). */
-  readFile(kind: string, name: string, filename: string): string | null {
-    const buf = readItemFile(kind, name, filename);
-    return buf ? buf.toString("utf8") : null;
+  /**
+   * Read a published file, downloading it first if this device does not have
+   * it.
+   *
+   * Fetch-aware on purpose: the store now shows every item while holding only
+   * the files someone clicked, so an agent restricted to already-downloaded
+   * files could only edit the handful it happened to have. Editing anything in
+   * the catalogue is the point.
+   */
+  async readFile(kind: string, name: string, filename: string): Promise<string | null> {
+    const local = readItemFile(kind, name, filename);
+    if (local) return local.toString("utf8");
+    try {
+      const { fetchItemFile } = await import("../models && skills/core/store-fetch.js");
+      const { buf } = await fetchItemFile(kind, name, filename);
+      return buf.toString("utf8");
+    } catch {
+      // Unreachable or genuinely absent: null either way, and the caller has
+      // to handle "no content" regardless.
+      return null;
+    }
   }
 
   /**
