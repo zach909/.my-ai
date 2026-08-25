@@ -1,0 +1,9 @@
+{
+  "kind": "prompting",
+  "name": "check-the-wiki-first",
+  "title": "Check the wiki before searching anywhere else",
+  "description": "Reads the shared wiki for anything about the goal, so the agent uses what the community already wrote down instead of rediscovering it.",
+  "author": "zach",
+  "publishedAt": "2026-08-24T21:07:51.795Z",
+  "updatedAt": "2026-08-24T21:07:51.795Z"
+}

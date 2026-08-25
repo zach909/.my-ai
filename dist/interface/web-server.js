@@ -5,10 +5,12 @@ import path from 'node:path';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
+import { installFromStore, installPromptingSkill, listInstalled, loadRegistry, publishPromptingSkill, readPublishedPromptingSkill, uninstallPromptingSkill, isBuiltIn, } from '../models && skills/core/prompting-skill-store.js';
+import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { STORE_KINDS, STORE_KIND_LABELS, StoreError, listCatalog, publishAndSync, readItem, readItemFile, deleteAndSync, } from '../models && skills/core/store.js';
-import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFile, linkSkillUploadWiki, unlinkSkillUploadWiki, recordSkillUploadRsiPass, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
+import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFileAndSync, linkSkillUploadWikiAndSync, unlinkSkillUploadWikiAndSync, recordSkillUploadRsiPassAndSync, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
 /**
  * Keeps exactly one `extension-builder/pytorch_trainer.py` subprocess alive
  * for the life of the server instead of spawning (and re-importing torch
@@ -363,10 +365,14 @@ export function isStorePublicRoute(pathname, method) {
         // /api/store, /api/store/:kind/:name, /api/store/:kind/:name/file/:filename
         return (pathname === '/api/store' ||
             /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+$/.test(pathname) ||
-            /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+\/file\/[A-Za-z0-9._-]+$/.test(pathname));
+            /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+\/file\/.+$/.test(pathname));
     }
     if (method === 'POST') {
-        return pathname === '/api/store';
+        // Publishing a prompting skill is a publish like any other, so it is open.
+        // Installing one is deliberately NOT here: publishing shares a document,
+        // installing changes how this machine's agent actually behaves, and those
+        // are not the same permission.
+        return pathname === '/api/store' || pathname === '/api/prompting-skills/publish';
     }
     return false;
 }
@@ -932,7 +938,10 @@ export class WebServer {
         }
         // Download one published file. Served as an attachment so a click saves it
         // rather than rendering a binary into the page.
-        const fileMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)\/file\/([A-Za-z0-9._-]+)$/);
+        // The filename part accepts '/' so a nested file (scripts/run.py) is
+        // reachable. It is NOT trusted for being in the URL: assertSafeFilename
+        // and readItemFile's containment check are what actually guard it.
+        const fileMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)\/file\/(.+)$/);
         if (fileMatch && method === 'GET') {
             try {
                 const buf = readItemFile(fileMatch[1], fileMatch[2], fileMatch[3]);
@@ -961,6 +970,148 @@ export class WebServer {
                     return;
                 }
                 this.sendJson(res, item);
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+            }
+            return;
+        }
+        // ── Memory files: what the agent remembers ──────────────────────────
+        // Reading is open (it is this instance's own knowledge, and the wiki and
+        // store are readable too). Forgetting is NOT -- it is destruction, and it
+        // is gated for the same reason wiki and store deletion are.
+        if (pathname === '/api/memory' && method === 'GET') {
+            try {
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const q = parsedUrl.searchParams.get('q')?.trim() ?? '';
+                const tag = parsedUrl.searchParams.get('tag')?.trim() ?? '';
+                const limit = Math.min(500, Math.max(1, Number(parsedUrl.searchParams.get('limit') ?? 100)));
+                const all = system.memory.all();
+                // Tag counts come from everything, not the filtered page, so the
+                // summary does not silently change meaning as you search.
+                const tagCounts = {};
+                for (const item of all)
+                    for (const t of item.tags)
+                        tagCounts[t] = (tagCounts[t] ?? 0) + 1;
+                const needle = q.toLowerCase();
+                const filtered = all
+                    .filter(item => !tag || item.tags.includes(tag))
+                    .filter(item => !needle || `${item.content} ${item.payload ?? ''}`.toLowerCase().includes(needle))
+                    .sort((a, b) => b.timestamp - a.timestamp)
+                    .slice(0, limit)
+                    .map(item => ({
+                    id: item.id,
+                    content: item.content,
+                    payload: item.payload,
+                    tags: item.tags,
+                    importance: item.importance,
+                    accessCount: item.accessCount,
+                    timestamp: item.timestamp,
+                    // Pinned items are installed knowledge and survive eviction; saying
+                    // so is the difference between "this will stay" and "this may go".
+                    pinned: item.pinned === true,
+                }));
+                this.sendJson(res, { total: all.length, capacityNote: 'pinned memories are exempt from eviction', tagCounts, memories: filtered });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
+        const memoryMatch = pathname.match(/^\/api\/memory\/([A-Za-z0-9._-]+)$/);
+        if (memoryMatch && method === 'DELETE') {
+            try {
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const forgotten = system.memory.forget(memoryMatch[1]);
+                this.sendJson(res, { forgotten }, forgotten ? 200 : 404);
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
+        // ── Prompting skills ────────────────────────────────────────────────
+        // The modular functions the agent calls inside its own perceive-think-act
+        // loop. Publishing is open (it shares a document); installing is gated,
+        // because it changes how this machine's agent actually behaves.
+        if (pathname === '/api/prompting-skills' && method === 'GET') {
+            const installed = listInstalled();
+            const installedNames = new Set(installed.map(s => s.name));
+            this.sendJson(res, {
+                categories: PROMPTING_CATEGORIES,
+                labels: PROMPTING_CATEGORY_LABELS,
+                // The built-ins are reported separately so the UI can show that a
+                // fresh install already has a working loop rather than three empty
+                // steps -- and can mark which of them the user has since replaced.
+                builtIn: builtInPromptingSkills().map(s => ({ ...s, replaced: installedNames.has(s.name) })),
+                installed,
+                active: loadRegistry().all(),
+            });
+            return;
+        }
+        const promptingMatch = pathname.match(/^\/api\/prompting-skills\/([A-Za-z0-9._-]+)$/);
+        if (promptingMatch && method === 'GET') {
+            try {
+                const published = readPublishedPromptingSkill(promptingMatch[1]);
+                if (!published) {
+                    this.sendJson(res, { error: 'No such published prompting skill.' }, 404);
+                    return;
+                }
+                this.sendJson(res, published);
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+            }
+            return;
+        }
+        // Publish: open, and pushed like every other publish so everyone who pulls
+        // gets it.
+        if (pathname === '/api/prompting-skills/publish' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const { item, sync, skill } = await publishPromptingSkill(body);
+                this.sendJson(res, { ...item, skill, sync }, 201);
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, err instanceof PromptingSkillError ? 400 : 500);
+            }
+            return;
+        }
+        // Install: from the store by name, or straight from a document the user or
+        // the agent just wrote. Same endpoint, because both mean "the loop should
+        // use this from now on" -- and re-installing under an existing name is how
+        // an edit takes effect.
+        if (pathname === '/api/prompting-skills/install' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                if (!body) {
+                    this.sendJson(res, { error: 'Expected a skill document or { "name": "..." }.' }, 400);
+                    return;
+                }
+                const skill = typeof body.name === 'string' && body.category === undefined
+                    ? installFromStore(body.name)
+                    : installPromptingSkill(body);
+                this.sendJson(res, { installed: skill, active: loadRegistry().all() }, 201);
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, err instanceof PromptingSkillError ? 400 : 500);
+            }
+            return;
+        }
+        if (promptingMatch && method === 'DELETE') {
+            try {
+                const name = promptingMatch[1];
+                const removed = uninstallPromptingSkill(name);
+                this.sendJson(res, {
+                    uninstalled: removed,
+                    // Removing an installed skill that shares a built-in's name
+                    // restores the built-in rather than leaving a hole, so the UI can
+                    // say so instead of the skill appearing to come back by itself.
+                    restoredBuiltIn: removed && isBuiltIn(name),
+                    active: loadRegistry().all(),
+                }, removed ? 200 : 404);
             }
             catch (err) {
                 this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
@@ -1733,7 +1884,7 @@ export class WebServer {
         if (skillUploadExtraFileMatch && method === 'DELETE') {
             const [, name, filename] = skillUploadExtraFileMatch;
             try {
-                deleteSkillUploadExtraFile(name, decodeURIComponent(filename));
+                await deleteSkillUploadExtraFileAndSync(name, decodeURIComponent(filename));
                 this.sendJson(res, { name, filename, deleted: true });
             }
             catch (err) {
@@ -1864,7 +2015,7 @@ export class WebServer {
                     this.sendJson(res, { error: `"${body.wikiPage}" is a curated wiki page -- only a bot-published page can be linked to a skill upload` }, 400);
                     return;
                 }
-                const summary = linkSkillUploadWiki(name, body.wikiPage);
+                const { pkg: summary } = await linkSkillUploadWikiAndSync(name, body.wikiPage);
                 this.sendJson(res, summary);
             }
             catch (err) {
@@ -1879,7 +2030,7 @@ export class WebServer {
         if (skillUploadWikiMatch && method === 'DELETE') {
             const name = skillUploadWikiMatch[1];
             try {
-                const summary = unlinkSkillUploadWiki(name);
+                const { pkg: summary } = await unlinkSkillUploadWikiAndSync(name);
                 this.sendJson(res, summary);
             }
             catch (err) {
@@ -1958,7 +2109,7 @@ export class WebServer {
                     this.sendJson(res, { ok: true, passed: false, message, score, ranFrom: file.filename });
                     return;
                 }
-                recordSkillUploadRsiPass(name, message);
+                await recordSkillUploadRsiPassAndSync(name, message);
                 let installed = null;
                 const skillFile = readSkillUploadFile(name, 'binarySkill') ?? readSkillUploadFile(name, 'sourceSkill');
                 if (skillFile) {

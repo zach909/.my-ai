@@ -4609,8 +4609,9 @@ async function testMarkWaveAnimation() {
   const fsp = await import('node:fs');
   const src = fsp.readFileSync('src/components/NeuroclawMark.tsx', 'utf8');
 
-  // The mark's three amplitudes: circle (A=0), resting (A=17), star (A=42).
-  const paths = [...src.matchAll(/const RING_(CIRCLE|CALM|STAR) =\s*\n\s*'([^']+)'/g)]
+  // The mark's amplitudes: circle (A=0), the resting shape it shows when idle
+  // (A=17), and the spike the animation reaches (A=64).
+  const paths = [...src.matchAll(/const RING_(CIRCLE|CALM|SPIKE) =\s*\n\s*'([^']+)'/g)]
     .map(m => ({ name: m[1], d: m[2] }));
   check(paths.length === 3, `all three wave amplitudes are defined (found ${paths.length})`);
 
@@ -4635,13 +4636,41 @@ async function testMarkWaveAnimation() {
     return Math.max(...xs) - Math.min(...xs);
   };
   const circle = paths.find(p => p.name === 'CIRCLE');
-  const star = paths.find(p => p.name === 'STAR');
+  const star = paths.find(p => p.name === 'CALM');
   // Proportional, not a fixed pixel margin: with six lobes the widest points
   // do not fall on the x-axis, so the horizontal extent grows by noticeably
   // less than 2*(R+A). Measured 304 -> 342, which is a plainly visible change.
-  const grew = extent(star.d) / extent(circle.d);
-  check(grew > 1.1,
-    `the star genuinely extends beyond the circle (${Math.round(extent(circle.d))} -> ${Math.round(extent(star.d))}, ${((grew - 1) * 100).toFixed(0)}% wider)`);
+  // Horizontal extent is the wrong ruler for the resting shape: with six
+  // lobes the widest points do not sit on the x-axis, so A=17 measures 303
+  // against the circle's 304 despite being visibly wavy. Compare the shapes
+  // point-by-point instead, which is what "not a circle" actually means.
+  const points = (d) => [...d.matchAll(/(-?[\d.]+)\s+(-?[\d.]+)/g)].map(m => [parseFloat(m[1]), parseFloat(m[2])]);
+  const maxShift = Math.max(...points(star.d).map(([x, y], i) => {
+    const [cx, cy] = points(circle.d)[i];
+    return Math.hypot(x - cx, y - cy);
+  }));
+  check(maxShift > 10,
+    `the resting shape is genuinely wavy, not a circle (points move up to ${maxShift.toFixed(0)} units)`);
+
+  // The peak, on the other hand, does widen the whole mark, and that is the
+  // change a person actually sees while the agent is working.
+  const grew = extent(circle.d);
+
+  // The animation runs between the two EXTREMES -- a real circle and a really
+  // pointy star -- with no resting shape in between. Easing through the
+  // resting shape made it read as a wobble around the normal look rather than
+  // a circle becoming a star, which is the whole point of the motion.
+  const spike = paths.find(p => p.name === 'SPIKE');
+  const spiked = extent(spike.d) / grew;
+  check(spiked > 1.2,
+    `the animation's peak is dramatically wider than the circle it starts from (${Math.round(grew)} -> ${Math.round(extent(spike.d))}, ${((spiked - 1) * 100).toFixed(0)}% wider)`);
+  const keyframes = src.match(/@keyframes neuroclaw-wave \{([\s\S]*?)\n\}/);
+  check(!!keyframes && /0%[^}]*RING_CIRCLE/.test(keyframes[1]) && /100%[^}]*RING_CIRCLE/.test(keyframes[1]),
+    'the cycle starts and ends on a true circle');
+  check(!!keyframes && /50%[^}]*RING_SPIKE/.test(keyframes[1]),
+    'the cycle peaks on the most extreme shape');
+  check(!!keyframes && !/RING_CALM/.test(keyframes[1]),
+    'nothing softens the contrast in between -- it goes circle straight to spike and back');
 
   // Driven by CSS, not SMIL. SMIL's clock does not advance under headless
   // Chromium, so a SMIL version could never be verified here.
@@ -4653,6 +4682,72 @@ async function testMarkWaveAnimation() {
   // Off unless the agent is working.
   check(/active \? 'neuroclaw-wave-active' : undefined/.test(src),
     'the animation only runs when the agent is actually working');
+}
+
+async function testPromptingSkills() {
+  const { isStorePublicRoute } = await load('interface/web-server.js');
+  const {
+    PROMPTING_CATEGORIES,
+    builtInPromptingSkills,
+    parsePromptingSkill,
+  } = await load('models && skills/core/prompting-skills.js');
+  const { runAgentLoop } = await load('models && skills/core/agent-loop.js');
+  const { PromptingSkillRegistry } = await load('models && skills/core/prompting-skills.js');
+  const { STORE_KINDS, STORE_KIND_LABELS } = await load('models && skills/core/store.js');
+
+  check(STORE_KINDS.includes('prompting'),
+    `prompting skills are a real store section, so they travel like everything else (kinds: ${STORE_KINDS.join(', ')})`);
+  check(STORE_KIND_LABELS.prompting === 'Prompting Skills', 'the section has a human label');
+
+  check(PROMPTING_CATEGORIES.length === 3 &&
+    ['perception', 'cognitive', 'action'].every(c => PROMPTING_CATEGORIES.includes(c)),
+    `the three categories exist: ${PROMPTING_CATEGORIES.join(', ')}`);
+
+  // A fresh install must have a working loop rather than three empty steps.
+  const builtIns = builtInPromptingSkills();
+  for (const category of PROMPTING_CATEGORIES) {
+    check(builtIns.some(s => s.category === category),
+      `a fresh install already has a ${category} skill, so no step of the loop starts empty`);
+  }
+
+  // Publishing is open (it shares a document); installing changes how this
+  // machine's agent behaves and must NOT be open.
+  check(isStorePublicRoute('/api/prompting-skills/publish', 'POST'),
+    'publishing a prompting skill is open, like every other publish');
+  check(!isStorePublicRoute('/api/prompting-skills/install', 'POST'),
+    'installing one is NOT open -- publishing shares a document, installing changes how the agent runs');
+  check(!isStorePublicRoute('/api/prompting-skills/anything', 'DELETE'),
+    'uninstalling is not open either');
+
+  // Declarative, so installing a stranger's skill cannot execute their code.
+  const doc = parsePromptingSkill({ name: 'p', category: 'action', plugin: 'tools', input: '{goal}' });
+  check(typeof doc.plugin === 'string' && !('code' in doc) && !('script' in doc),
+    'a prompting skill names a plugin rather than carrying code, so installing one runs nothing on its own');
+
+  // The loop genuinely calls the installed skills, in order.
+  const seen = [];
+  const registry = new PromptingSkillRegistry();
+  registry.install(parsePromptingSkill({ name: 'see', category: 'perception', source: 'memory' }));
+  registry.install(parsePromptingSkill({ name: 'plan', category: 'cognitive', strategy: 'decompose' }));
+  registry.install(parsePromptingSkill({ name: 'act', category: 'action', plugin: 'tools' }));
+  const result = await runAgentLoop('reach the goal', registry, {
+    recall: () => { seen.push('perceive'); return ['a fact']; },
+    decompose: () => { seen.push('think'); return ['step one']; },
+    callPlugin: () => { seen.push('act'); return 'done'; },
+    isGoalMet: (_g, obs) => obs.includes('done'),
+  });
+  check(seen.join(' -> ') === 'perceive -> think -> act',
+    `the loop runs the skills in perceive-think-act order (${seen.join(' -> ')})`);
+  check(result.outcome === 'goal-met' && result.iterations === 1,
+    `it stops when the goal is met rather than burning iterations (${result.outcome}, ${result.iterations} iteration)`);
+
+  // Termination is always explained.
+  const stuck = await runAgentLoop('impossible', registry, { recall: () => ['x'], callPlugin: () => 'no', isGoalMet: () => false }, { maxIterations: 2 });
+  check(stuck.outcome === 'max-iterations' && stuck.iterations === 2,
+    'a loop that cannot finish stops at its ceiling and says so, instead of hanging');
+  const dead = await runAgentLoop('nothing wired up', registry, {}, { maxIterations: 9 });
+  check(dead.outcome === 'dead-end' && dead.iterations === 1,
+    'a loop with nothing to try stops immediately and reports a dead end, rather than looping to look busy');
 }
 
 async function testPublicStore() {
@@ -5036,6 +5131,7 @@ async function main() {
     ['Zip Loop neural data interface (bit-level I/O neurons)', testZipLoopInterface],
     ['Settle-loop optimizations preserve behavior exactly', testPropagateOptimizations],
     ['Mark wave: circle to star while the agent works', testMarkWaveAnimation],
+    ['Prompting skills: the perceive-think-act loop', testPromptingSkills],
     ['Public store: shared via the repo, open to publish, gated on destroy', testPublicStore],
     ['Tools plugin: exact local utilities, and a non-greedy dispatch contract', testToolsPlugin],
     ['Representation geometry: distance between embeddings actually means something', testEmbeddingGeometry],

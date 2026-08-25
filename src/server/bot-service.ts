@@ -12,6 +12,7 @@ import { logError, getRecentErrors, type LoggedError } from '../lib/error-log.js
 import { appendConversationTurn } from '../lib/conversation-log.js'
 import { triggerConversationLearning } from '../lib/conversation-learning-trigger.js'
 import { recordSkillMeshAttempt } from '../lib/skill-mesh-metrics.js'
+import { runAgentLoopForMessage } from '../../models && skills/core/agent-capabilities.js'
 
 /** A route the bot knows about and can reference/point users to. */
 export interface AppRoute {
@@ -54,6 +55,15 @@ export interface BotResponse {
     usedPlanning?: boolean
     /** Set when domain is 'skill' -- which trained skill's script answered directly (see ChatBot.matchSkillMesh()). */
     matchedSkill?: string
+    /**
+     * Set when domain is 'agent-loop' -- how the perceive-think-act run ended,
+     * how many iterations it took, and which installed prompting skills took
+     * part. Reported rather than summarised away: "the agent did something"
+     * should not be a claim anyone has to take on trust.
+     */
+    loopOutcome?: 'goal-met' | 'dead-end' | 'max-iterations'
+    loopIterations?: number
+    promptingSkills?: string[]
   }
   /** Set when this response reports an error, so callers can look it up via getRecentErrors(). */
   errorId?: string
@@ -297,6 +307,26 @@ export class ChatBot {
     // into the reasoner (ReasoningEngine's `recall` dependency) -- diluted,
     // and with no guarantee it was actually used. A confident direct match
     // returns the skill's own trained response verbatim instead.
+    // The perceive-think-act loop, running the installed prompting skills
+    // (see models && skills/core/prompting-skills.ts).
+    //
+    // It runs BEFORE the trained-skill fast path, and that ordering is not
+    // arbitrary -- I had it the other way round first and measured the
+    // difference. "calculate 17 * 23" matched a stale trained script and
+    // returned 60; the loop hands the same message to the Tools plugin and
+    // gets 391. A skill-mesh hit is fuzzy similarity against something
+    // memorised earlier, while an action skill firing means its own author
+    // wrote down that this kind of message is theirs. The explicit claim
+    // should win over the fuzzy one, and computing an answer should win over
+    // recalling a possibly-stale one.
+    //
+    // It is still narrow: it engages only when an installed ACTION skill's
+    // trigger claims the message, and only answers when it genuinely reached
+    // the goal. Everything else falls straight through to the behaviour that
+    // was already there.
+    const loop = await this.tryAgentLoop(userMessage)
+    if (loop) return loop
+
     const skillMatch = this.matchSkillMesh(userMessage)
     if (skillMatch) return skillMatch
 
@@ -332,6 +362,52 @@ export class ChatBot {
           metadata: { domain: result.domain },
         }
       }
+    }
+  }
+
+  /**
+   * Runs the prompting-skill loop for this message, or returns null to leave
+   * the existing behaviour alone.
+   *
+   * Null in three cases, each of which means "the loop is not the right answer
+   * here": no system, no installed action skill claims the message, or the
+   * loop ran and did not reach the goal. The last one is deliberate -- the
+   * work is not wasted (the trace is kept and returned on the responses that
+   * do come from the loop), but a partial attempt must not displace a pipeline
+   * that can still answer properly.
+   *
+   * Never throws into the chat path. A prompting skill can be published by
+   * anyone, and a bad one must degrade to "the loop contributed nothing"
+   * rather than taking down the reply.
+   */
+  private async tryAgentLoop(userMessage: string): Promise<BotResponse | null> {
+    if (!this.system) return null
+    try {
+      const run = await runAgentLoopForMessage(userMessage, this.system)
+      if (!run || !run.answered) return null
+      const skillsUsed = [...new Set(run.result.steps.map(s => s.skill).filter(Boolean))] as string[]
+      return {
+        message: run.message,
+        confidence: 0.9,
+        suggestions: this.generateSuggestions(userMessage, run.message, 'agent-loop'),
+        metadata: {
+          domain: 'agent-loop',
+          // The trace is reported rather than summarised away: "the agent did
+          // something" is not a claim anyone should have to take on trust.
+          loopOutcome: run.result.outcome,
+          loopIterations: run.result.iterations,
+          promptingSkills: skillsUsed,
+        },
+      }
+    } catch (error) {
+      // Logged, not swallowed. A prompting skill can be published by anyone,
+      // so a bad one must not take down the reply -- but a loop that failed
+      // silently is indistinguishable from one that decided not to answer,
+      // and that cost me an hour of chasing the wrong thing. The user still
+      // gets the normal pipeline's answer; the failure is recoverable via
+      // getRecentErrors().
+      logError('bot-service.tryAgentLoop', error, { userMessage })
+      return null
     }
   }
 

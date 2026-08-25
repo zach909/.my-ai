@@ -49,6 +49,9 @@ function wavePath(lobes: number, amplitude: number, rotation: number): string {
 /** Each store section gets its own hue family, so kind is readable at a glance. */
 const KIND_HUE: Record<string, number> = {
   skills: 205,
+  // Prompting skills sit between skills and plugins visually because that is
+  // what they are: a skill that changes how the agent works, not what it knows.
+  prompting: 235,
   plugins: 265,
   binaries: 25,
   source: 150,

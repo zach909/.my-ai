@@ -1,7 +1,7 @@
 {
   "name": "neuroclaw-desktop",
   "version": "1.0.0",
-  "description": "NeuroClaw — local-first AI agent, powered by the OneBrain neural mesh",
+  "description": "NeuroClaw \u2014 local-first AI agent, powered by the OneBrain neural mesh",
   "main": "src/main/main.js",
   "scripts": {
     "start": "electron .",
@@ -10,7 +10,12 @@
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",
     "build:linux": "electron-builder --linux",
-    "build:all": "electron-builder -mwl"
+    "build:all": "electron-builder -mwl",
+    "prebuild": "node ../scripts/stage-desktop-dist.mjs",
+    "prebuild:win": "node ../scripts/stage-desktop-dist.mjs",
+    "prebuild:mac": "node ../scripts/stage-desktop-dist.mjs",
+    "prebuild:linux": "node ../scripts/stage-desktop-dist.mjs",
+    "prebuild:all": "node ../scripts/stage-desktop-dist.mjs"
   },
   "keywords": [
     "electron",
@@ -90,7 +95,7 @@
     "publish": null,
     "extraResources": [
       {
-        "from": "../dist",
+        "from": "../desktop-app/.staged-dist",
         "to": "dist",
         "filter": [
           "**/*"
