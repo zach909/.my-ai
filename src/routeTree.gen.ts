@@ -17,6 +17,7 @@ import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppStoreRouteImport } from './routes/app/store'
 import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
 import { Route as AppPlanningRouteImport } from './routes/app/planning'
+import { Route as AppMemoryRouteImport } from './routes/app/memory'
 import { Route as AppKnowledgeRouteImport } from './routes/app/knowledge'
 import { Route as AppExperimentsRouteImport } from './routes/app/experiments'
 import { Route as AppEvaluationRouteImport } from './routes/app/evaluation'
@@ -63,6 +64,11 @@ const AppSelfImprovementRoute = AppSelfImprovementRouteImport.update({
 const AppPlanningRoute = AppPlanningRouteImport.update({
   id: '/planning',
   path: '/planning',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppMemoryRoute = AppMemoryRouteImport.update({
+  id: '/memory',
+  path: '/memory',
   getParentRoute: () => AppRoute,
 } as any)
 const AppKnowledgeRoute = AppKnowledgeRouteImport.update({
@@ -113,6 +119,7 @@ export interface FileRoutesByFullPath {
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/store': typeof AppStoreRoute
@@ -129,6 +136,7 @@ export interface FileRoutesByTo {
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/store': typeof AppStoreRoute
@@ -147,6 +155,7 @@ export interface FileRoutesById {
   '/app/evaluation': typeof AppEvaluationRoute
   '/app/experiments': typeof AppExperimentsRoute
   '/app/knowledge': typeof AppKnowledgeRoute
+  '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/store': typeof AppStoreRoute
@@ -166,6 +175,7 @@ export interface FileRouteTypes {
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
+    | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/store'
@@ -182,6 +192,7 @@ export interface FileRouteTypes {
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
+    | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/store'
@@ -199,6 +210,7 @@ export interface FileRouteTypes {
     | '/app/evaluation'
     | '/app/experiments'
     | '/app/knowledge'
+    | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
     | '/app/store'
@@ -270,6 +282,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppPlanningRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/memory': {
+      id: '/app/memory'
+      path: '/memory'
+      fullPath: '/app/memory'
+      preLoaderRoute: typeof AppMemoryRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/knowledge': {
       id: '/app/knowledge'
       path: '/knowledge'
@@ -330,6 +349,7 @@ interface AppRouteChildren {
   AppEvaluationRoute: typeof AppEvaluationRoute
   AppExperimentsRoute: typeof AppExperimentsRoute
   AppKnowledgeRoute: typeof AppKnowledgeRoute
+  AppMemoryRoute: typeof AppMemoryRoute
   AppPlanningRoute: typeof AppPlanningRoute
   AppSelfImprovementRoute: typeof AppSelfImprovementRoute
   AppStoreRoute: typeof AppStoreRoute
@@ -344,6 +364,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppEvaluationRoute: AppEvaluationRoute,
   AppExperimentsRoute: AppExperimentsRoute,
   AppKnowledgeRoute: AppKnowledgeRoute,
+  AppMemoryRoute: AppMemoryRoute,
   AppPlanningRoute: AppPlanningRoute,
   AppSelfImprovementRoute: AppSelfImprovementRoute,
   AppStoreRoute: AppStoreRoute,

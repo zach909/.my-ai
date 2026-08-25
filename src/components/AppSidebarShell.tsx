@@ -54,6 +54,9 @@ const NAV_ITEMS: NavItemDef[] = [
   // shared chat are tabs of /app/store, because they are all the same activity
   // -- publishing things and reading what other people published.
   { href: '/app/store', icon: <Store className="h-4 w-4" />, label: 'Store' },
+  // Its own entry rather than a Store tab: what the agent remembers is not
+  // something anyone published, and it is not shared with anyone.
+  { href: '/app/memory', icon: <Brain className="h-4 w-4" />, label: 'Memory' },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {
