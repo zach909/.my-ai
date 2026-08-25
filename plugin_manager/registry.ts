@@ -2,6 +2,16 @@ import type { PluginDefinition, SkillDefinition } from "./types.js";
 import type { BasePlugin, PluginContext, PluginLogger } from "./sdk.js";
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
 import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import { CapabilityRouter, type Ranked } from "./capability-router.js";
+
+/**
+ * How many of the ranked plugins are actually called before giving up.
+ *
+ * Scoring is free; calling is not. Four is enough for the top choice to be
+ * wrong twice and still be recovered, and few enough that a message nothing
+ * can handle does not run a third of the plugin set to discover that.
+ */
+const MAX_PLUGINS_TRIED = 4;
 
 /** Strips anything but alphanumerics/hyphen/underscore, so the id can never contain a path separator or "..". */
 function sanitizePluginIdForPath(pluginId: string): string {
@@ -15,6 +25,10 @@ export class PluginRegistry {
   private skillPluginMap: Map<string, string> = new Map();
   private activePlugins: Set<string> = new Set();
   private intentMap: Record<string, string[]> = {};
+  private readonly router = new CapabilityRouter();
+  private routerStale = true;
+  private lastRouting: Ranked[] = [];
+  private lastHandledBy: string | null = null;
   /**
    * The shared neural mesh every registered plugin gets real neurons in --
    * "Plugins": a plugin's neurons connect into the main neural network so
@@ -45,6 +59,10 @@ export class PluginRegistry {
   register(definition: PluginDefinition, instance: BasePlugin): void {
     this.definitions.set(definition.id, definition);
     this.plugins.set(definition.id, instance);
+    // The routing index is a function of the plugin set, so it has to be
+    // rebuilt when that set changes -- not per message, which is the cost this
+    // whole design exists to avoid.
+    this.routerStale = true;
     // Give the plugin real neurons in the shared mesh, wired all-to-all into
     // everything else already there (addExpert() -> NeuronMesh.addNode()).
     // skill-expert plugins get a full MoE expert group (multiple neurons,
@@ -75,6 +93,7 @@ export class PluginRegistry {
     const context = this.createContext(pluginId);
     await plugin.onActivate(context);
     this.activePlugins.add(pluginId);
+    this.routerStale = true;
   }
 
   async deactivate(pluginId: string): Promise<void> {
@@ -84,6 +103,7 @@ export class PluginRegistry {
     }
     await plugin.onDeactivate();
     this.activePlugins.delete(pluginId);
+    this.routerStale = true;
   }
 
   registerSkill(skill: SkillDefinition, pluginId: string): void {
@@ -159,12 +179,47 @@ export class PluginRegistry {
     }
   }
 
+  /**
+   * Each plugin's manifest capability strings, so a plugin that never declares
+   * anything is still findable by what its definition already says it does.
+   */
+  private pluginManifestCapabilities(): Record<string, string[]> {
+    const out: Record<string, string[]> = {};
+    for (const [id, def] of this.definitions) out[id] = (def.capabilities ?? []) as string[];
+    return out;
+  }
+
+  /** Force a rebuild of the routing index. Called whenever the plugin set changes. */
+  invalidateRouting(): void {
+    this.routerStale = true;
+  }
+
+  /**
+   * Rebuild the index if the plugin set has changed since it was last built.
+   *
+   * Every entry point that consults the router goes through here. dispatch()
+   * used to do this inline, which meant rankPlugins() -- the read-only "who
+   * would handle this" question -- consulted an index that was never built and
+   * silently returned nothing for every message.
+   */
+  private ensureRoutingIndex(): void {
+    if (!this.routerStale) return;
+    this.router.reindex(this.plugins, this.pluginManifestCapabilities());
+    this.routerStale = false;
+  }
+
   setIntentMap(map: Record<string, string[]>): void {
     this.intentMap = map;
   }
 
-  // Route an input to the most relevant active plugin based on intent keyword
-  async dispatch(input: string, intent: string): Promise<string | null> {
+  /**
+   * The intent map's suggestions for an intent.
+   *
+   * Still useful -- it encodes real knowledge about which plugin handles which
+   * kind of request -- but it is now advice the router weighs, not the entire
+   * decision. See dispatch() for why that distinction matters.
+   */
+  private intentCandidatesFor(intent: string): string[] {
     const intentToPlugins: Record<string, string[]> = {
       ...{
         command: ['tools', 'self-heal', 'terminal', 'file-system'],
@@ -209,7 +264,14 @@ export class PluginRegistry {
     };
     // Unmapped intents (plain conversation) get no plugin candidates — the
     // runner falls through to full neural generation instead of a web search.
-    const baseCandidates = intentToPlugins[intent] ?? [];
+    return intentToPlugins[intent] ?? [];
+  }
+
+  // Route an input to the most relevant active plugin, scoring every plugin's
+  // declared capabilities rather than walking a hardcoded list.
+  async dispatch(input: string, intent: string): Promise<string | null> {
+    this.ensureRoutingIndex();
+    const baseCandidates = this.intentCandidatesFor(intent);
 
     // THORNS' 'command'/'creation' intents come from generic verbs ("make",
     // "create", "write", ...) with no sense of WHAT is being made -- e.g.
@@ -241,19 +303,52 @@ export class PluginRegistry {
       }
     }
 
-    for (const pluginId of candidates) {
+    // The intent map above is now a PRIOR, not a gate. It used to be the whole
+    // routing decision, and 26 of the 35 registered plugins appeared nowhere
+    // in it -- store, research, email, calendar, camera, robotics, the coding
+    // and image skills -- so no message could ever reach them. The router
+    // scores every plugin's declared capabilities against the message and
+    // orders them; the intent map's suggestions get a boost inside that
+    // scoring rather than deciding the outcome alone.
+    const ranked = this.router.rank(input, candidates);
+    const ordered = ranked.map(r => r.id).filter(id => this.activePlugins.has(id));
+    this.lastRouting = ranked.slice(0, 5);
+
+    // Only the best few are actually called. Scoring does not execute plugin
+    // code, so the expensive part is now bounded: previously every candidate
+    // that could not handle a message still paid a full onMessage() to find
+    // that out, including whatever disk or network work it did first.
+    for (const pluginId of ordered.slice(0, MAX_PLUGINS_TRIED)) {
       const plugin = this.plugins.get(pluginId);
-      if (plugin && this.activePlugins.has(pluginId)) {
-        try {
-          const result = await plugin.onMessage?.(input);
-          if (result != null) {
-            this.firePluginNeurons(pluginId);
-            return typeof result === "string" ? result : JSON.stringify(result);
-          }
-        } catch { /* plugin failed, try next */ }
-      }
+      if (!plugin) continue;
+      try {
+        const result = await plugin.onMessage?.(input);
+        if (result != null) {
+          this.firePluginNeurons(pluginId);
+          this.lastHandledBy = pluginId;
+          return typeof result === "string" ? result : JSON.stringify(result);
+        }
+      } catch { /* plugin failed, try next */ }
     }
+    this.lastHandledBy = null;
     return null;
+  }
+
+  /**
+   * How the last message was routed, and who answered.
+   *
+   * Exposed because a routing decision nobody can inspect is a routing
+   * decision nobody can fix -- the previous table was wrong for 26 plugins
+   * and nothing in the system said so.
+   */
+  explainLastRouting(): { considered: Ranked[]; handledBy: string | null } {
+    return { considered: this.lastRouting, handledBy: this.lastHandledBy };
+  }
+
+  /** Rank plugins for a message without calling any of them. */
+  rankPlugins(input: string, intent = ""): Ranked[] {
+    this.ensureRoutingIndex();
+    return this.router.rank(input, this.intentCandidatesFor(intent));
   }
 
   /**

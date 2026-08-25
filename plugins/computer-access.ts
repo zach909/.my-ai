@@ -83,6 +83,14 @@ export class ComputerAccessPlugin extends BasePlugin {
     return lines.join("\n");
   }
 
+  describeCapabilities() {
+    return {
+      commands: ["computer access", "access", "desktop probe", "probe"],
+      verbs: ["turn", "disable", "enable", "grant", "revoke", "control", "observe"],
+      nouns: ["access", "permission", "capability", "desktop", "gnome", "window", "screen", "terminal", "switch"],
+    };
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = (typeof message === "string" ? message : String(message ?? "")).trim();
     if (!input) return null;
