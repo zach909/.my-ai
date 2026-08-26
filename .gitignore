@@ -87,3 +87,10 @@ desktop-app/node_modules/
 # .gitmodules, so every clone got a submodule entry git could not populate.
 # Ignored so the same accident cannot be committed again.
 .my-ai/
+
+# Probe files written by test/smoke.mjs into the LIVE extensions directory
+# (it has to, since it tests the boot loader that reads from there). They are
+# deleted after each run now; ignored so an interrupted run cannot commit one.
+extension-builder/extensions/autoload_probe_*
+extension-builder/extensions/source_autoload_probe_*
+extension-builder/extensions/good_bits_test_*

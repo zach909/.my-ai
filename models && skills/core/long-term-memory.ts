@@ -285,23 +285,31 @@ export class LongTermMemory {
   }
 
   private evictIfNeeded(): void {
-    if (this.items.size <= this.capacity) return;
-    const now = Date.now();
-    // Pinned memories are installed knowledge, not observations, so they
-    // are never candidates. Capacity therefore bounds what the system
-    // picked up on its own -- which is the thing that grows without limit
-    // -- and never silently deletes something the user installed.
+    // Pinned memories are installed knowledge, not observations, so they are
+    // never candidates. Capacity therefore bounds what the system picked up on
+    // its own -- which is the thing that grows without limit -- and never
+    // silently deletes something the user installed.
+    //
+    // That was the stated intent, and the code did something else: it compared
+    // items.size, which INCLUDES pinned, against capacity. On this machine
+    // that meant 3347 pinned installed memories against a capacity of 2000, so
+    // toRemove came out at 1347, capped at the number of evictable items --
+    // which evicted every unpinned memory in the store, on every single
+    // insert. Measured: five new memories at importance 0.9, none survived.
+    // The agent could not form a new memory at all, and nothing said so.
     const evictable = this.all().filter(item => !item.pinned);
+    if (evictable.length <= this.capacity) return;
+    const now = Date.now();
     const ranked = evictable.map(item => {
       const recency = Math.exp(-(now - item.lastAccess) / (1000 * 60 * 60 * 24));
       const retention = item.importance * 0.6 + recency * 0.25 + Math.min(1, item.accessCount / 10) * 0.15;
       return { item, retention };
     });
     ranked.sort((a, b) => a.retention - b.retention);
-    // Capped at what is actually evictable: when pinned items alone reach
-    // capacity the store is allowed to exceed it rather than start
-    // deleting them.
-    const toRemove = Math.min(this.items.size - this.capacity, ranked.length);
+    // Measured against the evictable population, not the total: when pinned
+    // items alone exceed capacity the store is allowed to be larger rather
+    // than emptying itself of everything it has learned since.
+    const toRemove = Math.min(evictable.length - this.capacity, ranked.length);
     for (let i = 0; i < toRemove; i++) {
       const removeId = ranked[i].item.id;
       this.items.delete(removeId);
