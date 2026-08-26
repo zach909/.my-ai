@@ -101,6 +101,25 @@ if (process.env.NEUROCLAW_SKILL_DRILLS !== '0') {
   console.log('[server] skill-drill agent disabled (NEUROCLAW_SKILL_DRILLS=0)')
 }
 
+// The sixth agent, and the only one whose job is to stop things getting worse
+// rather than to make the system do more. It checks for the specific kinds of
+// rot this codebase reliably produces -- code with no call path, test files
+// accumulating where the running system loads them, the repository containing
+// itself, a memory store that can no longer accept anything new -- against a
+// baseline that only ever moves in the improving direction, so a regression
+// stays visible until it is fixed instead of quietly becoming the new normal.
+//
+// It deletes known test leftovers and nothing else. It does not edit code or
+// revert commits: an autonomous process that rewrites the program while nobody
+// is watching is a far worse failure than one that files an accurate complaint.
+if (process.env.CORONA_OPTIMIZE_AGENT !== '0') {
+  console.log('[server] starting optimization agent (watches for regressions, cleans test leftovers)...')
+  const optimizer = spawn('node', ['scripts/optimize-agent.mjs'], { cwd: ROOT, stdio: 'inherit', env: childEnv })
+  children.push(optimizer)
+} else {
+  console.log('[server] optimization agent disabled (CORONA_OPTIMIZE_AGENT=0)')
+}
+
 if (process.env.NEUROCLAW_PEER_SYNC !== '0') {
   const peerPort = Number(process.env.NEUROCLAW_PEER_PORT) || DEFAULT_PEER_PORT
   console.log(`[server] starting peer-sync listener on port ${peerPort}...`)

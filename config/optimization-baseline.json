@@ -1,0 +1,18 @@
+{
+  "test-leftovers": {
+    "value": 0,
+    "at": "2026-08-26T12:24:11.997Z"
+  },
+  "unexplained-gitlinks": {
+    "value": 0,
+    "at": "2026-08-26T12:24:13.550Z"
+  },
+  "tested-but-unreachable": {
+    "value": 22,
+    "at": "2026-08-26T12:24:13.550Z"
+  },
+  "memory-accepts-new": {
+    "value": 1,
+    "at": "2026-08-26T12:24:13.550Z"
+  }
+}
