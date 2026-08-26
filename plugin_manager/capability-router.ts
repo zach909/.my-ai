@@ -93,6 +93,107 @@ export function tokenize(text: string): string[] {
     .map(stem);
 }
 
+
+/**
+ * What actually worked, remembered.
+ *
+ * The declarations and the intent map are both guesses written in advance by
+ * someone imagining how people would phrase things. This is the part that does
+ * not have to guess: when a plugin genuinely handles a message, the terms of
+ * that message become evidence for it, and the next similar message routes
+ * better than the author's imagination allowed.
+ *
+ * Three deliberate limits, because a system that learns from its own output
+ * can also learn to be confidently wrong:
+ *
+ *   The boost is CAPPED, well below what an exact command match scores. A
+ *   plugin cannot promote itself past someone typing another plugin's literal
+ *   syntax, however often it has succeeded before.
+ *
+ *   Evidence DECAYS. Old successes fade, so a plugin that used to handle
+ *   something and no longer does stops winning on reputation. Without this the
+ *   first plugin to answer a phrasing owns it permanently.
+ *
+ *   Only genuine successes count -- a plugin returning null has declined, and
+ *   declining teaches nothing. Recording attempts rather than successes would
+ *   teach the router that whatever gets tried first is what works.
+ */
+const MAX_LEARNED_BOOST = 12;
+const DECAY_PER_RECORD = 0.995;
+const MIN_EVIDENCE = 0.05;
+/** Bounded so a long-running instance cannot grow this without limit. */
+const MAX_LEARNED_TERMS = 4000;
+
+export interface LearnedEvidence {
+  [term: string]: { [pluginId: string]: number };
+}
+
+export class RoutingMemory {
+  private evidence: LearnedEvidence = {};
+  private records = 0;
+
+  /** A plugin genuinely handled this message. */
+  recordSuccess(input: string, pluginId: string): void {
+    const terms = new Set(tokenize(input));
+    if (terms.size === 0) return;
+    this.records++;
+
+    for (const term of terms) {
+      const forTerm = (this.evidence[term] ??= {});
+      // Weighted by how specific the message was: a term from a five-word
+      // request is stronger evidence than one from a rambling paragraph where
+      // most words had nothing to do with why the plugin matched.
+      forTerm[pluginId] = (forTerm[pluginId] ?? 0) + 1 / Math.sqrt(terms.size);
+    }
+
+    // Decay everything periodically rather than on every record: the point is
+    // that old evidence fades, not that it fades smoothly.
+    if (this.records % 25 === 0) this.decay();
+    if (Object.keys(this.evidence).length > MAX_LEARNED_TERMS) this.prune();
+  }
+
+  private decay(): void {
+    for (const [term, plugins] of Object.entries(this.evidence)) {
+      for (const [id, weight] of Object.entries(plugins)) {
+        const next = weight * DECAY_PER_RECORD ** 25;
+        if (next < MIN_EVIDENCE) delete plugins[id];
+        else plugins[id] = next;
+      }
+      if (Object.keys(plugins).length === 0) delete this.evidence[term];
+    }
+  }
+
+  /** Drop the weakest terms when the table grows past its bound. */
+  private prune(): void {
+    const strength = (plugins: Record<string, number>) => Math.max(...Object.values(plugins));
+    const ranked = Object.entries(this.evidence).sort((a, b) => strength(b[1]) - strength(a[1]));
+    this.evidence = Object.fromEntries(ranked.slice(0, MAX_LEARNED_TERMS));
+  }
+
+  /** How much this plugin has earned for these terms, capped. */
+  boostFor(pluginId: string, terms: Set<string>): number {
+    let total = 0;
+    for (const term of terms) total += this.evidence[term]?.[pluginId] ?? 0;
+    return Math.min(MAX_LEARNED_BOOST, total);
+  }
+
+  /** Everything learned, for persisting or inspecting. */
+  export(): { evidence: LearnedEvidence; records: number } {
+    return { evidence: this.evidence, records: this.records };
+  }
+
+  import(data: { evidence?: LearnedEvidence; records?: number } | null | undefined): void {
+    if (!data || typeof data.evidence !== "object" || !data.evidence) return;
+    this.evidence = data.evidence;
+    this.records = Number(data.records) || 0;
+  }
+
+  /** How many distinct terms carry evidence. */
+  size(): number {
+    return Object.keys(this.evidence).length;
+  }
+}
+
 interface IndexedPlugin {
   id: string;
   commands: string[];
@@ -117,6 +218,7 @@ export interface Ranked {
  */
 export class CapabilityRouter {
   private index: IndexedPlugin[] = [];
+  readonly memory = new RoutingMemory();
 
   /** Rebuild from the live plugin set. Cheap, and only called when that set changes. */
   reindex(plugins: Map<string, BasePlugin>, fallbackCapabilities: Record<string, string[]> = {}): void {
@@ -156,6 +258,14 @@ export class CapabilityRouter {
   }
 
   /**
+   * A plugin genuinely handled this message. Only call this on a real success
+   * -- see RoutingMemory for why recording attempts would teach the wrong thing.
+   */
+  learn(input: string, pluginId: string): void {
+    this.memory.recordSuccess(input, pluginId);
+  }
+
+  /**
    * Rank plugins for a message. Never executes anything.
    *
    * @param intentCandidates plugin ids the intent map suggested, as a prior.
@@ -191,6 +301,14 @@ export class CapabilityRouter {
       if (prior !== undefined) {
         score += Math.max(1, 6 - prior);
         if (!reason) reason = "suggested by intent";
+      }
+
+      // What has actually worked before, capped so it can inform routing
+      // without overriding an explicit command.
+      const learned = this.memory.boostFor(entry.id, terms);
+      if (learned > 0) {
+        score += learned;
+        if (!reason) reason = "handled similar requests before";
       }
 
       score += entry.weight;

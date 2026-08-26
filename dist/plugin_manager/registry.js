@@ -1,5 +1,6 @@
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
 import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import * as nodeFs from "node:fs";
 import { CapabilityRouter } from "./capability-router.js";
 /**
  * How many of the ranked plugins are actually called before giving up.
@@ -25,6 +26,8 @@ export class PluginRegistry {
         this.routerStale = true;
         this.lastRouting = [];
         this.lastHandledBy = null;
+        this.routingWrites = 0;
+        this.routingLoaded = false;
         /** Each registered plugin's neuron ids in `moe`'s shared mesh, set once in register(). */
         this.pluginNeuronIds = new Map();
         this.moe = moe ?? new MixtureOfExperts();
@@ -146,6 +149,55 @@ export class PluginRegistry {
             out[id] = (def.capabilities ?? []);
         return out;
     }
+    /**
+     * Where what-actually-worked is kept between runs.
+     *
+     * Routing that relearns from nothing on every restart is routing that never
+     * gets better than the day it was written, which is the whole point of
+     * learning it.
+     */
+    routingMemoryPath() {
+        return process.env.CORONA_ROUTING_FILE ?? "config/routing.json";
+    }
+    /** Load previously learned routing. Never throws -- a bad file means start fresh. */
+    loadRoutingMemory() {
+        try {
+            // eslint-disable-next-line @typescript-eslint/no-var-requires
+            const { readFileSync, existsSync } = nodeFs;
+            const file = this.routingMemoryPath();
+            if (!existsSync(file))
+                return;
+            this.router.memory.import(JSON.parse(readFileSync(file, "utf8")));
+        }
+        catch {
+            /* unreadable or malformed: start with no learned evidence */
+        }
+    }
+    /**
+     * Write learned routing to disk, at most every 25 successes.
+     *
+     * Throttled because dispatch is the hottest path in the system and a
+     * synchronous write per message would put a disk round trip in front of
+     * every reply.
+     */
+    persistRouting() {
+        this.routingWrites++;
+        if (this.routingWrites % 25 !== 0)
+            return;
+        try {
+            const { writeFileSync, mkdirSync } = nodeFs;
+            const file = this.routingMemoryPath();
+            mkdirSync(file.slice(0, file.lastIndexOf("/")) || ".", { recursive: true });
+            writeFileSync(file, JSON.stringify(this.router.memory.export()), "utf8");
+        }
+        catch {
+            /* a read-only or full disk must not break dispatch */
+        }
+    }
+    /** What routing has learned so far, for inspection. */
+    routingMemorySize() {
+        return this.router.memory.size();
+    }
     /** Force a rebuild of the routing index. Called whenever the plugin set changes. */
     invalidateRouting() {
         this.routerStale = true;
@@ -159,6 +211,14 @@ export class PluginRegistry {
      * silently returned nothing for every message.
      */
     ensureRoutingIndex() {
+        // Learned routing is loaded once, on the first build. Doing it here rather
+        // than in the constructor means it happens after the environment is set
+        // up, and means there is exactly one path -- a load() nothing calls is the
+        // same as not persisting at all, which is what this nearly shipped as.
+        if (!this.routingLoaded) {
+            this.routingLoaded = true;
+            this.loadRoutingMemory();
+        }
         if (!this.routerStale)
             return;
         this.router.reindex(this.plugins, this.pluginManifestCapabilities());
@@ -280,6 +340,11 @@ export class PluginRegistry {
                 if (result != null) {
                     this.firePluginNeurons(pluginId);
                     this.lastHandledBy = pluginId;
+                    // Learned only on a genuine success. A plugin returning null has
+                    // declined, and recording attempts instead would teach the router
+                    // that whatever happens to be tried first is what works.
+                    this.router.learn(input, pluginId);
+                    this.persistRouting();
                     return typeof result === "string" ? result : JSON.stringify(result);
                 }
             }

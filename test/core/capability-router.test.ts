@@ -166,3 +166,72 @@ describe('tokenizing', () => {
     expect(new Set(['cat', 'car', 'can'].map(stem)).size).toBe(3)
   })
 })
+
+describe('learning from what actually worked', () => {
+  it('routes better after seeing a plugin succeed on that phrasing', () => {
+    // "handle the widget" matches nothing anyone declared.
+    expect(router.rank('handle the widget')).toEqual([])
+    for (let i = 0; i < 5; i++) router.learn('handle the widget', 'tools')
+    expect(router.rank('handle the widget')[0].id).toBe('tools')
+  })
+
+  it('generalises to a related phrasing, not just the exact words', () => {
+    for (let i = 0; i < 8; i++) router.learn('sort out the widget assembly', 'tools')
+    // Different sentence, shared terms.
+    expect(router.rank('the widget needs assembly')[0].id).toBe('tools')
+  })
+
+  it('cannot outvote someone typing another plugin’s literal command', () => {
+    // Heavily reward the wrong plugin for these exact words.
+    for (let i = 0; i < 200; i++) router.learn('store install skills demo', 'wiki')
+    const ranked = router.rank('store install skills demo')
+    expect(ranked[0].id).toBe('store')
+  })
+
+  it('caps how much reputation any one plugin can accumulate', () => {
+    for (let i = 0; i < 500; i++) router.learn('widget', 'tools')
+    const withLearning = router.rank('widget')[0].score
+    expect(withLearning).toBeLessThanOrEqual(12 + 1)
+  })
+
+  it('fades old evidence rather than letting the first answer own a phrase forever', () => {
+    for (let i = 0; i < 10; i++) router.learn('gadget', 'wiki')
+    const early = router.rank('gadget').find(r => r.id === 'wiki')!.score
+    // Lots of unrelated activity, which is what decays the old evidence.
+    for (let i = 0; i < 400; i++) router.learn(`unrelated topic number ${i}`, 'camera')
+    const later = router.rank('gadget').find(r => r.id === 'wiki')!.score
+    expect(later).toBeLessThan(early)
+  })
+
+  it('learns nothing from an empty or filler-only message', () => {
+    const before = router.memory.size()
+    router.learn('', 'tools')
+    router.learn('the a of to', 'tools')
+    expect(router.memory.size()).toBe(before)
+  })
+
+  it('survives a save and reload', () => {
+    for (let i = 0; i < 5; i++) router.learn('handle the widget', 'tools')
+    const saved = JSON.parse(JSON.stringify(router.memory.export()))
+
+    const fresh = new CapabilityRouter()
+    fresh.reindex(plugins, {})
+    expect(fresh.rank('handle the widget')).toEqual([])
+    fresh.memory.import(saved)
+    expect(fresh.rank('handle the widget')[0].id).toBe('tools')
+  })
+
+  it('ignores a corrupt saved file rather than refusing to route', () => {
+    const fresh = new CapabilityRouter()
+    fresh.reindex(plugins, {})
+    for (const bad of [null, undefined, {}, { evidence: 'not an object' }]) {
+      expect(() => fresh.memory.import(bad as never)).not.toThrow()
+    }
+    expect(fresh.rank('store install skills demo')[0].id).toBe('store')
+  })
+
+  it('stays bounded no matter how much it sees', () => {
+    for (let i = 0; i < 6000; i++) router.learn(`distinct phrase number ${i} here`, 'tools')
+    expect(router.memory.size()).toBeLessThanOrEqual(4000)
+  })
+})

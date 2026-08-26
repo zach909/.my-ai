@@ -39,7 +39,15 @@ export interface AgentHost {
    * exactly why the agent could never reach the web before this.
    */
   research?: { searchWeb: (query: string, maxResults?: number) => Promise<Array<{ title?: string; snippet?: string; url?: string }>> };
-  pluginRegistry?: { getPluginInstance: (id: string) => { onMessage?: (m: unknown) => Promise<unknown> } | undefined };
+  pluginRegistry?: {
+    getPluginInstance: (id: string) => { onMessage?: (m: unknown) => Promise<unknown> } | undefined;
+    /**
+     * Scores plugins against a message without running any of them. Optional
+     * so a host that predates the capability router still works -- it simply
+     * loses tool discovery, not the ability to call a plugin by name.
+     */
+    rankPlugins?: (input: string, intent?: string) => Array<{ id: string; score: number; reason: string }>;
+  };
 }
 
 /** How many memory hits / wiki pages / store items one perception step returns. */
@@ -199,6 +207,48 @@ export function buildAgentCapabilities(host: AgentHost): AgentCapabilities {
       const result = textOf(await instance.onMessage(input));
       lastActionResult = result.trim().length > 0 ? result : null;
       return result;
+    };
+  }
+
+  if (host.pluginRegistry?.rankPlugins) {
+    /**
+     * Which plugin should handle this, without calling anything.
+     *
+     * The agent could previously only reach a plugin whose id a prompting
+     * skill had hardcoded, which meant it could not use any tool nobody had
+     * written a skill for -- and there are 35 plugins. Discovery is the
+     * difference between "the agent has tools" and "the agent can find the
+     * right tool".
+     */
+    caps.findPlugin = (task: string) => host.pluginRegistry!.rankPlugins!(task).slice(0, 3);
+
+    /**
+     * Pick the best plugin for a task and call it, falling through to the next
+     * when one declines.
+     *
+     * Bounded to three: a plugin that returns null has genuinely declined, and
+     * walking the whole ranked list to find that out is exactly the
+     * try-everything cost the router exists to avoid.
+     */
+    caps.useBestTool = async (task: string) => {
+      const ranked = host.pluginRegistry!.rankPlugins!(task).slice(0, 3);
+      for (const candidate of ranked) {
+        const instance = host.pluginRegistry!.getPluginInstance(candidate.id);
+        if (!instance?.onMessage) continue;
+        try {
+          const result = textOf(await instance.onMessage(task));
+          if (result.trim().length > 0) {
+            lastActionResult = result;
+            return { plugin: candidate.id, result, why: candidate.reason };
+          }
+        } catch {
+          // A plugin that throws has not handled the task; try the next rather
+          // than failing the whole step, which would make one broken plugin
+          // able to stop the agent using any of the others.
+        }
+      }
+      lastActionResult = null;
+      return null;
     };
   }
 

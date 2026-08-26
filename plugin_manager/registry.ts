@@ -2,6 +2,7 @@ import type { PluginDefinition, SkillDefinition } from "./types.js";
 import type { BasePlugin, PluginContext, PluginLogger } from "./sdk.js";
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
 import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import * as nodeFs from "node:fs";
 import { CapabilityRouter, type Ranked } from "./capability-router.js";
 
 /**
@@ -29,6 +30,8 @@ export class PluginRegistry {
   private routerStale = true;
   private lastRouting: Ranked[] = [];
   private lastHandledBy: string | null = null;
+  private routingWrites = 0;
+  private routingLoaded = false;
   /**
    * The shared neural mesh every registered plugin gets real neurons in --
    * "Plugins": a plugin's neurons connect into the main neural network so
@@ -189,6 +192,55 @@ export class PluginRegistry {
     return out;
   }
 
+  /**
+   * Where what-actually-worked is kept between runs.
+   *
+   * Routing that relearns from nothing on every restart is routing that never
+   * gets better than the day it was written, which is the whole point of
+   * learning it.
+   */
+  private routingMemoryPath(): string {
+    return process.env.CORONA_ROUTING_FILE ?? "config/routing.json";
+  }
+
+  /** Load previously learned routing. Never throws -- a bad file means start fresh. */
+  loadRoutingMemory(): void {
+    try {
+      // eslint-disable-next-line @typescript-eslint/no-var-requires
+      const { readFileSync, existsSync } = nodeFs;
+      const file = this.routingMemoryPath();
+      if (!existsSync(file)) return;
+      this.router.memory.import(JSON.parse(readFileSync(file, "utf8")));
+    } catch {
+      /* unreadable or malformed: start with no learned evidence */
+    }
+  }
+
+  /**
+   * Write learned routing to disk, at most every 25 successes.
+   *
+   * Throttled because dispatch is the hottest path in the system and a
+   * synchronous write per message would put a disk round trip in front of
+   * every reply.
+   */
+  private persistRouting(): void {
+    this.routingWrites++;
+    if (this.routingWrites % 25 !== 0) return;
+    try {
+      const { writeFileSync, mkdirSync } = nodeFs;
+      const file = this.routingMemoryPath();
+      mkdirSync(file.slice(0, file.lastIndexOf("/")) || ".", { recursive: true });
+      writeFileSync(file, JSON.stringify(this.router.memory.export()), "utf8");
+    } catch {
+      /* a read-only or full disk must not break dispatch */
+    }
+  }
+
+  /** What routing has learned so far, for inspection. */
+  routingMemorySize(): number {
+    return this.router.memory.size();
+  }
+
   /** Force a rebuild of the routing index. Called whenever the plugin set changes. */
   invalidateRouting(): void {
     this.routerStale = true;
@@ -203,6 +255,14 @@ export class PluginRegistry {
    * silently returned nothing for every message.
    */
   private ensureRoutingIndex(): void {
+    // Learned routing is loaded once, on the first build. Doing it here rather
+    // than in the constructor means it happens after the environment is set
+    // up, and means there is exactly one path -- a load() nothing calls is the
+    // same as not persisting at all, which is what this nearly shipped as.
+    if (!this.routingLoaded) {
+      this.routingLoaded = true;
+      this.loadRoutingMemory();
+    }
     if (!this.routerStale) return;
     this.router.reindex(this.plugins, this.pluginManifestCapabilities());
     this.routerStale = false;
@@ -326,6 +386,11 @@ export class PluginRegistry {
         if (result != null) {
           this.firePluginNeurons(pluginId);
           this.lastHandledBy = pluginId;
+          // Learned only on a genuine success. A plugin returning null has
+          // declined, and recording attempts instead would teach the router
+          // that whatever happens to be tried first is what works.
+          this.router.learn(input, pluginId);
+          this.persistRouting();
           return typeof result === "string" ? result : JSON.stringify(result);
         }
       } catch { /* plugin failed, try next */ }
