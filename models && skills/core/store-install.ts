@@ -30,6 +30,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { assertKind, assertSafeName, readItem, readItemFile, type StoreItem, type StoreKind } from "./store.js";
 import { fetchItemFile } from "./store-fetch.js";
+import { writeFileAtomic, writeJsonAtomic } from "./atomic-write.js";
 
 export class StoreInstallError extends Error {}
 
@@ -123,7 +124,7 @@ export async function installItem(kind: string, name: string): Promise<InstallRe
     }
     const target = path.join(dir, entry.filename);
     mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, buf);
+    writeFileAtomic(target, buf);
     written.push({ filename: entry.filename, bytes: buf.length, sha256: sha256(buf) });
   };
 
@@ -159,7 +160,7 @@ export async function installItem(kind: string, name: string): Promise<InstallRe
     files: written,
   };
   mkdirSync(dir, { recursive: true });
-  writeFileSync(path.join(dir, RECORD), JSON.stringify(record, null, 2) + "\n", "utf8");
+  writeJsonAtomic(path.join(dir, RECORD), record);
   return { record, downloaded, missing };
 }
 

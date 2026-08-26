@@ -16,6 +16,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import path from "node:path";
+import { writeJsonAtomic } from "./atomic-write.js";
 import {
   ACCESS_SWITCHES,
   AccessManager,
@@ -75,7 +76,10 @@ export function loadSettings(file = accessSettingsPath()): AccessSettings {
 
 export function saveSettings(settings: AccessSettings, file = accessSettingsPath()): void {
   mkdirSync(path.dirname(file), { recursive: true });
-  writeFileSync(file, JSON.stringify(settings, null, 2) + "\n", "utf8");
+  // Atomic: this file decides what the agent may do to the computer. A
+  // half-written one falls back to defaults, which would silently re-enable a
+  // switch someone deliberately turned off.
+  writeJsonAtomic(file, settings);
 }
 
 /**
