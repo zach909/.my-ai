@@ -123,3 +123,43 @@ describe('LongTermMemory payload', () => {
     expect(LongTermMemory.deserialize(broken).retrieve('neural network').length).toBe(1);
   });
 });
+
+describe('capacity bounds what it learned, not what was installed', () => {
+  it('still accepts new memories when pinned knowledge alone exceeds capacity', () => {
+    // The bug: evictIfNeeded compared items.size -- INCLUDING pinned -- against
+    // capacity. On a real install that was 3347 pinned memories against a
+    // capacity of 2000, so it evicted every unpinned memory on every insert.
+    // The agent could not form a single new memory, and nothing reported it.
+    const mem = new LongTermMemory({ capacity: 10 });
+    for (let i = 0; i < 25; i++) mem.remember(`installed knowledge ${i}`, { pinned: true });
+
+    const kept = []
+    for (let i = 0; i < 5; i++) kept.push(mem.remember(`something newly learned ${i}`, { importance: 0.9 }).id)
+    expect(kept.filter(id => mem.get(id))).toHaveLength(5)
+  })
+
+  it('never evicts installed knowledge to make room', () => {
+    const mem = new LongTermMemory({ capacity: 5 })
+    const pinnedIds = []
+    for (let i = 0; i < 20; i++) pinnedIds.push(mem.remember(`installed ${i}`, { pinned: true }).id)
+    for (let i = 0; i < 50; i++) mem.remember(`observation ${i}`, { importance: 0.1 })
+    expect(pinnedIds.every(id => mem.get(id))).toBe(true)
+  })
+
+  it('still bounds what it picked up on its own', () => {
+    // The cap has to remain real, or this fix would just be a memory leak.
+    const mem = new LongTermMemory({ capacity: 10 })
+    for (let i = 0; i < 30; i++) mem.remember(`installed ${i}`, { pinned: true })
+    for (let i = 0; i < 200; i++) mem.remember(`observation ${i}`, { importance: 0.5 })
+    expect(mem.all().filter(m => !m.pinned).length).toBeLessThanOrEqual(10)
+  })
+
+  it('keeps the more important observation when it has to choose', () => {
+    const mem = new LongTermMemory({ capacity: 2 })
+    const important = mem.remember('worth keeping', { importance: 0.95 }).id
+    mem.remember('filler a', { importance: 0.01 })
+    mem.remember('filler b', { importance: 0.01 })
+    mem.remember('filler c', { importance: 0.01 })
+    expect(mem.get(important)).toBeDefined()
+  })
+})

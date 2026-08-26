@@ -1345,6 +1345,22 @@ async function testWebBackend() {
     check(goodBits.status === 200 && goodBitsJson.ok === true && goodBitsJson.bits === 8,
       'Web backend POST /api/extension/build still accepts a valid numeric bits value');
 
+    // Delete what that build just wrote. The route saves into the LIVE
+    // extensions directory, which the agent loads at boot, and this test ran
+    // on every smoke run without ever cleaning up: 147 good_bits_test_*.ext.json
+    // files had accumulated over six days, each one loaded as a real extension
+    // for the rest of the machine's life. A test that permanently installs
+    // something into the system under test is not a test, it is a leak.
+    try {
+      const { promises: fsp } = await import('node:fs');
+      const extDir = resolve(process.cwd(), 'extension-builder', 'extensions');
+      for (const entry of await fsp.readdir(extDir)) {
+        if (entry.startsWith('good_bits_test_')) {
+          await fsp.unlink(join(extDir, entry)).catch(() => {});
+        }
+      }
+    } catch { /* nothing written, or the directory is not there: fine */ }
+
     // POST /api/extension/train-pytorch -- the optional real-gradient-descent
     // training backend (extension-builder/pytorch_trainer.py, spawned as a
     // Python subprocess). Runs end-to-end against whatever Python/torch
