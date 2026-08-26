@@ -80,3 +80,10 @@ clones/
 # electron-builder output (packaged installers, ~100-130 MB each)
 desktop-app/dist/
 desktop-app/node_modules/
+
+# An accidental clone of this repository inside itself, created by the
+# `git clone` that used to sit at the top of scripts/install.sh and run on
+# every source. It was committed as a gitlink (mode 160000) with no
+# .gitmodules, so every clone got a submodule entry git could not populate.
+# Ignored so the same accident cannot be committed again.
+.my-ai/
