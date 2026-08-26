@@ -169,7 +169,12 @@ export function parsePromptingSkill(raw: unknown): PromptingSkill {
     }
     skill.strategy = strategy;
   } else {
-    skill.plugin = str(o.plugin, "plugin", 100);
+    // `plugin` is optional for an action skill. Requiring it meant a skill
+    // could only say "do this" if its author already knew WHICH tool does it,
+    // so the whole class of "handle this, find the tool yourself" skills could
+    // not be expressed at all -- and the loop's tool discovery had nothing to
+    // discover for. Naming one still wins; omitting it now means "choose".
+    if (o.plugin !== undefined) skill.plugin = str(o.plugin, "plugin", 100);
     skill.input = o.input === undefined ? "{goal}" : str(o.input, "input");
     if (o.expect !== undefined) skill.expect = str(o.expect, "expect");
   }
