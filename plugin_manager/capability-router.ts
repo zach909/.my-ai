@@ -207,6 +207,16 @@ export interface Ranked {
   score: number;
   /** Why it was chosen, so a routing decision can be explained rather than guessed at. */
   reason: string;
+  /**
+   * How much of what was asked this plugin actually declares, reported
+   * alongside the score because the score is not on a scale anyone else can
+   * interpret: "8" means two matching terms here and nothing in general. A
+   * caller asking "does something already cover this requirement?" needs a
+   * fraction, not a rank, and computing it from the router's own tokenizer is
+   * the only way to get one that matches how the routing was decided.
+   */
+  matched: number;
+  inputTerms: number;
 }
 
 /**
@@ -312,7 +322,17 @@ export class CapabilityRouter {
       }
 
       score += entry.weight;
-      if (score > 0) ranked.push({ id: entry.id, score, reason: reason || "weighted" });
+      if (score > 0) {
+        ranked.push({
+          id: entry.id,
+          score,
+          reason: reason || "weighted",
+          // An exact command match means the person typed this plugin's own
+          // syntax, which covers the request whatever the word overlap says.
+          matched: command ? terms.size : overlap,
+          inputTerms: terms.size,
+        });
+      }
     }
 
     // Deterministic: ties break by id, so the same message always routes the
