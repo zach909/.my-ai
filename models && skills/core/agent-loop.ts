@@ -47,6 +47,20 @@ export interface AgentCapabilities {
   searchWeb?: (query: string) => string[] | Promise<string[]>;
   /** Invoke a plugin by id. Used by perception skills with source 'plugin', and by every action skill. */
   callPlugin?: (pluginId: string, input: string) => unknown | Promise<unknown>;
+  /**
+   * Which plugins could handle a task, best first, without calling any.
+   *
+   * Discovery, as distinct from callPlugin's "run this exact one". Without it
+   * a skill can only reach a plugin whose id its author knew to hardcode,
+   * which means every tool nobody wrote a skill for is invisible to the agent.
+   */
+  findPlugin?: (task: string) => Array<{ id: string; score: number; reason: string }>;
+  /**
+   * Pick the best plugin for a task and run it, trying the next when one
+   * declines. Returns what ran and why it was chosen, so an agent's tool
+   * choice can be explained rather than guessed at.
+   */
+  useBestTool?: (task: string) => Promise<{ plugin: string; result: string; why: string } | null>;
   /** Split a goal into subproblems (reasoning-engine). */
   decompose?: (goal: string) => string[] | Promise<string[]>;
   /** Past lessons relevant to a task (mistake tracker). */

@@ -197,6 +197,23 @@ export class StorePlugin extends BasePlugin {
     return { installed: listInstalled(), active: loadRegistry().all() };
   }
 
+  /**
+   * What this plug-in handles. The command list is what makes "store install
+   * skills X" route here decisively rather than competing on word overlap with
+   * whatever else happens to mention "install".
+   */
+  describeCapabilities() {
+    return {
+      commands: [
+        "store", "store show", "store install", "store uninstall", "store installed",
+        "store outdated", "store update", "store updates", "store publish",
+        "store describe", "store read", "store get", "list store", "store catalog",
+      ],
+      verbs: ["publish", "install", "uninstall", "download", "upload", "share", "catalog"],
+      nouns: ["store", "skill", "plugin", "package", "item", "marketplace"],
+    };
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = (typeof message === "string" ? message : String(message ?? "")).trim();
     if (!input) return null;
