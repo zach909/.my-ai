@@ -1,0 +1,35 @@
+{
+  "at": "2026-08-26T12:24:13.551Z",
+  "checks": [
+    {
+      "name": "test-leftovers",
+      "value": 1,
+      "lowerIsBetter": true,
+      "detail": "removed 1",
+      "removed": [
+        "extension-builder/extensions/good_bits_test_VITEST_PROBE.ext.json"
+      ]
+    },
+    {
+      "name": "unexplained-gitlinks",
+      "value": 0,
+      "lowerIsBetter": true,
+      "detail": "none"
+    },
+    {
+      "name": "tested-but-unreachable",
+      "value": 22,
+      "lowerIsBetter": true,
+      "detail": "22 exports"
+    },
+    {
+      "name": "memory-accepts-new",
+      "value": 1,
+      "lowerIsBetter": false,
+      "detail": "yes"
+    }
+  ],
+  "regressions": [
+    "test-leftovers"
+  ]
+}
