@@ -270,3 +270,91 @@ export function readInstalledFile(kind: string, name: string, filename: string):
   if (!full.startsWith(dir + path.sep)) return null;
   return existsSync(full) && statSync(full).isFile() ? readFileSync(full) : null;
 }
+
+/** One thing an installed item wants the system to remember. */
+export interface ActivatableMemory {
+  content: string;
+  payload?: string;
+  tags: string[];
+}
+
+export interface ActivationPlan {
+  /** Files that carried loadable knowledge. */
+  from: string[];
+  memories: ActivatableMemory[];
+  /**
+   * Set when the item installed fine but carries nothing this system knows how
+   * to load -- a Python bridge and a README, say. Not an error: plenty of
+   * useful store items are instructions for a human, and reporting that
+   * honestly beats implying something was activated.
+   */
+  nothingLoadable?: string;
+}
+
+/**
+ * What an installed item would contribute if it were activated.
+ *
+ * Separate from doing it, so the caller owns the actual writes to memory and
+ * this stays testable without a whole system. Reads only what the install
+ * already wrote to this device.
+ *
+ * This exists because installing was inert. Files were copied into
+ * extension-builder/installed/ and nothing ever read them back --
+ * readInstalledFile had no callers at all, which the unreachable-code detector
+ * is what surfaced. "Install" that produces files no part of the system
+ * consumes is a copy, not an install.
+ */
+export function planActivation(kind: string, name: string): ActivationPlan {
+  const record = readInstalled(kind, name);
+  if (!record) return { from: [], memories: [], nothingLoadable: `"${kind}/${name}" is not installed.` };
+
+  const from: string[] = [];
+  const memories: ActivatableMemory[] = [];
+
+  for (const file of record.files) {
+    // Only the neuron-bearing JSON the rest of this system already understands.
+    // Guessing at other formats would be inventing a loader for files nobody
+    // agreed on a shape for.
+    if (!/\.(skill|source|ext)\.json$/i.test(file.filename) && !/^skill\.json$/i.test(file.filename)) continue;
+    const buf = readInstalledFile(kind, name, file.filename);
+    if (!buf) continue;
+
+    let parsed: { neurons?: unknown };
+    try {
+      parsed = JSON.parse(buf.toString("utf8")) as { neurons?: unknown };
+    } catch {
+      // A malformed file in an otherwise good item should not stop the rest
+      // loading, and should not look like the item had nothing in it.
+      continue;
+    }
+    const neurons = Array.isArray(parsed?.neurons) ? parsed.neurons : [];
+    if (neurons.length === 0) continue;
+    from.push(file.filename);
+
+    for (const raw of neurons) {
+      const neuron = raw as { name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> };
+      if (!neuron?.name) continue;
+      const definition = (neuron.definition ?? "").trim();
+      if (definition) {
+        memories.push({ content: `${neuron.name}: ${definition}`, tags: ["store-install", `${kind}/${name}`] });
+      }
+      for (const script of neuron.scripts ?? []) {
+        const userSays = (script?.userSays ?? "").trim();
+        const response = (script?.response ?? "").trim();
+        if (!userSays || !response) continue;
+        memories.push({ content: userSays, payload: response, tags: ["skill-script", "store-install", `${kind}/${name}`] });
+      }
+    }
+  }
+
+  if (memories.length === 0) {
+    return {
+      from,
+      memories,
+      nothingLoadable:
+        `"${kind}/${name}" is installed, but carries nothing this system knows how to load ` +
+        `(no neuron definitions or skill scripts). Its files are on disk and can be read.`,
+    };
+  }
+  return { from, memories };
+}

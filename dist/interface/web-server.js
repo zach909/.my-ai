@@ -965,8 +965,30 @@ export class WebServer {
                     this.sendJson(res, { error: 'Expected { kind, name }.' }, 400);
                     return;
                 }
-                const { installItem } = await import('../models && skills/core/store-install.js');
-                this.sendJson(res, await installItem(body.kind, body.name), 201);
+                const { installItem, planActivation } = await import('../models && skills/core/store-install.js');
+                const installed = await installItem(body.kind, body.name);
+                // Installing used to stop at copying files -- nothing ever read them
+                // back, so an installed skill was inert. Whatever the item carries that
+                // this system understands is loaded now, pinned like every other piece
+                // of installed knowledge. This is not automatic installation: someone
+                // asked for this specific item, and loading what they installed is the
+                // point of installing it.
+                const plan = planActivation(body.kind, body.name);
+                let remembered = 0;
+                if (plan.memories.length > 0) {
+                    const { getNeuroclawSystem } = await import('../src/index.js');
+                    const system = await getNeuroclawSystem();
+                    for (const memory of plan.memories) {
+                        system.memory.remember(memory.content, {
+                            importance: 0.7,
+                            tags: memory.tags,
+                            payload: memory.payload,
+                            pinned: true,
+                        });
+                        remembered++;
+                    }
+                }
+                this.sendJson(res, { ...installed, activated: { remembered, from: plan.from, note: plan.nothingLoadable }, }, 201);
             }
             catch (err) {
                 this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
