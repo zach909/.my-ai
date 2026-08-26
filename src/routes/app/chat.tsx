@@ -15,6 +15,7 @@
  */
 
 import { createFileRoute } from '@tanstack/react-router'
+import { fetchWithTimeout, startPolling } from '@/lib/poll'
 import { useState, useRef, useEffect } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -131,18 +132,21 @@ function ChatPage() {
     let cancelled = false
     const poll = async () => {
       try {
-        const res = await fetch('/api/continuous/status')
+        // Timed, and self-scheduling rather than on an interval: this is the
+        // endpoint most likely to stall (it reports on work in progress), and
+        // an untimed poll of it on a fixed interval is exactly what can eat
+        // the browser's per-host connection budget and freeze the chat itself.
+        const res = await fetchWithTimeout('/api/continuous/status', {}, 2500)
         if (res.ok && !cancelled) setContinuousStatus(await res.json())
       } catch {
         // Backend unreachable this tick -- leave the last known status up
         // rather than flashing an error for a purely informational poll.
       }
     }
-    poll()
-    const id = setInterval(poll, 3000)
+    const handle = startPolling(poll, 3000)
     return () => {
       cancelled = true
-      clearInterval(id)
+      handle.stop()
     }
   }, [pageVisible])
 
