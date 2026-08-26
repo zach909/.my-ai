@@ -77,6 +77,37 @@ function exportsOf(source) {
   return names
 }
 
+/** Type names this file exports, which are a different kind of thing entirely. */
+function typeExportsOf(source) {
+  const names = new Set()
+  for (const m of source.matchAll(/export\s+(?:interface|type)\s+([A-Za-z_$][\w$]*)/g)) names.add(m[1])
+  return names
+}
+
+/**
+ * A type that appears in its own file's exported signatures is part of what
+ * this file offers, not dead code.
+ *
+ * This tool exists to find real code with no call path -- the repo's most
+ * common defect, and the one that looks finished because it has tests. A type
+ * has no call path to have. Reporting `FrozenModel` as unreachable because
+ * nothing imports the name, when it is the return type of an exported
+ * function and cannot be removed without breaking every caller's typing, is a
+ * false alarm -- and the whole reason scripts/ was added to CALLER_DIRS is
+ * that a report with false alarms in it is one people stop reading.
+ *
+ * A type genuinely used nowhere, including in its own file, is still reported.
+ */
+function inOwnSignatures(name, source) {
+  const declaration = new RegExp(`export\\s+(?:interface|type)\\s+${name}\\b`)
+  let uses = 0
+  for (const line of source.split('\n')) {
+    if (declaration.test(line)) continue
+    if (new RegExp(`\\b${name}\\b`).test(line)) uses++
+  }
+  return uses > 0
+}
+
 const files = SEARCH_DIRS.flatMap(d => walk(path.join(ROOT, d)))
 const sources = new Map(files.map(f => [f, readFileSync(f, 'utf8')]))
 
@@ -94,8 +125,10 @@ const testSource = testFiles.map(f => { try { return readFileSync(f, 'utf8') } c
 const findings = []
 for (const [file, source] of sources) {
   const rel = path.relative(ROOT, file)
+  const typeExports = typeExportsOf(source)
   for (const name of exportsOf(source)) {
     if (EXPECTED_UNUSED.some(([re]) => re.test(name))) continue
+    if (typeExports.has(name) && inOwnSignatures(name, source)) continue
 
     let usedElsewhere = false
     for (const [otherFile, otherSource] of sources) {

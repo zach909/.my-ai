@@ -2720,6 +2720,86 @@ export class WebServer {
             }
             return;
         }
+        // POST /api/extension/plan-requirements — "here is what I need, make it true"
+        //
+        // The builder could always build a net skill once you knew which neurons
+        // you wanted. This answers the question people actually start with: a list
+        // of requirements. It plans a net skill by default -- that is the whole
+        // point of the builder -- and reports separately which requirements would
+        // be learned better from examples, so training a new network stays an
+        // informed choice rather than something that happens to you.
+        //
+        // The plan is made AGAINST the main model, with the main model frozen. It
+        // can see every neuron the main model already has, which is what lets it
+        // say "you already have this" instead of rebuilding it, and the freeze is
+        // verified rather than merely intended: a digest before, the same digest
+        // after. Nothing here writes to the main model, and nothing here installs
+        // anything -- the neurons join a mesh when someone installs the skill.
+        if (pathname === '/api/extension/plan-requirements' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const raw = body?.requirements;
+                const requirements = Array.isArray(raw)
+                    ? raw
+                    : typeof raw === 'string'
+                        ? raw.split('\n')
+                        : [];
+                const cleaned = requirements.map(r => String(r).trim()).filter(Boolean);
+                if (cleaned.length === 0) {
+                    this.sendJson(res, { error: 'Give it at least one requirement — there is nothing to make true otherwise.' }, 400);
+                    return;
+                }
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const moe = system.pluginRegistry.getMoE?.();
+                // One entry per neuron, so a change in neuron count changes the digest
+                // too -- a freeze that only noticed renames would miss the failure that
+                // actually matters, which is something quietly growing the main mesh.
+                const view = {
+                    neuronNames: () => {
+                        const names = [];
+                        for (const expert of moe?.listExperts() ?? []) {
+                            for (let i = 0; i < expert.neuronIds.length; i++)
+                                names.push(expert.name);
+                        }
+                        return names;
+                    },
+                };
+                const { planAgainstFrozenModel } = await import('../models && skills/core/skill-freeze.js');
+                const { plan, frozen, verified } = planAgainstFrozenModel(cleaned, view, {
+                    // The router knows about capabilities the mesh has no neuron named
+                    // for (a plugin that reads files is not a neuron called "read file"),
+                    // so it is consulted alongside the frozen model, not instead of it.
+                    //
+                    // Its raw score is a rank, not a confidence -- "8" means two matching
+                    // terms, and feeding that straight in meant nothing ever cleared the
+                    // planner's threshold, so the plan cheerfully proposed rebuilding
+                    // capabilities this machine plainly has. What crosses over is the
+                    // fraction of the requirement the plugin actually declares, on the
+                    // same 0-100 scale the frozen model reports.
+                    findExisting: task => system.pluginRegistry
+                        .rankPlugins(task)
+                        .slice(0, 3)
+                        .map(r => ({
+                        id: r.id,
+                        score: r.inputTerms > 0 ? Math.min(100, Math.round((r.matched / r.inputTerms) * 100)) : 0,
+                        reason: r.reason,
+                    }))
+                        .filter(r => r.score >= 50),
+                });
+                this.sendJson(res, {
+                    ok: true,
+                    plan,
+                    neuroLang: plan.neuroLang,
+                    frozen: { neuronCount: frozen.neuronCount, digest: frozen.digest, frozenAt: frozen.frozenAt },
+                    mainModelUnchanged: verified,
+                });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         // POST /api/extension/build — build a real extension from NeuroLang and save it
         // POST /api/extension/publish — build a net skill and put it in the store.
         //
@@ -2741,6 +2821,29 @@ export class WebServer {
                     this.sendJson(res, { error: 'A net skill needs a name to be published under.' }, 400);
                     return;
                 }
+                // The main model is frozen for the duration of the build. A skill is
+                // built WITH the main model as part of the picture and cannot change
+                // it, which is the training system's own rule (§8) applied to the
+                // thing people do most often. The interesting failure is not a build
+                // that crashes -- it is a build that quietly leaves the general
+                // network different than it was, which nobody notices until the model
+                // behaves differently and no history explains why. So it is checked,
+                // not merely intended.
+                const { getNeuroclawSystem: loadSystem } = await import('../src/index.js');
+                const system = await loadSystem();
+                const moe = system.pluginRegistry.getMoE?.();
+                const mainModel = {
+                    neuronNames: () => {
+                        const names = [];
+                        for (const expert of moe?.listExperts() ?? []) {
+                            for (let i = 0; i < expert.neuronIds.length; i++)
+                                names.push(expert.name);
+                        }
+                        return names;
+                    },
+                };
+                const { freezeMainModel, assertMainModelUnchanged, MainModelChanged } = await import('../models && skills/core/skill-freeze.js');
+                const frozen = freezeMainModel(mainModel);
                 const { ExtensionBuilder } = await import('../extension-builder/builder.js');
                 const builder = new ExtensionBuilder();
                 const project = builder.createProject(name, body?.description ?? '');
@@ -2781,7 +2884,27 @@ export class WebServer {
                         { filename: `${slug}.source.json`, content: JSON.stringify({ neurons, code: body?.code ?? '' }, null, 2) },
                     ],
                 });
-                this.sendJson(res, { ok: true, item, sync, neurons: neurons.length, quantized: quantize }, 201);
+                // Verified after the build, before anyone is told it succeeded: the
+                // skill's neurons join a mesh when someone INSTALLS it, never here.
+                try {
+                    assertMainModelUnchanged(frozen, mainModel);
+                }
+                catch (err) {
+                    if (err instanceof MainModelChanged) {
+                        this.sendJson(res, { error: err.message, published: true, item, mainModelUnchanged: false }, 409);
+                        return;
+                    }
+                    throw err;
+                }
+                this.sendJson(res, {
+                    ok: true,
+                    item,
+                    sync,
+                    neurons: neurons.length,
+                    quantized: quantize,
+                    frozenMainModel: { neuronCount: frozen.neuronCount, digest: frozen.digest },
+                    mainModelUnchanged: true,
+                }, 201);
             }
             catch (err) {
                 this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
