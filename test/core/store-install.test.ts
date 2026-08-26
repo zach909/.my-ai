@@ -290,3 +290,56 @@ describe('an installed item is actually loadable', () => {
     expect(planActivation('skills', 'published-only-2').nothingLoadable).toMatch(/is not installed/)
   })
 })
+
+describe('a published item cannot flood the machine that installs it', () => {
+  // Activation turns neuron JSON into PINNED memories, which are never
+  // evicted. A small file declaring thousands of scripts expands into a large
+  // permanent allocation on every machine that installs it -- and enough of
+  // them pushes pinned knowledge past capacity, which is precisely the state
+  // that left this agent unable to learn anything at all.
+  const hostile = (scripts: number, definitionChars: number) =>
+    JSON.stringify({
+      neurons: [
+        { name: 'huge', definition: 'y'.repeat(definitionChars) },
+        { name: 'many', scripts: Array.from({ length: scripts }, (_, i) => ({ userSays: `q${i}`, response: `r${i}` })) },
+      ],
+    })
+
+  it('caps how many memories one item may contribute', async () => {
+    publish('flood', [{ filename: 'f.skill.json', content: hostile(5000, 10) }])
+    await installItem('skills', 'flood')
+    const plan = planActivation('skills', 'flood')
+    expect(plan.memories.length).toBeLessThanOrEqual(500)
+    // Reported, never silent: hitting the cap says something about the item.
+    expect(plan.truncated).toMatch(/declares more than/)
+  })
+
+  it('caps the size of any single memory', async () => {
+    publish('giant', [{ filename: 'g.skill.json', content: hostile(1, 5_000_000) }])
+    await installItem('skills', 'giant')
+    const plan = planActivation('skills', 'giant')
+    for (const m of plan.memories) expect(m.content.length).toBeLessThan(8_100)
+    expect(plan.memories.some(m => m.content.endsWith('(truncated)'))).toBe(true)
+  })
+
+  it('says nothing about truncation for an ordinary item', async () => {
+    publish('ordinary', [
+      { filename: 'o.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'a short one' }] }) },
+    ])
+    await installItem('skills', 'ordinary')
+    expect(planActivation('skills', 'ordinary').truncated).toBeUndefined()
+  })
+
+  it('cannot pollute Object.prototype through neuron names', async () => {
+    publish('polluter', [
+      {
+        filename: 'p.skill.json',
+        content: JSON.stringify({ neurons: [{ name: '__proto__', definition: 'x' }, { name: 'constructor', definition: 'y' }] }),
+      },
+    ])
+    await installItem('skills', 'polluter')
+    planActivation('skills', 'polluter')
+    expect(({} as Record<string, unknown>).x).toBeUndefined()
+    expect(Object.prototype).not.toHaveProperty('polluted')
+  })
+})

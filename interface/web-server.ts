@@ -268,7 +268,11 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   }
   async function checkStatus() {
     try {
-      const res = await fetch('/api/status');
+      // Timed. This page had the same bug the React app did: setInterval
+      // around an untimed fetch, so a stalled backend accumulated requests
+      // that never completed until the browser's per-host connection budget
+      // was gone and the page could no longer send a chat message either.
+      const res = await fetch('/api/status', { signal: AbortSignal.timeout(2500) });
       const data = await res.json();
       if (data.running) {
         statusDot.className = 'online';
@@ -327,8 +331,14 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   sendBtn.addEventListener('click', () => sendMessage(input.value));
   clearBtn.addEventListener('click', clearChat);
   input.addEventListener('keydown', (e) => { if (e.key === 'Enter') sendMessage(input.value); });
-  setInterval(checkStatus, 3000);
-  checkStatus();
+  // Self-scheduling, not setInterval: the gap is measured from when a check
+  // FINISHES, so a slow response delays the next one instead of overlapping.
+  (async function pollStatus() {
+    for (;;) {
+      await checkStatus();
+      await new Promise(r => setTimeout(r, 3000));
+    }
+  })();
   if (chatHistory.length) {
     chatHistory.forEach(m => addMessage(m.role === 'user' ? 'user' : 'ai', m.content, m.time));
   } else {

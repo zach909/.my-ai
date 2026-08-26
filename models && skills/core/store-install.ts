@@ -55,6 +55,27 @@ export interface InstalledRecord {
 
 const RECORD = "installed.json";
 
+/**
+ * Limits on what one installed item may put into memory.
+ *
+ * Activation turns a published item's neuron JSON into PINNED memories, and
+ * pinned memories are never evicted. That combination is dangerous in a way
+ * the store's own file-size caps do not cover: a single item declaring
+ * thousands of scripts, or one enormous definition, is a small file that
+ * expands into a large permanent allocation on every machine that installs it.
+ *
+ * Probed on the activation path with a deliberately hostile item: 5003
+ * memories from one file, one of them 5,000,004 characters. Enough of those
+ * and pinned knowledge exceeds capacity, which is exactly the state that made
+ * this agent unable to learn anything at all -- so a hostile publisher could
+ * inflict that on anyone who installed their skill.
+ *
+ * Truncating is reported, never silent. An item that hits the cap is telling
+ * you something either about itself or about whoever wrote it.
+ */
+const MAX_MEMORIES_PER_ITEM = 500;
+const MAX_MEMORY_CHARS = 8_000;
+
 /** How many files to download at once. Enough to hide latency, few enough not to look like a scraper. */
 const DOWNLOAD_CONCURRENCY = 4;
 
@@ -283,6 +304,8 @@ export interface ActivationPlan {
   /** Files that carried loadable knowledge. */
   from: string[];
   memories: ActivatableMemory[];
+  /** Set when the item declared more than it is allowed to contribute. */
+  truncated?: string;
   /**
    * Set when the item installed fine but carries nothing this system knows how
    * to load -- a Python bridge and a README, say. Not an error: plenty of
@@ -333,21 +356,28 @@ export function planActivation(kind: string, name: string): ActivationPlan {
     from.push(file.filename);
 
     for (const raw of neurons) {
+      if (memories.length >= MAX_MEMORIES_PER_ITEM) break;
       const neuron = raw as { name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> };
       if (!neuron?.name) continue;
       const definition = (neuron.definition ?? "").trim();
       if (definition) {
-        memories.push({ content: `${neuron.name}: ${definition}`, tags: ["store-install", `${kind}/${name}`] });
+        memories.push({ content: clip(`${neuron.name}: ${definition}`), tags: ["store-install", `${kind}/${name}`] });
       }
       for (const script of neuron.scripts ?? []) {
+        if (memories.length >= MAX_MEMORIES_PER_ITEM) break;
         const userSays = (script?.userSays ?? "").trim();
         const response = (script?.response ?? "").trim();
         if (!userSays || !response) continue;
-        memories.push({ content: userSays, payload: response, tags: ["skill-script", "store-install", `${kind}/${name}`] });
+        memories.push({
+          content: clip(userSays),
+          payload: clip(response),
+          tags: ["skill-script", "store-install", `${kind}/${name}`],
+        });
       }
     }
   }
 
+  const hitCap = memories.length >= MAX_MEMORIES_PER_ITEM;
   if (memories.length === 0) {
     return {
       from,
@@ -357,5 +387,20 @@ export function planActivation(kind: string, name: string): ActivationPlan {
         `(no neuron definitions or skill scripts). Its files are on disk and can be read.`,
     };
   }
-  return { from, memories };
+  return {
+    from,
+    memories,
+    ...(hitCap
+      ? {
+          truncated:
+            `"${kind}/${name}" declares more than the ${MAX_MEMORIES_PER_ITEM} memories one item may contribute. ` +
+            `The rest were not loaded.`,
+        }
+      : {}),
+  };
+}
+
+/** Trim one memory to the per-memory limit, marking it so a reader is not misled. */
+function clip(text: string): string {
+  return text.length <= MAX_MEMORY_CHARS ? text : `${text.slice(0, MAX_MEMORY_CHARS)}… (truncated)`;
 }
