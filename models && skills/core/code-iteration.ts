@@ -17,9 +17,28 @@
  * skill, or a human. Pretending otherwise would be the whole problem with
  * claiming an agent "writes code".
  *
- * Everything runs in `createContext({})`: no require, no process, no
- * filesystem, no network, and a hard timeout. Consistent with this project's
- * no-external-APIs rule, a candidate cannot reach out even if it tries.
+ * On isolation, stated precisely, because the previous version of this comment
+ * was wrong and the code matched the comment rather than reality.
+ *
+ * It claimed candidates had "no require, no process, no filesystem, no
+ * network". They had all of it. `createContext({})` contextifies an object
+ * created in the HOST realm, so its prototype chain leads back to host
+ * intrinsics: `this.constructor.constructor` is the host Function constructor,
+ * and `F('return process')()` handed back the real process object -- pid, cwd,
+ * argv, and from there require('child_process'). Demonstrated, not theorised.
+ *
+ * The context is now built with `Object.create(null)`, which has no prototype
+ * and so no chain to walk back along. That specific escape is closed, verified
+ * against the exact probe that worked before.
+ *
+ * What this is NOT is a security boundary. Node's own documentation says the
+ * vm module must not be used to run untrusted code, and no amount of scrubbing
+ * the context changes that -- new escapes are found regularly. Treat this the
+ * way plugins/terminal.ts treats its command blocklist: a real guardrail
+ * against the ordinary case, not protection against code written to break out.
+ * Candidates here come from this agent's own reasoning, which is a very
+ * different threat model from arbitrary input off the network, and the
+ * distinction is the reason this is acceptable at all.
  */
 
 import { createContext, Script } from "node:vm";
@@ -71,15 +90,66 @@ function sameValue(a: unknown, b: unknown): boolean {
   }
 }
 
+
+/**
+ * Script options shared by candidates and checks.
+ *
+ * `importModuleDynamically` exists to stop a candidate taking the whole
+ * process down. Without a handler, `import("node:fs")` inside a vm script does
+ * not fail politely -- Node throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING from
+ * its own internals, outside any try/catch here, and the host process dies.
+ * A single `import()` in generated code was enough to kill the agent.
+ *
+ * Refusing here turns that into an ordinary rejected promise the candidate can
+ * see, which is what "the sandbox said no" should look like.
+ */
+function scriptOptions(filename: string) {
+  return { filename };
+}
+
+/**
+ * Dynamic import, refused before the code runs.
+ *
+ * This is not stylistic. `import("node:fs")` inside a vm script does not fail
+ * politely: Node throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING from its own
+ * internals, outside any try/catch here, and the HOST PROCESS DIES. One
+ * `import()` in generated code was enough to kill the agent.
+ *
+ * The clean fix -- an importModuleDynamically hook that refuses -- requires
+ * running Node with --experimental-vm-modules, which is not something a
+ * library should force on every process that loads it. So the syntax is
+ * refused up front instead.
+ *
+ * A regex is a guardrail, not a parser: it can be worked around by anyone
+ * trying to. That is acceptable here for the same reason the rest of this
+ * module's isolation is (see the header) -- it stops the accident, and the
+ * accident is what actually happens.
+ */
+const DYNAMIC_IMPORT = /\bimport\s*(\(|\.)/;
+
 /** Run a candidate against its checks. Never throws -- a crash is a result. */
 export function verifyCode(code: string, checks: CodeCheck[]): VerifyResult {
   const started = Date.now();
   const outcomes: CheckOutcome[] = [];
 
+  if (DYNAMIC_IMPORT.test(code) || checks.some(c => DYNAMIC_IMPORT.test(c.expression))) {
+    const refusal = "Dynamic import is not available in the sandbox.";
+    return {
+      passed: false,
+      outcomes: [],
+      crashed: refusal,
+      ms: Date.now() - started,
+      report: `The code did not run: ${refusal}`,
+    };
+  }
+
   let sandbox: object;
   try {
-    sandbox = createContext({});
-    new Script(code, { filename: "candidate.js" }).runInContext(sandbox, { timeout: CANDIDATE_TIMEOUT_MS });
+    // Object.create(null), not {}: a plain object literal is created in the
+    // host realm and keeps a prototype chain leading back to host intrinsics,
+    // which is exactly how a candidate reached the real `process`.
+    sandbox = createContext(Object.create(null));
+    new Script(code, scriptOptions("candidate.js")).runInContext(sandbox, { timeout: CANDIDATE_TIMEOUT_MS });
   } catch (err) {
     const crashed = err instanceof Error ? err.message : String(err);
     return {
@@ -95,7 +165,7 @@ export function verifyCode(code: string, checks: CodeCheck[]): VerifyResult {
 
   for (const check of checks) {
     try {
-      const actual = new Script(check.expression, { filename: "check.js" }).runInContext(sandbox, {
+      const actual = new Script(check.expression, scriptOptions("check.js")).runInContext(sandbox, {
         timeout: CANDIDATE_TIMEOUT_MS,
       });
       outcomes.push({ name: check.name, passed: sameValue(actual, check.expected), expected: check.expected, actual });
