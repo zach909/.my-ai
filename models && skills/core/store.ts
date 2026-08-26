@@ -20,6 +20,7 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
+import { writeFileAtomic, writeJsonAtomic } from "./atomic-write.js";
 
 /** What kinds of thing the store holds. Each is a folder under `store/`. */
 export const STORE_KINDS = ["skills", "prompting", "plugins", "binaries", "source", "files", "wiki"] as const;
@@ -254,7 +255,9 @@ export function publishItem(input: {
       throw new StoreError(`"${d.filename}" would write outside the item.`);
     }
     mkdirSync(path.dirname(target), { recursive: true });
-    writeFileSync(target, d.buf);
+    // The payload too: a half-written file whose manifest records the full
+    // sha256 is worse than no file, because the checksum says it is intact.
+    writeFileAtomic(target, d.buf);
     carried.set(d.filename, { filename: d.filename, bytes: d.buf.length, sha256: sha256(d.buf), local: true });
   }
   // Stored without `local`: whether a file is on a given device is a fact
@@ -280,7 +283,11 @@ export function publishItem(input: {
     // even see that it existed.
     files: manifestFiles,
   };
-  writeFileSync(path.join(dir, MANIFEST), JSON.stringify(manifest, null, 2) + "\n");
+  // Atomic: a manifest half-written by a power cut does not corrupt the item,
+  // it makes the item VANISH -- readItem fails to parse, returns null, and the
+  // item drops out of the catalogue while its payload files sit intact beside
+  // it. Demonstrated by truncating one.
+  writeJsonAtomic(path.join(dir, MANIFEST), manifest);
   return readItem(kind, input.name)!;
 }
 

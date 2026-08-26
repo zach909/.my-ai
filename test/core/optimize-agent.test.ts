@@ -48,6 +48,12 @@ describe('catching what it is meant to catch', () => {
     expect(runAgent()).toMatch(/memory-accepts-new\s+yes/)
   }, 200_000)
 
+  it('checks that state writes survive a power cut', () => {
+    // A plain writeFileSync truncates before it writes; losing power in
+    // between made a published store item vanish from the catalogue entirely.
+    expect(runAgent()).toMatch(/non-atomic-state-writes\s+none in the watched files/)
+  }, 200_000)
+
   it('checks the repository does not contain itself', () => {
     expect(runAgent()).toMatch(/unexplained-gitlinks\s+none/)
   }, 200_000)
@@ -67,6 +73,7 @@ describe('the baseline is a ratchet', () => {
     const report = JSON.parse(readFileSync(path.join(ROOT, 'config', 'optimization-report.json'), 'utf8'))
     expect(report.checks.map((c: { name: string }) => c.name).sort()).toEqual([
       'memory-accepts-new',
+      'non-atomic-state-writes',
       'test-leftovers',
       'tested-but-unreachable',
       'unexplained-gitlinks',

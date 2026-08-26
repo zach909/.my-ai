@@ -3,6 +3,7 @@ import type { BasePlugin, PluginContext, PluginLogger } from "./sdk.js";
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
 import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
 import * as nodeFs from "node:fs";
+import { writeFileAtomic } from "../models && skills/core/atomic-write.js";
 import { CapabilityRouter, type Ranked } from "./capability-router.js";
 
 /**
@@ -227,10 +228,9 @@ export class PluginRegistry {
     this.routingWrites++;
     if (this.routingWrites % 25 !== 0) return;
     try {
-      const { writeFileSync, mkdirSync } = nodeFs;
-      const file = this.routingMemoryPath();
-      mkdirSync(file.slice(0, file.lastIndexOf("/")) || ".", { recursive: true });
-      writeFileSync(file, JSON.stringify(this.router.memory.export()), "utf8");
+      // Atomic: this is written from the hottest path in the system, so it is
+      // the file most likely to be mid-write when the power goes.
+      writeFileAtomic(this.routingMemoryPath(), JSON.stringify(this.router.memory.export()));
     } catch {
       /* a read-only or full disk must not break dispatch */
     }

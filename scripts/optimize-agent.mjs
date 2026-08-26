@@ -149,6 +149,38 @@ async function checkMemoryAcceptsNew() {
   }
 }
 
+/**
+ * Are the writes that matter atomic?
+ *
+ * A power cut during a plain writeFileSync leaves an empty or partial file.
+ * For a store manifest that does not corrupt an item, it makes the item
+ * VANISH from the catalogue while its payload sits intact on disk. This counts
+ * the state writes that still go out non-atomically, so the number can only
+ * go down.
+ */
+function checkDurableWrites() {
+  const watched = [
+    'models && skills/core/store.ts',
+    'models && skills/core/store-install.ts',
+    'models && skills/core/access-settings.ts',
+    'plugin_manager/registry.ts',
+  ]
+  let plain = 0
+  const offenders = []
+  for (const rel of watched) {
+    const full = path.join(ROOT, rel)
+    if (!existsSync(full)) continue
+    const hits = (readFileSync(full, 'utf8').match(/\bwriteFileSync\(/g) ?? []).length
+    if (hits > 0) { plain += hits; offenders.push(`${rel}:${hits}`) }
+  }
+  return {
+    name: 'non-atomic-state-writes',
+    value: plain,
+    lowerIsBetter: true,
+    detail: plain ? offenders.join(', ') : 'none in the watched files',
+  }
+}
+
 function loadBaseline() {
   try {
     return JSON.parse(readFileSync(BASELINE, 'utf8'))
@@ -157,9 +189,15 @@ function loadBaseline() {
   }
 }
 
-function save(file, data) {
+/**
+ * Atomic, like every other bit of state here. The baseline is the record of
+ * how good things have ever been; a half-written one on a power cut would
+ * reset the ratchet, which is the one failure this file cannot tolerate.
+ */
+async function save(file, data) {
   mkdirSync(path.dirname(file), { recursive: true })
-  writeFileSync(file, JSON.stringify(data, null, 2) + '\n', 'utf8')
+  const { writeJsonAtomic } = await import(path.join(ROOT, 'dist/models && skills/core/atomic-write.js'))
+  writeJsonAtomic(file, data)
 }
 
 /** A number that moved the wrong way since the baseline. */
@@ -175,6 +213,7 @@ async function cycle() {
     checkTestLeftovers({ remove: true }),
     checkRepoIntegrity(),
     checkUnreachable(),
+    checkDurableWrites(),
     await checkMemoryAcceptsNew(),
   ]
 
@@ -194,8 +233,8 @@ async function cycle() {
     const better = typeof before !== 'number' || (c.lowerIsBetter ? c.value <= before : c.value >= before)
     if (better) next[c.name] = { value: c.value, at: new Date().toISOString() }
   }
-  save(BASELINE, next)
-  save(REPORT, { at: new Date().toISOString(), checks, regressions: regressions.map(r => r.name) })
+  await save(BASELINE, next)
+  await save(REPORT, { at: new Date().toISOString(), checks, regressions: regressions.map(r => r.name) })
 
   if (regressions.length > 0) {
     console.log(`[optimize] ${regressions.length} regression(s) since the best measurement. Details in config/optimization-report.json`)

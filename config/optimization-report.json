@@ -1,5 +1,5 @@
 {
-  "at": "2026-08-26T12:24:13.551Z",
+  "at": "2026-08-26T12:31:46.341Z",
   "checks": [
     {
       "name": "test-leftovers",
@@ -21,6 +21,12 @@
       "value": 22,
       "lowerIsBetter": true,
       "detail": "22 exports"
+    },
+    {
+      "name": "non-atomic-state-writes",
+      "value": 0,
+      "lowerIsBetter": true,
+      "detail": "none in the watched files"
     },
     {
       "name": "memory-accepts-new",
