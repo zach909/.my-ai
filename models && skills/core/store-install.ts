@@ -362,6 +362,7 @@ export function planActivation(kind: string, name: string): ActivationPlan {
   // entries were pushed into the array being iterated -- the skill reported
   // zero neurons and the mesh join fell back to a default count of one.
   const meshNeurons: Array<{ name: string; definition: string }> = [];
+  const seenNeurons = new Set<string>();
 
   for (const file of record.files) {
     // An Agent Skill: a SKILL.md carrying instructions rather than weights.
@@ -415,13 +416,28 @@ export function planActivation(kind: string, name: string): ActivationPlan {
       const neuron = raw as { name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> };
       if (!neuron?.name) continue;
       const definition = (neuron.definition ?? "").trim();
+
+      // A memory needs a definition, because without one there is no text to
+      // recall. A MESH NEURON does not: it is a node in a network, and its
+      // value comes from its name, its value and what it connects to.
+      //
+      // Requiring a definition for both was wrong, and wrong in a way that
+      // broke the system's own main path. The Extension Builder compiles
+      // NeuroLang into neurons with names, values and connections and no prose
+      // at all, so every net skill built the intended way contributed exactly
+      // nothing: nothing remembered, nothing joined. Measured end to end
+      // before the fix -- built, published, installed, remembered 0, joined 0.
       if (definition) {
         memories.push({ content: clip(`${neuron.name}: ${definition}`), tags: ["store-install", `${kind}/${name}`] });
-        // Also offered to the mesh: a net skill is supposed to become part of
-        // the network, not merely be remembered.
-        if (meshNeurons.length < MAX_MEMORIES_PER_ITEM) {
-          meshNeurons.push({ name: neuron.name, definition: clip(definition) });
-        }
+      }
+      // Deduped by name within the item. A net skill is normally published as
+      // BOTH a compiled and a source artifact -- that is deliberate, since one
+      // is what installs and the other is what someone reads first -- and they
+      // describe the same neurons. Counting them twice made a 2-neuron skill
+      // claim 4, and would have inflated the mesh on every install.
+      if (meshNeurons.length < MAX_MEMORIES_PER_ITEM && !seenNeurons.has(neuron.name)) {
+        seenNeurons.add(neuron.name);
+        meshNeurons.push({ name: neuron.name, definition: clip(definition) });
       }
       for (const script of neuron.scripts ?? []) {
         if (memories.length >= MAX_MEMORIES_PER_ITEM) break;
@@ -437,8 +453,8 @@ export function planActivation(kind: string, name: string): ActivationPlan {
     }
   }
 
-  const hitCap = memories.length >= MAX_MEMORIES_PER_ITEM;
-  if (memories.length === 0) {
+  const hitCap = memories.length >= MAX_MEMORIES_PER_ITEM || meshNeurons.length >= MAX_MEMORIES_PER_ITEM;
+  if (memories.length === 0 && meshNeurons.length === 0) {
     return {
       from,
       memories,

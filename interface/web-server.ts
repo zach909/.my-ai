@@ -2875,6 +2875,80 @@ export class WebServer {
     }
 
     // POST /api/extension/build — build a real extension from NeuroLang and save it
+    // POST /api/extension/publish — build a net skill and put it in the store.
+    //
+    // The Extension Builder builds net skills, and until now its output went to
+    // extension-builder/extensions/ and stopped there. So the chain the whole
+    // system is built around -- builder makes a net skill, it is published,
+    // someone installs it, its neurons join the shared all-to-all mesh -- was
+    // broken at the very first link. Anything built here was invisible to
+    // everyone else.
+    //
+    // Publishing is open, like every other publish. It does NOT install: the
+    // person on the other machine still chooses, and their install is what
+    // wires the neurons into their network.
+    if (pathname === '/api/extension/publish' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as
+          { name?: string; description?: string; code?: string; quantize?: boolean; bits?: number; author?: string } | null;
+        const name = (body?.name ?? '').trim();
+        if (!name) {
+          this.sendJson(res, { error: 'A net skill needs a name to be published under.' }, 400);
+          return;
+        }
+
+        const { ExtensionBuilder } = await import('../extension-builder/builder.js');
+        const builder = new ExtensionBuilder();
+        const project = builder.createProject(name, body?.description ?? '');
+        const parsed = await builder.parseNeuroLang(project.id, body?.code ?? '');
+        if (!parsed.success) {
+          // The builder's own errors, not a generic failure: someone fixing
+          // their NeuroLang needs to know which line it disliked.
+          this.sendJson(res, { errors: parsed.errors }, 400);
+          return;
+        }
+
+        const quantize = body?.quantize === true;
+        const bits = body?.bits ?? 8;
+        const compiled = quantize
+          ? await builder.installWithQuantization(project.id, { bits })
+          : builder.saveWithoutQuantization(project.id);
+
+        const proj = builder.getProject(project.id);
+        const neurons = proj
+          ? Array.from(proj.neurons.values()).map(n => ({ name: n.name, value: n.value, definition: n.definition }))
+          : [];
+        if (neurons.length === 0) {
+          this.sendJson(res, { error: 'That built nothing — a net skill with no neurons has nothing to join a network with.' }, 400);
+          return;
+        }
+
+        // Both artifacts, for the same reason skill-agent publishes both: the
+        // compiled form is what installs, and the source form is what someone
+        // reads before deciding to.
+        const slug = name.toLowerCase().replace(/[^a-z0-9._-]+/g, '-').replace(/^-+|-+$/g, '') || `skill-${Date.now()}`;
+        const { publishAndSync } = await import('../models && skills/core/store.js');
+        const { item, sync } = await publishAndSync({
+          kind: 'skills',
+          name: slug,
+          title: name,
+          description:
+            (body?.description ?? '').trim() ||
+            `A net skill built in the Extension Builder: ${neurons.length} neuron${neurons.length === 1 ? '' : 's'}.`,
+          author: typeof body?.author === 'string' && body.author.trim() ? body.author.trim() : 'extension-builder',
+          files: [
+            { filename: `${slug}.skill.json`, content: compiled ?? JSON.stringify({ neurons }) },
+            { filename: `${slug}.source.json`, content: JSON.stringify({ neurons, code: body?.code ?? '' }, null, 2) },
+          ],
+        });
+
+        this.sendJson(res, { ok: true, item, sync, neurons: neurons.length, quantized: quantize }, 201);
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
     if (pathname === '/api/extension/build' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as

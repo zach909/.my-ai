@@ -272,6 +272,49 @@ function BuilderPage() {
     )
   }
 
+  /**
+   * Publish what was built to the store, so other people can install it.
+   *
+   * Until now the builder's output stopped at this machine: it saved into
+   * extension-builder/extensions/ and went no further. So the chain this whole
+   * system is built around -- build a net skill, publish it, someone installs
+   * it, its neurons join their shared all-to-all mesh -- was broken at the very
+   * first link, and anything built here was invisible to everyone else.
+   *
+   * Publishing is not installing. The person on the other machine still
+   * chooses, and their install is what wires the neurons into their network.
+   */
+  const handlePublish = async () => {
+    const name = (b.projectName ?? '').trim()
+    if (!name) {
+      setStatusMsg('Give the project a name before publishing it')
+      return
+    }
+    setStatusMsg('Publishing to the store…')
+    try {
+      const res = await fetch('/api/extension/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: '', code: neuroLang }),
+      })
+      const body = await res.json()
+      if (!res.ok) {
+        setStatusMsg(body.errors ? `Could not publish: ${body.errors.join('; ')}` : `Could not publish: ${body.error}`)
+        return
+      }
+      // Said honestly: "saved" and "everyone can get it" are different
+      // outcomes, and only one of them is publishing.
+      setStatusMsg(
+        `Published "${body.item.name}" with ${body.neurons} neuron(s) — `
+        + (body.sync?.pushed
+          ? `pushed${body.sync.branch ? ` to ${body.sync.branch}` : ''}, anyone who pulls can install it`
+          : `saved on this device only (${body.sync?.reason ?? 'it has not reached anyone else yet'})`),
+      )
+    } catch (err) {
+      setStatusMsg(`Could not publish: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const handleParse = async () => {
     const res = await b.parseNeuroLang(neuroLang)
     if (res.success) spreadUnplaced()
@@ -665,6 +708,18 @@ function BuilderPage() {
               </Button>
               <Button size="sm" className="h-7 w-full text-xs" onClick={handleInstall} disabled={training}>
                 Install (quantize 8-bit)
+              </Button>
+              {/* Publishing is what makes a built net skill reach anyone else.
+                  Save and Install both stop at this machine. */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-xs"
+                onClick={handlePublish}
+                disabled={training}
+                title="Publish this net skill to the store so other people can install it"
+              >
+                Publish to the store
               </Button>
             </CardContent>
           </Card>

@@ -466,3 +466,48 @@ describe('a net skill becomes part of the network', () => {
     expect(planActivation('skills', 'neuron-flood').neurons.length).toBeLessThanOrEqual(500)
   })
 })
+
+describe('what the Extension Builder actually produces', () => {
+  // NeuroLang compiles to neurons with names, values and CONNECTIONS -- and no
+  // prose. Requiring a definition before a neuron could join the mesh meant
+  // every net skill built the intended way contributed nothing at all:
+  // published fine, installed fine, remembered 0, joined 0.
+  const builtByBuilder = JSON.stringify({
+    neurons: [
+      { name: 'alpha', value: 0, definition: '' },
+      { name: 'beta', value: 1, definition: '' },
+    ],
+  })
+
+  it('joins the mesh even with no definitions on any neuron', async () => {
+    publish('from-builder', [{ filename: 'from-builder.skill.json', content: builtByBuilder }])
+    await installItem('skills', 'from-builder')
+    const plan = planActivation('skills', 'from-builder')
+    expect(plan.neurons.map(n => n.name)).toEqual(['alpha', 'beta'])
+    // Nothing to remember is correct: there is no text.
+    expect(plan.memories).toEqual([])
+    expect(plan.nothingLoadable).toBeUndefined()
+  })
+
+  it('counts a neuron once when the compiled and source artifacts both describe it', async () => {
+    // A net skill is normally published as both -- one installs, the other is
+    // what someone reads first. Counting both made a 2-neuron skill claim 4.
+    publish('two-artifacts', [
+      { filename: 'x.skill.json', content: builtByBuilder },
+      { filename: 'x.source.json', content: builtByBuilder },
+    ])
+    await installItem('skills', 'two-artifacts')
+    expect(planActivation('skills', 'two-artifacts').neurons).toHaveLength(2)
+  })
+
+  it('still remembers a definition when one is present', async () => {
+    publish('with-prose', [{
+      filename: 'p.skill.json',
+      content: JSON.stringify({ neurons: [{ name: 'n', definition: 'what it means' }] }),
+    }])
+    await installItem('skills', 'with-prose')
+    const plan = planActivation('skills', 'with-prose')
+    expect(plan.memories).toHaveLength(1)
+    expect(plan.neurons).toHaveLength(1)
+  })
+})
