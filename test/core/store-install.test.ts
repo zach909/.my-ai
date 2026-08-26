@@ -343,3 +343,65 @@ describe('a published item cannot flood the machine that installs it', () => {
     expect(Object.prototype).not.toHaveProperty('polluted')
   })
 })
+
+describe('an Agent Skill is a prompting skill, and loads as one', () => {
+  // The format the project's own example arrived in: a SKILL.md carrying
+  // instructions rather than weights. Activation used to skip it entirely and
+  // report "carries nothing this system knows how to load" about a file whose
+  // whole content is what to load.
+  const SKILL_MD = `---
+name: wiki-first
+description: Check the wiki before answering. Use when the user asks a factual question.
+---
+
+# Wiki First
+
+Search the wiki, then answer from what you find.
+`
+
+  it('loads a SKILL.md as a trigger and its instructions', async () => {
+    publish('wiki-first', [{ filename: 'SKILL.md', content: SKILL_MD }])
+    await installItem('skills', 'wiki-first')
+    const plan = planActivation('skills', 'wiki-first')
+
+    expect(plan.from).toEqual(['SKILL.md'])
+    expect(plan.nothingLoadable).toBeUndefined()
+    // The description is the trigger; the body is what to do.
+    expect(plan.memories[0].content).toMatch(/^Check the wiki before answering/)
+    expect(plan.memories[0].payload).toMatch(/Search the wiki, then answer/)
+    expect(plan.memories[0].tags).toContain('prompting-skill')
+  })
+
+  it('loads the skill alongside its scripts and references without choking on them', async () => {
+    publish('with-extras', [
+      { filename: 'SKILL.md', content: SKILL_MD },
+      { filename: 'scripts/run.py', content: 'print("hi")' },
+      { filename: 'references/schemas.md', content: '# Schemas' },
+    ])
+    await installItem('skills', 'with-extras')
+    const plan = planActivation('skills', 'with-extras')
+    // Only the SKILL.md is instructions; the rest are files it can refer to.
+    expect(plan.from).toEqual(['SKILL.md'])
+    expect(plan.memories).toHaveLength(1)
+  })
+
+  it('does not lose a neuron skill that also ships a SKILL.md', async () => {
+    publish('both', [
+      { filename: 'SKILL.md', content: SKILL_MD },
+      { filename: 'both.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'd' }] }) },
+    ])
+    await installItem('skills', 'both')
+    const plan = planActivation('skills', 'both')
+    expect(plan.from.sort()).toEqual(['SKILL.md', 'both.skill.json'])
+    expect(plan.memories).toHaveLength(2)
+  })
+
+  it('keeps the rest of an item when one SKILL.md is malformed', async () => {
+    publish('half-broken', [
+      { filename: 'SKILL.md', content: '---\nname: x\ndescription: d\n---\n\n' },
+      { filename: 'good.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'works' }] }) },
+    ])
+    await installItem('skills', 'half-broken')
+    expect(planActivation('skills', 'half-broken').from).toEqual(['good.skill.json'])
+  })
+})
