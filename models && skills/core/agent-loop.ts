@@ -238,6 +238,39 @@ export async function runAgentLoop(
     let actionResult: string | undefined;
 
     for (const skill of actionSkills) {
+      // A skill that names no plugin used to be skipped entirely, so an action
+      // skill saying "do this" without knowing WHICH tool does it was inert.
+      // With discovery available, the loop can find the tool itself -- which is
+      // the difference between an agent that must be told its tools and one
+      // that can pick them.
+      if (!skill.plugin && caps.useBestTool) {
+        const task = fillTemplate(skill.input ?? "{goal}", { goal, observation: observations[observations.length - 1] });
+        try {
+          const chosen = await caps.useBestTool(task);
+          if (chosen) {
+            actionResult = chosen.result;
+            acted = true;
+            steps.push({
+              iteration,
+              phase: "act",
+              skill: skill.name,
+              // Records which tool was chosen and why, so a wrong choice is
+              // diagnosable rather than mysterious.
+              detail: `chose ${chosen.plugin} (${chosen.why}) -> ${chosen.result || "(no result)"}`,
+            });
+            break;
+          }
+        } catch (err) {
+          steps.push({
+            iteration,
+            phase: "act",
+            skill: skill.name,
+            detail: "tool discovery failed",
+            error: err instanceof Error ? err.message : String(err),
+          });
+        }
+        continue;
+      }
       if (!caps.callPlugin || !skill.plugin) continue;
       const input = fillTemplate(skill.input ?? "{goal}", { goal, observation: observations[observations.length - 1] });
       try {
