@@ -65,6 +65,21 @@ export class ResearchPlugin extends BasePlugin {
   }
 
   /**
+   * How someone would ASK for this, not what the plugin calls itself.
+   *
+   * Added after the agent exam measured routing and found this plugin
+   * unreachable for the obvious phrasing: the only terms available were its id
+   * and its manifest capabilities, so a request had to contain the plugin's
+   * own name to find it.
+   */
+  describeCapabilities() {
+    return {
+      verbs: ["research", "investigate", "study", "learn"],
+      nouns: ["topic", "subject", "source", "reference", "background", "information"],
+    };
+  }
+
+  /**
    * "search its own chats" -- the real LongTermMemory.retrieve() (the
    * same store /api/extension/register's remember() calls already
    * write into, and every trained network loaded at boot lands in),

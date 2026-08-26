@@ -405,3 +405,64 @@ Search the wiki, then answer from what you find.
     expect(planActivation('skills', 'half-broken').from).toEqual(['good.skill.json'])
   })
 })
+
+describe('a net skill becomes part of the network', () => {
+  // The distinction that matters: a PROMPTING skill is instructions -- it tells
+  // the agent how to do something and lives in memory. A NET SKILL connects to
+  // the neural network and becomes part of it: its neurons join the same
+  // all-to-all pool as every plugin's, so they can influence and be influenced
+  // by everything already there.
+  //
+  // This is the architecture's departure from ordinary mixture-of-experts. In
+  // MoE you pick the top experts for a context and the rest sit inert. Here the
+  // brains all go in one pool and the neurons are connected, so nothing is
+  // switched off for not being chosen.
+  const netSkill = JSON.stringify({
+    neurons: [
+      { name: 'alpha', definition: 'the first neuron' },
+      { name: 'beta', definition: 'the second neuron' },
+    ],
+  })
+
+  it('reports the neurons it contributes, not just memories', async () => {
+    publish('joins', [{ filename: 'j.skill.json', content: netSkill }])
+    await installItem('skills', 'joins')
+    const plan = planActivation('skills', 'joins')
+    expect(plan.neurons.map(n => n.name)).toEqual(['alpha', 'beta'])
+    expect(plan.neurons[0].definition).toBe('the first neuron')
+  })
+
+  it('does not confuse the parsed neuron array with what it contributes', async () => {
+    // These two collided once: the accumulator stayed empty while entries were
+    // pushed into the array being iterated, so a skill reported zero neurons
+    // and the mesh join fell back to a default count of one.
+    publish('shadowed', [{ filename: 's.skill.json', content: netSkill }])
+    await installItem('skills', 'shadowed')
+    const plan = planActivation('skills', 'shadowed')
+    expect(plan.neurons).toHaveLength(2)
+    expect(plan.memories).toHaveLength(2)
+  })
+
+  it('offers no neurons for a prompting skill, which carries none', async () => {
+    publish('instructions-only', [
+      {
+        filename: 'SKILL.md',
+        content: '---\nname: x\ndescription: Use when asked about x.\n---\n\n# X\n\nDo the thing.',
+      },
+    ])
+    await installItem('skills', 'instructions-only')
+    const plan = planActivation('skills', 'instructions-only')
+    expect(plan.neurons).toEqual([])
+    // It is still fully loadable -- as instructions.
+    expect(plan.memories).toHaveLength(1)
+  })
+
+  it('caps the neurons one item may contribute, like everything else', async () => {
+    const flood = JSON.stringify({
+      neurons: Array.from({ length: 2000 }, (_, i) => ({ name: `n${i}`, definition: `d${i}` })),
+    })
+    publish('neuron-flood', [{ filename: 'f.skill.json', content: flood }])
+    await installItem('skills', 'neuron-flood')
+    expect(planActivation('skills', 'neuron-flood').neurons.length).toBeLessThanOrEqual(500)
+  })
+})

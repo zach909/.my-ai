@@ -985,6 +985,23 @@ export class WebServer {
                 // point of installing it.
                 const plan = planActivation(body.kind, body.name);
                 let remembered = 0;
+                let joinedMesh = 0;
+                // A net skill joins the shared all-to-all mesh, which is what makes it
+                // part of the network rather than a note about one. A prompting skill
+                // carries no neurons and simply does not reach this.
+                if (plan.neurons.length > 0) {
+                    try {
+                        const { getNeuroclawSystem } = await import('../src/index.js');
+                        const system = await getNeuroclawSystem();
+                        const ids = system.pluginRegistry.joinMesh(`installed:${body.kind}/${body.name}`, body.name, plan.neurons.length);
+                        joinedMesh = ids.length;
+                    }
+                    catch (err) {
+                        // Failing to wire the mesh must not lose the install: the files are
+                        // on disk and the memories still load.
+                        console.warn('[store] could not wire the installed skill into the mesh:', err instanceof Error ? err.message : err);
+                    }
+                }
                 if (plan.memories.length > 0) {
                     const { getNeuroclawSystem } = await import('../src/index.js');
                     const system = await getNeuroclawSystem();
@@ -998,7 +1015,7 @@ export class WebServer {
                         remembered++;
                     }
                 }
-                this.sendJson(res, { ...installed, activated: { remembered, from: plan.from, note: plan.nothingLoadable }, }, 201);
+                this.sendJson(res, { ...installed, activated: { remembered, joinedMesh, from: plan.from, note: plan.nothingLoadable } }, 201);
             }
             catch (err) {
                 this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
