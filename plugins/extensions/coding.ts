@@ -1,6 +1,21 @@
 import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/types.js";
 import { SkillPlugin } from "../../plugin_manager/sdk.js";
 import { createContext, Script } from "node:vm";
+import {
+  iterateOnCode,
+  verifyCode,
+  type CodeCheck,
+  type VerifyResult,
+} from "../../models && skills/core/code-iteration.js";
+
+/** Parses an expected value, falling back to the literal text when it is not JSON. */
+function safeJson(text: string): unknown {
+  try {
+    return JSON.parse(text);
+  } catch {
+    return text;
+  }
+}
 
 /** Result of a single runSandboxed() call. */
 export interface SandboxRunResult {
@@ -42,11 +57,64 @@ export class CodingExtension extends SkillPlugin {
    * caller that says "run:"/"execute:"/"calculate:"/"eval:" up front.
    * Anything else still goes through the existing analysis path.
    */
+  describeCapabilities() {
+    return {
+      commands: ["run:", "execute:", "eval:", "calculate:", "verify:", "check:"],
+      verbs: ["code", "program", "implement", "debug", "refactor", "compile", "verify", "test"],
+      nouns: ["code", "function", "script", "snippet", "bug", "syntax", "algorithm"],
+    };
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     const input = typeof message === "string" ? message : String(message ?? "");
+
+    // verify: <code> ||| <expression> === <expected>
+    // Checking is what makes writing code work, so it gets a way in that does
+    // not require a caller to already hold a reference to this class.
+    const verify = input.match(/^(?:verify|check)\s*:\s*([\s\S]+?)\s*\|\|\|\s*([\s\S]+)$/i);
+    if (verify) {
+      const checks = verify[2]
+        .split("\n")
+        .map(line => line.trim())
+        .filter(Boolean)
+        .map((line, i) => {
+          const parts = line.split("===");
+          return {
+            name: `check ${i + 1}`,
+            expression: (parts[0] ?? "").trim(),
+            expected: safeJson((parts[1] ?? "").trim()),
+          };
+        });
+      return this.verify(verify[1], checks);
+    }
+
     const m = input.match(/^(run|execute|calculate|eval)\s*:\s*([\s\S]+)$/i);
     if (m) return this.runSandboxed(m[2]);
     return this.execute(input);
+  }
+
+  /**
+   * Run code against real checks and say precisely what failed.
+   *
+   * Separate from runSandboxed() because "did it run" and "is it right" are
+   * different questions, and only the second one supports fixing anything.
+   */
+  verify(code: string, checks: CodeCheck[]): VerifyResult {
+    return verifyCode(code, checks);
+  }
+
+  /**
+   * Write, run, read the failure, revise, repeat -- the loop that actually
+   * makes coding work. The proposing intelligence is the caller's; this owns
+   * the checking and the stopping conditions.
+   */
+  iterate(input: {
+    initial: string;
+    checks: CodeCheck[];
+    revise: (code: string, failure: string, attempt: number) => string | null | Promise<string | null>;
+    maxAttempts?: number;
+  }) {
+    return iterateOnCode(input);
   }
 
   /**
