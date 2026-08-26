@@ -9,6 +9,20 @@ export class CameraPlugin extends BasePlugin {
         this.streaming = false;
         this.streamDir = null;
     }
+    /**
+     * How someone would ASK for this, not what the plugin calls itself.
+     *
+     * Added after the agent exam measured routing and found this plugin
+     * unreachable for the obvious phrasing: the only terms available were its id
+     * and its manifest capabilities, so a request had to contain the plugin's
+     * own name to find it.
+     */
+    describeCapabilities() {
+        return {
+            verbs: ["photograph", "capture", "snap", "shoot", "film"],
+            nouns: ["camera", "photo", "picture", "image", "selfie", "webcam", "lens"],
+        };
+    }
     async captureImage() {
         const tmpDir = mkdtempSync(join(tmpdir(), "neuroclaw-cam-"));
         const outPath = join(tmpDir, "capture.jpeg");

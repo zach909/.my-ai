@@ -89,6 +89,26 @@ export class PluginRegistry {
     }
   }
 
+  /**
+   * Give an installed skill real neurons in the shared mesh.
+   *
+   * This is what makes a net skill part of the network rather than a note
+   * about one. addExpert wires the new neurons all-to-all into everything
+   * already there -- the same path a plugin takes at registration -- so an
+   * installed skill can influence, and be influenced by, every other neuron.
+   *
+   * Idempotent: installing the same skill twice must not keep adding neurons,
+   * which would inflate the mesh a little more on every reinstall until the
+   * all-to-all connection count made propagation crawl.
+   */
+  joinMesh(skillId: string, displayName: string, neuronCount: number): number[] {
+    const existing = this.moe.getExpert(skillId);
+    if (existing) return this.pluginNeuronIds.get(skillId) ?? [];
+    const expert = this.moe.addExpert(skillId, displayName, "installed-skill", Math.max(1, neuronCount));
+    this.pluginNeuronIds.set(skillId, expert.neuronIds);
+    return expert.neuronIds;
+  }
+
   async activate(pluginId: string): Promise<void> {
     const plugin = this.plugins.get(pluginId);
     if (!plugin) {

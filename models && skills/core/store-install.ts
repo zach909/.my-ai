@@ -305,6 +305,26 @@ export interface ActivationPlan {
   /** Files that carried loadable knowledge. */
   from: string[];
   memories: ActivatableMemory[];
+  /**
+   * Neurons this skill contributes to the shared mesh.
+   *
+   * This is the difference between a prompting skill and a net skill. A
+   * prompting skill is instructions -- it tells the agent how to do something,
+   * and lives in memory. A net skill connects to the neural network and
+   * BECOMES PART OF IT: its neurons join the same all-to-all pool as every
+   * plugin's, wired to all 205 neurons already there, so they can influence
+   * and be influenced by everything else.
+   *
+   * That is the architecture's whole departure from ordinary mixture-of-
+   * experts. In MoE you pick the top experts for a context and the rest sit
+   * inert. Here the brains all go in one pool and the neurons are connected,
+   * so nothing is switched off for not being chosen.
+   *
+   * Activation used to produce memories only, so an installed net skill was
+   * recallable text and nothing more -- a note ABOUT a skill rather than the
+   * skill joining the network.
+   */
+  neurons: Array<{ name: string; definition: string }>;
   /** Set when the item declared more than it is allowed to contribute. */
   truncated?: string;
   /**
@@ -331,10 +351,17 @@ export interface ActivationPlan {
  */
 export function planActivation(kind: string, name: string): ActivationPlan {
   const record = readInstalled(kind, name);
-  if (!record) return { from: [], memories: [], nothingLoadable: `"${kind}/${name}" is not installed.` };
+  if (!record) {
+    return { from: [], memories: [], neurons: [], nothingLoadable: `"${kind}/${name}" is not installed.` };
+  }
 
   const from: string[] = [];
   const memories: ActivatableMemory[] = [];
+  // Named distinctly on purpose: the loop below has its own `neurons`, the
+  // parsed JSON array. They collided, so this accumulator stayed empty while
+  // entries were pushed into the array being iterated -- the skill reported
+  // zero neurons and the mesh join fell back to a default count of one.
+  const meshNeurons: Array<{ name: string; definition: string }> = [];
 
   for (const file of record.files) {
     // An Agent Skill: a SKILL.md carrying instructions rather than weights.
@@ -390,6 +417,11 @@ export function planActivation(kind: string, name: string): ActivationPlan {
       const definition = (neuron.definition ?? "").trim();
       if (definition) {
         memories.push({ content: clip(`${neuron.name}: ${definition}`), tags: ["store-install", `${kind}/${name}`] });
+        // Also offered to the mesh: a net skill is supposed to become part of
+        // the network, not merely be remembered.
+        if (meshNeurons.length < MAX_MEMORIES_PER_ITEM) {
+          meshNeurons.push({ name: neuron.name, definition: clip(definition) });
+        }
       }
       for (const script of neuron.scripts ?? []) {
         if (memories.length >= MAX_MEMORIES_PER_ITEM) break;
@@ -410,6 +442,7 @@ export function planActivation(kind: string, name: string): ActivationPlan {
     return {
       from,
       memories,
+      neurons: meshNeurons,
       nothingLoadable:
         `"${kind}/${name}" is installed, but carries nothing this system knows how to load ` +
         `(no SKILL.md instructions, neuron definitions or skill scripts). Its files are on disk and can be read.`,
@@ -418,6 +451,7 @@ export function planActivation(kind: string, name: string): ActivationPlan {
   return {
     from,
     memories,
+    neurons: meshNeurons,
     ...(hitCap
       ? {
           truncated:

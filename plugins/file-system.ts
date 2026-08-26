@@ -95,6 +95,21 @@ export class FileSystemPlugin extends BasePlugin {
     return fullPath;
   }
 
+  /**
+   * How someone would ASK for this, not what the plugin calls itself.
+   *
+   * Added after the agent exam measured routing and found this plugin
+   * unreachable for the obvious phrasing: the only terms available were its id
+   * and its manifest capabilities, so a request had to contain the plugin's
+   * own name to find it.
+   */
+  describeCapabilities() {
+    return {
+      verbs: ["open", "save"],
+      nouns: ["file", "folder", "directory", "disk", "document", "path"],
+    };
+  }
+
   override async onMessage(message: unknown): Promise<unknown> {
     // Case-insensitive on the command keyword only -- lowercasing the whole
     // input previously mangled the extracted path too (`MyDir/MyFile.TXT`
