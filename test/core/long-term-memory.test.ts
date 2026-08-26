@@ -163,3 +163,57 @@ describe('capacity bounds what it learned, not what was installed', () => {
     expect(mem.get(important)).toBeDefined()
   })
 })
+
+describe('the evictable count never drifts from reality', () => {
+  // Eviction now trusts an incrementally maintained count instead of scanning.
+  // That is only safe if the count is right on every path that adds or removes
+  // a memory; a drifting counter would silently break eviction in whichever
+  // direction it drifted -- either never evicting, or evicting constantly.
+  const actual = (mem: LongTermMemory) => mem.all().filter(m => !m.pinned).length
+
+  it('matches after ordinary inserts', () => {
+    const mem = new LongTermMemory({ capacity: 1000 })
+    for (let i = 0; i < 50; i++) mem.remember(`thing ${i}`, { pinned: i % 3 === 0 })
+    expect(mem.evictableCount()).toBe(actual(mem))
+  })
+
+  it('matches after forgetting, pinned and unpinned alike', () => {
+    const mem = new LongTermMemory({ capacity: 1000 })
+    const ids = []
+    for (let i = 0; i < 40; i++) ids.push(mem.remember(`thing ${i}`, { pinned: i % 2 === 0 }).id)
+    for (const id of ids.slice(0, 25)) mem.forget(id)
+    expect(mem.evictableCount()).toBe(actual(mem))
+  })
+
+  it('matches after re-using an id, which must not double-count', () => {
+    const mem = new LongTermMemory({ capacity: 1000 })
+    mem.remember('first', { id: 'same' })
+    mem.remember('second', { id: 'same' })
+    mem.remember('third', { id: 'same' })
+    expect(mem.evictableCount()).toBe(actual(mem))
+    expect(mem.evictableCount()).toBe(1)
+  })
+
+  it('matches when an id changes from unpinned to pinned', () => {
+    const mem = new LongTermMemory({ capacity: 1000 })
+    mem.remember('a thing', { id: 'x' })
+    mem.remember('the same thing, now installed', { id: 'x', pinned: true })
+    expect(mem.evictableCount()).toBe(actual(mem))
+    expect(mem.evictableCount()).toBe(0)
+  })
+
+  it('matches after eviction has actually run', () => {
+    const mem = new LongTermMemory({ capacity: 10 })
+    for (let i = 0; i < 30; i++) mem.remember(`pinned ${i}`, { pinned: true })
+    for (let i = 0; i < 100; i++) mem.remember(`observation ${i}`, { importance: Math.random() })
+    expect(mem.evictableCount()).toBe(actual(mem))
+    expect(mem.evictableCount()).toBeLessThanOrEqual(10)
+  })
+
+  it('matches after a save and reload', () => {
+    const mem = new LongTermMemory({ capacity: 1000 })
+    for (let i = 0; i < 30; i++) mem.remember(`thing ${i}`, { pinned: i % 4 === 0 })
+    const reloaded = LongTermMemory.deserialize(mem.serialize())
+    expect(reloaded.evictableCount()).toBe(actual(reloaded))
+  })
+})

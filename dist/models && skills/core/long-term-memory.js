@@ -28,6 +28,8 @@ export class LongTermMemory {
         /** Cached sparse vector representations for stored memory items. */
         this.sparseMap = new Map();
         this.seq = 0;
+        /** Kept incrementally so the common insert never scans the whole store. */
+        this.unpinnedCount = 0;
         // A large sparse dimension keeps hash collisions rare, so cosine tracks
         // real shared vocabulary rather than collision noise.
         this.dim = opts?.dim ?? 512;
@@ -61,7 +63,13 @@ export class LongTermMemory {
             ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
             ...(opts.pinned ? { pinned: true } : {}),
         };
+        // Replacing an existing id must not double-count it.
+        const replaced = this.items.get(id);
+        if (replaced && !replaced.pinned)
+            this.unpinnedCount--;
         this.items.set(id, item);
+        if (!item.pinned)
+            this.unpinnedCount++;
         // Cache precomputed sparse vector for fast $O(\text{nonZeros})$ retrieval
         this.sparseMap.set(id, sparse);
         this.evictIfNeeded();
@@ -141,8 +149,17 @@ export class LongTermMemory {
             item.importance = clamp01(item.importance + delta);
     }
     forget(id) {
+        // The count has to be maintained on EVERY removal path, not just eviction,
+        // or it drifts from reality and the early return starts lying.
+        const item = this.items.get(id);
+        if (item && !item.pinned)
+            this.unpinnedCount--;
         this.sparseMap.delete(id);
         return this.items.delete(id);
+    }
+    /** Unpinned memories held. Exposed so a test can prove the count never drifts. */
+    evictableCount() {
+        return this.unpinnedCount;
     }
     /**
      * Consolidate working-context snippets (e.g. drained from the ZipIO buffer)
@@ -160,6 +177,8 @@ export class LongTermMemory {
         const mem = new LongTermMemory({ dim: data.dim, capacity: data.capacity });
         for (const it of data.items) {
             mem.items.set(it.id, it);
+            if (!it.pinned)
+                mem.unpinnedCount++;
             // Warmed here rather than lazily in recall(): deserialize knows it is
             // about to hold every item, and rebuilding during the first search made
             // that one search pay for all of them.
@@ -202,9 +221,15 @@ export class LongTermMemory {
         // which evicted every unpinned memory in the store, on every single
         // insert. Measured: five new memories at importance 0.9, none survived.
         // The agent could not form a new memory at all, and nothing said so.
-        const evictable = this.all().filter(item => !item.pinned);
-        if (evictable.length <= this.capacity)
+        // Counted incrementally rather than scanned. Fixing the eviction bug above
+        // moved this filter BEFORE the early return, so every insert allocated and
+        // scanned the whole store even when nothing needed evicting -- a
+        // regression I introduced with the fix. The count answers the same
+        // question in constant time; the scan now happens only when it is actually
+        // going to evict something.
+        if (this.unpinnedCount <= this.capacity)
             return;
+        const evictable = this.all().filter(item => !item.pinned);
         const now = Date.now();
         const ranked = evictable.map(item => {
             const recency = Math.exp(-(now - item.lastAccess) / (1000 * 60 * 60 * 24));
@@ -218,6 +243,8 @@ export class LongTermMemory {
         const toRemove = Math.min(evictable.length - this.capacity, ranked.length);
         for (let i = 0; i < toRemove; i++) {
             const removeId = ranked[i].item.id;
+            if (!ranked[i].item.pinned)
+                this.unpinnedCount--;
             this.items.delete(removeId);
             this.sparseMap.delete(removeId);
         }
