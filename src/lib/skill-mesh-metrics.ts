@@ -12,8 +12,9 @@
  * real usage, not something to publish or share.
  */
 
-import { appendFileSync, readFileSync, writeFileSync, mkdirSync, existsSync, statSync } from 'node:fs'
+import { appendFileSync, readFileSync, mkdirSync, existsSync, statSync } from 'node:fs'
 import path from 'node:path'
+import { writeFileAtomic } from '../../models && skills/core/atomic-write.js'
 
 export interface SkillMeshAttempt {
   at: number
@@ -52,7 +53,10 @@ function maybeTrim(logPath: string): void {
   if (size < MAX_LINES * 200) return
   const lines = readFileSync(logPath, 'utf8').split('\n').filter(Boolean)
   if (lines.length <= MAX_LINES) return
-  writeFileSync(logPath, lines.slice(-MAX_LINES).join('\n') + '\n', 'utf8')
+  // Atomic: rotation truncates and rewrites the whole file, which is the
+  // longest window this module ever has where a power cut destroys data --
+  // and what it would destroy here is the skill-mesh metric history.
+  writeFileAtomic(logPath, lines.slice(-MAX_LINES).join('\n') + '\n')
 }
 
 /** Reads the most recent `limit` real attempts, oldest first. Malformed
