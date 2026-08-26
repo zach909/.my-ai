@@ -14,6 +14,7 @@
 
 import { useEffect, useState } from 'react'
 import { usePageVisible } from './usePageVisible'
+import { fetchWithTimeout, startPolling } from '@/lib/poll'
 
 const POLL_MS = 3000
 
@@ -27,7 +28,10 @@ export function useAgentRunning(): boolean {
 
     const poll = async () => {
       try {
-        const res = await fetch('/api/continuous/status')
+        // Deadline shorter than the interval, and the next poll is scheduled
+        // only after this one settles -- see src/lib/poll.ts for why an
+        // interval around an untimed fetch can starve the whole page.
+        const res = await fetchWithTimeout('/api/continuous/status', {}, 2500)
         if (!res.ok) throw new Error(String(res.status))
         const data = await res.json()
         if (cancelled) return
@@ -40,11 +44,10 @@ export function useAgentRunning(): boolean {
       }
     }
 
-    poll()
-    const id = setInterval(poll, POLL_MS)
+    const handle = startPolling(poll, POLL_MS)
     return () => {
       cancelled = true
-      clearInterval(id)
+      handle.stop()
     }
   }, [visible])
 

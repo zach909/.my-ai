@@ -40,6 +40,7 @@
  */
 
 import { createFileRoute, Link } from '@tanstack/react-router'
+import { fetchWithTimeout, startPolling, type PollHandle } from '@/lib/poll'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
@@ -2869,7 +2870,7 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
   const [asking, setAsking] = useState(false)
   const lastIdRef = useRef<string | undefined>(undefined)
   const messagesEndRef = useRef<HTMLDivElement>(null)
-  const pollRef = useRef<ReturnType<typeof setInterval> | null>(null)
+  const pollRef = useRef<PollHandle | null>(null)
 
   useEffect(() => {
     const stored = localStorage.getItem(CHAT_NAME_KEY)
@@ -2922,7 +2923,9 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
       const url = lastIdRef.current
         ? `/api/shared-chat/rooms/${encodeURIComponent(forRoomId)}/messages?since=${encodeURIComponent(lastIdRef.current)}`
         : `/api/shared-chat/rooms/${encodeURIComponent(forRoomId)}/messages`
-      const res = await fetch(url)
+      // Timed: this is polled, and a polled request without a deadline is the
+      // one that piles up when the backend is busy.
+      const res = await fetchWithTimeout(url, {}, 6000)
       if (!res.ok) return
       const data: { messages: SharedMessage[] } = await res.json()
       if (data.messages.length === 0) return
@@ -2942,10 +2945,13 @@ function ChatPanel({ topic, onTopicConsumed }: { topic: string | null; onTopicCo
   const pageVisible = usePageVisible()
   useEffect(() => {
     if (!name || !pageVisible) return
-    fetchNew(roomId)
-    pollRef.current = setInterval(() => fetchNew(roomId), CHAT_POLL_MS)
+    // startPolling runs immediately, so there is no separate first call here
+    // -- keeping one would have fired two requests on every room change.
+    // Self-scheduling rather than an interval, so a slow room fetch delays
+    // the next one instead of overlapping with it. See src/lib/poll.ts.
+    pollRef.current = startPolling(() => fetchNew(roomId), CHAT_POLL_MS)
     return () => {
-      if (pollRef.current) clearInterval(pollRef.current)
+      pollRef.current?.stop()
     }
   }, [name, roomId, fetchNew, pageVisible])
 
