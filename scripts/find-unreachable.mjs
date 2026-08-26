@@ -28,7 +28,20 @@ import { readdirSync, readFileSync, statSync } from 'node:fs'
 import path from 'node:path'
 
 const ROOT = process.cwd()
+/** Files whose exports are checked. */
 const SEARCH_DIRS = ['models && skills', 'plugins', 'plugin_manager', 'interface', 'src']
+
+/**
+ * Extra places a caller can live, scanned for USES but not for exports.
+ *
+ * scripts/ was missing, and the omission made the tool lie in the direction
+ * that matters most: it reported publishSkillToStore as unused when
+ * scripts/skill-agent.mjs is the only thing that calls it, which is exactly
+ * the wiring the function exists for. A detector for unreachable code that
+ * cannot see one of the two places callers live produces false alarms, and a
+ * report with false alarms in it is one people stop reading.
+ */
+const CALLER_DIRS = ['scripts', 'benchmarks', 'desktop-app', 'extension-builder']
 const SKIP_DIRS = new Set(['node_modules', 'dist', '.git', '.vite-out', 'generated', 'clones'])
 
 /** Exports a symbol name is allowed to be unused under, with the reason. */
@@ -66,6 +79,13 @@ function exportsOf(source) {
 
 const files = SEARCH_DIRS.flatMap(d => walk(path.join(ROOT, d)))
 const sources = new Map(files.map(f => [f, readFileSync(f, 'utf8')]))
+
+// Read as callers only. Kept separate from `sources` so their own exports are
+// not audited -- a build script's helper is not the kind of thing this looks for.
+const callerText = CALLER_DIRS.flatMap(d => walk(path.join(ROOT, d)))
+  .filter(f => !f.includes(`${path.sep}PyTorch${path.sep}`) && !f.includes(`${path.sep}Moby${path.sep}`))
+  .map(f => { try { return readFileSync(f, 'utf8') } catch { return '' } })
+  .join('\n')
 // Tests count as callers for "is this used at all", but NOT for reachability:
 // a test calling a function directly is exactly the caller that proves nothing.
 const testFiles = [...walk(path.join(ROOT, 'test')), ...walk(path.join(ROOT, 'tests'))]
@@ -83,6 +103,8 @@ for (const [file, source] of sources) {
       // Word-boundary match: `foo` must not be satisfied by `fooBar`.
       if (new RegExp(`\\b${name.replace(/[$]/g, '\\$')}\\b`).test(otherSource)) { usedElsewhere = true; break }
     }
+    // A caller in scripts/ counts as a real caller.
+    if (!usedElsewhere && new RegExp(`\\b${name.replace(/[$]/g, '\\$')}\\b`).test(callerText)) usedElsewhere = true
     if (usedElsewhere) continue
 
     const usedInTests = new RegExp(`\\b${name.replace(/[$]/g, '\\$')}\\b`).test(testSource)

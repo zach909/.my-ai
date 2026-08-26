@@ -23,6 +23,7 @@ import {
   readInstalledFile,
   changedFiles,
   installedRoot,
+  planActivation,
   StoreInstallError,
 } from '../../models && skills/core/store-install.js'
 
@@ -216,5 +217,76 @@ describe('reading back what is installed', () => {
     mkdirSync(path.join(installedRoot(), 'skills'), { recursive: true })
     writeFileSync(path.join(installedRoot(), 'skills', 'secret.txt'), 'not yours')
     expect(readInstalledFile('skills', 'confined', '../secret.txt')).toBeNull()
+  })
+})
+
+describe('an installed item is actually loadable', () => {
+  it('turns neuron definitions and scripts into memories the system can hold', async () => {
+    publish('greeter', [
+      {
+        filename: 'greeter.skill.json',
+        content: JSON.stringify({
+          neurons: [
+            { name: 'greeting', definition: 'how to greet someone warmly', scripts: [{ userSays: 'say hello', response: 'Hello there.' }] },
+          ],
+        }),
+      },
+    ])
+    await installItem('skills', 'greeter')
+
+    const plan = planActivation('skills', 'greeter')
+    expect(plan.from).toEqual(['greeter.skill.json'])
+    expect(plan.memories).toHaveLength(2)
+    expect(plan.memories[0].content).toBe('greeting: how to greet someone warmly')
+    // The script pair keeps trigger and response separate, which is what lets
+    // the skill-mesh fast path answer with the response rather than the trigger.
+    expect(plan.memories[1]).toMatchObject({ content: 'say hello', payload: 'Hello there.' })
+    expect(plan.memories[1].tags).toContain('skill-script')
+  })
+
+  it('reads .source.json and skill.json too, not just .skill.json', async () => {
+    for (const filename of ['thing.source.json', 'skill.json', 'thing.ext.json']) {
+      const name = `carrier-${filename.replace(/\W/g, '')}`
+      publish(name, [{ filename, content: JSON.stringify({ neurons: [{ name: 'n', definition: 'd' }] }) }])
+      await installItem('skills', name)
+      expect(planActivation('skills', name).memories, filename).toHaveLength(1)
+    }
+  })
+
+  it('says plainly when an item carries nothing loadable, rather than implying it activated', async () => {
+    // A Python bridge and a README is a perfectly good store item. It just is
+    // not something this system can load into memory.
+    publish('bridge', [
+      { filename: 'SKILL.md', content: '# How to use this' },
+      { filename: 'bridge.py', content: 'print("hi")' },
+    ])
+    await installItem('skills', 'bridge')
+    const plan = planActivation('skills', 'bridge')
+    expect(plan.memories).toEqual([])
+    expect(plan.nothingLoadable).toMatch(/nothing this system knows how to load/)
+  })
+
+  it('lets one malformed file through without losing the rest of the item', async () => {
+    publish('mixed', [
+      { filename: 'broken.skill.json', content: '{ not json at all' },
+      { filename: 'good.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'works' }] }) },
+    ])
+    await installItem('skills', 'mixed')
+    const plan = planActivation('skills', 'mixed')
+    expect(plan.from).toEqual(['good.skill.json'])
+    expect(plan.memories).toHaveLength(1)
+  })
+
+  it('reports an item that was never installed as not installed', () => {
+    expect(planActivation('skills', 'never-installed').nothingLoadable).toMatch(/is not installed/)
+  })
+
+  it('does not activate anything merely by publishing', async () => {
+    publish('published-only-2', [
+      { filename: 'x.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'd' }] }) },
+    ])
+    // Publishing shares; installing is the deliberate act. Nothing loads until
+    // someone asks for it.
+    expect(planActivation('skills', 'published-only-2').nothingLoadable).toMatch(/is not installed/)
   })
 })
