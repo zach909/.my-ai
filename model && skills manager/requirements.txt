@@ -1,7 +1,16 @@
 # Mesh AI dependencies. Install torch matching your CUDA version from
 # https://pytorch.org/get-started/locally/ if the default wheel doesn't match
 # your GPU. For an RTX 5070 (Blackwell / CUDA 12.x) use a recent PyTorch build.
-# These three are all the canonical all-to-all mesh needs.
+# These three are what the tinygpt TRANSFORMER track needs -- pretrain.py,
+# finetune.py, and the elastic-mesh experiment under tinygpt/.
+#
+# They are NOT what Corona's all-to-all mesh needs. That mesh is implemented
+# directly, in asi_core/neural_mesh.py and models && skills/core/onebrain.ts,
+# and imports nothing outside the standard library. Verified by importing it
+# under `python3 -S`, which disables site-packages entirely. The line this
+# comment replaces described these as everything the canonical mesh required,
+# which sent anyone who read it to install 2.5GB of PyTorch for a mesh that
+# never calls it. See the root requirements.txt.
 torch>=2.1
 numpy>=1.24
 sentencepiece>=0.1.99

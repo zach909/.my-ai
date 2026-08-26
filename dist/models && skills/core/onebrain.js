@@ -4146,13 +4146,45 @@ export class MoERouter {
             this.experts.set(expertId, { weights: first, bias: bias || new Float32Array(0) });
         }
         else {
+            // Allocated on first use, not at registration.
+            //
+            // Measured at boot: this allocated inputDim x expertHiddenDim floats --
+            // 1.5MB -- for EVERY registered plugin, and randomly initialised all
+            // 393216 of them. With 36 plugins that is 54MB of resident typed arrays
+            // before anything has been asked a single question, which was most of
+            // the 65MB gap between this process's 21MB heap and its 178MB RSS.
+            //
+            // Most of it is never touched. api-connection plugins get one presence
+            // neuron precisely because, as registry.ts says where it calls this,
+            // their capability "genuinely can't be reduced to neuron weights" --
+            // reading a file requires real I/O, not a weighted sum. Paying 1.5MB up
+            // front for a matrix that will never be multiplied is the definition of
+            // eager work with no consumer.
+            //
+            // The getter materialises identical weights on first read, so anything
+            // that does use an expert sees exactly what it saw before; it just does
+            // not pay for the ones nobody routes to.
             const dim = this.config.expertHiddenDim || 128;
-            const weights = new Float32Array(this.config.inputDim * dim);
-            const scale = Math.sqrt(2.0 / this.config.inputDim);
-            for (let i = 0; i < weights.length; i++) {
-                weights[i] = (Math.random() * 2 - 1) * scale;
-            }
-            this.experts.set(expertId, { weights, bias: new Float32Array(dim) });
+            const inputDim = this.config.inputDim;
+            let weights = null;
+            this.experts.set(expertId, {
+                get weights() {
+                    if (weights === null) {
+                        weights = new Float32Array(inputDim * dim);
+                        const scale = Math.sqrt(2.0 / inputDim);
+                        for (let i = 0; i < weights.length; i++) {
+                            weights[i] = (Math.random() * 2 - 1) * scale;
+                        }
+                    }
+                    return weights;
+                },
+                set weights(next) {
+                    // Training writes back through here; assigning replaces the lazy
+                    // value rather than being silently dropped.
+                    weights = next;
+                },
+                bias: new Float32Array(dim),
+            });
         }
         this.utilization.set(expertId, { calls: 0, tokens: 0, weightSum: 0 });
         this.growRouterCapacity();
