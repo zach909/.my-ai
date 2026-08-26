@@ -31,6 +31,7 @@ import path from "node:path";
 import { assertKind, assertSafeName, readItem, readItemFile, type StoreItem, type StoreKind } from "./store.js";
 import { fetchItemFile } from "./store-fetch.js";
 import { writeFileAtomic, writeJsonAtomic } from "./atomic-write.js";
+import { isAgentSkillFile, parseAgentSkill } from "./agent-skill.js";
 
 export class StoreInstallError extends Error {}
 
@@ -336,9 +337,36 @@ export function planActivation(kind: string, name: string): ActivationPlan {
   const memories: ActivatableMemory[] = [];
 
   for (const file of record.files) {
-    // Only the neuron-bearing JSON the rest of this system already understands.
-    // Guessing at other formats would be inventing a loader for files nobody
-    // agreed on a shape for.
+    // An Agent Skill: a SKILL.md carrying instructions rather than weights.
+    // This is a PROMPTING skill, and it was the format the project's own
+    // example arrived in -- which activation used to skip entirely, reporting
+    // "carries nothing this system knows how to load" about a file whose whole
+    // content is what to load.
+    //
+    // The frontmatter description is the trigger ("Use when users want to...")
+    // and the body is what to do, which is the same (trigger, response) shape
+    // everything else here uses. So it loads without inventing a new execution
+    // model for it.
+    if (isAgentSkillFile(file.filename)) {
+      const buf = readInstalledFile(kind, name, file.filename);
+      if (!buf) continue;
+      try {
+        const skill = parseAgentSkill(buf.toString("utf8"), name);
+        from.push(file.filename);
+        memories.push({
+          content: clip(skill.description),
+          payload: clip(skill.body),
+          tags: ["prompting-skill", "agent-skill", "store-install", `${kind}/${name}`],
+        });
+      } catch {
+        // Malformed frontmatter should not lose the rest of the item.
+      }
+      continue;
+    }
+
+    // Neuron-bearing JSON: a skill that carries weights rather than
+    // instructions. Guessing at any other format would be inventing a loader
+    // for files nobody agreed on a shape for.
     if (!/\.(skill|source|ext)\.json$/i.test(file.filename) && !/^skill\.json$/i.test(file.filename)) continue;
     const buf = readInstalledFile(kind, name, file.filename);
     if (!buf) continue;
@@ -384,7 +412,7 @@ export function planActivation(kind: string, name: string): ActivationPlan {
       memories,
       nothingLoadable:
         `"${kind}/${name}" is installed, but carries nothing this system knows how to load ` +
-        `(no neuron definitions or skill scripts). Its files are on disk and can be read.`,
+        `(no SKILL.md instructions, neuron definitions or skill scripts). Its files are on disk and can be read.`,
     };
   }
   return {
