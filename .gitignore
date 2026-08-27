@@ -94,3 +94,9 @@ desktop-app/node_modules/
 extension-builder/extensions/autoload_probe_*
 extension-builder/extensions/source_autoload_probe_*
 extension-builder/extensions/good_bits_test_*
+
+# Store items installed on THIS machine. Installing is a local act -- someone
+# here chose to install a published skill -- so the copy under installed/
+# belongs to this machine, not to the repository. The published original in
+# store/ is the shared thing.
+extension-builder/installed/skills/*/

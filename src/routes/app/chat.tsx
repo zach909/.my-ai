@@ -21,7 +21,8 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Send, Zap, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'lucide-react'
+import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'lucide-react'
+import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from 'sonner'
 import { VoiceInput } from '@/components/VoiceInput'
 import { usePageVisible } from '@/hooks/usePageVisible'
@@ -441,7 +442,7 @@ function ChatPage() {
           <div className="flex justify-start">
             <div className="bg-card border border-border rounded-lg px-4 py-3 text-sm text-muted-foreground">
               <div className="flex items-center gap-2">
-                <Zap size={14} className="animate-pulse" />
+                <AgentPulse size={18} className="text-primary" label="The agent is working" />
                 Thinking…
               </div>
             </div>

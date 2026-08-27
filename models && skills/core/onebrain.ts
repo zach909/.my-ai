@@ -4407,6 +4407,9 @@ const ZIP_LOOP_PULSE = 1;
 /** Shared "nothing is externally driven this tick" set for receiveBits(). Safe to share because process()/settle() only ever read the driven set -- nothing on that path adds to or clears it. */
 const ZIP_LOOP_NO_DRIVEN: Set<number> = new Set<number>();
 
+/** Below this, an output neuron counts as saying nothing rather than saying zero. */
+const SILENT_OUTPUT = 1e-6;
+
 export class ZipLoopInterface {
   /** Constant per-interface drive sets, built once instead of per bit (see sendBit()). */
   private readonly drivenBit0: Set<number>;
@@ -4474,6 +4477,36 @@ export class ZipLoopInterface {
       bits[i] = this.engine.getNeuronEnergy(bit1Out) > this.engine.getNeuronEnergy(bit0Out) ? 1 : 0;
     }
     return bits;
+  }
+
+  /**
+   * One tick-group of output, or null when the network emitted nothing.
+   *
+   * This is what makes the mesh a BitDoorway (zip-halt.ts) and therefore what
+   * lets a run end when the NETWORK decides it is over rather than when a
+   * timer says so. An all-connected mesh has no last layer to fall out of, so
+   * silence is the only evidence that it has finished emitting -- and silence
+   * has to be a value the caller receives, not a gap it fails to notice.
+   *
+   * Silence means both output neurons sat below SILENT_OUTPUT for the whole
+   * byte. receiveBits() alone cannot express that: it compares the two and
+   * always returns a bit, so a completely dormant network reads as an endless
+   * stream of zeros -- indistinguishable from a network patiently emitting
+   * zeros, which is exactly the distinction a halt condition rests on.
+   */
+  nextOutputByte(): number | null {
+    if (!this.idleScratch) this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
+    const idle = this.idleScratch;
+    let byte = 0;
+    let heard = false;
+    for (let b = 0; b < 8; b++) {
+      this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN);
+      const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
+      const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
+      if (zero > SILENT_OUTPUT || one > SILENT_OUTPUT) heard = true;
+      byte = (byte << 1) | (one > zero ? 1 : 0);
+    }
+    return heard ? byte : null;
   }
 
   /** Reads `byteCount` bytes back, packing each 8 bits MSB-first. */
