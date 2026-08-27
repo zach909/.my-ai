@@ -16,7 +16,7 @@
 
 import { createFileRoute } from '@tanstack/react-router'
 import { fetchWithTimeout, startPolling } from '@/lib/poll'
-import { useState, useRef, useEffect } from 'react'
+import { useState, useRef, useEffect, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
@@ -24,8 +24,8 @@ import { Label } from '@/components/ui/label'
 import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'lucide-react'
 import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from 'sonner'
-import { VoiceInput } from '@/components/VoiceInput'
-import { FileToNetwork } from '@/components/FileToNetwork'
+import { VoiceRecorder } from '@/components/VoiceRecorder'
+import { AttachFile, type StagedFile } from '@/components/AttachFile'
 import { usePageVisible } from '@/hooks/usePageVisible'
 
 export const Route = createFileRoute('/app/chat')({
@@ -290,6 +290,18 @@ function ChatPage() {
       const savedId = await saveToHistory('user', messageText, threadId)
       if (savedId !== threadId) setThreadId(savedId)
 
+      // Everything staged goes in with this message, zipped together into one
+      // archive rather than one run each.
+      if (staged.length > 0) {
+        const attached = staged
+        setStaged([])
+        const outcome = await sendArchive(messageText, attached)
+        setMessages((prev) => [
+          ...prev,
+          { id: `msg_${Date.now()}_archive`, role: 'assistant', content: outcome, timestamp: Date.now() },
+        ])
+      }
+
       const response = await callBotAPI(messageText)
       const agentMsg: Message = {
         id: `msg_${Date.now()}_assistant`,
@@ -302,6 +314,47 @@ function ChatPage() {
       await saveToHistory('assistant', response.message, savedId)
     } finally {
       setLoading(false)
+    }
+  }
+
+  /**
+   * Files waiting to go in with the next message: recordings, uploads,
+   * anything. They are already uploaded -- what is still to happen is the
+   * zipping and the run, which is the expensive half and only worth doing
+   * once for everything together.
+   */
+  const [staged, setStaged] = useState<StagedFile[]>([])
+
+  const addStaged = useCallback((file: StagedFile) => {
+    setStaged((prev) => [...prev.filter((f) => f.path !== file.path), file])
+  }, [])
+
+  /**
+   * Zip the message together with everything staged and send it through the
+   * two input neurons.
+   *
+   * Reported honestly: "ceiling" means the run was cut off at its tick budget
+   * rather than the network deciding it was done, and one settle per BIT means
+   * even a small file is thousands of ticks. Saying "sent" for a run that was
+   * cut off would be a lie the next person has to discover themselves.
+   */
+  const sendArchive = async (messageText: string, files: StagedFile[]): Promise<string> => {
+    const binary: Record<string, string> = {}
+    for (const file of files) Object.assign(binary, file.binary)
+    const names = files.map((f) => f.path).join(', ')
+    try {
+      const res = await fetch('/api/zip-loop/run', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: messageText, binary, maxTicks: 512 }),
+      })
+      const data = await res.json().catch(() => ({}))
+      if (!res.ok) return `Could not send ${names} into the network: ${data?.error ?? res.status}`
+      return data.complete
+        ? `Sent ${names} into the network (${data.bytesIn} bytes zipped, ${data.sendTicks} ticks in). It stopped itself.`
+        : `Sent ${names} into the network (${data.bytesIn} bytes zipped, ${data.sendTicks} ticks in). It hit the tick ceiling rather than stopping itself — it has not been trained to say when it is done.`
+    } catch (err) {
+      return `Could not reach the network: ${err instanceof Error ? err.message : String(err)}`
     }
   }
 
@@ -454,6 +507,31 @@ function ChatPage() {
 
       {/* Input area */}
       <Card className="border-t border-x-0 border-b-0 rounded-none mx-0 p-4 space-y-2">
+        {/* What is waiting to go in with the next message. Shown because
+            attaching and sending are separate steps here, and something
+            staged but invisible would be a surprise either way -- forgotten,
+            or sent when it was not meant to be. */}
+        {staged.length > 0 && (
+          <ul className="flex flex-wrap gap-1.5 text-xs" aria-label="Files going in with this message">
+            {staged.map((file) => (
+              <li
+                key={file.path}
+                className="flex items-center gap-1.5 rounded-md border border-border bg-muted/40 px-2 py-1"
+              >
+                <span className="font-mono">{file.path}</span>
+                <span className="text-muted-foreground">{(file.bytes / 1024).toFixed(1)}KB</span>
+                <button
+                  type="button"
+                  className="text-muted-foreground hover:text-destructive"
+                  aria-label={`Remove ${file.path}`}
+                  onClick={() => setStaged((prev) => prev.filter((f) => f.path !== file.path))}
+                >
+                  ×
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
         <div className="flex gap-2">
           <Label htmlFor="chat-message-input" className="sr-only">Chat message input</Label>
           <Input
@@ -472,20 +550,12 @@ function ChatPage() {
             autoFocus
             className="flex-1"
           />
-          {/* A file goes in as a file. Not attached to a message and described
-              in words -- the doorway takes bytes, and a recording that had to
-              become a transcript first would arrive with everything about it
-              except the words thrown away. */}
-          <FileToNetwork disabled={loading} />
-          <VoiceInput
-            disabled={loading}
-            onTranscript={(text) => {
-              // Append rather than replace: a user may have typed part of the
-              // message already, and losing it would be worse than a bad join.
-              setInput((prev) => (prev.trim() ? `${prev.trim()} ${text}` : text))
-              inputRef.current?.focus()
-            }}
-          />
+          {/* A file goes in as a file, and a recording goes in as a recording.
+              The doorway takes bytes, so neither has to become words first --
+              a transcript would arrive with everything about the audio except
+              the words already thrown away. */}
+          <AttachFile disabled={loading} onStaged={addStaged} />
+          <VoiceRecorder disabled={loading} onRecorded={addStaged} />
           <Button
             onClick={() => handleSendMessage()}
             disabled={loading || !input.trim()}

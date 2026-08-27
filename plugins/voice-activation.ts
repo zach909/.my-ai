@@ -1,10 +1,9 @@
 import { execSync, spawn } from 'node:child_process';
-import { existsSync, writeFileSync, unlinkSync, readFileSync } from 'node:fs';
+import { existsSync, writeFileSync, unlinkSync, renameSync, mkdirSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { transcribeAudio } from '../models && skills/core/speech-to-text.js';
 
 export interface VoiceCommand {
   transcript: string;
@@ -18,6 +17,8 @@ export class VoiceActivationPlugin extends BasePlugin {
   private commands: VoiceCommand[] = [];
   private wakeWord: string = "neuroclaw";
   private micProcess: ReturnType<typeof spawn> | null = null;
+  /** Paths of clips recorded and not yet collected. */
+  private captured: string[] = [];
 
   constructor(definition: PluginDefinition) {
     super(definition);
@@ -59,9 +60,12 @@ export class VoiceActivationPlugin extends BasePlugin {
 
     this.micProcess.on('exit', (code) => {
       if (code === 0 && existsSync(outPath)) {
-        const transcript = this.transcribe(outPath);
-        if (transcript) this.processTranscript(transcript);
-        try { unlinkSync(outPath); } catch { /* ignore */ }
+        // The clip is kept as a clip. It used to be handed to a local speech
+        // recogniser and thrown away, which meant a recording could only ever
+        // reach the agent as whatever words a transcriber happened to hear --
+        // everything else about it discarded before anything saw it. Now it is
+        // a file, and a file goes into the network as a file.
+        this.captured.push(this.keepClip(outPath));
       }
     });
 
@@ -130,21 +134,34 @@ export class VoiceActivationPlugin extends BasePlugin {
   }
 
   /**
-   * Transcribe a captured clip with a locally installed speech recogniser.
+   * Move a finished clip somewhere it will still exist when someone wants it.
    *
-   * This used to be simulateSTT(), which measured the clip's DURATION with
-   * ffprobe and returned a synthetic string ("<wake word> audio-captured
-   * duration-3s"). That is worse than returning nothing: processTranscript()
-   * feeds the result straight into command matching, so the agent could act on
-   * words nobody ever said. It now returns null when no recogniser is
-   * installed, and the caller simply does not fire a command.
+   * The recorder writes to a temp path that the old flow deleted the moment it
+   * had a transcript. A recording that is going to be sent into the network as
+   * a file has to outlive the recording itself.
    */
-  private transcribe(wavPath: string): string | null {
+  private keepClip(tempPath: string): string {
+    const dir = join(tmpdir(), 'neuroclaw-recordings');
     try {
-      const result = transcribeAudio(readFileSync(wavPath));
-      return result.text;
+      mkdirSync(dir, { recursive: true });
+      const kept = join(dir, `recording_${Date.now()}.wav`);
+      renameSync(tempPath, kept);
+      return kept;
     } catch {
-      return null;
+      // Could not move it; the original is still a real file and still usable.
+      return tempPath;
+    }
+  }
+
+  /** Clips captured since the last collection, oldest first. */
+  takeCaptured(): string[] {
+    return this.captured.splice(0, this.captured.length);
+  }
+
+  /** Discard captured clips and the files behind them. */
+  discardCaptured(): void {
+    for (const path of this.captured.splice(0, this.captured.length)) {
+      try { unlinkSync(path); } catch { /* already gone */ }
     }
   }
 }

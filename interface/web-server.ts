@@ -976,45 +976,6 @@ export class WebServer {
       return;
     }
 
-    // Voice input: raw recorded audio in, recognised text out. Transcription
-    // runs entirely on this machine (see speech-to-text.ts for why the
-    // browser's SpeechRecognition API is deliberately not used), so the audio
-    // reaches this loopback endpoint and goes no further.
-    if (pathname === '/api/voice/transcribe' && method === 'POST') {
-      const chunks: Buffer[] = [];
-      let total = 0;
-      // A minute of 16kHz mono is well under this; the cap is only here so a
-      // malformed or hostile request cannot grow the buffer without bound.
-      const MAX_AUDIO_BYTES = 25 * 1024 * 1024;
-      let tooLarge = false;
-      await new Promise<void>((resolve) => {
-        req.on('data', (chunk: Buffer) => {
-          total += chunk.length;
-          if (total > MAX_AUDIO_BYTES) {
-            tooLarge = true;
-            req.destroy();
-            resolve();
-            return;
-          }
-          chunks.push(chunk);
-        });
-        req.on('end', () => resolve());
-        req.on('error', () => resolve());
-      });
-      if (tooLarge) {
-        this.sendJson(res, { error: 'Recording too large.' }, 413);
-        return;
-      }
-      const { transcribeAudio } = await import('../models && skills/core/speech-to-text.js');
-      const result = transcribeAudio(Buffer.concat(chunks));
-      if (result.error) {
-        this.sendJson(res, { error: result.error, engine: result.engine }, 503);
-        return;
-      }
-      this.sendJson(res, { text: result.text, engine: result.engine });
-      return;
-    }
-
     // ── The public store ────────────────────────────────────────────────
     // Everything published lives in `store/` at the repo root and travels with
     // the repository, so anyone who clones or pulls has the whole catalogue
