@@ -752,6 +752,119 @@ export interface ElasticMaterializeResult {
  * definition-training tolerances were tuned against; scaling cannot affect
  * cosine similarity, so the geometry above is unchanged by it.
  */
+/** Who said it. The two sides of a conversation, kept apart. */
+export type Speaker = "ai" | "user";
+
+/**
+ * How a turn is written down, and how it is shown. Not exported: callers want
+ * formatTurn(), and an exported constant nothing outside calls is how dead
+ * code starts looking finished.
+ */
+const SPEAKER_LABELS: Record<Speaker, string> = { ai: "AI", user: "User" };
+
+/**
+ * One turn, written the way the conversation reads: "AI: ..." / "User: ...".
+ *
+ * The label is part of the text on purpose. Continuous learning trains on real
+ * exchanges, and a transcript that does not say who spoke is a transcript of
+ * nobody -- the network sees the words and has no way to learn that answering
+ * and being asked are different things.
+ */
+export function formatTurn(speaker: Speaker, text: string): string {
+  return `${SPEAKER_LABELS[speaker]}: ${text}`;
+}
+
+/**
+ * A turn as the network sees it: the words, plus who said them.
+ *
+ * Dimension 0 is the speaker and nothing else -- +1 for the AI, -1 for the
+ * user -- and the words occupy the rest. The engine already reserves state[0]
+ * as an input flag, so a reserved coordinate is the shape this architecture
+ * already thinks in.
+ *
+ * A label in the text is not enough on its own, and that is measured rather
+ * than assumed: at 16 dimensions "AI: <long message>" and "User: <same long
+ * message>" embed at cosine 0.96, because the prefix is three character
+ * n-grams out of hundreds. Mixing in a hashed speaker marker only reached
+ * 0.93 -- at this few dimensions two hashed vectors are not far enough apart
+ * to separate anything. A dedicated coordinate is: the same words from
+ * different speakers come out orthogonal, whatever the message length, so the
+ * network can always tell a question from an answer.
+ *
+ * The label stays in the text as well, because the transcript is also read by
+ * people, and "AI: ..." / "User: ..." is how a conversation reads.
+ */
+export function embedTurn(speaker: Speaker, text: string, dims: number): number[] {
+  if (dims <= 0) return [];
+  if (dims === 1) return [speaker === "ai" ? 1 : -1];
+
+  const content = embedText(formatTurn(speaker, text), dims - 1);
+
+  // The speaker gets the same energy as everything that was said, which is what
+  // makes the two orthogonal rather than merely distinguishable. Weaker and a
+  // long message drowns it out again -- the exact failure this replaces.
+  let contentNorm = 0;
+  for (const v of content) contentNorm += v * v;
+  const speakerAmplitude = contentNorm > 0 ? Math.sqrt(contentNorm) : 1;
+
+  const out = new Array(dims);
+  out[0] = (speaker === "ai" ? 1 : -1) * speakerAmplitude;
+  for (let d = 1; d < dims; d++) out[d] = content[d - 1];
+
+  // Readout neurons are tanh-bounded, so a target outside [-1, 1] is
+  // unreachable and training against it can never converge. Scaling is
+  // uniform, so it cannot disturb the orthogonality above.
+  let peak = 0;
+  for (const v of out) peak = Math.max(peak, Math.abs(v));
+  if (peak > 1) for (let d = 0; d < dims; d++) out[d] /= peak;
+  return out;
+}
+
+/**
+ * A stretch of conversation as the network sees it, speakers included.
+ *
+ * The continuous loop drains everything queued since its last tick and embeds
+ * it as one thing. It used to join those with a space and embed the result,
+ * which threw away the boundary AND who said each part -- so the mind that
+ * "never stops" was thinking about an anonymous run-on sentence.
+ *
+ * Dimension 0 carries who has been talking: +1 if it is all the AI, -1 if it
+ * is all the user, and in between when the batch is a genuine exchange. That
+ * makes a back-and-forth distinguishable from a monologue, which is most of
+ * what a conversation is.
+ */
+export function embedTranscript(turns: Array<{ speaker: Speaker; text: string }>, dims: number): number[] {
+  if (dims <= 0) return [];
+  if (turns.length === 0) return new Array(dims).fill(0);
+  if (turns.length === 1) return embedTurn(turns[0].speaker, turns[0].text, dims);
+
+  // Newline-joined, not space-joined: where one turn ends and the next begins
+  // is part of what happened.
+  const text = turns.map(t => formatTurn(t.speaker, t.text)).join("\n");
+  if (dims === 1) {
+    let sum = 0;
+    for (const t of turns) sum += t.speaker === "ai" ? 1 : -1;
+    return [sum / turns.length];
+  }
+
+  const content = embedText(text, dims - 1);
+  let contentNorm = 0;
+  for (const v of content) contentNorm += v * v;
+  const amplitude = contentNorm > 0 ? Math.sqrt(contentNorm) : 1;
+
+  let sum = 0;
+  for (const t of turns) sum += t.speaker === "ai" ? 1 : -1;
+
+  const out = new Array(dims);
+  out[0] = (sum / turns.length) * amplitude;
+  for (let d = 1; d < dims; d++) out[d] = content[d - 1];
+
+  let peak = 0;
+  for (const v of out) peak = Math.max(peak, Math.abs(v));
+  if (peak > 1) for (let d = 0; d < dims; d++) out[d] /= peak;
+  return out;
+}
+
 export function embedText(text: string, dims: number): number[] {
   const vec = new Array(dims).fill(0);
   if (text.length === 0 || dims === 0) return vec;

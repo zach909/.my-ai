@@ -16,10 +16,10 @@
  * actually converges on for that turn's real content:
  *
  *   1. "predict what any input into the model is gonna say" --
- *      input = embedText(the user's actual message),
- *      target = embedText(this agent's actual response) to it.
- *   2. "predict what you're gonna say" -- input = embedText(this
- *      agent's PRIOR response), target = embedText(the user's NEXT
+ *      input = embedTurn("user", the user's actual message),
+ *      target = embedTurn("ai", this agent's actual response) to it.
+ *   2. "predict what you're gonna say" -- input = embedTurn("ai", this
+ *      agent's PRIOR response), target = embedTurn("user", the user's NEXT
  *      real message) that actually followed it.
  *
  * Absolute privacy boundary, enforced structurally, not just by policy:
@@ -148,10 +148,28 @@ export function buildSamples(turns) {
   const samples = []
   for (let i = 0; i < turns.length; i++) {
     const turn = turns[i]
-    samples.push({ key: `respond:${turn.at}`, kind: 'respond', inputText: turn.userMessage, targetText: turn.response })
+    // Who said each side travels with the text. Without it a transcript is a
+    // transcript of nobody: the network sees the words of a question and the
+    // words of an answer and has nothing telling it those are different kinds
+    // of thing, which is most of what there is to learn from a conversation.
+    samples.push({
+      key: `respond:${turn.at}`,
+      kind: 'respond',
+      inputSpeaker: 'user',
+      inputText: turn.userMessage,
+      targetSpeaker: 'ai',
+      targetText: turn.response,
+    })
     if (i > 0) {
       const prior = turns[i - 1]
-      samples.push({ key: `anticipate:${turn.at}`, kind: 'anticipate', inputText: prior.response, targetText: turn.userMessage })
+      samples.push({
+        key: `anticipate:${turn.at}`,
+        kind: 'anticipate',
+        inputSpeaker: 'ai',
+        inputText: prior.response,
+        targetSpeaker: 'user',
+        targetText: turn.userMessage,
+      })
     }
   }
   return samples
@@ -181,11 +199,14 @@ function trainSamples(worktreeRoot, samples) {
       }
     })
     ;(async () => {
-      const { embedText } = await import(path.join(worktreeRoot, 'dist', 'models && skills', 'core', 'neuro-lang.js'))
+      const { embedTurn } = await import(path.join(worktreeRoot, 'dist', 'models && skills', 'core', 'neuro-lang.js'))
+      // embedTurn, not embedText: the speaker is a reserved dimension, so the
+      // same sentence said by the AI and by the user lands somewhere genuinely
+      // different rather than 4% apart.
       const trainerSamples = samples.map((s, idx) => ({
         readout: idx,
-        input: embedText(s.inputText, DIMS),
-        target: embedText(s.targetText, DIMS),
+        input: embedTurn(s.inputSpeaker, s.inputText, DIMS),
+        target: embedTurn(s.targetSpeaker, s.targetText, DIMS),
       }))
       const spec = { dims: DIMS, numReadouts: samples.length, epochs: 1200, learningRate: 0.05, tolerance: 1e-3, samples: trainerSamples }
       child.stdin.write(JSON.stringify(spec) + '\n')

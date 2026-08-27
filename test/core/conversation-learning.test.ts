@@ -187,3 +187,132 @@ describe('conversation-learning-agent: acquireLock() / releaseLock() -- the cros
     expect(acquireLock(lockPath)).toBe(false); // just created -- nowhere near stale
   });
 });
+
+describe('who said what', () => {
+  it('carries the speaker on both sides of every sample', () => {
+    // A transcript that does not say who spoke is a transcript of nobody: the
+    // network sees the words of a question and the words of an answer with
+    // nothing marking those as different kinds of thing.
+    const turns = [
+      { at: 1, userMessage: 'what is this', response: 'a neural mesh' },
+      { at: 2, userMessage: 'and this', response: 'the same mesh' },
+    ];
+    const samples = buildSamples(turns);
+    const respond = samples.find(s => s.kind === 'respond')!;
+    expect(respond.inputSpeaker).toBe('user');
+    expect(respond.targetSpeaker).toBe('ai');
+
+    const anticipate = samples.find(s => s.kind === 'anticipate')!;
+    expect(anticipate.inputSpeaker).toBe('ai');
+    expect(anticipate.targetSpeaker).toBe('user');
+  });
+
+  it('writes a turn the way a conversation reads', async () => {
+    const { formatTurn } = await import('../../models && skills/core/neuro-lang.js');
+    expect(formatTurn('ai', 'hello')).toBe('AI: hello');
+    expect(formatTurn('user', 'hello')).toBe('User: hello');
+  });
+
+  it('puts the same words from different speakers in genuinely different places', async () => {
+    // The point of the reserved dimension. A label alone leaves the two at
+    // cosine 0.96 for a long message -- a difference the network cannot learn
+    // from, which would make labelling decoration.
+    const { embedTurn, embedText } = await import('../../models && skills/core/neuro-lang.js');
+    const cos = (a: number[], b: number[]) => {
+      let d = 0, x = 0, y = 0;
+      for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; }
+      return d / (Math.sqrt(x) * Math.sqrt(y));
+    };
+    const long = 'the quick brown fox jumps over the lazy dog and keeps running across the field for a while';
+
+    expect(cos(embedText(`AI: ${long}`, 16), embedText(`User: ${long}`, 16))).toBeGreaterThan(0.9);
+    expect(Math.abs(cos(embedTurn('ai', long, 16), embedTurn('user', long, 16)))).toBeLessThan(0.2);
+  });
+
+  it('does not let a long message drown the speaker out', async () => {
+    // The failure a weaker marker had: it worked on short text and stopped
+    // working exactly when a conversation got interesting.
+    const { embedTurn } = await import('../../models && skills/core/neuro-lang.js');
+    const cos = (a: number[], b: number[]) => {
+      let d = 0, x = 0, y = 0;
+      for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; }
+      return d / (Math.sqrt(x) * Math.sqrt(y));
+    };
+    const huge = 'a fairly long sentence that goes on and on '.repeat(30);
+    expect(Math.abs(cos(embedTurn('ai', huge, 16), embedTurn('user', huge, 16)))).toBeLessThan(0.2);
+  });
+
+  it('still separates different things said by the same speaker', async () => {
+    // The speaker must not swamp the content either -- the network has to
+    // learn what was actually said, not only who was talking.
+    const { embedTurn } = await import('../../models && skills/core/neuro-lang.js');
+    const cos = (a: number[], b: number[]) => {
+      let d = 0, x = 0, y = 0;
+      for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; }
+      return d / (Math.sqrt(x) * Math.sqrt(y));
+    };
+    const same = cos(embedTurn('ai', 'the weather is cold today', 16), embedTurn('ai', 'the weather is cold today', 16));
+    const different = cos(embedTurn('ai', 'the weather is cold today', 16), embedTurn('ai', 'compile the extension builder', 16));
+    expect(same).toBeCloseTo(1, 6);
+    expect(different).toBeLessThan(0.9);
+  });
+
+  it('keeps every component inside what a tanh readout can reach', async () => {
+    const { embedTurn } = await import('../../models && skills/core/neuro-lang.js');
+    for (const text of ['hi', 'a much longer message '.repeat(20)]) {
+      for (const speaker of ['ai', 'user'] as const) {
+        for (const v of embedTurn(speaker, text, 16)) expect(Math.abs(v)).toBeLessThanOrEqual(1);
+      }
+    }
+  });
+});
+
+describe('the continuous mind sees a conversation, not a run-on sentence', () => {
+  const cos = (a: number[], b: number[]) => {
+    let d = 0, x = 0, y = 0;
+    for (let i = 0; i < a.length; i++) { d += a[i] * b[i]; x += a[i] * a[i]; y += b[i] * b[i]; }
+    return d / (Math.sqrt(x) * Math.sqrt(y));
+  };
+
+  it('tells a monologue from a back-and-forth', async () => {
+    const { embedTranscript } = await import('../../models && skills/core/neuro-lang.js');
+    const both = embedTranscript([
+      { speaker: 'user', text: 'what is the mesh' },
+      { speaker: 'ai', text: 'every neuron wired to every other' },
+    ], 16);
+    const onlyAi = embedTranscript([
+      { speaker: 'ai', text: 'what is the mesh' },
+      { speaker: 'ai', text: 'every neuron wired to every other' },
+    ], 16);
+
+    // Same words, different conversation. Dimension 0 is who was talking:
+    // balanced in an exchange, saturated in a monologue.
+    expect(Math.abs(both[0])).toBeLessThan(0.2);
+    expect(Math.abs(onlyAi[0])).toBeGreaterThan(0.4);
+    expect(cos(both, onlyAi)).toBeLessThan(0.95);
+  });
+
+  it('keeps the turn boundary rather than running the words together', async () => {
+    const { embedTranscript, embedTurn } = await import('../../models && skills/core/neuro-lang.js');
+    const asTwo = embedTranscript([
+      { speaker: 'user', text: 'stop' },
+      { speaker: 'user', text: 'now' },
+    ], 16);
+    const asOne = embedTurn('user', 'stop now', 16);
+    expect(cos(asTwo, asOne)).toBeLessThan(0.99);
+  });
+
+  it('a single queued turn is exactly one turn', async () => {
+    const { embedTranscript, embedTurn } = await import('../../models && skills/core/neuro-lang.js');
+    expect(embedTranscript([{ speaker: 'ai', text: 'hello' }], 16)).toEqual(embedTurn('ai', 'hello', 16));
+  });
+
+  it('stays inside what a tanh readout can reach', async () => {
+    const { embedTranscript } = await import('../../models && skills/core/neuro-lang.js');
+    const many = Array.from({ length: 20 }, (_, i) => ({
+      speaker: (i % 2 === 0 ? 'user' : 'ai') as 'user' | 'ai',
+      text: `turn number ${i} with a reasonable amount of text in it`,
+    }));
+    for (const v of embedTranscript(many, 16)) expect(Math.abs(v)).toBeLessThanOrEqual(1);
+  });
+});

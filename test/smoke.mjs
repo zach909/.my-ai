@@ -892,6 +892,30 @@ async function testContinuousOutputLoop() {
     check(sawInjectedText, 'Continuous loop: injected input reached the shared pipeline state (zip-io input loop)');
   }
 
+  // The continuous mind has to be able to tell the two sides apart. It used to
+  // join everything queued with a space and embed the result, so what reached
+  // the pipeline was an anonymous run-on sentence with no way to tell a
+  // question from its own answer.
+  {
+    const runner = mkRunner();
+    runner.injectInput('what is the mesh', 'user');
+    runner.injectInput('every neuron wired to every other', 'ai');
+    runner.startContinuous(20);
+    await new Promise(r => setTimeout(r, 200));
+    runner.stopContinuous();
+
+    let transcript = '';
+    for await (const chunk of runner.getPipeline().getZipIO().getFullContext()) transcript += chunk;
+    check(
+      transcript.includes('User: what is the mesh'),
+      'Continuous loop: the user\'s turn reaches the pipeline labelled "User:"',
+    );
+    check(
+      transcript.includes('AI: every neuron wired to every other'),
+      'Continuous loop: the AI\'s turn reaches the pipeline labelled "AI:"',
+    );
+  }
+
   // Section 4.1(b): live correction (Section 3.3) and RLM thinking-steps
   // (Section 3.4) run *continuously inside the output loop* — every tick,
   // not once per discrete request. The mechanism that actually fires a
