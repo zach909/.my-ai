@@ -5,6 +5,12 @@
  * backend for transcription. Nothing leaves the machine: the recording goes to
  * this app's own server on loopback and no further.
  *
+ * A recording can also go STRAIGHT into the neural network as a file, without
+ * becoming text first. That is what `onRecording` is for: the doorway into the
+ * mesh takes bits, and audio is already bits, so making it pass through a
+ * transcript on the way in throws away everything about it except the words.
+ * Transcription remains the default because the chat box wants text.
+ *
  * On transcription specifically — the browser's built-in SpeechRecognition API
  * is deliberately NOT used. In Chromium (and therefore Electron) it streams the
  * captured audio to Google's servers, which would quietly turn a local-first
@@ -15,19 +21,27 @@
 
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Mic, Square, Loader2 } from 'lucide-react'
+import { Mic, Square } from 'lucide-react'
+import { AgentPulse } from '@/components/agent-pulse'
 
-type State = 'idle' | 'recording' | 'transcribing'
+type State = 'idle' | 'recording' | 'transcribing' | 'sending'
 
 /** Stop a runaway recording rather than filling memory if the user walks away. */
 const MAX_RECORDING_MS = 60_000
 
 export function VoiceInput({
   onTranscript,
+  onRecording,
   disabled,
 }: {
   /** Called with recognised text, to be placed in the chat box. */
   onTranscript: (text: string) => void
+  /**
+   * Called with the recording itself, already placed in the archive as a file
+   * and ready to send through the two input neurons. When this is set the
+   * recording goes in as audio and is never transcribed.
+   */
+  onRecording?: (file: { path: string; bytes: number; binary: Record<string, string> }) => void
   disabled?: boolean
 }) {
   const [state, setState] = useState<State>('idle')
@@ -48,6 +62,36 @@ export function VoiceInput({
   }, [])
 
   useEffect(() => releaseStream, [releaseStream])
+
+  /**
+   * Hand the recording to the network as a file.
+   *
+   * The bytes are the body: no form encoding, no transcript, no describing the
+   * audio in words on the way in. What comes back is the file placed in the
+   * archive, ready to be sent through the doorway.
+   */
+  const sendRecording = useCallback(
+    async (blob: Blob) => {
+      setState('sending')
+      try {
+        const res = await fetch(
+          `/api/zip-loop/file?path=${encodeURIComponent('input/recording.webm')}`,
+          { method: 'POST', headers: { 'Content-Type': blob.type || 'audio/webm' }, body: blob },
+        )
+        const data = await res.json().catch(() => ({}))
+        if (!res.ok) {
+          setError(data?.error || `Could not send the recording (${res.status})`)
+          return
+        }
+        onRecording?.(data)
+      } catch {
+        setError('Could not reach the local network.')
+      } finally {
+        setState('idle')
+      }
+    },
+    [onRecording]
+  )
 
   const transcribe = useCallback(
     async (blob: Blob) => {
@@ -94,7 +138,8 @@ export function VoiceInput({
           setError('That recording was too short to contain speech.')
           return
         }
-        void transcribe(blob)
+        if (onRecording) void sendRecording(blob)
+        else void transcribe(blob)
       }
 
       rec.start()
@@ -113,13 +158,16 @@ export function VoiceInput({
       )
       setState('idle')
     }
-  }, [releaseStream, transcribe])
+  }, [releaseStream, transcribe, sendRecording, onRecording])
 
   const stop = useCallback(() => {
     if (recorderRef.current?.state === 'recording') recorderRef.current.stop()
   }, [])
 
-  const busy = state === 'transcribing'
+  // Both post-recording states are busy: the button must not start a second
+  // recording while the first one is still on its way somewhere.
+  const busy = state === 'transcribing' || state === 'sending'
+  const busyLabel = state === 'sending' ? 'Sending the recording to the network' : 'Transcribing'
 
   return (
     <>
@@ -130,13 +178,13 @@ export function VoiceInput({
         onClick={state === 'recording' ? stop : start}
         disabled={disabled || busy}
         aria-label={
-          state === 'recording' ? 'Stop recording' : busy ? 'Transcribing' : 'Record a voice message'
+          state === 'recording' ? 'Stop recording' : busy ? busyLabel : 'Record a voice message'
         }
         title={state === 'recording' ? 'Stop recording' : 'Record a voice message'}
         className="gap-2 active:scale-95 transition-all duration-150"
       >
         {busy ? (
-          <Loader2 size={16} className="animate-spin" />
+          <AgentPulse size={16} label={busyLabel} />
         ) : state === 'recording' ? (
           <Square size={16} />
         ) : (
@@ -147,7 +195,7 @@ export function VoiceInput({
       {/* Announced politely so a screen reader hears the outcome without the
           message stealing focus from the chat box. */}
       <span role="status" aria-live="polite" className="sr-only">
-        {state === 'recording' ? 'Recording' : busy ? 'Transcribing' : error || ''}
+        {state === 'recording' ? 'Recording' : busy ? busyLabel : error || ''}
       </span>
 
       {error && (

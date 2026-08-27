@@ -15,6 +15,7 @@ import {
   runUntilStopped,
   ZIP_FOLDERS,
   STOP_CALL,
+  NETWORK_STATE_FILE,
   type BitDoorway,
   type ZipTree,
 } from '../../models && skills/core/zip-halt.js';
@@ -158,4 +159,135 @@ describe('the real mesh doorway', () => {
     }
     expect(sawSilence).toBe(true);
   }, 20_000);
+});
+
+describe('what a stopped run keeps', () => {
+  /** A doorway that stops immediately and reports a snapshot. */
+  const withState = (state: unknown, opts: { readable?: boolean } = {}): BitDoorway => {
+    const bytes = opts.readable === false ? new Uint8Array(0) : packZip({ files: { [STOP_CALL]: '' } });
+    let i = 0;
+    return {
+      sendBytes: () => {},
+      nextOutputByte: () => (i < bytes.length ? bytes[i++] : null),
+      captureNetworkState: () => state,
+    };
+  };
+
+  const fakeState = { shape: { neurons: 2, dimensions: 4 }, states: 'AA==' };
+
+  it('saves what every neuron and connection was, into state/', () => {
+    const result = runUntilStopped(withState(fakeState), { files: {} }, { quietTicks: 3, maxTicks: 500 });
+    expect(result.reason).toBe('stopped-itself');
+    expect(result.networkState).toEqual(fakeState);
+    expect(JSON.parse(result.tree!.files[NETWORK_STATE_FILE])).toEqual(fakeState);
+  });
+
+  it('keeps memory/ for chat history rather than for network state', () => {
+    // Two different things: what was said in other conversations, and what the
+    // mesh was holding. A folder that mixed them would make them
+    // indistinguishable to anything reading them back.
+    const result = runUntilStopped(withState(fakeState), { files: {} }, { quietTicks: 3, maxTicks: 500 });
+    expect(NETWORK_STATE_FILE.startsWith(ZIP_FOLDERS.state)).toBe(true);
+    expect(Object.keys(result.tree!.files).some(f => f.startsWith(ZIP_FOLDERS.memory))).toBe(false);
+  });
+
+  it('saves the state of a run that was cut off, not just one that finished', () => {
+    // The cut-off run is the one worth resuming. Saving only on the tidy
+    // ending would lose exactly the state anyone would want back.
+    const forever: BitDoorway = {
+      sendBytes: () => {},
+      nextOutputByte: () => 0x41,
+      captureNetworkState: () => fakeState,
+    };
+    const result = runUntilStopped(forever, { files: {} }, { quietTicks: 3, maxTicks: 50 });
+    expect(result.reason).toBe('ceiling');
+    expect(result.networkState).toEqual(fakeState);
+  });
+
+  it('does not invent an archive out of the state it saved itself', () => {
+    // A null tree means the network produced nothing readable. Manufacturing
+    // one from our own snapshot would erase that distinction.
+    const result = runUntilStopped(
+      withState(fakeState, { readable: false }),
+      { files: {} },
+      { quietTicks: 2, maxTicks: 20 },
+    );
+    expect(result.tree).toBeNull();
+    expect(result.networkState).toEqual(fakeState);
+  });
+});
+
+describe('starting again in the same place', () => {
+  it('restores the network exactly: states, energies and connections', async () => {
+    const { HyperDimensionalEngine } = await import('../../models && skills/core/onebrain.js');
+    const engine = new HyperDimensionalEngine({ neuronCount: 12, dimensions: 6 });
+
+    engine.process(new Array(6).fill(0.7));
+    const saved = engine.captureNetworkState();
+    const before = engine.getNeuronStates().map(n => Array.from(n.state));
+    const beforeEnergy = engine.getNeuronEnergy(0);
+
+    // Move the network on -- and move the CONNECTIONS, not just the
+    // activations, since learning is what makes resuming hard.
+    for (let i = 0; i < 3; i++) engine.process(new Array(6).fill(-0.9));
+
+    expect(engine.restoreNetworkState(saved)).toBe(true);
+    expect(engine.getNeuronStates().map(n => Array.from(n.state))).toEqual(before);
+    expect(engine.getNeuronEnergy(0)).toBeCloseTo(beforeEnergy, 10);
+
+    // The real test of "same place": the same input now produces the same
+    // next state it did the first time. That is only true if the connections
+    // came back too.
+    const replayed = engine.captureNetworkState();
+    expect(replayed.connDiag).toBe(saved.connDiag);
+    expect(replayed.connShift).toBe(saved.connShift);
+  }, 30_000);
+
+  it('refuses a snapshot from a network of a different shape', async () => {
+    // Padding or truncating would hand the network a plausible-looking context
+    // it never had -- worse than starting clean, because nothing looks wrong.
+    const { HyperDimensionalEngine } = await import('../../models && skills/core/onebrain.js');
+    const small = new HyperDimensionalEngine({ neuronCount: 4, dimensions: 4 });
+    const large = new HyperDimensionalEngine({ neuronCount: 8, dimensions: 4 });
+    expect(large.restoreNetworkState(small.captureNetworkState())).toBe(false);
+  }, 30_000);
+
+  it('refuses a snapshot whose arrays are the wrong length for its own shape', async () => {
+    // Same shape, truncated payload -- the case a length-blind restore would
+    // load halfway and leave the engine in a state that is neither.
+    const { HyperDimensionalEngine } = await import('../../models && skills/core/onebrain.js');
+    const engine = new HyperDimensionalEngine({ neuronCount: 4, dimensions: 4 });
+    const snapshot = engine.captureNetworkState();
+    expect(engine.restoreNetworkState({ ...snapshot, connDiag: snapshot.connDiag.slice(0, 8) })).toBe(false);
+  }, 30_000);
+});
+
+describe('a file goes straight in', () => {
+  it('carries bytes through the doorway without describing them as text first', () => {
+    // A recording is already bits. Making it become a transcript on the way in
+    // would throw away everything about it except the words.
+    const audio = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x00, 0xff, 0x7f]).toString('base64');
+    const tree: ZipTree = {
+      files: { [`${ZIP_FOLDERS.input}note.txt`]: 'said out loud' },
+      binary: { [`${ZIP_FOLDERS.input}recording.webm`]: audio },
+    };
+    const back = unpackZip(packZip(tree));
+    expect(back?.binary?.[`${ZIP_FOLDERS.input}recording.webm`]).toBe(audio);
+    expect(back?.files[`${ZIP_FOLDERS.input}note.txt`]).toBe('said out loud');
+  });
+
+  it('keeps bytes out of the text map, so nothing has to guess which is which', () => {
+    const tree: ZipTree = { files: {}, binary: { 'input/a.bin': 'AAEC' } };
+    const back = unpackZip(packZip(tree));
+    expect(back?.files['input/a.bin']).toBeUndefined();
+    expect(back?.binary?.['input/a.bin']).toBe('AAEC');
+  });
+
+  it('packs an all-text tree exactly as before, with no empty binary map', () => {
+    // Adding binary support must not change the bytes of a tree that has none:
+    // the same input has to keep producing the same stream.
+    const withoutKey = packZip({ files: { 'a.txt': '1' } });
+    const withEmpty = packZip({ files: { 'a.txt': '1' }, binary: {} });
+    expect(Buffer.from(withoutKey).equals(Buffer.from(withEmpty))).toBe(true);
+  });
 });

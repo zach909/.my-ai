@@ -2140,6 +2140,41 @@ export class ElasticCoreBlock {
 // ============================================================================
 const dAdd = dualAdd;
 const dScale = dualScale;
+/** Float array -> base64, exactly, without a decimal round trip. */
+function encodeFloats(values) {
+    return Buffer.from(values.buffer, values.byteOffset, values.byteLength).toString("base64");
+}
+function encodeDoubles(values) {
+    return Buffer.from(values.buffer, values.byteOffset, values.byteLength).toString("base64");
+}
+function decodeDoubles(encoded, expected) {
+    if (typeof encoded !== "string")
+        return null;
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.byteLength !== expected * 8)
+        return null;
+    const out = new Float64Array(expected);
+    Buffer.from(out.buffer).set(bytes);
+    return out;
+}
+/**
+ * base64 -> float array of exactly `expected` values, or null.
+ *
+ * The length check is the point: a snapshot whose arrays are the wrong size
+ * belongs to a different network, and quietly loading as much of it as fits
+ * would leave the engine in a state that is neither the saved one nor a clean
+ * one.
+ */
+function decodeFloats(encoded, expected) {
+    if (typeof encoded !== "string")
+        return null;
+    const bytes = Buffer.from(encoded, "base64");
+    if (bytes.byteLength !== expected * 4)
+        return null;
+    const out = new Float32Array(expected);
+    Buffer.from(out.buffer).set(bytes);
+    return out;
+}
 function clamp(v, lo, hi) {
     return Math.max(lo, Math.min(hi, v));
 }
@@ -2443,6 +2478,77 @@ export class HyperDimensionalEngine {
         if (direct !== undefined && direct.id === id)
             return direct;
         return this.neurons.find(n => n.id === id);
+    }
+    /**
+     * Everything the network is holding right now: every neuron's state and
+     * energy, and every connection between them.
+     *
+     * Taken when a run stops. An all-connected mesh keeps its working context in
+     * its own state rather than in a buffer beside it -- that is the whole
+     * reason two neurons are enough of a doorway -- so the moment a run ends,
+     * this is the only record of what it had built up. Throwing it away at the
+     * end of every run makes each run start from nothing and forget what it just
+     * did.
+     *
+     * Connections are included because they are half of where the network is.
+     * They move during a run (learning is exactly that), so a snapshot of the
+     * activations alone would resume the right thought inside the wrong network.
+     *
+     * The neuron states saved are `allStates` -- the interleaved array the
+     * settle loop actually reads. HyperNeuron.state is a per-neuron copy kept
+     * for compatibility, and saving that instead would restore what callers see
+     * while leaving what the network computes with untouched.
+     */
+    captureNetworkState() {
+        const energies = new Float64Array(this.neurons.length);
+        for (let i = 0; i < this.neurons.length; i++)
+            energies[i] = this.neurons[i].energy;
+        return {
+            shape: { neurons: this.neurons.length, dimensions: this.getDimensions() },
+            states: encodeFloats(this.allStates),
+            energies: encodeDoubles(energies),
+            bias: encodeFloats(this.bias),
+            connDiag: encodeFloats(this.connDiag),
+            connShift: encodeFloats(this.connShift),
+        };
+    }
+    /**
+     * Put a saved snapshot back, so the next run starts where the last one
+     * stopped. Returns true only if everything was restored.
+     *
+     * All-or-nothing on purpose. A snapshot from an engine of a different shape
+     * is not this engine's state, and a partial restore -- states from before,
+     * connections from now -- is a network that never existed. Refusing outright
+     * leaves a clean start, which is a state someone can reason about.
+     */
+    restoreNetworkState(snapshot) {
+        if (!snapshot?.shape ||
+            snapshot.shape.neurons !== this.neurons.length ||
+            snapshot.shape.dimensions !== this.getDimensions())
+            return false;
+        const states = decodeFloats(snapshot.states, this.allStates.length);
+        const energies = decodeDoubles(snapshot.energies, this.neurons.length);
+        const bias = decodeFloats(snapshot.bias, this.bias.length);
+        const diag = decodeFloats(snapshot.connDiag, this.connDiag.length);
+        const shift = decodeFloats(snapshot.connShift, this.connShift.length);
+        if (!states || !energies || !bias || !diag || !shift)
+            return false;
+        this.allStates.set(states);
+        this.bias.set(bias);
+        this.connDiag.set(diag);
+        this.connShift.set(shift);
+        // HyperNeuron.state mirrors allStates for callers that read neurons
+        // directly; leaving it stale would have getNeuronStates() describing the
+        // network as it was before the restore.
+        const N = this.neurons.length;
+        const D = this.totalDims;
+        for (let i = 0; i < N; i++) {
+            const neuron = this.neurons[i];
+            neuron.energy = energies[i];
+            for (let d = 0; d < D; d++)
+                neuron.state[d] = states[d * N + i];
+        }
+        return true;
     }
     /** Total configured neuron count (fixed at construction). */
     getNeuronCount() {
@@ -3765,6 +3871,17 @@ export class ZipLoopInterface {
             byte = (byte << 1) | (one > zero ? 1 : 0);
         }
         return heard ? byte : null;
+    }
+    /**
+     * Everything the network is holding right now -- neuron states and every
+     * connection between them.
+     *
+     * This is what makes a stopped run resumable: the mesh's recurrent state IS
+     * its working context, so ending a run without saving it means every run
+     * starts from nothing and forgets what the last one built up.
+     */
+    captureNetworkState() {
+        return this.engine.captureNetworkState();
     }
     /** Reads `byteCount` bytes back, packing each 8 bits MSB-first. */
     receiveBytes(byteCount) {

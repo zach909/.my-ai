@@ -49,12 +49,20 @@ export const ZIP_FOLDERS = {
   /** Prompting skills: specialised instructions, their own folder, fed in with everything else. */
   promptingSkills: "prompting-skills/",
   /**
-   * What it should remember, and what it remembered. A folder like any other:
-   * memory arrives through the same doorway as everything else rather than
-   * through a side channel, which means a run can be handed its own past and
-   * can hand back what it wants kept.
+   * Chat history from other conversations -- the network's past across
+   * sessions, not just the exchange it is in the middle of. A folder like any
+   * other, so being handed your own history comes through the same doorway as
+   * everything else rather than through a side channel.
    */
   memory: "memory/",
+  /**
+   * The network's own working state -- what every neuron had coming into it
+   * when the last run stopped. Kept apart from memory/ on purpose: one is the
+   * conversation, the other is the mesh's internal condition, and a folder
+   * that mixed them would make "what was said" and "what the network was
+   * holding" indistinguishable to anything reading it back.
+   */
+  state: "state/",
   /** What it produced. */
   output: "output/",
 } as const;
@@ -63,8 +71,22 @@ export const ZIP_FOLDERS = {
 export const STOP_CALL = `${ZIP_FOLDERS.plugins}stop`;
 
 export interface ZipTree {
-  /** Path (including its folder prefix) -> contents. */
+  /** Path (including its folder prefix) -> text contents. */
   files: Record<string, string>;
+  /**
+   * Path -> raw bytes, base64.
+   *
+   * A recording, an image, a compiled thing: files that are not text still go
+   * straight in as files. Everything here becomes bits at the doorway anyway,
+   * so there is no reason a file should have to be described in words first --
+   * transcribing a recording to text before the network sees it throws away
+   * everything about it except the words.
+   *
+   * Kept as a separate map rather than smuggled into files as base64 strings,
+   * so nothing downstream has to guess whether a value is text that looks like
+   * base64 or bytes that happen to decode as letters.
+   */
+  binary?: Record<string, string>;
 }
 
 /**
@@ -77,7 +99,13 @@ export interface ZipTree {
 export function packZip(tree: ZipTree): Uint8Array {
   const ordered: Record<string, string> = {};
   for (const key of Object.keys(tree.files).sort()) ordered[key] = tree.files[key];
-  return new Uint8Array(gzipSync(Buffer.from(JSON.stringify({ files: ordered }), "utf8")));
+  const payload: { files: Record<string, string>; binary?: Record<string, string> } = { files: ordered };
+  if (tree.binary && Object.keys(tree.binary).length > 0) {
+    const orderedBinary: Record<string, string> = {};
+    for (const key of Object.keys(tree.binary).sort()) orderedBinary[key] = tree.binary[key];
+    payload.binary = orderedBinary;
+  }
+  return new Uint8Array(gzipSync(Buffer.from(JSON.stringify(payload), "utf8")));
 }
 
 /**
@@ -99,7 +127,14 @@ export function unpackZip(bytes: Uint8Array): ZipTree | null {
     for (const [path, content] of Object.entries(files as Record<string, unknown>)) {
       if (typeof content === "string") out[path] = content;
     }
-    return { files: out };
+
+    const rawBinary = (parsed as { binary?: unknown }).binary;
+    if (!rawBinary || typeof rawBinary !== "object") return { files: out };
+    const binary: Record<string, string> = {};
+    for (const [path, content] of Object.entries(rawBinary as Record<string, unknown>)) {
+      if (typeof content === "string") binary[path] = content;
+    }
+    return { files: out, binary };
   } catch {
     return null;
   }
@@ -221,12 +256,30 @@ export interface BitDoorway {
   sendBytes(bytes: Uint8Array): void;
   /** One tick of output. Null means the network emitted nothing this tick. */
   nextOutputByte(): number | null;
+  /**
+   * Everything the network is holding -- every neuron's state and every
+   * connection between them -- taken when the run stops.
+   *
+   * Optional because a doorway can be a recording or a stub, and neither has
+   * neurons. A real mesh has this, and when it does the run saves it.
+   */
+  captureNetworkState?(): unknown;
 }
+
+/** Where a stopped run leaves what every neuron and every connection was. */
+export const NETWORK_STATE_FILE = `${ZIP_FOLDERS.state}network-state.json`;
 
 export interface RunResult extends HaltDecision {
   /** What came back, as far as it could be read. */
   tree: ZipTree | null;
   raw: Uint8Array;
+  /**
+   * Everything the network was holding when the run stopped -- neuron states
+   * and every connection -- if the doorway could tell us. Also placed in the
+   * returned tree under state/, so it travels with the rest of the output
+   * rather than beside it.
+   */
+  networkState?: unknown;
 }
 
 /**
@@ -251,5 +304,25 @@ export function runUntilStopped(
     decision = watcher.observe(doorway.nextOutputByte());
   }
 
-  return { ...decision, tree: watcher.tree(), raw: watcher.collected() };
+  // Saved whatever the reason, so the next run starts in the same place. A run
+  // that hit the ceiling has MORE worth keeping than one that finished
+  // cleanly, not less: it was cut off mid-thought, and its state is the only
+  // record of how far it got. Saving only on the tidy ending would lose
+  // exactly the runs worth resuming.
+  const networkState = doorway.captureNetworkState?.();
+
+  // Into state/, not memory/: memory is the chat history, this is the mesh's
+  // own condition. It leaves through the same doorway everything else does.
+  //
+  // Only when there IS a tree: a null tree means the network produced nothing
+  // readable, and manufacturing one out of the state we saved ourselves would
+  // erase that distinction. The state still comes back on neuronInputs, so a
+  // caller that wants to persist it can, whether or not the run said anything.
+  const tree = watcher.tree();
+  const withMemory =
+    tree && networkState !== undefined
+      ? { files: { ...tree.files, [NETWORK_STATE_FILE]: JSON.stringify(networkState) } }
+      : tree;
+
+  return { ...decision, tree: withMemory, raw: watcher.collected(), networkState };
 }
