@@ -2720,6 +2720,93 @@ export class WebServer {
             }
             return;
         }
+        // POST /api/zip-loop/run — send an archive in through two neurons and read
+        // what comes back, until the network stops ITSELF.
+        //
+        // The architecture is all-to-all, so there is no last layer to fall out
+        // of: signal goes in and keeps bouncing. Nothing here decides when the
+        // work is done. The network says so, by writing a stop call into the
+        // plugins/ folder of the archive it is emitting -- and that only counts
+        // once it has also gone quiet, because writing "stop" and continuing to
+        // type is not finishing.
+        //
+        // Two honest limits, reported rather than hidden. The ceiling is a
+        // termination guarantee, not a halt condition: a network that has not been
+        // TRAINED to emit the stop call will hit it every time, and the response
+        // says "ceiling" and complete:false so nobody mistakes a cut-off run for a
+        // finished one. And every bit is one full settle() of the mesh, so this is
+        // slow by construction -- a few hundred ticks, not a few hundred thousand.
+        if (pathname === '/api/zip-loop/run' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL } = await import('../models && skills/core/zip-halt.js');
+                // Three ways to say what goes in, because the whole point of an
+                // archive doorway is that complicated things fit through it: a plain
+                // prompt (dropped into input/ for you), an explicit tree of folders
+                // and files, or an already-packed archive as base64 -- which is how
+                // real files and folders from a disk get here without being retyped
+                // as JSON.
+                const files = {};
+                if (typeof body?.prompt === 'string' && body.prompt.trim()) {
+                    files[`${ZIP_FOLDERS.input}prompt.txt`] = body.prompt;
+                }
+                for (const [path, content] of Object.entries(body?.files ?? {})) {
+                    if (typeof content === 'string')
+                        files[path] = content;
+                }
+                if (typeof body?.archive === 'string' && body.archive) {
+                    const unpacked = unpackZip(new Uint8Array(Buffer.from(body.archive, 'base64')));
+                    if (!unpacked) {
+                        this.sendJson(res, { error: 'That archive could not be read. Send base64 of a packed zip tree.' }, 400);
+                        return;
+                    }
+                    Object.assign(files, unpacked.files);
+                }
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                // The pipeline builds its mesh and engine lazily on first run, and in a
+                // default deployment nothing had run it -- so this endpoint answered
+                // "the network has not run yet" forever. Building them is a thing a
+                // caller can now simply ask for.
+                system.pipeline.ensureReady();
+                const engine = system.pipeline.getHyperEngine();
+                if (!engine) {
+                    this.sendJson(res, {
+                        error: 'The network has not run yet, so it has no engine to stream through. Ask it something first.',
+                    }, 409);
+                    return;
+                }
+                const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
+                const { runUntilStopped, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
+                const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+                // Capped hard. One settle per bit means an unbounded ceiling here
+                // would be a request that never returns.
+                const maxTicks = Math.min(Math.max(1, Number(body?.maxTicks) || 512), 4096);
+                const quietTicks = Math.min(Math.max(1, Number(body?.quietTicks) || DEFAULT_HALT.quietTicks), maxTicks);
+                // Said up front, because it is the number that matters: every bit is
+                // one settle() of the mesh, so the send alone costs bytesIn * 8 ticks
+                // before a single bit of output is read.
+                const bytesIn = packZip({ files }).length;
+                const result = runUntilStopped(zip, { files }, { quietTicks, maxTicks });
+                this.sendJson(res, {
+                    ok: true,
+                    bytesIn,
+                    sendTicks: bytesIn * 8,
+                    // What the network has to write to end its own run.
+                    stopCall: STOP_CALL,
+                    reason: result.reason,
+                    complete: result.complete,
+                    sawStop: result.sawStop,
+                    ticks: result.ticks,
+                    bytesOut: result.raw.length,
+                    tree: result.tree,
+                });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         // POST /api/extension/plan-requirements — "here is what I need, make it true"
         //
         // The builder could always build a net skill once you knew which neurons
