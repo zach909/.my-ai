@@ -312,22 +312,41 @@ async function testHyperdimensional() {
 
 async function testHyperdimensionalCapacity() {
   // process() runs on every live NeuroclawLLM.generate() call, and none of
-  // `history`, each neuron's own `transitions`, or `seenPatterns` had any
-  // bound at all -- the constructor's `historyLength` option (which llm.js
-  // passes expecting a real cap) is actually aliased into `noveltyWindow`,
-  // a recency-decay time constant, not an entry limit. `history` has zero
-  // readers anywhere in the file; only a neuron's *last* transition is ever
-  // read, so trimming from the front is always safe.
+  // `history`, each neuron's own `transitions`, and `seenPatterns` all grew
+  // without bound. Two of them are now gone rather than capped: `history` had
+  // no readers anywhere, and a neuron's 100-deep transition ring existed so one
+  // field of its newest entry could be read. `seenPatterns` is real -- novelty
+  // scoring reads it -- so it stays, capped.
   const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const hd = new HyperDimensionalEngine({ neuronCount: 20, dimensions: 8, historyLength: 1000, energyThreshold: 0.001 });
   for (let i = 0; i < 6000; i++) {
     hd.process(new Array(20).fill(0).map(() => Math.random() * 2 - 1));
   }
-  check(hd.history.length === 5000, "HyperDimensionalEngine's history caps at a bounded size instead of growing forever");
+  check(hd.history === undefined, "HyperDimensionalEngine keeps no unread transition history at all, rather than capping one");
   check(hd.seenPatterns.size === 5000, "HyperDimensionalEngine's seenPatterns caps at a bounded size instead of growing forever");
-  check(Math.max(...hd.neurons.map(n => n.transitions.length)) === 100, "each neuron's own transitions history caps at a bounded size instead of growing forever");
+  check(
+    hd.neurons.every(n => n.lastTransition === null || n.lastTransition.toState.length === 9),
+    "each neuron keeps exactly its last transition, not a ring of them",
+  );
+  // The one field the old 100-deep ring existed to provide: this transition's
+  // fromState is exactly the previous transition's toState.
+  {
+    const before = new Map();
+    for (const n of hd.neurons) {
+      if (n.lastTransition) before.set(n.id, Float32Array.from(n.lastTransition.toState));
+    }
+    hd.process(new Array(20).fill(0).map(() => Math.random() * 2 - 1));
+    let chained = 0;
+    for (const n of hd.neurons) {
+      const prevTo = before.get(n.id);
+      if (!prevTo || !n.lastTransition) continue;
+      const from = n.lastTransition.fromState;
+      if (from.length === prevTo.length && from.every((v, i) => v === prevTo[i])) chained++;
+    }
+    check(chained > 0, `a neuron's transition chains from exactly where it previously was (${chained} neurons)`);
+  }
   const out = hd.process(new Array(20).fill(0).map(() => Math.random() * 2 - 1));
-  check(allFinite(out.outputVector) && out.noveltyScore >= 0 && out.noveltyScore <= 1, 'process() still produces sane, finite output after heavy capping across all three bounded structures');
+  check(allFinite(out.outputVector) && out.noveltyScore >= 0 && out.noveltyScore <= 1, 'process() still produces sane, finite output after heavy capping');
 }
 
 async function testInputFlagSelfModelLiveCorrection() {
@@ -890,6 +909,30 @@ async function testContinuousOutputLoop() {
       if (chunk.includes('hello from mid-stream')) { sawInjectedText = true; break; }
     }
     check(sawInjectedText, 'Continuous loop: injected input reached the shared pipeline state (zip-io input loop)');
+  }
+
+  // The continuous mind has to be able to tell the two sides apart. It used to
+  // join everything queued with a space and embed the result, so what reached
+  // the pipeline was an anonymous run-on sentence with no way to tell a
+  // question from its own answer.
+  {
+    const runner = mkRunner();
+    runner.injectInput('what is the mesh', 'user');
+    runner.injectInput('every neuron wired to every other', 'ai');
+    runner.startContinuous(20);
+    await new Promise(r => setTimeout(r, 200));
+    runner.stopContinuous();
+
+    let transcript = '';
+    for await (const chunk of runner.getPipeline().getZipIO().getFullContext()) transcript += chunk;
+    check(
+      transcript.includes('User: what is the mesh'),
+      'Continuous loop: the user\'s turn reaches the pipeline labelled "User:"',
+    );
+    check(
+      transcript.includes('AI: every neuron wired to every other'),
+      'Continuous loop: the AI\'s turn reaches the pipeline labelled "AI:"',
+    );
   }
 
   // Section 4.1(b): live correction (Section 3.3) and RLM thinking-steps

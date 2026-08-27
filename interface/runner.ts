@@ -5,7 +5,7 @@ import { MultiDesktopManager } from './multi-desktop.js';
 import type { NeuroclawLLM } from "../models && skills/llm.js";
 import type { NeuroPipeline, PipelineResult } from "../models && skills/core/pipeline.js";
 import type { PluginRegistry } from "../plugin_manager/registry.js";
-import { embedText } from "../models && skills/core/neuro-lang.js";
+import { embedTranscript, formatTurn, type Speaker } from "../models && skills/core/neuro-lang.js";
 
 export class NeuroclawRunner extends EventEmitter {
   private llm: NeuroclawLLM;
@@ -25,7 +25,15 @@ export class NeuroclawRunner extends EventEmitter {
   // ticking (propagate -> QIL collapse -> zip-io append, via pipeline.run())
   // whether or not anything new was queued.
   private continuousTimer: ReturnType<typeof setInterval> | null = null;
-  private pendingInputs: string[] = [];
+  /**
+   * What has been said since the last tick, and by whom.
+   *
+   * The speaker is stored, not inferred later: the continuous loop used to
+   * join these with a space and embed the result, so the mind that never
+   * stops was thinking about an anonymous run-on sentence with no way to tell
+   * a question from its own answer.
+   */
+  private pendingInputs: Array<{ speaker: Speaker; text: string }> = [];
   private continuousTickInFlight = false;
   private continuousEmbeddingDim = 768;
   /** How many continuousTick() runs have actually fired since start() — real, not simulated. */
@@ -57,7 +65,7 @@ export class NeuroclawRunner extends EventEmitter {
     // nothing actually called, so the loop (once started) just ticked on
     // the mesh's own recurrent dynamics with no real user input reaching
     // it at all.
-    this.injectInput(prompt);
+    this.injectInput(prompt, 'user');
 
     // Run THORNS analysis first to determine intent. Intent detection and
     // plugin routing always use the raw prompt, so recalled memory never
@@ -74,7 +82,15 @@ export class NeuroclawRunner extends EventEmitter {
 
     // Fall through to LLM generation (all 6 neural subsystems), grounded in any
     // relevant recalled conversation turns (continuous context, Section 7).
-    return this.llm.generate(prompt, memoryContext && memoryContext.length ? { memoryContext } : undefined);
+    const response = await this.llm.generate(
+      prompt,
+      memoryContext && memoryContext.length ? { memoryContext } : undefined,
+    );
+    // The loop only ever saw one side of the conversation: prompts went in and
+    // the agent's own answers did not, so it could never learn that an answer
+    // follows a question -- there were no answers in it.
+    this.injectInput(response, 'ai');
+    return response;
   }
 
   async start(): Promise<void> {
@@ -130,8 +146,8 @@ export class NeuroclawRunner extends EventEmitter {
    * picked up by whichever tick fires next; if none is ever queued, the
    * output loop keeps running on the mesh's own recurrent dynamics alone.
    */
-  injectInput(text: string): void {
-    this.pendingInputs.push(text);
+  injectInput(text: string, speaker: Speaker = 'user'): void {
+    this.pendingInputs.push({ speaker, text });
   }
 
   /** Whether the continuous output loop is currently running. */
@@ -173,10 +189,15 @@ export class NeuroclawRunner extends EventEmitter {
     // that land *during* this tick's own (async) run() simply go into the
     // array for the *next* drain — they are never blocked by this one.
     const queued = this.pendingInputs.splice(0, this.pendingInputs.length);
-    const text = queued.length > 0 ? queued.join(' ') : undefined;
+    // Written the way a conversation reads -- "AI: ..." / "User: ..." -- both
+    // for the transcript the pipeline ingests and for the embedding, where a
+    // reserved dimension carries who has been talking.
+    const text = queued.length > 0
+      ? queued.map(q => formatTurn(q.speaker, q.text)).join('\n')
+      : undefined;
     const embedding = new Float32Array(this.continuousEmbeddingDim);
-    if (text) {
-      const vec = embedText(text, this.continuousEmbeddingDim);
+    if (queued.length > 0) {
+      const vec = embedTranscript(queued, this.continuousEmbeddingDim);
       embedding.set(vec);
     }
     const result = await this.pipeline.run(embedding, text);

@@ -2536,7 +2536,16 @@ export interface HyperNeuron {
    */
   state: Float32Array;
   energy: number;
-  transitions: StateTransition[];
+  /**
+   * Where this neuron last moved from and to, or null if it has not been
+   * active yet.
+   *
+   * One transition, not a history of them: the only thing ever read was the
+   * newest entry's `toState`, and keeping a hundred full state copies per
+   * neuron to answer "where were you a moment ago" is a hundred times the
+   * memory for the same answer.
+   */
+  lastTransition: StateTransition | null;
   influenceRadius: number;
   activationThreshold: number;
 }
@@ -2618,6 +2627,25 @@ export interface StateTransition {
   energy: number;
   timestamp: number;
   cause: string;
+}
+
+/** Per-tick options for process(). */
+export interface ProcessOptions {
+  /**
+   * Whether this tick may change the connections. Default true.
+   *
+   * Reading is not learning. The Zip Loop reads output one bit at a time, one
+   * full tick per bit, and every one of those ticks was applying the same
+   * Hebbian update as a tick that had actually received something: 50 idle
+   * read ticks moved 98% of all connections. Individually tiny -- but a
+   * hundred-byte answer is 800 of them, so asking the network what it thought
+   * quietly rewired it, and asking twice gave two different networks.
+   *
+   * It is also where nearly all the time goes. Weight learning is ~88% of a
+   * tick at the default size (every connection, every dimension, every tick),
+   * so a read tick that skips it is both correct and several times faster.
+   */
+  learn?: boolean;
 }
 
 export interface HyperDimensionalOutput {
@@ -2714,27 +2742,24 @@ export class HyperDimensionalEngine {
   private config: HyperConfig;
   private neurons: HyperNeuron[];
   private seenPatterns: Map<string, SeenPattern>;
-  private history: StateTransition[];
   private iteration: number = 0;
   private totalDims: number;
 
   /**
-   * process() runs on every live NeuroclawLLM.generate() call, and none of
-   * `history`, each neuron's own `transitions`, or `seenPatterns` had any
-   * bound at all -- the constructor's `historyLength` config option (passed
-   * by llm.js expecting a real cap) is actually aliased into `noveltyWindow`,
-   * a recency-decay time constant, not an entry limit; nothing in this file
-   * ever trims any of the three. `history` in particular has zero readers
-   * anywhere in this file -- pure accumulated dead weight from the start.
-   * Only the *last* entry of a neuron's `transitions` is ever read
-   * (resolveStateTransitions()'s `fromState` lookup), so trimming from the
-   * front is always safe there. `seenPatterns` eviction here is by
-   * insertion order (first-seen), not true least-recently-used -- an honest
-   * simplification, not a claim of LRU precision, matching the same
+   * process() runs on every live generate() call, and on every BIT through the
+   * Zip Loop, so what it keeps per tick matters more than anywhere else here.
+   *
+   * Two of the three things it used to accumulate are gone rather than capped.
+   * `history` had no readers anywhere -- capping dead weight still pays to
+   * build it, and it was built out of two fresh state copies per neuron per
+   * tick. Each neuron's 100-deep `transitions` ring existed so one field of
+   * its newest entry could be read, and is now that one field.
+   *
+   * `seenPatterns` is real -- novelty scoring reads it -- so it stays, capped.
+   * Eviction is by insertion order (first-seen), not true least-recently-used:
+   * an honest simplification, not a claim of LRU precision, matching the same
    * plain-cap approach already used for SharedBlackboard's log.
    */
-  private readonly historyCapacity = 5000;
-  private readonly perNeuronTransitionsCapacity = 100;
   private readonly seenPatternsCapacity = 5000;
 
   /**
@@ -2767,8 +2792,6 @@ export class HyperDimensionalEngine {
   private tempCtx: Float32Array;
   private stateDeltasBuffer: Float32Array;
   private entropyHist: Uint32Array;
-  private preSettleStatesBuffer: Float32Array;
-  private preSettleEnergiesBuffer: Float32Array;
   private defaultDrivenIds: Set<number>;
   private selfModelHScratch: Float32Array;
   private selfModelOutScratch: Float32Array;
@@ -2824,7 +2847,6 @@ export class HyperDimensionalEngine {
     this.totalDims = D;
     this.neurons = [];
     this.seenPatterns = new Map();
-    this.history = [];
 
     this.allStates = new Float32Array(D * N);
     this.connDiag = new Float32Array(N * D * N);
@@ -2839,8 +2861,6 @@ export class HyperDimensionalEngine {
     this.initializeNeurons();
     this.initializeConnections();
 
-    this.preSettleStatesBuffer = new Float32Array(D * N);
-    this.preSettleEnergiesBuffer = new Float32Array(N);
     this.defaultDrivenIds = new Set(this.neurons.map(n => n.id));
 
     // Pre-calculate the entropy lookup table for fast dimensional entropy calculations.
@@ -2901,7 +2921,8 @@ export class HyperDimensionalEngine {
     inputVector: number[] | Map<string, Float32Array>,
     learningRates?: Map<number, number>,
     directInputNeuronIds?: Set<number>,
-    vale?: Map<number, number>
+    vale?: Map<number, number>,
+    options?: ProcessOptions
   ): HyperDimensionalOutput {
     let resolvedInput: number[];
     if (inputVector instanceof Map) {
@@ -2920,38 +2941,26 @@ export class HyperDimensionalEngine {
     const N = this.neurons.length;
     const D = this.totalDims;
 
-    // Fast pre-allocated copy
-    this.preSettleStatesBuffer.set(this.allStates);
-    for (let idx = 0; idx < N; idx++) {
-      this.preSettleEnergiesBuffer[idx] = this.neurons[idx].energy;
-    }
-
     const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds, vale);
 
-    this.applyWeightLearning(learningRates, stateDeltas);
+    // Weight learning is on by default -- a tick that receives input is
+    // supposed to change the network. A tick that is only READING is not: see
+    // ProcessOptions.learn.
+    if (options?.learn !== false) this.applyWeightLearning(learningRates, stateDeltas);
 
-    const transitions: StateTransition[] = [];
+    // Energies only. This loop used to also build a StateTransition per neuron
+    // whose energy had changed -- two fresh Float32Array(dimensions + 1) plus
+    // an object each, every tick -- for the sole purpose of pushing them into
+    // `history`, which nothing in this file or anywhere else ever read. At the
+    // default size that was ~200 typed arrays and 13,000 floats copied per
+    // tick, and the Zip Loop runs one tick per BIT, so the dead record cost
+    // more than most of the real computation.
     for (let idx = 0; idx < N; idx++) {
       const neuron = this.neurons[idx];
-      const newEnergy = this.computeStateEnergy(neuron.state);
-      const oldEnergy = this.preSettleEnergiesBuffer[idx];
-      if (newEnergy !== oldEnergy) {
-        const fromState = new Float32Array(D);
-        for (let d = 0; d < D; d++) {
-          fromState[d] = this.preSettleStatesBuffer[d * N + idx];
-        }
-        transitions.push({
-          fromState,
-          toState: new Float32Array(neuron.state),
-          energy: newEnergy - oldEnergy,
-          timestamp: Date.now(),
-          cause: 'input_update',
-        });
-      }
-      neuron.energy = newEnergy;
+      neuron.energy = this.computeStateEnergy(neuron.state);
     }
 
-    const resolvedTransitions = this.resolveStateTransitions();
+    const transitionCount = this.resolveStateTransitions();
 
     const activeStates: HyperNeuron[] = [];
     const threshold = this.config.energyThreshold;
@@ -2985,10 +2994,6 @@ export class HyperDimensionalEngine {
     const noveltyScore = clamp(0.6 * patternNovelty + 0.4 * selfModelSurprise, 0, 1);
 
     this.recordPattern(patternHash, noveltyScore);
-    this.history.push(...transitions, ...resolvedTransitions);
-    if (this.history.length > this.historyCapacity) {
-      this.history.splice(0, this.history.length - this.historyCapacity);
-    }
     this.iteration++;
 
     const inputTopography = new Map<number, number>();
@@ -3002,7 +3007,7 @@ export class HyperDimensionalEngine {
       totalEnergy,
       dimensionalEntropy,
       noveltyScore,
-      transitionCount: resolvedTransitions.length,
+      transitionCount,
       stateDeltas,
       selfModelSurprise,
       liveCorrections,
@@ -3557,7 +3562,7 @@ export class HyperDimensionalEngine {
         id: i,
         state,
         energy: 0,
-        transitions: [],
+        lastTransition: null,
         influenceRadius: 0.1 + Math.random() * 0.4,
         activationThreshold: 0.3 + Math.random() * 0.4,
       });
@@ -4281,25 +4286,34 @@ export class HyperDimensionalEngine {
     return sum / n;
   }
 
-  private resolveStateTransitions(): StateTransition[] {
-    const resolved: StateTransition[] = [];
+  /**
+   * Record each active neuron's move from where it was to where it now is,
+   * and report how many made one.
+   *
+   * Each neuron keeps its LAST transition, not a hundred of them. The old ring
+   * buffer held 100 per neuron and exactly one field of one entry was ever
+   * read -- the newest `toState`, as the next transition's `fromState`. So it
+   * was storing 200 full state copies per neuron to answer "where were you a
+   * moment ago", which one copy answers.
+   *
+   * The returned value is a count rather than the list, because the count is
+   * all a caller ever received: the list itself went into `history`, which had
+   * no readers at all.
+   */
+  private resolveStateTransitions(): number {
+    let resolved = 0;
+    const now = Date.now();
     for (const neuron of this.neurons) {
       if (neuron.energy > this.config.energyThreshold) {
-        const fromState = neuron.transitions.length > 0
-          ? neuron.transitions[neuron.transitions.length - 1].toState
-          : neuron.state;
-        const transition: StateTransition = {
-          fromState: new Float32Array(fromState),
+        const previous = neuron.lastTransition;
+        neuron.lastTransition = {
+          fromState: new Float32Array(previous ? previous.toState : neuron.state),
           toState: new Float32Array(neuron.state),
           energy: neuron.energy,
-          timestamp: Date.now(),
+          timestamp: now,
           cause: 'energy_resolved',
         };
-        neuron.transitions.push(transition);
-        if (neuron.transitions.length > this.perNeuronTransitionsCapacity) {
-          neuron.transitions.splice(0, neuron.transitions.length - this.perNeuronTransitionsCapacity);
-        }
-        resolved.push(transition);
+        resolved++;
       }
     }
     return resolved;
@@ -4555,6 +4569,9 @@ const ZIP_LOOP_NO_DRIVEN: Set<number> = new Set<number>();
 /** Below this, an output neuron counts as saying nothing rather than saying zero. */
 const SILENT_OUTPUT = 1e-6;
 
+/** Shared options for every read tick: reading the network must not rewrite it. */
+const ZIP_LOOP_READ_ONLY: ProcessOptions = { learn: false };
+
 export class ZipLoopInterface {
   /** Constant per-interface drive sets, built once instead of per bit (see sendBit()). */
   private readonly drivenBit0: Set<number>;
@@ -4618,7 +4635,11 @@ export class ZipLoopInterface {
     const bit0Out = this.ids.bit0Out;
     const bit1Out = this.ids.bit1Out;
     for (let i = 0; i < count; i++) {
-      this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN);
+      // learn: false -- reading is not learning. Every one of these ticks used
+      // to apply a full Hebbian update, so pulling an answer out of the
+      // network changed the network it was pulled from, and reading the same
+      // thing twice gave two different networks.
+      this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
       bits[i] = this.engine.getNeuronEnergy(bit1Out) > this.engine.getNeuronEnergy(bit0Out) ? 1 : 0;
     }
     return bits;
@@ -4645,7 +4666,8 @@ export class ZipLoopInterface {
     let byte = 0;
     let heard = false;
     for (let b = 0; b < 8; b++) {
-      this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN);
+      // Reading, so not learning -- see receiveBits().
+      this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
       const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
       const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
       if (zero > SILENT_OUTPUT || one > SILENT_OUTPUT) heard = true;
