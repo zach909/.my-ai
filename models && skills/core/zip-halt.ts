@@ -38,15 +38,35 @@
 
 import { gzipSync, gunzipSync } from "node:zlib";
 
-/** The folders the network sees, on the way in and on the way out. */
+/**
+ * The folders the network sees, on the way in and on the way out.
+ *
+ * A folder per kind of thing, because they are different kinds of thing. A
+ * prompt is what is being asked; a plug-in is a capability with its own
+ * instructions; a prompting skill is guidance about HOW to go about it. Flatten
+ * them into one pile and nothing downstream can tell which is which.
+ */
 export const ZIP_FOLDERS = {
-  /** What it is being asked about. */
-  input: "input/",
-  /** Plugin calls: what the network asks the outside world to do -- including stopping. */
+  /** The prompt, and any files that came with it. */
+  prompt: "prompt/",
+  /**
+   * Plug-ins: one folder each, holding that plug-in's instructions and
+   * whatever else it carries. Also where the network asks the outside world to
+   * do something -- including to stop.
+   */
   plugins: "plugins/",
   /** What came back from those calls, including the ones that went wrong. */
   errors: "plugins/error/",
-  /** Prompting skills: specialised instructions, their own folder, fed in with everything else. */
+  /**
+   * Prompting skills: specialised instructions for how to go about something.
+   * Selecting one puts it here, in the same archive as everything else, rather
+   * than injecting it into the prompt where it would be indistinguishable from
+   * what was actually asked.
+   *
+   * Not to be confused with a NET skill, which has no folder here at all: a net
+   * skill is neurons wired directly into the mesh, part of the network rather
+   * than something handed to it.
+   */
   promptingSkills: "prompting-skills/",
   /**
    * Chat history from other conversations -- the network's past across

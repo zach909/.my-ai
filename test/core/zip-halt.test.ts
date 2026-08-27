@@ -39,7 +39,7 @@ function replay(tree: ZipTree, options: { trailingNoise?: number } = {}): BitDoo
 
 describe('the archive that goes through two neurons', () => {
   it('round-trips folders and files', () => {
-    const tree = { files: { [`${ZIP_FOLDERS.input}ask.txt`]: 'what is this', [STOP_CALL]: '' } };
+    const tree = { files: { [`${ZIP_FOLDERS.prompt}ask.txt`]: 'what is this', [STOP_CALL]: '' } };
     expect(unpackZip(packZip(tree))).toEqual(tree);
   });
 
@@ -73,7 +73,7 @@ describe('stopping', () => {
   it('ends the run when the network asks to stop and then goes quiet', () => {
     const result = runUntilStopped(
       replay({ files: { [`${ZIP_FOLDERS.output}answer.txt`]: 'done', [STOP_CALL]: '' } }),
-      { files: { [`${ZIP_FOLDERS.input}ask.txt`]: 'go' } },
+      { files: { [`${ZIP_FOLDERS.prompt}ask.txt`]: 'go' } },
       { quietTicks: 4, maxTicks: 5_000 },
     );
     expect(result.reason).toBe('stopped-itself');
@@ -268,12 +268,12 @@ describe('a file goes straight in', () => {
     // would throw away everything about it except the words.
     const audio = Buffer.from([0x1a, 0x45, 0xdf, 0xa3, 0x00, 0xff, 0x7f]).toString('base64');
     const tree: ZipTree = {
-      files: { [`${ZIP_FOLDERS.input}note.txt`]: 'said out loud' },
-      binary: { [`${ZIP_FOLDERS.input}recording.webm`]: audio },
+      files: { [`${ZIP_FOLDERS.prompt}note.txt`]: 'said out loud' },
+      binary: { [`${ZIP_FOLDERS.prompt}recording.webm`]: audio },
     };
     const back = unpackZip(packZip(tree));
-    expect(back?.binary?.[`${ZIP_FOLDERS.input}recording.webm`]).toBe(audio);
-    expect(back?.files[`${ZIP_FOLDERS.input}note.txt`]).toBe('said out loud');
+    expect(back?.binary?.[`${ZIP_FOLDERS.prompt}recording.webm`]).toBe(audio);
+    expect(back?.files[`${ZIP_FOLDERS.prompt}note.txt`]).toBe('said out loud');
   });
 
   it('keeps bytes out of the text map, so nothing has to guess which is which', () => {
@@ -289,5 +289,42 @@ describe('a file goes straight in', () => {
     const withoutKey = packZip({ files: { 'a.txt': '1' } });
     const withEmpty = packZip({ files: { 'a.txt': '1' }, binary: {} });
     expect(Buffer.from(withoutKey).equals(Buffer.from(withEmpty))).toBe(true);
+  });
+});
+
+describe('the folders in the archive', () => {
+  it('keeps a prompt, a plug-in and a prompting skill apart', () => {
+    // Three different kinds of thing: what was asked, a capability with its
+    // own instructions, and guidance about how to go about it. Flattened into
+    // one pile, nothing downstream could tell which is which -- and guidance
+    // spliced into the prompt would be indistinguishable from the request.
+    expect(ZIP_FOLDERS.prompt).toBe('prompt/');
+    expect(ZIP_FOLDERS.plugins).toBe('plugins/');
+    expect(ZIP_FOLDERS.promptingSkills).toBe('prompting-skills/');
+  });
+
+  it('gives each plug-in and each prompting skill its own folder', () => {
+    // A folder each, so both can be walked the same way and either can carry
+    // more than one file.
+    const tree: ZipTree = {
+      files: {
+        [`${ZIP_FOLDERS.prompt}prompt.txt`]: 'find out what changed today',
+        [`${ZIP_FOLDERS.plugins}file-system/PLUGIN.json`]: '{"id":"file-system"}',
+        [`${ZIP_FOLDERS.promptingSkills}recall-what-i-know/SKILL.json`]: '{"name":"recall-what-i-know"}',
+      },
+    };
+    const back = unpackZip(packZip(tree));
+    expect(Object.keys(back!.files).sort()).toEqual([
+      'plugins/file-system/PLUGIN.json',
+      'prompt/prompt.txt',
+      'prompting-skills/recall-what-i-know/SKILL.json',
+    ]);
+  });
+
+  it('has no folder for a net skill, because a net skill is not handed over', () => {
+    // A net skill is neurons wired into the mesh -- part of the network rather
+    // than something in the archive it reads.
+    expect(Object.values(ZIP_FOLDERS)).not.toContain('net-skills/');
+    expect(Object.values(ZIP_FOLDERS)).not.toContain('skills/');
   });
 });

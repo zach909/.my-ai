@@ -2763,7 +2763,7 @@ export class WebServer {
             // Contained to the archive: a path that climbs out of it is not a file
             // in this tree, whatever it is.
             const safe = requested.replace(/\\/g, '/').replace(/(^|\/)\.\.(?=\/|$)/g, '').replace(/^\/+/, '');
-            const filePath = safe || `${ZIP_FOLDERS.input}file-${Date.now()}`;
+            const filePath = safe || `${ZIP_FOLDERS.prompt}file-${Date.now()}`;
             this.sendJson(res, {
                 ok: true,
                 path: filePath,
@@ -2802,7 +2802,7 @@ export class WebServer {
                 // as JSON.
                 const files = {};
                 if (typeof body?.prompt === 'string' && body.prompt.trim()) {
-                    files[`${ZIP_FOLDERS.input}prompt.txt`] = body.prompt;
+                    files[`${ZIP_FOLDERS.prompt}prompt.txt`] = body.prompt;
                 }
                 for (const [path, content] of Object.entries(body?.files ?? {})) {
                     if (typeof content === 'string')
@@ -2841,6 +2841,46 @@ export class WebServer {
                 }
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const system = await getNeuroclawSystem();
+                // A selected prompting skill goes IN THE ARCHIVE, in its own folder --
+                // not spliced into the prompt, where guidance about how to go about
+                // something would be indistinguishable from what was actually asked.
+                //
+                // This is not a net skill and there is no folder for one: a net skill
+                // is neurons wired into the mesh, part of the network rather than
+                // something handed to it.
+                if (Array.isArray(body?.promptingSkills) && body.promptingSkills.length > 0) {
+                    const { builtInPromptingSkills } = await import('../models && skills/core/prompting-skills.js');
+                    const wanted = new Set(body.promptingSkills.map(String));
+                    // Installed skills first: installing one is how someone replaces a
+                    // built-in, so the installed version has to win the name.
+                    const installed = listInstalled();
+                    const installedNames = new Set(installed.map(skill => skill.name));
+                    const available = [...installed, ...builtInPromptingSkills().filter(skill => !installedNames.has(skill.name))];
+                    for (const skill of available) {
+                        if (!wanted.has(skill.name))
+                            continue;
+                        // One folder per skill, holding the skill itself -- the same shape
+                        // a plug-in folder has, so anything reading the archive can walk
+                        // both the same way.
+                        files[`${ZIP_FOLDERS.promptingSkills}${skill.name}/SKILL.json`] = JSON.stringify(skill, null, 2);
+                    }
+                }
+                // Plug-ins: one folder each, carrying what that plug-in says it can do.
+                // A plug-in is a capability with instructions, so what goes in is the
+                // instructions -- not a name the network has to already know.
+                if (Array.isArray(body?.plugins) && body.plugins.length > 0) {
+                    const wanted = new Set(body.plugins.map(String));
+                    for (const definition of system.pluginRegistry.listPlugins()) {
+                        if (!wanted.has(definition.id))
+                            continue;
+                        files[`${ZIP_FOLDERS.plugins}${definition.id}/PLUGIN.json`] = JSON.stringify({
+                            id: definition.id,
+                            name: definition.name,
+                            type: definition.type,
+                            capabilities: definition.capabilities ?? [],
+                        }, null, 2);
+                    }
+                }
                 // The pipeline builds its mesh and engine lazily on first run, and in a
                 // default deployment nothing had run it -- so this endpoint answered
                 // "the network has not run yet" forever. Building them is a thing a
@@ -2887,6 +2927,10 @@ export class WebServer {
                     ok: true,
                     bytesIn,
                     sendTicks: bytesIn * 8,
+                    // What was actually in the archive. A caller that asked for two
+                    // prompting skills and a plug-in should be able to see that all
+                    // three went in, rather than inferring it from a byte count.
+                    contents: [...Object.keys(files), ...Object.keys(binary)].sort(),
                     // What the network has to write to end its own run.
                     stopCall: STOP_CALL,
                     reason: result.reason,

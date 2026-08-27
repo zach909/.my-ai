@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Mic, Square } from 'lucide-react'
 import { AgentPulse } from '@/components/agent-pulse'
+import { stageFile, StageError, generatedName, type StagedFile } from '@/lib/stage-file'
 
 /**
  * A recorder. Not a transcriber.
@@ -23,20 +24,13 @@ const MAX_RECORDING_MS = 60_000
 /** Below this it is a mis-click, not a recording. */
 const MIN_BYTES = 1024
 
-export interface RecordedFile {
-  path: string
-  bytes: number
-  /** Ready to send: { "input/recording-....webm": "<base64>" } */
-  binary: Record<string, string>
-}
-
 export function VoiceRecorder({
   onRecorded,
   disabled,
-  folder = 'input/',
+  folder = 'prompt/',
 }: {
   /** The recording, uploaded and placed in the archive, ready to zip with the rest. */
-  onRecorded: (file: RecordedFile) => void
+  onRecorded: (file: StagedFile) => void
   disabled?: boolean
   folder?: string
 }) {
@@ -68,20 +62,9 @@ export function VoiceRecorder({
       setState('uploading')
       try {
         const extension = (blob.type.split('/')[1] || 'webm').split(';')[0]
-        const name = `recording-${Date.now()}.${extension}`
-        const res = await fetch(`/api/zip-loop/file?path=${encodeURIComponent(`${folder}${name}`)}`, {
-          method: 'POST',
-          headers: { 'Content-Type': blob.type || 'audio/webm' },
-          body: blob,
-        })
-        const data = await res.json().catch(() => ({}))
-        if (!res.ok) {
-          setError(data?.error || `Could not upload the recording (${res.status})`)
-          return
-        }
-        onRecorded({ path: data.path, bytes: data.bytes, binary: data.binary })
-      } catch {
-        setError('Could not reach the local network.')
+        onRecorded(await stageFile(blob, generatedName('recording', extension), folder))
+      } catch (err) {
+        setError(err instanceof StageError ? err.message : 'Could not upload the recording.')
       } finally {
         setState('idle')
       }

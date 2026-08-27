@@ -25,7 +25,8 @@ import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'luc
 import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from 'sonner'
 import { VoiceRecorder } from '@/components/VoiceRecorder'
-import { AttachFile, type StagedFile } from '@/components/AttachFile'
+import { AttachFile } from '@/components/AttachFile'
+import { stageFile, StageError, generatedName, type StagedFile } from '@/lib/stage-file'
 import { usePageVisible } from '@/hooks/usePageVisible'
 
 export const Route = createFileRoute('/app/chat')({
@@ -325,6 +326,51 @@ function ChatPage() {
    */
   const [staged, setStaged] = useState<StagedFile[]>([])
 
+  const [pasteError, setPasteError] = useState<string | null>(null)
+
+  /**
+   * Anything pasted goes in as a file.
+   *
+   * An image off the clipboard is already a file and always was one -- it just
+   * had nowhere to go before. Pasted TEXT becomes a file too, which is the
+   * part worth being deliberate about: a pasted log, document or block of code
+   * is a thing in its own right, and flattening it into the middle of a
+   * sentence loses where it started and where it ended.
+   *
+   * Nothing is lost if that was not what you wanted: what was pasted appears
+   * in the tray below with an x, so it can be dropped and typed instead.
+   */
+  const handlePaste = useCallback(
+    async (event: React.ClipboardEvent<HTMLInputElement>) => {
+      const clipboard = event.clipboardData
+      if (!clipboard) return
+
+      const files = Array.from(clipboard.files)
+      const text = clipboard.getData('text/plain')
+      if (files.length === 0 && !text.trim()) return
+
+      // Taken over entirely: half-pasting -- a file staged AND the text landing
+      // in the box -- would be the worst of both.
+      event.preventDefault()
+      setPasteError(null)
+
+      try {
+        for (const file of files) {
+          const staged = await stageFile(file, file.name || generatedName('pasted', 'bin'))
+          setStaged((prev) => [...prev, staged])
+        }
+        if (files.length === 0 && text) {
+          const blob = new Blob([text], { type: 'text/plain' })
+          const staged = await stageFile(blob, generatedName('pasted', 'txt'))
+          setStaged((prev) => [...prev, staged])
+        }
+      } catch (err) {
+        setPasteError(err instanceof StageError ? err.message : 'Could not attach what was pasted.')
+      }
+    },
+    [],
+  )
+
   const addStaged = useCallback((file: StagedFile) => {
     setStaged((prev) => [...prev.filter((f) => f.path !== file.path), file])
   }, [])
@@ -511,6 +557,9 @@ function ChatPage() {
             attaching and sending are separate steps here, and something
             staged but invisible would be a surprise either way -- forgotten,
             or sent when it was not meant to be. */}
+        {pasteError && (
+          <p className="text-xs text-destructive" role="alert">{pasteError}</p>
+        )}
         {staged.length > 0 && (
           <ul className="flex flex-wrap gap-1.5 text-xs" aria-label="Files going in with this message">
             {staged.map((file) => (
@@ -545,6 +594,7 @@ function ChatPage() {
                 handleSendMessage()
               }
             }}
+            onPaste={handlePaste}
             placeholder="Ask anything… (Shift+Enter for new line)"
             disabled={loading}
             autoFocus
