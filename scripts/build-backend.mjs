@@ -48,6 +48,9 @@ if (!TSC) {
   console.error('  Run `npm install` (or `bun install` / `pnpm install`) in this directory, then try again.');
   process.exit(1);
 }
+// Resolve tsc from the standard node_modules/.bin location rather than the
+// fragile committed .bin/tsc symlink, which dangles until `npm install` runs.
+const TSC = join(ROOT, 'node_modules', '.bin', 'tsc');
 
 // Directories that make up the backend runtime.
 const DIRS = [
@@ -61,6 +64,11 @@ const DIRS = [
 ];
 
 // 1. Type-check + emit the TypeScript half.
+if (!existsSync(TSC)) {
+  console.error('✗ tsc not found at', TSC);
+  console.error('  Run `npm install` (or `bun install` / `pnpm install`) first to install dependencies.');
+  process.exit(1);
+}
 console.log('› tsc -p tsconfig.backend.json');
 execFileSync(TSC, ['-p', 'tsconfig.backend.json'], { stdio: 'inherit', cwd: ROOT });
 

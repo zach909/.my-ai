@@ -1,0 +1,18 @@
+services:
+  web:
+    image: node:22-slim
+    working_dir: /app
+    volumes:
+      - ./:/app
+    # `npm run dev` (scripts/dev.mjs) builds the TS backend (tsc -> dist/),
+    # starts it on 127.0.0.1:7861, then starts Vite on 0.0.0.0:3000 with a
+    # /api proxy to the backend — single-origin, no CORS/cookie concerns.
+    # NEUROCLAW_AUTO_UPDATE=0 stops the startup git fetch/pull from touching
+    # the bind-mounted working tree.
+    command: sh -c "npm install && npm run dev"
+    ports:
+      - "3000:3000"
+    environment:
+      - NEUROCLAW_AUTO_UPDATE=0
+      - CHOKIDAR_USEPOLLING=true
+    restart: unless-stopped
