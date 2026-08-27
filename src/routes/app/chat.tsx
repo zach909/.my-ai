@@ -25,6 +25,7 @@ import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'luc
 import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from 'sonner'
 import { VoiceInput } from '@/components/VoiceInput'
+import { FileToNetwork } from '@/components/FileToNetwork'
 import { usePageVisible } from '@/hooks/usePageVisible'
 
 export const Route = createFileRoute('/app/chat')({
@@ -471,6 +472,11 @@ function ChatPage() {
             autoFocus
             className="flex-1"
           />
+          {/* A file goes in as a file. Not attached to a message and described
+              in words -- the doorway takes bytes, and a recording that had to
+              become a transcript first would arrive with everything about it
+              except the words thrown away. */}
+          <FileToNetwork disabled={loading} />
           <VoiceInput
             disabled={loading}
             onTranscript={(text) => {
