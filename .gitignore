@@ -94,3 +94,15 @@ desktop-app/node_modules/
 extension-builder/extensions/autoload_probe_*
 extension-builder/extensions/source_autoload_probe_*
 extension-builder/extensions/good_bits_test_*
+
+# Store items installed on THIS machine. Installing is a local act -- someone
+# here chose to install a published skill -- so the copy under installed/
+# belongs to this machine, not to the repository. The published original in
+# store/ is the shared thing.
+extension-builder/installed/skills/*/
+
+# What the network was holding when its last run stopped (neuron states and
+# every connection, a few megabytes). Per-machine runtime state, rewritten on
+# every stop -- the point of it is that the NEXT run on THIS machine starts in
+# the same place, which is not something to share or to version.
+config/network-state.json

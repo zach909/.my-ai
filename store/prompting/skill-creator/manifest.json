@@ -1,5 +1,5 @@
 {
-  "kind": "skills",
+  "kind": "prompting",
   "name": "skill-creator",
   "title": "Skill Creator",
   "description": "Create new skills, modify and improve existing skills, and measure skill performance.",

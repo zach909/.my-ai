@@ -7,6 +7,7 @@ import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
+import type { NetworkStateSnapshot } from '../models && skills/core/onebrain.js';
 import {
   installFromStore,
   installPromptingSkill,
@@ -442,6 +443,42 @@ export class WebServer {
   // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
   private readonly chatGroupsLock = new PasswordLock();
   private readonly chatHistory = new ChatHistoryStore();
+
+  /**
+   * Where a stopped run leaves what every neuron and every connection was.
+   *
+   * On disk as well as in the archive, because the archive goes back to
+   * whoever asked and the point of saving state is that the NEXT run can pick
+   * it up -- including a next run in a different process, after the machine
+   * was turned off.
+   */
+  private networkStatePath(): string {
+    return path.resolve(process.cwd(), 'config', 'network-state.json');
+  }
+
+  /** Returns how many neurons' worth of state was written. */
+  private async saveNetworkState(snapshot: unknown): Promise<number> {
+    const { writeJsonAtomic } = await import('../models && skills/core/atomic-write.js');
+    writeJsonAtomic(this.networkStatePath(), snapshot);
+    return (snapshot as { shape?: { neurons?: number } } | null)?.shape?.neurons ?? 0;
+  }
+
+  /**
+   * The last saved state, or null. A missing or unreadable file is "nothing to
+   * resume", not an error: the first run on a machine has no predecessor, and
+   * a corrupt one is better started clean than half-restored.
+   */
+  private async readSavedNetworkState(): Promise<NetworkStateSnapshot | null> {
+    try {
+      const file = this.networkStatePath();
+      if (!existsSync(file)) return null;
+      const parsed = JSON.parse(readFileSync(file, 'utf8')) as NetworkStateSnapshot | null;
+      if (!parsed || typeof parsed !== 'object' || !parsed.shape) return null;
+      return parsed;
+    } catch {
+      return null;
+    }
+  }
   // Lazily spawned on first POST /api/extension/train-pytorch call, then
   // reused for the life of this server -- see PyTorchTrainerWorker's own
   // doc comment for why (torch import cost dominates a per-request spawn).
@@ -2870,6 +2907,216 @@ export class WebServer {
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.sendJson(res, { ok: false, error: msg }, 500);
+      }
+      return;
+    }
+
+    // POST /api/zip-loop/file — a file goes straight into the network.
+    //
+    // The body IS the file: raw bytes, whatever they are. A recording arrives
+    // here as a recording rather than as a transcript of itself, which matters
+    // because transcribing first throws away everything about it except the
+    // words -- and the doorway turns it into bits either way.
+    //
+    // ?path= chooses where in the archive it lands (default input/), so the
+    // same route takes a recording, an image, or anything else without
+    // needing a variant per kind of file.
+    if (pathname === '/api/zip-loop/file' && method === 'POST') {
+      const chunks: Buffer[] = [];
+      let total = 0;
+      // Same ceiling as the transcription route: generous for a recording,
+      // bounded so a malformed or hostile request cannot grow without limit.
+      const MAX_FILE_BYTES = 25 * 1024 * 1024;
+      let tooLarge = false;
+      await new Promise<void>((resolve) => {
+        req.on('data', (chunk: Buffer) => {
+          total += chunk.length;
+          if (total > MAX_FILE_BYTES) {
+            tooLarge = true;
+            req.destroy();
+            resolve();
+            return;
+          }
+          chunks.push(chunk);
+        });
+        req.on('end', () => resolve());
+        req.on('error', () => resolve());
+      });
+      if (tooLarge) {
+        this.sendJson(res, { error: 'That file is too large to send through the doorway in one go.' }, 413);
+        return;
+      }
+      const bytes = Buffer.concat(chunks);
+      if (bytes.length === 0) {
+        this.sendJson(res, { error: 'The body was empty — there is no file to send in.' }, 400);
+        return;
+      }
+
+      const { ZIP_FOLDERS } = await import('../models && skills/core/zip-halt.js');
+      const requested = parsedUrl.searchParams.get("path") ?? "";
+      // Contained to the archive: a path that climbs out of it is not a file
+      // in this tree, whatever it is.
+      const safe = requested.replace(/\\/g, '/').replace(/(^|\/)\.\.(?=\/|$)/g, '').replace(/^\/+/, '');
+      const filePath = safe || `${ZIP_FOLDERS.input}file-${Date.now()}`;
+
+      this.sendJson(res, {
+        ok: true,
+        path: filePath,
+        bytes: bytes.length,
+        // Handed back ready to send: the caller posts this to
+        // /api/zip-loop/run as `binary`, or keeps it for a later run.
+        binary: { [filePath]: bytes.toString('base64') },
+      });
+      return;
+    }
+
+    // POST /api/zip-loop/run — send an archive in through two neurons and read
+    // what comes back, until the network stops ITSELF.
+    //
+    // The architecture is all-to-all, so there is no last layer to fall out
+    // of: signal goes in and keeps bouncing. Nothing here decides when the
+    // work is done. The network says so, by writing a stop call into the
+    // plugins/ folder of the archive it is emitting -- and that only counts
+    // once it has also gone quiet, because writing "stop" and continuing to
+    // type is not finishing.
+    //
+    // Two honest limits, reported rather than hidden. The ceiling is a
+    // termination guarantee, not a halt condition: a network that has not been
+    // TRAINED to emit the stop call will hit it every time, and the response
+    // says "ceiling" and complete:false so nobody mistakes a cut-off run for a
+    // finished one. And every bit is one full settle() of the mesh, so this is
+    // slow by construction -- a few hundred ticks, not a few hundred thousand.
+    if (pathname === '/api/zip-loop/run' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as
+          {
+            files?: Record<string, string>;
+            binary?: Record<string, string>;
+            archive?: string;
+            prompt?: string;
+            includeHistory?: boolean;
+            resume?: boolean;
+            quietTicks?: number;
+            maxTicks?: number;
+          } | null;
+
+        const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL, NETWORK_STATE_FILE } =
+          await import('../models && skills/core/zip-halt.js');
+
+        // Three ways to say what goes in, because the whole point of an
+        // archive doorway is that complicated things fit through it: a plain
+        // prompt (dropped into input/ for you), an explicit tree of folders
+        // and files, or an already-packed archive as base64 -- which is how
+        // real files and folders from a disk get here without being retyped
+        // as JSON.
+        const files: Record<string, string> = {};
+        if (typeof body?.prompt === 'string' && body.prompt.trim()) {
+          files[`${ZIP_FOLDERS.input}prompt.txt`] = body.prompt;
+        }
+        for (const [path, content] of Object.entries(body?.files ?? {})) {
+          if (typeof content === 'string') files[path] = content;
+        }
+        // Files that are not text go straight in as files. A recording does not
+        // have to become a transcript before the network is allowed to see it
+        // -- everything becomes bits at the doorway regardless, and turning
+        // audio into words first throws away everything except the words.
+        const binary: Record<string, string> = {};
+        for (const [filePath, encoded] of Object.entries(body?.binary ?? {})) {
+          if (typeof encoded === 'string') binary[filePath] = encoded;
+        }
+
+        if (typeof body?.archive === 'string' && body.archive) {
+          const unpacked = unpackZip(new Uint8Array(Buffer.from(body.archive, 'base64')));
+          if (!unpacked) {
+            this.sendJson(res, { error: 'That archive could not be read. Send base64 of a packed zip tree.' }, 400);
+            return;
+          }
+          Object.assign(files, unpacked.files);
+          Object.assign(binary, unpacked.binary ?? {});
+        }
+
+        // memory/ is chat history from OTHER conversations -- the network's past
+        // across sessions, handed to it through the same doorway as everything
+        // else. Opt-in, because a run that did not ask to be given its history
+        // should not silently be sending it through the mesh.
+        if (body?.includeHistory) {
+          const threads = this.chatHistory.listThreads().slice(0, 10);
+          for (const thread of threads) {
+            const transcript = thread.messages
+              .map(m => `${m.role}: ${m.content}`)
+              .join('\n');
+            files[`${ZIP_FOLDERS.memory}${thread.id}.txt`] = transcript;
+          }
+        }
+
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        // The pipeline builds its mesh and engine lazily on first run, and in a
+        // default deployment nothing had run it -- so this endpoint answered
+        // "the network has not run yet" forever. Building them is a thing a
+        // caller can now simply ask for.
+        system.pipeline.ensureReady();
+        const engine = system.pipeline.getHyperEngine();
+        if (!engine) {
+          this.sendJson(res, {
+            error: 'The network has not run yet, so it has no engine to stream through. Ask it something first.',
+          }, 409);
+          return;
+        }
+
+        const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
+        const { runUntilStopped, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
+        const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+
+        // Capped hard. One settle per bit means an unbounded ceiling here
+        // would be a request that never returns.
+        const maxTicks = Math.min(Math.max(1, Number(body?.maxTicks) || 512), 4096);
+        const quietTicks = Math.min(Math.max(1, Number(body?.quietTicks) || DEFAULT_HALT.quietTicks), maxTicks);
+
+        // Said up front, because it is the number that matters: every bit is
+        // one settle() of the mesh, so the send alone costs bytesIn * 8 ticks
+        // before a single bit of output is read.
+        const bytesIn = packZip({ files, binary }).length;
+
+        // Pick up where the last run stopped, if asked and if there is anything
+        // to pick up. Skipped silently when there is no saved state -- a first
+        // run has nothing to resume and that is not a failure.
+        let resumed = false;
+        if (body?.resume) {
+          const saved = await this.readSavedNetworkState();
+          if (saved) resumed = engine.restoreNetworkState(saved);
+        }
+
+        const result = runUntilStopped(zip, { files, binary }, { quietTicks, maxTicks });
+
+        // When it stops it saves the input of every neuron -- whatever the
+        // reason it stopped. A run cut off at the ceiling has MORE worth
+        // keeping than one that ended tidily, since its state is the only
+        // record of how far it got. Written atomically, because the reason to
+        // save state at all is to survive things ending badly.
+        let savedNeurons = 0;
+        if (result.networkState) {
+          savedNeurons = await this.saveNetworkState(result.networkState);
+        }
+        this.sendJson(res, {
+          ok: true,
+          bytesIn,
+          sendTicks: bytesIn * 8,
+          // What the network has to write to end its own run.
+          stopCall: STOP_CALL,
+          reason: result.reason,
+          complete: result.complete,
+          sawStop: result.sawStop,
+          ticks: result.ticks,
+          bytesOut: result.raw.length,
+          tree: result.tree,
+          // Where the state went, on disk and inside the archive.
+          savedNeurons,
+          stateFile: NETWORK_STATE_FILE,
+          resumed,
+        });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
       }
       return;
     }

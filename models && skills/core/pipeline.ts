@@ -663,6 +663,35 @@ export class NeuroPipeline {
   /**
    * Access the Zip I/O system for context iteration
    */
+  /**
+   * Build the subsystems now, without running anything through them.
+   *
+   * They were only ever built lazily by run(), and restorePersistedState() --
+   * the other caller -- is skipped entirely unless zip persistence is
+   * configured. So in a default deployment the pipeline's mesh and engine did
+   * not exist until the first query, and anything asking the pipeline about
+   * itself before then got null and had to guess whether that meant "empty" or
+   * "not yet". This makes "make it ready" something a caller can just say.
+   */
+  ensureReady(): void {
+    this.ensureSubsystems();
+  }
+
+  /**
+   * The hyper-dimensional engine, once a run (or ensureReady()) has built it.
+   *
+   * Null before the first run rather than lazily constructed: building it here
+   * would create a second engine with none of the run's configuration, and a
+   * caller reaching an empty stand-in while believing it has the brain is
+   * worse than being told there is nothing yet.
+   *
+   * Exposed so the Zip Loop (zip-halt.ts) can drive the real mesh through its
+   * two input and two output neurons instead of a private copy of one.
+   */
+  getHyperEngine(): HyperDimensionalEngine | null {
+    return this.hyperEngine;
+  }
+
   getZipIO(): ZipIOSystem | null {
     return this.zipIO;
   }

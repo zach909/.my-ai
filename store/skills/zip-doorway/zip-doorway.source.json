@@ -1,0 +1,50 @@
+{
+  "neurons": [
+    {
+      "name": "bit-zero",
+      "value": 0,
+      "definition": "the input neuron that fires for a 0"
+    },
+    {
+      "name": "bit-one",
+      "value": 0,
+      "definition": "the input neuron that fires for a 1"
+    },
+    {
+      "name": "archive",
+      "value": 0,
+      "definition": "everything zipped into one stream, which is why folders fit through two neurons"
+    },
+    {
+      "name": "input-folder",
+      "value": 0,
+      "definition": "input/ : what I am being asked about"
+    },
+    {
+      "name": "plugins-folder-in",
+      "value": 0,
+      "definition": "plugins/ : calls I make out to the world"
+    },
+    {
+      "name": "error-folder",
+      "value": 0,
+      "definition": "plugins/error/ : what came back from those calls, including what went wrong"
+    },
+    {
+      "name": "prompting-skills-folder",
+      "value": 0,
+      "definition": "prompting-skills/ : specialised instructions, fed in with everything else"
+    },
+    {
+      "name": "memory-folder",
+      "value": 0,
+      "definition": "memory/ : what I am handed of my own past, and what I hand back to keep"
+    },
+    {
+      "name": "output-folder",
+      "value": 0,
+      "definition": "output/ : what I produced"
+    }
+  ],
+  "code": "name=\"bit-zero\"\n\"bit-zero\"@definishon=\"the input neuron that fires for a 0\"\nname=\"bit-one\"\n\"bit-one\"@definishon=\"the input neuron that fires for a 1\"\nname=\"archive\"\n\"archive\"@definishon=\"everything zipped into one stream, which is why folders fit through two neurons\"\nname=\"input-folder\"\n\"input-folder\"@definishon=\"input/ : what I am being asked about\"\nname=\"plugins-folder-in\"\n\"plugins-folder-in\"@definishon=\"plugins/ : calls I make out to the world\"\nname=\"error-folder\"\n\"error-folder\"@definishon=\"plugins/error/ : what came back from those calls, including what went wrong\"\nname=\"prompting-skills-folder\"\n\"prompting-skills-folder\"@definishon=\"prompting-skills/ : specialised instructions, fed in with everything else\"\nname=\"memory-folder\"\n\"memory-folder\"@definishon=\"memory/ : what I am handed of my own past, and what I hand back to keep\"\nname=\"output-folder\"\n\"output-folder\"@definishon=\"output/ : what I produced\"\n\"bit-zero\"@connections=\".bit-one\"\n\"bit-one\"@connections=\".archive\"\n\"archive\"@connections=\".input-folder\"\n\"input-folder\"@connections=\".plugins-folder-in\"\n\"plugins-folder-in\"@connections=\".error-folder\"\n\"error-folder\"@connections=\".prompting-skills-folder\"\n\"prompting-skills-folder\"@connections=\".memory-folder\"\n\"memory-folder\"@connections=\".output-folder\"\n\"output-folder\"@connections=\".bit-zero\""
+}
