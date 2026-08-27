@@ -2619,6 +2619,20 @@ export interface NetworkStateSnapshot {
   connDiag: string;
   /** Connection shift, base64 Float32. */
   connShift: string;
+  /**
+   * Each neuron's own say in every connection -- its modulation and offset
+   * variables. Part of the network, so part of starting again in the same
+   * place: restore the connections without these and every connection is
+   * scaled and offset by a different network than the one that stopped.
+   */
+  modWeight: string;
+  addWeight: string;
+  /**
+   * Per-connection bias, base64 Float32, or an empty string when this engine
+   * does not have one. Empty rather than absent so a snapshot from an engine
+   * without it cannot be mistaken for a truncated one.
+   */
+  connBias: string;
 }
 
 export interface StateTransition {
@@ -2693,6 +2707,60 @@ export interface HyperConfig {
   divergenceTolerance: number;
   /** Live-correction: how many consecutive off-track iterations before damping kicks in. */
   sustainedDivergenceTicks: number;
+  /**
+   * How strongly the whole network scales every single connection.
+   *
+   * Section: hyperdimensional thinking. A connection is not just between its
+   * two neurons -- every other neuron is part of it. Each neuron carries its
+   * own modulation variable; their activations times those variables are
+   * summed, and that sum multiplies what the connection would otherwise have
+   * contributed. So the same connection, with the same weight and the same
+   * input, lands differently depending on what the rest of the network is
+   * doing.
+   *
+   * The connection's result is MULTIPLIED by that sum -- a plain product, not
+   * a nudge around 1. When the network's combined say is near zero, every
+   * connection contributes near nothing; that is the mechanism, not a bug in
+   * it, and the per-neuron variables are what the network learns in order to
+   * control it.
+   *
+   * One concession: the combination is a mean rather than a raw sum. A sum
+   * grows with neuron count, so at any real size it would saturate tanh on the
+   * first tick and leave a wall of +/-1. Dividing by the neuron count is a
+   * change of units the learned variables absorb -- the same family of
+   * functions, expressed so it survives being scaled up.
+   *
+   * hyperGain 0 means OFF, and off means a gain of exactly 1: x * 1 is exact
+   * in IEEE754, so the default is the old arithmetic rather than something
+   * indistinguishably close to it.
+   */
+  hyperGain: number;
+  /**
+   * The whole network added to every connection, through a second per-neuron
+   * variable of its own.
+   *
+   * The other half of the same idea: after the connection's result has been
+   * scaled by what the network is doing, the network is added again -- every
+   * neuron's activation times a different variable belonging to it. Scaling
+   * and adding are different operations and a network that could only do one
+   * of them could not express the other.
+   *
+   * Also a mean, and also 0 by default (x + 0 is exact).
+   */
+  hyperAdd: number;
+  /**
+   * Whether every connection carries its own bias, not just its own weight.
+   *
+   * The per-neuron weight-and-bias architecture says a connection has both:
+   * c = x * w + b, per connection, before anything is combined. Only the
+   * weight existed here; the bias lived on the receiving neuron, shared across
+   * every connection into it, which is a different and much weaker thing.
+   *
+   * Off by default because it is another neuronCount * dimensions *
+   * neuronCount array to hold and to learn -- 2.6MB and a 50% longer learning
+   * pass at the default size. Real, and not free.
+   */
+  connectionBias: boolean;
   /**
    * How strongly the shared wave pool (see wavePhase/waveFreq below)
    * feeds back into every neuron's own settling equation, each
@@ -2770,6 +2838,27 @@ export class HyperDimensionalEngine {
    */
   private connDiag: Float32Array;
   private connShift: Float32Array;
+  /**
+   * Per-connection bias: the `b` in `c = x * w + b`, one for every connection
+   * rather than one for every receiving neuron. Empty unless
+   * config.connectionBias is on.
+   */
+  private connBias: Float32Array;
+  /**
+   * Row sums of connBias, per (neuron, dimension).
+   *
+   * The bias term does not depend on any state, so summing it over j every
+   * iteration would be neuronCount pointless adds per connection per tick. It
+   * changes only when learning changes it, so it is summed then instead.
+   */
+  private connBiasRowSum: Float32Array;
+  /** Each neuron's own variable for how it modulates every connection in the network. */
+  private modWeight: Float32Array;
+  /** Each neuron's own variable for what it adds to every connection in the network. */
+  private addWeight: Float32Array;
+  /** Per-dimension network gain and offset, rebuilt each settle iteration. */
+  private hyperGainScratch: Float32Array;
+  private hyperAddScratch: Float32Array;
 
   /** Bias is per-neuron (added once after the full summed product) */
   private bias: Float32Array;
@@ -2841,6 +2930,12 @@ export class HyperDimensionalEngine {
       // measurably perturbs. Pass waveGain explicitly to opt a given
       // engine instance into it.
       waveGain: config.waveGain ?? 0,
+      // All three default to inert, for the same reason waveGain does: existing
+      // callers rely on exact pre-activation invariants, and this changes the
+      // arithmetic of every connection in the network.
+      hyperGain: config.hyperGain ?? 0,
+      hyperAdd: config.hyperAdd ?? 0,
+      connectionBias: config.connectionBias ?? false,
     };
     const N = this.config.neuronCount;
     const D = this.config.dimensions + 1;
@@ -2851,7 +2946,24 @@ export class HyperDimensionalEngine {
     this.allStates = new Float32Array(D * N);
     this.connDiag = new Float32Array(N * D * N);
     this.connShift = new Float32Array(N * D * N);
+    // Allocated only when asked for: at the default size this is another 2.6MB
+    // that most engines will never read.
+    this.connBias = this.config.connectionBias ? new Float32Array(N * D * N) : new Float32Array(0);
+    this.connBiasRowSum = new Float32Array(this.config.connectionBias ? N * D : 0);
     this.bias = new Float32Array(N * D);
+
+    // Every neuron's say in every connection. Small random values rather than
+    // zeros: identical variables would make every neuron's contribution to the
+    // network term interchangeable, and learning could never separate them.
+    const networkScale = Math.sqrt(1 / Math.max(1, N));
+    this.modWeight = new Float32Array(N);
+    this.addWeight = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      this.modWeight[i] = (Math.random() * 2 - 1) * networkScale;
+      this.addWeight[i] = (Math.random() * 2 - 1) * networkScale;
+    }
+    this.hyperGainScratch = new Float32Array(D);
+    this.hyperAddScratch = new Float32Array(D);
 
     this.nextStatesBuffer = new Float32Array(N * D);
     this.tempCtx = new Float32Array(D);
@@ -3113,6 +3225,9 @@ export class HyperDimensionalEngine {
       bias: encodeFloats(this.bias),
       connDiag: encodeFloats(this.connDiag),
       connShift: encodeFloats(this.connShift),
+      modWeight: encodeFloats(this.modWeight),
+      addWeight: encodeFloats(this.addWeight),
+      connBias: this.config.connectionBias ? encodeFloats(this.connBias) : "",
     };
   }
 
@@ -3137,12 +3252,44 @@ export class HyperDimensionalEngine {
     const bias = decodeFloats(snapshot.bias, this.bias.length);
     const diag = decodeFloats(snapshot.connDiag, this.connDiag.length);
     const shift = decodeFloats(snapshot.connShift, this.connShift.length);
-    if (!states || !energies || !bias || !diag || !shift) return false;
+    const mod = decodeFloats(snapshot.modWeight, this.modWeight.length);
+    const add = decodeFloats(snapshot.addWeight, this.addWeight.length);
+    if (!states || !energies || !bias || !diag || !shift || !mod || !add) return false;
+
+    // A snapshot from an engine with per-connection biases does not fit one
+    // without them, and vice versa: same neuron count, genuinely different
+    // network. Refused rather than half-loaded, like every other mismatch.
+    const wantsConnBias = this.config.connectionBias;
+    const hasConnBias = typeof snapshot.connBias === "string" && snapshot.connBias.length > 0;
+    if (wantsConnBias !== hasConnBias) return false;
+    let connBias: Float32Array | null = null;
+    if (wantsConnBias) {
+      connBias = decodeFloats(snapshot.connBias, this.connBias.length);
+      if (!connBias) return false;
+    }
 
     this.allStates.set(states);
     this.bias.set(bias);
     this.connDiag.set(diag);
     this.connShift.set(shift);
+    this.modWeight.set(mod);
+    this.addWeight.set(add);
+    if (connBias) {
+      this.connBias.set(connBias);
+      // The row sums are derived, so they are rebuilt rather than saved --
+      // saving them would let a snapshot carry sums that disagree with the
+      // biases they claim to be sums of.
+      const N = this.neurons.length;
+      const D = this.totalDims;
+      for (let i = 0; i < N; i++) {
+        for (let d = 0; d < D; d++) {
+          const rowOffset = (i * D + d) * N;
+          let sum = 0;
+          for (let j = 0; j < N; j++) sum += this.connBias[rowOffset + j];
+          this.connBiasRowSum[i * D + d] = sum;
+        }
+      }
+    }
 
     // HyperNeuron.state mirrors allStates for callers that read neurons
     // directly; leaving it stale would have getNeuronStates() describing the
@@ -3671,6 +3818,13 @@ export class HyperDimensionalEngine {
     const totalDrivenEnergyContribution = drivenCount * drivenEnergyContribution;
 
     const waveGain = this.config.waveGain;
+    const hyperGain = this.config.hyperGain;
+    const hyperAdd = this.config.hyperAdd;
+    const modWeight = this.modWeight;
+    const addWeight = this.addWeight;
+    const connBias = this.connBias;
+    const connBiasRowSum = this.connBiasRowSum;
+    const usesConnectionBias = this.config.connectionBias;
     const wavePhase = this.wavePhase;
     const waveFreq = this.waveFreq;
     const waveAmp = this.waveAmpScratch;
@@ -3700,6 +3854,38 @@ export class HyperDimensionalEngine {
       }
       const waveTerm = waveGain * poolWave;
 
+      // Hyperdimensional term: what the WHOLE network is doing, per dimension,
+      // read from the same pre-update snapshot as everything else this
+      // iteration. O(neurons * dimensions), against the O(neurons^2 *
+      // dimensions) the connections themselves cost, so it is close to free.
+      //
+      // Means, not sums: a sum grows with neuron count and would saturate tanh
+      // on the first tick at any real size. Centred on 1 and 0 so that gains of
+      // 0 leave the arithmetic below exactly as it was.
+      const gainRow = this.hyperGainScratch;
+      const addRow = this.hyperAddScratch;
+      if (hyperGain !== 0 || hyperAdd !== 0) {
+        const invN = 1 / N;
+        for (let d = 0; d < D; d++) {
+          const row = stateViews[d];
+          let modulation = 0;
+          let offset = 0;
+          for (let k = 0; k < N; k++) {
+            const state = row[k];
+            modulation += state * modWeight[k];
+            offset += state * addWeight[k];
+          }
+          // A product, as described: the connection's result times what the
+          // whole network says. 1 only when the term is off, so that off means
+          // untouched rather than scaled by something near 1.
+          gainRow[d] = hyperGain === 0 ? 1 : hyperGain * modulation * invN;
+          addRow[d] = hyperAdd * offset * invN;
+        }
+      } else {
+        gainRow.fill(1);
+        addRow.fill(0);
+      }
+
       // Initialize content energy with the pre-calculated constant driven energy contribution.
       let currentTotalContentEnergy = totalDrivenEnergyContribution;
 
@@ -3724,6 +3910,12 @@ export class HyperDimensionalEngine {
           const srcD = (d - 1 + D) % D;
           const sjShiftRow = stateViews[srcD];
           const dn = d * N;
+          // Constant for every neuron at this dimension, so read once rather
+          // than once per neuron: two array loads per neuron per dimension is
+          // a third of a tick at the default size, for two numbers that do not
+          // change inside the loop.
+          const gain = gainRow[d];
+          const offset = addRow[d];
 
           for (let idx = 0; idx < nonDrivenCount; idx++) {
             const i = nonDrivenIndices[idx];
@@ -3758,7 +3950,16 @@ export class HyperDimensionalEngine {
               dotShift += sjShiftRow[j] * connShift[rowOffset + j];
             }
 
-            const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength + waveTerm);
+            // The connection's own result -- weight, and its own bias if it has
+            // one -- scaled by what the whole network is doing, then the whole
+            // network added again through a different variable. gain 1 / add 0
+            // is exact, so with the feature off this is the old expression.
+            const connectionResult = usesConnectionBias
+              ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
+              : dotDiag + dotShift * strength;
+            const computedState = Math.tanh(
+              bias[biasOffset + d] + connectionResult * gain + offset + waveTerm,
+            );
             nextStates[i * D + d] = computedState;
             if (d > 0) {
               currentTotalContentEnergy += computedState * computedState;
@@ -3771,6 +3972,12 @@ export class HyperDimensionalEngine {
           const srcD = (d - 1 + D) % D;
           const sjShiftRow = stateViews[srcD];
           const dn = d * N;
+          // Constant for every neuron at this dimension, so read once rather
+          // than once per neuron: two array loads per neuron per dimension is
+          // a third of a tick at the default size, for two numbers that do not
+          // change inside the loop.
+          const gain = gainRow[d];
+          const offset = addRow[d];
 
           for (let idx = 0; idx < nonDrivenCount; idx++) {
             const i = nonDrivenIndices[idx];
@@ -3805,7 +4012,16 @@ export class HyperDimensionalEngine {
               dotShift += sjShiftRow[j] * connShift[rowOffset + j];
             }
 
-            const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength + waveTerm);
+            // The connection's own result -- weight, and its own bias if it has
+            // one -- scaled by what the whole network is doing, then the whole
+            // network added again through a different variable. gain 1 / add 0
+            // is exact, so with the feature off this is the old expression.
+            const connectionResult = usesConnectionBias
+              ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
+              : dotDiag + dotShift * strength;
+            const computedState = Math.tanh(
+              bias[biasOffset + d] + connectionResult * gain + offset + waveTerm,
+            );
             const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
             nextStates[i * D + d] = finalVal;
             if (d > 0) {
@@ -4079,6 +4295,14 @@ export class HyperDimensionalEngine {
       deltaSums[i] = deltaSum;
     }
 
+    // Everything the hyperdimensional term introduced has to learn too. A
+    // per-connection bias that never moves is a constant; a per-neuron
+    // modulation variable that never moves means every neuron says the same
+    // fixed thing about every connection forever, which is a fancy way of
+    // saying nothing.
+    if (this.config.connectionBias) this.learnConnectionBias(rates);
+    if (this.config.hyperGain !== 0 || this.config.hyperAdd !== 0) this.learnNetworkVariables(rates);
+
     for (let i = 0; i < N; i++) {
       stateDeltas.set(i, (stateDeltas.get(i) ?? 0) + deltaSums[i]);
     }
@@ -4300,6 +4524,81 @@ export class HyperDimensionalEngine {
    * all a caller ever received: the list itself went into `history`, which had
    * no readers at all.
    */
+  /**
+   * Move every connection's own bias, and keep the row sums that read it.
+   *
+   * The bias update carries no input factor -- that is what makes it a bias:
+   * the weight learns how much of the SOURCE to let through, the bias learns
+   * where the connection sits regardless of it. Same clamp as the weights, so
+   * one cannot quietly run away while the other is bounded.
+   *
+   * Row sums are rebuilt here rather than in the settle loop because they only
+   * change when this runs, and rebuilding them per iteration would be
+   * neuronCount pointless additions per connection per tick.
+   */
+  private learnConnectionBias(rates: Float32Array): void {
+    const D = this.totalDims;
+    const N = this.neurons.length;
+    const connBias = this.connBias;
+    const rowSum = this.connBiasRowSum;
+
+    for (let i = 0; i < N; i++) {
+      const rate = rates[i];
+      const si = this.neurons[i].state;
+      for (let d = 0; d < D; d++) {
+        const step = rate * si[d];
+        const rowOffset = (i * D + d) * N;
+        let sum = 0;
+        for (let j = 0; j < N; j++) {
+          const value = connBias[rowOffset + j] + step;
+          const clamped = value < -2 ? -2 : (value > 2 ? 2 : value);
+          connBias[rowOffset + j] = clamped;
+          sum += clamped;
+        }
+        rowSum[i * D + d] = sum;
+      }
+    }
+  }
+
+  /**
+   * Move each neuron's own say in what every connection does.
+   *
+   * Hebbian in the same sense as the weights: a neuron that was active while
+   * the network as a whole was active strengthens its hold on the network
+   * term. Bounded tightly (+/-1 rather than +/-2) because these two numbers
+   * multiply and offset EVERY connection at once -- a runaway weight distorts
+   * one connection, a runaway modulation variable distorts all of them.
+   */
+  private learnNetworkVariables(rates: Float32Array): void {
+    const N = this.neurons.length;
+    const D = this.totalDims;
+    const modWeight = this.modWeight;
+    const addWeight = this.addWeight;
+
+    // One number for how lively the network currently is, from the same states
+    // the settle loop just read.
+    let activity = 0;
+    for (let i = 0; i < N; i++) {
+      const state = this.neurons[i].state;
+      let energy = 0;
+      for (let d = 1; d < D; d++) energy += state[d] * state[d];
+      activity += Math.sqrt(energy);
+    }
+    activity /= Math.max(1, N);
+
+    for (let i = 0; i < N; i++) {
+      const state = this.neurons[i].state;
+      let own = 0;
+      for (let d = 1; d < D; d++) own += state[d] * state[d];
+      const step = rates[i] * Math.sqrt(own) * activity;
+
+      const nextMod = modWeight[i] + step;
+      modWeight[i] = nextMod < -1 ? -1 : (nextMod > 1 ? 1 : nextMod);
+      const nextAdd = addWeight[i] + step;
+      addWeight[i] = nextAdd < -1 ? -1 : (nextAdd > 1 ? 1 : nextAdd);
+    }
+  }
+
   private resolveStateTransitions(): number {
     let resolved = 0;
     const now = Date.now();
