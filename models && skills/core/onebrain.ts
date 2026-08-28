@@ -2776,6 +2776,34 @@ export interface HyperConfig {
    */
   hyperGain: number;
   /**
+   * The whole network SCALING every connection, out of the same personalised
+   * variables the added weight is made of.
+   *
+   * "You take that and you times that" -- the network's combined say
+   * multiplying what the connection would otherwise have contributed. This is
+   * the other way two weights can be combined, and the spec says both: the
+   * wave half says plainly to ADD the two weights, and the numeric half says
+   * just as plainly to multiply by the network's. Rather than pick one and
+   * make the other unsayable, both are here.
+   *
+   * Same variables (modWeight), two different things they can do:
+   *   hyperScale  the network's say MULTIPLIES what the connection produced
+   *   hyperGain   the network's say is ADDED to the connection's own weight
+   * Either alone, or both at once -- which is the full reading, a connection
+   * scaled by the network and then given the network's own weight on top.
+   *
+   * They fail differently, which is why having both matters: a scale near
+   * zero silences every connection in the mesh at once (that is the mechanism,
+   * not a bug -- it is how the network can hold everything still), while an
+   * added weight can never erase a connection's own worth. A network that
+   * could only do one of those could not express the other.
+   *
+   * 0 means OFF, and off is a scale of exactly 1: x * 1 is exact in IEEE754,
+   * so the default is the old arithmetic rather than something
+   * indistinguishably close to it.
+   */
+  hyperScale: number;
+  /**
    * The whole network's BIAS, added to the bias of every single connection,
    * through a second per-neuron variable of its own.
    *
@@ -3036,6 +3064,7 @@ export class HyperDimensionalEngine {
   private hyperGainScratch: Float32Array;
   private hyperAddScratch: Float32Array;
   private hyperMeanScratch: Float32Array;
+  private hyperScaleScratch: Float32Array;
 
   /** Bias is per-neuron (added once after the full summed product) */
   private bias: Float32Array;
@@ -3158,6 +3187,7 @@ export class HyperDimensionalEngine {
       // callers rely on exact pre-activation invariants, and this changes the
       // arithmetic of every connection in the network.
       hyperGain: config.hyperGain ?? 0,
+      hyperScale: config.hyperScale ?? 0,
       hyperAdd: config.hyperAdd ?? 0,
       hyperWaveGain: config.hyperWaveGain ?? 0,
       hyperWaveAdd: config.hyperWaveAdd ?? 0,
@@ -3191,6 +3221,7 @@ export class HyperDimensionalEngine {
     this.hyperGainScratch = new Float32Array(D);
     this.hyperAddScratch = new Float32Array(D);
     this.hyperMeanScratch = new Float32Array(D);
+    this.hyperScaleScratch = new Float32Array(D);
     this.modWaveWeight = new Float32Array(N);
     this.addWaveWeight = new Float32Array(N);
     this.neuronWaveBiasRe = new Float32Array(N);
@@ -3209,7 +3240,23 @@ export class HyperDimensionalEngine {
     this.initializeNeurons();
     this.initializeConnections();
 
-    this.defaultDrivenIds = new Set(this.neurons.map(n => n.id));
+    // The input layer: which neurons are clamped to the input when a caller
+    // does not say.
+    //
+    // This used to be EVERY neuron, and that is not a default -- it is a
+    // bypass. A driven neuron is written straight from the input vector and
+    // never computes: no connections, no bias, no network term, no wave. With
+    // all of them driven, none of them compute anything, and every neuron in
+    // the mesh ends the tick holding the identical vector. Measured on the
+    // live pipeline: 64 neurons, one distinct state between them, and the
+    // whole hyperdimensional structure skipped on every tick of the running
+    // agent.
+    //
+    // One input neuron, matching what elastic-core.ts's forward() has always
+    // defaulted to. The input still reaches everything -- it is an all-to-all
+    // mesh -- but it reaches it through the connections, which is the entire
+    // point of having them.
+    this.defaultDrivenIds = new Set([0]);
 
     // Pre-calculate the entropy lookup table for fast dimensional entropy calculations.
     // Since count is always an integer from 0 to N (neuronCount), there are exactly N + 1 possible probabilities.
@@ -3364,7 +3411,22 @@ export class HyperDimensionalEngine {
     }
 
     const dimensionalEntropy = this.computeDimensionalEntropy();
-    const patternHash = this.hashVector(outputVector);
+    // Have I been asked this before?
+    //
+    // The hash used to be the OUTPUT, which only worked while the network was
+    // not computing: with every neuron clamped to the input the output was the
+    // input, so the same input twice hashed the same and read as familiar.
+    // Once the neurons actually compute, a recurrent mesh answers the same
+    // question differently the second time -- correctly, its state has moved
+    // on -- and every output hashed as brand new. Nothing was ever familiar
+    // again, and a novelty signal that says "new" to everything is not a
+    // signal.
+    //
+    // So the two halves of surprise are kept separate, which is what the 0.6 /
+    // 0.4 blend below was always for: patternNovelty is about the QUESTION and
+    // whether it has been asked before, selfModelSurprise is about the ANSWER
+    // and whether the network predicted its own.
+    const patternHash = this.hashVector(resolvedInput);
     const patternNovelty = this.computeNoveltyScore(patternHash);
 
     let selfModelSurprise = 0;
@@ -4191,6 +4253,7 @@ export class HyperDimensionalEngine {
     const waveGain = this.config.waveGain;
     const hyperGain = this.config.hyperGain;
     const hyperAdd = this.config.hyperAdd;
+    const hyperScale = this.config.hyperScale;
     const modWeight = this.modWeight;
     const addWeight = this.addWeight;
     const connBias = this.connBias;
@@ -4498,10 +4561,17 @@ export class HyperDimensionalEngine {
       // the average of what the neuron is hearing, which is why the mean of
       // the states is computed here too -- one extra accumulator in a loop
       // that was already running.
+      //
+      // The network's say is computed once and used two ways, both from the
+      // same personalised variables: it SCALES what the connection produced
+      // (hyperScale) and it is ADDED to the connection's own weight
+      // (hyperGain). See their doc comments for why both exist rather than
+      // one of them.
       const gainRow = this.hyperGainScratch;
       const addRow = this.hyperAddScratch;
       const meanRow = this.hyperMeanScratch;
-      if (hyperGain !== 0 || hyperAdd !== 0) {
+      const scaleRow = this.hyperScaleScratch;
+      if (hyperGain !== 0 || hyperAdd !== 0 || hyperScale !== 0) {
         const invN = 1 / N;
         for (let d = 0; d < D; d++) {
           const row = stateViews[d];
@@ -4514,7 +4584,11 @@ export class HyperDimensionalEngine {
             offset += state * addWeight[k];
             total += state;
           }
-          gainRow[d] = hyperGain * modulation * invN;
+          const say = modulation * invN;
+          gainRow[d] = hyperGain * say;
+          // 1 when off, so off is untouched rather than scaled by something
+          // near 1.
+          scaleRow[d] = hyperScale === 0 ? 1 : hyperScale * say;
           addRow[d] = hyperAdd * offset * invN;
           meanRow[d] = total * invN;
         }
@@ -4522,6 +4596,7 @@ export class HyperDimensionalEngine {
         gainRow.fill(0);
         addRow.fill(0);
         meanRow.fill(0);
+        scaleRow.fill(1);
       }
 
       // Initialize content energy with the pre-calculated constant driven energy contribution.
@@ -4558,6 +4633,7 @@ export class HyperDimensionalEngine {
           const netWeight = gainRow[d];
           const netBias = addRow[d];
           const heardMean = meanRow[d];
+          const netScale = scaleRow[d];
 
           for (let idx = 0; idx < nonDrivenCount; idx++) {
             const i = nonDrivenIndices[idx];
@@ -4616,7 +4692,7 @@ export class HyperDimensionalEngine {
               : dotDiag + dotShift * strength;
             const computedState = Math.tanh(
               bias[biasOffset + d] +
-                connectionResult +
+                connectionResult * netScale +
                 netWeight * heardMean +
                 netBias +
                 waveTermRow[i],
@@ -4643,6 +4719,7 @@ export class HyperDimensionalEngine {
           const netWeight = gainRow[d];
           const netBias = addRow[d];
           const heardMean = meanRow[d];
+          const netScale = scaleRow[d];
 
           for (let idx = 0; idx < nonDrivenCount; idx++) {
             const i = nonDrivenIndices[idx];
@@ -4701,7 +4778,7 @@ export class HyperDimensionalEngine {
               : dotDiag + dotShift * strength;
             const computedState = Math.tanh(
               bias[biasOffset + d] +
-                connectionResult +
+                connectionResult * netScale +
                 netWeight * heardMean +
                 netBias +
                 waveTermRow[i],

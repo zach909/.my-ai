@@ -286,6 +286,71 @@ describe('every neuron in every connection', () => {
     expect(measure({ hyperAdd: 1 })).toBeGreaterThan(1e-6);
   });
 
+  it('lets the whole network scale every connection as well as add to it', () => {
+    // The two ways the network's say can combine with a connection's own
+    // weight, and both are in the spec: multiply what the connection produced,
+    // and add to the weight that produced it. They fail differently, which is
+    // the reason for having both -- a scale near zero can hold the entire mesh
+    // still, an added weight never can.
+    const seed = new HyperDimensionalEngine(base).captureNetworkState();
+    const measure = (config: Record<string, number>) => {
+      const engine = new HyperDimensionalEngine({ ...base, ...config });
+      engine.restoreNetworkState(seed);
+      engine.process(input, undefined, driven, undefined, { learn: false });
+      return decode(engine.captureNetworkState().states);
+    };
+
+    const off = measure({});
+    const scaled = measure({ hyperScale: 1 });
+    const added = measure({ hyperGain: 1 });
+    const both = measure({ hyperScale: 1, hyperGain: 1 });
+
+    // Each does something...
+    expect(spread(scaled, off, -1)).toBeGreaterThan(1e-6);
+    expect(spread(added, off, -1)).toBeGreaterThan(1e-6);
+    // ...and they are not each other.
+    expect(spread(scaled, added, -1)).toBeGreaterThan(1e-6);
+    expect(spread(both, scaled, -1)).toBeGreaterThan(1e-6);
+    expect(spread(both, added, -1)).toBeGreaterThan(1e-6);
+  });
+
+  it('leaves every connection exactly as it was when the scale is off', () => {
+    // Off has to be a scale of exactly 1. Anything merely close to 1 makes
+    // "the feature is off" and "the feature is on and nearly neutral"
+    // indistinguishable, which is how a default quietly becomes a behaviour.
+    const seed = new HyperDimensionalEngine(base).captureNetworkState();
+    const run = (config: Record<string, number>) => {
+      const engine = new HyperDimensionalEngine({ ...base, ...config });
+      engine.restoreNetworkState(seed);
+      engine.process(input, undefined, driven, undefined, { learn: false });
+      return engine.captureNetworkState().states;
+    };
+    expect(run({ hyperScale: 0 })).toBe(run({}));
+  });
+
+  it('lets the network hold the whole mesh still, which an added weight cannot', () => {
+    // What the scale can do and the added weight cannot: with every neuron's
+    // say cancelling to nothing, every connection in the network contributes
+    // nothing at once. That is the mechanism, not a bug in it.
+    const engine = new HyperDimensionalEngine({ ...base, hyperScale: 1 });
+    const snapshot = engine.captureNetworkState();
+    // Every neuron's variable zero: the network's say is exactly zero however
+    // loud the states are.
+    engine.restoreNetworkState({
+      ...snapshot,
+      modWeight: encode(new Float32Array(base.neuronCount)),
+      bias: encode(new Float32Array(decode(snapshot.bias).length)),
+    });
+    engine.process(input, undefined, driven, undefined, { learn: false });
+    const states = decode(engine.captureNetworkState().states);
+    for (let i = 0; i < base.neuronCount; i++) {
+      if (driven.has(i)) continue;
+      for (let d = 1; d <= base.dimensions; d++) {
+        expect(Math.abs(states[d * base.neuronCount + i])).toBeLessThan(1e-6);
+      }
+    }
+  });
+
   it('gives every connection its own bias, and moves it', () => {
     // The per-neuron weight-and-bias architecture asks for c = x*w + b per
     // CONNECTION. Only the weight existed; the bias lived on the receiving

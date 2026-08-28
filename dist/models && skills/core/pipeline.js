@@ -154,6 +154,29 @@ export class NeuroPipeline {
             learningRate: 0.05,
             influenceDecay: 0.95,
             crossInfluenceStrength: 0.2,
+            // The hyperdimensional term and the wave layer, ON.
+            //
+            // Both defaulted to 0 in the engine, deliberately, so that adding them
+            // could not change the arithmetic of every existing caller at once. The
+            // cost of that caution was that nothing ever turned them on: the whole
+            // structure -- the network's weight and bias in every connection, the
+            // wave copy of each, the shared pool -- existed and was tested and was
+            // not what the running agent actually computed. Real, tested, and
+            // unreachable is the defect this project keeps finding in itself.
+            //
+            // So the live pipeline runs the full equation. Every connection carries
+            // its own weight and bias plus the whole network's, in numbers and in
+            // waves, and every neuron reads the pool at its own frequency.
+            hyperGain: 1,
+            hyperAdd: 1,
+            hyperWaveGain: 1,
+            hyperWaveAdd: 1,
+            // Modest: this one lands inside tanh on every neuron, so it is the term
+            // that saturates the mesh if it is set carelessly.
+            waveGain: 0.1,
+            // A bias on every connection, not one per receiving neuron shared across
+            // all of them -- c = x*w + b per CONNECTION, as the architecture asks.
+            connectionBias: true,
             ...(this.config.hyperSustainedDivergenceTicks !== undefined
                 ? { sustainedDivergenceTicks: this.config.hyperSustainedDivergenceTicks } : {}),
             ...(this.config.hyperDivergenceTolerance !== undefined
