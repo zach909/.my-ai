@@ -3271,11 +3271,21 @@ export class HyperDimensionalEngine {
                 let poolEnergy = 0;
                 for (let i = 0; i < N; i++) {
                     const amp = waveAmp[i];
-                    // A neuron's own ripple, into the slot its frequency belongs to --
-                    // where every other wave at that frequency also lands.
+                    // A neuron does not have a wave of its own to broadcast. Its wave is
+                    // whatever formed inside it out of the waves that came in -- see the
+                    // emission below.
+                    //
+                    // Except at the edge. A neuron being driven from outside has nothing
+                    // flowing into it to be made of, so it is a SOURCE: it emits its own
+                    // signature, and everything else in the network is ultimately an
+                    // edited, interfered version of what the sources put in. The Zip
+                    // Loop's bit neurons are exactly this -- two sources, perfect
+                    // enemies, and every wave downstream descends from them.
                     const ownBin = waveBin[i];
-                    poolRe[ownBin] += amp * phaseCos[i];
-                    poolIm[ownBin] += amp * phaseSin[i];
+                    if (isDriven[i]) {
+                        poolRe[ownBin] += amp * phaseCos[i];
+                        poolIm[ownBin] += amp * phaseSin[i];
+                    }
                     // ── The neuron's own small pool ──────────────────────────────
                     //
                     // Every wave in the shared pool reaches this neuron through the
@@ -3292,10 +3302,24 @@ export class HyperDimensionalEngine {
                     innerPoolIm.fill(0);
                     for (let k = 0; k < N; k++) {
                         const sourceBin = waveBin[k];
-                        // Its own contribution removed before it listens: hearing yourself
-                        // back, in a recurrent network, is a loop with nothing opposing it.
-                        const inRe = sourceBin === ownBin ? prevPoolRe[sourceBin] - amp * phaseCos[i] : prevPoolRe[sourceBin];
-                        const inIm = sourceBin === ownBin ? prevPoolIm[sourceBin] - amp * phaseSin[i] : prevPoolIm[sourceBin];
+                        // A source removes its own signature before listening: hearing
+                        // yourself back, in a recurrent network, is a loop with nothing
+                        // opposing it.
+                        //
+                        // Only a source. Everything else no longer puts a signature into
+                        // the pool at all -- its wave is whatever formed inside it -- so
+                        // subtracting one here invents a wave that was never emitted. It
+                        // did exactly that when this line was left unguarded: an
+                        // undriven network with an empty pool reported waves in it,
+                        // conjured from the subtraction alone.
+                        //
+                        // A non-source's own contribution IS still in there, spread across
+                        // bins, and it is not subtracted. It comes back divided by the
+                        // neuron count and damped below one, so a neuron hears a
+                        // vanishing fraction of itself rather than a loop.
+                        const mine = sourceBin === ownBin && isDriven[i];
+                        const inRe = mine ? prevPoolRe[sourceBin] - amp * phaseCos[i] : prevPoolRe[sourceBin];
+                        const inIm = mine ? prevPoolIm[sourceBin] - amp * phaseSin[i] : prevPoolIm[sourceBin];
                         const gain = connWaveGain[editRow + k];
                         const turn = connWavePhase[editRow + k];
                         const turnCos = Math.cos(turn);
@@ -3320,8 +3344,15 @@ export class HyperDimensionalEngine {
                     // Where the pool sits relative to this neuron, which is what the
                     // wave learns from.
                     wavePhaseError[i] = Math.atan2(quadrature, inPhase);
-                    // Pushed back out at the force of its input. A neuron with nothing
-                    // coming in re-emits nothing, however loud the pool is around it.
+                    // The wave that formed inside it, pushed back out at the force of
+                    // its input. This IS the neuron's wave -- not an echo of someone
+                    // else's on top of a signature of its own. What a neuron carries is
+                    // determined by what reached it, shaped by the editing equation on
+                    // every connection it arrived through, so no two neurons downstream
+                    // of the same source end up carrying the same thing.
+                    //
+                    // A neuron with nothing coming in emits nothing, however loud the
+                    // pool is around it.
                     //
                     // Divided by the neuron count, and damped. Every neuron re-emitting
                     // everything it hears is an echo chamber with a gain of N: measured
@@ -3330,7 +3361,7 @@ export class HyperDimensionalEngine {
                     // reads in a test as the pool having no effect at all. The mean
                     // keeps the loop gain independent of how big the network is; the
                     // damping keeps it below one.
-                    if (amp !== 0 && waveFeedback !== 0) {
+                    if (amp !== 0 && waveFeedback !== 0 && !isDriven[i]) {
                         const reemit = (waveFeedback * amp) / N;
                         for (let b = 0; b < WAVE_BINS; b++) {
                             poolRe[b] += reemit * innerPoolRe[b];

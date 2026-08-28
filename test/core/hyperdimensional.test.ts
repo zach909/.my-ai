@@ -350,14 +350,21 @@ describe('the wave pool', () => {
     wavePhases: [0, 0, Math.PI, 0],
   };
 
-  /** Only these neurons carry anything; everything else is silent. */
+  /**
+   * Only these neurons carry anything, and they are DRIVEN.
+   *
+   * A neuron's wave is whatever formed inside it out of what flowed in, so a
+   * neuron with nothing flowing in has no wave to contribute. Sources are the
+   * exception and the origin: driven from outside, they emit their own
+   * signature, and everything else in the pool descends from them.
+   */
   const poolAfter = (speakers: number[]) => {
     const engine = new HyperDimensionalEngine(config);
     const snapshot = engine.captureNetworkState();
     const states = new Float32Array(decode(snapshot.states).length);
     for (const speaker of speakers) for (let d = 1; d <= D; d++) states[d * N + speaker] = 0.5;
     engine.restoreNetworkState({ ...snapshot, states: encode(states) });
-    engine.process(new Array(D).fill(0), undefined, new Set([]), undefined, { learn: false });
+    engine.process(new Array(D).fill(0.5), undefined, new Set(speakers), undefined, { learn: false });
     return engine.poolContent();
   };
 
@@ -389,6 +396,40 @@ describe('the wave pool', () => {
     expect(frequencies[1]).toBeCloseTo(0.3, 1);
   });
 
+  it('gives a neuron with nothing flowing into it no wave to contribute', () => {
+    // Its wave is whatever formed inside it, so with an empty pool and no
+    // source driving it there is nothing to be made of. This caught a real
+    // one: with the self-removal left unguarded, an undriven network with an
+    // empty pool reported waves in it, conjured out of the subtraction alone.
+    const engine = new HyperDimensionalEngine(config);
+    const snapshot = engine.captureNetworkState();
+    const states = new Float32Array(decode(snapshot.states).length);
+    for (let d = 1; d <= D; d++) states[d * N + 1] = 0.5;
+    engine.restoreNetworkState({ ...snapshot, states: encode(states) });
+    engine.process(new Array(D).fill(0.5), undefined, new Set([]), undefined, { learn: false });
+    expect(engine.poolContent()).toEqual([]);
+  });
+
+  it('carries a source\'s wave onward through the neurons that heard it', () => {
+    // How a wave gets past the neurons that can hear its source directly:
+    // each one passes on what formed inside it, edited by the connection it
+    // arrived through.
+    const engine = new HyperDimensionalEngine({ ...config, waveFeedback: 0.5 });
+    const snapshot = engine.captureNetworkState();
+    const states = new Float32Array(decode(snapshot.states).length);
+    for (let d = 1; d <= D; d++) states[d * N + 0] = 0.5;
+    engine.restoreNetworkState({ ...snapshot, states: encode(states) });
+
+    const magnitudes: number[] = [];
+    for (let t = 0; t < 3; t++) {
+      engine.process(new Array(D).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+      magnitudes.push(engine.poolContent()[0]?.magnitude ?? 0);
+    }
+    // Still there, and travelling rather than running away.
+    expect(magnitudes[2]).toBeGreaterThan(magnitudes[0]);
+    expect(magnitudes[2]).toBeLessThan(magnitudes[0] * 4);
+  });
+
   it('holds nothing when the pool is off', () => {
     const engine = new HyperDimensionalEngine({ ...config, waveGain: 0 });
     engine.process(new Array(D).fill(0.5));
@@ -413,7 +454,7 @@ describe('the wave pool', () => {
         connShift: encode(new Float32Array(decode(snapshot.connShift).length)),
       });
       for (let t = 0; t < 2; t++) {
-        engine.process(new Array(D).fill(0.05), undefined, new Set([]), undefined, { learn: false });
+        engine.process(new Array(D).fill(0.05), undefined, new Set([speaker]), undefined, { learn: false });
       }
       const after = decode(engine.captureNetworkState().states);
       return [after[1 * N + 1], after[2 * N + 1]];
