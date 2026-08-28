@@ -2228,6 +2228,24 @@ const WAVE_BINS = 64;
  * at full strength the pool went 4 -> 3,579 -> 2,682,806 in three ticks.
  */
 const WAVE_FEEDBACK = 0.5;
+/**
+ * How far a network variable may go, and why it stops just short of 1.
+ *
+ * The step that moves these is scaled by the room left before the bound, so a
+ * variable eases into its limit rather than slamming into it. That leaves one
+ * trap: a variable that lands exactly ON the bound has no room left, its step
+ * is multiplied by zero, and it can never move again -- measured, one of
+ * sixteen after 300 ticks. Stopping a hair short means there is always
+ * something left to move with, so a neuron can still change its mind.
+ */
+const NETWORK_VARIABLE_LIMIT = 0.999;
+function clampNetworkVariable(value) {
+    if (value < -NETWORK_VARIABLE_LIMIT)
+        return -NETWORK_VARIABLE_LIMIT;
+    if (value > NETWORK_VARIABLE_LIMIT)
+        return NETWORK_VARIABLE_LIMIT;
+    return value;
+}
 /** However high a caller asks for, the loop gain stays below one. */
 const WAVE_FEEDBACK_CEILING = 0.9;
 /** Below this a bin holds float dust from cancelled waves rather than a wave. */
@@ -2326,6 +2344,7 @@ export class HyperDimensionalEngine {
         }
         this.hyperGainScratch = new Float32Array(D);
         this.hyperAddScratch = new Float32Array(D);
+        this.hyperMeanScratch = new Float32Array(D);
         this.modWaveWeight = new Float32Array(N);
         this.addWaveWeight = new Float32Array(N);
         this.neuronWaveBiasRe = new Float32Array(N);
@@ -3512,31 +3531,42 @@ export class HyperDimensionalEngine {
             // dimensions) the connections themselves cost, so it is close to free.
             //
             // Means, not sums: a sum grows with neuron count and would saturate tanh
-            // on the first tick at any real size. Centred on 1 and 0 so that gains of
-            // 0 leave the arithmetic below exactly as it was.
+            // on the first tick at any real size. Both are 0 when off, and 0 is the
+            // exact identity for adding -- so off is the old arithmetic, not
+            // something indistinguishably close to it.
+            //
+            // What comes out is a WEIGHT and a BIAS, not a multiplier and an offset:
+            // netWeightRow[d] is added to every connection's own weight and
+            // netBiasRow[d] to every connection's own bias. Adding a constant to
+            // every weight into a neuron is the same as adding that constant times
+            // the average of what the neuron is hearing, which is why the mean of
+            // the states is computed here too -- one extra accumulator in a loop
+            // that was already running.
             const gainRow = this.hyperGainScratch;
             const addRow = this.hyperAddScratch;
+            const meanRow = this.hyperMeanScratch;
             if (hyperGain !== 0 || hyperAdd !== 0) {
                 const invN = 1 / N;
                 for (let d = 0; d < D; d++) {
                     const row = stateViews[d];
                     let modulation = 0;
                     let offset = 0;
+                    let total = 0;
                     for (let k = 0; k < N; k++) {
                         const state = row[k];
                         modulation += state * modWeight[k];
                         offset += state * addWeight[k];
+                        total += state;
                     }
-                    // A product, as described: the connection's result times what the
-                    // whole network says. 1 only when the term is off, so that off means
-                    // untouched rather than scaled by something near 1.
-                    gainRow[d] = hyperGain === 0 ? 1 : hyperGain * modulation * invN;
+                    gainRow[d] = hyperGain * modulation * invN;
                     addRow[d] = hyperAdd * offset * invN;
+                    meanRow[d] = total * invN;
                 }
             }
             else {
-                gainRow.fill(1);
+                gainRow.fill(0);
                 addRow.fill(0);
+                meanRow.fill(0);
             }
             // Initialize content energy with the pre-calculated constant driven energy contribution.
             let currentTotalContentEnergy = totalDrivenEnergyContribution;
@@ -3564,8 +3594,12 @@ export class HyperDimensionalEngine {
                     // than once per neuron: two array loads per neuron per dimension is
                     // a third of a tick at the default size, for two numbers that do not
                     // change inside the loop.
-                    const gain = gainRow[d];
-                    const offset = addRow[d];
+                    // The network's weight, the network's bias, and the average of what
+                    // every neuron is holding at this dimension -- constant for every
+                    // neuron here, so read once rather than once per neuron.
+                    const netWeight = gainRow[d];
+                    const netBias = addRow[d];
+                    const heardMean = meanRow[d];
                     for (let idx = 0; idx < nonDrivenCount; idx++) {
                         const i = nonDrivenIndices[idx];
                         const biasOffset = i * D;
@@ -3596,14 +3630,33 @@ export class HyperDimensionalEngine {
                             dotDiag += sjRow[j] * connDiag[rowOffset + j];
                             dotShift += sjShiftRow[j] * connShift[rowOffset + j];
                         }
-                        // The connection's own result -- weight, and its own bias if it has
-                        // one -- scaled by what the whole network is doing, then the whole
-                        // network added again through a different variable. gain 1 / add 0
-                        // is exact, so with the feature off this is the old expression.
+                        // The two weights combined and the two biases combined.
+                        //
+                        // Every connection into this neuron has its own weight, and a
+                        // second weight standing for the whole network -- every neuron's
+                        // value through a personalised variable, all of them added
+                        // together. Those two are ADDED, so the connection's own weight is
+                        // worth something on its own and the network moves it. Summed over
+                        // the connections, adding the same constant to every weight is
+                        // that constant times the average of what arrived, which is what
+                        // netWeight * heardMean is.
+                        //
+                        // The biases combine the same way: the connection's own, plus a
+                        // second one made from the network through a different set of
+                        // variables. It is the same value on every connection into this
+                        // neuron, so it is added once here rather than N times and divided
+                        // back down -- a change of units the learned variables absorb.
+                        //
+                        // 0 and 0 when the terms are off, and adding zero is exact, so
+                        // with the feature off this is the old expression.
                         const connectionResult = usesConnectionBias
                             ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
                             : dotDiag + dotShift * strength;
-                        const computedState = Math.tanh(bias[biasOffset + d] + connectionResult * gain + offset + waveTermRow[i]);
+                        const computedState = Math.tanh(bias[biasOffset + d] +
+                            connectionResult +
+                            netWeight * heardMean +
+                            netBias +
+                            waveTermRow[i]);
                         nextStates[i * D + d] = computedState;
                         if (d > 0) {
                             currentTotalContentEnergy += computedState * computedState;
@@ -3621,8 +3674,12 @@ export class HyperDimensionalEngine {
                     // than once per neuron: two array loads per neuron per dimension is
                     // a third of a tick at the default size, for two numbers that do not
                     // change inside the loop.
-                    const gain = gainRow[d];
-                    const offset = addRow[d];
+                    // The network's weight, the network's bias, and the average of what
+                    // every neuron is holding at this dimension -- constant for every
+                    // neuron here, so read once rather than once per neuron.
+                    const netWeight = gainRow[d];
+                    const netBias = addRow[d];
+                    const heardMean = meanRow[d];
                     for (let idx = 0; idx < nonDrivenCount; idx++) {
                         const i = nonDrivenIndices[idx];
                         const biasOffset = i * D;
@@ -3653,14 +3710,33 @@ export class HyperDimensionalEngine {
                             dotDiag += sjRow[j] * connDiag[rowOffset + j];
                             dotShift += sjShiftRow[j] * connShift[rowOffset + j];
                         }
-                        // The connection's own result -- weight, and its own bias if it has
-                        // one -- scaled by what the whole network is doing, then the whole
-                        // network added again through a different variable. gain 1 / add 0
-                        // is exact, so with the feature off this is the old expression.
+                        // The two weights combined and the two biases combined.
+                        //
+                        // Every connection into this neuron has its own weight, and a
+                        // second weight standing for the whole network -- every neuron's
+                        // value through a personalised variable, all of them added
+                        // together. Those two are ADDED, so the connection's own weight is
+                        // worth something on its own and the network moves it. Summed over
+                        // the connections, adding the same constant to every weight is
+                        // that constant times the average of what arrived, which is what
+                        // netWeight * heardMean is.
+                        //
+                        // The biases combine the same way: the connection's own, plus a
+                        // second one made from the network through a different set of
+                        // variables. It is the same value on every connection into this
+                        // neuron, so it is added once here rather than N times and divided
+                        // back down -- a change of units the learned variables absorb.
+                        //
+                        // 0 and 0 when the terms are off, and adding zero is exact, so
+                        // with the feature off this is the old expression.
                         const connectionResult = usesConnectionBias
                             ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
                             : dotDiag + dotShift * strength;
-                        const computedState = Math.tanh(bias[biasOffset + d] + connectionResult * gain + offset + waveTermRow[i]);
+                        const computedState = Math.tanh(bias[biasOffset + d] +
+                            connectionResult +
+                            netWeight * heardMean +
+                            netBias +
+                            waveTermRow[i]);
                         const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
                         nextStates[i * D + d] = finalVal;
                         if (d > 0) {
@@ -4156,38 +4232,112 @@ export class HyperDimensionalEngine {
     /**
      * Move each neuron's own say in what every connection does.
      *
-     * Hebbian in the same sense as the weights: a neuron that was active while
-     * the network as a whole was active strengthens its hold on the network
-     * term. Bounded tightly (+/-1 rather than +/-2) because these two numbers
-     * multiply and offset EVERY connection at once -- a runaway weight distorts
-     * one connection, a runaway modulation variable distorts all of them.
+     * These are the two personalised variables the whole hyperdimensional term
+     * is built out of: modWeight[k] is neuron k's contribution to the WEIGHT the
+     * network adds to every connection, addWeight[k] its contribution to the
+     * BIAS. Two things have to stay true of them, and the first version of this
+     * broke both.
+     *
+     * THEY MUST BE ABLE TO GO DOWN. The step used to be a product of magnitudes
+     * -- always positive -- so every variable climbed to its +1 clamp and stayed
+     * there. Measured over 300 ticks: every one of them pinned at 1. A variable
+     * that only ever grows is not a variable, and a network whose neurons all
+     * end up saying exactly the same thing has no personalised variables left at
+     * all. So the step is SIGNED now: a neuron moving with the rest of the
+     * network gains its say, a neuron moving against it loses its say. That is
+     * also the mechanism the whole design rests on -- contradicting answers
+     * cancel, and the one that agrees is magnified.
+     *
+     * THE TWO SETS MUST BE DIFFERENT. They used to take the identical step, so
+     * beyond their random starts they moved as one number in two arrays -- and
+     * the weight half and the bias half of the equation are meant to be
+     * separately expressible. They now learn from genuinely different signals:
+     * the weight variable from how a neuron's direction compares with the
+     * network's, the bias variable from the neuron's own signed level. A bias is
+     * what something contributes with nothing arriving, so its variable tracks
+     * where the neuron sits rather than who it agrees with.
+     *
+     * Bounded tightly (+/-1 rather than +/-2) because these two numbers move
+     * EVERY connection at once -- a runaway weight distorts one connection, a
+     * runaway network variable distorts all of them.
      */
     learnNetworkVariables(rates) {
         const N = this.neurons.length;
         const D = this.totalDims;
         const modWeight = this.modWeight;
         const addWeight = this.addWeight;
-        // One number for how lively the network currently is, from the same states
-        // the settle loop just read.
+        // Where the network as a whole is pointing, and how lively it is: the mean
+        // state per dimension, from the same states the settle loop just read.
+        const mean = this.hyperMeanScratch;
+        mean.fill(0);
         let activity = 0;
         for (let i = 0; i < N; i++) {
             const state = this.neurons[i].state;
             let energy = 0;
-            for (let d = 1; d < D; d++)
+            for (let d = 1; d < D; d++) {
                 energy += state[d] * state[d];
+                mean[d] += state[d];
+            }
             activity += Math.sqrt(energy);
         }
-        activity /= Math.max(1, N);
+        const invN = 1 / Math.max(1, N);
+        activity *= invN;
+        let meanNorm = 0;
+        for (let d = 1; d < D; d++) {
+            mean[d] *= invN;
+            meanNorm += mean[d] * mean[d];
+        }
+        meanNorm = Math.sqrt(meanNorm);
         for (let i = 0; i < N; i++) {
             const state = this.neurons[i].state;
+            // Everything here is measured on what this neuron holds that the network
+            // does NOT -- its state minus the common mode.
+            //
+            // Against the raw state, every neuron in a network driven by one input
+            // agrees with the mean, because the mean is mostly that same input: the
+            // "agreement" came out positive for all sixteen neurons and every weight
+            // variable climbed to +1 together. Removing the common mode is what
+            // makes the signal differ from neuron to neuron at all, which is the
+            // entire point of the variables being personalised.
             let own = 0;
-            for (let d = 1; d < D; d++)
+            let devNorm = 0;
+            let dot = 0;
+            let deviation = 0;
+            for (let d = 1; d < D; d++) {
+                const dev = state[d] - mean[d];
                 own += state[d] * state[d];
-            const step = rates[i] * Math.sqrt(own) * activity;
-            const nextMod = modWeight[i] + step;
-            modWeight[i] = nextMod < -1 ? -1 : (nextMod > 1 ? 1 : nextMod);
-            const nextAdd = addWeight[i] + step;
-            addWeight[i] = nextAdd < -1 ? -1 : (nextAdd > 1 ? 1 : nextAdd);
+                devNorm += dev * dev;
+                dot += dev * mean[d];
+                deviation += dev;
+            }
+            const ownNorm = Math.sqrt(own);
+            devNorm = Math.sqrt(devNorm);
+            // In [-1, 1]: +1 when what is distinctive about this neuron points the
+            // way the network as a whole is pointing, -1 when it points against it.
+            // Zero when either side has nothing to point with, which is the honest
+            // answer rather than an arbitrary direction.
+            const agreement = devNorm > 0 && meanNorm > 0 ? dot / (devNorm * meanNorm) : 0;
+            const step = rates[i] * ownNorm * activity;
+            // Room left before the bound, so a variable eases into its limit instead
+            // of slamming against it. A hard clamp alone let anything consistent pin
+            // at +/-1 within a few hundred ticks and stay there -- measured: 15 of
+            // 16 pinned -- and a pinned variable has stopped being personal to its
+            // neuron. This way the pull weakens as it gets there, and a neuron that
+            // changes its mind can still move.
+            const modRoom = 1 - Math.abs(modWeight[i]);
+            const nextMod = modWeight[i] + step * agreement * modRoom;
+            modWeight[i] = clampNetworkVariable(nextMod);
+            // The bias variable's own signal: what this neuron is holding that the
+            // network is NOT -- its deviation from the common mode, not its level.
+            // Level was nearly the same thing as agreement once the states saturate
+            // (both collapse to the same sign), which left the two sets of variables
+            // as one number in two arrays: 15 of 16 identical, measured. A bias is
+            // what something contributes on its own, so the deviation is the signal
+            // that actually means that, and it is genuinely independent of who a
+            // neuron agrees with.
+            const addRoom = 1 - Math.abs(addWeight[i]);
+            const nextAdd = addWeight[i] + step * (deviation / Math.max(1, D - 1)) * addRoom;
+            addWeight[i] = clampNetworkVariable(nextAdd);
         }
     }
     /**

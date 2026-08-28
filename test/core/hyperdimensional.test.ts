@@ -211,11 +211,11 @@ describe('every neuron in every connection', () => {
     expect(thrice).toBeGreaterThan(once);
   });
 
-  it('lets a distant neuron change what a connection contributes, through the gain', () => {
+  it('lets a distant neuron change what a connection contributes, through the network weight', () => {
     // Weights zeroed and every connection bias set to the same constant: the
     // connection's own result is now a fixed number that no neuron's state can
     // touch. Anything a distant neuron does must therefore have arrived
-    // through the gain that multiplies it.
+    // through the network's weight, which is added to every connection's own.
     const withBias = { ...base, connectionBias: true };
     const rig = (engine: HyperDimensionalEngine) => {
       const snapshot = engine.captureNetworkState();
@@ -250,6 +250,40 @@ describe('every neuron in every connection', () => {
     expect(measure({})).toBe(0);
     expect(measure({ hyperGain: 1 })).toBeGreaterThan(0);
     expect(measure({ hyperGain: 3 })).toBeGreaterThan(measure({ hyperGain: 1 }));
+  });
+
+  it('still moves a neuron whose every incoming weight is zero', () => {
+    // The difference between adding the network's weight and multiplying by
+    // it, made decisive. With every connection weight at zero and no
+    // connection bias, a multiplying network term has nothing to act on --
+    // zero times whatever the network says is zero, and the neuron cannot
+    // move. Added, the network's weight is a weight of its own, and it does.
+    const silence = (engine: HyperDimensionalEngine) => {
+      const snapshot = engine.captureNetworkState();
+      engine.restoreNetworkState({
+        ...snapshot,
+        connDiag: encode(new Float32Array(decode(snapshot.connDiag).length)),
+        connShift: encode(new Float32Array(decode(snapshot.connShift).length)),
+        bias: encode(new Float32Array(decode(snapshot.bias).length)),
+      });
+    };
+
+    const measure = (config: Record<string, number>) => {
+      const engine = new HyperDimensionalEngine({ ...base, ...config });
+      silence(engine);
+      engine.process(input, undefined, driven, undefined, { learn: false });
+      const states = decode(engine.captureNetworkState().states);
+      // The undriven half: whatever moved here came from the network term.
+      let moved = 0;
+      for (let i = base.neuronCount / 2; i < base.neuronCount; i++) {
+        for (let d = 1; d <= base.dimensions; d++) moved += Math.abs(states[d * base.neuronCount + i]);
+      }
+      return moved;
+    };
+
+    expect(measure({})).toBeCloseTo(0, 6);
+    expect(measure({ hyperGain: 1 })).toBeGreaterThan(1e-6);
+    expect(measure({ hyperAdd: 1 })).toBeGreaterThan(1e-6);
   });
 
   it('gives every connection its own bias, and moves it', () => {
@@ -617,6 +651,82 @@ describe('the Zip Loop\'s two bits are perfect enemies', () => {
  * The wave side now has that same shape, part for part, rather than being a
  * separate answer added on at the end.
  */
+describe('the personalised variable every neuron carries', () => {
+  const decode = (b64: string) => {
+    const buf = Buffer.from(b64, 'base64');
+    return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+  };
+
+  const settings = {
+    neuronCount: 16,
+    dimensions: 6,
+    hyperGain: 1,
+    hyperAdd: 1,
+    waveGain: 1,
+    waveFeedback: 0.5,
+    connectionBias: true,
+  };
+
+  /** A drive that is coherent but not the same vector every tick. */
+  const drive = (engine: HyperDimensionalEngine, ticks: number, sign = 1) => {
+    for (let t = 0; t < ticks; t++) {
+      engine.process(
+        Array.from({ length: 6 }, (_, d) => sign * 0.3 * Math.sin(t * 0.31 + d)),
+        undefined,
+        new Set([t % 4, (t % 4) + 4]),
+      );
+    }
+  };
+
+  it('lets a variable go down, not only up', () => {
+    // The rule used to be a product of magnitudes -- always positive -- so
+    // every one of these climbed to its bound together and the "different
+    // weight for each one" the design rests on stopped being different at all.
+    const engine = new HyperDimensionalEngine(settings);
+    drive(engine, 200);
+    const after = decode(engine.captureNetworkState().modWeight);
+    expect(after.some(v => v < 0)).toBe(true);
+    expect(after.some(v => v > 0)).toBe(true);
+  });
+
+  it('learns the weight variables and the bias variables from different things', () => {
+    // Two sets of variables, one for the weight the network adds and one for
+    // the bias. They took the identical step before, which made them one
+    // number kept in two arrays -- and then the weight half and the bias half
+    // of the equation could not say different things.
+    const engine = new HyperDimensionalEngine(settings);
+    drive(engine, 200);
+    const snapshot = engine.captureNetworkState();
+    const mod = decode(snapshot.modWeight);
+    const add = decode(snapshot.addWeight);
+    const identical = mod.filter((v, i) => Math.abs(v - add[i]) < 1e-6).length;
+    // Some will coincide by chance -- both live in [-1, 1] and both saturate.
+    // What must not happen is all of them.
+    expect(identical).toBeLessThan(mod.length);
+    expect(mod).not.toEqual(add);
+  });
+
+  it('never freezes a variable at its bound', () => {
+    // The step is scaled by the room left before the limit, so a variable
+    // eases in rather than slamming into it. A variable landing exactly ON the
+    // limit would have no room left, its step would be multiplied by zero, and
+    // it could never move again however the evidence changed.
+    const engine = new HyperDimensionalEngine(settings);
+    drive(engine, 300);
+    const before = decode(engine.captureNetworkState().modWeight);
+    expect(before.every(v => Math.abs(v) < 1)).toBe(true);
+
+    // Reverse the evidence. Every variable still has room to move, so the set
+    // as a whole has to move -- asserted on the total rather than on any one
+    // variable, since which ones reverse depends on the random start.
+    drive(engine, 300, -1);
+    const after = decode(engine.captureNetworkState().modWeight);
+    const movement = after.reduce((sum, v, i) => sum + Math.abs(v - before[i]), 0);
+    expect(movement).toBeGreaterThan(1e-6);
+    expect(after.every(v => Math.abs(v) < 1)).toBe(true);
+  });
+});
+
 describe('the wave copy of every weight', () => {
   const decode = (b64: string) => {
     const buf = Buffer.from(b64, 'base64');
