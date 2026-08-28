@@ -22,6 +22,7 @@ import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, b
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
+import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
 import {
   STORE_KINDS,
   STORE_KIND_LABELS,
@@ -552,7 +553,7 @@ export class WebServer {
   // Set once by loadSavedExtensions() during start() -- surfaced via
   // GET /api/status so "did the runner actually pick up my trained
   // network on this boot" is observable, not just assumed.
-  private loadedExtensions: { files: number; remembered: number } = { files: 0, remembered: 0 };
+  private loadedExtensions: { files: number; remembered: number; graftedNeurons: number } = { files: 0, remembered: 0, graftedNeurons: 0 };
 
   constructor(runner: NeuroclawRunner, launcher?: AppLauncher) {
     this.runner = runner;
@@ -1044,10 +1045,42 @@ export class WebServer {
    */
   private async installSkillProject(
     name: string,
-    neurons: Array<{ name?: string; value?: number; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }>,
-  ): Promise<{ remembered: number }> {
+    neurons: Array<{ name?: string; value?: number; definition?: string; connections?: SkillNeuron['connections']; scripts?: Array<{ userSays?: string; response?: string }> }>,
+  ): Promise<{ remembered: number; grafted: { added: number; connections: number; neuronCount: number; skipped?: string } }> {
     const { getNeuroclawSystem } = await import('../src/index.js');
     const system = await getNeuroclawSystem();
+
+    // The graft, and the reason a net skill is a net skill: the neurons join
+    // the main network, all-to-all, computed by the same hyperdimensional
+    // equation and the same wave layer as everything already there. Before
+    // this, installing turned a built network into sentences in long-term
+    // memory and left the network itself untouched -- the agent could recall
+    // what the skill was for and could not think with it, which is a prompting
+    // skill wearing a net skill's name.
+    //
+    // Best effort on purpose: a network that has not been built yet (nothing
+    // has run through the pipeline) has nothing to graft into, and that must
+    // not stop the install -- the definitions below are still worth having.
+    let grafted = { added: 0, connections: 0, neuronCount: 0, skipped: 'no network to join yet' as string | undefined };
+    try {
+      // ensureBrain(), not getHyperEngine(): on a fresh boot nothing has run
+      // yet, and a skill that found no network to join would quietly fall back
+      // to being a sentence in memory -- the exact difference this graft
+      // exists to remove.
+      const engine = system.pipeline.ensureBrain();
+      if (engine) {
+        const result = graftNetSkill(engine, name, neurons);
+        grafted = {
+          added: result.added,
+          connections: result.connections,
+          neuronCount: result.neuronCount,
+          skipped: result.skipped,
+        };
+      }
+    } catch (err) {
+      grafted.skipped = err instanceof Error ? err.message : String(err);
+    }
+
     let remembered = 0;
     for (const n of neurons) {
       if (!n.name) continue;
@@ -1070,7 +1103,7 @@ export class WebServer {
         remembered++;
       }
     }
-    return { remembered };
+    return { remembered, grafted };
   }
 
   /** Parses a skill file's { neurons: [...] } JSON, the shape install-skill and run-rsi-test both need. Throws a plain Error with a message safe to send straight to the client. */
@@ -1115,7 +1148,7 @@ export class WebServer {
     return candidate as (...args: unknown[]) => unknown;
   }
 
-  private async loadSavedExtensions(): Promise<{ files: number; remembered: number }> {
+  private async loadSavedExtensions(): Promise<{ files: number; remembered: number; graftedNeurons: number }> {
     try {
       const path = await import('node:path');
       const { promises: fs } = await import('node:fs');
@@ -1124,7 +1157,7 @@ export class WebServer {
       try {
         allEntries = await fs.readdir(dir);
       } catch {
-        return { files: 0, remembered: 0 }; // no extensions directory yet -- nothing to load, not an error
+        return { files: 0, remembered: 0, graftedNeurons: 0 }; // no extensions directory yet -- nothing to load, not an error
       }
       // Both the quantized (*.ext.json -- the historical format, still what
       // conversation-learning-agent.mjs and the manual /api/extension/register
@@ -1134,13 +1167,14 @@ export class WebServer {
       // structure below -- loading only *.ext.json silently never picked up
       // any skill-agent-published skill at all.
       const entries = allEntries.filter(f => f.endsWith('.ext.json') || f.endsWith('.source.json'));
-      if (entries.length === 0) return { files: 0, remembered: 0 };
+      if (entries.length === 0) return { files: 0, remembered: 0, graftedNeurons: 0 };
 
       const { getNeuroclawSystem } = await import('../src/index.js');
       const system = await getNeuroclawSystem();
 
       let filesLoaded = 0;
       let remembered = 0;
+      let graftedNeurons = 0;
       for (const filename of entries) {
         let data: { project?: { name?: string }; name?: string; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
         try {
@@ -1152,6 +1186,19 @@ export class WebServer {
         const neurons = Array.isArray(data.neurons) ? data.neurons : [];
         if (neurons.length === 0) continue;
         filesLoaded++;
+
+        // Back into the mesh, on every boot. An installed net skill whose
+        // neurons only existed in the session someone clicked Install in was
+        // a net skill for one session and a paragraph of text ever after.
+        try {
+          const engine = system.pipeline.ensureBrain();
+          const result = graftNetSkill(engine, extName, neurons);
+          graftedNeurons += result.added;
+        } catch {
+          // A skill that cannot be grafted still gets remembered below. Losing
+          // the graft is bad; losing the whole boot is worse.
+        }
+
         for (const n of neurons) {
           if (!n.name) continue;
           const def = (n.definition ?? '').trim();
@@ -1168,9 +1215,9 @@ export class WebServer {
           }
         }
       }
-      return { files: filesLoaded, remembered };
+      return { files: filesLoaded, remembered, graftedNeurons };
     } catch {
-      return { files: 0, remembered: 0 }; // never let a boot-time extension-load failure take the whole server down
+      return { files: 0, remembered: 0, graftedNeurons: 0 }; // never let a boot-time extension-load failure take the whole server down
     }
   }
 
@@ -1899,6 +1946,34 @@ export class WebServer {
     // "the queue is actually empty right now."
     if (pathname === '/api/continuous/status' && method === 'GET') {
       this.sendJson(res, this.runner.getContinuousStatus());
+      return;
+    }
+
+    // GET /api/net-skills — which net skills are actually IN the network, and
+    // where each one's neurons live.
+    //
+    // The question this answers is the one that separates a net skill from a
+    // prompting skill, and it used to be unanswerable: installing wrote
+    // sentences into memory, so "is my skill part of the network" and "does
+    // the agent have a note about my skill" looked identical from outside.
+    // Now the mesh's own size and the skill's own neuron ids are the answer.
+    if (pathname === '/api/net-skills' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const engine = system.pipeline.getHyperEngine();
+        if (!engine) {
+          this.sendJson(res, { neuronCount: 0, skills: [], note: 'the network has not been built yet' });
+          return;
+        }
+        this.sendJson(res, {
+          neuronCount: engine.getNeuronCount(),
+          dimensions: engine.getDimensions(),
+          skills: graftedSkills(engine),
+        });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
       return;
     }
 
@@ -2701,8 +2776,8 @@ export class WebServer {
           this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
           return;
         }
-        const { remembered } = await this.installSkillProject(name, neurons);
-        this.sendJson(res, { ok: true, installedFrom: file.filename, neuronCount: neurons.length, remembered });
+        const { remembered, grafted } = await this.installSkillProject(name, neurons);
+        this.sendJson(res, { ok: true, installedFrom: file.filename, neuronCount: neurons.length, remembered, grafted });
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
       }
@@ -2893,7 +2968,7 @@ export class WebServer {
           return;
         }
         await recordSkillUploadRsiPassAndSync(name, message);
-        let installed: { remembered: number } | null = null;
+        let installed: { remembered: number; grafted: { added: number; connections: number; neuronCount: number; skipped?: string } } | null = null;
         const skillFile = readSkillUploadFile(name, 'binarySkill') ?? readSkillUploadFile(name, 'sourceSkill');
         if (skillFile) {
           try {
@@ -2942,9 +3017,13 @@ export class WebServer {
         const filename = `${safe}_${Date.now()}.ext.json`;
         await fs.writeFile(path.join(dir, filename), JSON.stringify({ name, neurons }, null, 2), 'utf8');
 
-        const { remembered } = await this.installSkillProject(name, neurons);
+        const { remembered, grafted } = await this.installSkillProject(name, neurons);
 
-        this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered });
+        // `grafted` is the part that makes this a NET skill: how many neurons
+        // actually joined the running mesh and how many of the skill's own
+        // connections came with them. Reported rather than assumed -- a graft
+        // that silently did nothing would look exactly like one that worked.
+        this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered, grafted });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);
         this.sendJson(res, { error: msg }, 500);

@@ -3755,6 +3755,244 @@ export class HyperDimensionalEngine {
   }
 
   /**
+   * Grow the mesh: add neurons to a network that is already running.
+   *
+   * This is what a net skill IS. A skill built in the Extension Builder is a
+   * small network of its own, and connecting it means its neurons join THIS
+   * mesh -- all-to-all with everything already here, every new connection
+   * carrying the same equation every old one does: its own weight and bias,
+   * the whole network's weight and bias, and the wave copies of both. Not a
+   * separate network the agent consults, and not a paragraph of text about
+   * what the skill knows. Neurons, in the mesh, computing.
+   *
+   * Everything already here is preserved exactly. A skill that shifted the
+   * weights of the network it joined would be a skill that damages what it is
+   * added to, and nobody would install a second one.
+   *
+   * Returns the ids of the new neurons, in order, so a caller can bind names
+   * to them and wire them up.
+   */
+  addNeurons(count: number): number[] {
+    if (!Number.isInteger(count) || count <= 0) return [];
+    const oldN = this.neurons.length;
+    const newN = oldN + count;
+    const D = this.totalDims;
+
+    // Every per-connection array is indexed [receiver][dimension][sender], so
+    // growing it is not a copy -- each row moves to a new offset and each row
+    // gets longer. Done row by row, with the new columns left at their
+    // initial values.
+    const growConnections = (old: Float32Array): Float32Array => {
+      const grown = new Float32Array(newN * D * newN);
+      for (let i = 0; i < oldN; i++) {
+        for (let d = 0; d < D; d++) {
+          const from = (i * D + d) * oldN;
+          const to = (i * D + d) * newN;
+          grown.set(old.subarray(from, from + oldN), to);
+        }
+      }
+      return grown;
+    };
+
+    // The wave arrays are [receiver][sender], one dimension shallower.
+    const growPairs = (old: Float32Array, fill: number): Float32Array => {
+      const grown = new Float32Array(newN * newN);
+      if (fill !== 0) grown.fill(fill);
+      for (let i = 0; i < oldN; i++) {
+        grown.set(old.subarray(i * oldN, i * oldN + oldN), i * newN);
+      }
+      return grown;
+    };
+
+    const growPerNeuron = (old: Float32Array): Float32Array => {
+      const grown = new Float32Array(newN);
+      grown.set(old);
+      return grown;
+    };
+
+    // States are [dimension][neuron], so each dimension's row moves.
+    const grownStates = new Float32Array(D * newN);
+    for (let d = 0; d < D; d++) {
+      grownStates.set(this.allStates.subarray(d * oldN, (d + 1) * oldN), d * newN);
+    }
+
+    const grownBias = new Float32Array(newN * D);
+    grownBias.set(this.bias);
+
+    const scale = Math.sqrt(1 / Math.max(1, newN));
+    const newConnDiag = growConnections(this.connDiag);
+    const newConnShift = growConnections(this.connShift);
+    // The new connections in both directions: every new neuron to every old
+    // one, and every old one to every new. All-to-all is the architecture, so
+    // a neuron that joined with connections in only one direction would be
+    // half-attached.
+    for (let i = 0; i < newN; i++) {
+      for (let d = 0; d < D; d++) {
+        const row = (i * D + d) * newN;
+        for (let j = 0; j < newN; j++) {
+          if (i === j) continue;
+          if (i < oldN && j < oldN) continue; // already there, untouched
+          newConnDiag[row + j] = (Math.random() * 2 - 1) * scale;
+          newConnShift[row + j] = (Math.random() * 2 - 1) * scale * 0.5;
+        }
+      }
+    }
+
+    this.allStates = grownStates;
+    this.bias = grownBias;
+    this.connDiag = newConnDiag;
+    this.connShift = newConnShift;
+    if (this.config.connectionBias) {
+      this.connBias = growConnections(this.connBias);
+      const grownRowSum = new Float32Array(newN * D);
+      grownRowSum.set(this.connBiasRowSum);
+      this.connBiasRowSum = grownRowSum;
+    }
+
+    this.modWeight = growPerNeuron(this.modWeight);
+    this.addWeight = growPerNeuron(this.addWeight);
+    this.modWaveWeight = growPerNeuron(this.modWaveWeight);
+    this.addWaveWeight = growPerNeuron(this.addWaveWeight);
+    this.neuronWaveBiasRe = growPerNeuron(this.neuronWaveBiasRe);
+    this.neuronWaveBiasIm = growPerNeuron(this.neuronWaveBiasIm);
+    for (let i = oldN; i < newN; i++) {
+      // The same small random start a neuron gets at construction: identical
+      // variables would make every new neuron's say interchangeable, and
+      // learning could never separate them.
+      this.modWeight[i] = (Math.random() * 2 - 1) * scale;
+      this.addWeight[i] = (Math.random() * 2 - 1) * scale;
+      this.modWaveWeight[i] = (Math.random() * 2 - 1) * scale;
+      this.addWaveWeight[i] = (Math.random() * 2 - 1) * scale;
+    }
+
+    this.connWaveGain = growPairs(this.connWaveGain, 1);
+    this.connWavePhase = growPairs(this.connWavePhase, 0);
+    this.connWaveBias = growPairs(this.connWaveBias, 0);
+    this.connWaveBiasIm = growPairs(this.connWaveBiasIm, 0);
+    this.connWaveShift = growPairs(this.connWaveShift, 0);
+
+    this.waveFreq = growPerNeuron(this.waveFreq);
+    this.wavePhase = growPerNeuron(this.wavePhase);
+    this.waveRe = growPerNeuron(this.waveRe);
+    this.waveIm = growPerNeuron(this.waveIm);
+    this.prevWaveRe = new Float32Array(newN);
+    this.prevWaveIm = new Float32Array(newN);
+
+    // A wave of its own for each new neuron, spread across the band the same
+    // way the original ones were, so a skill's neurons do not all land on one
+    // frequency and drown each other out.
+    for (let i = oldN; i < newN; i++) {
+      const spread = (i % Math.max(1, newN)) / Math.max(1, newN);
+      this.waveFreq[i] = MIN_WAVE_FREQ + spread * (MAX_WAVE_FREQ - MIN_WAVE_FREQ);
+      this.wavePhase[i] = Math.random() * Math.PI * 2;
+    }
+
+    // Everything sized by the neuron count, rebuilt. A scratch array left at
+    // the old size is a buffer overrun waiting for the next settle.
+    this.nextStatesBuffer = new Float32Array(newN * D);
+    this.stateDeltasBuffer = new Float32Array(newN);
+    this.isDrivenScratch = new Uint8Array(newN);
+    this.drivenIndicesScratch = new Int32Array(newN);
+    this.nonDrivenIndicesScratch = new Int32Array(newN);
+    this.vsScratch = new Float32Array(newN);
+    this.hasVScratch = new Uint8Array(newN);
+    this.ratesScratch = new Float32Array(newN);
+    this.deltaSumsScratch = new Float32Array(newN);
+    this.waveAmpScratch = new Float32Array(newN);
+    this.waveTermScratch = new Float32Array(newN);
+    this.wavePhaseErrorScratch = new Float32Array(newN);
+    this.waveBin = new Int32Array(newN);
+    this.phaseCos = new Float32Array(newN);
+    this.phaseSin = new Float32Array(newN);
+    this.entropyLookup = new Float64Array(newN + 1);
+    this.entropyLookup[0] = 0;
+    for (let c = 1; c <= newN; c++) {
+      const p = c / newN;
+      this.entropyLookup[c] = p * Math.log2(p);
+    }
+
+    this.stateViews = new Array<Float32Array>(D);
+    for (let d = 0; d < D; d++) {
+      this.stateViews[d] = this.allStates.subarray(d * newN, (d + 1) * newN);
+    }
+
+    const added: number[] = [];
+    for (let i = oldN; i < newN; i++) {
+      // A start of its own, like every neuron gets at construction: a skill
+      // whose neurons all began identical would have nothing to tell them
+      // apart, and learning could never separate them afterwards.
+      const state = new Float32Array(D);
+      for (let d = 1; d < D; d++) {
+        const value = Math.random() * 2 - 1;
+        state[d] = value;
+        this.allStates[d * newN + i] = value;
+      }
+      this.neurons.push({
+        id: i,
+        state,
+        energy: 0,
+        lastTransition: null,
+        influenceRadius: 0.1 + Math.random() * 0.4,
+        activationThreshold: 0.3 + Math.random() * 0.4,
+      });
+      added.push(i);
+    }
+    // Point every neuron's state view back into the grown buffer.
+    for (let i = 0; i < newN; i++) {
+      const neuron = this.neurons[i];
+      for (let d = 0; d < D; d++) neuron.state[d] = this.allStates[d * newN + i];
+    }
+
+    return added;
+  }
+
+  /**
+   * Wire one connection by hand: what neuron `from` contributes to neuron
+   * `to`, on every dimension.
+   *
+   * How a net skill's own structure survives being grafted in. The builder
+   * knows which of its neurons feed which; without this they would arrive
+   * connected to the mesh at random and to each other not at all, which is a
+   * pile of neurons rather than a skill.
+   */
+  setConnection(to: number, from: number, weight: number): boolean {
+    const N = this.neurons.length;
+    if (to < 0 || to >= N || from < 0 || from >= N || to === from) return false;
+    if (!Number.isFinite(weight)) return false;
+    const D = this.totalDims;
+    for (let d = 0; d < D; d++) this.connDiag[(to * D + d) * N + from] = weight;
+    return true;
+  }
+
+  /**
+   * Put one neuron where its meaning points.
+   *
+   * A grafted skill neuron starts somewhere rather than nowhere: its
+   * definition, embedded, becomes the state it begins in, so it sits in the
+   * part of the space its meaning belongs to and the mesh takes over from
+   * there. Dimension 0 is the input flag and is not writable this way.
+   *
+   * Shorter vectors fill what they cover and leave the rest; longer ones are
+   * truncated. A caller should not have to know the network's width to say
+   * what a neuron is about.
+   */
+  setNeuronState(id: number, content: ArrayLike<number>): boolean {
+    const N = this.neurons.length;
+    if (id < 0 || id >= N) return false;
+    const D = this.totalDims;
+    const neuron = this.neurons[id];
+    const limit = Math.min(content.length, D - 1);
+    for (let k = 0; k < limit; k++) {
+      const raw = content[k];
+      if (!Number.isFinite(raw)) continue;
+      const value = raw < -1 ? -1 : (raw > 1 ? 1 : raw);
+      this.allStates[(k + 1) * N + id] = value;
+      neuron.state[k + 1] = value;
+    }
+    return true;
+  }
+
+  /**
    * Set one neuron's wave by hand.
    *
    * Wave signatures are learned, so this is not the usual way in -- but two

@@ -596,6 +596,24 @@ export class NeuroPipeline {
     getHyperEngine() {
         return this.hyperEngine;
     }
+    /**
+     * Build the brain now, and hand it back.
+     *
+     * getHyperEngine() deliberately returns null before the first run rather
+     * than conjuring a stand-in. But there is one caller that legitimately needs
+     * the real network before anything has been asked of it: installing a net
+     * skill, which means grafting neurons INTO the mesh. On a fresh boot, saved
+     * skills would otherwise find nothing to join and fall back to being
+     * sentences in memory -- which is the exact difference between a net skill
+     * and a prompting skill.
+     *
+     * This is the same construction the first run would do, done earlier and on
+     * purpose, so what a skill joins is the real network and not a copy of it.
+     */
+    ensureBrain() {
+        this.ensureSubsystems();
+        return this.hyperEngine;
+    }
     getZipIO() {
         return this.zipIO;
     }
