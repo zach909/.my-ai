@@ -2649,6 +2649,35 @@ export interface NetworkStateSnapshot {
    * no turned half, which is the same as zero.
    */
   connWaveBiasIm?: string;
+  /**
+   * Each neuron's own wave when the run stopped, so it starts again where it
+   * left off rather than in silence.
+   *
+   * Optional for the same reason connWaveBiasIm is: a snapshot written before
+   * neurons had a wave of their own has none to restore, and silence is
+   * exactly what those networks were holding.
+   */
+  neuronWaveRe?: string;
+  neuronWaveIm?: string;
+  /**
+   * The shared pool itself. A neuron reads the pool at its own frequency, so a
+   * network restored without it starts hearing silence from everyone else even
+   * with its own wave intact -- and the next tick is a different tick.
+   */
+  wavePoolRe?: string;
+  wavePoolIm?: string;
+  /**
+   * What live correction was holding: the running energy estimate it compares
+   * against, whether it has one yet, and how many consecutive iterations have
+   * been off track.
+   *
+   * Small, and not optional in spirit -- a network restored without them damps
+   * differently on its very next tick than the one that stopped, which is the
+   * definition of not starting in the same place.
+   */
+  emaEnergy?: number;
+  hasEma?: boolean;
+  sustainedDivergence?: number;
   connWaveShift: string;
   /** The wave copies of the neuron's own bias and of its two network variables. */
   neuronWaveBiasRe: string;
@@ -3132,8 +3161,21 @@ export class HyperDimensionalEngine {
   private prevPoolRe: Float32Array;
   private prevPoolIm: Float32Array;
   /** One neuron's internal pool: what it hears at every frequency, after its own connections have edited it. */
-  private innerPoolRe: Float32Array;
-  private innerPoolIm: Float32Array;
+  /**
+   * Each neuron's own wave -- one complex number apiece, at that neuron's own
+   * frequency, which is what "each neuron has a corresponding wave" means.
+   *
+   * This is what a connection carries. Before it existed, a connection
+   * multiplied the shared POOL's content at the giving neuron's frequency,
+   * which is not the same thing at all: two neurons sharing a frequency were
+   * indistinguishable to everything downstream of them, and what a connection
+   * carried was everyone's wave at that pitch rather than the wave of the
+   * neuron doing the giving.
+   */
+  private waveRe: Float32Array;
+  private waveIm: Float32Array;
+  private prevWaveRe: Float32Array;
+  private prevWaveIm: Float32Array;
   /**
    * The wave-editing equation on every connection: how much of the wave gets
    * through, how far it is turned, and what the connection adds on its own.
@@ -3326,8 +3368,10 @@ export class HyperDimensionalEngine {
     this.poolIm = new Float32Array(WAVE_BINS);
     this.prevPoolRe = new Float32Array(WAVE_BINS);
     this.prevPoolIm = new Float32Array(WAVE_BINS);
-    this.innerPoolRe = new Float32Array(WAVE_BINS);
-    this.innerPoolIm = new Float32Array(WAVE_BINS);
+    this.waveRe = new Float32Array(N);
+    this.waveIm = new Float32Array(N);
+    this.prevWaveRe = new Float32Array(N);
+    this.prevWaveIm = new Float32Array(N);
     this.waveBin = new Int32Array(N);
     this.phaseCos = new Float32Array(N);
     this.phaseSin = new Float32Array(N);
@@ -3567,6 +3611,13 @@ export class HyperDimensionalEngine {
       connWavePhase: encodeFloats(this.connWavePhase),
       connWaveBias: encodeFloats(this.connWaveBias),
       connWaveBiasIm: encodeFloats(this.connWaveBiasIm),
+      neuronWaveRe: encodeFloats(this.waveRe),
+      neuronWaveIm: encodeFloats(this.waveIm),
+      wavePoolRe: encodeFloats(this.poolRe),
+      wavePoolIm: encodeFloats(this.poolIm),
+      emaEnergy: this.emaEnergy,
+      hasEma: this.hasEma,
+      sustainedDivergence: this.sustainedDivergence,
       connWaveShift: encodeFloats(this.connWaveShift),
       neuronWaveBiasRe: encodeFloats(this.neuronWaveBiasRe),
       neuronWaveBiasIm: encodeFloats(this.neuronWaveBiasIm),
@@ -3609,6 +3660,18 @@ export class HyperDimensionalEngine {
     const waveBiasTurned = snapshot.connWaveBiasIm === undefined
       ? new Float32Array(this.connWaveBiasIm.length)
       : decodeFloats(snapshot.connWaveBiasIm, this.connWaveBiasIm.length);
+    const neuronWaveRe = snapshot.neuronWaveRe === undefined
+      ? new Float32Array(this.waveRe.length)
+      : decodeFloats(snapshot.neuronWaveRe, this.waveRe.length);
+    const neuronWaveIm = snapshot.neuronWaveIm === undefined
+      ? new Float32Array(this.waveIm.length)
+      : decodeFloats(snapshot.neuronWaveIm, this.waveIm.length);
+    const poolSavedRe = snapshot.wavePoolRe === undefined
+      ? new Float32Array(this.poolRe.length)
+      : decodeFloats(snapshot.wavePoolRe, this.poolRe.length);
+    const poolSavedIm = snapshot.wavePoolIm === undefined
+      ? new Float32Array(this.poolIm.length)
+      : decodeFloats(snapshot.wavePoolIm, this.poolIm.length);
     const waveShift = decodeFloats(snapshot.connWaveShift, this.connWaveShift.length);
     const waveBiasRe = decodeFloats(snapshot.neuronWaveBiasRe, this.neuronWaveBiasRe.length);
     const waveBiasIm = decodeFloats(snapshot.neuronWaveBiasIm, this.neuronWaveBiasIm.length);
@@ -3617,6 +3680,7 @@ export class HyperDimensionalEngine {
     if (
       !states || !energies || !bias || !diag || !shift || !mod || !add || !freq || !phase ||
       !waveGain || !waveTurn || !waveBias || !waveBiasTurned || !waveShift ||
+      !neuronWaveRe || !neuronWaveIm || !poolSavedRe || !poolSavedIm ||
       !waveBiasRe || !waveBiasIm || !modWave || !addWave
     ) return false;
 
@@ -3644,6 +3708,17 @@ export class HyperDimensionalEngine {
     this.connWavePhase.set(waveTurn);
     this.connWaveBias.set(waveBias);
     this.connWaveBiasIm.set(waveBiasTurned);
+    this.waveRe.set(neuronWaveRe);
+    this.waveIm.set(neuronWaveIm);
+    this.poolRe.set(poolSavedRe);
+    this.poolIm.set(poolSavedIm);
+    if (typeof snapshot.emaEnergy === "number" && Number.isFinite(snapshot.emaEnergy)) {
+      this.emaEnergy = snapshot.emaEnergy;
+      this.hasEma = snapshot.hasEma !== false;
+    }
+    if (typeof snapshot.sustainedDivergence === "number" && snapshot.sustainedDivergence >= 0) {
+      this.sustainedDivergence = snapshot.sustainedDivergence;
+    }
     this.connWaveShift.set(waveShift);
     this.neuronWaveBiasRe.set(waveBiasRe);
     this.neuronWaveBiasIm.set(waveBiasIm);
@@ -4268,8 +4343,10 @@ export class HyperDimensionalEngine {
     const poolIm = this.poolIm;
     const prevPoolRe = this.prevPoolRe;
     const prevPoolIm = this.prevPoolIm;
-    const innerPoolRe = this.innerPoolRe;
-    const innerPoolIm = this.innerPoolIm;
+    const waveRe = this.waveRe;
+    const waveIm = this.waveIm;
+    const prevWaveRe = this.prevWaveRe;
+    const prevWaveIm = this.prevWaveIm;
     const connWaveGain = this.connWaveGain;
     const connWavePhase = this.connWavePhase;
     const connWaveBias = this.connWaveBias;
@@ -4388,60 +4465,54 @@ export class HyperDimensionalEngine {
           }
         }
 
+        // Every neuron's wave as it was last iteration -- what the
+        // connections carry this one. A wave takes a moment to cross the
+        // network, and reading the array being written would let a neuron
+        // carry a wave that had not been made yet.
+        prevWaveRe.set(waveRe);
+        prevWaveIm.set(waveIm);
+
+        // A neuron being driven from outside has nothing flowing into it to be
+        // made of, so it is a SOURCE: its wave IS its signature. Everything
+        // else in the network is ultimately an edited, interfered version of
+        // what the sources put in. The Zip Loop's bit neurons are exactly this
+        // -- two sources, perfect enemies, and every wave downstream descends
+        // from them.
+        for (let i = 0; i < N; i++) {
+          if (!isDriven[i]) continue;
+          prevWaveRe[i] = waveAmp[i] * phaseCos[i];
+          prevWaveIm[i] = waveAmp[i] * phaseSin[i];
+        }
+
         let poolEnergy = 0;
+        const invN = 1 / N;
+        // The largest amplitude a neuron could have: every content dimension
+        // saturated. Used to turn an amplitude into a fraction below.
+        const invMaxAmp = 1 / Math.sqrt(Math.max(1, D - 1));
         for (let i = 0; i < N; i++) {
           const amp = waveAmp[i];
-
-          // A neuron does not have a wave of its own to broadcast. Its wave is
-          // whatever formed inside it out of the waves that came in -- see the
-          // emission below.
-          //
-          // Except at the edge. A neuron being driven from outside has nothing
-          // flowing into it to be made of, so it is a SOURCE: it emits its own
-          // signature, and everything else in the network is ultimately an
-          // edited, interfered version of what the sources put in. The Zip
-          // Loop's bit neurons are exactly this -- two sources, perfect
-          // enemies, and every wave downstream descends from them.
           const ownBin = waveBin[i];
-          if (isDriven[i]) {
-            poolRe[ownBin] += amp * phaseCos[i];
-            poolIm[ownBin] += amp * phaseSin[i];
-          }
 
           // ── The neuron's own small pool ──────────────────────────────
           //
-          // Every wave in the shared pool reaches this neuron through the
-          // connection that carries it, and every connection edits what passes
-          // along it -- how much gets through, how far it is turned, and what
-          // the connection adds of its own. Those edited waves interfere
-          // inside the neuron exactly as they would in the big pool. The
-          // result is the neuron's own wave, which it pushes back out at the
-          // force of its input.
+          // Every neuron that has a wave gives it along the connection to this
+          // one, and every connection edits what passes along it: the two wave
+          // weights combined, the two wave biases combined, run against the
+          // wave of the neuron doing the giving. Those edited waves interfere
+          // inside this neuron exactly as they would in the big pool, and what
+          // they add up to is this neuron's wave.
           const editRow = i * N;
           let heardRe = 0;
           let heardIm = 0;
-          innerPoolRe.fill(0);
-          innerPoolIm.fill(0);
           for (let k = 0; k < N; k++) {
-            const sourceBin = waveBin[k];
-            // A source removes its own signature before listening: hearing
-            // yourself back, in a recurrent network, is a loop with nothing
-            // opposing it.
-            //
-            // Only a source. Everything else no longer puts a signature into
-            // the pool at all -- its wave is whatever formed inside it -- so
-            // subtracting one here invents a wave that was never emitted. It
-            // did exactly that when this line was left unguarded: an
-            // undriven network with an empty pool reported waves in it,
-            // conjured from the subtraction alone.
-            //
-            // A non-source's own contribution IS still in there, spread across
-            // bins, and it is not subtracted. It comes back divided by the
-            // neuron count and damped below one, so a neuron hears a
-            // vanishing fraction of itself rather than a loop.
-            const mine = sourceBin === ownBin && isDriven[i];
-            const inRe = mine ? prevPoolRe[sourceBin] - amp * phaseCos[i] : prevPoolRe[sourceBin];
-            const inIm = mine ? prevPoolIm[sourceBin] - amp * phaseSin[i] : prevPoolIm[sourceBin];
+            // Not from itself. A neuron hearing its own wave back through its
+            // own connection is a loop with nothing opposing it; what it does
+            // hear of itself is the pool read below, and that is subtracted
+            // exactly.
+            if (k === i) continue;
+
+            const inRe = prevWaveRe[k];
+            const inIm = prevWaveIm[k];
 
             const gain = connWaveGain[editRow + k];
             const turn = connWavePhase[editRow + k];
@@ -4460,41 +4531,50 @@ export class HyperDimensionalEngine {
             const biasRe = connWaveBias[editRow + k] + netWaveBiasRe;
             const biasIm = connWaveBiasIm[editRow + k] + netWaveBiasIm;
 
-            let shapedRe = weightRe * inRe - weightIm * inIm + biasRe;
-            let shapedIm = weightRe * inIm + weightIm * inRe + biasIm;
+            let editedRe = weightRe * inRe - weightIm * inIm + biasRe;
+            let editedIm = weightRe * inIm + weightIm * inRe + biasIm;
 
-            // ...and its shift weight, reading the neighbouring frequency the
-            // way connShift reads the neighbouring dimension. Zero on a fresh
-            // network, so it contributes nothing until learning gives it a
-            // reason to.
+            // ...and its shift weight, reaching across to the neighbouring
+            // frequency in the shared pool the way connShift reaches across to
+            // the neighbouring dimension. Zero on a fresh network, so it
+            // contributes nothing until learning gives it a reason to.
             const shiftWeight = connWaveShift[editRow + k];
             if (shiftWeight !== 0) {
+              const sourceBin = waveBin[k];
               const neighbour = sourceBin === 0 ? WAVE_BINS - 1 : sourceBin - 1;
-              shapedRe += shiftWeight * prevPoolRe[neighbour];
-              shapedIm += shiftWeight * prevPoolIm[neighbour];
+              editedRe += shiftWeight * prevPoolRe[neighbour];
+              editedIm += shiftWeight * prevPoolIm[neighbour];
             }
 
-            // The result is one wave, and it goes into the receiving neuron's
-            // own pool at the frequency it came in on. The neuron gets a
-            // bunch of these, and what they add up to is its wave.
-            const editedRe = shapedRe;
-            const editedIm = shapedIm;
-
-            innerPoolRe[sourceBin] += editedRe;
-            innerPoolIm[sourceBin] += editedIm;
-
-            // What this neuron receives is the part of its own small pool
-            // sitting at its own frequency, in phase with its own wave.
-            if (sourceBin === ownBin) {
-              heardRe += editedRe;
-              heardIm += editedIm;
-            }
+            heardRe += editedRe;
+            heardIm += editedIm;
           }
+
+          // A mean over the connections, not a sum, for the same reason every
+          // other network-wide combination here is: a sum grows with neuron
+          // count until the wave term alone saturates every neuron.
+          heardRe *= invN;
+          heardIm *= invN;
 
           // The neuron's own bias on the wave: what it contributes with
           // nothing arriving, the wave beside bias[i][d].
           heardRe += neuronWaveBiasRe[i];
           heardIm += neuronWaveBiasIm[i];
+
+          // ── And the other way ────────────────────────────────────────
+          //
+          // If a wave in the main pool is this neuron's wave, this neuron gets
+          // an input of the height of that wave. Not routed through a
+          // connection: the pool is shared, and a wave at a neuron's own
+          // frequency is that neuron's wave whoever made it. This is what
+          // makes the whole thing go both ways -- neurons put waves into the
+          // pool, and the pool puts inputs back into neurons.
+          //
+          // Its own last contribution comes out first, exactly, because it is
+          // known exactly. What is left is what everyone ELSE built at this
+          // neuron's frequency: agreement adds up, contradiction cancels.
+          heardRe += prevPoolRe[ownBin] - prevWaveRe[i];
+          heardIm += prevPoolIm[ownBin] - prevWaveIm[i];
 
           const inPhase = heardRe * phaseCos[i] + heardIm * phaseSin[i];
           const quadrature = heardIm * phaseCos[i] - heardRe * phaseSin[i];
@@ -4504,29 +4584,44 @@ export class HyperDimensionalEngine {
           wavePhaseError[i] = Math.atan2(quadrature, inPhase);
 
           // The wave that formed inside it, pushed back out at the force of
-          // its input. This IS the neuron's wave -- not an echo of someone
-          // else's on top of a signature of its own. What a neuron carries is
-          // determined by what reached it, shaped by the editing equation on
-          // every connection it arrived through, so no two neurons downstream
-          // of the same source end up carrying the same thing.
+          // its input. This IS the neuron's wave -- what reached it, shaped by
+          // the editing equation on every connection it arrived through, so no
+          // two neurons downstream of the same source carry the same thing.
           //
           // A neuron with nothing coming in emits nothing, however loud the
-          // pool is around it.
+          // pool around it. A source emits its signature instead, which was
+          // set above.
           //
-          // Divided by the neuron count, and damped. Every neuron re-emitting
-          // everything it hears is an echo chamber with a gain of N: measured
-          // before this line existed, the pool went 4 -> 3,579 -> 2,682,806
-          // over three ticks, and every neuron saturated identically, which
-          // reads in a test as the pool having no effect at all. The mean
-          // keeps the loop gain independent of how big the network is; the
-          // damping keeps it below one.
-          if (amp !== 0 && waveFeedback !== 0 && !isDriven[i]) {
-            const reemit = (waveFeedback * amp) / N;
-            for (let b = 0; b < WAVE_BINS; b++) {
-              poolRe[b] += reemit * innerPoolRe[b];
-              poolIm[b] += reemit * innerPoolIm[b];
-            }
+          // Damped below one: every neuron passing on everything it hears is
+          // an echo chamber. Measured before the damping existed, the pool
+          // went 4 -> 3,579 -> 2,682,806 over three ticks and every neuron
+          // saturated identically, which reads in a test as the pool having no
+          // effect at all.
+          if (isDriven[i]) {
+            waveRe[i] = prevWaveRe[i];
+            waveIm[i] = prevWaveIm[i];
+          } else if (amp !== 0 && waveFeedback !== 0) {
+            // The force of its input, as a FRACTION of the loudest input it
+            // could have. That fraction is what keeps the loop gain below one:
+            // a neuron hears the pool at its own frequency directly, and puts
+            // its wave back into that same bin, so the round trip is multiplied
+            // by exactly this number every iteration. With a raw amplitude
+            // there instead, the round trip gained about 1.2x per iteration --
+            // measured: the pool went 0.17 -> 3.3 -> NaN over 150 ticks.
+            // Bounded by waveFeedback, which is already capped below one.
+            const force = waveFeedback * (amp * invMaxAmp);
+            waveRe[i] = force * heardRe;
+            waveIm[i] = force * heardIm;
+          } else {
+            waveRe[i] = 0;
+            waveIm[i] = 0;
           }
+
+          // Into the shared pool at its own frequency. Two neurons on the same
+          // wave meet here, and that meeting is the whole point: equal and
+          // opposite annihilate, equal and alike double.
+          poolRe[ownBin] += waveRe[i];
+          poolIm[ownBin] += waveIm[i];
         }
 
         // A ceiling as well as a gain below one. The damping makes runaway
