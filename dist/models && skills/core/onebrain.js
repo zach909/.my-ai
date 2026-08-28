@@ -2201,16 +2201,6 @@ function pearson(a, b) {
         return 0;
     return cov / Math.sqrt(va * vb);
 }
-/**
- * How many points the wave pool is sampled at when neurons read it back.
- *
- * Long enough that neurons with different frequencies are actually
- * distinguishable: frequencies are spread across 0.05..0.5 radians per step, so
- * the closest pair separates by a full cycle in roughly 2*PI/0.45 ~ 14 steps.
- * A shorter window would make every neuron look like every other one and the
- * pool would drive them all identically -- which is the thing this replaced.
- */
-const WAVE_SAMPLES = 32;
 /** How much of the measured phase error a neuron's wave takes each tick. */
 const PHASE_LOCK_RATE = 0.5;
 /**
@@ -2220,7 +2210,35 @@ const PHASE_LOCK_RATE = 0.5;
  * reinforce anything.
  */
 const FREQUENCY_LOCK_RATE = 0.02;
-/** Frequencies that complete at least one cycle in the sampling window, and no more than it can represent. */
+/**
+ * How finely the pool distinguishes one wave from another.
+ *
+ * Frequencies are learned and continuous; this is what decides when two of
+ * them count as the same wave and therefore interfere. Fine enough that
+ * neurons do not all collapse into one wave, coarse enough that two neurons
+ * learning toward each other actually meet.
+ */
+const WAVE_BINS = 64;
+/**
+ * How much of what a neuron hears it passes back into the pool.
+ *
+ * Below one on purpose. Every neuron re-emitting everything it hears is a loop
+ * with nothing opposing it -- the architecture's own warning about runaway
+ * activation in an all-connected network, and it happens immediately: measured
+ * at full strength the pool went 4 -> 3,579 -> 2,682,806 in three ticks.
+ */
+const WAVE_FEEDBACK = 0.5;
+/** However high a caller asks for, the loop gain stays below one. */
+const WAVE_FEEDBACK_CEILING = 0.9;
+/** Below this a bin holds float dust from cancelled waves rather than a wave. */
+const POOL_SILENCE = 1e-6;
+/** Hard bound on any one wave in the pool, whatever the learned gains have drifted to. */
+const WAVE_POOL_CEILING = 8;
+/** How fast a connection's wave-editing equation moves. Slower than the numeric weights: it shapes what every wave through it becomes. */
+const WAVE_EDIT_RATE = 0.05;
+/** The wave-edit bias moves slower still -- it speaks with nothing arriving. */
+const WAVE_BIAS_RATE = 0.01;
+/** Frequencies that complete at least one cycle before aliasing. */
 const MIN_WAVE_FREQ = 0.02;
 const MAX_WAVE_FREQ = 0.6;
 export class HyperDimensionalEngine {
@@ -2271,6 +2289,7 @@ export class HyperDimensionalEngine {
             // measurably perturbs. Pass waveGain explicitly to opt a given
             // engine instance into it.
             waveGain: config.waveGain ?? 0,
+            waveFeedback: Math.max(0, Math.min(WAVE_FEEDBACK_CEILING, config.waveFeedback ?? WAVE_FEEDBACK)),
             // All three default to inert, for the same reason waveGain does: existing
             // callers rely on exact pre-activation invariants, and this changes the
             // arithmetic of every connection in the network.
@@ -2375,9 +2394,24 @@ export class HyperDimensionalEngine {
             }
         }
         this.waveAmpScratch = new Float32Array(N);
-        this.poolSampleScratch = new Float32Array(WAVE_SAMPLES);
+        this.poolRe = new Float32Array(WAVE_BINS);
+        this.poolIm = new Float32Array(WAVE_BINS);
+        this.prevPoolRe = new Float32Array(WAVE_BINS);
+        this.prevPoolIm = new Float32Array(WAVE_BINS);
+        this.innerPoolRe = new Float32Array(WAVE_BINS);
+        this.innerPoolIm = new Float32Array(WAVE_BINS);
+        this.waveBin = new Int32Array(N);
+        this.phaseCos = new Float32Array(N);
+        this.phaseSin = new Float32Array(N);
         this.waveTermScratch = new Float32Array(N);
         this.wavePhaseErrorScratch = new Float32Array(N);
+        // Connections start passing waves through unchanged -- full gain, no turn,
+        // nothing added. Learning is what makes them differ; starting them random
+        // would mean a fresh network scrambles every wave before anything has had
+        // a reason to.
+        this.connWaveGain = new Float32Array(N * N).fill(1);
+        this.connWavePhase = new Float32Array(N * N);
+        this.connWaveBias = new Float32Array(N * N);
     }
     /**
      * Run one tick: settle the mesh to convergence for the given input, apply
@@ -2560,6 +2594,9 @@ export class HyperDimensionalEngine {
             addWeight: encodeFloats(this.addWeight),
             waveFreq: encodeFloats(this.waveFreq),
             wavePhase: encodeFloats(this.wavePhase),
+            connWaveGain: encodeFloats(this.connWaveGain),
+            connWavePhase: encodeFloats(this.connWavePhase),
+            connWaveBias: encodeFloats(this.connWaveBias),
             connBias: this.config.connectionBias ? encodeFloats(this.connBias) : "",
         };
     }
@@ -2586,7 +2623,11 @@ export class HyperDimensionalEngine {
         const add = decodeFloats(snapshot.addWeight, this.addWeight.length);
         const freq = decodeFloats(snapshot.waveFreq, this.waveFreq.length);
         const phase = decodeFloats(snapshot.wavePhase, this.wavePhase.length);
-        if (!states || !energies || !bias || !diag || !shift || !mod || !add || !freq || !phase)
+        const waveGain = decodeFloats(snapshot.connWaveGain, this.connWaveGain.length);
+        const waveTurn = decodeFloats(snapshot.connWavePhase, this.connWavePhase.length);
+        const waveBias = decodeFloats(snapshot.connWaveBias, this.connWaveBias.length);
+        if (!states || !energies || !bias || !diag || !shift || !mod || !add || !freq || !phase ||
+            !waveGain || !waveTurn || !waveBias)
             return false;
         // A snapshot from an engine with per-connection biases does not fit one
         // without them, and vice versa: same neuron count, genuinely different
@@ -2609,6 +2650,9 @@ export class HyperDimensionalEngine {
         this.addWeight.set(add);
         this.waveFreq.set(freq);
         this.wavePhase.set(phase);
+        this.connWaveGain.set(waveGain);
+        this.connWavePhase.set(waveTurn);
+        this.connWaveBias.set(waveBias);
         if (connBias) {
             this.connBias.set(connBias);
             // The row sums are derived, so they are rebuilt rather than saved --
@@ -2638,6 +2682,66 @@ export class HyperDimensionalEngine {
                 neuron.state[d] = states[d * N + i];
         }
         return true;
+    }
+    /**
+     * Set one neuron's wave by hand.
+     *
+     * Wave signatures are learned, so this is not the usual way in -- but two
+     * neurons that must be exact opposites cannot be left to find each other.
+     * The Zip Loop's bit-0 and bit-1 neurons are the case: they need to be
+     * perfect enemies, the same wave half a cycle apart, so a one and a zero
+     * arriving together annihilate rather than leaving a residue that means
+     * neither.
+     */
+    setWaveSignature(id, frequency, phase) {
+        if (!Number.isFinite(frequency) || !Number.isFinite(phase))
+            return false;
+        if (id < 0 || id >= this.neurons.length)
+            return false;
+        const clamped = frequency < MIN_WAVE_FREQ ? MIN_WAVE_FREQ : (frequency > MAX_WAVE_FREQ ? MAX_WAVE_FREQ : frequency);
+        this.waveFreq[id] = clamped;
+        const TWO_PI = Math.PI * 2;
+        let wrapped = phase % TWO_PI;
+        if (wrapped < 0)
+            wrapped += TWO_PI;
+        this.wavePhase[id] = wrapped;
+        return true;
+    }
+    /**
+     * What is in the shared pool right now, one entry per occupied frequency.
+     *
+     * Exposed because the pool is where the interference actually happens, and
+     * everything downstream of it -- tanh, energy damping, the connection maths
+     * -- makes it harder to see rather than easier. Measuring "did those two
+     * waves cancel" through a neuron's final state means measuring it through
+     * three other mechanisms that also moved.
+     */
+    poolContent() {
+        const span = (MAX_WAVE_FREQ - MIN_WAVE_FREQ) || 1;
+        const content = [];
+        for (let b = 0; b < WAVE_BINS; b++) {
+            const re = this.poolRe[b];
+            const im = this.poolIm[b];
+            const magnitude = Math.sqrt(re * re + im * im);
+            // Below this is float dust from waves that cancelled, not a wave. Two
+            // equal and opposite ripples annihilate in exact arithmetic; in Float32
+            // they leave a residue around 1e-8, and reporting that as a wave in the
+            // pool would make perfect cancellation look imperfect.
+            if (magnitude <= POOL_SILENCE)
+                continue;
+            content.push({
+                frequency: MIN_WAVE_FREQ + (b / (WAVE_BINS - 1)) * span,
+                magnitude,
+                phase: Math.atan2(im, re),
+            });
+        }
+        return content;
+    }
+    /** What wave a neuron currently carries. */
+    waveSignature(id) {
+        if (id < 0 || id >= this.neurons.length)
+            return null;
+        return { frequency: this.waveFreq[id], phase: this.wavePhase[id] };
     }
     /** Total configured neuron count (fixed at construction). */
     getNeuronCount() {
@@ -3099,9 +3203,21 @@ export class HyperDimensionalEngine {
         const wavePhase = this.wavePhase;
         const waveFreq = this.waveFreq;
         const waveAmp = this.waveAmpScratch;
-        const poolSamples = this.poolSampleScratch;
         const waveTermRow = this.waveTermScratch;
         const wavePhaseError = this.wavePhaseErrorScratch;
+        const poolRe = this.poolRe;
+        const poolIm = this.poolIm;
+        const prevPoolRe = this.prevPoolRe;
+        const prevPoolIm = this.prevPoolIm;
+        const innerPoolRe = this.innerPoolRe;
+        const innerPoolIm = this.innerPoolIm;
+        const connWaveGain = this.connWaveGain;
+        const connWavePhase = this.connWavePhase;
+        const connWaveBias = this.connWaveBias;
+        const phaseCos = this.phaseCos;
+        const phaseSin = this.phaseSin;
+        const waveBin = this.waveBin;
+        const waveFeedback = this.config.waveFeedback;
         // Zeroed once per settle rather than per iteration: with waveGain 0 nothing
         // ever writes to it, and reading a zero is exactly the old arithmetic.
         if (waveGain === 0)
@@ -3118,70 +3234,124 @@ export class HyperDimensionalEngine {
             // equally this iteration -- genuine constructive/destructive
             // interference, not a per-connection weight.
             if (waveGain !== 0) {
-                // Amplitudes: how much of a ripple each neuron is currently making.
-                // Read from the pre-update snapshot, the same states the connection
-                // terms below read, so a neuron's wave and its connections describe
-                // the same moment.
+                // ── The wave pool ────────────────────────────────────────────────
+                //
+                // Every neuron owns one wave. Its input sets that wave's height, the
+                // wave goes into a shared pool, and what a neuron RECEIVES is what the
+                // pool is doing at its own wave -- so a wave formed by others at a
+                // neuron's frequency gives that neuron an input nobody handed it.
+                //
+                // Held as one complex amplitude per frequency rather than as samples
+                // over time. Each neuron owns exactly one frequency, so the whole pool
+                // is neuronCount complex numbers, and everything arriving at the same
+                // frequency simply adds -- which is interference, exactly, with no
+                // trigonometry in the loop and no sampling error.
+                // Where each neuron's own wave currently points.
+                const binSpan = (MAX_WAVE_FREQ - MIN_WAVE_FREQ) || 1;
                 for (let i = 0; i < N; i++) {
+                    const phase = wavePhase[i];
+                    phaseCos[i] = Math.cos(phase);
+                    phaseSin[i] = Math.sin(phase);
                     const s = this.neurons[i].state;
                     let energy = 0;
                     for (let d = 1; d < D; d++)
                         energy += s[d] * s[d];
                     waveAmp[i] = Math.sqrt(energy);
+                    const slot = Math.round(((waveFreq[i] - MIN_WAVE_FREQ) / binSpan) * (WAVE_BINS - 1));
+                    waveBin[i] = slot < 0 ? 0 : (slot >= WAVE_BINS ? WAVE_BINS - 1 : slot);
                 }
-                // The pool: every neuron's wave, superposed, sampled across a window.
-                // Sampled rather than reduced to one number because the whole point is
-                // that the pool has SHAPE -- which waves are in it, at which
-                // frequencies and phases -- and a single scalar has none.
-                for (let t = 0; t < WAVE_SAMPLES; t++) {
-                    let sum = 0;
-                    for (let k = 0; k < N; k++)
-                        sum += waveAmp[k] * Math.sin(waveFreq[k] * t + wavePhase[k]);
-                    poolSamples[t] = sum;
-                }
-                // What each neuron reads back: the part of the pool that matches its
-                // OWN wave, correlated across the window.
-                //
-                // This is the difference between a shared pool and a shared number.
-                // Every neuron used to read the same scalar, so the pool could only
-                // ever push the whole network the same way at once. Now a wave formed
-                // by other neurons at a neuron's own frequency and phase drives that
-                // neuron -- it receives an input it was never given directly, which is
-                // the behaviour the pool exists for. A wave at a frequency it does not
-                // share barely touches it. A wave at its frequency but opposite phase
-                // SUBTRACTS. Magnification and cancellation both come out of the same
-                // correlation rather than being special cases.
-                //
-                // A neuron's own contribution is removed before it reads: a neuron
-                // hearing its own ripple back would be self-reinforcement, and in a
-                // recurrent network that is a feedback loop with nothing opposing it.
+                // What is in the pool right now is what neurons hear; what they emit
+                // this iteration builds the next one. A wave takes a moment to cross
+                // the network, and pretending otherwise would let a neuron hear its
+                // own emission in the instant it made it.
+                prevPoolRe.set(poolRe);
+                prevPoolIm.set(poolIm);
+                poolRe.fill(0);
+                poolIm.fill(0);
                 let poolEnergy = 0;
                 for (let i = 0; i < N; i++) {
-                    const freq = waveFreq[i];
-                    const phase = wavePhase[i];
-                    const ownAmp = waveAmp[i];
-                    let correlation = 0;
-                    let quadrature = 0;
-                    for (let t = 0; t < WAVE_SAMPLES; t++) {
-                        const angle = freq * t + phase;
-                        const own = Math.sin(angle);
-                        const heard = poolSamples[t] - ownAmp * own;
-                        correlation += heard * own;
-                        // The same correlation against a quarter-cycle-shifted copy. In
-                        // phase and out of phase together say not just HOW MUCH of the
-                        // pool matches this neuron but WHERE it sits relative to it --
-                        // which is what learning needs in order to move toward it.
-                        quadrature += heard * Math.cos(angle);
+                    const amp = waveAmp[i];
+                    // A neuron's own ripple, into the slot its frequency belongs to --
+                    // where every other wave at that frequency also lands.
+                    const ownBin = waveBin[i];
+                    poolRe[ownBin] += amp * phaseCos[i];
+                    poolIm[ownBin] += amp * phaseSin[i];
+                    // ── The neuron's own small pool ──────────────────────────────
+                    //
+                    // Every wave in the shared pool reaches this neuron through the
+                    // connection that carries it, and every connection edits what passes
+                    // along it -- how much gets through, how far it is turned, and what
+                    // the connection adds of its own. Those edited waves interfere
+                    // inside the neuron exactly as they would in the big pool. The
+                    // result is the neuron's own wave, which it pushes back out at the
+                    // force of its input.
+                    const editRow = i * N;
+                    let heardRe = 0;
+                    let heardIm = 0;
+                    innerPoolRe.fill(0);
+                    innerPoolIm.fill(0);
+                    for (let k = 0; k < N; k++) {
+                        const sourceBin = waveBin[k];
+                        // Its own contribution removed before it listens: hearing yourself
+                        // back, in a recurrent network, is a loop with nothing opposing it.
+                        const inRe = sourceBin === ownBin ? prevPoolRe[sourceBin] - amp * phaseCos[i] : prevPoolRe[sourceBin];
+                        const inIm = sourceBin === ownBin ? prevPoolIm[sourceBin] - amp * phaseSin[i] : prevPoolIm[sourceBin];
+                        const gain = connWaveGain[editRow + k];
+                        const turn = connWavePhase[editRow + k];
+                        const turnCos = Math.cos(turn);
+                        const turnSin = Math.sin(turn);
+                        // Rotate by the connection's phase shift and scale by its gain --
+                        // a complex multiply, which is what "edit this wave" means for a
+                        // wave held as an amplitude and an angle.
+                        const editedRe = gain * (inRe * turnCos - inIm * turnSin) + connWaveBias[editRow + k];
+                        const editedIm = gain * (inRe * turnSin + inIm * turnCos);
+                        innerPoolRe[sourceBin] += editedRe;
+                        innerPoolIm[sourceBin] += editedIm;
+                        // What this neuron receives is the part of its own small pool
+                        // sitting at its own frequency, in phase with its own wave.
+                        if (sourceBin === ownBin) {
+                            heardRe += editedRe;
+                            heardIm += editedIm;
+                        }
                     }
-                    wavePhaseError[i] = Math.atan2(quadrature, correlation);
-                    // 2/T is the standard normalisation for correlating against a unit
-                    // sinusoid: an exact match then returns the matching wave's own
-                    // amplitude rather than a number scaled by however long the window is.
-                    waveTermRow[i] = waveGain * (2 / WAVE_SAMPLES) * correlation;
+                    const inPhase = heardRe * phaseCos[i] + heardIm * phaseSin[i];
+                    const quadrature = heardIm * phaseCos[i] - heardRe * phaseSin[i];
+                    waveTermRow[i] = waveGain * inPhase;
+                    // Where the pool sits relative to this neuron, which is what the
+                    // wave learns from.
+                    wavePhaseError[i] = Math.atan2(quadrature, inPhase);
+                    // Pushed back out at the force of its input. A neuron with nothing
+                    // coming in re-emits nothing, however loud the pool is around it.
+                    //
+                    // Divided by the neuron count, and damped. Every neuron re-emitting
+                    // everything it hears is an echo chamber with a gain of N: measured
+                    // before this line existed, the pool went 4 -> 3,579 -> 2,682,806
+                    // over three ticks, and every neuron saturated identically, which
+                    // reads in a test as the pool having no effect at all. The mean
+                    // keeps the loop gain independent of how big the network is; the
+                    // damping keeps it below one.
+                    if (amp !== 0 && waveFeedback !== 0) {
+                        const reemit = (waveFeedback * amp) / N;
+                        for (let b = 0; b < WAVE_BINS; b++) {
+                            poolRe[b] += reemit * innerPoolRe[b];
+                            poolIm[b] += reemit * innerPoolIm[b];
+                        }
+                    }
                 }
-                for (let t = 0; t < WAVE_SAMPLES; t++)
-                    poolEnergy += poolSamples[t] * poolSamples[t];
-                this.lastWaveEnergy = Math.sqrt(poolEnergy / WAVE_SAMPLES);
+                // A ceiling as well as a gain below one. The damping makes runaway
+                // unlikely; the ceiling makes it impossible, including for a network
+                // whose learned wave gains have all drifted high at once.
+                for (let b = 0; b < WAVE_BINS; b++) {
+                    const magnitude = Math.sqrt(poolRe[b] * poolRe[b] + poolIm[b] * poolIm[b]);
+                    if (magnitude > WAVE_POOL_CEILING) {
+                        const shrink = WAVE_POOL_CEILING / magnitude;
+                        poolRe[b] *= shrink;
+                        poolIm[b] *= shrink;
+                    }
+                }
+                for (let b = 0; b < WAVE_BINS; b++)
+                    poolEnergy += poolRe[b] * poolRe[b] + poolIm[b] * poolIm[b];
+                this.lastWaveEnergy = Math.sqrt(poolEnergy / WAVE_BINS);
             }
             // Hyperdimensional term: what the WHOLE network is doing, per dimension,
             // read from the same pre-update snapshot as everything else this
@@ -3582,8 +3752,10 @@ export class HyperDimensionalEngine {
             this.learnConnectionBias(rates);
         if (this.config.hyperGain !== 0 || this.config.hyperAdd !== 0)
             this.learnNetworkVariables(rates);
-        if (this.config.waveGain !== 0)
+        if (this.config.waveGain !== 0) {
             this.learnWavePool(rates);
+            this.learnWaveConnections(rates);
+        }
         for (let i = 0; i < N; i++) {
             stateDeltas.set(i, (stateDeltas.get(i) ?? 0) + deltaSums[i]);
         }
@@ -3887,6 +4059,57 @@ export class HyperDimensionalEngine {
      * saying nothing to has no evidence to move on, and moving anyway would be
      * drift rather than learning.
      */
+    /**
+     * Let every connection's wave-editing equation learn.
+     *
+     * Wherever there is a weight there is one of these, and a weight that never
+     * moves is a constant. The rule is the same shape as the Hebbian one on the
+     * connection's numeric weight: a connection carrying a wave that arrived in
+     * phase -- that helped -- opens up, and one carrying a wave that arrived
+     * against the grain closes down and turns toward agreement.
+     *
+     * Gain is bounded to [0, 2]: negative gain is not a weaker connection, it is
+     * a half-turn, and the phase term already expresses that. Two ways of saying
+     * the same thing let learning oscillate between them forever.
+     */
+    learnWaveConnections(rates) {
+        const N = this.neurons.length;
+        const amplitude = this.waveAmpScratch;
+        const error = this.wavePhaseErrorScratch;
+        const gain = this.connWaveGain;
+        const turn = this.connWavePhase;
+        const bias = this.connWaveBias;
+        const TWO_PI = Math.PI * 2;
+        for (let i = 0; i < N; i++) {
+            const heard = amplitude[i];
+            if (heard === 0)
+                continue;
+            const rate = rates[i];
+            const mismatch = error[i];
+            // In phase when the mismatch is near zero, against the grain near +/-pi.
+            const agreement = Math.cos(mismatch);
+            const row = i * N;
+            for (let k = 0; k < N; k++) {
+                const carried = amplitude[k];
+                if (carried === 0)
+                    continue;
+                const step = rate * carried * Math.min(1, heard);
+                const nextGain = gain[row + k] + step * agreement * WAVE_EDIT_RATE;
+                gain[row + k] = nextGain < 0 ? 0 : (nextGain > 2 ? 2 : nextGain);
+                let nextTurn = turn[row + k] - step * mismatch * WAVE_EDIT_RATE;
+                nextTurn %= TWO_PI;
+                if (nextTurn < 0)
+                    nextTurn += TWO_PI;
+                turn[row + k] = nextTurn;
+                // The bias: what this connection contributes with nothing arriving.
+                // Bounded much harder than the gain -- it fires whether or not there
+                // is anything to carry, so a large one is a connection shouting into
+                // the pool on its own.
+                const nextBias = bias[row + k] + step * agreement * WAVE_BIAS_RATE;
+                bias[row + k] = nextBias < -0.5 ? -0.5 : (nextBias > 0.5 ? 0.5 : nextBias);
+            }
+        }
+    }
     learnWavePool(rates) {
         const N = this.neurons.length;
         const error = this.wavePhaseErrorScratch;
@@ -4127,6 +4350,8 @@ const ZIP_LOOP_PULSE = 1;
 const ZIP_LOOP_NO_DRIVEN = new Set();
 /** Below this, an output neuron counts as saying nothing rather than saying zero. */
 const SILENT_OUTPUT = 1e-6;
+/** The wave the Zip Loop's bit neurons share. Its value does not matter; that all four share it does. */
+const ZIP_BIT_FREQUENCY = 0.25;
 /** Shared options for every read tick: reading the network must not rewrite it. */
 const ZIP_LOOP_READ_ONLY = { learn: false };
 export class ZipLoopInterface {
@@ -4138,6 +4363,19 @@ export class ZipLoopInterface {
         this.idleScratch = null;
         this.drivenBit0 = new Set([ids.bit0In]);
         this.drivenBit1 = new Set([ids.bit1In]);
+        // Perfect enemies. The two input neurons carry the same wave half a cycle
+        // apart, so a one and a zero arriving together annihilate exactly rather
+        // than leaving a residue that means neither. Everything downstream of the
+        // doorway then gets interference that says something: what survives is
+        // what the bits actually disagreed about.
+        //
+        // Set rather than learned, because two neurons that must be exact
+        // opposites cannot be left to find each other -- and if they drifted
+        // apart, a one and a zero would stop cancelling and nothing would say so.
+        this.engine.setWaveSignature(ids.bit0In, ZIP_BIT_FREQUENCY, 0);
+        this.engine.setWaveSignature(ids.bit1In, ZIP_BIT_FREQUENCY, Math.PI);
+        this.engine.setWaveSignature(ids.bit0Out, ZIP_BIT_FREQUENCY, 0);
+        this.engine.setWaveSignature(ids.bit1Out, ZIP_BIT_FREQUENCY, Math.PI);
     }
     /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
     sendBytes(bytes) {

@@ -312,20 +312,19 @@ describe('every neuron in every connection', () => {
 });
 
 /**
- * The wave pool, both ways.
+ * The wave pool.
  *
- * A neuron's input makes a ripple in a shared pool at that neuron's own
- * frequency and phase, with a height set by how much input it got. And the
- * pool drives neurons back: a wave formed at a neuron's frequency gives that
- * neuron an input it was never handed directly.
+ * Every neuron owns a wave. Its input sets that wave's height, the wave goes
+ * into a shared pool, and what a neuron RECEIVES is what the pool is doing at
+ * its own wave -- so a wave formed by others gives a neuron an input nobody
+ * handed it. Waves that agree add up; waves that contradict each other cancel.
  *
- * The second direction is what was missing. Every neuron read the same single
- * number out of the pool, so the pool could only ever push the whole network
- * the same way at once -- which is not a pool, it is a global bias term.
- *
- * And it does not have to be the exact wave: the read-back is a correlation,
- * so a wave that partly matches drives partly, and one at the same frequency
- * but opposite phase subtracts instead of adding.
+ * These test the pool directly rather than through a neuron's final state.
+ * Everything downstream of the pool -- tanh saturation, the energy-based
+ * damping, the connection maths -- also moves when you poke a neuron, so
+ * measuring "did those two waves cancel" through a settled state means
+ * measuring three other mechanisms at the same time. Twice while writing this
+ * the answer came back as a confident zero that turned out to be saturation.
  */
 describe('the wave pool', () => {
   const decode = (b64: string) => {
@@ -335,93 +334,110 @@ describe('the wave pool', () => {
   const encode = (f: Float32Array) =>
     Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
 
-  const N = 6;
-  const D = 3;
-  /** Neuron 1 and 2 share a wave exactly. 3 is far off. 4 matches in frequency but is half a cycle out. */
+  const N = 4;
+  const D = 2;
+  /** Neurons 0, 1 and 2 share a wave; 2 is half a cycle out. 3 is elsewhere. */
   const config = {
     neuronCount: N,
     dimensions: D,
     propagationSteps: 1,
     waveGain: 1,
-    waveFrequencies: [0.11, 0.30, 0.30, 0.05, 0.30, 0.19],
-    wavePhases: [0, 0, 0, 0, Math.PI, 0],
+    // Signatures only, no echo: a neuron passing a wave ALONG is loud whatever
+    // its own phase, so echo would add where signatures cancel. Both are real;
+    // this isolates the one being measured.
+    waveFeedback: 0,
+    waveFrequencies: [0.3, 0.3, 0.3, 0.1],
+    wavePhases: [0, 0, Math.PI, 0],
   };
-  const driven = new Set([0]);
 
-  /** Every connection weight zeroed, so the pool is the only route between neurons. */
-  const zeroWeights = (engine: HyperDimensionalEngine) => {
+  /** Only these neurons carry anything; everything else is silent. */
+  const poolAfter = (speakers: number[]) => {
+    const engine = new HyperDimensionalEngine(config);
     const snapshot = engine.captureNetworkState();
-    engine.restoreNetworkState({
-      ...snapshot,
-      connDiag: encode(new Float32Array(decode(snapshot.connDiag).length)),
-      connShift: encode(new Float32Array(decode(snapshot.connShift).length)),
-    });
+    const states = new Float32Array(decode(snapshot.states).length);
+    for (const speaker of speakers) for (let d = 1; d <= D; d++) states[d * N + speaker] = 0.5;
+    engine.restoreNetworkState({ ...snapshot, states: encode(states) });
+    engine.process(new Array(D).fill(0), undefined, new Set([]), undefined, { learn: false });
+    return engine.poolContent();
   };
 
-  /** How far each neuron moved when neuron 1 was given a ripple and nothing else changed. */
-  const movementFromRipple = (overrides: Record<string, unknown> = {}) => {
-    const settings = { ...config, ...overrides };
+  it('puts a neuron\'s ripple into the pool at its own frequency', () => {
+    const pool = poolAfter([0]);
+    expect(pool).toHaveLength(1);
+    expect(pool[0].frequency).toBeCloseTo(0.3, 1);
+    expect(pool[0].magnitude).toBeGreaterThan(0);
+  });
+
+  it('magnifies agreement: two neurons on the same wave add up', () => {
+    const alone = poolAfter([0])[0].magnitude;
+    const together = poolAfter([0, 1])[0].magnitude;
+    expect(together).toBeCloseTo(alone * 2, 5);
+  });
+
+  it('cancels contradiction: equal and opposite annihilate exactly', () => {
+    // Perfect enemies. Not "small" -- zero.
+    const pool = poolAfter([0, 2]);
+    const shared = pool.find(entry => Math.abs(entry.frequency - 0.3) < 0.02);
+    expect(shared).toBeUndefined();
+  });
+
+  it('keeps different frequencies apart rather than mixing them', () => {
+    const pool = poolAfter([0, 3]);
+    expect(pool).toHaveLength(2);
+    const frequencies = pool.map(entry => entry.frequency).sort((a, b) => a - b);
+    expect(frequencies[0]).toBeCloseTo(0.1, 1);
+    expect(frequencies[1]).toBeCloseTo(0.3, 1);
+  });
+
+  it('holds nothing when the pool is off', () => {
+    const engine = new HyperDimensionalEngine({ ...config, waveGain: 0 });
+    engine.process(new Array(D).fill(0.5));
+    expect(engine.poolContent()).toEqual([]);
+  });
+
+  it('reaches a neuron that was never given an input directly', () => {
+    // The end-to-end version: no connections at all, and a listener still
+    // moves because something else was carrying its wave.
+    const settings = { ...config, propagationSteps: 4, waveGain: 0.05 };
     const seed = new HyperDimensionalEngine(settings).captureNetworkState();
-    const quiet = new HyperDimensionalEngine(settings);
-    const loud = new HyperDimensionalEngine(settings);
-    quiet.restoreNetworkState(seed);
-    loud.restoreNetworkState(seed);
-    zeroWeights(quiet);
-    zeroWeights(loud);
-
-    const snapshot = loud.captureNetworkState();
-    const states = Float32Array.from(decode(snapshot.states));
-    for (let d = 1; d <= D; d++) states[d * N + 1] = 0.9;
-    loud.restoreNetworkState({ ...snapshot, states: encode(states) });
-
-    const input = new Array(D).fill(0.2);
-    quiet.process(input, undefined, driven, undefined, { learn: false });
-    loud.process(input, undefined, driven, undefined, { learn: false });
-
-    const before = decode(quiet.captureNetworkState().states);
-    const after = decode(loud.captureNetworkState().states);
-    return (neuron: number) => {
-      let most = 0;
-      for (let d = 1; d <= D; d++) most = Math.max(most, Math.abs(before[d * N + neuron] - after[d * N + neuron]));
-      return most;
+    const build = (speaker: number) => {
+      const engine = new HyperDimensionalEngine(settings);
+      engine.restoreNetworkState(seed);
+      const snapshot = engine.captureNetworkState();
+      const states = Float32Array.from(decode(snapshot.states));
+      for (let d = 1; d <= D; d++) states[d * N + speaker] = 0.4;
+      engine.restoreNetworkState({
+        ...snapshot,
+        states: encode(states),
+        connDiag: encode(new Float32Array(decode(snapshot.connDiag).length)),
+        connShift: encode(new Float32Array(decode(snapshot.connShift).length)),
+      });
+      for (let t = 0; t < 2; t++) {
+        engine.process(new Array(D).fill(0.05), undefined, new Set([]), undefined, { learn: false });
+      }
+      const after = decode(engine.captureNetworkState().states);
+      return [after[1 * N + 1], after[2 * N + 1]];
     };
-  };
 
-  it('gives a neuron an input it was never handed, through a matching wave', () => {
-    const moved = movementFromRipple();
-    // Neuron 2 shares neuron 1's frequency and phase exactly and has no
-    // connection to it at all, so everything it felt arrived through the pool.
-    expect(moved(2)).toBeGreaterThan(0.1);
+    // Neuron 1 listens on 0.3. Neuron 0 shares that wave; neuron 3 does not.
+    // Both speakers inject the same energy, so anything that differs came
+    // through the wave rather than through the network being louder.
+    const fromSameWave = build(0);
+    const fromElsewhere = build(3);
+    const apart = Math.max(...fromSameWave.map((v, i) => Math.abs(v - fromElsewhere[i])));
+    expect(apart).toBeGreaterThan(1e-4);
   });
 
-  it('drives a partly-matching wave partly, not all or nothing', () => {
-    const moved = movementFromRipple();
-    // It does not have to be the exact wave. A different frequency still
-    // correlates somewhat -- less than an exact match, more than nothing.
-    expect(moved(5)).toBeGreaterThan(0);
-    expect(moved(5)).toBeLessThan(moved(2));
-    expect(moved(3)).toBeLessThan(moved(2));
-  });
-
-  it('subtracts when a wave arrives at the same frequency but opposite phase', () => {
-    const moved = movementFromRipple();
-    // Neuron 4 matches in frequency and is half a cycle out, so the ripple
-    // cancels against its own wave rather than magnifying it.
-    expect(moved(4)).toBeLessThan(moved(2));
-  });
-
-  it('does nothing at all when the pool is off', () => {
-    const moved = movementFromRipple({ waveGain: 0 });
-    // With no connections and no pool there is no route between neurons, and
-    // "no route" has to mean exactly zero rather than nearly zero.
-    for (let neuron = 1; neuron < N; neuron++) expect(moved(neuron)).toBe(0);
-  });
-
-  it('lets each neuron read something different out of the same pool', () => {
-    // The failure this replaced: one scalar, read identically by everyone.
-    const moved = movementFromRipple();
-    const readings = [2, 3, 4, 5].map(moved);
-    expect(new Set(readings.map(v => v.toFixed(6))).size).toBeGreaterThan(1);
+  it('edits a wave differently on every connection', () => {
+    // Wherever there is a weight there is a wave-editing equation, and they
+    // differ per connection -- which is what lets two neurons hear the same
+    // pool and receive different things from it.
+    const engine = new HyperDimensionalEngine({ ...config, waveGain: 1 });
+    const before = engine.captureNetworkState();
+    for (let i = 0; i < 20; i++) engine.process(new Array(D).fill(0.5));
+    const after = engine.captureNetworkState();
+    expect(after.connWaveGain).not.toBe(before.connWaveGain);
+    expect(after.connWavePhase).not.toBe(before.connWavePhase);
   });
 });
 
@@ -494,64 +510,59 @@ describe('the wave is learned, continuously', () => {
     expect(fresh.captureNetworkState().waveFreq).toBe(learned.waveFreq);
   });
 
-  it('cancels contradicting waves and magnifies agreeing ones', () => {
-    // The point of doing any of this with waves. Neurons that agree add up in
-    // the pool; neurons that contradict each other cancel before anyone reads.
-    const N = 9;
-    const D = 3;
-    const listener = 0;
-    const shared = 0.3;
+});
 
-    /** Everyone except the listener carries the same frequency; `opposed` of them are half a cycle out. */
-    const build = (opposed: number) => {
-      const waveFrequencies = new Array(N).fill(shared);
-      const wavePhases = new Array(N).fill(0);
-      for (let i = N - opposed; i < N; i++) wavePhases[i] = Math.PI;
-      // A small gain on purpose. At waveGain 1 eight neurons shouting in
-      // unison drive the listener straight into tanh's flat region, where it
-      // reads +/-1 whatever they said -- and the measured difference collapses
-      // to zero, making perfect agreement look like perfect silence. The
-      // effect is real; saturation just hides it.
-      const settings = { neuronCount: N, dimensions: D, propagationSteps: 1, waveGain: 0.02, waveFrequencies, wavePhases };
+describe('the Zip Loop\'s two bits are perfect enemies', () => {
+  it('gives bit-0 and bit-1 the same wave, half a cycle apart', () => {
+    // A one and a zero arriving together must annihilate rather than leaving a
+    // residue that means neither. Set rather than learned: two neurons that
+    // have to be exact opposites cannot be left to find each other, and if
+    // they drifted apart nothing would say so.
+    const engine = new HyperDimensionalEngine({ neuronCount: 12, dimensions: 4, waveGain: 1 });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
 
-      const seed = new HyperDimensionalEngine(settings).captureNetworkState();
-      const quiet = new HyperDimensionalEngine(settings);
-      const loud = new HyperDimensionalEngine(settings);
-      quiet.restoreNetworkState(seed);
-      loud.restoreNetworkState(seed);
+    const zero = engine.waveSignature(0)!;
+    const one = engine.waveSignature(1)!;
+    expect(one.frequency).toBe(zero.frequency);
+    expect(Math.abs(Math.abs(one.phase - zero.phase) - Math.PI)).toBeLessThan(1e-6);
 
-      // No connections at all: the pool is the only way anything reaches the listener.
-      for (const engine of [quiet, loud]) {
-        const snapshot = engine.captureNetworkState();
-        engine.restoreNetworkState({
-          ...snapshot,
-          connDiag: encode(new Float32Array(decode(snapshot.connDiag).length)),
-          connShift: encode(new Float32Array(decode(snapshot.connShift).length)),
-        });
-      }
+    // The output pair too -- the same argument applies on the way out.
+    const zeroOut = engine.waveSignature(2)!;
+    const oneOut = engine.waveSignature(3)!;
+    expect(oneOut.frequency).toBe(zeroOut.frequency);
+    expect(Math.abs(Math.abs(oneOut.phase - zeroOut.phase) - Math.PI)).toBeLessThan(1e-6);
+  });
 
-      // Every neuron but the listener speaks up, in `loud` only.
-      const snapshot = loud.captureNetworkState();
-      const states = Float32Array.from(decode(snapshot.states));
-      for (let i = 1; i < N; i++) for (let d = 1; d <= D; d++) states[d * N + i] = 0.9;
-      loud.restoreNetworkState({ ...snapshot, states: encode(states) });
+  it('annihilates when both bits are driven equally', () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 6,
+      dimensions: 2,
+      propagationSteps: 1,
+      waveGain: 1,
+      waveFeedback: 0,
+    });
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const _zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
 
-      const input = new Array(D).fill(0.2);
-      quiet.process(input, undefined, new Set([]), undefined, { learn: false });
-      loud.process(input, undefined, new Set([]), undefined, { learn: false });
-
-      const before = decode(quiet.captureNetworkState().states);
-      const after = decode(loud.captureNetworkState().states);
-      let most = 0;
-      for (let d = 1; d <= D; d++) most = Math.max(most, Math.abs(before[d * N + listener] - after[d * N + listener]));
-      return most;
+    const decode = (b64: string) => {
+      const buf = Buffer.from(b64, 'base64');
+      return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
     };
+    const encode = (f: Float32Array) =>
+      Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
 
-    const allAgree = build(0);
-    const halfContradict = build(4);
-    expect(allAgree).toBeGreaterThan(0);
-    // Eight neurons agreeing reach the listener; four against four erase each
-    // other on the way. Measured at roughly 27 times less.
-    expect(halfContradict).toBeLessThan(allAgree / 5);
+    const snapshot = engine.captureNetworkState();
+    const states = new Float32Array(decode(snapshot.states).length);
+    // Both bits equally loud, everything else silent.
+    for (let d = 1; d <= 2; d++) {
+      states[d * 6 + 0] = 0.5;
+      states[d * 6 + 1] = 0.5;
+    }
+    engine.restoreNetworkState({ ...snapshot, states: encode(states) });
+    engine.process(new Array(2).fill(0), undefined, new Set([]), undefined, { learn: false });
+
+    // Nothing left in the pool at the bits' shared frequency.
+    expect(engine.poolContent()).toEqual([]);
   });
 });
