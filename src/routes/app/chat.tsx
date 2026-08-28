@@ -276,6 +276,35 @@ function ChatPage() {
     inputRef.current?.focus()
   }
 
+  /**
+   * What was typed while it was still working.
+   *
+   * The input used to be disabled during a reply, which meant a thought you
+   * had mid-answer was one you had to hold until it finished. Now it is
+   * always typeable -- but a second request must not go out on top of the
+   * first, or two answers race and land in whichever order the network
+   * decides. So it queues, in the order it was typed, and goes as soon as the
+   * current one is done.
+   *
+   * The ref is what the send loop reads (a plain function closing over state
+   * would see whatever was true when it started); the state is what the
+   * screen shows.
+   */
+  const queuedRef = useRef<string[]>([])
+  const [queued, setQueued] = useState<string[]>([])
+
+  const enqueue = useCallback((text: string) => {
+    queuedRef.current = [...queuedRef.current, text]
+    setQueued(queuedRef.current)
+  }, [])
+
+  const takeNext = useCallback((): string | undefined => {
+    const [next, ...rest] = queuedRef.current
+    queuedRef.current = rest
+    setQueued(rest)
+    return next
+  }, [])
+
   const sendMessage = async (messageText: string) => {
     const userMsg: Message = {
       id: `msg_${Date.now()}_user`,
@@ -313,8 +342,26 @@ function ChatPage() {
       }
       setMessages((prev) => [...prev, agentMsg])
       await saveToHistory('assistant', response.message, savedId)
+    } catch (err) {
+      // Said in the transcript rather than thrown into the console. A reply
+      // that failed while three more were queued behind it used to escape as
+      // an unhandled rejection: nothing on screen changed, and the only clue
+      // was in devtools.
+      setMessages((prev) => [
+        ...prev,
+        {
+          id: `msg_${Date.now()}_error`,
+          role: 'assistant',
+          content: `That did not get through: ${err instanceof Error ? err.message : String(err)}`,
+          timestamp: Date.now(),
+        },
+      ])
     } finally {
       setLoading(false)
+      // Whatever was typed while this one was running goes now, in the order
+      // it was typed.
+      const next = takeNext()
+      if (next !== undefined) void sendMessage(next)
     }
   }
 
@@ -407,6 +454,14 @@ function ChatPage() {
   const handleSendMessage = async (text?: string) => {
     const messageText = (text ?? input).trim()
     if (!messageText) return
+
+    // Still working: take it now, send it next. Typing is never blocked, and
+    // two requests never go out at once.
+    if (loading) {
+      enqueue(messageText)
+      setInput('')
+      return
+    }
 
     // Only check for a match at the start of a genuinely new conversation
     // (no thread adopted yet, nothing sent this session) -- once a thread is
@@ -557,6 +612,16 @@ function ChatPage() {
             attaching and sending are separate steps here, and something
             staged but invisible would be a surprise either way -- forgotten,
             or sent when it was not meant to be. */}
+        {queued.length > 0 && (
+          <ul className="space-y-1 text-xs text-muted-foreground" aria-label="Waiting to send">
+            {queued.map((text, index) => (
+              <li key={`${index}-${text}`} className="flex items-center gap-1.5">
+                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5">next</span>
+                <span className="truncate">{text}</span>
+              </li>
+            ))}
+          </ul>
+        )}
         {pasteError && (
           <p className="text-xs text-destructive" role="alert">{pasteError}</p>
         )}
@@ -595,8 +660,7 @@ function ChatPage() {
               }
             }}
             onPaste={handlePaste}
-            placeholder="Ask anything… (Shift+Enter for new line)"
-            disabled={loading}
+            placeholder={loading ? 'Type while it is working…' : 'Ask anything… (Shift+Enter for new line)'}
             autoFocus
             className="flex-1"
           />
@@ -604,15 +668,15 @@ function ChatPage() {
               The doorway takes bytes, so neither has to become words first --
               a transcript would arrive with everything about the audio except
               the words already thrown away. */}
-          <AttachFile disabled={loading} onStaged={addStaged} />
-          <VoiceRecorder disabled={loading} onRecorded={addStaged} />
+          <AttachFile onStaged={addStaged} />
+          <VoiceRecorder onRecorded={addStaged} />
           <Button
             onClick={() => handleSendMessage()}
-            disabled={loading || !input.trim()}
+            disabled={!input.trim()}
             size="sm"
             className="gap-2 active:scale-95 transition-all duration-150"
-            aria-label={loading ? "Sending message" : "Send message"}
-            title={loading ? "Sending..." : "Send message (or press Enter)"}
+            aria-label={loading ? 'Queue message' : 'Send message'}
+            title={loading ? 'It is still working — this goes next' : 'Send message (or press Enter)'}
           >
             {loading ? (
               <Loader2 size={16} className="animate-spin" />

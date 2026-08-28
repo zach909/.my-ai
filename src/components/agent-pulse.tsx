@@ -6,9 +6,9 @@ import { useEffect, useRef, useState } from 'react'
  * It used to be a lightning bolt on a CSS pulse, which says "loading" and
  * nothing else -- the same bolt whether the agent is thinking hard or idling
  * on a slow network. The ring is the product's own shape, and unlike a bolt it
- * has something to say: the waves get spikier and more numerous while there is
- * work happening, and settle back down as it eases off. Someone glancing at it
- * can tell the difference between busy and nearly done without reading a word.
+ * has something to say: its six points stretch out and sharpen while there is
+ * work happening, and relax back toward a circle as it eases off. Someone
+ * glancing at it can tell busy from nearly-done without reading a word.
  *
  * Two things drive it. `activity` (0..1) is the caller's own measure when it
  * has one -- tokens arriving, ticks propagating, agents running. When it does
@@ -22,16 +22,42 @@ import { useEffect, useRef, useState } from 'react'
 /** Ring geometry in the SVG's own units. */
 const VIEW = 48
 const CENTRE = VIEW / 2
-const BASE_RADIUS = 17
+const BASE_RADIUS = 14
 /** Points around the ring. Enough that the lobes read as curves, few enough to rebuild every frame cheaply. */
-const SEGMENTS = 96
+const SEGMENTS = 120
 
-/** Lobe count at rest and at full tilt -- "more waves and less waves". */
-const LOBES_CALM = 6
-const LOBES_BUSY = 14
-/** Lobe depth at rest and at full tilt -- "more spiky and less spiky". */
-const AMPLITUDE_CALM = 1.1
-const AMPLITUDE_BUSY = 4.2
+/**
+ * Six points. Always six.
+ *
+ * The first version animated the NUMBER of lobes as well as their depth, which
+ * made the ring look like a different shape from moment to moment rather than
+ * one shape doing something. Six is the icon's count, and it stays six: what
+ * changes is how far the points are stretched out.
+ */
+const POINTS = 6
+
+/**
+ * Lobe depth: near-nothing (a circle) to far out (a six-pointed star).
+ *
+ * The busy end is bounded by the viewBox, not by taste. The stroke is
+ * non-scaling, so at a 20px render a 2.2px line is about 5 viewBox units
+ * wide -- the tips need to stay that far inside the edge or they get clipped
+ * exactly when the shape is at its most expressive.
+ */
+const AMPLITUDE_CALM = 0.4
+const AMPLITUDE_BUSY = 7
+
+/**
+ * How sharp the points are.
+ *
+ * A plain sine gives soft, wide lobes however tall they get -- more of a
+ * flower than a star. Raising it to an odd power narrows the peaks and
+ * flattens everything between them, so the shape reads as points being pulled
+ * out of a ring rather than as bumps growing on one. 1 is the untouched sine;
+ * the busy end is where the points get their edge.
+ */
+const SHARPNESS_CALM = 1
+const SHARPNESS_BUSY = 3.4
 
 export interface AgentPulseProps {
   /**
@@ -47,23 +73,19 @@ export interface AgentPulseProps {
 }
 
 /**
- * r(θ) = R + A·sin(kθ + φ), sampled into a closed path.
+ * r(θ) = R + A · shape(sin(6θ + φ)), sampled into a closed path.
  *
- * k has to stay a whole number or the ring does not join up with itself: a
- * fractional lobe count leaves a visible step where θ wraps past 2π. The
- * animation therefore blends between whole lobe counts rather than sweeping k
- * continuously.
+ * `shape` is the odd power that turns a soft sine into something with points
+ * on it. Odd on purpose: an even power would fold the troughs up into peaks
+ * and give twelve bumps instead of six.
  */
-function ringPath(lobes: number, amplitude: number, phase: number): string {
-  const whole = Math.floor(lobes)
-  const blend = lobes - whole
+function ringPath(amplitude: number, sharpness: number, phase: number): string {
   let path = ''
   for (let i = 0; i <= SEGMENTS; i++) {
     const theta = (i / SEGMENTS) * Math.PI * 2
-    const wave =
-      Math.sin(whole * theta + phase) * (1 - blend) +
-      Math.sin((whole + 1) * theta + phase) * blend
-    const r = BASE_RADIUS + amplitude * wave
+    const wave = Math.sin(POINTS * theta + phase)
+    const shaped = Math.sign(wave) * Math.pow(Math.abs(wave), sharpness)
+    const r = BASE_RADIUS + amplitude * shaped
     const x = CENTRE + r * Math.cos(theta)
     const y = CENTRE + r * Math.sin(theta)
     path += `${i === 0 ? 'M' : 'L'}${x.toFixed(2)} ${y.toFixed(2)}`
@@ -78,7 +100,7 @@ function prefersReducedMotion(): boolean {
 
 export function AgentPulse({ activity, size = 20, className, label }: AgentPulseProps) {
   const still = prefersReducedMotion()
-  const [path, setPath] = useState(() => ringPath(LOBES_CALM, AMPLITUDE_CALM, 0))
+  const [path, setPath] = useState(() => ringPath(AMPLITUDE_CALM, SHARPNESS_CALM, 0))
 
   // The latest activity without restarting the animation loop: a prop that
   // changes on every streamed token would otherwise tear the loop down and
@@ -99,11 +121,13 @@ export function AgentPulse({ activity, size = 20, className, label }: AgentPulse
       // and busy so the ring is visibly alive rather than a static outline.
       const drive = activityRef.current ?? (Math.sin(t * 0.9) * 0.5 + 0.5)
       const eased = Math.max(0, Math.min(1, drive))
-      const lobes = LOBES_CALM + (LOBES_BUSY - LOBES_CALM) * eased
+      // One shape, stretched: the points go from barely there to pulled well
+      // out, and sharpen as they go. The count never changes.
       const amplitude = AMPLITUDE_CALM + (AMPLITUDE_BUSY - AMPLITUDE_CALM) * eased
+      const sharpness = SHARPNESS_CALM + (SHARPNESS_BUSY - SHARPNESS_CALM) * eased
       // Rotation speeds up with the work, so a busy ring reads as busy even in
       // a still screenshot's worth of attention.
-      setPath(ringPath(lobes, amplitude, t * (0.8 + eased * 2.6)))
+      setPath(ringPath(amplitude, sharpness, t * (0.8 + eased * 2.6)))
       frame = requestAnimationFrame(draw)
     }
 
