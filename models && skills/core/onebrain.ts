@@ -2643,6 +2643,12 @@ export interface NetworkStateSnapshot {
   connWaveGain: string;
   connWavePhase: string;
   connWaveBias: string;
+  /**
+   * The turned half of that same bias. Optional only so a snapshot written
+   * before the connection's bias became a genuine wave still loads -- it had
+   * no turned half, which is the same as zero.
+   */
+  connWaveBiasIm?: string;
   connWaveShift: string;
   /** The wave copies of the neuron's own bias and of its two network variables. */
   neuronWaveBiasRe: string;
@@ -2826,13 +2832,23 @@ export interface HyperConfig {
    * side rather than one.
    *
    * These give the wave the same shape. Every neuron contributes its wave
-   * through a personalised wave-variable of its own; those combine into one
-   * wave that MULTIPLIES what a connection produced -- rotating and scaling
-   * it, which is what one wave does to another -- and a second round combines
-   * into a wave that is ADDED.
+   * through a personalised wave-variable of its own, and all of them add
+   * together: once, with one set of variables, into the network's WAVE WEIGHT
+   * (hyperWaveGain), and again, with a different set, into the network's WAVE
+   * BIAS (hyperWaveAdd).
    *
-   * 0 means off, and off means exactly untouched: a modulation of 1 and an
-   * offset of 0 leave the wave as it was.
+   * A connection then adds those to its own. Its wave weight is its own plus
+   * the network's, its wave bias is its own plus the network's, and the wave
+   * it carries is that combined pair run against the wave arriving along it:
+   * weight times wave, plus bias. So what a connection produces is part what
+   * that connection is worth and part what the entire network is doing, in
+   * one wave rather than two answers laid on top of each other.
+   *
+   * Added rather than multiplied, deliberately. A network term that multiplied
+   * could silence every connection at once by happening to sit near zero, and
+   * a connection's own weight would only ever be a suggestion.
+   *
+   * 0 means off, and off means exactly untouched: nothing is added.
    */
   hyperWaveGain: number;
   hyperWaveAdd: number;
@@ -3071,6 +3087,7 @@ export class HyperDimensionalEngine {
   private connWaveGain: Float32Array;
   private connWavePhase: Float32Array;
   private connWaveBias: Float32Array;
+  private connWaveBiasIm: Float32Array;
   /** Cos/sin of each neuron's phase, rebuilt once per iteration instead of per connection. */
   private phaseCos: Float32Array;
   private phaseSin: Float32Array;
@@ -3246,6 +3263,7 @@ export class HyperDimensionalEngine {
     this.connWaveGain = new Float32Array(N * N).fill(1);
     this.connWavePhase = new Float32Array(N * N);
     this.connWaveBias = new Float32Array(N * N);
+    this.connWaveBiasIm = new Float32Array(N * N);
   }
 
   /**
@@ -3455,6 +3473,7 @@ export class HyperDimensionalEngine {
       connWaveGain: encodeFloats(this.connWaveGain),
       connWavePhase: encodeFloats(this.connWavePhase),
       connWaveBias: encodeFloats(this.connWaveBias),
+      connWaveBiasIm: encodeFloats(this.connWaveBiasIm),
       connWaveShift: encodeFloats(this.connWaveShift),
       neuronWaveBiasRe: encodeFloats(this.neuronWaveBiasRe),
       neuronWaveBiasIm: encodeFloats(this.neuronWaveBiasIm),
@@ -3492,6 +3511,11 @@ export class HyperDimensionalEngine {
     const waveGain = decodeFloats(snapshot.connWaveGain, this.connWaveGain.length);
     const waveTurn = decodeFloats(snapshot.connWavePhase, this.connWavePhase.length);
     const waveBias = decodeFloats(snapshot.connWaveBias, this.connWaveBias.length);
+    // Absent in snapshots written before the connection's bias had a turned
+    // half; zeros are exactly what those networks were running.
+    const waveBiasTurned = snapshot.connWaveBiasIm === undefined
+      ? new Float32Array(this.connWaveBiasIm.length)
+      : decodeFloats(snapshot.connWaveBiasIm, this.connWaveBiasIm.length);
     const waveShift = decodeFloats(snapshot.connWaveShift, this.connWaveShift.length);
     const waveBiasRe = decodeFloats(snapshot.neuronWaveBiasRe, this.neuronWaveBiasRe.length);
     const waveBiasIm = decodeFloats(snapshot.neuronWaveBiasIm, this.neuronWaveBiasIm.length);
@@ -3499,7 +3523,7 @@ export class HyperDimensionalEngine {
     const addWave = decodeFloats(snapshot.addWaveWeight, this.addWaveWeight.length);
     if (
       !states || !energies || !bias || !diag || !shift || !mod || !add || !freq || !phase ||
-      !waveGain || !waveTurn || !waveBias || !waveShift ||
+      !waveGain || !waveTurn || !waveBias || !waveBiasTurned || !waveShift ||
       !waveBiasRe || !waveBiasIm || !modWave || !addWave
     ) return false;
 
@@ -3526,6 +3550,7 @@ export class HyperDimensionalEngine {
     this.connWaveGain.set(waveGain);
     this.connWavePhase.set(waveTurn);
     this.connWaveBias.set(waveBias);
+    this.connWaveBiasIm.set(waveBiasTurned);
     this.connWaveShift.set(waveShift);
     this.neuronWaveBiasRe.set(waveBiasRe);
     this.neuronWaveBiasIm.set(waveBiasIm);
@@ -4154,6 +4179,7 @@ export class HyperDimensionalEngine {
     const connWaveGain = this.connWaveGain;
     const connWavePhase = this.connWavePhase;
     const connWaveBias = this.connWaveBias;
+    const connWaveBiasIm = this.connWaveBiasIm;
     const phaseCos = this.phaseCos;
     const phaseSin = this.phaseSin;
     const waveBin = this.waveBin;
@@ -4217,26 +4243,35 @@ export class HyperDimensionalEngine {
         poolRe.fill(0);
         poolIm.fill(0);
 
-        // ── The network's say in every wave ──────────────────────────
+        // ── The network's wave weight and wave bias ──────────────────
         //
-        // The same shape the numbers have: every neuron contributes through a
-        // personalised variable of its own, combined into one thing that
-        // multiplies what a connection produced, and a second round combined
-        // into one that is added. Complex, so multiplying genuinely rotates
-        // and scales -- what one wave does to another -- rather than merely
-        // changing a height.
+        // A connection does not only have a wave weight and a wave bias of its
+        // own. It has a SECOND weight and a SECOND bias that stand for the
+        // whole network: every neuron's wave through a personalised variable,
+        // all of them added together -- once with one set of variables to make
+        // the weight, again with a different set to make the bias.
         //
-        // One pair for the whole network, not one per neuron: the variables
-        // belong to the neurons contributing, so the combination is the same
-        // for everyone reading it. O(neurons) per iteration.
+        // Then the two weights are added together and the two biases are added
+        // together, and the wave the connection carries is made out of THAT
+        // pair. Added, not multiplied: a connection keeps what it is worth and
+        // the network moves it, rather than the network being able to erase
+        // every connection at once by being near zero.
         //
-        // Means rather than sums, and 1/0 when off, for the same reasons as
-        // the numeric side: a sum grows with neuron count until it saturates
-        // everything, and off has to mean untouched.
-        let modWaveRe = 1;
-        let modWaveIm = 0;
-        let addWaveRe = 0;
-        let addWaveIm = 0;
+        // Complex on both sides, because a weight that cannot turn a wave is
+        // not a weight on a wave -- it is a volume knob.
+        //
+        // One pair for the whole network, not one per connection: the
+        // variables belong to the neurons contributing, so what the network
+        // says is the same for everyone reading it. O(neurons) per iteration
+        // rather than O(neurons squared).
+        //
+        // Means rather than sums, for the same reason as the numeric side: a
+        // sum grows with neuron count until it drowns out what any single
+        // connection is worth.
+        let netWaveWeightRe = 0;
+        let netWaveWeightIm = 0;
+        let netWaveBiasRe = 0;
+        let netWaveBiasIm = 0;
         if (hyperWaveGain !== 0 || hyperWaveAdd !== 0) {
           let mr = 0, mi = 0, ar = 0, ai = 0;
           for (let k = 0; k < N; k++) {
@@ -4250,12 +4285,12 @@ export class HyperDimensionalEngine {
           }
           const invN = 1 / N;
           if (hyperWaveGain !== 0) {
-            modWaveRe = hyperWaveGain * mr * invN;
-            modWaveIm = hyperWaveGain * mi * invN;
+            netWaveWeightRe = hyperWaveGain * mr * invN;
+            netWaveWeightIm = hyperWaveGain * mi * invN;
           }
           if (hyperWaveAdd !== 0) {
-            addWaveRe = hyperWaveAdd * ar * invN;
-            addWaveIm = hyperWaveAdd * ai * invN;
+            netWaveBiasRe = hyperWaveAdd * ar * invN;
+            netWaveBiasIm = hyperWaveAdd * ai * invN;
           }
         }
 
@@ -4316,14 +4351,23 @@ export class HyperDimensionalEngine {
 
             const gain = connWaveGain[editRow + k];
             const turn = connWavePhase[editRow + k];
-            const turnCos = Math.cos(turn);
-            const turnSin = Math.sin(turn);
-            // Rotate by the connection's phase shift and scale by its gain --
-            // a complex multiply, which is what "edit this wave" means for a
-            // wave held as an amplitude and an angle.
-            // The connection's own weight on the wave it carries...
-            let shapedRe = gain * (inRe * turnCos - inIm * turnSin) + connWaveBias[editRow + k];
-            let shapedIm = gain * (inRe * turnSin + inIm * turnCos);
+            // The connection's own wave weight, as a wave: how much of what
+            // arrives gets through, and how far it is turned.
+            const ownWeightRe = gain * Math.cos(turn);
+            const ownWeightIm = gain * Math.sin(turn);
+
+            // The two weights added, and the two biases added. This pair IS
+            // the wave of this connection -- part it, part what the entire
+            // network is doing -- and running it against the wave of the
+            // neuron that is giving one is a complex multiply, which is what
+            // one wave does to another.
+            const weightRe = ownWeightRe + netWaveWeightRe;
+            const weightIm = ownWeightIm + netWaveWeightIm;
+            const biasRe = connWaveBias[editRow + k] + netWaveBiasRe;
+            const biasIm = connWaveBiasIm[editRow + k] + netWaveBiasIm;
+
+            let shapedRe = weightRe * inRe - weightIm * inIm + biasRe;
+            let shapedIm = weightRe * inIm + weightIm * inRe + biasIm;
 
             // ...and its shift weight, reading the neighbouring frequency the
             // way connShift reads the neighbouring dimension. Zero on a fresh
@@ -4336,13 +4380,11 @@ export class HyperDimensionalEngine {
               shapedIm += shiftWeight * prevPoolIm[neighbour];
             }
 
-            // What the connection produced, times what the whole network says
-            // about it, plus what the whole network adds. The wave version of
-            // the connection equation, integrated rather than bolted on: one
-            // computation with the numbers, not a second answer added to
-            // theirs afterwards.
-            const editedRe = shapedRe * modWaveRe - shapedIm * modWaveIm + addWaveRe;
-            const editedIm = shapedRe * modWaveIm + shapedIm * modWaveRe + addWaveIm;
+            // The result is one wave, and it goes into the receiving neuron's
+            // own pool at the frequency it came in on. The neuron gets a
+            // bunch of these, and what they add up to is its wave.
+            const editedRe = shapedRe;
+            const editedIm = shapedIm;
 
             innerPoolRe[sourceBin] += editedRe;
             innerPoolIm[sourceBin] += editedIm;
@@ -5199,6 +5241,7 @@ export class HyperDimensionalEngine {
     const gain = this.connWaveGain;
     const turn = this.connWavePhase;
     const bias = this.connWaveBias;
+    const biasIm = this.connWaveBiasIm;
     const shift = this.connWaveShift;
     const TWO_PI = Math.PI * 2;
 
@@ -5216,8 +5259,10 @@ export class HyperDimensionalEngine {
       // way its numeric twin does -- toward what was agreed with, away from
       // what was fought.
       const ownStep = rate * Math.min(1, heard) * agreement * WAVE_BIAS_RATE;
-      const nextBiasRe = this.neuronWaveBiasRe[i] + ownStep * Math.cos(this.wavePhase[i]);
-      const nextBiasIm = this.neuronWaveBiasIm[i] + ownStep * Math.sin(this.wavePhase[i]);
+      const ownCos = Math.cos(this.wavePhase[i]);
+      const ownSin = Math.sin(this.wavePhase[i]);
+      const nextBiasRe = this.neuronWaveBiasRe[i] + ownStep * ownCos;
+      const nextBiasIm = this.neuronWaveBiasIm[i] + ownStep * ownSin;
       this.neuronWaveBiasRe[i] = nextBiasRe < -0.5 ? -0.5 : (nextBiasRe > 0.5 ? 0.5 : nextBiasRe);
       this.neuronWaveBiasIm[i] = nextBiasIm < -0.5 ? -0.5 : (nextBiasIm > 0.5 ? 0.5 : nextBiasIm);
 
@@ -5240,11 +5285,18 @@ export class HyperDimensionalEngine {
         turn[row + k] = nextTurn;
 
         // The bias: what this connection contributes with nothing arriving.
-        // Bounded much harder than the gain -- it fires whether or not there
-        // is anything to carry, so a large one is a connection shouting into
-        // the pool on its own.
-        const nextBias = bias[row + k] + step * agreement * WAVE_BIAS_RATE;
+        // A wave in its own right, so both halves move, along the phase the
+        // receiving neuron is sitting at -- a bias that only ever grew in one
+        // direction could add height but never disagree with anything.
+        //
+        // Bounded much harder than the gain: it fires whether or not there is
+        // anything to carry, so a large one is a connection shouting into the
+        // pool on its own.
+        const biasStep = step * agreement * WAVE_BIAS_RATE;
+        const nextBias = bias[row + k] + biasStep * ownCos;
         bias[row + k] = nextBias < -0.5 ? -0.5 : (nextBias > 0.5 ? 0.5 : nextBias);
+        const nextBiasTurned = biasIm[row + k] + biasStep * ownSin;
+        biasIm[row + k] = nextBiasTurned < -0.5 ? -0.5 : (nextBiasTurned > 0.5 ? 0.5 : nextBiasTurned);
 
         // The shift weight's wave copy, moving like the gain but far more
         // slowly: it reaches across frequencies, so a large one lets a wave

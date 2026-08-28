@@ -680,22 +680,73 @@ describe('the wave copy of every weight', () => {
     }
   });
 
-  it('lets the whole network scale what a connection produced', () => {
-    // The wave version of "times what the network says". Off means untouched,
-    // so the two must genuinely differ.
+  it('adds the network\'s wave weight to every connection\'s own', () => {
+    // The second weight: every neuron's wave through a variable of its own,
+    // added together, then added to what the connection itself is worth.
+    // Off means nothing added, so the two must genuinely differ.
     const off = poolAfter({});
     const on = poolAfter({ hyperWaveGain: 1 });
     expect(on[0].magnitude).not.toBeCloseTo(off[0].magnitude, 4);
   });
 
-  it('lets the whole network add a wave of its own', () => {
-    // The wave version of "plus what the network adds". It reaches
-    // frequencies the source never occupied, which a per-connection edit
-    // cannot do on its own -- that is what makes it a NETWORK term.
+  it('adds the network\'s wave bias to every connection\'s own', () => {
+    // The second bias, made the same way out of a different set of variables.
+    // It reaches frequencies the source never occupied, which a weight on the
+    // arriving wave cannot do -- a bias fires whether or not anything came in.
     const off = poolAfter({});
     const on = poolAfter({ hyperWaveAdd: 1 });
     expect(off).toHaveLength(1);
     expect(on.length).toBeGreaterThan(1);
+  });
+
+  it('still carries a wave through a connection whose own weight is zero', () => {
+    // The point of ADDING the two weights rather than multiplying them. With
+    // the connection's own wave weight at zero there is nothing for a
+    // multiplier to act on, and the old shape produced silence no matter what
+    // the network said. Added, the network's weight is a weight in its own
+    // right, and the wave still gets through.
+    const silent = { ...seed, connWaveGain: encode(new Float32Array(N * N)) };
+    const carry = (extra: Record<string, unknown>) => {
+      const engine = new HyperDimensionalEngine({ ...base, ...extra });
+      engine.restoreNetworkState(silent);
+      for (let t = 0; t < 3; t++) {
+        engine.process(new Array(D).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+      }
+      return engine.poolContent();
+    };
+
+    const total = (pool: Array<{ magnitude: number }>) =>
+      pool.reduce((sum, bin) => sum + bin.magnitude, 0);
+
+    // With its own weight at zero and no network weight to add, a connection
+    // carries nothing: all that is left in the pool is what the source itself
+    // put there. Every neuron downstream of it emits silence.
+    const own = carry({});
+    // Add the network's half of the weight and waves cross the connections
+    // again -- the same connections, still worth nothing on their own.
+    const withNetwork = carry({ hyperWaveGain: 1 });
+    expect(total(withNetwork)).toBeGreaterThan(total(own) + 1e-6);
+  });
+
+  it('gives a connection\'s wave bias a turned half, and saves it', () => {
+    // A bias on a wave that can only be taller is not a wave, it is a volume.
+    // Both halves have to exist and both have to survive a restore.
+    const engine = new HyperDimensionalEngine({ ...base, hyperWaveGain: 1, hyperWaveAdd: 1 });
+    const before = engine.captureNetworkState();
+    expect(typeof before.connWaveBiasIm).toBe('string');
+    expect(decode(before.connWaveBiasIm as string)).toHaveLength(N * N);
+
+    for (let i = 0; i < 40; i++) engine.process(new Array(D).fill(0.5), undefined, new Set([0, 1]));
+    const after = engine.captureNetworkState();
+    expect(after.connWaveBiasIm).not.toBe(before.connWaveBiasIm);
+
+    // And a snapshot from before the turned half existed still loads, with
+    // the turned half read as the zero it effectively was.
+    const older = { ...after };
+    delete (older as Record<string, unknown>).connWaveBiasIm;
+    const revived = new HyperDimensionalEngine(base);
+    expect(revived.restoreNetworkState(older)).toBe(true);
+    expect(decode(revived.captureNetworkState().connWaveBiasIm as string).every(v => v === 0)).toBe(true);
   });
 
   it('leaves the wave exactly as it was when both are off', () => {
