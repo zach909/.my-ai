@@ -15,7 +15,7 @@ import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
-import { Brain, Loader2, RefreshCw, Trash2, Pin } from 'lucide-react'
+import { Brain, Loader2, RefreshCw, Trash2, Pin, AlertTriangle } from 'lucide-react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute('/app/memory')({
@@ -53,6 +53,7 @@ function MemoryPage() {
   const [query, setQuery] = useState('')
   const [tag, setTag] = useState('')
   const [forgetting, setForgetting] = useState<string | null>(null)
+  const [wiping, setWiping] = useState(false)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -89,6 +90,43 @@ function MemoryPage() {
     }
   }
 
+  /**
+   * Forget everything: every memory, every AI Chat thread, every shared chat
+   * room. Two confirmations, because there is no undo and the second one is
+   * cheap.
+   *
+   * The server asks for the confirm phrase too. That is not this dialog
+   * repeated -- it is the route refusing to fire for anything that did not
+   * come from a person who meant it, including a stray DELETE from some other
+   * tool that never saw this page.
+   */
+  const deleteEverything = async () => {
+    if (!window.confirm(
+      'Delete ALL memory and chats?\n\n' +
+      'Everything this instance remembers, every AI Chat thread, and every shared chat room. ' +
+      'This cannot be undone.'
+    )) return
+    if (!window.confirm('Really delete all of it? There is no undo.')) return
+    setWiping(true)
+    try {
+      const res = await fetch('/api/memory/all', {
+        method: 'DELETE',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ confirm: 'delete everything' }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || 'Could not delete it')
+      toast.success(
+        `Deleted ${body.memories} memories, ${body.threads} chat threads and ${body.rooms} chat rooms`
+      )
+      await load()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setWiping(false)
+    }
+  }
+
   const topTags = Object.entries(data?.tagCounts ?? {})
     .sort((a, b) => b[1] - a[1])
     .slice(0, 12)
@@ -116,6 +154,18 @@ function MemoryPage() {
         <Button variant="outline" size="sm" onClick={() => void load()} className="gap-2">
           <RefreshCw className="h-4 w-4" />
           Refresh
+        </Button>
+        {/* Last in the row and visually apart: this is the one control here
+            that cannot be taken back. */}
+        <Button
+          variant="destructive"
+          size="sm"
+          disabled={wiping}
+          onClick={() => void deleteEverything()}
+          className="ml-auto gap-2"
+        >
+          {wiping ? <Loader2 className="h-4 w-4 animate-spin" /> : <AlertTriangle className="h-4 w-4" />}
+          {wiping ? 'Deleting…' : 'Delete all memory and chats'}
         </Button>
       </div>
 

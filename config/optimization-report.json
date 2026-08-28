@@ -1,5 +1,5 @@
 {
-  "at": "2026-08-28T11:06:52.334Z",
+  "at": "2026-08-28T11:28:28.201Z",
   "checks": [
     {
       "name": "test-leftovers",
@@ -18,9 +18,9 @@
     },
     {
       "name": "tested-but-unreachable",
-      "value": 25,
+      "value": 27,
       "lowerIsBetter": true,
-      "detail": "25 exports"
+      "detail": "27 exports"
     },
     {
       "name": "non-atomic-state-writes",

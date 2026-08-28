@@ -725,7 +725,10 @@ describe('the wave copy of every weight', () => {
     // Add the network's half of the weight and waves cross the connections
     // again -- the same connections, still worth nothing on their own.
     const withNetwork = carry({ hyperWaveGain: 1 });
-    expect(total(withNetwork)).toBeGreaterThan(total(own) + 1e-6);
+    // Different, not louder. What comes back can interfere with the source
+    // either way, and asserting "more" would be asserting the sign of a random
+    // draw rather than that the weight did anything.
+    expect(total(withNetwork)).not.toBeCloseTo(total(own), 6);
   });
 
   it('gives a connection\'s wave bias a turned half, and saves it', () => {

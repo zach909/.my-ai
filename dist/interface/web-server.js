@@ -9,6 +9,7 @@ import { installFromStore, installPromptingSkill, listInstalled, loadRegistry, p
 import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
+import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { STORE_KINDS, STORE_KIND_LABELS, StoreError, listCatalog, publishAndSync, readItem, deleteAndSync, } from '../models && skills/core/store.js';
 import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFileAndSync, linkSkillUploadWikiAndSync, unlinkSkillUploadWikiAndSync, recordSkillUploadRsiPassAndSync, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
 /**
@@ -386,6 +387,52 @@ export function isStorePublicRoute(pathname, method) {
     }
     return false;
 }
+/**
+ * Which shared-chat routes need no credential.
+ *
+ * The chat rooms attached to wiki pages are public in the same sense the wiki
+ * itself is: anyone who can reach this instance can read the conversation and
+ * say something in it, with no account anywhere -- no GitHub, no sign-up, just
+ * a name typed into a box. That is the whole point of a room hanging off a
+ * public page; a page anyone can read and contribute to, with a discussion
+ * only the owner can see, is not a discussion.
+ *
+ * Open: listing rooms, opening one, reading it, posting to it, creating one,
+ * and summoning the bot into it. Deliberately absent, and this is the line
+ * that must never move: DELETE. Publishing is open precisely so that
+ * destroying can be privileged -- the same split the wiki and the store make.
+ */
+export function isSharedChatPublicRoute(pathname, method) {
+    if (method === 'GET') {
+        return (pathname === '/api/shared-chat/rooms' ||
+            /^\/api\/shared-chat\/rooms\/[a-z0-9-]+\/messages$/.test(pathname));
+    }
+    if (method === 'POST') {
+        return (pathname === '/api/shared-chat/rooms' ||
+            /^\/api\/shared-chat\/rooms\/[a-z0-9-]+\/(messages|ask)$/.test(pathname));
+    }
+    return false;
+}
+/**
+ * Which routes exist so someone can log in at all, and therefore cannot
+ * themselves require being logged in. Nothing here reads or changes anything
+ * the password protects: it serves the login page, says whether a password
+ * has been set, takes a login attempt, and ends a session.
+ *
+ * Setting the password is here too, and is the one that needs care: the
+ * handler will only accept it from the machine itself, from someone holding
+ * the setup code printed on the server's console, or from someone who already
+ * knows the current password. Reaching the handler is not the same as being
+ * allowed to change anything.
+ */
+export function isAuthPublicRoute(pathname, method) {
+    if (method === 'GET')
+        return pathname === '/login' || pathname === '/api/auth/status';
+    if (method === 'POST') {
+        return pathname === '/api/auth/login' || pathname === '/api/auth/logout' || pathname === '/api/auth/password';
+    }
+    return false;
+}
 export class WebServer {
     /**
      * Where a stopped run leaves what every neuron and every connection was.
@@ -429,6 +476,20 @@ export class WebServer {
         // Set only when start() is given a non-localhost host and a password --
         // see start()'s doc comment for why binding remotely without one is refused.
         this.remoteAccessLock = new PasswordLock();
+        /**
+         * The password someone can set from the interface and use to log in from
+         * another device, stored (hashed) so it survives a restart. Independent of
+         * remoteAccessLock, which is the process-lifetime NEUROCLAW_WEB_PASSWORD and
+         * stays exactly as it was -- either one being satisfied is enough.
+         */
+        this.remoteAccess = getRemoteAccessStore();
+        /**
+         * True when this server is bound somewhere remote and has no password of any
+         * kind yet. Nothing but the setup page answers while this is true: it is the
+         * state between "reachable" and "claimed", and it ends the moment someone
+         * sets a password.
+         */
+        this.setupOnly = false;
         // Independent of remoteAccessLock: gates only /api/chat-groups/* (and the
         // /app/chat-groups page's own login prompt), even over an already-trusted
         // localhost connection -- set via NEUROCLAW_CHAT_GROUPS_PASSWORD.
@@ -459,11 +520,25 @@ export class WebServer {
         this.port = port;
         const isLocal = LOCAL_HOSTS.has(host);
         if (!isLocal) {
-            if (!password) {
-                throw new Error(`Refusing to bind to ${host}: a password is required for non-localhost access ` +
-                    `(set NEUROCLAW_WEB_PASSWORD). Binding stays loopback-only otherwise.`);
+            if (password) {
+                await this.remoteAccessLock.set(password);
             }
-            await this.remoteAccessLock.set(password);
+            else if (!this.remoteAccess.isSet()) {
+                // No password anywhere. This used to refuse to bind, which is safe and
+                // also makes setting one from another device impossible -- the page
+                // that would let you is behind the port that will not open.
+                //
+                // So it binds, and serves exactly one thing: the setup page. Every
+                // other route is refused until a password exists, and setting the
+                // first one from off the machine needs the code printed right below,
+                // which only someone looking at this console can see. Reachable, and
+                // still not open.
+                this.setupOnly = true;
+                console.log(`\nNeuroclaw is bound to ${host}:${port} with no password set yet.\n` +
+                    `Open http://<this machine>:${port}/login and enter this setup code:\n\n` +
+                    `    ${this.remoteAccess.firstTimeSetupCode}\n\n` +
+                    `Until a password is set, nothing else on this server will answer.\n`);
+            }
         }
         if (process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD) {
             await this.chatGroupsLock.set(process.env.NEUROCLAW_CHAT_GROUPS_PASSWORD);
@@ -487,6 +562,176 @@ export class WebServer {
             this.server.on('error', (err) => { this.server = null; reject(err); });
         });
     }
+    /**
+     * Is this request allowed past the blanket remote gate?
+     *
+     * Three ways in, and any one of them is enough:
+     *   - the NEUROCLAW_WEB_PASSWORD given to start(), over HTTP Basic, exactly
+     *     as before this file grew a login page;
+     *   - a live session cookie, which is what the login page hands out;
+     *   - the stored password over HTTP Basic, so scripts and curl can use the
+     *     same credential a browser logs in with.
+     *
+     * With neither lock set -- a plain localhost run -- everything is allowed,
+     * which is the behaviour this server has always had on loopback.
+     */
+    async isRemotelyAuthorized(req) {
+        if (this.remoteAccess.hasSession(readCookie(req.headers.cookie, SESSION_COOKIE)))
+            return true;
+        if (this.remoteAccessLock.required) {
+            if (await this.isAuthorizedBasic(req, this.remoteAccessLock))
+                return true;
+        }
+        if (this.remoteAccess.isSet()) {
+            const supplied = this.basicPassword(req);
+            if (supplied !== null && await this.remoteAccess.check(supplied))
+                return true;
+            return false;
+        }
+        // No stored password and no start()-time one: nothing to check against.
+        return !this.remoteAccessLock.required;
+    }
+    /** Whether the request came from the machine this server runs on. */
+    isFromThisMachine(req) {
+        const address = req.socket.remoteAddress ?? '';
+        // ::ffff:127.0.0.1 is how a v4 loopback connection looks on a v6 socket.
+        const bare = address.startsWith('::ffff:') ? address.slice(7) : address;
+        return LOCAL_HOSTS.has(bare);
+    }
+    /** The password half of an `Authorization: Basic ...` header, or null if there is not one. */
+    basicPassword(req) {
+        const match = /^Basic\s+(\S+)$/i.exec(req.headers.authorization ?? '');
+        if (!match)
+            return null;
+        let decoded;
+        try {
+            decoded = Buffer.from(match[1], 'base64').toString('utf8');
+        }
+        catch {
+            return null;
+        }
+        const sep = decoded.indexOf(':');
+        return sep === -1 ? decoded : decoded.slice(sep + 1);
+    }
+    /**
+     * The login page: one box on a plain page, and the first thing anyone sees
+     * when they open this instance from another device.
+     *
+     * It is one page doing two jobs, because from the visitor's side they are
+     * the same moment. With no password set it is the SETUP page -- pick one,
+     * and from off the machine also type the code on the server's console. With
+     * one set it is the LOGIN page. It asks /api/auth/status which it is rather
+     * than being told, so a page left open through a restart still behaves.
+     *
+     * Inline styles and script, no build step and nothing fetched from
+     * anywhere: this page has to work on an instance whose assets have not been
+     * built, and it is the one page that must never depend on the network.
+     */
+    loginPage() {
+        return `<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Neuroclaw</title>
+<style>
+  :root { color-scheme: dark; }
+  body { margin:0; min-height:100vh; display:grid; place-items:center;
+         background:#0b0d10; color:#e8eaed;
+         font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  form { width:min(360px,90vw); padding:28px; background:#14171c;
+         border:1px solid #232830; border-radius:14px; }
+  h1 { margin:0 0 4px; font-size:19px; }
+  p.sub { margin:0 0 20px; color:#9aa3af; font-size:13px; }
+  label { display:block; margin:14px 0 6px; font-size:13px; color:#c5ccd6; }
+  input { width:100%; box-sizing:border-box; padding:10px 12px; font-size:15px;
+          background:#0b0d10; color:#e8eaed; border:1px solid #2b313a; border-radius:8px; }
+  input:focus { outline:2px solid #4a7dff; outline-offset:1px; }
+  button { width:100%; margin-top:20px; padding:11px; font-size:15px; font-weight:600;
+           background:#4a7dff; color:#fff; border:0; border-radius:8px; cursor:pointer; }
+  button[disabled] { opacity:.6; cursor:default; }
+  .msg { margin-top:14px; font-size:13px; min-height:1.2em; }
+  .msg.bad { color:#ff8080; }
+  .msg.good { color:#7ddb9a; }
+  .hidden { display:none; }
+</style>
+</head>
+<body>
+<form id="f" autocomplete="on">
+  <h1 id="title">Log in</h1>
+  <p class="sub" id="sub">This Neuroclaw instance is password protected.</p>
+
+  <div id="setup-code-row" class="hidden">
+    <label for="setupCode">Setup code</label>
+    <input id="setupCode" name="setupCode" autocomplete="off" spellcheck="false"
+           placeholder="shown on the server&#39;s console">
+  </div>
+
+  <label for="password" id="passwordLabel">Password</label>
+  <input id="password" name="password" type="password" autocomplete="current-password" required>
+
+  <div id="confirm-row" class="hidden">
+    <label for="confirm">Confirm password</label>
+    <input id="confirm" name="confirm" type="password" autocomplete="new-password">
+  </div>
+
+  <button id="go" type="submit">Log in</button>
+  <div class="msg" id="msg" role="status" aria-live="polite"></div>
+</form>
+<script>
+  var setting = false;
+  var el = function (id) { return document.getElementById(id); };
+  function say(text, ok) {
+    var m = el('msg');
+    m.textContent = text;
+    m.className = 'msg ' + (ok ? 'good' : 'bad');
+  }
+  fetch('/api/auth/status').then(function (r) { return r.json(); }).then(function (s) {
+    if (s.loggedIn && s.passwordSet) { location.href = '/'; return; }
+    setting = !s.passwordSet;
+    if (!setting) return;
+    el('title').textContent = 'Set a password';
+    el('sub').textContent = 'Nobody has claimed this instance yet. Pick a password and it is yours -- '
+      + 'it is what you will type to reach this from anywhere else. At least '
+      + s.minPasswordLength + ' characters.';
+    el('go').textContent = 'Set password';
+    el('password').setAttribute('autocomplete', 'new-password');
+    el('confirm-row').className = '';
+    if (s.needsSetupCode) {
+      el('setup-code-row').className = '';
+      el('sub').textContent += ' Because you are not on the machine itself, it also needs '
+        + 'the setup code printed on that machine&#39;s console.';
+    }
+  }).catch(function () { say('Could not reach the server.', false); });
+
+  el('f').addEventListener('submit', function (event) {
+    event.preventDefault();
+    var password = el('password').value;
+    if (setting && password !== el('confirm').value) { say('The two passwords do not match.', false); return; }
+    el('go').disabled = true;
+    say('', true);
+    var body = setting
+      ? { password: password, setupCode: el('setupCode').value }
+      : { password: password };
+    fetch(setting ? '/api/auth/password' : '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    }).then(function (r) {
+      return r.json().then(function (data) { return { ok: r.ok, data: data }; });
+    }).then(function (result) {
+      if (!result.ok) { say(result.data.error || 'That did not work.', false); el('go').disabled = false; return; }
+      say(setting ? 'Password set. Opening...' : 'Welcome back.', true);
+      location.href = '/';
+    }).catch(function () {
+      say('Could not reach the server.', false);
+      el('go').disabled = false;
+    });
+  });
+</script>
+</body>
+</html>`;
+    }
     /** Constant-time check of an incoming `Authorization: Basic ...` header's password against `lock`. */
     async isAuthorizedBasic(req, lock) {
         if (!lock.required)
@@ -506,11 +751,30 @@ export class WebServer {
         const suppliedPassword = sep === -1 ? decoded : decoded.slice(sep + 1);
         return lock.check(suppliedPassword);
     }
-    requireAuth(res) {
+    /**
+     * Refuse an unauthenticated request.
+     *
+     * A browser asking for a page gets sent to the login page -- that is the
+     * point of having one, and the native Basic-auth box it used to get instead
+     * cannot say "set a password" or "here is where the setup code goes".
+     * Anything else (fetch, curl, a script) gets the JSON 401 and the Basic
+     * challenge it has always got, so nothing that worked before stops working.
+     */
+    requireAuth(req, res) {
         this.setSecurityHeaders(res);
+        const wantsHtml = (req.headers.accept ?? '').includes('text/html');
+        if (wantsHtml) {
+            res.writeHead(302, { Location: '/login' });
+            res.end();
+            return;
+        }
         res.setHeader('WWW-Authenticate', 'Basic realm="Neuroclaw", charset="UTF-8"');
         res.writeHead(401, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Authentication required' }));
+        res.end(JSON.stringify({
+            error: this.setupOnly ? 'No password is set yet. Open /login to set one.' : 'Authentication required',
+            login: '/login',
+            passwordSet: this.remoteAccess.isSet(),
+        }));
     }
     /**
      * Gate for /api/chat-groups/* specifically, checked via a plain header
@@ -888,10 +1152,101 @@ export class WebServer {
         // there. The POST handler itself enforces the create-vs-overwrite
         // split (it needs to inspect the request body first); this exemption
         // only lets the request past the blanket gate to reach that check.
-        if (!isWikiPublicRoute(pathname, method) &&
-            !isStorePublicRoute(pathname, method) &&
-            !(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
-            this.requireAuth(res);
+        //
+        // The chat rooms are public on the same terms and for the same reason --
+        // see isSharedChatPublicRoute -- and the login routes are public because
+        // they are how someone stops being unauthenticated in the first place.
+        const publicRoute = isWikiPublicRoute(pathname, method) ||
+            isStorePublicRoute(pathname, method) ||
+            isSharedChatPublicRoute(pathname, method) ||
+            isAuthPublicRoute(pathname, method);
+        // Bound remotely with no password set: only the login page answers, and
+        // even the things that are normally public stay shut. An instance nobody
+        // has claimed yet should not be publishing chat rooms to the internet.
+        if (this.setupOnly && !isAuthPublicRoute(pathname, method)) {
+            this.requireAuth(req, res);
+            return;
+        }
+        if (!publicRoute && !(await this.isRemotelyAuthorized(req))) {
+            this.requireAuth(req, res);
+            return;
+        }
+        // ── Logging in ──────────────────────────────────────────────────────
+        if (pathname === '/login' && method === 'GET') {
+            this.sendHtml(res, this.loginPage());
+            return;
+        }
+        // What the login page needs to know before anyone has typed anything:
+        // whether this instance has a password at all (so it can show "set one"
+        // rather than "enter it"), and whether the caller is already logged in.
+        if (pathname === '/api/auth/status' && method === 'GET') {
+            this.sendJson(res, {
+                passwordSet: this.remoteAccess.isSet(),
+                loggedIn: await this.isRemotelyAuthorized(req),
+                onThisMachine: this.isFromThisMachine(req),
+                needsSetupCode: !this.remoteAccess.isSet() && !this.isFromThisMachine(req),
+                minPasswordLength: MIN_PASSWORD_LENGTH,
+            });
+            return;
+        }
+        if (pathname === '/api/auth/login' && method === 'POST') {
+            const body = await this.parseBody(req);
+            const password = typeof body?.password === 'string' ? body.password : '';
+            if (!this.remoteAccess.isSet()) {
+                this.sendJson(res, { error: 'No password has been set on this instance yet.' }, 400);
+                return;
+            }
+            if (!(await this.remoteAccess.check(password))) {
+                // One message for both "no such password" and "wrong password", and
+                // no timing shortcut: check() hashes before comparing either way.
+                this.sendJson(res, { error: 'Wrong password.' }, 401);
+                return;
+            }
+            const token = this.remoteAccess.openSession();
+            this.setSecurityHeaders(res);
+            res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ loggedIn: true }));
+            return;
+        }
+        if (pathname === '/api/auth/logout' && method === 'POST') {
+            this.remoteAccess.closeSession(readCookie(req.headers.cookie, SESSION_COOKIE));
+            this.setSecurityHeaders(res);
+            res.setHeader('Set-Cookie', `${SESSION_COOKIE}=; HttpOnly; SameSite=Strict; Path=/; Max-Age=0`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ loggedIn: false }));
+            return;
+        }
+        // Set the password, or change it. Who is allowed is decided here rather
+        // than in the store, which knows nothing about requests: someone at the
+        // machine itself, someone holding the setup code from its console, or
+        // someone who can already prove they know the current password.
+        if (pathname === '/api/auth/password' && method === 'POST') {
+            const body = await this.parseBody(req);
+            const password = typeof body?.password === 'string' ? body.password : '';
+            const alreadySet = this.remoteAccess.isSet();
+            const authorised = alreadySet
+                ? this.isFromThisMachine(req) ||
+                    await this.isRemotelyAuthorized(req) ||
+                    (typeof body?.current === 'string' && await this.remoteAccess.check(body.current))
+                : this.isFromThisMachine(req) || this.remoteAccess.checkSetupCode(body?.setupCode);
+            try {
+                await this.remoteAccess.set(password, authorised);
+            }
+            catch (err) {
+                const message = err instanceof RemoteAccessError ? err.message : 'Could not set the password.';
+                this.sendJson(res, { error: message }, authorised ? 400 : 403);
+                return;
+            }
+            // Setting a password is what ends setup mode -- the instance is claimed,
+            // and everything else can start answering.
+            this.setupOnly = false;
+            // Straight into a session, so nobody has to type it twice.
+            const token = this.remoteAccess.openSession();
+            this.setSecurityHeaders(res);
+            res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
+            res.writeHead(200, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ passwordSet: true, loggedIn: true }));
             return;
         }
         // Unauthenticated on purpose (a boolean, nothing sensitive) -- the
@@ -1256,6 +1611,37 @@ export class WebServer {
             }
             return;
         }
+        // DELETE /api/memory/all — forget everything: every remembered item,
+        // every AI Chat thread, and every shared chat room.
+        //
+        // Never public, and it never can be. It is behind the blanket gate above
+        // like all destruction, and it is deliberately not one of the
+        // isWikiPublicRoute / isStorePublicRoute / isSharedChatPublicRoute
+        // exemptions: those exist so anyone can ADD to what is shared, and the
+        // reason that is safe is precisely that this is not open to them.
+        //
+        // Requires an explicit `{ "confirm": "delete everything" }` body. A button
+        // that empties someone's whole memory should be impossible to fire by
+        // accident, by a mistyped URL, or by a stray DELETE from some other tool.
+        if (pathname === '/api/memory/all' && method === 'DELETE') {
+            try {
+                const body = await this.parseBody(req);
+                if (body?.confirm !== 'delete everything') {
+                    this.sendJson(res, { error: 'Send {"confirm":"delete everything"} to confirm.' }, 400);
+                    return;
+                }
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const memories = system.memory.forgetAll();
+                const threads = this.chatHistory.deleteAllThreads();
+                const rooms = getSharedChatStore().deleteAllRooms();
+                this.sendJson(res, { memories, threads, rooms });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         const memoryMatch = pathname.match(/^\/api\/memory\/([A-Za-z0-9._-]+)$/);
         if (memoryMatch && method === 'DELETE') {
             try {
@@ -1403,6 +1789,33 @@ export class WebServer {
         // "the queue is actually empty right now."
         if (pathname === '/api/continuous/status' && method === 'GET') {
             this.sendJson(res, this.runner.getContinuousStatus());
+            return;
+        }
+        // POST /api/continuous/input — put something into the running loop right
+        // now, without waiting for whatever it is currently doing to finish.
+        //
+        // This is what typing while it is thinking does. The reply to a message
+        // still has to wait its turn (two answers racing land in whichever order
+        // the network returns them), but the TEXT does not: it goes onto the zip
+        // input on the next tick, so a thought you had mid-answer is part of what
+        // the network is working on rather than something it hears about after it
+        // has finished.
+        //
+        // Non-blocking by construction -- injectInput() appends and returns; the
+        // tick already in flight is never interrupted.
+        if (pathname === '/api/continuous/input' && method === 'POST') {
+            const body = await this.parseBody(req);
+            const text = typeof body?.text === 'string' ? body.text.trim() : '';
+            if (!text) {
+                this.sendJson(res, { error: 'Expected a "text" string.' }, 400);
+                return;
+            }
+            // Labelled, like every other turn that reaches the loop: the transcript
+            // says who said it and a reserved dimension carries the same thing into
+            // the embedding.
+            const speaker = body?.speaker === 'ai' ? 'ai' : 'user';
+            this.runner.injectInput(text, speaker);
+            this.sendJson(res, { accepted: true, pending: this.runner.getContinuousStatus().pendingInputCount });
             return;
         }
         // GET /api/self-improvement/history — the graph data behind
@@ -1808,7 +2221,7 @@ export class WebServer {
                 // required) can overwrite as before; this only blocks an
                 // unauthenticated, non-local caller from replacing existing content.
                 if (readWikiPage(body.name) && !(await this.isAuthorizedBasic(req, this.remoteAccessLock))) {
-                    this.requireAuth(res);
+                    this.requireAuth(req, res);
                     return;
                 }
                 // ...AndSync: writing the file is only half a publish -- it has to

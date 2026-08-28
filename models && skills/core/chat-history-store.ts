@@ -109,6 +109,23 @@ export class ChatHistoryStore {
     return threads;
   }
 
+  /**
+   * Delete every thread, and every group they were filed into. Returns how
+   * many threads went.
+   *
+   * Not a loop over deleteThread() at the call site: forgetting the
+   * conversations while leaving the organizer holding groups that point at
+   * threads which no longer exist is a half-delete, and a half-delete is the
+   * kind of thing someone discovers months later.
+   */
+  deleteAllThreads(): number {
+    let deleted = 0;
+    for (const thread of this.listThreads()) {
+      if (this.deleteThread(thread.id)) deleted++;
+    }
+    return deleted;
+  }
+
   deleteThread(id: string): boolean {
     const p = this.path(id);
     if (!existsSync(p)) return false;

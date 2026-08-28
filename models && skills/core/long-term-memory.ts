@@ -246,6 +246,22 @@ export class LongTermMemory {
     return this.items.delete(id);
   }
 
+  /**
+   * Forget everything, pinned included, and say how much was forgotten.
+   *
+   * Pinned memories are exempt from EVICTION -- being pushed out to make room
+   * for something newer, which is the store deciding on its own. This is not
+   * that. This is someone asking for it all to go, and "all" that quietly kept
+   * some of it would be a worse answer than refusing.
+   */
+  forgetAll(): number {
+    const held = this.items.size;
+    this.items.clear();
+    this.sparseMap.clear();
+    this.unpinnedCount = 0;
+    return held;
+  }
+
   /** Unpinned memories held. Exposed so a test can prove the count never drifts. */
   evictableCount(): number {
     return this.unpinnedCount;
