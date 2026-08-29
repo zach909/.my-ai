@@ -34,6 +34,8 @@ export class NeuroPipeline {
         // init so routing decisions name an actual capability instead of an
         // anonymous randomly-initialized expert network.
         this.expertPluginMap = new Map();
+        /** What each expert is FOR, in words -- its name and capabilities, not just its id. */
+        this.expertMeaning = new Map();
         // Deterministic registry from real expert id -> neuron ids in the network.
         // Every plugin/skill expert gets at least one concrete neuron in the ONE
         // mesh; when the expert catalog outgrows the base size, ensureSubsystems()
@@ -76,6 +78,7 @@ export class NeuroPipeline {
         // capability — not left as anonymous, randomly-initialized experts with
         // nothing behind their index.
         this.expertPluginMap.clear();
+        this.expertMeaning.clear();
         for (const def of Object.values(pluginExtensions)) {
             const expertId = this.moeRouter.addExpert({
                 id: def.id,
@@ -83,6 +86,7 @@ export class NeuroPipeline {
                 specialization: def.capabilities.join(',') || def.type,
             });
             this.expertPluginMap.set(expertId, def.id);
+            this.expertMeaning.set(def.id, `${def.id} ${def.name} ${def.capabilities.join(' ')} ${def.type}`);
         }
         // Section 2.2: every skill in programming-skills.ts must be registered
         // too. Registering one expert per individual skill (584 entries, each a
@@ -100,6 +104,7 @@ export class NeuroPipeline {
                 specialization: expertType,
             });
             this.expertPluginMap.set(expertId, id);
+            this.expertMeaning.set(id, `${id} ${expertType} skills ${expertType}`);
         }
         // Expert neurons live in the ONE network, not in a stage in front of it.
         //
@@ -194,7 +199,15 @@ export class NeuroPipeline {
             // Tuning the incoming weights is what makes a region able to answer
             // differently; its state cannot, because a non-driven neuron is
             // recomputed from its inputs every tick.
-            this.hyperEngine.tuneNeuronTo(neuronId, 0, embedText(expertId, this.hyperEngine.getDimensions()));
+            // Tuned to what the expert is FOR, not to its bare id.
+            //
+            // An id is one word -- "location", "camera" -- and ordinary traffic
+            // does not line up with a single word, so every region read the same
+            // low number for a sentence as for a string of symbols and nothing
+            // could be told apart. The name and capabilities describe the same
+            // expert in enough words to overlap with what people actually type.
+            const meaning = this.expertMeaning.get(expertId) ?? expertId;
+            this.hyperEngine.tuneNeuronTo(neuronId, 0, embedText(meaning, this.hyperEngine.getDimensions()));
             this.expertNeuronRegistry.set(expertId, [neuronId]);
         }
         this.valueBudgetSize = Math.max(this.valueBudgetSize, this.hyperEngine.getNeuronCount());

@@ -4267,47 +4267,41 @@ export class HyperDimensionalEngine {
   /**
    * Does the mesh have anything that handles what it is currently holding?
    *
-   * IT CANNOT TELL YET. Read this before relying on it.
+   * It works when the regions cover what arrives, and reports nothing when
+   * they do not. Both halves matter.
    *
-   * The measurement below is sound and the plumbing is real, but the mesh
-   * does not currently answer differently to an input it knows and one it has
-   * never seen -- measured at 1.01-1.05 of the usual level for an unfamiliar
-   * input against 0.946 for a region's own trained pattern, which is the
-   * wrong way round and inside the noise either way. So it reports no gap,
-   * and the text heuristic in learn() goes on deciding by itself.
+   * WHAT IT DOES. Each Net Skill region's neurons are tuned to what that
+   * skill is for, so an input pointing that way makes the region do more.
+   * Measured on single-neuron regions -- the shape the live mesh has -- an
+   * input aligned to a region reads about twice what one aligned to nothing
+   * reads (0.51 of it), stable across tuning strengths, and a sustained run
+   * of the latter fires. On the live agent, inputs matching the experts'
+   * own domains read 0.00589 against 0.00390 for a string of symbols: a
+   * ratio of 0.661, under the threshold, gap reported.
    *
-   * It appeared to work for a while, and the reason is worth keeping. Region
-   * response used to include DRIVEN neurons, whose state is clamped to the
-   * input rather than computed from it. Expert regions take neurons from
-   * index 0 up, so the first region owned neuron 0 -- the neuron the input is
-   * fed into -- and always scored the maximum. `best` was the input's own
-   * magnitude handed back, which is why a string of symbols nothing had ever
-   * seen scored 1.000 and a familiar sentence 0.955. The tests that covered
-   * this passed on that artifact. They now pin the honest behaviour instead.
+   * MATCH THE INPUT MAGNITUDE BEFORE ASKING. Region response is how much a
+   * region is doing, and a bigger input makes everything do more. An
+   * unfamiliar vector with a larger norm reads HIGHER than a familiar one --
+   * measured at every tuning strength from 1x to 16x -- which looks exactly
+   * like "the mesh cannot tell these apart" and is not. learn() normalises
+   * before asking, and anything else calling this must too.
    *
-   * What is missing is upstream: the live regions are one neuron each and
-   * never learn to be different from one another, so there is nothing for
-   * this to read. Tuning their incoming weights to their own meaning helps
-   * measurably -- separation between familiar and unfamiliar inputs went from
-   * 0.008 to 0.048 -- and is not nearly enough.
+   * WHAT IT WILL NOT TELL YOU. If the regions do not cover the input at all,
+   * everything reads alike and no gap is reportable. The live experts are
+   * device permissions and programming categories, so an ordinary fact like
+   * "Paris is the capital of France" matches no region -- and reads the same
+   * as a string of symbols (0.00446 against 0.00431, ratio 0.967). That is
+   * the honest answer rather than a broken one: a mesh with no expert for
+   * general knowledge has no basis for singling out one unhandled input from
+   * another. It reports no gap and the text heuristic in learn() decides.
    *
-   * This is the "Determine Required Capability" step, read off the network
-   * rather than off the input text. After the Zip Loop settles, each Net
-   * Skill region has a response -- how much its neurons are actually doing --
-   * and the strongest of those says whether ANY region took the input up. An
-   * input nothing handles leaves every region quiet.
-   *
-   * Measured on a mesh with three trained regions: the best response was
-   * 0.072-0.089 for inputs a region had been trained on and 0.059 for one
-   * none of them had seen.
-   *
-   * "Quiet" has to be relative, because the absolute level depends on the
-   * network's size, its learning rate and how long it has been running. So it
-   * is measured against a slow EMA of the best response this network normally
-   * achieves. Until that baseline exists there is no gap -- a network that
-   * has not settled anything yet cannot honestly claim to be missing a
-   * capability, and saying so on tick one would fire the Extension Builder at
-   * everything.
+   * HOW THIS LOOKED LIKE IT WORKED BEFORE, AND DID NOT. Region response used
+   * to count DRIVEN neurons, whose state is clamped to the input rather than
+   * computed from it. Expert regions take neurons from index 0 up, so the
+   * first region owned neuron 0 -- the input neuron -- and always scored the
+   * maximum. `best` was the input handed back to itself, which is why a
+   * string of symbols scored 1.000 of the usual level and a familiar sentence
+   * 0.955. The tests covering this passed on that artifact.
    *
    * Call it after process(), which is when the states mean something.
    *

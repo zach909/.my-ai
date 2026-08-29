@@ -1646,7 +1646,94 @@ describe('the mesh says when it has nothing that handles an input', () => {
     }
   });
 
-  it('does not yet tell an unfamiliar input from a familiar one', () => {
+  it('answers a region\'s own direction about twice as strongly as one nothing is tuned to', () => {
+    // The mechanism the capability gap rests on, in the shape the live mesh
+    // actually has: single-neuron regions, each tuned to its own meaning.
+    //
+    // INPUT MAGNITUDE HAS TO BE MATCHED, and getting that wrong is what made
+    // this look broken for a long time. Region response is how much a
+    // region's neurons are doing, and a bigger input makes everything do
+    // more -- an unfamiliar vector that simply had a larger norm read HIGHER
+    // than a familiar one at every tuning strength tried (1x through 16x),
+    // which reads as "the mesh cannot tell these apart" when what it could
+    // not tell apart was loud from familiar. learn() normalises before asking
+    // for this reason.
+    const dirs: Record<string, number[]> = {
+      math: Array.from({ length: D }, (_, d) => Math.sin(d * 1.1)),
+      language: Array.from({ length: D }, (_, d) => Math.cos(d * 0.5)),
+      vision: Array.from({ length: D }, (_, d) => ((d % 3) - 1)),
+    };
+    const unit = (v: number[]) => {
+      const n = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+      return v.map(x => (x / n) * 0.8);
+    };
+    const untuned = unit(Array.from({ length: D }, (_, d) => Math.tan(d * 0.31)));
+
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24, dimensions: D, propagationSteps: 8,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    const ids: Record<string, number> = { math: 1, language: 2, vision: 3 };
+    for (const [name, id] of Object.entries(ids)) {
+      engine.setNeuronGroup(id, name);
+      engine.tuneNeuronTo(id, 0, unit(dirs[name]));
+    }
+    const ask = (v: number[]) => {
+      engine.process(v, undefined, new Set([0]), undefined, { learn: false });
+      return engine.capabilityGap();
+    };
+    for (let r = 0; r < 6; r++) for (const v of Object.values(dirs)) ask(unit(v));
+
+    const mean = (a: number[]) => a.reduce((s, x) => s + x, 0) / a.length;
+    const aligned = mean(Object.values(dirs).map(v => ask(unit(v)).bestResponse));
+    const unaligned = mean([0, 1, 2, 3].map(() => ask(untuned).bestResponse));
+
+    // Measured about 0.51 of the aligned response, stable across tuning
+    // strengths. Well outside noise, and in the right direction.
+    expect(unaligned).toBeLessThan(aligned * 0.7);
+  });
+
+  it('fires on a direction nothing is tuned to, and not on one that is', () => {
+    const dirs: Record<string, number[]> = {
+      math: Array.from({ length: D }, (_, d) => Math.sin(d * 1.1)),
+      language: Array.from({ length: D }, (_, d) => Math.cos(d * 0.5)),
+      vision: Array.from({ length: D }, (_, d) => ((d % 3) - 1)),
+    };
+    const unit = (v: number[]) => {
+      const n = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+      return v.map(x => (x / n) * 0.8);
+    };
+    const untuned = unit(Array.from({ length: D }, (_, d) => Math.tan(d * 0.31)));
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24, dimensions: D, propagationSteps: 8,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    const ids: Record<string, number> = { math: 1, language: 2, vision: 3 };
+    for (const [name, id] of Object.entries(ids)) {
+      engine.setNeuronGroup(id, name);
+      engine.tuneNeuronTo(id, 0, unit(dirs[name]));
+    }
+    const ask = (v: number[]) => {
+      engine.process(v, undefined, new Set([0]), undefined, { learn: false });
+      return engine.capabilityGap();
+    };
+    for (let r = 0; r < 6; r++) for (const v of Object.values(dirs)) ask(unit(v));
+
+    // Sustained, so one noisy tick cannot send the Extension Builder anywhere.
+    const verdicts: boolean[] = [];
+    for (let k = 0; k < 5; k++) verdicts.push(ask(untuned).needed);
+    expect(verdicts[0]).toBe(false);
+    expect(verdicts[verdicts.length - 1]).toBe(true);
+
+    // And it clears the moment something the mesh is tuned for comes back.
+    const back = ask(unit(dirs.math));
+    expect(back.needed).toBe(false);
+    expect(back.quietRun).toBe(0);
+  });
+
+  it('does not tell a familiar input from an unfamiliar one when neither matches a region', () => {
     // This test used to assert the opposite, and it passed for a bad reason.
     //
     // Region response included DRIVEN neurons, whose state is clamped to the
