@@ -1143,7 +1143,7 @@ async function testElasticCoreTrainingYields() {
 
 async function testNeuroLangElasticMaterializer() {
   const { NeuroLangInterpreter, ElasticNeuroLangRuntime } = await load('models && skills/core/neuro-lang.js');
-  const { ElasticCoreBlock } = await load('models && skills/core/elastic-core.js');
+  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const { ValueRangeAllocator } = await load('models && skills/core/value-range.js');
 
   const interp = new NeuroLangInterpreter();
@@ -1155,7 +1155,11 @@ async function testNeuroLangElasticMaterializer() {
   ].join('\n'));
   check(parsed.errors.length === 0, `Elastic NeuroLang: parsed DSL snippet without errors (${JSON.stringify(parsed.errors)})`);
 
-  const core = new ElasticCoreBlock({ neuronCount: 1, stateDim: 4, inputDim: 4, outputDim: 4, seed: 11 });
+  // The ONE network, not a second one built beside it. A NeuroLang program is
+  // how the Extension Builder describes a net skill, and its neurons have to
+  // land where the agent actually thinks -- carrying the hyperdimensional term
+  // and the wave like every other neuron.
+  const core = new HyperDimensionalEngine({ neuronCount: 1, dimensions: 4, propagationSteps: 1 });
   const vale = new ValueRangeAllocator({ enabled: true, totalPoints: 100, minLearningRate: 0.001, maxLearningRate: 0.5, redistributionInterval: 1000, decayFactor: 0 });
   vale.initializeNeurons([0, 1].map(id => ({ id: String(id), name: `n${id}`, value: 0, learningRate: 0, states: new Map(), connections: new Map(), expertGroup: null, active: true })));
 
@@ -1163,15 +1167,23 @@ async function testNeuroLangElasticMaterializer() {
   const result = runtime.materialize(parsed.neurons, { definitionTolerance: 2 });
   const alphaId = result.nameToId.get('alpha');
   const betaId = result.nameToId.get('beta');
-  check(alphaId !== undefined && betaId !== undefined && core.getNeuronCount() >= 2, 'Elastic NeuroLang: materializer creates/grows Elastic Core neurons for parsed and referenced names');
+  check(alphaId !== undefined && betaId !== undefined && core.getNeuronCount() >= 2, 'NeuroLang: materializer creates/grows neurons in the one network for parsed and referenced names');
 
-  const installed = core.connectionBlock(alphaId, betaId);
-  check(Math.abs(installed[0] - 0.75) < 1e-6 && Math.abs(installed[5] - 0.75) < 1e-6,
-    'Elastic NeuroLang: explicit @connections weight is installed on the Elastic Core diagonal block');
+  const snapshot = core.captureNetworkState();
+  const diagBuf = Buffer.from(snapshot.connDiag, 'base64');
+  const diag = new Float32Array(diagBuf.buffer, diagBuf.byteOffset, diagBuf.byteLength / 4);
+  const N = snapshot.shape.neurons;
+  const D = snapshot.shape.dimensions + 1;
+  let installedOnEveryDimension = true;
+  for (let d = 0; d < D; d++) {
+    if (Math.abs(diag[(alphaId * D + d) * N + betaId] - 0.75) > 1e-6) installedOnEveryDimension = false;
+  }
+  check(installedOnEveryDimension,
+    'NeuroLang: explicit @connections weight is installed as a real connection in the one network');
 
   const alphaVale = vale.getValeFractions().get(String(alphaId));
-  check(alphaVale !== undefined && alphaVale > 0.5, 'Elastic NeuroLang: @vale is applied through the shared ValueRangeAllocator');
-  check(result.definitionChecks.has('alpha') && result.satisfied.includes('alpha'), 'Elastic NeuroLang: @definition produces a testable settle/readout check');
+  check(alphaVale !== undefined && alphaVale > 0.5, 'NeuroLang: @vale is applied through the shared ValueRangeAllocator');
+  check(result.definitionChecks.has('alpha') && result.satisfied.includes('alpha'), 'NeuroLang: @definition produces a testable readout check in the one network');
 }
 
 async function testBootstrap() {

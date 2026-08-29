@@ -157,6 +157,15 @@ export class NeuroPipeline {
             // A bias on every connection, not one per receiving neuron shared across
             // all of them -- c = x*w + b per CONNECTION, as the architecture asks.
             connectionBias: true,
+            // Room to settle. The engine's default ceiling is 8, and a wave network
+            // needs more than that to reach its steady oscillation -- measured, 27
+            // iterations on the first tick and 4-9 after. With a ceiling of 8 the
+            // loop hit the wall every single tick and never once reported settling,
+            // which made "the network settles into a state that represents the
+            // input" a description of something that was not happening. Costs
+            // nothing on a settled network, because the loop now stops when the
+            // residual stops falling rather than running to the ceiling.
+            propagationSteps: 32,
             ...(this.config.hyperSustainedDivergenceTicks !== undefined
                 ? { sustainedDivergenceTicks: this.config.hyperSustainedDivergenceTicks } : {}),
             ...(this.config.hyperDivergenceTolerance !== undefined

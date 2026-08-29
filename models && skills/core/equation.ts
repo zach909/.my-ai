@@ -43,9 +43,21 @@
  *
  *   The two weights combine and the two biases combine:
  *
- *     connections = Σ_j state[j][d]·connDiag[i][d][j]
- *                 + Σ_j connBias[i][d][j]
- *                 + Σ_j state[j][(d-1) mod D]·connShift[i][d][j]·strength
+ *     connections = Σ_j Σ_e state[j][e]·W[i][j][d][e]      ← the general form
+ *
+ *   W[i][j] is a block: it maps the whole state of the source neuron to each
+ *   dimension of the receiver. Two implementations use two restrictions of it,
+ *   and that is the only thing that differs between them:
+ *
+ *     the engine        keeps two bands of the block -- the diagonal
+ *                       (connDiag) and one off-diagonal (connShift·strength) --
+ *                       which is what makes an N x D x N array enough
+ *     the elastic core  keeps the whole block (connBlock), which is richer per
+ *                       connection and costs D times as much
+ *
+ *   So `connections` below is written once, and a caller says which form its
+ *   weights are in. There is one equation; there are two ways of storing the
+ *   part of it a given network can afford.
  *
  *     state'[i][d] = tanh( bias[i][d]
  *                        + connections · networkScale
@@ -76,6 +88,14 @@
  *     pool'[bin_i] += wave'[i]                ← where waves meet and cancel
  *     waveTerm[i]  = waveGain · Re( heard[i] · e^{-i·phase[i]} )
  *
+ *   VALE is the last term, and it is the same in every implementation:
+ *
+ *     state'[i][d] = vale[i]·state[i][d] + (1 - vale[i])·tanh( ... )
+ *
+ *   A neuron with a high vale holds still; one with a low vale moves freely.
+ *   It is the zero-sum plasticity budget, applied as a blend between where the
+ *   neuron was and what the equation says it should be.
+ *
  *   A DRIVEN neuron is clamped to the input and emits its signature instead of
  *   computing. A HELD neuron -- one whose expert group was not asked for this
  *   tick -- keeps the state it had. Everything else runs the equation.
@@ -90,9 +110,20 @@ export interface EquationState {
   states: Float32Array;
   /** [i][d] */
   bias: Float32Array;
-  /** [i][d][j] */
+  /** [i][d][j] -- the two-band form of the connection block. */
   connDiag: Float32Array;
   connShift: Float32Array;
+  /**
+   * [(i*N + j)*D*D + d*D + e] -- the whole connection block, when a network
+   * keeps it. Present means the general form is used and the two bands above
+   * are ignored; absent means the bands are the connection.
+   */
+  connBlock?: Float32Array;
+  /**
+   * [i] -- how much each neuron holds still. Undefined means nothing does,
+   * which is the same as every vale being 0.
+   */
+  vale?: Float32Array;
   /** [i][d][j], empty when the network has no per-connection biases. */
   connBias: Float32Array;
   /** [i][k] -- receiver i's window into the network. */
@@ -140,6 +171,23 @@ export interface EquationSettings {
   divergenceTolerance: number;
   /** Live correction: how many consecutive off-track iterations before damping. */
   sustainedDivergenceTicks: number;
+  /**
+   * Whether dimension 0 -- the input flag -- is wiped before the tick.
+   *
+   * The two implementations disagree about what that dimension IS, and this is
+   * the only place they disagree at all. The elastic core treats it as a mark
+   * that is true for exactly one tick: it clears every neuron's flag, then
+   * sets it again for whatever is being driven now, so a neuron driven last
+   * tick does not still look driven. The engine treats it as an ordinary
+   * dimension that neurons compute and propagate, which is what makes its
+   * inputTopography ("how close is each neuron to a directly-driven input")
+   * mean anything.
+   *
+   * Found by writing the equation down and comparing: the numbers disagreed by
+   * 0.26 and the connection term was identical, because the elastic core was
+   * computing from a state with dimension 0 already wiped.
+   */
+  clearInputFlagFirst?: boolean;
 }
 
 /**
@@ -199,7 +247,13 @@ export function applyEquation(
 ): EquationResult {
   const N = state.neurons;
   const D = state.dimensions;
-  const at = (d: number, i: number) => state.states[d * N + i];
+  // The input flag, wiped first where that is what the implementation does.
+  // Everything below reads through `at`, so this is the state the equation
+  // sees rather than a separate pass over it.
+  const working = settings.clearInputFlagFirst
+    ? (() => { const copy = Float32Array.from(state.states); for (let i = 0; i < N; i++) copy[i] = 0; return copy; })()
+    : state.states;
+  const at = (d: number, i: number) => working[d * N + i];
 
   // ── The wave, first: what a neuron hears enters the tanh below ──────────
   const waveTerm = new Float32Array(N);
@@ -356,19 +410,34 @@ export function applyEquation(
     for (let d = 0; d < D; d++) {
       const shiftDim = (d - 1 + D) % D;
       let connections = 0;
-      for (let j = 0; j < N; j++) {
-        connections += at(d, j) * state.connDiag[(i * D + d) * N + j];
-        connections += at(shiftDim, j) * state.connShift[(i * D + d) * N + j] * settings.crossInfluenceStrength;
-        if (settings.connectionBias) connections += state.connBias[(i * D + d) * N + j];
+      if (state.connBlock) {
+        // The general form: every source dimension reaches every receiving
+        // dimension through the block.
+        for (let j = 0; j < N; j++) {
+          if (j === i) continue;
+          const block = (i * N + j) * D * D + d * D;
+          for (let e = 0; e < D; e++) connections += at(e, j) * state.connBlock[block + e];
+        }
+      } else {
+        // Two bands of that same block.
+        for (let j = 0; j < N; j++) {
+          connections += at(d, j) * state.connDiag[(i * D + d) * N + j];
+          connections += at(shiftDim, j) * state.connShift[(i * D + d) * N + j] * settings.crossInfluenceStrength;
+          if (settings.connectionBias) connections += state.connBias[(i * D + d) * N + j];
+        }
       }
       const window = i * D + d;
-      next[d * N + i] = Math.tanh(
+      const computed = Math.tanh(
         state.bias[i * D + d]
         + connections * networkScale[window]
         + networkWeight[window] * heardMean[d]
         + networkBias[window]
         + waveTerm[i],
       );
+      // Vale: how much this neuron holds still rather than moving to what the
+      // equation says. The same blend in every implementation of it.
+      const v = state.vale ? state.vale[i] : 0;
+      next[d * N + i] = v !== 0 ? v * at(d, i) + (1 - v) * computed : computed;
     }
   }
 

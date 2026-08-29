@@ -37,7 +37,7 @@
 
 import type { HyperDimensionalEngine } from './onebrain.js';
 import type { ValueRangeAllocator } from './value-range.js';
-import type { ElasticCoreBlock, DefinitionCheckResult } from './elastic-core.js';
+import type { DefinitionCheckResult } from './elastic-core.js';
 import { CodeToNetCompiler, CodeNet } from './code-to-net.js';
 import type { CompileOptions, TestReport } from './code-to-net.js';
 import { NetSearchEngine } from './net-search.js';
@@ -1109,20 +1109,28 @@ export class NeuroLangRuntime {
 }
 
 /**
- * Materializes parsed NeuriLang directly into an ElasticCoreBlock. The runtime
- * keeps name→id bindings stable across calls, grows the block with addNeuron()
+ * Materializes parsed NeuriLang directly into THE network.
+ *
+ * The runtime keeps name→id bindings stable across calls, grows the network
  * whenever a new parsed neuron needs capacity, installs explicit connection
- * scalars as diagonal Elastic Core connection blocks, maps @vale through the
- * shared ValueRangeAllocator, and turns @definition into a deterministic
- * readout target that callers can smoke-test with checkDefinition().
+ * scalars as real connections, maps @vale through the shared
+ * ValueRangeAllocator, and turns @definition into a readout target callers can
+ * check with checkDefinition().
+ *
+ * It built into an ElasticCoreBlock before -- a second network, with its own
+ * equation, beside the one everything else runs. So a NeuroLang program (which
+ * is how the Extension Builder describes a net skill) produced neurons that
+ * carried none of the hyperdimensional term and none of the wave, and were
+ * connected to nothing the agent actually thinks with. Same DSL, same
+ * materialisation, one network.
  */
 export class ElasticNeuroLangRuntime {
-  private core: ElasticCoreBlock;
+  private core: HyperDimensionalEngine;
   private valeAllocator?: ValueRangeAllocator;
   private nameToId: Map<string, number> = new Map();
   private nextId = 0;
 
-  constructor(core: ElasticCoreBlock, valeAllocator?: ValueRangeAllocator) {
+  constructor(core: HyperDimensionalEngine, valeAllocator?: ValueRangeAllocator) {
     this.core = core;
     this.valeAllocator = valeAllocator;
   }
@@ -1141,7 +1149,7 @@ export class ElasticNeuroLangRuntime {
 
       for (const [otherName, weight] of neuron.connections) {
         const sourceId = this.assignId(otherName);
-        this.core.setConnectionScalar(targetId, sourceId, weight);
+        this.core.setConnection(targetId, sourceId, weight);
       }
 
       if (neuron.vale !== undefined && this.valeAllocator) {
@@ -1151,7 +1159,18 @@ export class ElasticNeuroLangRuntime {
       }
 
       if (neuron.definition.length > 0) {
-        this.core.setDefinitionTarget(targetId, embedText(neuron.definition, this.core.getStateDim()));
+        const meaning = embedText(neuron.definition, this.core.getDimensions());
+        // Where the neuron starts AND what it is held to: a definition is both
+        // the place in the space this neuron is about and the contract it has
+        // to keep saying.
+        this.core.setNeuronState(targetId, meaning);
+        this.core.setDefinitionTarget(targetId, meaning);
+      }
+      // The wave it carries, from the same meaning -- so two neurons defined
+      // the same way land on the same frequency and reinforce each other in
+      // the shared pool. See net-skill-graft.ts's waveForMeaning().
+      if (neuron.wave) {
+        this.core.setWaveSignature(targetId, neuron.wave.frequency, neuron.wave.phase);
       }
     }
 
@@ -1162,6 +1181,7 @@ export class ElasticNeuroLangRuntime {
       const id = this.nameToId.get(name);
       if (id === undefined) continue;
       const check = this.core.checkDefinition(id, opts.definitionTolerance);
+      if (!check) continue;
       definitionChecks.set(name, check);
       if (check.satisfied) satisfied.push(name);
     }
@@ -1172,7 +1192,7 @@ export class ElasticNeuroLangRuntime {
   private assignId(name: string): number {
     const existing = this.nameToId.get(name);
     if (existing !== undefined) return existing;
-    while (this.nextId >= this.core.getNeuronCount()) this.core.addNeuron();
+    while (this.nextId >= this.core.getNeuronCount()) this.core.addNeurons(1);
     const id = this.nextId++;
     this.nameToId.set(name, id);
     return id;

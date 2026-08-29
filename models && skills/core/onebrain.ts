@@ -3025,6 +3025,17 @@ function clampNetworkVariable(value: number): number {
   return value;
 }
 
+/**
+ * A wave network settles into an oscillation, not a fixed point, so "settled"
+ * has to mean "the residual has stopped falling" as well as "the residual is
+ * nearly zero". These are how flat, and for how long, before the settle loop
+ * calls it: a twentieth of itself is well outside the ~10% wobble measured on
+ * a steady oscillation, and three iterations avoids stopping on one flat step
+ * during the initial decay.
+ */
+const SETTLED_RESIDUAL_CHANGE = 0.05;
+const SETTLED_RESIDUAL_TICKS = 3;
+
 /** However high a caller asks for, the loop gain stays below one. */
 const WAVE_FEEDBACK_CEILING = 0.9;
 
@@ -3172,6 +3183,8 @@ export class HyperDimensionalEngine {
    * tick -- see ProcessOptions.activeGroups.
    */
   private neuronGroups: Map<number, string> = new Map();
+  /** What each neuron with a definition is supposed to say. */
+  private definitionTargets: Map<number, Float32Array> = new Map();
   /** Neurons holding their state this tick because their group was not asked. */
   private heldIndicesScratch: Int32Array;
   /** Per-receiver network wave weight and bias, rebuilt each settle iteration. */
@@ -4260,6 +4273,62 @@ export class HyperDimensionalEngine {
   }
 
   /**
+   * What a neuron is supposed to say, and whether it is saying it.
+   *
+   * A `@definishon` in NeuroLang is a contract: "when this neuron is the one
+   * being read, the network's answer must be this." The target is the
+   * definition embedded into the network's own dimensions, kept so the
+   * contract can be checked rather than assumed.
+   *
+   * This lived only on ElasticCoreBlock, which meant a NeuroLang program built
+   * its neurons into THAT network -- a second network with its own equation,
+   * beside the one everything else runs. The DSL builds into the one network
+   * now, and a definition is checkable there.
+   */
+  setDefinitionTarget(id: number, target: ArrayLike<number>): boolean {
+    if (id < 0 || id >= this.neurons.length) return false;
+    const dims = this.config.dimensions;
+    const stored = new Float32Array(dims);
+    for (let d = 0; d < Math.min(dims, target.length); d++) {
+      const value = target[d];
+      stored[d] = Number.isFinite(value) ? (value < -1 ? -1 : (value > 1 ? 1 : value)) : 0;
+    }
+    this.definitionTargets.set(id, stored);
+    return true;
+  }
+
+  /**
+   * How far a neuron is from the definition it was given, and whether that is
+   * close enough to call the contract satisfied.
+   *
+   * Mean squared error over the content dimensions -- dimension 0 is the
+   * input flag, which is about how a neuron is being driven rather than what
+   * it means. A neuron with no definition has nothing to fail: it reports a
+   * loss of 0 and satisfied, because an unstated contract is not a broken one.
+   */
+  checkDefinition(id: number, tolerance: number = 0.25): {
+    neuronId: number;
+    loss: number;
+    satisfied: boolean;
+    readout: Float32Array;
+    target: Float32Array;
+  } | null {
+    if (id < 0 || id >= this.neurons.length) return null;
+    const dims = this.config.dimensions;
+    const target = this.definitionTargets.get(id) ?? new Float32Array(dims);
+    const N = this.neurons.length;
+    const readout = new Float32Array(dims);
+    for (let d = 0; d < dims; d++) readout[d] = this.allStates[(d + 1) * N + id];
+    let loss = 0;
+    for (let d = 0; d < dims; d++) {
+      const error = target[d] - readout[d];
+      loss += error * error;
+    }
+    loss /= Math.max(1, dims);
+    return { neuronId: id, loss, satisfied: loss <= tolerance, readout, target };
+  }
+
+  /**
    * The network as a topology: nodes and the strongest edges between them.
    *
    * For anything that wants to LOOK at the network -- the snapshot the
@@ -4767,6 +4836,10 @@ export class HyperDimensionalEngine {
 
     let liveCorrections = 0;
     let iterations = 0;
+    // For the second settle test below: is the residual still falling?
+    let previousResidual = 0;
+    let hasPreviousResidual = false;
+    let flatResidualRun = 0;
     const nextStates = this.nextStatesBuffer;
     const strength = this.config.crossInfluenceStrength;
     const dims = this.config.dimensions;
@@ -5500,10 +5573,41 @@ export class HyperDimensionalEngine {
         }
       }
 
+      // ── Has it settled? ─────────────────────────────────────────────
+      //
+      // Two ways to be settled, because there are two kinds of settled.
+      //
+      // A network with no wave comes to REST: the residual falls away to
+      // nothing and stays there. Measured on a 24-neuron network with a steady
+      // input, it goes 1.0e+2 -> 3.7e-1 -> 2.6e-3 -> 3.9e-7. The absolute
+      // threshold catches that.
+      //
+      // A network WITH a wave never comes to rest, and should not be expected
+      // to. Every neuron's phase advances each iteration, so the wave term is
+      // different each time by construction -- the network converges to a
+      // steady oscillation rather than a fixed point. Same measurement with
+      // the wave on: 1.0e+2 -> 3.2e-1 -> 1.7e-1 -> 1.7e-1, flat forever. The
+      // absolute threshold never fires, so the loop always ran to its ceiling
+      // and never once reported having settled.
+      //
+      // So the second test is that the residual has STOPPED FALLING. When it
+      // changes by less than a twentieth of itself for a few iterations
+      // running, the network is as settled as this network gets -- a limit
+      // cycle rather than a point, which is what a wave system settles into.
       if (residual < this.config.convergenceThreshold) {
         iterations++;
         break;
       }
+      if (hasPreviousResidual && residual > 0) {
+        const change = Math.abs(residual - previousResidual) / residual;
+        flatResidualRun = change < SETTLED_RESIDUAL_CHANGE ? flatResidualRun + 1 : 0;
+        if (flatResidualRun >= SETTLED_RESIDUAL_TICKS) {
+          iterations++;
+          break;
+        }
+      }
+      previousResidual = residual;
+      hasPreviousResidual = true;
     }
 
     const stateDeltas = new Map<number, number>();

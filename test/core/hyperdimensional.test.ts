@@ -1204,3 +1204,58 @@ describe('every connection is its own window into the network', () => {
     expect(newColumns).toBeGreaterThan(0);
   });
 });
+
+describe('the settle loop stops when the network has settled', () => {
+  // "The Zip Loop repeats until the network settles" was, measurably, not
+  // happening once the wave layer was on. A wave network does not come to
+  // rest at a fixed point -- every neuron's phase advances each iteration --
+  // so a test that only asks "is the state still moving?" never fires, and
+  // the loop ran to its ceiling on every single tick. The second test asks
+  // instead whether the movement has stopped SHRINKING, which is what a
+  // settled oscillation looks like.
+  const waveConfig = {
+    neuronCount: 24,
+    dimensions: 8,
+    propagationSteps: 200,
+    convergenceThreshold: 0.01,
+    hyperGain: 1,
+    hyperAdd: 1,
+    hyperWaveGain: 1,
+    hyperWaveAdd: 1,
+    waveGain: 0.1,
+    connectionBias: true,
+  };
+  const steady = new Array(8).fill(0.35);
+
+  it('reports settling well short of the ceiling on a wave network', () => {
+    const engine = new HyperDimensionalEngine(waveConfig);
+    const runs: number[] = [];
+    for (let t = 0; t < 8; t++) {
+      runs.push(engine.process(steady, undefined, new Set([0]), undefined, { learn: false }).settleIterations);
+    }
+    // Not one tick may hit the wall. Before the residual test was added every
+    // one of these was 200.
+    for (const n of runs) expect(n).toBeLessThan(200);
+    // And the steady-state cost is small, not "just under the ceiling".
+    const later = runs.slice(1);
+    expect(Math.max(...later)).toBeLessThan(60);
+  });
+
+  it('still runs long enough to actually propagate', () => {
+    // The cheap way to pass the test above is to declare victory on
+    // iteration one. A 24-neuron mesh cannot carry the driven neuron's
+    // influence across itself in a single step.
+    const engine = new HyperDimensionalEngine(waveConfig);
+    const first = engine.process(steady, undefined, new Set([0]), undefined, { learn: false });
+    expect(first.settleIterations).toBeGreaterThan(3);
+  });
+
+  it('leaves a settling non-wave network alone', () => {
+    // The residual test must not cut short a network that is genuinely
+    // converging to a point -- those reach the absolute threshold on their
+    // own, and did before this change.
+    const engine = new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8, propagationSteps: 200, convergenceThreshold: 0.01 });
+    const out = engine.process(steady, undefined, new Set([0]), undefined, { learn: false });
+    expect(out.settleIterations).toBeLessThan(200);
+  });
+});
