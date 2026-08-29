@@ -30,8 +30,16 @@
  *
  *     its own weight        connDiag[i][d][j]
  *     its own bias          connBias[i][d][j]  (and bias[i][d], the neuron's)
- *     the network's weight  hyperGain  · mean_k( state[k][d] · modWeight[k] )
- *     the network's bias    hyperAdd   · mean_k( state[k][d] · addWeight[k] )
+ *     the network's weight  hyperGain · mean_k( state[k][d] · modWeight[i][k] ) · senderGain[j]
+ *     the network's bias    hyperAdd  · mean_k( state[k][d] · addWeight[i][k] )
+ *
+ *   Every connection is its own window into the whole network. modWeight[i] is
+ *   a ROW -- receiver i's learned variables, one per neuron -- and senderGain
+ *   scales that reading by who is sending, so the connection A->B and the
+ *   connection C->B get different numbers out of one identical network state.
+ *   A window per (receiver, sender) pair with its own N variables would be
+ *   N^3; this is that factorised to N^2, which is what a network that grows
+ *   with every installed skill can carry.
  *
  *   The two weights combine and the two biases combine:
  *
@@ -87,16 +95,18 @@ export interface EquationState {
   connShift: Float32Array;
   /** [i][d][j], empty when the network has no per-connection biases. */
   connBias: Float32Array;
-  /** [i] */
+  /** [i][k] -- receiver i's window into the network. */
   modWeight: Float32Array;
   addWeight: Float32Array;
+  /** [j] -- how much a connection from j scales its receiver's window. */
+  senderGain: Float32Array;
   /** [i][k] */
   connWaveGain: Float32Array;
   connWavePhase: Float32Array;
   connWaveBias: Float32Array;
   connWaveBiasIm: Float32Array;
   connWaveShift: Float32Array;
-  /** [i] */
+  /** [i][k] -- the wave copies of the same window. */
   modWaveWeight: Float32Array;
   addWaveWeight: Float32Array;
   neuronWaveBiasRe: Float32Array;
@@ -221,21 +231,27 @@ export function applyEquation(
 
     // The network's wave weight and wave bias: every neuron's wave through a
     // personalised variable, added together.
-    let netWeightRe = 0, netWeightIm = 0, netBiasRe = 0, netBiasIm = 0;
+    // Each receiving neuron's own window into the pool.
+    const netWeightRe = new Float32Array(N);
+    const netWeightIm = new Float32Array(N);
+    const netBiasRe = new Float32Array(N);
+    const netBiasIm = new Float32Array(N);
     if (settings.hyperWaveGain !== 0 || settings.hyperWaveAdd !== 0) {
-      let mr = 0, mi = 0, ar = 0, ai = 0;
-      for (let k = 0; k < N; k++) {
-        const re = state.poolRe[bin[k]];
-        const im = state.poolIm[bin[k]];
-        mr += re * state.modWaveWeight[k];
-        mi += im * state.modWaveWeight[k];
-        ar += re * state.addWaveWeight[k];
-        ai += im * state.addWaveWeight[k];
+      for (let i = 0; i < N; i++) {
+        let mr = 0, mi = 0, ar = 0, ai = 0;
+        for (let k = 0; k < N; k++) {
+          const re = state.poolRe[bin[k]];
+          const im = state.poolIm[bin[k]];
+          mr += re * state.modWaveWeight[i * N + k];
+          mi += im * state.modWaveWeight[i * N + k];
+          ar += re * state.addWaveWeight[i * N + k];
+          ai += im * state.addWaveWeight[i * N + k];
+        }
+        netWeightRe[i] = settings.hyperWaveGain * mr / N;
+        netWeightIm[i] = settings.hyperWaveGain * mi / N;
+        netBiasRe[i] = settings.hyperWaveAdd * ar / N;
+        netBiasIm[i] = settings.hyperWaveAdd * ai / N;
       }
-      netWeightRe = settings.hyperWaveGain * mr / N;
-      netWeightIm = settings.hyperWaveGain * mi / N;
-      netBiasRe = settings.hyperWaveAdd * ar / N;
-      netBiasIm = settings.hyperWaveAdd * ai / N;
     }
 
     const maxAmplitude = Math.sqrt(Math.max(1, D - 1));
@@ -246,10 +262,12 @@ export function applyEquation(
         const gain = state.connWaveGain[i * N + k];
         const turn = state.connWavePhase[i * N + k];
         // The two wave weights combined, and the two wave biases combined.
-        const wRe = gain * Math.cos(turn) + netWeightRe;
-        const wIm = gain * Math.sin(turn) + netWeightIm;
-        const bRe = state.connWaveBias[i * N + k] + netBiasRe;
-        const bIm = state.connWaveBiasIm[i * N + k] + netBiasIm;
+        // This connection's own share of its receiver's window.
+        const share = state.senderGain[k];
+        const wRe = gain * Math.cos(turn) + netWeightRe[i] * share;
+        const wIm = gain * Math.sin(turn) + netWeightIm[i] * share;
+        const bRe = state.connWaveBias[i * N + k] + netBiasRe[i] * share;
+        const bIm = state.connWaveBiasIm[i * N + k] + netBiasIm[i] * share;
         // Run against the wave of the neuron giving it.
         let editedRe = wRe * prevRe[k] - wIm * prevIm[k] + bRe;
         let editedIm = wRe * prevIm[k] + wIm * prevRe[k] + bIm;
@@ -297,24 +315,29 @@ export function applyEquation(
   }
 
   // ── The network's weight and bias, per dimension ────────────────────────
-  const networkWeight = new Float32Array(D);
-  const networkBias = new Float32Array(D);
-  const networkScale = new Float32Array(D).fill(1);
+  const networkWeight = new Float32Array(N * D);
+  const networkBias = new Float32Array(N * D);
+  const networkScale = new Float32Array(N * D).fill(1);
   const heardMean = new Float32Array(D);
   const anyHyper = settings.hyperGain !== 0 || settings.hyperAdd !== 0 || settings.hyperScale !== 0;
   if (anyHyper) {
     for (let d = 0; d < D; d++) {
-      let say = 0, offset = 0, total = 0;
-      for (let k = 0; k < N; k++) {
-        say += at(d, k) * state.modWeight[k];
-        offset += at(d, k) * state.addWeight[k];
-        total += at(d, k);
+      // What a connection carries at this dimension, weighted by who sends it.
+      let sent = 0;
+      for (let k = 0; k < N; k++) sent += at(d, k) * state.senderGain[k];
+      heardMean[d] = sent / N;
+
+      for (let i = 0; i < N; i++) {
+        let say = 0, offset = 0;
+        for (let k = 0; k < N; k++) {
+          say += at(d, k) * state.modWeight[i * N + k];
+          offset += at(d, k) * state.addWeight[i * N + k];
+        }
+        say /= N;
+        networkWeight[i * D + d] = settings.hyperGain * say;
+        networkScale[i * D + d] = settings.hyperScale === 0 ? 1 : settings.hyperScale * say;
+        networkBias[i * D + d] = settings.hyperAdd * offset / N;
       }
-      say /= N;
-      networkWeight[d] = settings.hyperGain * say;
-      networkScale[d] = settings.hyperScale === 0 ? 1 : settings.hyperScale * say;
-      networkBias[d] = settings.hyperAdd * offset / N;
-      heardMean[d] = total / N;
     }
   }
 
@@ -338,11 +361,12 @@ export function applyEquation(
         connections += at(shiftDim, j) * state.connShift[(i * D + d) * N + j] * settings.crossInfluenceStrength;
         if (settings.connectionBias) connections += state.connBias[(i * D + d) * N + j];
       }
+      const window = i * D + d;
       next[d * N + i] = Math.tanh(
         state.bias[i * D + d]
-        + connections * networkScale[d]
-        + networkWeight[d] * heardMean[d]
-        + networkBias[d]
+        + connections * networkScale[window]
+        + networkWeight[window] * heardMean[d]
+        + networkBias[window]
         + waveTerm[i],
       );
     }

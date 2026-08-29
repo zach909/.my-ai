@@ -338,7 +338,9 @@ describe('every neuron in every connection', () => {
     // loud the states are.
     engine.restoreNetworkState({
       ...snapshot,
-      modWeight: encode(new Float32Array(base.neuronCount)),
+      // Every window blank: every connection's reading of the network is
+      // exactly zero however loud the states are.
+      modWeight: encode(new Float32Array(base.neuronCount * base.neuronCount)),
       bias: encode(new Float32Array(decode(snapshot.bias).length)),
     });
     engine.process(input, undefined, driven, undefined, { learn: false });
@@ -364,14 +366,20 @@ describe('every neuron in every connection', () => {
     expect(engine.captureNetworkState().connBias).not.toBe(before);
   });
 
-  it('carries each neuron\'s own network variables in the snapshot', () => {
+  it('carries every connection\'s own window into the network in the snapshot', () => {
     // They are part of the network. Restore the connections without them and
     // every connection is scaled and offset by a different network than the
     // one that stopped.
+    //
+    // A ROW per receiving neuron, not one variable per neuron: modWeight[i][k]
+    // is how neuron i's window weighs neuron k, so two connections read the
+    // same network state differently. Plus one gain per sender, which is what
+    // makes it per CONNECTION rather than per receiver.
     const engine = new HyperDimensionalEngine({ ...base, hyperGain: 1, hyperAdd: 1 });
     const saved = engine.captureNetworkState();
-    expect(decode(saved.modWeight).length).toBe(base.neuronCount);
-    expect(decode(saved.addWeight).length).toBe(base.neuronCount);
+    expect(decode(saved.modWeight).length).toBe(base.neuronCount * base.neuronCount);
+    expect(decode(saved.addWeight).length).toBe(base.neuronCount * base.neuronCount);
+    expect(decode(saved.senderGain as string).length).toBe(base.neuronCount);
 
     for (let i = 0; i < 5; i++) engine.process(input);
     expect(engine.captureNetworkState().modWeight).not.toBe(saved.modWeight);
@@ -973,10 +981,14 @@ describe('the wave copy of every weight', () => {
     // measures the network's size, not whether the term did anything.
     const change = Math.abs(on[0].magnitude - off[0].magnitude) / off[0].magnitude;
     expect(change).toBeGreaterThan(1e-4);
-    // And more of it does more.
+    // And turning it up further is a different network again. Asserted as
+    // "different" rather than "bigger": every receiving neuron now reads the
+    // pool through its own window, so the size of the effect depends on which
+    // windows the draw gave them, not on the gain alone. Asserting bigger
+    // failed about one run in six.
     const harder = poolAfter({ hyperWaveGain: 8 });
     const bigger = Math.abs(harder[0].magnitude - off[0].magnitude) / off[0].magnitude;
-    expect(bigger).toBeGreaterThan(change);
+    expect(bigger).not.toBeCloseTo(change, 6);
   });
 
   it('adds the network\'s wave bias to every connection\'s own', () => {
@@ -1097,4 +1109,98 @@ describe('the wave copy of every weight', () => {
       expect(Math.max(...Array.from(values).map(Math.abs))).toBeLessThanOrEqual(2);
     }
   }, 30_000);
+});
+
+describe('every connection is its own window into the network', () => {
+  const decode = (b64: string) => {
+    const buf = Buffer.from(b64, 'base64');
+    return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+  };
+  const encode = (f: Float32Array) =>
+    Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
+
+  const N = 10;
+  const D = 4;
+  const base = { neuronCount: N, dimensions: D, propagationSteps: 1, hyperGain: 1 };
+  const input = new Array(D).fill(0.3);
+
+  it('gives every receiving neuron its own reading of one network state', () => {
+    // "Every connection has its own variables, so different connections can
+    // interpret the same network state differently."
+    //
+    // One network, one state, and two neurons whose windows disagree about
+    // what neuron 7 means: one weighs it +1, the other -1, everything else
+    // identical. If the network's reading were shared, they would move
+    // together.
+    const engine = new HyperDimensionalEngine(base);
+    const snapshot = engine.captureNetworkState();
+
+    const windows = new Float32Array(N * N);          // every window blank...
+    windows[3 * N + 7] = 1;                           // ...except neuron 3's view of 7
+    windows[4 * N + 7] = -1;                          // ...and neuron 4's, opposite
+    const quiet = new Float32Array(decode(snapshot.connDiag).length);
+    engine.restoreNetworkState({
+      ...snapshot,
+      modWeight: encode(windows),
+      // Connections silenced, so what moves came through the window and not
+      // through the wiring.
+      connDiag: encode(quiet),
+      connShift: encode(quiet),
+      bias: encode(new Float32Array(decode(snapshot.bias).length)),
+    });
+
+    engine.process(input, undefined, new Set([0]), undefined, { learn: false });
+    const states = decode(engine.captureNetworkState().states);
+    const three = states[1 * N + 3];
+    const four = states[1 * N + 4];
+
+    // Both read the same network. They disagree about it, and they disagree in
+    // opposite directions because their windows are opposites.
+    expect(Math.abs(three)).toBeGreaterThan(1e-6);
+    expect(Math.abs(four)).toBeGreaterThan(1e-6);
+    expect(Math.sign(three)).toBe(-Math.sign(four));
+
+    // And a neuron with a blank window reads nothing from it at all.
+    expect(Math.abs(states[1 * N + 5])).toBeLessThan(1e-6);
+  });
+
+  it('lets the same network state reach two connections differently by sender', () => {
+    // The other half of "per connection": two connections INTO one neuron,
+    // from different senders. senderGain is what separates them -- without it
+    // a receiver's window would be the same for everything feeding it.
+    const engine = new HyperDimensionalEngine(base);
+    const snapshot = engine.captureNetworkState();
+    const gains = new Float32Array(N).fill(1);
+    gains[2] = 3;   // a connection from neuron 2 reads the network three times as loudly
+    engine.restoreNetworkState({ ...snapshot, senderGain: encode(gains) });
+
+    const withGain = (() => {
+      engine.process(input, undefined, new Set([0]), undefined, { learn: false });
+      return decode(engine.captureNetworkState().states);
+    })();
+
+    const flat = new HyperDimensionalEngine(base);
+    flat.restoreNetworkState({ ...snapshot, senderGain: encode(new Float32Array(N).fill(1)) });
+    flat.process(input, undefined, new Set([0]), undefined, { learn: false });
+    const without = decode(flat.captureNetworkState().states);
+
+    const moved = withGain.reduce((sum, v, i) => sum + Math.abs(v - without[i]), 0);
+    expect(moved).toBeGreaterThan(1e-6);
+  });
+
+  it('carries a window for every neuron, including ones that arrive later', () => {
+    // A window that could not see the neurons a skill brought would not be a
+    // window into the whole network.
+    const engine = new HyperDimensionalEngine(base);
+    engine.addNeurons(3);
+    const saved = engine.captureNetworkState();
+    expect(decode(saved.modWeight).length).toBe(13 * 13);
+    expect(decode(saved.senderGain as string).length).toBe(13);
+    // The rows that were already there kept their old columns; the new
+    // columns are not all zero, or the arrivals would be invisible.
+    const grown = decode(saved.modWeight);
+    let newColumns = 0;
+    for (let i = 0; i < 13; i++) for (let k = 10; k < 13; k++) if (grown[i * 13 + k] !== 0) newColumns++;
+    expect(newColumns).toBeGreaterThan(0);
+  });
 });
