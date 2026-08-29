@@ -172,7 +172,18 @@ export type HaltReason =
   /** The ceiling. The run was cut off; whatever came back may be half of something. */
   | "ceiling"
   /** The output stream ended without a stop call ever appearing. */
-  | "output-ended";
+  | "output-ended"
+  /**
+   * The network went quiet and stayed quiet without ever asking to stop.
+   *
+   * It stopped -- a network saying nothing at all has stopped, whatever it
+   * did or did not write first -- but it never said it was finished, so this
+   * is not a complete run. Before this existed, silence was not a halting
+   * condition at all: a network that had gone entirely mute was read until
+   * the ceiling, so on the live mesh every run ended on the ceiling and no
+   * run ever ended because the network stopped.
+   */
+  | "went-quiet";
 
 export interface HaltDecision {
   halted: boolean;
@@ -217,6 +228,16 @@ export const DEFAULT_HALT: HaltConfig = { quietTicks: 32, maxTicks: 100_000 };
 const MIN_OUTPUT_BUDGET = 8;
 
 /**
+ * How much longer silence must hold to count as stopping when the network
+ * never asked to stop.
+ *
+ * A network that wrote the stop call and then went quiet has told us it is
+ * done. One that simply stopped talking has not, so it gets more room before
+ * we decide the answer is over.
+ */
+const SILENT_STOP_MULTIPLIER = 3;
+
+/**
  * Watches a run and decides when it is over.
  *
  * Internal: a caller gets its verdict through runUntilStopped(). Nothing
@@ -259,6 +280,17 @@ class HaltWatcher {
     // finished -- it has mentioned stopping in the middle of something.
     if (this.sawStop && this.quiet >= this.config.quietTicks) {
       return { halted: true, reason: "stopped-itself", ticks: this.ticks, sawStop: true, complete: true };
+    }
+
+    // Silence alone, held longer, also counts as stopping.
+    //
+    // Longer, because a network that has not said it is finished gets more
+    // benefit of the doubt than one that has: a pause in the middle of an
+    // answer must not be mistaken for the end of it. Not "complete" either,
+    // for the same reason the ceiling is not -- it stopped, but it never told
+    // us it was done.
+    if (!this.sawStop && this.quiet >= this.config.quietTicks * SILENT_STOP_MULTIPLIER) {
+      return { halted: true, reason: "went-quiet", ticks: this.ticks, sawStop: false, complete: false };
     }
 
     if (this.ticks >= this.config.maxTicks) {

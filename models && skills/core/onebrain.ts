@@ -7459,6 +7459,8 @@ export class ZipLoopInterface {
   /** Reused input vectors; engine dimensions are fixed at construction, so these never need rebuilding. */
   private pulseScratch: number[] | null = null;
   private idleScratch: number[] | null = null;
+  /** The last bit fed in, so the learning pass can re-drive it. */
+  private lastBit: 0 | 1 | null = null;
 
   constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds) {
     this.drivenBit0 = new Set([ids.bit0In]);
@@ -7533,6 +7535,7 @@ export class ZipLoopInterface {
     // Settling to convergence is what you do when you want the ANSWER, and
     // that still happens: nextOutputByte() and learnFromEvent() both settle
     // fully. Streaming the question in does not need it.
+    this.lastBit = bit;
     const ceiling = this.engine.getPropagationSteps();
     this.engine.setPropagationSteps(ZIP_INPUT_STEPS);
     try {
@@ -7556,7 +7559,25 @@ export class ZipLoopInterface {
    * one learning pass here is what the elastic core is described as doing.
    */
   learnFromEvent(): void {
-    this.engine.process(this.idleVector(), undefined, ZIP_LOOP_NO_DRIVEN);
+    if (this.lastBit === null) return;
+    // Learn while the input is still THERE.
+    //
+    // The first version of this drove nothing, on an idle vector, and learned
+    // whatever the network held afterwards. By then it held almost nothing:
+    // with no drive the states fell to 4e-6, so the Hebbian step came out at
+    // 1e-11 and vanished under Float32 against weights of 0.2 -- measured,
+    // exactly zero movement from a whole byte. The event was over before the
+    // learning ran.
+    //
+    // So the last bit of the message is re-driven with learning on, at the
+    // full settle ceiling. The states then mean "the message just arrived",
+    // which is the moment the elastic core is meant to learn from, and the
+    // input force each neuron felt is real rather than residual.
+    this.engine.process(
+      this.pulseVector(),
+      undefined,
+      this.lastBit === 1 ? this.drivenBit1 : this.drivenBit0,
+    );
   }
 
   /** Lazily built idle vector, shared with nextOutputByte(). */

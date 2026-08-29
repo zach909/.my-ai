@@ -65,7 +65,13 @@ describe('the archive that goes through two neurons', () => {
       { quietTicks: 4, maxTicks: 120 },
     );
     expect(result.sawStop).toBe(false);
-    expect(result.reason).toBe('ceiling');
+    // The claim here is sawStop: calling `search` is not asking to finish. The
+    // ENDING is now "went-quiet" rather than "ceiling", because the replay
+    // falls silent after its one call and silence held long enough is itself a
+    // way of stopping. Neither is "complete" -- the network never said it was
+    // done -- so nothing about "a plugin call is not a stop call" has moved.
+    expect(result.reason).toBe('went-quiet');
+    expect(result.complete).toBe(false);
   });
 });
 
