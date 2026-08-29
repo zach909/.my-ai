@@ -2698,6 +2698,21 @@ export class HyperDimensionalEngine {
      * silently degrades to a scan rather than returning the wrong neuron if that
      * ever stops holding.
      */
+    /**
+     * The mean energy across every neuron -- the network's own floor.
+     *
+     * What "quiet" has to be measured against: an absolute threshold that suits
+     * a small mesh calls a large one permanently noisy.
+     */
+    meanNeuronEnergy() {
+        const N = this.neurons.length;
+        if (N === 0)
+            return 0;
+        let total = 0;
+        for (let i = 0; i < N; i++)
+            total += this.neurons[i].energy;
+        return total / N;
+    }
     getNeuronEnergy(id) {
         return this.neuronById(id)?.energy ?? 0;
     }
@@ -6193,6 +6208,14 @@ const ZIP_LOOP_PULSE = 1;
 const ZIP_LOOP_NO_DRIVEN = new Set();
 /** Below this, an output neuron counts as saying nothing rather than saying zero. */
 const SILENT_OUTPUT = 1e-6;
+/**
+ * How far above the network's own mean energy an output neuron must sit to
+ * count as speaking.
+ *
+ * Above 1 because being exactly as active as the average neuron is what every
+ * neuron in a resting mesh is doing.
+ */
+const SILENT_OUTPUT_RATIO = 1.5;
 /** The wave the Zip Loop's bit neurons share. Its value does not matter; that all four share it does. */
 const ZIP_BIT_FREQUENCY = 0.25;
 /** Shared options for every read tick: reading the network must not rewrite it. */
@@ -6388,7 +6411,24 @@ export class ZipLoopInterface {
             this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
             const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
             const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
-            if (zero > SILENT_OUTPUT || one > SILENT_OUTPUT)
+            // Speaking means standing out from the network's own floor, not
+            // clearing a fixed constant.
+            //
+            // SILENT_OUTPUT is 1e-6, which suited a small mesh where a quiet neuron
+            // really did sit near zero. On the live network of 336 neurons every
+            // neuron carries residual activity around 1e-3 -- a thousand times the
+            // threshold -- so the output neurons NEVER read as silent and the run
+            // could never end by going quiet. Measured over five reads: bit0Out
+            // 9.98e-4 against bit1Out 9.93e-4, both far above the line and barely
+            // half a percent apart, which is noise being reported as speech.
+            //
+            // Against the network's own mean energy instead, the same way the
+            // capability gap is measured against what a region usually manages. A
+            // network whose output neurons are merely as active as everything else
+            // is not saying anything; one where they stand above the rest is.
+            const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
+            const line = floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
+            if (zero > line || one > line)
                 heard = true;
             byte = (byte << 1) | (one > zero ? 1 : 0);
         }
