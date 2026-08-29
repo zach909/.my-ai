@@ -1354,3 +1354,127 @@ describe('Net Skills are overlapping regions, not partitions', () => {
     expect(affinity[0].strength).toBeGreaterThanOrEqual(affinity[affinity.length - 1].strength);
   });
 });
+
+describe('the input creates the wave', () => {
+  // "When an input enters the network, it creates an initial wave."
+  //
+  // It did not. A source neuron's wave was its state's ENERGY -- a magnitude,
+  // with no sign -- rotated to its signature phase, so an input and its exact
+  // opposite produced the IDENTICAL wave. Measured before the fix: feeding
+  // +0.6 and -0.6 into the same network moved the shared pool by 0.003
+  // against a total pool energy of 1.78. The pool was 99.8% the network's own
+  // resting activity and 0.2% the input.
+  //
+  // For a wave network that is the wrong way round. Interference IS the
+  // computation, and two contradicting inputs could not contradict each
+  // other, because they were not different waves.
+  const D = 8;
+  const N = 16;
+  const waveConfig = (extra: Record<string, unknown> = {}) => ({
+    neuronCount: N,
+    dimensions: D,
+    propagationSteps: 1,
+    hyperGain: 1,
+    hyperAdd: 1,
+    hyperWaveGain: 1,
+    hyperWaveAdd: 1,
+    waveGain: 0.1,
+    connectionBias: true,
+    ...extra,
+  });
+  const decodeF = (b64: string) => {
+    const raw = atob(b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return new Float32Array(bytes.buffer);
+  };
+  const poolEnergy = (engine: HyperDimensionalEngine) => {
+    const snap = engine.captureNetworkState();
+    const re = decodeF(snap.wavePoolRe as string);
+    const im = decodeF(snap.wavePoolIm as string);
+    let total = 0;
+    for (let k = 0; k < re.length; k++) total += Math.hypot(re[k], im[k]);
+    return total;
+  };
+
+  it('cancels two sources that are exact enemies and magnifies two that agree', () => {
+    // Two sources sharing one frequency land in the same pool bin and have to
+    // reckon with each other. Given the same input, whether they add or
+    // annihilate is decided by their signature phase -- half a cycle apart
+    // makes them perfect enemies.
+    //
+    // This is the claim the whole wave layer rests on, and it only works
+    // because the wave is now read off the input with a SIGN. It also pins
+    // the reading basis being shared: with a basis per neuron, two sources
+    // holding the same state emit different waves and cannot cancel at all.
+    const twoSources = (phaseB: number) => {
+      const engine = new HyperDimensionalEngine(waveConfig());
+      engine.setWaveSignature(0, 0.2, 0);
+      engine.setWaveSignature(1, 0.2, phaseB);
+      engine.process(new Array(D).fill(0.6), undefined, new Set([0, 1]), undefined, { learn: false });
+      return poolEnergy(engine);
+    };
+
+    const agreeing = twoSources(0);
+    const enemies = twoSources(Math.PI);
+    expect(agreeing).toBeGreaterThan(0.1);
+    expect(enemies).toBeLessThan(agreeing * 0.01);
+  });
+
+  it('puts more of the input into the pool than the network puts of itself', () => {
+    const base = new HyperDimensionalEngine(waveConfig());
+    const snapshot = base.captureNetworkState();
+    const twin = new HyperDimensionalEngine(waveConfig());
+    twin.restoreNetworkState(snapshot);
+
+    base.process(new Array(D).fill(0.6), undefined, new Set([0]), undefined, { learn: false });
+    twin.process(new Array(D).fill(-0.6), undefined, new Set([0]), undefined, { learn: false });
+
+    const a = decodeF(base.captureNetworkState().wavePoolRe as string);
+    const b = decodeF(twin.captureNetworkState().wavePoolRe as string);
+    let apart = 0;
+    for (let k = 0; k < a.length; k++) apart += Math.abs(a[k] - b[k]);
+
+    // The two pools must differ by more than a rounding error. Before the fix
+    // this was 0.003 against a pool of 1.78 -- the input was 0.2% of the wave
+    // and the network's own resting activity was the rest.
+    expect(apart).toBeGreaterThan(poolEnergy(base) * 0.5);
+  });
+
+  it('reads every neuron the same way, so two neurons can be exact enemies', () => {
+    // Tried first with a reading basis per neuron, which is wrong: two
+    // neurons holding the same state then emit DIFFERENT waves, so they
+    // cannot agree, and two given deliberately opposite signatures cannot
+    // annihilate either. The Zip Loop's bit neurons depend on being able to.
+    const engine = new HyperDimensionalEngine(waveConfig());
+    const reading = engine.getWaveReading();
+    expect(reading.re.length).toBe(D + 1);
+    // Orthogonal and unit-length, so reading a state is a rotation rather
+    // than something that quietly stretches it.
+    let dot = 0;
+    let normRe = 0;
+    let normIm = 0;
+    for (let d = 1; d <= D; d++) {
+      dot += reading.re[d] * reading.im[d];
+      normRe += reading.re[d] * reading.re[d];
+      normIm += reading.im[d] * reading.im[d];
+    }
+    expect(Math.abs(dot)).toBeLessThan(1e-5);
+    expect(normRe).toBeCloseTo(1, 5);
+    expect(normIm).toBeCloseTo(1, 5);
+    // Dimension 0 is the input flag, not content, and must never reach a wave.
+    expect(reading.re[0]).toBe(0);
+    expect(reading.im[0]).toBe(0);
+  });
+
+  it('still gives a grown network finite states', () => {
+    // A per-neuron array addNeurons() forgets to grow is how every grafted
+    // neuron came out NaN once before.
+    const engine = new HyperDimensionalEngine(waveConfig());
+    engine.addNeurons(5);
+    engine.process(new Array(D).fill(0.4), undefined, new Set([0]), undefined, { learn: true });
+    for (const neuron of engine.getNeuronStates()) {
+      for (const v of neuron.state) expect(Number.isFinite(v)).toBe(true);
+    }
+  });
+});

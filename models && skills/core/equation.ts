@@ -85,6 +85,12 @@
  *              + pool[bin_i] - wave[i]        ← the pool at its own frequency
  *
  *     wave'[i] = waveFeedback · (amplitude[i] / maxAmplitude) · heard[i]
+ *
+ *   and a DRIVEN neuron is a source -- nothing flows in, so its wave is read
+ *   off the input directly, signed so that an input and its opposite are
+ *   opposite waves and annihilate where they meet:
+ *
+ *     wave'[i] = (<state[i], readRe> + i·<state[i], readIm>) · e^{i·phase[i]}
  *     pool'[bin_i] += wave'[i]                ← where waves meet and cancel
  *     waveTerm[i]  = waveGain · Re( heard[i] · e^{-i·phase[i]} )
  *
@@ -159,6 +165,9 @@ export interface EquationSettings {
   hyperWaveAdd: number;
   waveGain: number;
   waveFeedback: number;
+  /** The two directions a state is read through to become a wave. Shared by every neuron. */
+  waveReadRe: Float32Array;
+  waveReadIm: Float32Array;
   crossInfluenceStrength: number;
   connectionBias: boolean;
   /** Frequency band and bin count, so a wave is placed the same way here as there. */
@@ -250,10 +259,26 @@ export function applyEquation(
   // The input flag, wiped first where that is what the implementation does.
   // Everything below reads through `at`, so this is the state the equation
   // sees rather than a separate pass over it.
-  const working = settings.clearInputFlagFirst
-    ? (() => { const copy = Float32Array.from(state.states); for (let i = 0; i < N; i++) copy[i] = 0; return copy; })()
-    : state.states;
+  // Always a copy: the input flag is wiped here where that is what the
+  // implementation does, and the driven neurons are seeded below, and neither
+  // may reach back into the caller's array.
+  const working = Float32Array.from(state.states);
+  if (settings.clearInputFlagFirst) for (let i = 0; i < N; i++) working[i] = 0;
   const at = (d: number, i: number) => working[d * N + i];
+
+  // The input goes into the driven neurons FIRST, before anything below reads
+  // them. "Input -> Create Wave -> wave enters the mesh" is an ordering: a
+  // source's wave has to be made of the input arriving now, not of what that
+  // neuron happened to be holding from last tick. With the seeding at the end
+  // instead, a network settling in one iteration never turned its input into
+  // a wave at all -- two opposite inputs gave byte-identical pools.
+  for (const i of driven) {
+    working[0 * N + i] = 1.0;
+    for (let d = 1; d < D; d++) {
+      const v = input[d - 1] ?? 0;
+      working[d * N + i] = v < -1 ? -1 : (v > 1 ? 1 : v);
+    }
+  }
 
   // ── The wave, first: what a neuron hears enters the tanh below ──────────
   const waveTerm = new Float32Array(N);
@@ -274,13 +299,31 @@ export function applyEquation(
       bin[i] = binFor(state.waveFreq[i], settings);
     }
 
-    // A driven neuron's wave IS its signature; everything else carries the
-    // wave that formed in it last iteration.
+    // A driven neuron is a SOURCE: nothing flows into it, so its wave comes
+    // from the input itself, read through the network's two reading
+    // directions and rotated into the neuron's own frequency slot. Everything
+    // else carries the wave that formed in it last iteration.
+    //
+    //   proj     = <state[i], readRe> + i*<state[i], readIm>
+    //   wave'[i] = proj * e^{i*phase[i]}
+    //
+    // Signed, which is the point. The amplitude alone was used here once, and
+    // an amplitude has no sign, so an input and its exact opposite made the
+    // same wave and could not cancel.
     const prevRe = Float32Array.from(state.waveRe);
     const prevIm = Float32Array.from(state.waveIm);
     for (const i of driven) {
-      prevRe[i] = amplitude[i] * Math.cos(state.wavePhase[i]);
-      prevIm[i] = amplitude[i] * Math.sin(state.wavePhase[i]);
+      let projRe = 0;
+      let projIm = 0;
+      for (let d = 1; d < D; d++) {
+        const v = at(d, i);
+        projRe += v * settings.waveReadRe[d];
+        projIm += v * settings.waveReadIm[d];
+      }
+      const c = Math.cos(state.wavePhase[i]);
+      const sn = Math.sin(state.wavePhase[i]);
+      prevRe[i] = projRe * c - projIm * sn;
+      prevIm[i] = projRe * sn + projIm * c;
     }
 
     // The network's wave weight and wave bias: every neuron's wave through a

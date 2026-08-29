@@ -2502,6 +2502,9 @@ export class HyperDimensionalEngine {
             }
         }
         this.waveAmpScratch = new Float32Array(N);
+        this.waveReadRe = new Float32Array(D);
+        this.waveReadIm = new Float32Array(D);
+        this.seedWaveReading();
         this.poolRe = new Float32Array(WAVE_BINS);
         this.poolIm = new Float32Array(WAVE_BINS);
         this.prevPoolRe = new Float32Array(WAVE_BINS);
@@ -3272,6 +3275,58 @@ export class HyperDimensionalEngine {
         return ids.sort((a, b) => a - b);
     }
     /**
+     * Give one neuron the pair of directions it reads its own state through.
+     *
+     * Two directions rather than one because the reading is complex: one
+     * neuron's state has to be able to become a wave with a phase, not just a
+     * height. They are made orthogonal to each other and unit-length, so the
+     * reading is a rotation-and-scale of the state rather than something that
+     * quietly amplifies or flattens it.
+     *
+     * Deterministic in the neuron's id, so two engines built the same way read
+     * the same way and a test can compare them.
+     */
+    seedWaveReading() {
+        const D = this.totalDims;
+        // Two directions, deterministic so two engines built the same way read the
+        // same way and a test can compare them.
+        let a = 0;
+        let b = 0;
+        for (let d = 1; d < D; d++) {
+            const re = Math.sin(d * 12.9898);
+            const im = Math.sin(d * 78.233);
+            this.waveReadRe[d] = re;
+            this.waveReadIm[d] = im;
+            a += re * re;
+            b += im * im;
+        }
+        // Dimension 0 is the input flag, not content, and never contributes.
+        this.waveReadRe[0] = 0;
+        this.waveReadIm[0] = 0;
+        const na = a > 0 ? 1 / Math.sqrt(a) : 0;
+        const nb = b > 0 ? 1 / Math.sqrt(b) : 0;
+        for (let d = 1; d < D; d++) {
+            this.waveReadRe[d] *= na;
+            this.waveReadIm[d] *= nb;
+        }
+        // Make the imaginary direction orthogonal to the real one, so a state
+        // lying along one reads as purely real and along the other as purely
+        // imaginary. Without this the two readings correlate and the phase a
+        // source can express is squeezed into part of the circle.
+        let dot = 0;
+        for (let d = 1; d < D; d++)
+            dot += this.waveReadRe[d] * this.waveReadIm[d];
+        let norm = 0;
+        for (let d = 1; d < D; d++) {
+            const v = this.waveReadIm[d] - dot * this.waveReadRe[d];
+            this.waveReadIm[d] = v;
+            norm += v * v;
+        }
+        const nn = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+        for (let d = 1; d < D; d++)
+            this.waveReadIm[d] *= nn;
+    }
+    /**
      * Set one neuron's wave by hand.
      *
      * Wave signatures are learned, so this is not the usual way in -- but two
@@ -3510,6 +3565,16 @@ export class HyperDimensionalEngine {
     /** Total configured neuron count (fixed at construction). */
     getNeuronCount() {
         return this.neurons.length;
+    }
+    /**
+     * The two directions a state is read through to become a wave.
+     *
+     * Exposed so the reference equation can be handed the same pair the engine
+     * uses -- a reference implementation given different constants proves
+     * nothing about the fast one.
+     */
+    getWaveReading() {
+        return { re: new Float32Array(this.waveReadRe), im: new Float32Array(this.waveReadIm) };
     }
     /** Content dimensions per neuron (excludes the reserved input-flag dimension). */
     getDimensions() {
@@ -3978,6 +4043,30 @@ export class HyperDimensionalEngine {
             drivenEnergyContribution += val * val;
         }
         const totalDrivenEnergyContribution = drivenCount * drivenEnergyContribution;
+        // Put the input into the driven neurons BEFORE the first iteration, not
+        // only at the end of one.
+        //
+        // "Input -> Create Wave -> wave enters the mesh" is an ordering, and it
+        // was reversed. The driven states were written at the END of each
+        // iteration, so the wave block on iteration 1 read whatever those neurons
+        // held from last tick and the input did not become a wave until iteration
+        // 2. On a network settling in one step it never became a wave at all:
+        // measured, two opposite inputs produced byte-identical wave pools.
+        //
+        // Both copies: allStates is the interleaved array the numeric side reads
+        // through stateViews, and HyperNeuron.state mirrors it for the wave side
+        // and for callers. Seeding one and not the other is a network that
+        // disagrees with itself about what its own input is.
+        for (let idx = 0; idx < drivenCount; idx++) {
+            const i = drivenIndices[idx];
+            const st = this.neurons[i].state;
+            st[0] = 1.0;
+            this.allStates[0 * N + i] = 1.0;
+            for (let d = 0; d < dims; d++) {
+                st[d + 1] = clampedInput[d];
+                this.allStates[(d + 1) * N + i] = clampedInput[d];
+            }
+        }
         const waveGain = this.config.waveGain;
         const hyperGain = this.config.hyperGain;
         const hyperAdd = this.config.hyperAdd;
@@ -3991,6 +4080,8 @@ export class HyperDimensionalEngine {
         const wavePhase = this.wavePhase;
         const waveFreq = this.waveFreq;
         const waveAmp = this.waveAmpScratch;
+        const waveReadRe = this.waveReadRe;
+        const waveReadIm = this.waveReadIm;
         const waveTermRow = this.waveTermScratch;
         const wavePhaseError = this.wavePhaseErrorScratch;
         const poolRe = this.poolRe;
@@ -4138,8 +4229,27 @@ export class HyperDimensionalEngine {
                 for (let i = 0; i < N; i++) {
                     if (!isDriven[i])
                         continue;
-                    prevWaveRe[i] = waveAmp[i] * phaseCos[i];
-                    prevWaveIm[i] = waveAmp[i] * phaseSin[i];
+                    // Read the input as a wave, sign and all.
+                    //
+                    // This used to be waveAmp[i] -- the ENERGY of the state, which is a
+                    // magnitude, so an input and its exact opposite made the identical
+                    // wave and could not possibly cancel. The projection below is
+                    // signed: negate the state and the reading negates, which is a
+                    // half-cycle shift, which is annihilation. The input finally
+                    // reaches the pool as something the pool can disagree with.
+                    const si = this.neurons[i].state;
+                    let projRe = 0;
+                    let projIm = 0;
+                    for (let d = 1; d < D; d++) {
+                        const v = si[d];
+                        projRe += v * waveReadRe[d];
+                        projIm += v * waveReadIm[d];
+                    }
+                    // Rotated into its own frequency slot: the signature says WHERE in
+                    // the band this source sits, the projection says what it is saying
+                    // there.
+                    prevWaveRe[i] = projRe * phaseCos[i] - projIm * phaseSin[i];
+                    prevWaveIm[i] = projRe * phaseSin[i] + projIm * phaseCos[i];
                 }
                 let poolEnergy = 0;
                 const invN = 1 / N;
