@@ -2243,6 +2243,17 @@ const WAVE_FEEDBACK = 0.5;
  * sixteen after 300 ticks. Stopping a hair short means there is always
  * something left to move with, so a neuron can still change its mind.
  */
+/**
+ * How far the input a neuron received during an event may push its learning
+ * rate, as a multiple of what the average neuron received.
+ *
+ * "High input equals more change, low input equals less change" -- but a
+ * neuron that happens to be the only loud one in an otherwise quiet tick
+ * would otherwise get an unbounded rate, which would undo the stability the
+ * value half of the elastic core exists to provide.
+ */
+const INPUT_FORCE_FLOOR = 0.25;
+const INPUT_FORCE_CEILING = 3;
 const NETWORK_VARIABLE_LIMIT = 0.999;
 function clampNetworkVariable(value) {
     if (value < -NETWORK_VARIABLE_LIMIT)
@@ -2493,6 +2504,8 @@ export class HyperDimensionalEngine {
         this.hasVScratch = new Uint8Array(N);
         this.ratesScratch = new Float32Array(N);
         this.deltaSumsScratch = new Float32Array(N);
+        this.forceScratch = new Float32Array(N);
+        this.heldThisTick = new Uint8Array(N);
         // Wave pool state -- see waveGain's doc comment on HyperConfig. Frequencies
         // are spread deterministically (not randomly) across [0.05, 0.5) radians/iteration
         // via a golden-ratio sequence, so N neurons don't cluster into just a few
@@ -3062,6 +3075,8 @@ export class HyperDimensionalEngine {
         this.vsScratch = new Float32Array(newN);
         this.hasVScratch = new Uint8Array(newN);
         this.ratesScratch = new Float32Array(newN);
+        this.forceScratch = new Float32Array(newN);
+        this.heldThisTick = new Uint8Array(newN);
         this.deltaSumsScratch = new Float32Array(newN);
         this.waveAmpScratch = new Float32Array(newN);
         this.waveTermScratch = new Float32Array(newN);
@@ -4189,6 +4204,7 @@ export class HyperDimensionalEngine {
         const nonDrivenIndices = this.nonDrivenIndicesScratch;
         let drivenCount = 0;
         let nonDrivenCount = 0;
+        this.heldThisTick.fill(0);
         // A neuron in a group nobody asked for this tick HOLDS: it keeps the state
         // it had instead of being recomputed. Driven always wins -- something
         // being fed from outside is being fed whatever else is true of it -- and
@@ -4210,6 +4226,7 @@ export class HyperDimensionalEngine {
                 const groups = this.neuronGroups.get(i);
                 if (groups !== undefined && !anyGroupActive(groups, activeGroups)) {
                     heldIndices[heldCount++] = i;
+                    this.heldThisTick[i] = 1;
                     continue;
                 }
             }
@@ -5087,6 +5104,58 @@ export class HyperDimensionalEngine {
         const defaultRate = this.config.learningRate;
         for (let i = 0; i < N; i++) {
             rates[i] = learningRates?.get(i) ?? defaultRate;
+        }
+        // And how much input the neuron was given during this event.
+        //
+        // The elastic core has two halves and only one was here. A neuron's VALUE
+        // made it change less -- high points, slow to re-weight, resistant to
+        // having its state overwritten -- and that half was real. The other half
+        // was not: how hard a neuron was driven made no difference at all. The
+        // rate was a pure function of value points, so a neuron sitting almost
+        // silent through an event learned from it exactly as fast as the neuron
+        // the event was about.
+        //
+        // Force is measured RELATIVE to what the network is doing this tick, not
+        // as an absolute. An absolute would quietly rescale every learning rate
+        // in the system the moment the mesh got louder or quieter, which is a
+        // change to everything rather than to the thing being described. Relative
+        // means the average neuron learns at the rate it always did, a neuron
+        // driven harder than its neighbours learns faster, and one barely touched
+        // learns slower.
+        // A neuron held out of this event does not learn from it.
+        //
+        // Holding was only ever applied to the state: a neuron whose group was
+        // not asked for kept what it had instead of being recomputed -- and then
+        // learned from the tick anyway, as if it had taken part. That was
+        // invisible while every rate was a pure function of value points. Once
+        // the rate follows the input a neuron actually received, it stopped
+        // being invisible and started being backwards: a held neuron keeps a
+        // stale state, which reads as high force, so the neurons that sat the
+        // event out were learning FASTER than the ones it happened to.
+        for (let i = 0; i < N; i++) {
+            if (this.heldThisTick[i])
+                rates[i] = 0;
+        }
+        let forceSum = 0;
+        for (let i = 0; i < N; i++) {
+            const si = this.neurons[i].state;
+            let energy = 0;
+            for (let d = 1; d < D; d++)
+                energy += si[d] * si[d];
+            const force = Math.sqrt(energy / Math.max(1, D - 1));
+            this.forceScratch[i] = force;
+            forceSum += force;
+        }
+        const meanForce = forceSum / Math.max(1, N);
+        if (meanForce > 1e-9) {
+            for (let i = 0; i < N; i++) {
+                // Bounded either side: a neuron that happens to be the only loud one
+                // in a quiet tick must not get a rate large enough to undo the
+                // stability the value half is there to provide.
+                const relative = this.forceScratch[i] / meanForce;
+                rates[i] *= relative < INPUT_FORCE_FLOOR ? INPUT_FORCE_FLOOR
+                    : (relative > INPUT_FORCE_CEILING ? INPUT_FORCE_CEILING : relative);
+            }
         }
         const connDiag = this.connDiag;
         const connShift = this.connShift;

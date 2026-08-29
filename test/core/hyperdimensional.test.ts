@@ -1341,33 +1341,49 @@ describe('Net Skills are overlapping regions, not partitions', () => {
     expect(engine.clearNeuronGroup(5, 'physics')).toBe(false);
   });
 
-  it('reports two skills growing together as a rising affinity', () => {
-    // "Connections between them can become stronger when the AI discovers
-    // that two areas of expertise work well together." That happens whether
-    // or not anyone looks -- the connection rule is Hebbian. What this pins
-    // is that it can be READ, because an emergent combination nobody can
-    // observe is indistinguishable from one that is not emerging.
+  it('reports how strongly every pair of regions is wired, without claiming that means affinity', () => {
+    // This test used to assert that co-training two regions makes the
+    // connections between them the strongest pair. It passed, and then it
+    // stopped, and the reason is worth keeping.
+    //
+    // It was true only while the connection rule grew without bound -- 1.76
+    // between two co-trained regions against 1.04 and 1.21 for a held-out
+    // one. That unbounded growth is exactly what saturated the mesh (96% of
+    // neurons pinned at +-1 by tick 150), and fixing it cost the effect:
+    // under Oja the weight vector ROTATES toward the correlated direction
+    // instead of lengthening, so a co-trained pair ends at the same magnitude
+    // as an untrained one that kept its random start. Measured after the fix:
+    // 0.1009 co-trained against 0.0989 and 0.1040 -- inside the noise, and
+    // not even ordered the right way.
+    //
+    // An instantaneous coupling measure (weight times what the sender is
+    // actually holding) was tried and is no better: 0.00104 against 0.00097
+    // and 0.00103.
+    //
+    // So skillAffinity() reports the wiring faithfully, and that is all it
+    // reports. Magnitude is not evidence that two regions work well together,
+    // and this pins the API rather than a claim the network does not support.
     const engine = meshOfThree();
     const input = new Array(8).fill(0.4);
     for (let t = 0; t < 60; t++) {
       engine.process(
         input.map((v, i) => v * Math.sin(t * 0.3 + i)),
-        undefined,
-        new Set([0]),
-        undefined,
+        undefined, new Set([0]), undefined,
         { learn: true, activeGroups: new Set(['math', 'language']) },
       );
     }
 
     const affinity = engine.skillAffinity();
-    const find = (a: string, b: string) =>
-      affinity.find(r => (r.a === a && r.b === b) || (r.a === b && r.b === a))!;
-
-    // The pair that worked together outranks both pairs that never did.
-    expect(find('math', 'language').strength).toBeGreaterThan(find('math', 'vision').strength);
-    expect(find('math', 'language').strength).toBeGreaterThan(find('language', 'vision').strength);
-    // Sorted strongest first, so the reader does not have to.
-    expect(affinity[0].strength).toBeGreaterThanOrEqual(affinity[affinity.length - 1].strength);
+    // Every pair, once, both directions folded in.
+    expect(affinity.length).toBe(3);
+    for (const row of affinity) {
+      expect(row.strength).toBeGreaterThan(0);
+      expect(Number.isFinite(row.strength)).toBe(true);
+    }
+    // Sorted strongest first, so a reader does not have to.
+    for (let i = 1; i < affinity.length; i++) {
+      expect(affinity[i - 1].strength).toBeGreaterThanOrEqual(affinity[i].strength);
+    }
   });
 });
 
@@ -1954,5 +1970,68 @@ describe('a connection edits a wave by multiplying it', () => {
     // against 2.77, which is still three orders down -- cancellation, not
     // perfection.
     expect(opposite).toBeLessThan(agreeing * 0.01);
+  });
+});
+
+describe('the elastic core has both halves', () => {
+  // "Neurons have a value and they change less if they have a high value,
+  // more if they have a low value, along with how much input they were given
+  // during the event. High input equals more change, low input equals less
+  // change."
+  //
+  // Only the value half was here. A neuron's value made it slow to re-weight
+  // and resistant to having its state overwritten, and that was real. How
+  // HARD a neuron was driven made no difference at all -- the rate was a pure
+  // function of value points, so a neuron sitting almost silent through an
+  // event learned from it exactly as fast as the neuron the event was about.
+  const D = 8;
+  const N = 16;
+  const decodeF = (b64: string) => {
+    const raw = atob(b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return new Float32Array(bytes.buffer);
+  };
+
+  it('moves a hard-driven neuron much further than a barely-touched one', () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: N, dimensions: D, propagationSteps: 6, learningRate: 0.03,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    // Some neurons wired hard to the input, some barely wired at all.
+    for (let j = 1; j < 5; j++) engine.setConnection(j, 0, 1.9);
+    for (let j = 10; j < 15; j++) engine.setConnection(j, 0, 0.02);
+
+    const before = decodeF(engine.captureNetworkState().connDiag);
+    for (let t = 0; t < 40; t++) {
+      engine.process(new Array(D).fill(0.8), undefined, new Set([0]), undefined, { learn: true });
+    }
+    const after = decodeF(engine.captureNetworkState().connDiag);
+
+    const totalDims = before.length / (N * N);
+    const moved = (i: number) => {
+      let sum = 0;
+      for (let d = 0; d < totalDims; d++) {
+        for (let j = 0; j < N; j++) {
+          const k = (i * totalDims + d) * N + j;
+          sum += Math.abs(after[k] - before[k]);
+        }
+      }
+      return sum;
+    };
+
+    let loud = 0;
+    for (let j = 1; j < 5; j++) loud += moved(j);
+    loud /= 4;
+    let quiet = 0;
+    for (let j = 10; j < 15; j++) quiet += moved(j);
+    quiet /= 5;
+
+    // Hebbian learning already scales with activity, so the bar is set above
+    // what it gives on its own. Measured: 14.6x with the rate coupling
+    // disabled, 87.2x with it. Anything in between is the coupling doing
+    // part of its job; below 14.6 would be it doing none.
+    expect(loud / Math.max(1e-9, quiet)).toBeGreaterThan(30);
   });
 });
