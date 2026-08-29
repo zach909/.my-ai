@@ -31,12 +31,23 @@
  */
 
 import type { HyperDimensionalEngine } from "./onebrain.js";
+import { MIN_WAVE_FREQ, MAX_WAVE_FREQ } from "./onebrain.js";
 import { embedText } from "./neuro-lang.js";
 
 /** One neuron as the Extension Builder saves it. */
 export interface SkillNeuron {
   name?: string;
   definition?: string;
+  /**
+   * The wave this neuron carries, when the skill says so.
+   *
+   * Usually it should not: derived from the definition, neurons meaning the
+   * same thing land on the same frequency and reinforce, which is the whole
+   * mechanism. Say it by hand for the case meaning cannot express -- two
+   * neurons that must be exact opposites, the same frequency half a cycle
+   * apart, the way the Zip Loop's one and zero are perfect enemies.
+   */
+  wave?: { frequency?: number; phase?: number } | null;
   /**
    * What this neuron feeds, by name, and how strongly -- the skill's own
    * internal structure. Accepted in both shapes the builder's artifacts use.
@@ -94,6 +105,50 @@ function registryFor(engine: HyperDimensionalEngine): Map<string, Record<string,
     grafted.set(engine, registry);
   }
   return registry;
+}
+
+/**
+ * The wave a neuron gets for meaning what it means.
+ *
+ * A grafted neuron has to have a wave -- it is in the pool with everything
+ * else, and a neuron with no wave of its own is a neuron the rest of the
+ * network cannot hear. The question is which one, and "wherever the next slot
+ * falls" wastes the mechanism.
+ *
+ * So the wave comes from the definition. That buys three things the engine's
+ * own spread cannot:
+ *
+ *   - Two neurons that mean the same thing land on the SAME frequency, and
+ *     two waves at one frequency add. Agreement is magnified, which is the
+ *     property the whole wave idea is for -- and it now happens between a
+ *     skill and whatever the network already knew, not just within one skill.
+ *   - The same skill grafted into two different machines gets the same waves,
+ *     so a shared skill sounds the same wherever it is installed. Random
+ *     placement would make a published skill a different skill on every
+ *     machine that installed it.
+ *   - Neurons that mean different things land apart and stop drowning each
+ *     other out.
+ *
+ * Frequency from the whole definition; phase from it too, so two different
+ * definitions that happen to collide in the band are still very unlikely to
+ * arrive in step.
+ */
+export function waveForMeaning(text: string): { frequency: number; phase: number } {
+  let hash = 0;
+  let mix = 0;
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i);
+    hash = (hash * 31 + code) | 0;
+    // A second, differently-weighted pass so phase is not a function of
+    // frequency -- one hash used twice would put every colliding pair in step.
+    mix = (mix * 131 + code * (i + 7)) | 0;
+  }
+  const spread = (Math.abs(hash) % 100_000) / 100_000;
+  const turn = (Math.abs(mix) % 100_000) / 100_000;
+  return {
+    frequency: MIN_WAVE_FREQ + spread * (MAX_WAVE_FREQ - MIN_WAVE_FREQ),
+    phase: turn * Math.PI * 2,
+  };
 }
 
 /** Normalise both connection shapes into (targetName, weight) pairs. */
@@ -183,6 +238,22 @@ export function graftNetSkill(
       // neuron the skill contributed nothing to.
       engine.setNeuronState(id, embedText(definition, dims));
     }
+    // And the wave it carries. A grafted neuron is in the shared pool with
+    // everything else from its first tick; this decides what it sounds like
+    // there.
+    //
+    // What the skill asked for, if it asked; otherwise the wave its meaning
+    // asks for, falling back to its name when it has no definition --
+    // something it means is better than nowhere in the band.
+    const asked = neuron.wave;
+    const derived = waveForMeaning(definition || neuron.name);
+    const frequency = typeof asked?.frequency === "number" && Number.isFinite(asked.frequency)
+      ? asked.frequency
+      : derived.frequency;
+    const phase = typeof asked?.phase === "number" && Number.isFinite(asked.phase)
+      ? asked.phase
+      : derived.phase;
+    engine.setWaveSignature(id, frequency, phase);
   });
 
   // The skill's own structure, so it arrives as a network rather than as a

@@ -13,11 +13,13 @@
  */
 import { describe, it, expect } from 'vitest';
 import { HyperDimensionalEngine } from '../../models && skills/core/onebrain';
+import { NeuroLangInterpreter } from '../../models && skills/core/neuro-lang';
 import {
   graftNetSkill,
   graftedSkills,
   MAX_NEURONS_PER_SKILL,
   MAX_MESH_NEURONS,
+  waveForMeaning,
 } from '../../models && skills/core/net-skill-graft';
 
 describe('grafting a net skill into the mesh', () => {
@@ -272,5 +274,184 @@ describe('installing a net skill', () => {
     expect(result.added).toBe(0);
     expect(result.skipped).toContain('no named neurons');
     expect(engine.getNeuronCount()).toBe(8);
+  });
+});
+
+describe('a net skill\'s wave', () => {
+  const settings = {
+    neuronCount: 8,
+    dimensions: 6,
+    propagationSteps: 2,
+    waveGain: 0.2,
+    waveFeedback: 0.5,
+    connectionBias: true,
+  };
+  const input = new Array(6).fill(0.35);
+
+  it('gives a neuron the wave its meaning asks for, the same everywhere', () => {
+    // A published skill has to sound the same on every machine that installs
+    // it. Placed at random it would be a different skill on each one -- the
+    // neurons would sit at different frequencies, so they would interfere with
+    // different things and hear different things back.
+    const a = new HyperDimensionalEngine(settings);
+    const b = new HyperDimensionalEngine(settings);
+    const neurons = [{ name: 'height', definition: 'how high the water is right now' }];
+    const ra = graftNetSkill(a, 'tides', neurons);
+    const rb = graftNetSkill(b, 'tides', neurons);
+    expect(a.waveSignature(ra.ids.height)).toEqual(b.waveSignature(rb.ids.height));
+
+    // And it is the wave the meaning asks for, not whatever slot was next.
+    const wanted = waveForMeaning('how high the water is right now');
+    expect(a.waveSignature(ra.ids.height)!.frequency).toBeCloseTo(wanted.frequency, 5);
+  });
+
+  it('puts different meanings on different waves', () => {
+    const one = waveForMeaning('how high the water is right now');
+    const other = waveForMeaning('a completely unrelated idea about bicycles');
+    expect(one.frequency).not.toBeCloseTo(other.frequency, 3);
+    // Phase is not a function of frequency: two definitions that collided in
+    // the band would otherwise also arrive exactly in step.
+    expect(one.phase).not.toBeCloseTo(other.phase, 3);
+  });
+
+  it('is genuinely in the shared pool once grafted', () => {
+    const engine = new HyperDimensionalEngine(settings);
+    graftNetSkill(engine, 'tides', [
+      { name: 'height', definition: 'how high the water is right now' },
+      { name: 'trend', definition: 'whether the water is rising or falling' },
+    ]);
+    for (let t = 0; t < 4; t++) engine.process(input, undefined, new Set([0]));
+
+    const wanted = waveForMeaning('how high the water is right now');
+    const heard = engine.poolContent().some(bin => Math.abs(bin.frequency - wanted.frequency) < 0.01);
+    expect(heard).toBe(true);
+  });
+
+  it('magnifies neurons that agree and leaves ones that differ alone', () => {
+    // "All the contradicting answers cancel out and the only correct one gets
+    // magnified." Same meaning means same frequency, and waves at one
+    // frequency add -- so a chorus is loud and a crowd is not.
+    //
+    // Measured: eight neurons that agree put 6.2 into that frequency; eight
+    // that differ put 0.04. It is sharply non-linear rather than proportional
+    // -- flat up to about four neurons, then it climbs to the pool's ceiling
+    // -- because each one hears the bin it is emitting into.
+    const chorus = (agree: boolean) => {
+      const engine = new HyperDimensionalEngine(settings);
+      const meaning = 'the water is rising';
+      graftNetSkill(engine, 'chorus', Array.from({ length: 8 }, (_, i) => ({
+        name: `n${i}`,
+        definition: agree ? meaning : `${meaning} number ${i} said a different way entirely`,
+      })));
+      for (let t = 0; t < 4; t++) engine.process(input, undefined, new Set([0]));
+      const wanted = waveForMeaning(meaning);
+      return engine.poolContent().find(b => Math.abs(b.frequency - wanted.frequency) < 0.01)?.magnitude ?? 0;
+    };
+
+    const agreeing = chorus(true);
+    const differing = chorus(false);
+    expect(agreeing).toBeGreaterThan(differing * 10);
+  });
+});
+
+describe('reading one neuron out of the pool', () => {
+  const settings = { neuronCount: 10, dimensions: 6, propagationSteps: 2, waveGain: 0.3, waveFeedback: 0.5 };
+
+  const decodeStates = (engine: HyperDimensionalEngine) => {
+    const snapshot = engine.captureNetworkState();
+    const buf = Buffer.from(snapshot.states, 'base64');
+    return { snapshot, states: new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4) };
+  };
+  const encode = (f: Float32Array) => Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
+
+  it('says what one neuron is holding, by interference', () => {
+    // "When every neuron has the same input except for the neuron you want to
+    // find's input, then it should release a wave which is its wave." Hold the
+    // network at one value, leave one neuron out of the chorus, and its own
+    // frequency carries its own contribution -- nothing has to be traced
+    // through the connections.
+    const engine = new HyperDimensionalEngine(settings);
+    const { snapshot, states } = decodeStates(engine);
+    const N = 10;
+
+    const held = (value: number) => {
+      const next = Float32Array.from(states);
+      for (let d = 1; d <= 6; d++) next[d * N + 4] = value;
+      engine.restoreNetworkState({ ...snapshot, states: encode(next) });
+      return engine.probeByInterference(4)!.amplitude;
+    };
+
+    const quiet = held(0.02);
+    const loud = held(0.95);
+    expect(loud).toBeGreaterThan(quiet * 5);
+  });
+
+  it('does not disturb the network it is asking about', () => {
+    // Reading is not learning, and a probe is not a tick. This file has been
+    // bitten before: fifty idle read ticks once moved 98% of the connections.
+    const engine = new HyperDimensionalEngine(settings);
+    const before = engine.captureNetworkState();
+    for (let i = 0; i < 10; i++) engine.probeByInterference(i);
+    expect(engine.captureNetworkState()).toEqual(before);
+  });
+
+  it('refuses rather than answering zero when there is nothing to read', () => {
+    // A network with its wave layer off has nothing to interfere. Zero would
+    // read as "this neuron contributes nothing", which is a different claim.
+    const silent = new HyperDimensionalEngine({ ...settings, waveGain: 0 });
+    expect(silent.probeByInterference(0)).toBeNull();
+    const engine = new HyperDimensionalEngine(settings);
+    expect(engine.probeByInterference(99)).toBeNull();
+    expect(engine.probeByInterference(-1)).toBeNull();
+  });
+});
+
+describe('a skill that names its own waves', () => {
+  it('round-trips @wave through the language', async () => {
+    // The builder writes it, the parser reads it back. Without the round trip
+    // a skill could be given a wave in the editor and lose it the moment it
+    // was saved.
+    const parsed = await new NeuroLangInterpreter().parse([
+      'name="bit-one"',
+      '"bit-one"@definition="the one"',
+      '"bit-one"@wave="0.25,0"',
+      'name="bit-zero"',
+      '"bit-zero"@definition="the zero"',
+      '"bit-zero"@wave="0.25,3.14159"',
+    ].join('\n'));
+
+    expect(parsed.errors).toEqual([]);
+    expect(parsed.neurons.get('bit-one')!.wave).toEqual({ frequency: 0.25, phase: 0 });
+    expect(parsed.neurons.get('bit-zero')!.wave).toEqual({ frequency: 0.25, phase: 3.14159 });
+  });
+
+  it('honours the wave the skill asked for over the one its meaning implies', () => {
+    // The case meaning cannot express: two neurons that must be perfect
+    // enemies, the same frequency half a cycle apart. Two different
+    // definitions would otherwise land on two different frequencies and never
+    // meet, let alone cancel.
+    const engine = new HyperDimensionalEngine({ neuronCount: 8, dimensions: 4, propagationSteps: 1, waveGain: 0.2 });
+    const result = graftNetSkill(engine, 'bits', [
+      { name: 'one', definition: 'the one', wave: { frequency: 0.25, phase: 0 } },
+      { name: 'zero', definition: 'the zero', wave: { frequency: 0.25, phase: Math.PI } },
+    ]);
+
+    const one = engine.waveSignature(result.ids.one)!;
+    const zero = engine.waveSignature(result.ids.zero)!;
+    expect(one.frequency).toBeCloseTo(0.25, 6);
+    expect(zero.frequency).toBeCloseTo(0.25, 6);
+    expect(Math.abs(one.phase - zero.phase)).toBeCloseTo(Math.PI, 5);
+    // And it is NOT what the definitions would have given them.
+    expect(waveForMeaning('the one').frequency).not.toBeCloseTo(0.25, 3);
+  });
+
+  it('falls back to meaning when only half a wave is given', () => {
+    const engine = new HyperDimensionalEngine({ neuronCount: 8, dimensions: 4, propagationSteps: 1, waveGain: 0.2 });
+    const result = graftNetSkill(engine, 'half', [
+      { name: 'a', definition: 'a thing', wave: { frequency: 0.3 } },
+    ]);
+    const signature = engine.waveSignature(result.ids.a)!;
+    expect(signature.frequency).toBeCloseTo(0.3, 6);
+    expect(signature.phase).toBeCloseTo(waveForMeaning('a thing').phase, 5);
   });
 });

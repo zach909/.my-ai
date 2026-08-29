@@ -5,6 +5,7 @@
  *   name="example"                             — create neuron named "example"
  *   "name"@value="1.0"                         — set neuron's value
  *   "name"@vale="0.9"                          — set neuron's vale (elasticity/resistance to change)
+ *   "name"@wave="0.3,1.57"                     — set neuron's wave: frequency, then phase in radians
  *   "name"@connections=".other*0.5+.third*0.3"  — set connections (alias: @conections=)
  *   "name"@definition="text"                   — set definition (alias: @definishon=)
  *   "name"@code="code"                         — attach code
@@ -421,6 +422,22 @@ export class NeuroLangInterpreter {
                     throw new Error(`Invalid vale "${m[2]}" for neuron "${name}"`);
                 const neuron = neurons.get(name) ?? this.defaultNeuron(name);
                 neuron.vale = Math.max(0, Math.min(1, val));
+                neurons.set(name, neuron);
+                return;
+            }
+        }
+        // ── "X"@wave="0.3,1.57" — the wave this neuron carries ────────────────
+        {
+            const m = line.match(/^"([^"]+)"\s*@\s*wave\s*=\s*"?\s*(-?[0-9.]+)\s*,\s*(-?[0-9.]+)\s*"?$/);
+            if (m) {
+                const name = m[1];
+                const frequency = parseFloat(m[2]);
+                const phase = parseFloat(m[3]);
+                if (isNaN(frequency) || isNaN(phase)) {
+                    throw new Error(`Invalid wave "${m[2]},${m[3]}" for neuron "${name}" -- expected frequency,phase`);
+                }
+                const neuron = neurons.get(name) ?? this.defaultNeuron(name);
+                neuron.wave = { frequency, phase };
                 neurons.set(name, neuron);
                 return;
             }

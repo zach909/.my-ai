@@ -2259,8 +2259,15 @@ const WAVE_BIAS_RATE = 0.01;
 /** The wave shift moves slowest: it reaches across frequencies a wave does not belong to. */
 const WAVE_SHIFT_RATE = 0.005;
 /** Frequencies that complete at least one cycle before aliasing. */
-const MIN_WAVE_FREQ = 0.02;
-const MAX_WAVE_FREQ = 0.6;
+/**
+ * The band every neuron's wave lives in.
+ *
+ * Exported because placing a wave is not only the engine's business: a net
+ * skill grafted into the mesh has to be given a wave of its own, and a caller
+ * that cannot see the band can only guess at a frequency and have it clamped.
+ */
+export const MIN_WAVE_FREQ = 0.02;
+export const MAX_WAVE_FREQ = 0.6;
 export class HyperDimensionalEngine {
     constructor(config = {}) {
         this.iteration = 0;
@@ -2922,11 +2929,19 @@ export class HyperDimensionalEngine {
         this.waveIm = growPerNeuron(this.waveIm);
         this.prevWaveRe = new Float32Array(newN);
         this.prevWaveIm = new Float32Array(newN);
-        // A wave of its own for each new neuron, spread across the band the same
-        // way the original ones were, so a skill's neurons do not all land on one
-        // frequency and drown each other out.
+        // A wave of its own for each new neuron, spread across the band by its
+        // position among the neurons ARRIVING rather than by its position in the
+        // mesh. Spreading by absolute index looked equivalent and is not: once the
+        // network has grown a few times, every later arrival has a high index, so
+        // they all crowd into the top of the band and sit on top of each other --
+        // and neurons sharing a frequency interfere, which for unrelated neurons
+        // means drowning each other out.
+        //
+        // A caller who knows what these neurons MEAN should override this: see
+        // net-skill-graft.ts, which gives each one a wave derived from its
+        // definition so that neurons about the same thing reinforce instead.
         for (let i = oldN; i < newN; i++) {
-            const spread = (i % Math.max(1, newN)) / Math.max(1, newN);
+            const spread = count === 1 ? 0.5 : (i - oldN) / (count - 1);
             this.waveFreq[i] = MIN_WAVE_FREQ + spread * (MAX_WAVE_FREQ - MIN_WAVE_FREQ);
             this.wavePhase[i] = Math.random() * Math.PI * 2;
         }
@@ -3094,6 +3109,77 @@ export class HyperDimensionalEngine {
         if (id < 0 || id >= this.neurons.length)
             return null;
         return { frequency: this.waveFreq[id], phase: this.wavePhase[id] };
+    }
+    /**
+     * Find out what one neuron is contributing, by interference.
+     *
+     * "When every neuron has the same input except for the neuron you want to
+     * find's input, then it should release a wave which is its wave."
+     *
+     * Hold the whole network at one value and every neuron is saying the same
+     * thing, so what they put into the pool is common to all of them. Leave one
+     * neuron out of that and it is the only thing in the pool that is not the
+     * chorus -- and because it owns its own frequency, its contribution is
+     * readable on its own. The pool sorts it out; nothing has to be traced
+     * through the connections.
+     *
+     * Reading is not learning and a probe is not a tick. The network is
+     * snapshotted, driven, measured and put back exactly as it was, so asking
+     * what a neuron is doing does not change what it does. That distinction has
+     * bitten this file before: fifty idle read ticks once moved 98% of the
+     * connections in the mesh.
+     *
+     * Returns the height and the angle of what came back, and null for a
+     * neuron that does not exist or a network with its wave layer switched off
+     * -- there is nothing to interfere in a network with no waves, and a zero
+     * would read as "this neuron contributes nothing", which is a different
+     * claim.
+     */
+    probeByInterference(id, level = 0.5) {
+        const N = this.neurons.length;
+        if (id < 0 || id >= N)
+            return null;
+        if (this.config.waveGain === 0)
+            return null;
+        const saved = this.captureNetworkState();
+        const steps = this.config.propagationSteps;
+        try {
+            // Everyone but the one being asked about, held at the same value.
+            const chorus = new Set();
+            for (let i = 0; i < N; i++)
+                if (i !== id)
+                    chorus.add(i);
+            const held = new Array(this.config.dimensions).fill(level);
+            // Exactly one settle iteration, whatever the network normally runs.
+            //
+            // A neuron's wave goes into the pool at the force of ITS OWN INPUT,
+            // measured from the state it was holding when the iteration began. Let
+            // the settle run twice and the second iteration measures the force of a
+            // state this probe just computed -- the neuron's own input has been
+            // overwritten by the answer to the question. Measured before this line
+            // existed: a neuron held at 0.02 and the same neuron held at 0.95 both
+            // read 0.1726, which is the reading of the chorus and not of the neuron.
+            this.config.propagationSteps = 1;
+            this.process(held, undefined, chorus, undefined, { learn: false });
+            const bin = this.binFor(this.waveFreq[id]);
+            const re = this.poolRe[bin];
+            const im = this.poolIm[bin];
+            return {
+                amplitude: Math.sqrt(re * re + im * im),
+                phase: Math.atan2(im, re),
+            };
+        }
+        finally {
+            // Put back exactly, whatever happened above.
+            this.config.propagationSteps = steps;
+            this.restoreNetworkState(saved);
+        }
+    }
+    /** Which frequency bin a wave falls in. One rule, so the pool is read the way it is written. */
+    binFor(frequency) {
+        const span = (MAX_WAVE_FREQ - MIN_WAVE_FREQ) || 1;
+        const slot = Math.round(((frequency - MIN_WAVE_FREQ) / span) * (WAVE_BINS - 1));
+        return slot < 0 ? 0 : (slot >= WAVE_BINS ? WAVE_BINS - 1 : slot);
     }
     /** Total configured neuron count (fixed at construction). */
     getNeuronCount() {
@@ -3610,7 +3696,6 @@ export class HyperDimensionalEngine {
                 // frequency simply adds -- which is interference, exactly, with no
                 // trigonometry in the loop and no sampling error.
                 // Where each neuron's own wave currently points.
-                const binSpan = (MAX_WAVE_FREQ - MIN_WAVE_FREQ) || 1;
                 for (let i = 0; i < N; i++) {
                     const phase = wavePhase[i];
                     phaseCos[i] = Math.cos(phase);
@@ -3620,8 +3705,7 @@ export class HyperDimensionalEngine {
                     for (let d = 1; d < D; d++)
                         energy += s[d] * s[d];
                     waveAmp[i] = Math.sqrt(energy);
-                    const slot = Math.round(((waveFreq[i] - MIN_WAVE_FREQ) / binSpan) * (WAVE_BINS - 1));
-                    waveBin[i] = slot < 0 ? 0 : (slot >= WAVE_BINS ? WAVE_BINS - 1 : slot);
+                    waveBin[i] = this.binFor(waveFreq[i]);
                 }
                 // What is in the pool right now is what neurons hear; what they emit
                 // this iteration builds the next one. A wave takes a moment to cross
