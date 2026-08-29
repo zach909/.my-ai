@@ -17,7 +17,6 @@ As with [[RLM]], there are two real, independent implementations:
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `models && skills/core/empathy.ts` — `EmpathyEngine` | Tracks the model's own emotional mirroring plus a running user-context average; exposes an alignment score and autonomous-decision gating |
-| Python training core | `model && skills manager/tinygpt/empathy.py` — `EmpathyEngine` | A lightweight local VAD reader (`read_mood`) with EMA smoothing, wired directly into `core.py`'s sampling parameters |
 
 ## `EmpathyEngine` (TypeScript)
 
@@ -38,16 +37,6 @@ const tuned = empathy.adjustDecision(decision, context);
 - **`recordDecisionPreference`** / **`getDecisionPreference`** let a specific class of decision (e.g. "how verbose to be") accumulate feedback over time, independent of momentary mood.
 
 ## `EmpathyEngine` (Python)
-
-```python
-from tinygpt.empathy import EmpathyEngine, read_mood
-
-empathy = EmpathyEngine(smoothing=0.35, history=50)
-reading = empathy.observe("this is broken and terrible, please fix it now!!!")
-print(empathy.describe())            # "(neutral, calm, assertive (valence -0.12, arousal 0.37, ...))"
-adj = empathy.sampling_adjustment()  # {"temperature_scale": ..., ...}
-empathy.save()  /  empathy.load()    # persists to --empathy-state (local JSON, no external API)
-```
 
 `core.py` calls `observe()` on every turn and feeds `sampling_adjustment()` straight into generation — an aroused or negative reading nudges temperature/sampling toward more careful, less exploratory completions. Because the reading is EMA-smoothed (`smoothing=0.35` by default), one noisy or sarcastic line doesn't swing the mood label outright; it shifts the *blended* valence/arousal proportionally, reflecting the conversation's trend rather than any single message.
 

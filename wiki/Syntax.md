@@ -23,7 +23,7 @@ Two spellings exist for the same two directives, and both are accepted everywher
 - `@vale=` (dialect) and `@value=` (spec-literal, matching the design notes' exact wording) are aliases for the same elastic-core value directive.
 - `@definishon=` (dialect) and `@definition=` (spec-literal) are aliases for the same output-definition directive.
 
-This isn't an accident of two competing implementations — `neurolang.py`'s parser (package root, not under `tinygpt/`) explicitly accepts both spellings for the same field, added specifically so a program written against the design notes' literal wording and one written in the dialect the rest of the codebase (and `wiki/NeuroLang.md`'s examples) uses both parse identically. `test_core.py`'s `test_neurolang_spec_aliases` verifies both spellings produce the same neuron state.
+This isn't an accident of two competing implementations — `neurolang.py`'s parser explicitly accepts both spellings for the same field, added specifically so a program written against the design notes' literal wording and one written in the dialect the rest of the codebase (and `wiki/NeuroLang.md`'s examples) uses both parse identically. `test_core.py`'s `test_neurolang_spec_aliases` verifies both spellings produce the same neuron state.
 
 The `@connections=` bias/weight numbers follow the same rule: the design notes quote them (`*"bias"+"weight"`), so the parser accepts `*"0.5"+"0.3"`, `*0.5+0.3`, or a mix — all install the same weight.
 

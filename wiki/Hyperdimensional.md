@@ -9,7 +9,6 @@ Each neuron maintains multiple temporary internal states that change according t
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `models && skills/core/hyperdimensional.ts` — `HyperDimensionalEngine` | A dedicated multi-ball neuron-state engine with novelty detection and live correction |
-| Python training core | `tinygpt/mesh.py`'s `mesh_dims` | The mesh's per-neuron state is natively multi-dimensional (D dimensions per neuron, not a separate engine) |
 
 ## `HyperDimensionalEngine` (TypeScript)
 

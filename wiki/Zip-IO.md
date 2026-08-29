@@ -9,7 +9,6 @@ The AI receives compressed ("zipped") inputs and produces compressed outputs, bo
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `models && skills/core/zip-io.ts` — `InfiniteZipLoop`, `ZipIOSystem` | Circular buffer with optional disk spill once in-memory capacity is reached |
-| Python training core | `tinygpt/memory.py` — `ZipLoopMemory` | Zlib-compressed circular buffer with optional local encryption at rest |
 
 ## `ZipIOSystem` (TypeScript)
 
@@ -25,16 +24,6 @@ await zip.restore();                  // reload both loops from their last disk 
 `ZipIOSystem` has no `append()`/`getTotalContextSize()` of its own — input and output are two separate `InfiniteZipLoop` ring buffers (`inputLoop`/`outputLoop`), fed independently via `ingest()`/`emit()`, and `getTotalContextSize()` is a method on each loop, not on `ZipIOSystem` itself. Each `InfiniteZipLoop` overwrites its own oldest entries in place once its capacity is reached, never growing without bound; independently of that, it also auto-checkpoints to disk every `checkpointInterval` writes (`getDiskSpillPath()` just returns that checkpoint file's path) so `restore()` can recover context beyond the live in-memory window after a restart. This is the direct implementation of "compressed input and output... circular buffers... continuous operation without requiring unlimited memory."
 
 ## `ZipLoopMemory` (Python)
-
-```python
-from tinygpt.memory import ZipLoopMemory
-
-memory = ZipLoopMemory(capacity=512, persist_path="checkpoints/memory.json",
-                        passphrase="optional — local encryption at rest")
-memory.add("user", "turn text")
-memory.save()   # writes to persist_path, zlib-compressed, encrypted if a passphrase was given
-memory.load()   # re-reads from persist_path (also called automatically in __init__ if the file exists)
-```
 
 `capacity` is a turn count (the ring buffer's `maxlen`), not a byte/MB size. `save()`/`load()` take no arguments — the path is fixed once, at construction, as `persist_path`. `core.py` wires this in directly via its own `--memory <path>` CLI flag (which becomes `persist_path`) and `--encrypt` / `MYAI_PASSPHRASE` — conversation memory persists across restarts, compressed, and optionally encrypted with a local stdlib cipher (no external key-management API). A real bug fixed during this project's development: `zlib` and a magic-byte constant were referenced but never imported/defined, and a leftover duplicate `save()`/`load()` code path silently discarded the compression and encryption *after* doing the real work correctly — meaning persisted memory was neither compressed nor encrypted despite the code appearing to do both. Fixed at the source; `test_memory_compression` and `test_encrypted_memory` in `test_core.py` cover it directly now.
 

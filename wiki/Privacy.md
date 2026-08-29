@@ -9,7 +9,6 @@ All data remains private through end-to-end encryption, and everything in this p
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `interface/encryption.ts` — `EncryptionManager` | Node's own crypto primitives: AES-GCM-style encrypt/decrypt with an auth tag, PBKDF2 password hashing |
-| Python training core | `tinygpt/crypto.py` — `LocalCipher`, `derive_key`, `cipher_for` | A stdlib-only cipher (no `cryptography` package dependency): PBKDF2-HMAC-SHA256 key derivation, used by `ZipLoopMemory` (see [[Zip-IO]]) |
 
 ## `EncryptionManager` (TypeScript)
 
@@ -24,14 +23,7 @@ The authentication tag is load-bearing, not decorative: tampering with `encrypte
 
 ## `LocalCipher` (Python)
 
-```python
-from tinygpt.crypto import cipher_for
-
-cipher = cipher_for(passphrase)          # PBKDF2-HMAC-SHA256, 100,000 iterations, random salt
-payload = cipher.encrypt(compressed_blob)
-```
-
-`tinygpt/crypto.py`'s own docstring is explicit about scope: this is a real, working local cipher — not a placeholder — but it is "not a substitute for a vetted library (e.g. AES-GCM via `cryptography`) in a high-stakes setting." It exists specifically so `--encrypt` / `MYAI_PASSPHRASE` work with zero external dependencies (stdlib `hashlib`/`hmac` only), matching the project's "no external APIs" constraint even for its own dependency list. `ZipLoopMemory` reuses the salt embedded in an existing encrypted file so a passphrase-derived key matches correctly across a restart (see [[Zip-IO]]).
+The local cipher that backed `--encrypt` / `MYAI_PASSPHRASE` went with the TinyGPT track. It was a real, working cipher with zero external dependencies (stdlib `hashlib`/`hmac` only) and explicitly not a substitute for a vetted library in a high-stakes setting. `ZipLoopMemory` reuses the salt embedded in an existing encrypted file so a passphrase-derived key matches correctly across a restart (see [[Zip-IO]]).
 
 ## What "no external APIs" actually means here
 

@@ -12,18 +12,8 @@ The neuron mesh is the substrate that replaces a transformer's fixed layer struc
 |---|---|---|
 | TypeScript runtime backend | `models && skills/core/mesh.ts` — `NeuronMesh` | The live pipeline's mesh: `propagate()` runs settle ticks with lazy CSR caching for performance (see the `.jules/bolt.md` engineering log for the specific cache-locality work) |
 | TypeScript extension mesh | `models && skills/core/elastic-core.ts` — `ElasticCoreBlock` | The extension-builder-editable, growable mesh: `addNeuron` preserves full density; `applyGradients` scales high-vale neuron updates down |
-| Python training core | `models && skills/tinygpt/mesh.py` — `NeuronMesh` (`MeshLM`) | The *trainable* mesh: a real `nn.Module` with backprop, quantization-aware training, and the zero-sum vale system |
 
 ## The Python trainable mesh
-
-```python
-from tinygpt.model import build_model
-from tinygpt.config import ModelConfig
-
-cfg = ModelConfig(arch="mesh", mesh_neurons=64, mesh_dims=4, mesh_input=8, settle_ticks=3)
-mesh = build_model(cfg)          # MeshLM: an nn.Module, trainable end to end
-out = mesh.generate(ids, max_new_tokens=20)
-```
 
 - **Settle loop**: `forward()` runs `settle_ticks` propagation steps and records the final state as `_last_settled` — the mesh's "committed thought" for that input. `search_neurons`, `neuron_waves`, and `state_phase` all read from `_last_settled`, which is why it has to be populated on every forward pass, not just the last one (a real bug fixed in this project's history: it was declared but never assigned, silently zeroing out every §5 quantum-interference-based selection).
 - **Vale-gated learning**: every neuron's plasticity is governed by the zero-sum [[Elastic-Value-Budget]] — `raise_vale()` locks in a verified behaviour, `demote_vale()` frees a poor-performing neuron to be repurposed (the self-healing mechanism, see [[Skills]]).

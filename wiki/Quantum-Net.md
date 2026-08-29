@@ -9,7 +9,6 @@ Every neuron carries a unique wave signature; a neuron's input determines its wa
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `models && skills/core/quantum-net.ts` — `QuantumNeuralNet` | Signature/phase computation, pairwise and group interference, Born-rule (`amplitude²`) probabilistic collapse |
-| Python training core | `tinygpt/interference.py` + `tinygpt/selection.py`'s `select_by_interference` | Interference-based *answer selection* among several generated candidates, sharing the [[RLM]] ledger's repeat-discounting |
 
 ## `QuantumNeuralNet` (TypeScript)
 
@@ -26,17 +25,7 @@ Interference is implemented as real complex arithmetic (`zA + zB`, magnitude of 
 
 ## `select_by_interference` (Python)
 
-```python
-from tinygpt.selection import select_by_interference
-
-winner = select_by_interference(
-    model, tokenizer, prompt_ids, n=5, max_new_tokens=40,
-    temperature=0.8, top_k=40, top_p=0.95, repetition_penalty=1.1,
-    eos_id=tokenizer.eos_id, device="cpu", ledger=ledger,
-)
-```
-
-Each of the `n` generated candidates gets an amplitude (its rescaled confidence) and a phase (`model.state_phase()` — the mesh's own settled-state phase right after generating that candidate, from `tinygpt/mesh.py`'s `_last_settled`). Candidates whose settled state agrees in phase with the group's consensus reinforce each other; a lone outlier phase gets cancelled toward zero even if its raw confidence looked good — Grover-style amplification of a rare-but-correct answer over several confident-but-wrong ones. This only activates for `arch="mesh"` models (it falls back to plain confidence ranking otherwise), and it shares the [[RLM]] ledger's repeat-discounting with `best_of_n`.
+Each of the `n` generated candidates gets an amplitude (its rescaled confidence) and a phase — the network's own settled-state phase right after generating that candidate. Candidates whose settled state agrees in phase with the group's consensus reinforce each other; a lone outlier phase gets cancelled toward zero even if its raw confidence looked good — Grover-style amplification of a rare-but-correct answer over several confident-but-wrong ones. This only activates for `arch="mesh"` models (it falls back to plain confidence ranking otherwise), and it shares the [[RLM]] ledger's repeat-discounting with `best_of_n`.
 
 **A previously-hidden bug** in this project's history: `NeuronMesh._last_settled` was declared but never actually assigned during `forward()`, so `state_phase()` always returned phase `0.0` for every candidate — silently degrading interference selection down to plain amplitude weighting with no real phase consensus happening at all. Fixed at the source in `mesh.py`; `select_by_interference` has worked as designed since.
 

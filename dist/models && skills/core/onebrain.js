@@ -3218,6 +3218,60 @@ export class HyperDimensionalEngine {
         const slot = Math.round(((frequency - MIN_WAVE_FREQ) / span) * (WAVE_BINS - 1));
         return slot < 0 ? 0 : (slot >= WAVE_BINS ? WAVE_BINS - 1 : slot);
     }
+    /**
+     * The network as a topology: nodes and the strongest edges between them.
+     *
+     * For anything that wants to LOOK at the network -- the snapshot the
+     * Extension Builder imports, a visualisation -- rather than run it. It used
+     * to come from a separate NeuronMesh that was built, serialised, and never
+     * computed; now it is a view of the one network that actually thinks.
+     *
+     * Every neuron connects to every other on every dimension, so the full edge
+     * list is neurons^2 x dimensions and unusable as a picture. `perNeuron` keeps
+     * the strongest incoming connections per neuron, measured on the first
+     * content dimension. That is a view, and the doc says so rather than letting
+     * a caller believe it is the whole wiring.
+     */
+    topology(perNeuron = 4) {
+        const N = this.neurons.length;
+        const D = this.totalDims;
+        const nodes = this.neurons.map(n => ({
+            id: n.id,
+            activation: n.state[1] ?? 0,
+            bias: this.bias[n.id * D + 1] ?? 0,
+            connections: new Map(),
+            layer: 0,
+            activationHistory: [],
+        }));
+        const edges = [];
+        const dimension = Math.min(1, D - 1);
+        for (let i = 0; i < N; i++) {
+            const row = (i * D + dimension) * N;
+            const strongest = [];
+            for (let j = 0; j < N; j++) {
+                if (j === i)
+                    continue;
+                strongest.push([j, this.connDiag[row + j]]);
+            }
+            strongest.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+            for (const [j, weight] of strongest.slice(0, perNeuron)) {
+                nodes[i].connections.set(j, weight);
+                edges.push([j, i, weight]);
+            }
+        }
+        return {
+            nodes,
+            edges,
+            // Density is of the REAL wiring, which is all-to-all, not of the subset
+            // drawn above -- a picture that showed 4 edges per neuron and reported
+            // itself as sparse would be lying twice.
+            density: 1,
+            averagePathLength: 1,
+            clusteringCoefficient: 1,
+            nodeCount: N,
+            edgeCount: edges.length,
+        };
+    }
     /** Total configured neuron count (fixed at construction). */
     getNeuronCount() {
         return this.neurons.length;

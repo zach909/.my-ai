@@ -1,19 +1,19 @@
-"""Browser backend that generates real text from a trained TinyGPT checkpoint.
+"""Browser backend for Neuroclaw.
 
-Serves the terminal UI (interface/index.html) on http://127.0.0.1:7860 and,
-on POST /api/chat, generates a multi-sentence reply by sampling from the model
-whose core computation IS the elastic mesh (all-to-all connectivity, vale-gated
-settle, MoE routing, quantum-interference QIL) when the checkpoint was trained
-with --use-elastic-mesh. This replaces the earlier bridge that proxied to a
-TypeScript pipeline whose output was a fixed intent-analysis template — the
-words now come from the model, not a template.
+Serves the terminal UI (interface/index.html) on http://127.0.0.1:7860 and
+hands every request to the one network -- the all-to-all mesh in the TypeScript
+backend, where a connection carries its own weight and bias plus the whole
+network's, in numbers and in waves, and installed skills are neurons grafted
+into it.
 
-Honest scope: this is a small model trained locally on CPU. It produces fluent
-multi-sentence prose in the style of its training text, not factual answers or
-original reasoning. No external APIs are used.
+This used to load a TinyGPT checkpoint and sample it here, with the network
+running alongside as a second model whose panels were proxied. TinyGPT is gone:
+there is one model, and the words come from it.
+
+No external APIs are used.
 
 Run:
-    python interface/server.py [--ckpt PATH] [--port 7860]
+    python interface/server.py [--port 7860]
 """
 from __future__ import annotations
 
@@ -29,24 +29,7 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 from typing import Any, Optional
 
 _ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-# The trained model + its inference helper live in the tinygpt package, which
-# is itself inside the Python core directory (not at the repo root) — put
-# that directory on sys.path (not tinygpt/ itself) so `import tinygpt.infer`
-# resolves the same way it does when tinygpt's own scripts import it.
-_PYCORE = os.path.join(_ROOT, "model && skills manager")
-if _PYCORE not in sys.path:
-    sys.path.insert(0, _PYCORE)
-_TINYGPT = os.path.join(_PYCORE, "tinygpt")
 
-# Default to the SFT (chat-tuned) checkpoint; fall back to the base pretrain
-# checkpoint if fine-tuning hasn't run yet. Matches pretrain.py/finetune.py's
-# own --out-dir/--ckpt-name defaults ("checkpoints/gpt.pt", "checkpoints/gpt_sft.pt").
-_DEFAULT_CKPTS = [
-    os.path.join(_PYCORE, "checkpoints", "gpt_sft.pt"),
-    os.path.join(_PYCORE, "checkpoints", "gpt.pt"),
-]
-
-_generator = None  # lazily-loaded tinygpt.infer.Generator
 
 # The TypeScript pipeline (all-to-all mesh, MoE, hyperdimensional, quantum
 # interference, NeuroLang/extension builder, plugins) runs as a sibling backend;
@@ -108,30 +91,10 @@ def _proxy(method: str, path: str, body: Optional[bytes]) -> tuple[int, bytes]:
         return 503, json.dumps({"error": f"subsystem backend unavailable: {e}"}).encode()
 
 
-def _resolve_ckpt(explicit: Optional[str]) -> Optional[str]:
-    if explicit:
-        return explicit if os.path.exists(explicit) else None
-    for path in _DEFAULT_CKPTS:
-        if os.path.exists(path):
-            return path
-    return None
-
-
-def _load_generator(ckpt_path: str):
-    global _generator
-    from tinygpt.infer import load_generator
-    print(f"[server] loading model: {os.path.relpath(ckpt_path, _ROOT)} ...")
-    _generator = load_generator(ckpt_path, device="cpu")
-    s = _generator.stats()
-    core = "elastic-mesh" if s["use_elastic_mesh"] else "standard-transformer"
-    print(f"[server] ready: {s['parameters']/1e6:.1f}M params, {core} core, "
-          f"vocab {s['vocab_size']}")
-
-
 # --- skills built with the extension builder --------------------------------
 # Every extension saved by the builder becomes a live skill: a neuron whose name
 # is a trigger phrase and whose definition is the response. Chat matches a skill
-# before falling back to the generator, so building an extension immediately
+# before the network answers, so building an extension immediately
 # extends what the AI can answer (design doc: skills as router-gated neurons).
 _skills: list[dict] = []
 _skills_mtime = -1.0
@@ -196,28 +159,19 @@ class NeuroClaw(BaseHTTPRequestHandler):
         elif path == "/health":
             self._json({"status": "ok", "ts": time.time()})
         elif path in ("/api/status", "/api/model"):
-            # The generator model this server owns (the thing that writes replies).
-            if _generator is None:
-                self._json({"running": False, "model": None})
+            # There is one model and it is the network, which lives in the
+            # TypeScript backend. This server used to own a TinyGPT checkpoint
+            # and answer from it; now it says where the real thing is.
+            status, data = _proxy("GET", "/api/status", None)
+            if status >= 400:
+                self._json({"running": False, "model": None,
+                            "note": "the network backend is not running (npm run server)"})
                 return
-            s = _generator.stats()
-            self._json({
-                "running": True,
-                "model": {
-                    "core": "elastic-mesh" if s["use_elastic_mesh"] else "standard-transformer",
-                    "parameters": s["parameters"],
-                    "n_layer": s["n_layer"],
-                    "n_embd": s["n_embd"],
-                    "block_size": s["block_size"],
-                    "vocab_size": s["vocab_size"],
-                    "mesh_experts": s["mesh_num_experts"],
-                    "mesh_neurons": s["mesh_n_neurons"],
-                    "mesh_qubits": s["mesh_n_qubits"],
-                },
-            })
-        elif path == "/api/skills":
-            _load_skills()
-            self._json({"skills": _skills, "total": len(_skills)})
+            self.send_response(200)
+            self.send_header("Content-Type", "application/json")
+            self._cors()
+            self.end_headers()
+            self.wfile.write(data)
         elif path in _PROXY_PATHS:
             status, data = _proxy("GET", path, None)
             self._raw_json(status, data)
@@ -261,27 +215,24 @@ class NeuroClaw(BaseHTTPRequestHandler):
                         "extension": skill["extension"], "timestamp": int(time.time() * 1000)})
             return
 
-        if _generator is None:
-            self._json({"response": "(no model loaded — train a checkpoint first)",
-                        "timestamp": int(time.time() * 1000)})
-            return
-
+        # Straight to the one network. This used to sample a TinyGPT checkpoint
+        # loaded in this process; TinyGPT is gone, and the words come from the
+        # network the rest of the system already is -- all-to-all, one equation,
+        # skills grafted into it as neurons rather than a separate model.
         t0 = time.time()
-        try:
-            # Fewer tokens keeps CPU latency reasonable; still multi-sentence
-            # after sentence-trimming. The elastic-mesh core is slower per token
-            # than a plain transformer because of its settle loop.
-            reply = _generator.generate(
-                query, max_new_tokens=100, temperature=0.8, top_k=40,
-                top_p=0.95, repetition_penalty=1.15, paragraph=True,
-            ).strip()
-        except Exception as e:  # generation must never take the server down
-            self._json({"error": f"generation failed: {e}"})
+        status, data = _proxy("POST", "/api/chat", json.dumps(body).encode())
+        if status >= 400:
+            self._json({"error": "the network backend is not answering "
+                                 "(start it with `npm run server`)"}, status=502)
             return
-        if not reply:
-            reply = "(the model produced no continuation for that prompt)"
-        self._json({"response": reply, "ms": round((time.time() - t0) * 1000),
-                    "timestamp": int(time.time() * 1000)})
+        try:
+            payload = json.loads(data)
+        except (ValueError, TypeError):
+            self._json({"error": "the network backend sent something unreadable"}, status=502)
+            return
+        payload.setdefault("timestamp", int(time.time() * 1000))
+        payload.setdefault("ms", round((time.time() - t0) * 1000))
+        self._json(payload)
 
     def do_OPTIONS(self):
         self.send_response(200)
@@ -322,18 +273,7 @@ class NeuroClaw(BaseHTTPRequestHandler):
         self.send_header("Content-Security-Policy", "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline';")
 
 
-def run(host: str = "127.0.0.1", port: int = 7860, ckpt: Optional[str] = None) -> None:
-    ckpt_path = _resolve_ckpt(ckpt)
-    if ckpt_path is None:
-        looked = ckpt or " or ".join(os.path.relpath(p, _ROOT) for p in _DEFAULT_CKPTS)
-        print(f"[server] no checkpoint found ({looked}).")
-        print("[server] train one first, e.g.:")
-        print('    cd "model && skills manager" && python3 build_corpus.py && '
-              "python3 train_tokenizer.py --vocab-size 8000")
-        print("    python3 pretrain.py --device cuda   # writes checkpoints/gpt.pt")
-        print("    python3 finetune.py --device cuda   # writes checkpoints/gpt_sft.pt")
-        sys.exit(1)
-    _load_generator(ckpt_path)
+def run(host: str = "127.0.0.1", port: int = 7860) -> None:
     _load_skills()
     _start_ts_backend()
     server = HTTPServer((host, port), NeuroClaw)
@@ -364,9 +304,7 @@ def run(host: str = "127.0.0.1", port: int = 7860, ckpt: Optional[str] = None) -
 
 
 def parse_args():
-    ap = argparse.ArgumentParser(description="Neuroclaw browser backend (real generation).")
-    ap.add_argument("--ckpt", default=None,
-                    help="Checkpoint to serve (default: mesh_v2, then v2 transformer)")
+    ap = argparse.ArgumentParser(description="Neuroclaw browser backend.")
     ap.add_argument("--host", default="127.0.0.1")
     ap.add_argument("--port", type=int, default=7860)
     return ap.parse_args()
@@ -374,4 +312,4 @@ def parse_args():
 
 if __name__ == "__main__":
     args = parse_args()
-    run(host=args.host, port=args.port, ckpt=args.ckpt)
+    run(host=args.host, port=args.port)
