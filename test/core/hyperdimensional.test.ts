@@ -1423,16 +1423,39 @@ describe('the input creates the wave', () => {
     // because the wave is now read off the input with a SIGN. It also pins
     // the reading basis being shared: with a basis per neuron, two sources
     // holding the same state emit different waves and cannot cancel at all.
-    const twoSources = (phaseB: number) => {
+    //
+    // Measured in the bin the two of them SHARE, not across the whole pool.
+    // Once the receiving neurons multiply their inputs, every other neuron
+    // in the mesh emits into its own bin too, so total pool energy stopped
+    // being a measurement of these two at all -- it read 8.26 against 10.33
+    // and said "no cancellation" about a pair that cancels perfectly.
+    const sharedBin = (phaseB: number) => {
       const engine = new HyperDimensionalEngine(waveConfig());
       engine.setWaveSignature(0, 0.2, 0);
       engine.setWaveSignature(1, 0.2, phaseB);
       engine.process(new Array(D).fill(0.6), undefined, new Set([0, 1]), undefined, { learn: false });
-      return poolEnergy(engine);
+      const snap = engine.captureNetworkState();
+      const re = decodeF(snap.wavePoolRe as string);
+      const im = decodeF(snap.wavePoolIm as string);
+      // Both sources sit at 0.2, so they share one bin. Find it by asking
+      // where a lone source of that frequency lands.
+      const solo = new HyperDimensionalEngine(waveConfig());
+      solo.setWaveSignature(0, 0.2, 0);
+      solo.process(new Array(D).fill(0.6), undefined, new Set([0]), undefined, { learn: false });
+      const soloSnap = solo.captureNetworkState();
+      const sRe = decodeF(soloSnap.wavePoolRe as string);
+      const sIm = decodeF(soloSnap.wavePoolIm as string);
+      let bin = 0;
+      let loudest = -1;
+      for (let k = 0; k < sRe.length; k++) {
+        const m = Math.hypot(sRe[k], sIm[k]);
+        if (m > loudest) { loudest = m; bin = k; }
+      }
+      return Math.hypot(re[bin], im[bin]);
     };
 
-    const agreeing = twoSources(0);
-    const enemies = twoSources(Math.PI);
+    const agreeing = sharedBin(0);
+    const enemies = sharedBin(Math.PI);
     expect(agreeing).toBeGreaterThan(0.1);
     expect(enemies).toBeLessThan(agreeing * 0.01);
   });
@@ -1864,5 +1887,72 @@ describe('a long-trained mesh keeps its responses readable', () => {
     for (const r of readings) expect(r).toBeLessThan(0.9);
     // ...and not all the same number, which is what saturation produced.
     expect(Math.max(...readings) - Math.min(...readings)).toBeGreaterThan(1e-4);
+  });
+});
+
+describe('a connection edits a wave by multiplying it', () => {
+  // The numeric side and the wave side are the same shape until the last
+  // step, and there they differ:
+  //
+  //   numeric   x_j * (ownWeight + networkWeight) + (ownBias + networkBias)
+  //   wave      (waveWeight + waveBias) * wave_j
+  //
+  // The weight and the bias MAKE A WAVE, and that wave multiplies the
+  // sender's. This used to be `weight * wave + bias`, the numeric shape
+  // borrowed for the wave, and it is the wrong shape: on the numeric side a
+  // bias is what a connection contributes with nothing arriving, and on the
+  // wave side there is no such thing, because a wave with nothing arriving is
+  // not a small wave -- it is no wave. An added bias gives every connection a
+  // standing wave of its own that no sender can cancel, which is the opposite
+  // of what interference means.
+  const D = 8;
+  const N = 12;
+  const waveCfg = (extra: Record<string, unknown> = {}) => ({
+    neuronCount: N, dimensions: D, propagationSteps: 1,
+    hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+    waveGain: 0.1, connectionBias: true, ...extra,
+  });
+  const decodeF = (b64: string) => {
+    const raw = atob(b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return new Float32Array(bytes.buffer);
+  };
+  const poolEnergy = (engine: HyperDimensionalEngine) => {
+    const snap = engine.captureNetworkState();
+    const re = decodeF(snap.wavePoolRe as string);
+    const im = decodeF(snap.wavePoolIm as string);
+    let total = 0;
+    for (let k = 0; k < re.length; k++) total += Math.hypot(re[k], im[k]);
+    return total;
+  };
+
+  it('leaves a silent network silent', () => {
+    // Nothing arriving anywhere. With an added bias every connection
+    // manufactured a wave out of nothing and the pool rang on its own.
+    const engine = new HyperDimensionalEngine(waveCfg());
+    engine.process(new Array(D).fill(0), undefined, new Set([0]), undefined, { learn: false });
+    expect(poolEnergy(engine)).toBe(0);
+  });
+
+  it('keeps two opposite senders exactly opposite through their connections', () => {
+    // The edit must not add anything of its own, or the two copies stop being
+    // negatives of each other and the cancellation is spoiled by whatever the
+    // biases happened to be.
+    const twoSources = (phaseB: number) => {
+      const engine = new HyperDimensionalEngine(waveCfg({ propagationSteps: 4 }));
+      engine.setWaveSignature(0, 0.2, 0);
+      engine.setWaveSignature(1, 0.2, phaseB);
+      engine.process(new Array(D).fill(0.6), undefined, new Set([0, 1]), undefined, { learn: false });
+      return poolEnergy(engine);
+    };
+    const agreeing = twoSources(0);
+    const opposite = twoSources(Math.PI);
+    expect(agreeing).toBeGreaterThan(0.5);
+    // Not exactly zero any more: averaging the phases of a product leaves a
+    // small residue where summing amplitudes left none. Measured at 0.0042
+    // against 2.77, which is still three orders down -- cancellation, not
+    // perfection.
+    expect(opposite).toBeLessThan(agreeing * 0.01);
   });
 });

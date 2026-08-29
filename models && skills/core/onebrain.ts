@@ -5596,8 +5596,12 @@ export class HyperDimensionalEngine {
           // inside this neuron exactly as they would in the big pool, and what
           // they add up to is this neuron's wave.
           const editRow = i * N;
-          let heardRe = 0;
+          // The running product starts at 1 (the multiplicative identity),
+          // with its size carried in logs alongside.
+          let heardRe = 1;
           let heardIm = 0;
+          let heardLogMag = 0;
+          let heardCount = 0;
           for (let k = 0; k < N; k++) {
             // Not from itself. A neuron hearing its own wave back through its
             // own connection is a loop with nothing opposing it; what it does
@@ -5628,8 +5632,29 @@ export class HyperDimensionalEngine {
             const biasRe = connWaveBias[editRow + k] + netWaveBiasRe[i] * share;
             const biasIm = connWaveBiasIm[editRow + k] + netWaveBiasIm[i] * share;
 
-            let editedRe = weightRe * inRe - weightIm * inIm + biasRe;
-            let editedIm = weightRe * inIm + weightIm * inRe + biasIm;
+            // The weight and the bias MAKE A WAVE, and that wave multiplies
+            // the sender's.
+            //
+            // This used to be `weight * wave + bias` -- the numeric step's
+            // shape, x*w + b, borrowed for the wave. It is the wrong shape
+            // here. On the numeric side the bias is what a connection
+            // contributes with nothing arriving; on the wave side there is no
+            // such thing, because a wave with nothing arriving is not a small
+            // wave, it is no wave. Adding a bias gave every connection a
+            // standing wave of its own that no sender could cancel, and a
+            // standing wave that cannot be cancelled is exactly what
+            // interference is not.
+            //
+            // So the two combined numbers become one editing wave, added the
+            // same way the weights and biases were each combined, and the
+            // edit is a pure complex multiply: amplitudes multiply, phases
+            // add. A silent sender stays silent through every connection it
+            // has, and two edited copies of opposite waves are still exactly
+            // opposite when they meet in the pool.
+            const editRe = weightRe + biasRe;
+            const editIm = weightIm + biasIm;
+            let editedRe = editRe * inRe - editIm * inIm;
+            let editedIm = editRe * inIm + editIm * inRe;
 
             // ...and its shift weight, reaching across to the neighbouring
             // frequency in the shared pool the way connShift reaches across to
@@ -5643,15 +5668,60 @@ export class HyperDimensionalEngine {
               editedIm += shiftWeight * prevPoolIm[neighbour];
             }
 
-            heardRe += editedRe;
-            heardIm += editedIm;
+            // The receiving neuron MULTIPLIES the waves coming into it.
+            //
+            // Adding them was the numeric side's habit again. Multiplying is
+            // what one wave does to another: amplitudes multiply and phases
+            // add, so a connection that turns a wave turns everything that
+            // reaches this neuron through it.
+            //
+            // Two things make the literal product unusable in an
+            // all-connected mesh, and both are handled here rather than
+            // pretended away:
+            //
+            //   A silent sender would annihilate everything. Zero times
+            //   anything is zero, and on a fresh network most neurons have no
+            //   wave yet, so one silent connection would leave the whole mesh
+            //   permanently silent. Senders with no wave are skipped -- they
+            //   contribute nothing, which is what having nothing to say
+            //   should mean.
+            //
+            //   The magnitude would vanish or explode with neuron count. Sixty
+            //   connections each around 0.5 multiply to 1e-19. So the
+            //   magnitudes are combined as a GEOMETRIC mean -- the nth root of
+            //   the product -- which is to multiplication exactly what the
+            //   mean is to addition, and is the same rule the rest of this
+            //   file already follows for every network-wide combination.
+            //
+            // The running product is kept at unit magnitude and the size
+            // carried separately in logs, so it cannot underflow on the way.
+            const mag = Math.sqrt(editedRe * editedRe + editedIm * editedIm);
+            if (mag > 0) {
+              heardLogMag += Math.log(mag);
+              const ur = editedRe / mag;
+              const ui = editedIm / mag;
+              const nr = heardRe * ur - heardIm * ui;
+              heardIm = heardRe * ui + heardIm * ur;
+              heardRe = nr;
+              heardCount++;
+            }
           }
 
-          // A mean over the connections, not a sum, for the same reason every
-          // other network-wide combination here is: a sum grows with neuron
-          // count until the wave term alone saturates every neuron.
-          heardRe *= invN;
-          heardIm *= invN;
+          if (heardCount > 0) {
+            // The nth root: geometric mean of the magnitudes, and the phases
+            // averaged rather than left summed. A summed phase over sixty
+            // connections wraps many times, so two nearly identical inputs
+            // would land at unrelated phases and nothing stable could be
+            // represented -- the root is what keeps multiplication's character
+            // without that.
+            const scale = Math.exp(heardLogMag / heardCount);
+            const angle = Math.atan2(heardIm, heardRe) / heardCount;
+            heardRe = scale * Math.cos(angle);
+            heardIm = scale * Math.sin(angle);
+          } else {
+            heardRe = 0;
+            heardIm = 0;
+          }
 
           // The neuron's own bias on the wave: what it contributes with
           // nothing arriving, the wave beside bias[i][d].
