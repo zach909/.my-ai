@@ -878,6 +878,45 @@ export class NeuroclawSystem {
           if (name) this.improvement.snapshot(`${result.decision === "recommend-skill" ? "skill" : "extension"}:${name}`, parsed);
         } catch { /* non-JSON creation output — nothing structured to version */ }
       }
+
+      // Connect it to the neural system.
+      //
+      // This is the last arrow of the capability loop -- Create -> Test ->
+      // Connect -> Neural System -> Zip Loop -> Wave -> Mesh -- and it did not
+      // exist. Grafting only ever happened on the install paths, so an
+      // extension a PERSON installed became a region of the mesh and an
+      // extension the AI built FOR ITSELF did not: it was written to disk and
+      // registered as a plugin and the wave could never reach it. The loop
+      // stopped one step short of closing, on exactly the half the whole idea
+      // is about.
+      //
+      // Non-fatal, like the boot-time graft: a capability that cannot be
+      // grafted is still a capability, and losing the graft must not lose the
+      // creation.
+      if (created) {
+        try {
+          const parsed = JSON.parse(created);
+          const name = parsed.skill ?? parsed.plugin ?? parsed.name;
+          // The makers emit a plugin, not a net skill, so there are usually no
+          // neurons to graft -- which is why nothing reached the mesh even
+          // once this was wired. A capability with no neuron is a capability
+          // the wave cannot reach, so one is derived from what was learned:
+          // the extension's name, and the procedure it was built from as its
+          // definition, which is what places its state and its wave.
+          //
+          // A region of one. It can grow later, the way any region does; what
+          // matters is that it EXISTS in the mesh, so the next time this
+          // input arrives the wave arrives somewhere.
+          const neurons = Array.isArray(parsed.neurons) && parsed.neurons.length > 0
+            ? parsed.neurons
+            : [{ name: String(name ?? "extension"), definition: information }];
+          if (name && neurons.length > 0) {
+            const { graftNetSkill } = await import("../models && skills/core/net-skill-graft.js");
+            graftNetSkill(this.pipeline.ensureBrain(), String(name), neurons);
+          }
+        } catch { /* not a net-skill-shaped creation, or the mesh is full */ }
+      }
+
       // Unlike the other five entry points, `created` here is structured JSON
       // consumed both internally (above) and by callers — annotating it with
       // "[Confirm before acting: ...]" the way solve()/collaborate()/etc.
