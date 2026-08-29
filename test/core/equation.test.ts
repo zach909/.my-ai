@@ -32,6 +32,7 @@ function readEngine(engine: HyperDimensionalEngine): EquationState {
     connBias: s.connBias ? decode(s.connBias) : new Float32Array(0),
     modWeight: decode(s.modWeight),
     addWeight: decode(s.addWeight),
+    senderGain: decode(s.senderGain as string),
     connWaveGain: decode(s.connWaveGain),
     connWavePhase: decode(s.connWavePhase),
     connWaveBias: decode(s.connWaveBias),

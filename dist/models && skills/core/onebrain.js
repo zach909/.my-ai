@@ -2352,22 +2352,41 @@ export class HyperDimensionalEngine {
         // zeros: identical variables would make every neuron's contribution to the
         // network term interchangeable, and learning could never separate them.
         const networkScale = Math.sqrt(1 / Math.max(1, N));
-        this.modWeight = new Float32Array(N);
-        this.addWeight = new Float32Array(N);
-        for (let i = 0; i < N; i++) {
+        // One row per RECEIVING neuron: modWeight[i*N + k] is how much neuron i's
+        // own view of the network weighs neuron k. Every connection into i reads
+        // the network through i's row, and senderGain scales that reading by which
+        // neuron is doing the sending -- so a connection A->B and a connection
+        // C->B looking at the identical network state interpret it differently,
+        // which is the defining property of the hyperdimensional term.
+        //
+        // Rows rather than a full per-connection cube: giving every (i,j) pair its
+        // own N variables is N^3, which at the sizes this network reaches after a
+        // few skills are installed is hundreds of megabytes and an N^3 inner loop.
+        // A row per receiver times a gain per sender is the same idea factorised:
+        // every connection gets its own reading, at N^2.
+        this.modWeight = new Float32Array(N * N);
+        this.addWeight = new Float32Array(N * N);
+        this.senderGain = new Float32Array(N);
+        for (let i = 0; i < N * N; i++) {
             this.modWeight[i] = (Math.random() * 2 - 1) * networkScale;
             this.addWeight[i] = (Math.random() * 2 - 1) * networkScale;
         }
-        this.hyperGainScratch = new Float32Array(D);
-        this.hyperAddScratch = new Float32Array(D);
+        for (let i = 0; i < N; i++) {
+            // Centred on 1: a sender that has learned nothing yet passes its
+            // receiver's reading through unchanged rather than muting it.
+            this.senderGain[i] = 1 + (Math.random() * 2 - 1) * networkScale;
+        }
+        this.hyperGainScratch = new Float32Array(N * D);
+        this.hyperAddScratch = new Float32Array(N * D);
         this.hyperMeanScratch = new Float32Array(D);
-        this.hyperScaleScratch = new Float32Array(D);
-        this.modWaveWeight = new Float32Array(N);
-        this.addWaveWeight = new Float32Array(N);
+        this.hyperScaleScratch = new Float32Array(N * D);
+        // The wave copies, per receiving neuron for the same reason.
+        this.modWaveWeight = new Float32Array(N * N);
+        this.addWaveWeight = new Float32Array(N * N);
         this.neuronWaveBiasRe = new Float32Array(N);
         this.neuronWaveBiasIm = new Float32Array(N);
         this.connWaveShift = new Float32Array(N * N);
-        for (let i = 0; i < N; i++) {
+        for (let i = 0; i < N * N; i++) {
             this.modWaveWeight[i] = (Math.random() * 2 - 1) * networkScale;
             this.addWaveWeight[i] = (Math.random() * 2 - 1) * networkScale;
         }
@@ -2425,6 +2444,10 @@ export class HyperDimensionalEngine {
         this.drivenIndicesScratch = new Int32Array(N);
         this.nonDrivenIndicesScratch = new Int32Array(N);
         this.heldIndicesScratch = new Int32Array(N);
+        this.netWaveWeightReScratch = new Float32Array(N);
+        this.netWaveWeightImScratch = new Float32Array(N);
+        this.netWaveBiasReScratch = new Float32Array(N);
+        this.netWaveBiasImScratch = new Float32Array(N);
         this.vsScratch = new Float32Array(N);
         this.hasVScratch = new Uint8Array(N);
         this.ratesScratch = new Float32Array(N);
@@ -2682,6 +2705,7 @@ export class HyperDimensionalEngine {
             connWavePhase: encodeFloats(this.connWavePhase),
             connWaveBias: encodeFloats(this.connWaveBias),
             connWaveBiasIm: encodeFloats(this.connWaveBiasIm),
+            senderGain: encodeFloats(this.senderGain),
             neuronWaveRe: encodeFloats(this.waveRe),
             neuronWaveIm: encodeFloats(this.waveIm),
             wavePoolRe: encodeFloats(this.poolRe),
@@ -2728,6 +2752,9 @@ export class HyperDimensionalEngine {
         const waveBiasTurned = snapshot.connWaveBiasIm === undefined
             ? new Float32Array(this.connWaveBiasIm.length)
             : decodeFloats(snapshot.connWaveBiasIm, this.connWaveBiasIm.length);
+        const senderGain = snapshot.senderGain === undefined
+            ? new Float32Array(this.senderGain.length).fill(1)
+            : decodeFloats(snapshot.senderGain, this.senderGain.length);
         const neuronWaveRe = snapshot.neuronWaveRe === undefined
             ? new Float32Array(this.waveRe.length)
             : decodeFloats(snapshot.neuronWaveRe, this.waveRe.length);
@@ -2747,7 +2774,7 @@ export class HyperDimensionalEngine {
         const addWave = decodeFloats(snapshot.addWaveWeight, this.addWaveWeight.length);
         if (!states || !energies || !bias || !diag || !shift || !mod || !add || !freq || !phase ||
             !waveGain || !waveTurn || !waveBias || !waveBiasTurned || !waveShift ||
-            !neuronWaveRe || !neuronWaveIm || !poolSavedRe || !poolSavedIm ||
+            !neuronWaveRe || !neuronWaveIm || !poolSavedRe || !poolSavedIm || !senderGain ||
             !waveBiasRe || !waveBiasIm || !modWave || !addWave)
             return false;
         // A snapshot from an engine with per-connection biases does not fit one
@@ -2775,6 +2802,7 @@ export class HyperDimensionalEngine {
         this.connWavePhase.set(waveTurn);
         this.connWaveBias.set(waveBias);
         this.connWaveBiasIm.set(waveBiasTurned);
+        this.senderGain.set(senderGain);
         this.waveRe.set(neuronWaveRe);
         this.waveIm.set(neuronWaveIm);
         this.poolRe.set(poolSavedRe);
@@ -2912,20 +2940,32 @@ export class HyperDimensionalEngine {
             grownRowSum.set(this.connBiasRowSum);
             this.connBiasRowSum = grownRowSum;
         }
-        this.modWeight = growPerNeuron(this.modWeight);
-        this.addWeight = growPerNeuron(this.addWeight);
-        this.modWaveWeight = growPerNeuron(this.modWaveWeight);
-        this.addWaveWeight = growPerNeuron(this.addWaveWeight);
+        // Each neuron's window into the network is a ROW, so growing it is the
+        // same row-by-row relayout the connections need -- and every neuron's
+        // window gains a column for each arrival, because a window that could not
+        // see the new neurons would not be a window into the whole network.
+        const growWindows = (old) => {
+            const grown = new Float32Array(newN * newN);
+            for (let i = 0; i < oldN; i++)
+                grown.set(old.subarray(i * oldN, i * oldN + oldN), i * newN);
+            for (let i = 0; i < newN; i++) {
+                for (let k = 0; k < newN; k++) {
+                    if (i < oldN && k < oldN)
+                        continue; // already there, untouched
+                    grown[i * newN + k] = (Math.random() * 2 - 1) * scale;
+                }
+            }
+            return grown;
+        };
+        this.modWeight = growWindows(this.modWeight);
+        this.addWeight = growWindows(this.addWeight);
+        this.modWaveWeight = growWindows(this.modWaveWeight);
+        this.addWaveWeight = growWindows(this.addWaveWeight);
+        this.senderGain = growPerNeuron(this.senderGain);
         this.neuronWaveBiasRe = growPerNeuron(this.neuronWaveBiasRe);
         this.neuronWaveBiasIm = growPerNeuron(this.neuronWaveBiasIm);
         for (let i = oldN; i < newN; i++) {
-            // The same small random start a neuron gets at construction: identical
-            // variables would make every new neuron's say interchangeable, and
-            // learning could never separate them.
-            this.modWeight[i] = (Math.random() * 2 - 1) * scale;
-            this.addWeight[i] = (Math.random() * 2 - 1) * scale;
-            this.modWaveWeight[i] = (Math.random() * 2 - 1) * scale;
-            this.addWaveWeight[i] = (Math.random() * 2 - 1) * scale;
+            this.senderGain[i] = 1 + (Math.random() * 2 - 1) * scale;
         }
         this.connWaveGain = growPairs(this.connWaveGain, 1);
         this.connWavePhase = growPairs(this.connWavePhase, 0);
@@ -2962,6 +3002,17 @@ export class HyperDimensionalEngine {
         this.drivenIndicesScratch = new Int32Array(newN);
         this.nonDrivenIndicesScratch = new Int32Array(newN);
         this.heldIndicesScratch = new Int32Array(newN);
+        // Sized by the neuron count AND the dimensions, because every receiver now
+        // has its own window into the network. Left at the old size, a grown
+        // network reads past the end of them and every grafted neuron comes back
+        // NaN on its first tick.
+        this.hyperGainScratch = new Float32Array(newN * D);
+        this.hyperAddScratch = new Float32Array(newN * D);
+        this.hyperScaleScratch = new Float32Array(newN * D);
+        this.netWaveWeightReScratch = new Float32Array(newN);
+        this.netWaveWeightImScratch = new Float32Array(newN);
+        this.netWaveBiasReScratch = new Float32Array(newN);
+        this.netWaveBiasImScratch = new Float32Array(newN);
         this.vsScratch = new Float32Array(newN);
         this.hasVScratch = new Uint8Array(newN);
         this.ratesScratch = new Float32Array(newN);
@@ -3740,6 +3791,7 @@ export class HyperDimensionalEngine {
         const hyperAdd = this.config.hyperAdd;
         const hyperScale = this.config.hyperScale;
         const modWeight = this.modWeight;
+        const senderGain = this.senderGain;
         const addWeight = this.addWeight;
         const connBias = this.connBias;
         const connBiasRowSum = this.connBiasRowSum;
@@ -3845,30 +3897,39 @@ export class HyperDimensionalEngine {
                 // Means rather than sums, for the same reason as the numeric side: a
                 // sum grows with neuron count until it drowns out what any single
                 // connection is worth.
-                let netWaveWeightRe = 0;
-                let netWaveWeightIm = 0;
-                let netWaveBiasRe = 0;
-                let netWaveBiasIm = 0;
+                // Per receiving neuron, like the numeric side: modWaveWeight[i][k] is
+                // how much neuron i's reading of the pool weighs neuron k's wave, and
+                // senderGain scales it by who is sending. Two connections into
+                // different neurons build different wave weights out of one pool.
+                const netWaveWeightRe = this.netWaveWeightReScratch;
+                const netWaveWeightIm = this.netWaveWeightImScratch;
+                const netWaveBiasRe = this.netWaveBiasReScratch;
+                const netWaveBiasIm = this.netWaveBiasImScratch;
                 if (hyperWaveGain !== 0 || hyperWaveAdd !== 0) {
-                    let mr = 0, mi = 0, ar = 0, ai = 0;
-                    for (let k = 0; k < N; k++) {
-                        const b = waveBin[k];
-                        const re = prevPoolRe[b];
-                        const im = prevPoolIm[b];
-                        mr += re * modWaveWeight[k];
-                        mi += im * modWaveWeight[k];
-                        ar += re * addWaveWeight[k];
-                        ai += im * addWaveWeight[k];
-                    }
                     const invN = 1 / N;
-                    if (hyperWaveGain !== 0) {
-                        netWaveWeightRe = hyperWaveGain * mr * invN;
-                        netWaveWeightIm = hyperWaveGain * mi * invN;
+                    for (let i = 0; i < N; i++) {
+                        const varRow = i * N;
+                        let mr = 0, mi = 0, ar = 0, ai = 0;
+                        for (let k = 0; k < N; k++) {
+                            const b = waveBin[k];
+                            const re = prevPoolRe[b];
+                            const im = prevPoolIm[b];
+                            mr += re * modWaveWeight[varRow + k];
+                            mi += im * modWaveWeight[varRow + k];
+                            ar += re * addWaveWeight[varRow + k];
+                            ai += im * addWaveWeight[varRow + k];
+                        }
+                        netWaveWeightRe[i] = hyperWaveGain === 0 ? 0 : hyperWaveGain * mr * invN;
+                        netWaveWeightIm[i] = hyperWaveGain === 0 ? 0 : hyperWaveGain * mi * invN;
+                        netWaveBiasRe[i] = hyperWaveAdd === 0 ? 0 : hyperWaveAdd * ar * invN;
+                        netWaveBiasIm[i] = hyperWaveAdd === 0 ? 0 : hyperWaveAdd * ai * invN;
                     }
-                    if (hyperWaveAdd !== 0) {
-                        netWaveBiasRe = hyperWaveAdd * ar * invN;
-                        netWaveBiasIm = hyperWaveAdd * ai * invN;
-                    }
+                }
+                else {
+                    netWaveWeightRe.fill(0);
+                    netWaveWeightIm.fill(0);
+                    netWaveBiasRe.fill(0);
+                    netWaveBiasIm.fill(0);
                 }
                 // Every neuron's wave as it was last iteration -- what the
                 // connections carry this one. A wave takes a moment to cross the
@@ -3927,10 +3988,13 @@ export class HyperDimensionalEngine {
                         // network is doing -- and running it against the wave of the
                         // neuron that is giving one is a complex multiply, which is what
                         // one wave does to another.
-                        const weightRe = ownWeightRe + netWaveWeightRe;
-                        const weightIm = ownWeightIm + netWaveWeightIm;
-                        const biasRe = connWaveBias[editRow + k] + netWaveBiasRe;
-                        const biasIm = connWaveBiasIm[editRow + k] + netWaveBiasIm;
+                        // The receiver's reading of the pool, scaled by who is sending:
+                        // this connection's own share of the network's wave weight.
+                        const share = senderGain[k];
+                        const weightRe = ownWeightRe + netWaveWeightRe[i] * share;
+                        const weightIm = ownWeightIm + netWaveWeightIm[i] * share;
+                        const biasRe = connWaveBias[editRow + k] + netWaveBiasRe[i] * share;
+                        const biasIm = connWaveBiasIm[editRow + k] + netWaveBiasIm[i] * share;
                         let editedRe = weightRe * inRe - weightIm * inIm + biasRe;
                         let editedIm = weightRe * inIm + weightIm * inRe + biasIm;
                         // ...and its shift weight, reaching across to the neighbouring
@@ -4055,30 +4119,50 @@ export class HyperDimensionalEngine {
             // (hyperScale) and it is ADDED to the connection's own weight
             // (hyperGain). See their doc comments for why both exist rather than
             // one of them.
-            const gainRow = this.hyperGainScratch;
-            const addRow = this.hyperAddScratch;
-            const meanRow = this.hyperMeanScratch;
-            const scaleRow = this.hyperScaleScratch;
+            //
+            // ── Every connection reads the network for itself ──────────────────
+            //
+            // Each RECEIVING neuron has its own row of variables -- modWeight[i][k]
+            // is how much neuron i's reading of the network weighs neuron k -- and
+            // senderGain scales that reading by which neuron is sending. So the
+            // connection A->B and the connection C->B, looking at one identical
+            // network state, get different numbers out of it. That is the point of
+            // the term: a connection is context-dependent, and two connections do
+            // not have to agree about what the context means.
+            //
+            // Per receiver rather than per (receiver, sender) pair with its own N
+            // variables, which would be N^3 -- see the constructor for why.
+            const gainRow = this.hyperGainScratch; // [i][d]: this receiver's added weight
+            const addRow = this.hyperAddScratch; // [i][d]: this receiver's added bias
+            const meanRow = this.hyperMeanScratch; // [d]: what a connection carries, sender-weighted
+            const scaleRow = this.hyperScaleScratch; // [i][d]: this receiver's scale
             if (hyperGain !== 0 || hyperAdd !== 0 || hyperScale !== 0) {
                 const invN = 1 / N;
                 for (let d = 0; d < D; d++) {
                     const row = stateViews[d];
-                    let modulation = 0;
-                    let offset = 0;
-                    let total = 0;
-                    for (let k = 0; k < N; k++) {
-                        const state = row[k];
-                        modulation += state * modWeight[k];
-                        offset += state * addWeight[k];
-                        total += state;
+                    // What every connection carries at this dimension, weighted by who
+                    // is sending. Shared across receivers, so it is computed once.
+                    let sent = 0;
+                    for (let k = 0; k < N; k++)
+                        sent += row[k] * senderGain[k];
+                    meanRow[d] = sent * invN;
+                    for (let i = 0; i < N; i++) {
+                        const varRow = i * N;
+                        let modulation = 0;
+                        let offset = 0;
+                        for (let k = 0; k < N; k++) {
+                            const state = row[k];
+                            modulation += state * modWeight[varRow + k];
+                            offset += state * addWeight[varRow + k];
+                        }
+                        const say = modulation * invN;
+                        const at = i * D + d;
+                        gainRow[at] = hyperGain * say;
+                        // 1 when off, so off is untouched rather than scaled by something
+                        // near 1.
+                        scaleRow[at] = hyperScale === 0 ? 1 : hyperScale * say;
+                        addRow[at] = hyperAdd * offset * invN;
                     }
-                    const say = modulation * invN;
-                    gainRow[d] = hyperGain * say;
-                    // 1 when off, so off is untouched rather than scaled by something
-                    // near 1.
-                    scaleRow[d] = hyperScale === 0 ? 1 : hyperScale * say;
-                    addRow[d] = hyperAdd * offset * invN;
-                    meanRow[d] = total * invN;
                 }
             }
             else {
@@ -4127,10 +4211,8 @@ export class HyperDimensionalEngine {
                     // The network's weight, the network's bias, and the average of what
                     // every neuron is holding at this dimension -- constant for every
                     // neuron here, so read once rather than once per neuron.
-                    const netWeight = gainRow[d];
-                    const netBias = addRow[d];
+                    // Per receiver now, so they are read inside the neuron loop below.
                     const heardMean = meanRow[d];
-                    const netScale = scaleRow[d];
                     for (let idx = 0; idx < nonDrivenCount; idx++) {
                         const i = nonDrivenIndices[idx];
                         const biasOffset = i * D;
@@ -4183,10 +4265,12 @@ export class HyperDimensionalEngine {
                         const connectionResult = usesConnectionBias
                             ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
                             : dotDiag + dotShift * strength;
+                        // This receiver's own reading of the network.
+                        const netAt = i * D + d;
                         const computedState = Math.tanh(bias[biasOffset + d] +
-                            connectionResult * netScale +
-                            netWeight * heardMean +
-                            netBias +
+                            connectionResult * scaleRow[netAt] +
+                            gainRow[netAt] * heardMean +
+                            addRow[netAt] +
                             waveTermRow[i]);
                         nextStates[i * D + d] = computedState;
                         if (d > 0) {
@@ -4208,10 +4292,8 @@ export class HyperDimensionalEngine {
                     // The network's weight, the network's bias, and the average of what
                     // every neuron is holding at this dimension -- constant for every
                     // neuron here, so read once rather than once per neuron.
-                    const netWeight = gainRow[d];
-                    const netBias = addRow[d];
+                    // Per receiver now, so they are read inside the neuron loop below.
                     const heardMean = meanRow[d];
-                    const netScale = scaleRow[d];
                     for (let idx = 0; idx < nonDrivenCount; idx++) {
                         const i = nonDrivenIndices[idx];
                         const biasOffset = i * D;
@@ -4264,10 +4346,12 @@ export class HyperDimensionalEngine {
                         const connectionResult = usesConnectionBias
                             ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
                             : dotDiag + dotShift * strength;
+                        // This receiver's own reading of the network.
+                        const netAt = i * D + d;
                         const computedState = Math.tanh(bias[biasOffset + d] +
-                            connectionResult * netScale +
-                            netWeight * heardMean +
-                            netBias +
+                            connectionResult * scaleRow[netAt] +
+                            gainRow[netAt] * heardMean +
+                            addRow[netAt] +
                             waveTermRow[i]);
                         const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
                         nextStates[i * D + d] = finalVal;
@@ -4820,6 +4904,22 @@ export class HyperDimensionalEngine {
             meanNorm += mean[d] * mean[d];
         }
         meanNorm = Math.sqrt(meanNorm);
+        // How each neuron lines up with where the network is pointing, computed
+        // once and reused for every row: neuron i's row learns to weigh k by how
+        // much k was part of what i agreed or disagreed with.
+        const agreementWith = new Float32Array(N);
+        for (let k = 0; k < N; k++) {
+            const state = this.neurons[k].state;
+            let devNorm = 0;
+            let dot = 0;
+            for (let d = 1; d < D; d++) {
+                const dev = state[d] - mean[d];
+                devNorm += dev * dev;
+                dot += dev * mean[d];
+            }
+            devNorm = Math.sqrt(devNorm);
+            agreementWith[k] = devNorm > 0 && meanNorm > 0 ? dot / (devNorm * meanNorm) : 0;
+        }
         for (let i = 0; i < N; i++) {
             const state = this.neurons[i].state;
             // Everything here is measured on what this neuron holds that the network
@@ -4856,9 +4956,25 @@ export class HyperDimensionalEngine {
             // 16 pinned -- and a pinned variable has stopped being personal to its
             // neuron. This way the pull weakens as it gets there, and a neuron that
             // changes its mind can still move.
-            const modRoom = 1 - Math.abs(modWeight[i]);
-            const nextMod = modWeight[i] + step * agreement * modRoom;
-            modWeight[i] = clampNetworkVariable(nextMod);
+            // Neuron i's whole row moves: how i weighs every other neuron k when it
+            // reads the network. The step is i's own (its agreement with where the
+            // network is pointing); what varies across the row is how much each k
+            // contributed to that, so a neuron learns WHO it is agreeing with rather
+            // than only that it agreed.
+            const varRow = i * N;
+            for (let k = 0; k < N; k++) {
+                const at = varRow + k;
+                const contribution = k === i ? 1 : agreementWith[k];
+                const modRoom = 1 - Math.abs(modWeight[at]);
+                modWeight[at] = clampNetworkVariable(modWeight[at] + step * agreement * contribution * modRoom);
+            }
+            // And how much a connection FROM this neuron scales its receiver's
+            // reading. Bounded around 1: a sender that mutes every receiver's view
+            // of the network is a sender that has switched the term off for everyone
+            // it talks to.
+            const gainRoom = 1 - Math.abs(this.senderGain[i] - 1);
+            const nextGain = this.senderGain[i] + step * agreement * gainRoom * 0.5;
+            this.senderGain[i] = nextGain < 0 ? 0 : (nextGain > 2 ? 2 : nextGain);
             // The bias variable's own signal: what this neuron is holding that the
             // network is NOT -- its deviation from the common mode, not its level.
             // Level was nearly the same thing as agreement once the states saturate
@@ -4867,9 +4983,13 @@ export class HyperDimensionalEngine {
             // what something contributes on its own, so the deviation is the signal
             // that actually means that, and it is genuinely independent of who a
             // neuron agrees with.
-            const addRoom = 1 - Math.abs(addWeight[i]);
-            const nextAdd = addWeight[i] + step * (deviation / Math.max(1, D - 1)) * addRoom;
-            addWeight[i] = clampNetworkVariable(nextAdd);
+            const level = deviation / Math.max(1, D - 1);
+            for (let k = 0; k < N; k++) {
+                const at = varRow + k;
+                const contribution = k === i ? 1 : agreementWith[k];
+                const addRoom = 1 - Math.abs(addWeight[at]);
+                addWeight[at] = clampNetworkVariable(addWeight[at] + step * level * contribution * addRoom);
+            }
         }
     }
     /**
