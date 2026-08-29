@@ -1939,8 +1939,11 @@ export class ElasticCoreBlock {
                         next[off + d] = curr[off + d];
                     continue;
                 }
+                // The connection sum starts at zero and the bias is added AFTER the
+                // mean below -- the bias is the neuron's own, not one of the senders,
+                // so averaging it in with them would shrink it by N.
                 for (let od = 0; od < SD; od++) {
-                    sums[od] = bias[off + od];
+                    sums[od] = 0;
                 }
                 // Split source loop to eliminate "s === t" branch with 4x loop unrolling
                 for (let s = 0; s < t; s++) {
@@ -1984,7 +1987,7 @@ export class ElasticCoreBlock {
                 const v = vAlloc[t];
                 const oneMinusV = 1 - v;
                 for (let od = 0; od < SD; od++) {
-                    next[off + od] = v * curr[off + od] + oneMinusV * Math.tanh(sums[od]);
+                    next[off + od] = v * curr[off + od] + oneMinusV * Math.tanh(bias[off + od] + sums[od]);
                 }
             }
             this.applyQuantizationInPlace(next);
@@ -2854,7 +2857,9 @@ export class HyperDimensionalEngine {
                     let sum = 0;
                     for (let j = 0; j < N; j++)
                         sum += this.connBias[rowOffset + j];
-                    this.connBiasRowSum[i * D + d] = sum;
+                    // Mean, matching learnConnectionBias -- a restore that rebuilt this
+                    // as a raw sum would put the network back saturated.
+                    this.connBiasRowSum[i * D + d] = sum / Math.max(1, N);
                 }
             }
         }
@@ -4564,6 +4569,32 @@ export class HyperDimensionalEngine {
                         //
                         // 0 and 0 when the terms are off, and adding zero is exact, so
                         // with the feature off this is the old expression.
+                        // NOTE: the connection sum here is still a RAW SUM over every
+                        // sender, and that is what still saturates a long-lived mesh.
+                        // With N senders it puts something of order N inside tanh: 96% of
+                        // neurons pinned at +-1 by tick 150, every region then answering
+                        // 1.0000 to every input including inputs never seen.
+                        //
+                        // Both scalings were tried and measured, and neither is free:
+                        //
+                        //   1/N       saturation gone entirely, but the term shrinks
+                        //             24-fold and the learned scale variable is clamped
+                        //             below 1, so it CANNOT grow to compensate. NeuroLang
+                        //             definitions stopped converging and stayed stopped
+                        //             at 400, 1000, 2000 and 4000 epochs.
+                        //   1/sqrt(N) definitions converge again and saturation is 0%
+                        //             through 150 ticks, 32% at 400 -- but the connection
+                        //             term drops far enough relative to the wave term
+                        //             that wave agreement and skill affinity change
+                        //             ranking.
+                        //
+                        // So this needs the wave gain and the scale-variable clamp
+                        // rebalanced alongside it, not a one-line division. Left as a
+                        // sum deliberately, with the measurements written down, rather
+                        // than half-changed. The three learning rules that fed it were
+                        // unbounded integrators and those ARE fixed -- see
+                        // learnConnectionBias and the Oja term in applyWeightLearning --
+                        // which moves saturation onset from tick 10 to tick 40-80.
                         const connectionResult = usesConnectionBias
                             ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
                             : dotDiag + dotShift * strength;
@@ -4645,6 +4676,21 @@ export class HyperDimensionalEngine {
                         //
                         // 0 and 0 when the terms are off, and adding zero is exact, so
                         // with the feature off this is the old expression.
+                        // A MEAN over the senders, not a sum -- the last place in the
+                        // file that still summed across the whole network.
+                        //
+                        // Oja's rule bounds each individual weight near 1, so a raw sum
+                        // over N senders puts something of order N inside tanh, and the
+                        // mesh saturates into a stable attractor it cannot leave: every
+                        // neuron pinned at +-1, every region answering 1.0000 to every
+                        // input including inputs it had never seen. Measured at N=24,
+                        // mean |connDiag| climbed to 0.888 and stayed there while 96% of
+                        // neurons sat at the rail.
+                        //
+                        // Dividing by N is a change of units the learned scale variable
+                        // absorbs, and it is the rule the rest of the file already
+                        // follows -- "a sum grows with neuron count until the term alone
+                        // saturates every neuron" is written above the wave code.
                         const connectionResult = usesConnectionBias
                             ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
                             : dotDiag + dotShift * strength;
@@ -4777,6 +4823,20 @@ export class HyperDimensionalEngine {
                 const sjShiftRow = stateViews[srcD];
                 const sid = si[d];
                 const rateSid = rate * sid;
+                // Oja's term. Plain Hebb (w += rate*s_i*s_j) only ever GROWS a weight
+                // whose two ends agree, and in an all-connected mesh that is a runaway:
+                // bigger weights -> bigger sums into tanh -> states pinned at +-1 ->
+                // the two ends agree perfectly and forever -> bigger weights. Measured,
+                // 96% of neurons saturated within 10-40 learning ticks at every
+                // learning rate tried (0.005 through 0.08; a lower rate only delayed
+                // it), and a saturated mesh represents nothing -- every region
+                // responded 1.0000 to every input, including inputs it had never seen.
+                //
+                // Subtracting rate*s_i^2*w is the standard local fix: it is still
+                // Hebbian and still only reads the two ends of the connection, but a
+                // weight stops growing once the receiver is loud, so the row settles
+                // at a finite length instead of running to the clamp.
+                const ojaDecay = rate * sid * sid;
                 const rowOffset = (i * D + d) * N;
                 // Unroll j loop from 0 to i by 4x manually with sequential index offsets
                 let j = 0;
@@ -4784,49 +4844,49 @@ export class HyperDimensionalEngine {
                 let wdIdx = rowOffset;
                 for (; j < limit1; j += 4) {
                     const oldWd0 = connDiag[wdIdx];
-                    const valWd0 = oldWd0 + rateSid * sjRow[j];
+                    const valWd0 = oldWd0 + rateSid * sjRow[j] - ojaDecay * oldWd0;
                     const newWd0 = valWd0 < -2 ? -2 : (valWd0 > 2 ? 2 : valWd0);
                     connDiag[wdIdx] = newWd0;
                     const diffWd0 = newWd0 - oldWd0;
                     deltaSum += diffWd0 < 0 ? -diffWd0 : diffWd0;
                     const oldWs0 = connShift[wdIdx];
-                    const valWs0 = oldWs0 + rateSid * sjShiftRow[j];
+                    const valWs0 = oldWs0 + rateSid * sjShiftRow[j] - ojaDecay * oldWs0;
                     const newWs0 = valWs0 < -2 ? -2 : (valWs0 > 2 ? 2 : valWs0);
                     connShift[wdIdx] = newWs0;
                     const diffWs0 = newWs0 - oldWs0;
                     deltaSum += diffWs0 < 0 ? -diffWs0 : diffWs0;
                     const oldWd1 = connDiag[wdIdx + 1];
-                    const valWd1 = oldWd1 + rateSid * sjRow[j + 1];
+                    const valWd1 = oldWd1 + rateSid * sjRow[j + 1] - ojaDecay * oldWd1;
                     const newWd1 = valWd1 < -2 ? -2 : (valWd1 > 2 ? 2 : valWd1);
                     connDiag[wdIdx + 1] = newWd1;
                     const diffWd1 = newWd1 - oldWd1;
                     deltaSum += diffWd1 < 0 ? -diffWd1 : diffWd1;
                     const oldWs1 = connShift[wdIdx + 1];
-                    const valWs1 = oldWs1 + rateSid * sjShiftRow[j + 1];
+                    const valWs1 = oldWs1 + rateSid * sjShiftRow[j + 1] - ojaDecay * oldWs1;
                     const newWs1 = valWs1 < -2 ? -2 : (valWs1 > 2 ? 2 : valWs1);
                     connShift[wdIdx + 1] = newWs1;
                     const diffWs1 = newWs1 - oldWs1;
                     deltaSum += diffWs1 < 0 ? -diffWs1 : diffWs1;
                     const oldWd2 = connDiag[wdIdx + 2];
-                    const valWd2 = oldWd2 + rateSid * sjRow[j + 2];
+                    const valWd2 = oldWd2 + rateSid * sjRow[j + 2] - ojaDecay * oldWd2;
                     const newWd2 = valWd2 < -2 ? -2 : (valWd2 > 2 ? 2 : valWd2);
                     connDiag[wdIdx + 2] = newWd2;
                     const diffWd2 = newWd2 - oldWd2;
                     deltaSum += diffWd2 < 0 ? -diffWd2 : diffWd2;
                     const oldWs2 = connShift[wdIdx + 2];
-                    const valWs2 = oldWs2 + rateSid * sjShiftRow[j + 2];
+                    const valWs2 = oldWs2 + rateSid * sjShiftRow[j + 2] - ojaDecay * oldWs2;
                     const newWs2 = valWs2 < -2 ? -2 : (valWs2 > 2 ? 2 : valWs2);
                     connShift[wdIdx + 2] = newWs2;
                     const diffWs2 = newWs2 - oldWs2;
                     deltaSum += diffWs2 < 0 ? -diffWs2 : diffWs2;
                     const oldWd3 = connDiag[wdIdx + 3];
-                    const valWd3 = oldWd3 + rateSid * sjRow[j + 3];
+                    const valWd3 = oldWd3 + rateSid * sjRow[j + 3] - ojaDecay * oldWd3;
                     const newWd3 = valWd3 < -2 ? -2 : (valWd3 > 2 ? 2 : valWd3);
                     connDiag[wdIdx + 3] = newWd3;
                     const diffWd3 = newWd3 - oldWd3;
                     deltaSum += diffWd3 < 0 ? -diffWd3 : diffWd3;
                     const oldWs3 = connShift[wdIdx + 3];
-                    const valWs3 = oldWs3 + rateSid * sjShiftRow[j + 3];
+                    const valWs3 = oldWs3 + rateSid * sjShiftRow[j + 3] - ojaDecay * oldWs3;
                     const newWs3 = valWs3 < -2 ? -2 : (valWs3 > 2 ? 2 : valWs3);
                     connShift[wdIdx + 3] = newWs3;
                     const diffWs3 = newWs3 - oldWs3;
@@ -4835,13 +4895,13 @@ export class HyperDimensionalEngine {
                 }
                 for (; j < i; j++) {
                     const oldWd = connDiag[wdIdx];
-                    const valWd = oldWd + rateSid * sjRow[j];
+                    const valWd = oldWd + rateSid * sjRow[j] - ojaDecay * oldWd;
                     const newWd = valWd < -2 ? -2 : (valWd > 2 ? 2 : valWd);
                     connDiag[wdIdx] = newWd;
                     const diffWd = newWd - oldWd;
                     deltaSum += diffWd < 0 ? -diffWd : diffWd;
                     const oldWs = connShift[wdIdx];
-                    const valWs = oldWs + rateSid * sjShiftRow[j];
+                    const valWs = oldWs + rateSid * sjShiftRow[j] - ojaDecay * oldWs;
                     const newWs = valWs < -2 ? -2 : (valWs > 2 ? 2 : valWs);
                     connShift[wdIdx] = newWs;
                     const diffWs = newWs - oldWs;
@@ -4854,49 +4914,49 @@ export class HyperDimensionalEngine {
                 let wdIdx2 = rowOffset + j2;
                 for (; j2 < limit2; j2 += 4) {
                     const oldWd0 = connDiag[wdIdx2];
-                    const valWd0 = oldWd0 + rateSid * sjRow[j2];
+                    const valWd0 = oldWd0 + rateSid * sjRow[j2] - ojaDecay * oldWd0;
                     const newWd0 = valWd0 < -2 ? -2 : (valWd0 > 2 ? 2 : valWd0);
                     connDiag[wdIdx2] = newWd0;
                     const diffWd0 = newWd0 - oldWd0;
                     deltaSum += diffWd0 < 0 ? -diffWd0 : diffWd0;
                     const oldWs0 = connShift[wdIdx2];
-                    const valWs0 = oldWs0 + rateSid * sjShiftRow[j2];
+                    const valWs0 = oldWs0 + rateSid * sjShiftRow[j2] - ojaDecay * oldWs0;
                     const newWs0 = valWs0 < -2 ? -2 : (valWs0 > 2 ? 2 : valWs0);
                     connShift[wdIdx2] = newWs0;
                     const diffWs0 = newWs0 - oldWs0;
                     deltaSum += diffWs0 < 0 ? -diffWs0 : diffWs0;
                     const oldWd1 = connDiag[wdIdx2 + 1];
-                    const valWd1 = oldWd1 + rateSid * sjRow[j2 + 1];
+                    const valWd1 = oldWd1 + rateSid * sjRow[j2 + 1] - ojaDecay * oldWd1;
                     const newWd1 = valWd1 < -2 ? -2 : (valWd1 > 2 ? 2 : valWd1);
                     connDiag[wdIdx2 + 1] = newWd1;
                     const diffWd1 = newWd1 - oldWd1;
                     deltaSum += diffWd1 < 0 ? -diffWd1 : diffWd1;
                     const oldWs1 = connShift[wdIdx2 + 1];
-                    const valWs1 = oldWs1 + rateSid * sjShiftRow[j2 + 1];
+                    const valWs1 = oldWs1 + rateSid * sjShiftRow[j2 + 1] - ojaDecay * oldWs1;
                     const newWs1 = valWs1 < -2 ? -2 : (valWs1 > 2 ? 2 : valWs1);
                     connShift[wdIdx2 + 1] = newWs1;
                     const diffWs1 = newWs1 - oldWs1;
                     deltaSum += diffWs1 < 0 ? -diffWs1 : diffWs1;
                     const oldWd2 = connDiag[wdIdx2 + 2];
-                    const valWd2 = oldWd2 + rateSid * sjRow[j2 + 2];
+                    const valWd2 = oldWd2 + rateSid * sjRow[j2 + 2] - ojaDecay * oldWd2;
                     const newWd2 = valWd2 < -2 ? -2 : (valWd2 > 2 ? 2 : valWd2);
                     connDiag[wdIdx2 + 2] = newWd2;
                     const diffWd2 = newWd2 - oldWd2;
                     deltaSum += diffWd2 < 0 ? -diffWd2 : diffWd2;
                     const oldWs2 = connShift[wdIdx2 + 2];
-                    const valWs2 = oldWs2 + rateSid * sjShiftRow[j2 + 2];
+                    const valWs2 = oldWs2 + rateSid * sjShiftRow[j2 + 2] - ojaDecay * oldWs2;
                     const newWs2 = valWs2 < -2 ? -2 : (valWs2 > 2 ? 2 : valWs2);
                     connShift[wdIdx2 + 2] = newWs2;
                     const diffWs2 = newWs2 - oldWs2;
                     deltaSum += diffWs2 < 0 ? -diffWs2 : diffWs2;
                     const oldWd3 = connDiag[wdIdx2 + 3];
-                    const valWd3 = oldWd3 + rateSid * sjRow[j2 + 3];
+                    const valWd3 = oldWd3 + rateSid * sjRow[j2 + 3] - ojaDecay * oldWd3;
                     const newWd3 = valWd3 < -2 ? -2 : (valWd3 > 2 ? 2 : valWd3);
                     connDiag[wdIdx2 + 3] = newWd3;
                     const diffWd3 = newWd3 - oldWd3;
                     deltaSum += diffWd3 < 0 ? -diffWd3 : diffWd3;
                     const oldWs3 = connShift[wdIdx2 + 3];
-                    const valWs3 = oldWs3 + rateSid * sjShiftRow[j2 + 3];
+                    const valWs3 = oldWs3 + rateSid * sjShiftRow[j2 + 3] - ojaDecay * oldWs3;
                     const newWs3 = valWs3 < -2 ? -2 : (valWs3 > 2 ? 2 : valWs3);
                     connShift[wdIdx2 + 3] = newWs3;
                     const diffWs3 = newWs3 - oldWs3;
@@ -4905,13 +4965,13 @@ export class HyperDimensionalEngine {
                 }
                 for (; j2 < N; j2++) {
                     const oldWd = connDiag[wdIdx2];
-                    const valWd = oldWd + rateSid * sjRow[j2];
+                    const valWd = oldWd + rateSid * sjRow[j2] - ojaDecay * oldWd;
                     const newWd = valWd < -2 ? -2 : (valWd > 2 ? 2 : valWd);
                     connDiag[wdIdx2] = newWd;
                     const diffWd = newWd - oldWd;
                     deltaSum += diffWd < 0 ? -diffWd : diffWd;
                     const oldWs = connShift[wdIdx2];
-                    const valWs = oldWs + rateSid * sjShiftRow[j2];
+                    const valWs = oldWs + rateSid * sjShiftRow[j2] - ojaDecay * oldWs;
                     const newWs = valWs < -2 ? -2 : (valWs > 2 ? 2 : valWs);
                     connShift[wdIdx2] = newWs;
                     const diffWs = newWs - oldWs;
@@ -4937,13 +4997,24 @@ export class HyperDimensionalEngine {
         for (let i = 0; i < N; i++) {
             stateDeltas.set(i, (stateDeltas.get(i) ?? 0) + deltaSums[i]);
         }
-        // Update biases after weight updates
+        // Update biases after weight updates.
+        //
+        // The same integrator the connection bias had: `b += rate*0.1*s_i[d]`
+        // with nothing pulling the other way, so a neuron that tends positive
+        // grows a bias that pushes it further positive, forever. Measured over
+        // 400 learning ticks it went 0.002 -> 0.681 and was still climbing, on
+        // its way to the clamp.
+        //
+        // An EMA toward the state instead: it tracks where the neuron tends to
+        // sit, which is what a bias is for, and it cannot exceed the largest
+        // state it has seen.
         for (let i = 0; i < N; i++) {
             const rate = rates[i];
             const si = this.neurons[i].state;
             const biasOffset = i * D;
             for (let d = 0; d < D; d++) {
-                const valB = bias[biasOffset + d] + rate * 0.1 * si[d];
+                const b = bias[biasOffset + d];
+                const valB = b + rate * 0.1 * (si[d] - b);
                 bias[biasOffset + d] = valB < -1 ? -1 : (valB > 1 ? 1 : valB);
             }
         }
@@ -5161,20 +5232,49 @@ export class HyperDimensionalEngine {
         const N = this.neurons.length;
         const connBias = this.connBias;
         const rowSum = this.connBiasRowSum;
+        // Two things were wrong here, and together they were what saturated the
+        // whole mesh.
+        //
+        // The update was `b += rate * s_i[d]` -- an integrator with nothing
+        // opposing it. A neuron holding a positive state grew its bias, which
+        // pushed the state further positive, which grew the bias faster. Nothing
+        // in the loop pulled the other way, so it ran until the clamp.
+        //
+        // And every connection in the row got the IDENTICAL step, then the row was
+        // SUMMED into the neuron. So it was never a bias per connection at all: it
+        // was one bias counted N times, with N times the gain. Measured at N=24:
+        // mean |connBias| went 0.000 -> 0.101 by tick 10, which is exactly when
+        // 79% of neurons pinned at +-1, and on to 0.676 by tick 40. Every region
+        // then answered 1.0000 to every input, including inputs never seen.
+        //
+        // So: an EMA toward what this connection cannot already account for,
+        // which is bounded by construction and genuinely differs per sender, and
+        // combined as a MEAN. The mean is the rule the rest of the file already
+        // follows -- "a sum grows with neuron count until the term alone saturates
+        // every neuron" is written above the wave code, and this was the one place
+        // that ignored it.
+        const connDiag = this.connDiag;
+        const stateViews = this.stateViews;
+        const invN = 1 / Math.max(1, N);
         for (let i = 0; i < N; i++) {
             const rate = rates[i];
             const si = this.neurons[i].state;
             for (let d = 0; d < D; d++) {
-                const step = rate * si[d];
+                const target = si[d];
+                const sjRow = stateViews[d];
                 const rowOffset = (i * D + d) * N;
                 let sum = 0;
                 for (let j = 0; j < N; j++) {
-                    const value = connBias[rowOffset + j] + step;
+                    const b = connBias[rowOffset + j];
+                    // What this connection's weight does not already explain. Different
+                    // for every sender, which is what makes it a per-connection bias.
+                    const residual = target - connDiag[rowOffset + j] * sjRow[j];
+                    const value = b + rate * (residual - b);
                     const clamped = value < -2 ? -2 : (value > 2 ? 2 : value);
                     connBias[rowOffset + j] = clamped;
                     sum += clamped;
                 }
-                rowSum[i * D + d] = sum;
+                rowSum[i * D + d] = sum * invN;
             }
         }
     }

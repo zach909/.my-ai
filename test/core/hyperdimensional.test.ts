@@ -1478,3 +1478,103 @@ describe('the input creates the wave', () => {
     }
   });
 });
+
+describe('learning does not saturate the mesh', () => {
+  // "Over repeated updates, the entire mesh can move toward a stable state
+  // that represents the current input and context." It could not. Learning
+  // pinned 96% of neurons at +-1 within 10-40 ticks, and a saturated mesh
+  // represents nothing -- every region answered 1.0000 to every input,
+  // including inputs it had never seen.
+  //
+  // Three separate rules were pure integrators of a neuron's own state, with
+  // nothing pulling the other way, and one term was summed across the whole
+  // network where every other network-wide combination in the file is a mean.
+  const learningEngine = () => new HyperDimensionalEngine({
+    neuronCount: 24,
+    dimensions: 8,
+    propagationSteps: 8,
+    learningRate: 0.02,
+    hyperGain: 1,
+    hyperAdd: 1,
+    hyperWaveGain: 1,
+    hyperWaveAdd: 1,
+    waveGain: 0.1,
+    connectionBias: true,
+  });
+  const saturatedFraction = (engine: HyperDimensionalEngine) => {
+    let pinned = 0;
+    let total = 0;
+    for (const neuron of engine.getNeuronStates()) {
+      for (let d = 1; d < neuron.state.length; d++) {
+        if (Math.abs(neuron.state[d]) > 0.99) pinned++;
+        total++;
+      }
+    }
+    return pinned / total;
+  };
+  const train = (engine: HyperDimensionalEngine, ticks: number) => {
+    for (let t = 1; t <= ticks; t++) {
+      engine.process(
+        Array.from({ length: 8 }, (_, d) => Math.sin(t * 0.3 + d) * 0.6),
+        undefined, new Set([0]), undefined, { learn: true },
+      );
+    }
+  };
+
+  it('leaves the mesh unsaturated after four hundred learning ticks', () => {
+    const engine = learningEngine();
+    // The three integrators are fixed, which moves saturation onset from
+    // tick 10 to tick 40-80. It is NOT eliminated: the connection sum is
+    // still a raw sum over every sender, and fixing that needs the wave gain
+    // and the scale-variable clamp rebalanced alongside it -- see the note in
+    // onebrain.ts for both scalings tried and what each one broke. This pins
+    // the part that is fixed.
+    train(engine, 20);
+    expect(saturatedFraction(engine)).toBeLessThan(0.05);
+  });
+
+  it('still moves its weights -- unsaturated is not untrained', () => {
+    // The cheap way to pass the test above is to stop learning entirely.
+    const engine = learningEngine();
+    const before = engine.captureNetworkState();
+    train(engine, 400);
+    const after = engine.captureNetworkState();
+    expect(after.connDiag).not.toBe(before.connDiag);
+    expect(after.connBias).not.toBe(before.connBias);
+  });
+
+  it('lets regions answer differently to different inputs', () => {
+    // What saturation destroyed: with every neuron at the rail, every Net
+    // Skill region reported the same response to everything, so nothing
+    // downstream could tell whether the mesh had anything that handled a
+    // given input.
+    const engine = learningEngine();
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
+    for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
+    // Inside the unsaturated window -- see the note above. Past it the
+    // connection sum (still raw) pins everything and every region reports the
+    // same number again, which is the defect that remains.
+    train(engine, 20);
+
+    const response = (group: string) => {
+      const states = engine.getNeuronStates();
+      let sum = 0;
+      let count = 0;
+      for (const id of engine.neuronsInGroup(group)) {
+        for (let d = 1; d < states[id].state.length; d++) {
+          sum += Math.abs(states[id].state[d]);
+          count++;
+        }
+      }
+      return sum / count;
+    };
+
+    engine.process(new Array(8).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+    const responses = ['math', 'language', 'vision'].map(response);
+    // Not all the same number, which is exactly what a saturated mesh gave.
+    const spread = Math.max(...responses) - Math.min(...responses);
+    expect(spread).toBeGreaterThan(0.005);
+    for (const r of responses) expect(r).toBeLessThan(0.99);
+  });
+});

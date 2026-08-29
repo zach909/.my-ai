@@ -463,11 +463,16 @@ export function applyEquation(
         }
       } else {
         // Two bands of that same block.
+        let biasRow = 0;
         for (let j = 0; j < N; j++) {
           connections += at(d, j) * state.connDiag[(i * D + d) * N + j];
           connections += at(shiftDim, j) * state.connShift[(i * D + d) * N + j] * settings.crossInfluenceStrength;
-          if (settings.connectionBias) connections += state.connBias[(i * D + d) * N + j];
+          if (settings.connectionBias) biasRow += state.connBias[(i * D + d) * N + j];
         }
+        // The connection biases were N copies of one number -- every
+        // connection in a row got the identical update -- so they enter as a
+        // mean too, which is the same division.
+        if (settings.connectionBias) connections += biasRow / Math.max(1, N);
       }
       const window = i * D + d;
       const computed = Math.tanh(
