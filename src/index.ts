@@ -66,6 +66,14 @@ import { embedText } from "../models && skills/core/neuro-lang.js";
  * retrieval: this gates giving a stored fact AS the answer, so a weak or
  * incidental match must not qualify.
  */
+/**
+ * How many stored instructions go onto the Zip Loop with one message.
+ *
+ * The loop is a working context with a finite size, so every instruction put
+ * on it is room the conversation does not get. Three is enough for one skill
+ * per step of a perceive-think-act cycle, which is what the categories are.
+ */
+const PROMPTING_SKILLS_PER_TURN = 3;
 const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
 
 /**
@@ -634,6 +642,43 @@ export class NeuroclawSystem {
     //    emotionally-charged messages are retained more strongly and evicted
     //    last under capacity pressure.
     await this.zipIO.ingest(input);
+
+    // Prompting Skills enter here, as information.
+    //
+    //   Prompting Skill -> Skill Folder -> Prompt -> INPUT -> ZIP LOOP
+    //
+    // They were reachable from exactly one place, the chat-bot service, where
+    // they steer a separate procedural perceive-think-act loop. That is a
+    // real use of them and it is not this one: the architecture says the
+    // prompt is "provided to the Zip Loop as part of the information being
+    // processed", so the neural side can see the instruction alongside the
+    // question. It never was. A skill folder full of instructions had no
+    // effect whatsoever on anything the mesh computed.
+    //
+    // Only the ones that apply to what actually arrived -- a skill declares
+    // when it applies, and putting every stored instruction on the loop for
+    // every message would drown the input in advice about other tasks.
+    try {
+      const { loadRegistry } = await import("../models && skills/core/prompting-skill-store.js");
+      const registry = loadRegistry();
+      const applicable = [
+        ...registry.forStep("perception", input),
+        ...registry.forStep("cognitive", input),
+        ...registry.forStep("action", input),
+      ];
+      // Highest priority first, and capped: the loop is a working context with
+      // a size, and instructions must not crowd out the conversation.
+      const chosen = applicable
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, PROMPTING_SKILLS_PER_TURN);
+      for (const skill of chosen) {
+        await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
+      }
+    } catch {
+      // No registry on disk, or an unreadable one. A missing instruction is
+      // not a reason to drop the message it was meant to help with.
+    }
+
     const turnImportance = Math.min(1, 0.4 + Math.max(0, emotion.arousal) * 0.4);
     // Retrieve relevant prior conversation turns *before* recording the current
     // one (so the current message can't match itself). This is the continuous-
