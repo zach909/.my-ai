@@ -47,6 +47,7 @@ import { CallHistoryPlugin } from "../plugins/call-history.js";
 import { PhoneCallsPlugin } from "../plugins/phone-calls.js";
 import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
 import type { SkillDefinition } from "../plugin_manager/types.js";
+import { embedText } from "../models && skills/core/neuro-lang.js";
 
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -814,7 +815,58 @@ export class NeuroclawSystem {
   }
 
   private async learnImpl(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
-    const result = this.learner.learn(information, opts);
+    let result = this.learner.learn(information, opts);
+
+    // Ask the MESH whether it has anything that handles this.
+    //
+    // This is the "Determine Required Capability" step, and it used to be
+    // decided entirely by counting words in the input -- procedural phrases,
+    // a repetition threshold. That is a text heuristic wearing the
+    // architecture's clothes: the spec says the wave propagates through the
+    // mesh and the AI RECOGNIZES it has no way to handle what arrived, which
+    // is a question about the network's own response, not about vocabulary.
+    //
+    // So the information goes through the Zip Loop first, and every Net Skill
+    // region's response is read off the settled state. If nothing took it up
+    // -- measured against what this network normally manages, because the
+    // absolute level depends on its size and history -- that is the mesh
+    // asking for a capability, and it is enough on its own.
+    //
+    // It does not REPLACE the text path. Two different questions are being
+    // asked ("is this a procedure worth keeping?" and "can I already do
+    // this?") and either is a good reason to build something.
+    try {
+      const engine = this.pipeline.ensureBrain();
+      const dims = engine.getDimensions();
+      // The same embedding a grafted neuron's definition gets, so "what this
+      // text means" is the same question in both places. A hand-rolled
+      // character hash was tried first and measured what it deserved to: it
+      // grew with the length of the string, so the longest input scored the
+      // HIGHEST response and the signal was reading sentence length rather
+      // than familiarity.
+      const embedded = embedText(information, dims);
+      // Unit length, so magnitude cannot drive the response either. What is
+      // being asked is which DIRECTION the input points and whether any
+      // region has learned to answer it.
+      let norm = 0;
+      for (const v of embedded) norm += v * v;
+      norm = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+      const vector = Array.from(embedded, v => v * norm * Math.sqrt(dims) * 0.4);
+      engine.process(vector, undefined, new Set([0]), undefined, { learn: false });
+      const gap = engine.capabilityGap();
+      if (gap.needed && result.decision !== "ignored-unreliable") {
+        result = {
+          ...result,
+          decision: "recommend-extension",
+          reason: `${result.reason}; and the mesh has nothing that handles this`
+            + ` (best region "${gap.bestSkill ?? "none"}" responded ${gap.bestResponse.toFixed(4)}`
+            + ` against its usual ${gap.baseline.toFixed(4)})`,
+        };
+      }
+    } catch {
+      // A mesh that cannot be asked is not a reason to stop learning. The
+      // text path still decides on its own.
+    }
     // Make the taught information RETRIEVABLE. learn() previously handed the
     // text to the learner (and, above, the language model) but never put it
     // in long-term memory, so nothing could ever look it up again -- the one

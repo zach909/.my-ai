@@ -1,0 +1,11 @@
+{
+  "id": "cats-are-mammals",
+  "name": "Cats are mammals.",
+  "version": "1.0.0",
+  "description": "Auto-generated: Cats are mammals.",
+  "permissions": [
+    "custom"
+  ],
+  "author": "neuroclaw-auto",
+  "entrypoint": "./plugins/cats-are-mammals.js"
+}

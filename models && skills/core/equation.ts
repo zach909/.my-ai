@@ -84,7 +84,7 @@
  *              + neuronWaveBias[i]
  *              + pool[bin_i] - wave[i]        ← the pool at its own frequency
  *
- *     wave'[i] = waveFeedback · (amplitude[i] / maxAmplitude) · heard[i]
+ *     wave'[i] = waveFeedback · (amplitude[i] / loudestAmplitude) · heard[i]
  *
  *   and a DRIVEN neuron is a source -- nothing flows in, so its wave is read
  *   off the input directly, signed so that an input and its opposite are
@@ -351,7 +351,14 @@ export function applyEquation(
       }
     }
 
-    const maxAmplitude = Math.sqrt(Math.max(1, D - 1));
+    // The loudest neuron this iteration, not the theoretical ceiling. A mesh
+    // whose states sit far from the rail reads as silent against a fixed
+    // ceiling, and the wave feedback all but vanishes with it. The loudest
+    // gets exactly waveFeedback and everyone else less, so the round trip is
+    // still bounded below one.
+    let loudest = 0;
+    for (let i = 0; i < N; i++) if (amplitude[i] > loudest) loudest = amplitude[i];
+    const maxAmplitude = loudest > 1e-9 ? loudest : Math.sqrt(Math.max(1, D - 1));
     for (let i = 0; i < N; i++) {
       let heardRe = 0, heardIm = 0;
       for (let k = 0; k < N; k++) {
@@ -453,6 +460,11 @@ export function applyEquation(
     for (let d = 0; d < D; d++) {
       const shiftDim = (d - 1 + D) % D;
       let connections = 0;
+      // The connection sum is scaled by 1/sqrt(N) in both forms -- the
+      // variance-preserving scale for a sum of N terms. A raw sum puts
+      // something of order N inside tanh and the mesh saturates into an
+      // attractor it cannot leave.
+      const invN = 1 / Math.sqrt(Math.max(1, N));
       if (state.connBlock) {
         // The general form: every source dimension reaches every receiving
         // dimension through the block.
@@ -461,6 +473,7 @@ export function applyEquation(
           const block = (i * N + j) * D * D + d * D;
           for (let e = 0; e < D; e++) connections += at(e, j) * state.connBlock[block + e];
         }
+        connections *= invN;
       } else {
         // Two bands of that same block.
         let biasRow = 0;
@@ -472,6 +485,10 @@ export function applyEquation(
         // The connection biases were N copies of one number -- every
         // connection in a row got the identical update -- so they enter as a
         // mean too, which is the same division.
+        connections *= invN;
+        // The connection biases were N copies of one number -- every
+        // connection in a row got the identical update -- so they enter as a
+        // plain mean, which is a different division.
         if (settings.connectionBias) connections += biasRow / Math.max(1, N);
       }
       const window = i * D + d;

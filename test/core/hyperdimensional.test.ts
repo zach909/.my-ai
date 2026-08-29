@@ -1266,7 +1266,23 @@ describe('Net Skills are overlapping regions, not partitions', () => {
   // second skill silently REMOVED it from the first -- the one thing the
   // spec says must not happen.
   const meshOfThree = () => {
-    const engine = new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8, propagationSteps: 4, learningRate: 0.05 });
+    // The full equation, the way the live pipeline configures it. With the
+    // hyperdimensional and wave terms off, the states stay so small that
+    // co-training barely moves the connections between two regions and the
+    // affinity below cannot separate them -- which says nothing about the
+    // network the agent actually runs.
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24,
+      dimensions: 8,
+      propagationSteps: 4,
+      learningRate: 0.05,
+      hyperGain: 1,
+      hyperAdd: 1,
+      hyperWaveGain: 1,
+      hyperWaveAdd: 1,
+      waveGain: 0.1,
+      connectionBias: true,
+    });
     for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
     for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
     for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
@@ -1576,5 +1592,119 @@ describe('learning does not saturate the mesh', () => {
     const spread = Math.max(...responses) - Math.min(...responses);
     expect(spread).toBeGreaterThan(0.005);
     for (const r of responses) expect(r).toBeLessThan(0.99);
+  });
+});
+
+describe('the mesh says when it has nothing that handles an input', () => {
+  /**
+   * "Determine Required Capability", read off the network.
+   *
+   * This step was decided entirely by counting words in the input text --
+   * procedural phrases, a repetition threshold. That is a text heuristic
+   * wearing the architecture's clothes. The spec says the wave propagates
+   * through the mesh and the AI RECOGNIZES it has no way to handle what
+   * arrived, which is a question about the network's own response.
+   *
+   * After the Zip Loop settles, each Net Skill region has a response -- how
+   * much its neurons are actually doing -- and the strongest of those says
+   * whether ANY region took the input up.
+   */
+  const D = 8;
+  const trained = () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24, dimensions: D, propagationSteps: 8, learningRate: 0.01,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
+    for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
+    const patterns: Record<string, number[]> = {
+      math: Array.from({ length: D }, (_, d) => Math.sin(d * 1.1) * 0.8),
+      language: Array.from({ length: D }, (_, d) => Math.cos(d * 0.5) * 0.8),
+      vision: Array.from({ length: D }, (_, d) => ((d % 3) - 1) * 0.7),
+    };
+    // Each region learns its own pattern, with only that region active.
+    for (let t = 0; t < 40; t++) {
+      for (const [name, p] of Object.entries(patterns)) {
+        engine.process(p, undefined, new Set([0]), undefined, { learn: true, activeGroups: new Set([name]) });
+      }
+    }
+    // And a baseline of what this network normally manages.
+    for (let r = 0; r < 4; r++) {
+      for (const p of Object.values(patterns)) {
+        engine.process(p, undefined, new Set([0]), undefined, { learn: false });
+        engine.capabilityGap();
+      }
+    }
+    return { engine, patterns };
+  };
+  const unfamiliar = Array.from({ length: D }, (_, d) => Math.tan(d * 0.31) * 0.2);
+
+  it('reports no gap for an input a region was trained on', () => {
+    const { engine, patterns } = trained();
+    for (const p of Object.values(patterns)) {
+      engine.process(p, undefined, new Set([0]), undefined, { learn: false });
+      expect(engine.capabilityGap().needed).toBe(false);
+    }
+  });
+
+  it('reports a gap once an unfamiliar input keeps coming back quiet', () => {
+    const { engine } = trained();
+    const verdicts: boolean[] = [];
+    for (let k = 0; k < 5; k++) {
+      engine.process(unfamiliar, undefined, new Set([0]), undefined, { learn: false });
+      verdicts.push(engine.capabilityGap().needed);
+    }
+    // Not on the first reading -- region response varies with whatever the
+    // network was just doing, and building an extension is not something to
+    // do on one noisy tick.
+    expect(verdicts[0]).toBe(false);
+    expect(verdicts[verdicts.length - 1]).toBe(true);
+  });
+
+  it('clears the moment something familiar comes back', () => {
+    const { engine, patterns } = trained();
+    for (let k = 0; k < 5; k++) {
+      engine.process(unfamiliar, undefined, new Set([0]), undefined, { learn: false });
+      engine.capabilityGap();
+    }
+    expect(engine.capabilityGap().needed).toBe(true);
+    engine.process(patterns.math, undefined, new Set([0]), undefined, { learn: false });
+    const back = engine.capabilityGap();
+    expect(back.needed).toBe(false);
+    expect(back.quietRun).toBe(0);
+  });
+
+  it('does not call an ordinary input a gap just because a louder one came before it', () => {
+    // The baseline was first written with a Math.max -- "so a run of gaps
+    // cannot drag it down" -- which made it ratchet UP forever, so one
+    // strongly-answered input made everything after it read as a gap. On the
+    // live agent that fired the Extension Builder on "Paris is in France"
+    // and not on the file format it had never seen.
+    const { engine, patterns } = trained();
+    // The pattern that draws the strongest response, several times over.
+    for (let k = 0; k < 6; k++) {
+      engine.process(patterns.language, undefined, new Set([0]), undefined, { learn: false });
+      engine.capabilityGap();
+    }
+    // Then the one that draws the weakest -- still a region's OWN pattern,
+    // still something the mesh handles, and it must not be called a gap.
+    for (let k = 0; k < 5; k++) {
+      engine.process(patterns.vision, undefined, new Set([0]), undefined, { learn: false });
+      expect(engine.capabilityGap().needed).toBe(false);
+    }
+  });
+
+  it('says nothing at all until it has a usual level to compare against', () => {
+    // A network that has answered nothing yet cannot honestly claim to be
+    // missing a capability, and saying so on tick one would fire the
+    // Extension Builder at everything.
+    const engine = new HyperDimensionalEngine({ neuronCount: 24, dimensions: D, propagationSteps: 4 });
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    engine.process(unfamiliar, undefined, new Set([0]), undefined, { learn: false });
+    const first = engine.capabilityGap();
+    expect(first.hasBaseline).toBe(false);
+    expect(first.needed).toBe(false);
   });
 });
