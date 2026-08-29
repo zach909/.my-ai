@@ -3233,6 +3233,17 @@ export class HyperDimensionalEngine {
      * against 1.084 unfamiliar) and broke the cases that do work, so they were
      * reverted. The missing piece is that the live regions never learn to be
      * different from each other, which is training, not reading.
+     *
+     * And the obvious shortcut does not work, which is worth knowing before
+     * trying it: seeding each expert neuron's STATE from its name places it
+     * nowhere, because a non-driven neuron's state is recomputed from its
+     * inputs on every tick. Measured -- a neuron set to
+     * [0.9,-0.9,0.9,...] reads [0.01,-0.02,0.02,...] one tick later, and the
+     * live gap numbers came back byte-identical with the seeding in place.
+     * What persists across a tick is the connections, the biases and the wave
+     * signature; a single-neuron region has no connections of its own to carry
+     * a speciality, so specialising one means giving it distinct INCOMING
+     * weights. That is the shape of the remaining work.
      */
     capabilityGap(threshold = CAPABILITY_GAP_RATIO) {
         const D = this.totalDims;
