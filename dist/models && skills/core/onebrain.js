@@ -2300,6 +2300,8 @@ export class HyperDimensionalEngine {
          * tick -- see ProcessOptions.activeGroups.
          */
         this.neuronGroups = new Map();
+        /** What each neuron with a definition is supposed to say. */
+        this.definitionTargets = new Map();
         /** |shared wave pool value| from the most recent settle() iteration -- genuinely observable evidence the wave mechanism ran, surfaced on HyperDimensionalOutput. */
         this.lastWaveEnergy = 0;
         this.config = {
@@ -3268,6 +3270,57 @@ export class HyperDimensionalEngine {
         const span = (MAX_WAVE_FREQ - MIN_WAVE_FREQ) || 1;
         const slot = Math.round(((frequency - MIN_WAVE_FREQ) / span) * (WAVE_BINS - 1));
         return slot < 0 ? 0 : (slot >= WAVE_BINS ? WAVE_BINS - 1 : slot);
+    }
+    /**
+     * What a neuron is supposed to say, and whether it is saying it.
+     *
+     * A `@definishon` in NeuroLang is a contract: "when this neuron is the one
+     * being read, the network's answer must be this." The target is the
+     * definition embedded into the network's own dimensions, kept so the
+     * contract can be checked rather than assumed.
+     *
+     * This lived only on ElasticCoreBlock, which meant a NeuroLang program built
+     * its neurons into THAT network -- a second network with its own equation,
+     * beside the one everything else runs. The DSL builds into the one network
+     * now, and a definition is checkable there.
+     */
+    setDefinitionTarget(id, target) {
+        if (id < 0 || id >= this.neurons.length)
+            return false;
+        const dims = this.config.dimensions;
+        const stored = new Float32Array(dims);
+        for (let d = 0; d < Math.min(dims, target.length); d++) {
+            const value = target[d];
+            stored[d] = Number.isFinite(value) ? (value < -1 ? -1 : (value > 1 ? 1 : value)) : 0;
+        }
+        this.definitionTargets.set(id, stored);
+        return true;
+    }
+    /**
+     * How far a neuron is from the definition it was given, and whether that is
+     * close enough to call the contract satisfied.
+     *
+     * Mean squared error over the content dimensions -- dimension 0 is the
+     * input flag, which is about how a neuron is being driven rather than what
+     * it means. A neuron with no definition has nothing to fail: it reports a
+     * loss of 0 and satisfied, because an unstated contract is not a broken one.
+     */
+    checkDefinition(id, tolerance = 0.25) {
+        if (id < 0 || id >= this.neurons.length)
+            return null;
+        const dims = this.config.dimensions;
+        const target = this.definitionTargets.get(id) ?? new Float32Array(dims);
+        const N = this.neurons.length;
+        const readout = new Float32Array(dims);
+        for (let d = 0; d < dims; d++)
+            readout[d] = this.allStates[(d + 1) * N + id];
+        let loss = 0;
+        for (let d = 0; d < dims; d++) {
+            const error = target[d] - readout[d];
+            loss += error * error;
+        }
+        loss /= Math.max(1, dims);
+        return { neuronId: id, loss, satisfied: loss <= tolerance, readout, target };
     }
     /**
      * The network as a topology: nodes and the strongest edges between them.

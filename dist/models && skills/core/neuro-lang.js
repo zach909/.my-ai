@@ -937,12 +937,20 @@ export class NeuroLangRuntime {
     }
 }
 /**
- * Materializes parsed NeuriLang directly into an ElasticCoreBlock. The runtime
- * keeps name→id bindings stable across calls, grows the block with addNeuron()
+ * Materializes parsed NeuriLang directly into THE network.
+ *
+ * The runtime keeps name→id bindings stable across calls, grows the network
  * whenever a new parsed neuron needs capacity, installs explicit connection
- * scalars as diagonal Elastic Core connection blocks, maps @vale through the
- * shared ValueRangeAllocator, and turns @definition into a deterministic
- * readout target that callers can smoke-test with checkDefinition().
+ * scalars as real connections, maps @vale through the shared
+ * ValueRangeAllocator, and turns @definition into a readout target callers can
+ * check with checkDefinition().
+ *
+ * It built into an ElasticCoreBlock before -- a second network, with its own
+ * equation, beside the one everything else runs. So a NeuroLang program (which
+ * is how the Extension Builder describes a net skill) produced neurons that
+ * carried none of the hyperdimensional term and none of the wave, and were
+ * connected to nothing the agent actually thinks with. Same DSL, same
+ * materialisation, one network.
  */
 export class ElasticNeuroLangRuntime {
     constructor(core, valeAllocator) {
@@ -964,7 +972,7 @@ export class ElasticNeuroLangRuntime {
                 continue;
             for (const [otherName, weight] of neuron.connections) {
                 const sourceId = this.assignId(otherName);
-                this.core.setConnectionScalar(targetId, sourceId, weight);
+                this.core.setConnection(targetId, sourceId, weight);
             }
             if (neuron.vale !== undefined && this.valeAllocator) {
                 const fractions = this.valeAllocator.getValeFractions();
@@ -972,7 +980,18 @@ export class ElasticNeuroLangRuntime {
                 this.valeAllocator.updateNeuronValue(String(targetId), (neuron.vale - current) / 0.1);
             }
             if (neuron.definition.length > 0) {
-                this.core.setDefinitionTarget(targetId, embedText(neuron.definition, this.core.getStateDim()));
+                const meaning = embedText(neuron.definition, this.core.getDimensions());
+                // Where the neuron starts AND what it is held to: a definition is both
+                // the place in the space this neuron is about and the contract it has
+                // to keep saying.
+                this.core.setNeuronState(targetId, meaning);
+                this.core.setDefinitionTarget(targetId, meaning);
+            }
+            // The wave it carries, from the same meaning -- so two neurons defined
+            // the same way land on the same frequency and reinforce each other in
+            // the shared pool. See net-skill-graft.ts's waveForMeaning().
+            if (neuron.wave) {
+                this.core.setWaveSignature(targetId, neuron.wave.frequency, neuron.wave.phase);
             }
         }
         const definitionChecks = new Map();
@@ -984,6 +1003,8 @@ export class ElasticNeuroLangRuntime {
             if (id === undefined)
                 continue;
             const check = this.core.checkDefinition(id, opts.definitionTolerance);
+            if (!check)
+                continue;
             definitionChecks.set(name, check);
             if (check.satisfied)
                 satisfied.push(name);
@@ -995,7 +1016,7 @@ export class ElasticNeuroLangRuntime {
         if (existing !== undefined)
             return existing;
         while (this.nextId >= this.core.getNeuronCount())
-            this.core.addNeuron();
+            this.core.addNeurons(1);
         const id = this.nextId++;
         this.nameToId.set(name, id);
         return id;
