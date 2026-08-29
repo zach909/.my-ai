@@ -1986,8 +1986,10 @@ export class ElasticCoreBlock {
                 }
                 const v = vAlloc[t];
                 const oneMinusV = 1 - v;
+                // Scaled the same way as the engine and the equation file.
+                const invN = 1 / Math.sqrt(Math.max(1, N));
                 for (let od = 0; od < SD; od++) {
-                    next[off + od] = v * curr[off + od] + oneMinusV * Math.tanh(bias[off + od] + sums[od]);
+                    next[off + od] = v * curr[off + od] + oneMinusV * Math.tanh(bias[off + od] + sums[od] * invN);
                 }
             }
             this.applyQuantizationInPlace(next);
@@ -2281,6 +2283,19 @@ const WAVE_SHIFT_RATE = 0.005;
  */
 export const MIN_WAVE_FREQ = 0.02;
 export const MAX_WAVE_FREQ = 0.6;
+/**
+ * How far below its usual best a region response has to fall before the mesh
+ * is saying it has nothing that handles this. Measured separation was
+ * 0.059 against 0.072-0.089, so the gap is real but not dramatic -- this sits
+ * inside it rather than at the edge.
+ */
+const CAPABILITY_GAP_RATIO = 0.8;
+/** How slowly the baseline follows. Slow, so one strange input does not move it. */
+const CAPABILITY_BASELINE_DECAY = 0.95;
+/** No verdict until the network has answered this many inputs -- there is nothing to compare against before that. */
+const CAPABILITY_BASELINE_MIN_SAMPLES = 8;
+/** Consecutive quiet readings before the mesh is believed. One is noise. */
+const CAPABILITY_GAP_TICKS = 3;
 /** True when a neuron belongs to at least one of the skills asked for. */
 function anyGroupActive(groups, active) {
     for (const name of groups)
@@ -2320,6 +2335,10 @@ export class HyperDimensionalEngine {
          * tick -- see ProcessOptions.activeGroups.
          */
         this.neuronGroups = new Map();
+        /** The best region response this network normally reaches -- the reference capabilityGap() reads "quiet" against. */
+        this.capabilityBaseline = 0;
+        this.capabilitySamples = 0;
+        this.capabilityQuietRun = 0;
         /** What each neuron with a definition is supposed to say. */
         this.definitionTargets = new Map();
         /** |shared wave pool value| from the most recent settle() iteration -- genuinely observable evidence the wave mechanism ran, surfaced on HyperDimensionalOutput. */
@@ -3110,6 +3129,41 @@ export class HyperDimensionalEngine {
         return true;
     }
     /**
+     * Tune one neuron to answer a particular direction.
+     *
+     * setConnection() writes the same weight to every dimension, which cannot
+     * make a neuron prefer one input over another -- it scales everything
+     * equally. This writes a weight PER DIMENSION on one incoming connection,
+     * so the neuron's activity rises when what arrives lines up with `toward`
+     * and stays low when it does not.
+     *
+     * This is what a single-neuron region needs in order to be a speciality
+     * rather than a label. A region's state cannot carry one: a non-driven
+     * neuron is recomputed from its inputs every tick, so seeding its state
+     * places it nowhere (measured -- [0.9,-0.9,...] reads [0.01,-0.02,...] one
+     * tick later). Incoming weights survive, and they are what capabilityGap()
+     * ends up reading.
+     */
+    tuneNeuronTo(id, from, toward) {
+        const N = this.neurons.length;
+        if (id < 0 || id >= N || from < 0 || from >= N || id === from)
+            return false;
+        const D = this.totalDims;
+        let norm = 0;
+        for (let k = 0; k < toward.length; k++)
+            norm += toward[k] * toward[k];
+        if (!(norm > 0))
+            return false;
+        const scale = 1 / Math.sqrt(norm);
+        for (let d = 1; d < D; d++) {
+            const v = toward[d - 1] ?? 0;
+            if (!Number.isFinite(v))
+                continue;
+            this.connDiag[(id * D + d) * N + from] = v * scale;
+        }
+        return true;
+    }
+    /**
      * Put one neuron where its meaning points.
      *
      * A grafted skill neuron starts somewhere rather than nowhere: its
@@ -3175,6 +3229,150 @@ export class HyperDimensionalEngine {
     neuronGroupsOf(id) {
         const groups = this.neuronGroups.get(id);
         return groups ? Array.from(groups) : [];
+    }
+    /**
+     * Does the mesh have anything that handles what it is currently holding?
+     *
+     * It works when the regions cover what arrives, and reports nothing when
+     * they do not. Both halves matter.
+     *
+     * WHAT IT DOES. Each Net Skill region's neurons are tuned to what that
+     * skill is for, so an input pointing that way makes the region do more.
+     * Measured on single-neuron regions -- the shape the live mesh has -- an
+     * input aligned to a region reads about twice what one aligned to nothing
+     * reads (0.51 of it), stable across tuning strengths, and a sustained run
+     * of the latter fires. On the live agent, inputs matching the experts'
+     * own domains read 0.00589 against 0.00390 for a string of symbols: a
+     * ratio of 0.661, under the threshold, gap reported.
+     *
+     * MATCH THE INPUT MAGNITUDE BEFORE ASKING. Region response is how much a
+     * region is doing, and a bigger input makes everything do more. An
+     * unfamiliar vector with a larger norm reads HIGHER than a familiar one --
+     * measured at every tuning strength from 1x to 16x -- which looks exactly
+     * like "the mesh cannot tell these apart" and is not. learn() normalises
+     * before asking, and anything else calling this must too.
+     *
+     * WHAT IT WILL NOT TELL YOU. If the regions do not cover the input at all,
+     * everything reads alike and no gap is reportable. The live experts are
+     * device permissions and programming categories, so an ordinary fact like
+     * "Paris is the capital of France" matches no region -- and reads the same
+     * as a string of symbols (0.00446 against 0.00431, ratio 0.967). That is
+     * the honest answer rather than a broken one: a mesh with no expert for
+     * general knowledge has no basis for singling out one unhandled input from
+     * another. It reports no gap and the text heuristic in learn() decides.
+     *
+     * HOW THIS LOOKED LIKE IT WORKED BEFORE, AND DID NOT. Region response used
+     * to count DRIVEN neurons, whose state is clamped to the input rather than
+     * computed from it. Expert regions take neurons from index 0 up, so the
+     * first region owned neuron 0 -- the input neuron -- and always scored the
+     * maximum. `best` was the input handed back to itself, which is why a
+     * string of symbols scored 1.000 of the usual level and a familiar sentence
+     * 0.955. The tests covering this passed on that artifact.
+     *
+     * Call it after process(), which is when the states mean something.
+     *
+     * WHERE THIS DOES NOT WORK YET, measured on the live agent. The mesh there
+     * carries 43 regions, one neuron each, registered from the expert
+     * catalogue -- and nothing ever trains them on their specialities. So their
+     * responses carry no information about the input: a familiar sentence read
+     * 0.955 of the usual level and a string of symbols nothing had ever seen
+     * read 1.000. No gap is reportable from that, and none is reported.
+     *
+     * It is not the measurement. Region response separates cleanly in a mesh
+     * whose regions HAVE specialised -- 0.070 against 0.055 for three regions
+     * of eight neurons trained on distinct patterns, which is what the tests
+     * cover. Per-region baselines were tried, on the theory that the max across
+     * 43 regions washes the signal out; they did not help (1.076 familiar
+     * against 1.084 unfamiliar) and broke the cases that do work, so they were
+     * reverted. The missing piece is that the live regions never learn to be
+     * different from each other, which is training, not reading.
+     *
+     * And the obvious shortcut does not work, which is worth knowing before
+     * trying it: seeding each expert neuron's STATE from its name places it
+     * nowhere, because a non-driven neuron's state is recomputed from its
+     * inputs on every tick. Measured -- a neuron set to
+     * [0.9,-0.9,0.9,...] reads [0.01,-0.02,0.02,...] one tick later, and the
+     * live gap numbers came back byte-identical with the seeding in place.
+     * What persists across a tick is the connections, the biases and the wave
+     * signature; a single-neuron region has no connections of its own to carry
+     * a speciality, so specialising one means giving it distinct INCOMING
+     * weights. That is the shape of the remaining work.
+     */
+    capabilityGap(threshold = CAPABILITY_GAP_RATIO) {
+        const D = this.totalDims;
+        const states = this.allStates;
+        const N = this.neurons.length;
+        let bestSkill;
+        let best = 0;
+        const seen = new Set();
+        for (const groups of this.neuronGroups.values())
+            for (const g of groups)
+                seen.add(g);
+        for (const skill of seen) {
+            const ids = this.neuronsInGroup(skill);
+            if (ids.length === 0)
+                continue;
+            let sum = 0;
+            let count = 0;
+            for (const i of ids) {
+                if (i >= N)
+                    continue;
+                // Skip DRIVEN neurons. A driven neuron is clamped to the input, so
+                // its state is the input rather than a response to it -- its
+                // "response" is just the input's magnitude, near enough constant
+                // whatever the input says.
+                //
+                // This was the whole reason the signal read flat on the live agent.
+                // Expert regions are assigned neurons from index 0 up, so the first
+                // expert owned neuron 0, which is the neuron the input is fed into.
+                // Its region therefore always scored the maximum, `best` was that
+                // region every single time, and the ratio came out 1.000 for a string
+                // of symbols nothing had ever seen -- indistinguishable from 0.955
+                // for a familiar sentence. The measurement was reading the input back
+                // to itself.
+                if (states[0 * N + i] >= 1)
+                    continue;
+                // Content dimensions only: dimension 0 is the input flag, which is 1
+                // on anything driven and says nothing about whether the region
+                // engaged with what arrived.
+                for (let d = 1; d < D; d++) {
+                    const v = states[d * N + i];
+                    sum += v < 0 ? -v : v;
+                    count++;
+                }
+            }
+            if (count === 0)
+                continue;
+            const response = sum / count;
+            if (response > best) {
+                best = response;
+                bestSkill = skill;
+            }
+        }
+        const baseline = this.capabilityBaseline;
+        const settled = this.capabilitySamples >= CAPABILITY_BASELINE_MIN_SAMPLES;
+        // A plain EMA. It was written with a Math.max first -- "so a run of gaps
+        // cannot drag the baseline down" -- and that was exactly wrong: the
+        // baseline then only ever ratcheted UP, so one strongly-answered input
+        // made everything after it read as a gap. On the live agent it fired on
+        // "Paris is in France" and not on the file format it had never seen.
+        this.capabilityBaseline = this.capabilitySamples === 0
+            ? best
+            : this.capabilityBaseline * CAPABILITY_BASELINE_DECAY + best * (1 - CAPABILITY_BASELINE_DECAY);
+        this.capabilitySamples++;
+        // Sustained, the way divergence is elsewhere here. One quiet tick is
+        // noise -- region response varies with whatever else the network was just
+        // doing -- and building an extension is not something to do on noise.
+        const quiet = settled && baseline > 0 && best < baseline * threshold;
+        this.capabilityQuietRun = quiet ? this.capabilityQuietRun + 1 : 0;
+        return {
+            needed: this.capabilityQuietRun >= CAPABILITY_GAP_TICKS,
+            bestSkill,
+            bestResponse: best,
+            baseline,
+            hasBaseline: settled,
+            quietRun: this.capabilityQuietRun,
+        };
     }
     /**
      * How strongly every pair of skills is wired to each other, strongest
@@ -4081,6 +4279,7 @@ export class HyperDimensionalEngine {
         const addWeight = this.addWeight;
         const connBias = this.connBias;
         const connBiasRowSum = this.connBiasRowSum;
+        const invConnN = 1 / Math.sqrt(Math.max(1, N));
         const usesConnectionBias = this.config.connectionBias;
         const wavePhase = this.wavePhase;
         const waveFreq = this.waveFreq;
@@ -4260,7 +4459,29 @@ export class HyperDimensionalEngine {
                 const invN = 1 / N;
                 // The largest amplitude a neuron could have: every content dimension
                 // saturated. Used to turn an amplitude into a fraction below.
-                const invMaxAmp = 1 / Math.sqrt(Math.max(1, D - 1));
+                // The reference this neuron's loudness is measured against.
+                //
+                // It used to be the THEORETICAL maximum -- every content dimension
+                // saturated, sqrt(D-1) -- which was fine only while the mesh actually
+                // ran near saturation. It does not any more, deliberately: the
+                // connection sum is scaled by 1/sqrt(N) so the states stay far from
+                // the rail. Against a fixed theoretical ceiling every neuron then
+                // reads as almost silent, the wave feedback all but vanishes, and
+                // agreement stops amplifying -- a chorus of eight neurons on one
+                // frequency came out at 0.0047 against 0.0056 for eight that
+                // disagreed, which is the claim backwards.
+                //
+                // So the reference is what the network is ACTUALLY doing: the loudest
+                // neuron this iteration. The loudest gets exactly waveFeedback and
+                // everyone else less, so the round-trip gain is still bounded by
+                // waveFeedback and still below one -- the property the fixed ceiling
+                // was there to guarantee. And it is self-calibrating, so rescaling
+                // the connection term cannot quietly mute the wave layer again.
+                let loudest = 0;
+                for (let i = 0; i < N; i++)
+                    if (waveAmp[i] > loudest)
+                        loudest = waveAmp[i];
+                const invMaxAmp = loudest > 1e-9 ? 1 / loudest : 1 / Math.sqrt(Math.max(1, D - 1));
                 for (let i = 0; i < N; i++) {
                     const amp = waveAmp[i];
                     const ownBin = waveBin[i];
@@ -4569,35 +4790,24 @@ export class HyperDimensionalEngine {
                         //
                         // 0 and 0 when the terms are off, and adding zero is exact, so
                         // with the feature off this is the old expression.
-                        // NOTE: the connection sum here is still a RAW SUM over every
-                        // sender, and that is what still saturates a long-lived mesh.
-                        // With N senders it puts something of order N inside tanh: 96% of
-                        // neurons pinned at +-1 by tick 150, every region then answering
-                        // 1.0000 to every input including inputs never seen.
+                        // Scaled by 1/sqrt(N) -- the last place in the file that
+                        // summed raw across the whole network.
                         //
-                        // Both scalings were tried and measured, and neither is free:
+                        // A raw sum over N senders puts something of order N inside tanh
+                        // and the mesh saturates into a stable attractor it cannot leave:
+                        // 96% of neurons pinned at +-1 by tick 150, every region then
+                        // answering 1.0000 to every input including inputs never seen.
                         //
-                        //   1/N       saturation gone entirely, but the term shrinks
-                        //             24-fold and the learned scale variable is clamped
-                        //             below 1, so it CANNOT grow to compensate. NeuroLang
-                        //             definitions stopped converging and stayed stopped
-                        //             at 400, 1000, 2000 and 4000 epochs.
-                        //   1/sqrt(N) definitions converge again and saturation is 0%
-                        //             through 150 ticks, 32% at 400 -- but the connection
-                        //             term drops far enough relative to the wave term
-                        //             that wave agreement and skill affinity change
-                        //             ranking.
-                        //
-                        // So this needs the wave gain and the scale-variable clamp
-                        // rebalanced alongside it, not a one-line division. Left as a
-                        // sum deliberately, with the measurements written down, rather
-                        // than half-changed. The three learning rules that fed it were
-                        // unbounded integrators and those ARE fixed -- see
-                        // learnConnectionBias and the Oja term in applyWeightLearning --
-                        // which moves saturation onset from tick 10 to tick 40-80.
+                        // sqrt(N) and not N. 1/N was tried and does remove saturation
+                        // outright, but it shrinks the term 24-fold and the learned scale
+                        // variable is clamped below 1, so it CANNOT grow to compensate --
+                        // NeuroLang definitions stopped converging and stayed stopped at
+                        // 400, 1000, 2000 and 4000 epochs. 1/sqrt(N) is the
+                        // variance-preserving scale for a sum of N terms: it stops the
+                        // term growing with neuron count without gutting it.
                         const connectionResult = usesConnectionBias
-                            ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
-                            : dotDiag + dotShift * strength;
+                            ? (dotDiag + dotShift * strength) * invConnN + connBiasRowSum[biasOffset + d]
+                            : (dotDiag + dotShift * strength) * invConnN;
                         // This receiver's own reading of the network.
                         const netAt = i * D + d;
                         const computedState = Math.tanh(bias[biasOffset + d] +
@@ -4692,8 +4902,8 @@ export class HyperDimensionalEngine {
                         // follows -- "a sum grows with neuron count until the term alone
                         // saturates every neuron" is written above the wave code.
                         const connectionResult = usesConnectionBias
-                            ? dotDiag + connBiasRowSum[biasOffset + d] + dotShift * strength
-                            : dotDiag + dotShift * strength;
+                            ? (dotDiag + dotShift * strength) * invConnN + connBiasRowSum[biasOffset + d]
+                            : (dotDiag + dotShift * strength) * invConnN;
                         // This receiver's own reading of the network.
                         const netAt = i * D + d;
                         const computedState = Math.tanh(bias[biasOffset + d] +
@@ -4980,6 +5190,56 @@ export class HyperDimensionalEngine {
                 }
             }
             deltaSums[i] = deltaSum;
+        }
+        // Hold every weight ROW to unit length.
+        //
+        // Oja's per-weight decay is the right shape but it only normalises a row
+        // when the receiver is linear, and these receivers are tanh: s_i is the
+        // squashed output, not the sum that produced it, so the property it
+        // relies on does not hold and the row is free to keep growing in the
+        // direction learning keeps pushing it. That is what still saturated a
+        // long-lived mesh -- an aligned row of N weights each near 1 puts
+        // something of order N into tanh, every neuron pins at +-1, and every
+        // region then answers the same number to every input.
+        //
+        // Measured before this: separation between an input a region was trained
+        // on and one nothing had seen fell from 0.0152 to 0.0071 as the mesh
+        // saturated, while the absolute responses ballooned to 0.79. The
+        // capability-gap signal is exactly that separation, so a long-running
+        // agent quietly lost the ability to notice it was missing something.
+        //
+        // Normalising the row makes |sum| <= ||w||*||s|| = ||s|| by
+        // Cauchy-Schwarz, which with the 1/sqrt(N) already on the sum is O(1) for
+        // any neuron count. Only rows that have OVERGROWN are pulled back, so a
+        // fresh or lightly-trained network is left exactly as it was.
+        for (let i = 0; i < N; i++) {
+            // Only where learning is actually happening. Rescaling the row of a
+            // neuron pinned to a zero learning rate would move weights that are
+            // supposed to be frozen -- normalisation is part of the learning step,
+            // not something done to the network behind it.
+            if (rates[i] === 0)
+                continue;
+            for (let d = 0; d < D; d++) {
+                const rowOffset = (i * D + d) * N;
+                let normDiag = 0;
+                let normShift = 0;
+                for (let j = 0; j < N; j++) {
+                    const wd = connDiag[rowOffset + j];
+                    const ws = connShift[rowOffset + j];
+                    normDiag += wd * wd;
+                    normShift += ws * ws;
+                }
+                if (normDiag > 1) {
+                    const k = 1 / Math.sqrt(normDiag);
+                    for (let j = 0; j < N; j++)
+                        connDiag[rowOffset + j] *= k;
+                }
+                if (normShift > 1) {
+                    const k = 1 / Math.sqrt(normShift);
+                    for (let j = 0; j < N; j++)
+                        connShift[rowOffset + j] *= k;
+                }
+            }
         }
         // Everything the hyperdimensional term introduced has to learn too. A
         // per-connection bias that never moves is a constant; a per-neuron
@@ -5398,8 +5658,18 @@ export class HyperDimensionalEngine {
             for (let k = 0; k < N; k++) {
                 const at = varRow + k;
                 const contribution = k === i ? 1 : agreementWith[k];
-                const modRoom = 1 - Math.abs(modWeight[at]);
-                modWeight[at] = clampNetworkVariable(modWeight[at] + step * agreement * contribution * modRoom);
+                // Tracks the agreement rather than accumulating it. `modRoom` only
+                // slowed the approach to the rail; nothing pulled back, so a neuron
+                // that kept agreeing ratcheted to the clamp and stopped being
+                // personal to itself -- the fourth integrator of this exact shape in
+                // the file. Measured: 0.102 -> 0.832 against a clamp of 0.999 over
+                // 630 ticks, and because this variable scales every neuron's reading
+                // of the whole network, railing it adds one big COMMON signal to
+                // everything. Mean activity went 0.021 -> 0.725 behind it, and the
+                // separation between an input a region knew and one nothing had seen
+                // fell to 0.0024 -- which is the capability-gap signal disappearing.
+                const target = agreement * contribution;
+                modWeight[at] = clampNetworkVariable(modWeight[at] + step * (target - modWeight[at]));
             }
             // And how much a connection FROM this neuron scales its receiver's
             // reading. Bounded around 1: a sender that mutes every receiver's view
@@ -5420,8 +5690,9 @@ export class HyperDimensionalEngine {
             for (let k = 0; k < N; k++) {
                 const at = varRow + k;
                 const contribution = k === i ? 1 : agreementWith[k];
-                const addRoom = 1 - Math.abs(addWeight[at]);
-                addWeight[at] = clampNetworkVariable(addWeight[at] + step * level * contribution * addRoom);
+                // The same, for the same reason.
+                const addTarget = level * contribution;
+                addWeight[at] = clampNetworkVariable(addWeight[at] + step * (addTarget - addWeight[at]));
             }
         }
     }

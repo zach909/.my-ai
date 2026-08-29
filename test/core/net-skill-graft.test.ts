@@ -14,6 +14,7 @@
 import { describe, it, expect } from 'vitest';
 import { HyperDimensionalEngine } from '../../models && skills/core/onebrain';
 import { NeuroLangInterpreter } from '../../models && skills/core/neuro-lang';
+import { embedText } from '../../models && skills/core/neuro-lang';
 import {
   graftNetSkill,
   graftedSkills,
@@ -553,5 +554,73 @@ describe('a grafted skill arrives as a region', () => {
     engine.process(new Array(8).fill(0.4), undefined, new Set([0]), undefined,
       { learn: false, activeGroups: new Set(['optics']) });
     expect(engine.captureNetworkState().states).not.toBe(before);
+  });
+});
+
+describe('the capability loop closes on itself', () => {
+  /**
+   * The whole cycle, in one test:
+   *
+   *   input -> mesh -> no region handles this -> build -> connect ->
+   *   the wave reaches the new capability -> the same input no longer
+   *   reads as a gap
+   *
+   * Creation and connection were demonstrable before this. What was not was
+   * the loop CYCLING -- a region appeared in the mesh and nothing ever ran
+   * through it, so nothing could tell whether building it had helped.
+   *
+   * It turned on one thing: a grafted neuron was placed by its STATE, which
+   * a non-driven neuron recomputes from its inputs on every tick, so the
+   * placement survived exactly one iteration. The skill was in the mesh,
+   * connected to everything, and deaf to the one thing it was built for.
+   * Tuning its incoming weights is what makes "the next time the AI
+   * encounters that type of file, the wave can reach the newly created
+   * capability" actually true.
+   */
+  const D = 8;
+  it('reports a gap, and stops reporting it once the capability is built', () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24, dimensions: D, propagationSteps: 8,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    const covered: Record<string, string> = {
+      alpha: 'reading and writing files on disk',
+      beta: 'sending and receiving network messages',
+      gamma: 'drawing shapes and colours on a screen',
+    };
+    let id = 1;
+    for (const [name, meaning] of Object.entries(covered)) {
+      engine.setNeuronGroup(id, name);
+      engine.tuneNeuronTo(id, 0, embedText(meaning, D));
+      id++;
+    }
+    // Magnitude matched, always: region response is how much a region is
+    // doing, and a louder input makes everything do more.
+    const ask = (text: string) => {
+      const v = embedText(text, D);
+      let n = 0;
+      for (const x of v) n += x * x;
+      n = n > 0 ? 1 / Math.sqrt(n) : 0;
+      engine.process(Array.from(v, x => x * n * Math.sqrt(D) * 0.4),
+        undefined, new Set([0]), undefined, { learn: false });
+      return engine.capabilityGap();
+    };
+    for (let r = 0; r < 6; r++) for (const m of Object.values(covered)) ask(m);
+
+    const novel = 'decoding qzx archive chunk tables with a range coder';
+    let before = ask(novel);
+    for (let k = 0; k < 4; k++) before = ask(novel);
+    expect(before.needed).toBe(true);
+
+    // The Extension Builder's half: a region for exactly that capability.
+    const built = graftNetSkill(engine, 'qzx-reader', [{ name: 'qzx-reader', definition: novel }]);
+    expect(built.added).toBe(1);
+
+    let after = ask(novel);
+    for (let k = 0; k < 4; k++) after = ask(novel);
+    // The same input, through the same mesh, no longer missing anything.
+    expect(after.needed).toBe(false);
+    expect(after.bestResponse).toBeGreaterThan(before.bestResponse);
   });
 });

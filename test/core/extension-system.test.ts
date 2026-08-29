@@ -292,3 +292,50 @@ describe('ExtensionManager', () => {
     expect(manager.listExtensions({ state: 'active' }).map(r => r.manifest.id)).toEqual(['k1']);
   });
 });
+
+describe('a self-built extension joins the mesh', () => {
+  /**
+   * The last arrow of the capability loop:
+   *
+   *   Create -> Test -> Connect -> Neural System -> Zip Loop -> Wave -> Mesh
+   *
+   * It did not exist. Grafting only ever happened on the INSTALL paths, so an
+   * extension a person installed became a region of the mesh and an extension
+   * the AI built for itself did not -- it was written to disk, registered as a
+   * plugin, and the wave could never reach it. The loop stopped one step short
+   * of closing, on exactly the half the whole idea is about.
+   *
+   * And once it was wired, still nothing arrived: the makers emit a plugin,
+   * which carries no neurons, so there was nothing to graft. A capability with
+   * no neuron is a capability the wave cannot reach, so one is derived from
+   * the extension's name and the procedure it was built from.
+   */
+  it('grows the network and names the new region', async () => {
+    const { getNeuroclawSystem } = await import('../../src/index.js');
+    const { graftedSkills } = await import('../../models && skills/core/net-skill-graft.js');
+    const system = await getNeuroclawSystem();
+    const engine = system.pipeline.ensureBrain();
+
+    const before = engine.getNeuronCount();
+    const skillsBefore = new Set(graftedSkills(engine).map(s => s.skill));
+
+    // A procedure repeated until the learner calls it a recurring capability.
+    const procedure = 'To convert a .heic photo: first, read the container header. '
+      + 'Then extract the HEVC payload. Next, decode each tile. '
+      + 'Finally, write the RGB rows out as PNG.';
+    let last: { decision: string; created?: string } | undefined;
+    for (let i = 0; i < 6; i++) last = await system.learn(procedure) as typeof last;
+
+    expect(last?.decision).toBe('recommend-extension');
+    expect(last?.created).toBeTruthy();
+
+    // The mesh actually grew, and the new neurons carry the extension's name
+    // -- which is what makes the wave able to reach it next time.
+    expect(engine.getNeuronCount()).toBeGreaterThan(before);
+    const added = graftedSkills(engine).map(s => s.skill).filter(s => !skillsBefore.has(s));
+    expect(added.length).toBeGreaterThan(0);
+    for (const id of engine.neuronsInGroup(added[0])) {
+      expect(engine.neuronGroupsOf(id)).toContain(added[0]);
+    }
+  }, 120_000);
+});

@@ -47,6 +47,7 @@ import { CallHistoryPlugin } from "../plugins/call-history.js";
 import { PhoneCallsPlugin } from "../plugins/phone-calls.js";
 import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
 import type { SkillDefinition } from "../plugin_manager/types.js";
+import { embedText } from "../models && skills/core/neuro-lang.js";
 
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -814,7 +815,58 @@ export class NeuroclawSystem {
   }
 
   private async learnImpl(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
-    const result = this.learner.learn(information, opts);
+    let result = this.learner.learn(information, opts);
+
+    // Ask the MESH whether it has anything that handles this.
+    //
+    // This is the "Determine Required Capability" step, and it used to be
+    // decided entirely by counting words in the input -- procedural phrases,
+    // a repetition threshold. That is a text heuristic wearing the
+    // architecture's clothes: the spec says the wave propagates through the
+    // mesh and the AI RECOGNIZES it has no way to handle what arrived, which
+    // is a question about the network's own response, not about vocabulary.
+    //
+    // So the information goes through the Zip Loop first, and every Net Skill
+    // region's response is read off the settled state. If nothing took it up
+    // -- measured against what this network normally manages, because the
+    // absolute level depends on its size and history -- that is the mesh
+    // asking for a capability, and it is enough on its own.
+    //
+    // It does not REPLACE the text path. Two different questions are being
+    // asked ("is this a procedure worth keeping?" and "can I already do
+    // this?") and either is a good reason to build something.
+    try {
+      const engine = this.pipeline.ensureBrain();
+      const dims = engine.getDimensions();
+      // The same embedding a grafted neuron's definition gets, so "what this
+      // text means" is the same question in both places. A hand-rolled
+      // character hash was tried first and measured what it deserved to: it
+      // grew with the length of the string, so the longest input scored the
+      // HIGHEST response and the signal was reading sentence length rather
+      // than familiarity.
+      const embedded = embedText(information, dims);
+      // Unit length, so magnitude cannot drive the response either. What is
+      // being asked is which DIRECTION the input points and whether any
+      // region has learned to answer it.
+      let norm = 0;
+      for (const v of embedded) norm += v * v;
+      norm = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+      const vector = Array.from(embedded, v => v * norm * Math.sqrt(dims) * 0.4);
+      engine.process(vector, undefined, new Set([0]), undefined, { learn: false });
+      const gap = engine.capabilityGap();
+      if (gap.needed && result.decision !== "ignored-unreliable") {
+        result = {
+          ...result,
+          decision: "recommend-extension",
+          reason: `${result.reason}; and the mesh has nothing that handles this`
+            + ` (best region "${gap.bestSkill ?? "none"}" responded ${gap.bestResponse.toFixed(4)}`
+            + ` against its usual ${gap.baseline.toFixed(4)})`,
+        };
+      }
+    } catch {
+      // A mesh that cannot be asked is not a reason to stop learning. The
+      // text path still decides on its own.
+    }
     // Make the taught information RETRIEVABLE. learn() previously handed the
     // text to the learner (and, above, the language model) but never put it
     // in long-term memory, so nothing could ever look it up again -- the one
@@ -878,6 +930,95 @@ export class NeuroclawSystem {
           if (name) this.improvement.snapshot(`${result.decision === "recommend-skill" ? "skill" : "extension"}:${name}`, parsed);
         } catch { /* non-JSON creation output — nothing structured to version */ }
       }
+
+      // Connect it to the neural system.
+      //
+      // This is the last arrow of the capability loop -- Create -> Test ->
+      // Connect -> Neural System -> Zip Loop -> Wave -> Mesh -- and it did not
+      // exist. Grafting only ever happened on the install paths, so an
+      // extension a PERSON installed became a region of the mesh and an
+      // extension the AI built FOR ITSELF did not: it was written to disk and
+      // registered as a plugin and the wave could never reach it. The loop
+      // stopped one step short of closing, on exactly the half the whole idea
+      // is about.
+      //
+      // Non-fatal, like the boot-time graft: a capability that cannot be
+      // grafted is still a capability, and losing the graft must not lose the
+      // creation.
+      if (created) {
+        try {
+          // The makers emit a plugin, not a net skill, so there are usually no
+          // neurons to graft. A capability with no neuron is a capability the
+          // wave cannot reach, so one is derived from what was LEARNED: the
+          // procedure itself as the definition, which is what places the
+          // neuron's state and its wave.
+          //
+          // The name must not come from the maker's output shape. Which maker
+          // answers depends on the content -- plugin-maker returns
+          // {type, plugin}, but a different one returned
+          // {original, formatted, analysis, generated, ...} with no name
+          // anywhere, and the graft silently skipped: created said yes and
+          // the mesh stayed at 64 neurons. So the maker's name is used when
+          // it offers one and the learned text names it otherwise. A
+          // capability joins the mesh regardless of who built it.
+          //
+          // A region of one. It can grow later the way any region does; what
+          // matters is that it EXISTS there, so the next time this input
+          // arrives the wave arrives somewhere.
+          const parsed = JSON.parse(created) as Record<string, unknown>;
+          const offered = parsed.skill ?? parsed.plugin ?? parsed.name;
+          const name = typeof offered === "string" && offered.trim().length > 0
+            ? offered.trim()
+            : information.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80)
+              || "extension";
+          const offeredNeurons = parsed.neurons;
+          const neurons = Array.isArray(offeredNeurons) && offeredNeurons.length > 0
+            ? offeredNeurons
+            : [{ name, definition: information }];
+          const { graftNetSkill } = await import("../models && skills/core/net-skill-graft.js");
+          const graft = graftNetSkill(this.pipeline.ensureBrain(), name, neurons);
+
+          // USE IT, AND PUT THE RESULT BACK IN THE LOOP.
+          //
+          // "The AI can use the extension, observe its result, and feed that
+          // result back into the Zip Loop" is the arrow that made this a
+          // cycle rather than a line, and it was the one still missing.
+          // Creation ended here: a region appeared in the mesh and nothing
+          // ever ran through it, so the system had no way to know whether
+          // building the thing had helped.
+          //
+          // Using it is running the mesh over the input that prompted it, now
+          // that the new region exists and is tuned to answer it -- which is
+          // exactly the "next time the AI encounters that type of file" the
+          // architecture describes. Observing the result is asking the same
+          // question that fired the builder in the first place: does the mesh
+          // still have nothing that handles this?
+          const outcome = graft.added > 0
+            ? `Built "${name}" and connected ${graft.added} neuron(s) to the network.`
+            : `Tried to build "${name}" but nothing joined the network${graft.skipped ? `: ${graft.skipped}` : "."}`;
+          if (graft.added > 0) {
+            const engine = this.pipeline.ensureBrain();
+            const dims = engine.getDimensions();
+            const embedded = embedText(information, dims);
+            let norm = 0;
+            for (const v of embedded) norm += v * v;
+            norm = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+            const vector = Array.from(embedded, v => v * norm * Math.sqrt(dims) * 0.4);
+            // Learning ON: the point of the round trip is that the network
+            // keeps something from having used the new capability.
+            engine.process(vector, undefined, new Set([0]), undefined, { learn: true });
+            const after = engine.capabilityGap();
+            // Straight back onto the loop, as input, so the next cycle
+            // processes what happened rather than only what was asked.
+            await this.zipIO.ingest(after.needed
+              ? `${outcome} The network still has nothing that handles this.`
+              : `${outcome} The network now has something that handles this.`);
+          } else {
+            await this.zipIO.ingest(outcome);
+          }
+        } catch { /* unparseable creation, or the mesh is full */ }
+      }
+
       // Unlike the other five entry points, `created` here is structured JSON
       // consumed both internally (above) and by callers — annotating it with
       // "[Confirm before acting: ...]" the way solve()/collaborate()/etc.

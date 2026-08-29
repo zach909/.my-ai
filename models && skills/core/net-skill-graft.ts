@@ -233,11 +233,24 @@ export function graftNetSkill(
     const id = ids[index];
     byName[neuron.name] = id;
     const definition = (neuron.definition ?? "").trim();
+    const meaning = definition || neuron.name;
     if (definition) {
       // Where its meaning points. A neuron that began at random would be a
       // neuron the skill contributed nothing to.
       engine.setNeuronState(id, embedText(definition, dims));
     }
+    // And what makes it ANSWER to that meaning rather than merely start
+    // there. A state is recomputed from its inputs on every tick, so seeding
+    // it places a neuron for exactly one iteration and then the Zip Loop
+    // overwrites it -- measured, [0.9,-0.9,...] reads [0.01,-0.02,...] one
+    // tick later. Incoming weights survive, and they are what decides whether
+    // this neuron does anything when its meaning arrives.
+    //
+    // Without this, "the next time the AI encounters that type of file, the
+    // wave can reach the newly created capability" was not true: the skill
+    // was in the mesh, connected to everything, and deaf to the one thing it
+    // was built for.
+    engine.tuneNeuronTo(id, 0, embedText(meaning, dims));
     // And the wave it carries. A grafted neuron is in the shared pool with
     // everything else from its first tick; this decides what it sounds like
     // there.

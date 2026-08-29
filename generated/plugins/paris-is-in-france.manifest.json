@@ -1,0 +1,11 @@
+{
+  "id": "paris-is-in-france",
+  "name": "Paris is in France.",
+  "version": "1.0.0",
+  "description": "Auto-generated: Paris is in France.",
+  "permissions": [
+    "custom"
+  ],
+  "author": "neuroclaw-auto",
+  "entrypoint": "./plugins/paris-is-in-france.js"
+}

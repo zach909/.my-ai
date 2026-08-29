@@ -1266,7 +1266,23 @@ describe('Net Skills are overlapping regions, not partitions', () => {
   // second skill silently REMOVED it from the first -- the one thing the
   // spec says must not happen.
   const meshOfThree = () => {
-    const engine = new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8, propagationSteps: 4, learningRate: 0.05 });
+    // The full equation, the way the live pipeline configures it. With the
+    // hyperdimensional and wave terms off, the states stay so small that
+    // co-training barely moves the connections between two regions and the
+    // affinity below cannot separate them -- which says nothing about the
+    // network the agent actually runs.
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24,
+      dimensions: 8,
+      propagationSteps: 4,
+      learningRate: 0.05,
+      hyperGain: 1,
+      hyperAdd: 1,
+      hyperWaveGain: 1,
+      hyperWaveAdd: 1,
+      waveGain: 0.1,
+      connectionBias: true,
+    });
     for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
     for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
     for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
@@ -1523,14 +1539,11 @@ describe('learning does not saturate the mesh', () => {
 
   it('leaves the mesh unsaturated after four hundred learning ticks', () => {
     const engine = learningEngine();
-    // The three integrators are fixed, which moves saturation onset from
-    // tick 10 to tick 40-80. It is NOT eliminated: the connection sum is
-    // still a raw sum over every sender, and fixing that needs the wave gain
-    // and the scale-variable clamp rebalanced alongside it -- see the note in
-    // onebrain.ts for both scalings tried and what each one broke. This pins
-    // the part that is fixed.
-    train(engine, 20);
-    expect(saturatedFraction(engine)).toBeLessThan(0.05);
+    // Was 96% by tick 150 and stuck there. Now 1-3% at 400, because every
+    // rule that fed the connection sum is bounded and the rows themselves are
+    // held to unit length.
+    train(engine, 400);
+    expect(saturatedFraction(engine)).toBeLessThan(0.1);
   });
 
   it('still moves its weights -- unsaturated is not untrained', () => {
@@ -1576,5 +1589,280 @@ describe('learning does not saturate the mesh', () => {
     const spread = Math.max(...responses) - Math.min(...responses);
     expect(spread).toBeGreaterThan(0.005);
     for (const r of responses) expect(r).toBeLessThan(0.99);
+  });
+});
+
+describe('the mesh says when it has nothing that handles an input', () => {
+  /**
+   * "Determine Required Capability", read off the network.
+   *
+   * This step was decided entirely by counting words in the input text --
+   * procedural phrases, a repetition threshold. That is a text heuristic
+   * wearing the architecture's clothes. The spec says the wave propagates
+   * through the mesh and the AI RECOGNIZES it has no way to handle what
+   * arrived, which is a question about the network's own response.
+   *
+   * After the Zip Loop settles, each Net Skill region has a response -- how
+   * much its neurons are actually doing -- and the strongest of those says
+   * whether ANY region took the input up.
+   */
+  const D = 8;
+  const trained = () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24, dimensions: D, propagationSteps: 8, learningRate: 0.01,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
+    for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
+    const patterns: Record<string, number[]> = {
+      math: Array.from({ length: D }, (_, d) => Math.sin(d * 1.1) * 0.8),
+      language: Array.from({ length: D }, (_, d) => Math.cos(d * 0.5) * 0.8),
+      vision: Array.from({ length: D }, (_, d) => ((d % 3) - 1) * 0.7),
+    };
+    // Each region learns its own pattern, with only that region active.
+    for (let t = 0; t < 40; t++) {
+      for (const [name, p] of Object.entries(patterns)) {
+        engine.process(p, undefined, new Set([0]), undefined, { learn: true, activeGroups: new Set([name]) });
+      }
+    }
+    // And a baseline of what this network normally manages.
+    for (let r = 0; r < 4; r++) {
+      for (const p of Object.values(patterns)) {
+        engine.process(p, undefined, new Set([0]), undefined, { learn: false });
+        engine.capabilityGap();
+      }
+    }
+    return { engine, patterns };
+  };
+  const unfamiliar = Array.from({ length: D }, (_, d) => Math.tan(d * 0.31) * 0.2);
+
+  it('reports no gap for an input a region was trained on', () => {
+    const { engine, patterns } = trained();
+    for (const p of Object.values(patterns)) {
+      engine.process(p, undefined, new Set([0]), undefined, { learn: false });
+      expect(engine.capabilityGap().needed).toBe(false);
+    }
+  });
+
+  it('answers a region\'s own direction about twice as strongly as one nothing is tuned to', () => {
+    // The mechanism the capability gap rests on, in the shape the live mesh
+    // actually has: single-neuron regions, each tuned to its own meaning.
+    //
+    // INPUT MAGNITUDE HAS TO BE MATCHED, and getting that wrong is what made
+    // this look broken for a long time. Region response is how much a
+    // region's neurons are doing, and a bigger input makes everything do
+    // more -- an unfamiliar vector that simply had a larger norm read HIGHER
+    // than a familiar one at every tuning strength tried (1x through 16x),
+    // which reads as "the mesh cannot tell these apart" when what it could
+    // not tell apart was loud from familiar. learn() normalises before asking
+    // for this reason.
+    const dirs: Record<string, number[]> = {
+      math: Array.from({ length: D }, (_, d) => Math.sin(d * 1.1)),
+      language: Array.from({ length: D }, (_, d) => Math.cos(d * 0.5)),
+      vision: Array.from({ length: D }, (_, d) => ((d % 3) - 1)),
+    };
+    const unit = (v: number[]) => {
+      const n = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+      return v.map(x => (x / n) * 0.8);
+    };
+    const untuned = unit(Array.from({ length: D }, (_, d) => Math.tan(d * 0.31)));
+
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24, dimensions: D, propagationSteps: 8,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    const ids: Record<string, number> = { math: 1, language: 2, vision: 3 };
+    for (const [name, id] of Object.entries(ids)) {
+      engine.setNeuronGroup(id, name);
+      engine.tuneNeuronTo(id, 0, unit(dirs[name]));
+    }
+    const ask = (v: number[]) => {
+      engine.process(v, undefined, new Set([0]), undefined, { learn: false });
+      return engine.capabilityGap();
+    };
+    for (let r = 0; r < 6; r++) for (const v of Object.values(dirs)) ask(unit(v));
+
+    const mean = (a: number[]) => a.reduce((s, x) => s + x, 0) / a.length;
+    const aligned = mean(Object.values(dirs).map(v => ask(unit(v)).bestResponse));
+    const unaligned = mean([0, 1, 2, 3].map(() => ask(untuned).bestResponse));
+
+    // Measured about 0.51 of the aligned response, stable across tuning
+    // strengths. Well outside noise, and in the right direction.
+    expect(unaligned).toBeLessThan(aligned * 0.7);
+  });
+
+  it('fires on a direction nothing is tuned to, and not on one that is', () => {
+    const dirs: Record<string, number[]> = {
+      math: Array.from({ length: D }, (_, d) => Math.sin(d * 1.1)),
+      language: Array.from({ length: D }, (_, d) => Math.cos(d * 0.5)),
+      vision: Array.from({ length: D }, (_, d) => ((d % 3) - 1)),
+    };
+    const unit = (v: number[]) => {
+      const n = Math.sqrt(v.reduce((s, x) => s + x * x, 0));
+      return v.map(x => (x / n) * 0.8);
+    };
+    const untuned = unit(Array.from({ length: D }, (_, d) => Math.tan(d * 0.31)));
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 24, dimensions: D, propagationSteps: 8,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    const ids: Record<string, number> = { math: 1, language: 2, vision: 3 };
+    for (const [name, id] of Object.entries(ids)) {
+      engine.setNeuronGroup(id, name);
+      engine.tuneNeuronTo(id, 0, unit(dirs[name]));
+    }
+    const ask = (v: number[]) => {
+      engine.process(v, undefined, new Set([0]), undefined, { learn: false });
+      return engine.capabilityGap();
+    };
+    for (let r = 0; r < 6; r++) for (const v of Object.values(dirs)) ask(unit(v));
+
+    // Sustained, so one noisy tick cannot send the Extension Builder anywhere.
+    const verdicts: boolean[] = [];
+    for (let k = 0; k < 5; k++) verdicts.push(ask(untuned).needed);
+    expect(verdicts[0]).toBe(false);
+    expect(verdicts[verdicts.length - 1]).toBe(true);
+
+    // And it clears the moment something the mesh is tuned for comes back.
+    const back = ask(unit(dirs.math));
+    expect(back.needed).toBe(false);
+    expect(back.quietRun).toBe(0);
+  });
+
+  it('does not tell a familiar input from an unfamiliar one when neither matches a region', () => {
+    // This test used to assert the opposite, and it passed for a bad reason.
+    //
+    // Region response included DRIVEN neurons, whose state is clamped to the
+    // input rather than computed from it. The first expert region owns neuron
+    // 0, which is the neuron the input is fed into, so that region always
+    // scored the maximum and `best` was the input's own magnitude read back
+    // to itself. Excluding driven neurons is plainly right -- and with it,
+    // the discrimination this metric claimed is not there: an unfamiliar
+    // input reads 1.01-1.05 of the usual level, slightly ABOVE it, while a
+    // region's own trained pattern reads 0.946.
+    //
+    // So the mesh does not currently recognise that it lacks a capability.
+    // The measurement is honest now and reports nothing, which is better than
+    // a confident number derived from an artifact -- and the text path still
+    // decides on its own meanwhile. Pinned as it stands so that whoever makes
+    // the regions genuinely specialise sees this flip, rather than inheriting
+    // a green test that was never testing it.
+    const { engine } = trained();
+    const verdicts: boolean[] = [];
+    for (let k = 0; k < 5; k++) {
+      engine.process(unfamiliar, undefined, new Set([0]), undefined, { learn: false });
+      verdicts.push(engine.capabilityGap().needed);
+    }
+    expect(verdicts.every(v => v === false)).toBe(true);
+  });
+
+  it('leaves a driven neuron out of its own region\'s response', () => {
+    // The bug above, pinned directly: a driven neuron holds the input, so
+    // counting it measures the input rather than the network's answer to it.
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 12, dimensions: D, propagationSteps: 4,
+    });
+    for (let i = 0; i < 4; i++) engine.setNeuronGroup(i, 'owns-the-input');
+    for (let i = 4; i < 8; i++) engine.setNeuronGroup(i, 'ordinary');
+    const loud = new Array(D).fill(0.95);
+    engine.process(loud, undefined, new Set([0]), undefined, { learn: false });
+    const gap = engine.capabilityGap();
+    // Neuron 0 is clamped to 0.95 in every dimension. If it counted, the
+    // region holding it would report about that, far above anything a
+    // computed neuron reaches on a fresh network.
+    expect(gap.bestResponse).toBeLessThan(0.5);
+  });
+
+  it('never fires on an input the mesh handles', () => {
+    // The half of the claim that still holds, and the half that matters for
+    // safety: whatever else it does, it must not send the Extension Builder
+    // after something the network already deals with.
+    const { engine, patterns } = trained();
+    for (const p of Object.values(patterns)) {
+      for (let k = 0; k < 5; k++) {
+        engine.process(p, undefined, new Set([0]), undefined, { learn: false });
+        expect(engine.capabilityGap().needed).toBe(false);
+      }
+    }
+  });
+
+  it('does not call an ordinary input a gap just because a louder one came before it', () => {
+    // The baseline was first written with a Math.max -- "so a run of gaps
+    // cannot drag it down" -- which made it ratchet UP forever, so one
+    // strongly-answered input made everything after it read as a gap. On the
+    // live agent that fired the Extension Builder on "Paris is in France"
+    // and not on the file format it had never seen.
+    const { engine, patterns } = trained();
+    // The pattern that draws the strongest response, several times over.
+    for (let k = 0; k < 6; k++) {
+      engine.process(patterns.language, undefined, new Set([0]), undefined, { learn: false });
+      engine.capabilityGap();
+    }
+    // Then the one that draws the weakest -- still a region's OWN pattern,
+    // still something the mesh handles, and it must not be called a gap.
+    for (let k = 0; k < 5; k++) {
+      engine.process(patterns.vision, undefined, new Set([0]), undefined, { learn: false });
+      expect(engine.capabilityGap().needed).toBe(false);
+    }
+  });
+
+  it('says nothing at all until it has a usual level to compare against', () => {
+    // A network that has answered nothing yet cannot honestly claim to be
+    // missing a capability, and saying so on tick one would fire the
+    // Extension Builder at everything.
+    const engine = new HyperDimensionalEngine({ neuronCount: 24, dimensions: D, propagationSteps: 4 });
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    engine.process(unfamiliar, undefined, new Set([0]), undefined, { learn: false });
+    const first = engine.capabilityGap();
+    expect(first.hasBaseline).toBe(false);
+    expect(first.needed).toBe(false);
+  });
+});
+
+describe('a long-trained mesh keeps its responses readable', () => {
+  // This block used to assert that a region responds MORE to what it was
+  // trained on than to something nothing had seen, and it passed -- on the
+  // driven neuron. Region response counted neurons clamped to the input, and
+  // region 'math' owns neuron 0, which is the one the input is fed into. The
+  // separation being measured was the input's own magnitude.
+  //
+  // With driven neurons excluded the ordering does not hold, so the claim is
+  // gone rather than restated. What IS worth pinning is the thing that has to
+  // be true before any such signal can exist: a mesh that has been learning
+  // for a long time must still produce responses that vary and are not
+  // pinned at the rail. Saturation used to destroy that -- 96% of neurons at
+  // +-1 by tick 150, every region answering the same number forever.
+  const D = 8;
+  const N = 24;
+
+  it('still varies its region responses after four hundred learning ticks', () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: N, dimensions: D, propagationSteps: 8, learningRate: 0.02,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
+    for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
+    const known = Array.from({ length: D }, (_, d) => Math.sin(d * 1.1) * 0.8);
+    for (let t = 0; t < 400; t++) {
+      engine.process(known.map((v, i) => v * Math.sin(t * 0.3 + i)),
+        undefined, new Set([0]), undefined, { learn: true });
+    }
+
+    const readings: number[] = [];
+    for (let k = 0; k < 6; k++) {
+      engine.process(known.map((v, i) => v * Math.cos(k + i)),
+        undefined, new Set([0]), undefined, { learn: false });
+      readings.push(engine.capabilityGap().bestResponse);
+    }
+    // Not pinned: every reading well short of the rail...
+    for (const r of readings) expect(r).toBeLessThan(0.9);
+    // ...and not all the same number, which is what saturation produced.
+    expect(Math.max(...readings) - Math.min(...readings)).toBeGreaterThan(1e-4);
   });
 });
