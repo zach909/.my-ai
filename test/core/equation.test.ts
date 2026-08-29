@@ -51,7 +51,7 @@ function readEngine(engine: HyperDimensionalEngine): EquationState {
   };
 }
 
-const settingsFor = (config: Record<string, number | boolean>): EquationSettings => ({
+const settingsFor = (config: Record<string, number | boolean>, reading?: { re: Float32Array; im: Float32Array }): EquationSettings => ({
   hyperGain: (config.hyperGain as number) ?? 0,
   hyperAdd: (config.hyperAdd as number) ?? 0,
   hyperScale: (config.hyperScale as number) ?? 0,
@@ -59,6 +59,11 @@ const settingsFor = (config: Record<string, number | boolean>): EquationSettings
   hyperWaveAdd: (config.hyperWaveAdd as number) ?? 0,
   waveGain: (config.waveGain as number) ?? 0,
   waveFeedback: (config.waveFeedback as number) ?? 0.5,
+  // Handed the engine's own pair, not a copy made here: a reference
+  // implementation given different constants proves nothing about the fast
+  // one.
+  waveReadRe: reading?.re ?? new Float32Array(0),
+  waveReadIm: reading?.im ?? new Float32Array(0),
   crossInfluenceStrength: (config.crossInfluenceStrength as number) ?? 0.3,
   connectionBias: (config.connectionBias as boolean) ?? false,
   minWaveFreq: MIN_WAVE_FREQ,
@@ -100,7 +105,7 @@ describe('one equation, two implementations, one answer', () => {
       for (const [id, v] of vale) asArray[id] = v;
       before.vale = asArray;
     }
-    const plain = applyEquation(before, settingsFor(config), input, driven, new Set(), {
+    const plain = applyEquation(before, settingsFor(config, engine.getWaveReading()), input, driven, new Set(), {
       emaEnergy: snapshot.emaEnergy ?? 0,
       hasEma: snapshot.hasEma ?? false,
       sustainedDivergence: snapshot.sustainedDivergence ?? 0,
@@ -268,6 +273,7 @@ describe('the elastic core is the same equation', () => {
     hyperGain: 0, hyperAdd: 0, hyperScale: 0,
     hyperWaveGain: 0, hyperWaveAdd: 0,
     waveGain: 0, waveFeedback: 0,
+    waveReadRe: new Float32Array(8), waveReadIm: new Float32Array(8),
     crossInfluenceStrength: 0,
     connectionBias: false,
     minWaveFreq: MIN_WAVE_FREQ, maxWaveFreq: MAX_WAVE_FREQ, waveBins: 64, poolCeiling: 8,

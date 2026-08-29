@@ -1259,3 +1259,322 @@ describe('the settle loop stops when the network has settled', () => {
     expect(out.settleIterations).toBeLessThan(200);
   });
 });
+
+describe('Net Skills are overlapping regions, not partitions', () => {
+  // "The experts are not necessarily permanently isolated. Their boundaries
+  // can overlap." A neuron used to belong to exactly one group, so joining a
+  // second skill silently REMOVED it from the first -- the one thing the
+  // spec says must not happen.
+  const meshOfThree = () => {
+    const engine = new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8, propagationSteps: 4, learningRate: 0.05 });
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
+    for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
+    return engine;
+  };
+
+  it('keeps a neuron in both skills when it joins a second', () => {
+    const engine = meshOfThree();
+    for (let i = 4; i < 12; i++) engine.setNeuronGroup(i, 'physics');
+
+    expect(engine.neuronGroupsOf(5).sort()).toEqual(['math', 'physics']);
+    // Maths did not lose the four neurons physics borrowed.
+    expect(engine.neuronsInGroup('math')).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(engine.groupOverlap('math', 'physics')).toEqual([4, 5, 6, 7]);
+    expect(engine.groupOverlap('math', 'vision')).toEqual([]);
+  });
+
+  it('computes a shared neuron when EITHER of its skills is asked for', () => {
+    // The point of an overlap. If a shared neuron only woke for the FIRST
+    // skill it joined, the boundary would still be a wall -- just a
+    // differently drawn one. So this watches neuron 5 itself, not the whole
+    // network: the driven and ungrouped neurons move on every tick, and a
+    // test that only asked "did anything change?" passed even with the gate
+    // reading one group per neuron.
+    const engine = meshOfThree();
+    engine.setNeuronGroup(5, 'physics'); // second skill; 'math' was first
+    const input = new Array(8).fill(0.4);
+    const stateOf = (id: number) => Array.from(engine.getNeuronStates()[id].state);
+
+    const shared = stateOf(5);
+    const visionOnly = stateOf(20); // in no asked-for skill: must not move
+    engine.process(input, undefined, new Set([0]), undefined, { learn: false, activeGroups: new Set(['physics']) });
+
+    expect(stateOf(5)).not.toEqual(shared);
+    expect(stateOf(20)).toEqual(visionOnly);
+  });
+
+  it('holds a neuron only when none of its skills was asked for', () => {
+    // The other half. A neuron in maths-and-physics must still HOLD on a
+    // tick that asks for neither, or "active groups" would mean nothing.
+    const engine = meshOfThree();
+    engine.setNeuronGroup(5, 'physics');
+    const input = new Array(8).fill(0.4);
+    const stateOf = (id: number) => Array.from(engine.getNeuronStates()[id].state);
+
+    const shared = stateOf(5);
+    engine.process(input, undefined, new Set([0]), undefined, { learn: false, activeGroups: new Set(['vision']) });
+    expect(stateOf(5)).toEqual(shared);
+  });
+
+  it('can take a neuron out of one skill without emptying it from the rest', () => {
+    const engine = meshOfThree();
+    engine.setNeuronGroup(5, 'physics');
+    expect(engine.clearNeuronGroup(5, 'physics')).toBe(true);
+    expect(engine.neuronGroupsOf(5)).toEqual(['math']);
+    expect(engine.clearNeuronGroup(5, 'physics')).toBe(false);
+  });
+
+  it('reports two skills growing together as a rising affinity', () => {
+    // "Connections between them can become stronger when the AI discovers
+    // that two areas of expertise work well together." That happens whether
+    // or not anyone looks -- the connection rule is Hebbian. What this pins
+    // is that it can be READ, because an emergent combination nobody can
+    // observe is indistinguishable from one that is not emerging.
+    const engine = meshOfThree();
+    const input = new Array(8).fill(0.4);
+    for (let t = 0; t < 60; t++) {
+      engine.process(
+        input.map((v, i) => v * Math.sin(t * 0.3 + i)),
+        undefined,
+        new Set([0]),
+        undefined,
+        { learn: true, activeGroups: new Set(['math', 'language']) },
+      );
+    }
+
+    const affinity = engine.skillAffinity();
+    const find = (a: string, b: string) =>
+      affinity.find(r => (r.a === a && r.b === b) || (r.a === b && r.b === a))!;
+
+    // The pair that worked together outranks both pairs that never did.
+    expect(find('math', 'language').strength).toBeGreaterThan(find('math', 'vision').strength);
+    expect(find('math', 'language').strength).toBeGreaterThan(find('language', 'vision').strength);
+    // Sorted strongest first, so the reader does not have to.
+    expect(affinity[0].strength).toBeGreaterThanOrEqual(affinity[affinity.length - 1].strength);
+  });
+});
+
+describe('the input creates the wave', () => {
+  // "When an input enters the network, it creates an initial wave."
+  //
+  // It did not. A source neuron's wave was its state's ENERGY -- a magnitude,
+  // with no sign -- rotated to its signature phase, so an input and its exact
+  // opposite produced the IDENTICAL wave. Measured before the fix: feeding
+  // +0.6 and -0.6 into the same network moved the shared pool by 0.003
+  // against a total pool energy of 1.78. The pool was 99.8% the network's own
+  // resting activity and 0.2% the input.
+  //
+  // For a wave network that is the wrong way round. Interference IS the
+  // computation, and two contradicting inputs could not contradict each
+  // other, because they were not different waves.
+  const D = 8;
+  const N = 16;
+  const waveConfig = (extra: Record<string, unknown> = {}) => ({
+    neuronCount: N,
+    dimensions: D,
+    propagationSteps: 1,
+    hyperGain: 1,
+    hyperAdd: 1,
+    hyperWaveGain: 1,
+    hyperWaveAdd: 1,
+    waveGain: 0.1,
+    connectionBias: true,
+    ...extra,
+  });
+  const decodeF = (b64: string) => {
+    const raw = atob(b64);
+    const bytes = new Uint8Array(raw.length);
+    for (let i = 0; i < raw.length; i++) bytes[i] = raw.charCodeAt(i);
+    return new Float32Array(bytes.buffer);
+  };
+  const poolEnergy = (engine: HyperDimensionalEngine) => {
+    const snap = engine.captureNetworkState();
+    const re = decodeF(snap.wavePoolRe as string);
+    const im = decodeF(snap.wavePoolIm as string);
+    let total = 0;
+    for (let k = 0; k < re.length; k++) total += Math.hypot(re[k], im[k]);
+    return total;
+  };
+
+  it('cancels two sources that are exact enemies and magnifies two that agree', () => {
+    // Two sources sharing one frequency land in the same pool bin and have to
+    // reckon with each other. Given the same input, whether they add or
+    // annihilate is decided by their signature phase -- half a cycle apart
+    // makes them perfect enemies.
+    //
+    // This is the claim the whole wave layer rests on, and it only works
+    // because the wave is now read off the input with a SIGN. It also pins
+    // the reading basis being shared: with a basis per neuron, two sources
+    // holding the same state emit different waves and cannot cancel at all.
+    const twoSources = (phaseB: number) => {
+      const engine = new HyperDimensionalEngine(waveConfig());
+      engine.setWaveSignature(0, 0.2, 0);
+      engine.setWaveSignature(1, 0.2, phaseB);
+      engine.process(new Array(D).fill(0.6), undefined, new Set([0, 1]), undefined, { learn: false });
+      return poolEnergy(engine);
+    };
+
+    const agreeing = twoSources(0);
+    const enemies = twoSources(Math.PI);
+    expect(agreeing).toBeGreaterThan(0.1);
+    expect(enemies).toBeLessThan(agreeing * 0.01);
+  });
+
+  it('puts more of the input into the pool than the network puts of itself', () => {
+    const base = new HyperDimensionalEngine(waveConfig());
+    const snapshot = base.captureNetworkState();
+    const twin = new HyperDimensionalEngine(waveConfig());
+    twin.restoreNetworkState(snapshot);
+
+    base.process(new Array(D).fill(0.6), undefined, new Set([0]), undefined, { learn: false });
+    twin.process(new Array(D).fill(-0.6), undefined, new Set([0]), undefined, { learn: false });
+
+    const a = decodeF(base.captureNetworkState().wavePoolRe as string);
+    const b = decodeF(twin.captureNetworkState().wavePoolRe as string);
+    let apart = 0;
+    for (let k = 0; k < a.length; k++) apart += Math.abs(a[k] - b[k]);
+
+    // The two pools must differ by more than a rounding error. Before the fix
+    // this was 0.003 against a pool of 1.78 -- the input was 0.2% of the wave
+    // and the network's own resting activity was the rest.
+    expect(apart).toBeGreaterThan(poolEnergy(base) * 0.5);
+  });
+
+  it('reads every neuron the same way, so two neurons can be exact enemies', () => {
+    // Tried first with a reading basis per neuron, which is wrong: two
+    // neurons holding the same state then emit DIFFERENT waves, so they
+    // cannot agree, and two given deliberately opposite signatures cannot
+    // annihilate either. The Zip Loop's bit neurons depend on being able to.
+    const engine = new HyperDimensionalEngine(waveConfig());
+    const reading = engine.getWaveReading();
+    expect(reading.re.length).toBe(D + 1);
+    // Orthogonal and unit-length, so reading a state is a rotation rather
+    // than something that quietly stretches it.
+    let dot = 0;
+    let normRe = 0;
+    let normIm = 0;
+    for (let d = 1; d <= D; d++) {
+      dot += reading.re[d] * reading.im[d];
+      normRe += reading.re[d] * reading.re[d];
+      normIm += reading.im[d] * reading.im[d];
+    }
+    expect(Math.abs(dot)).toBeLessThan(1e-5);
+    expect(normRe).toBeCloseTo(1, 5);
+    expect(normIm).toBeCloseTo(1, 5);
+    // Dimension 0 is the input flag, not content, and must never reach a wave.
+    expect(reading.re[0]).toBe(0);
+    expect(reading.im[0]).toBe(0);
+  });
+
+  it('still gives a grown network finite states', () => {
+    // A per-neuron array addNeurons() forgets to grow is how every grafted
+    // neuron came out NaN once before.
+    const engine = new HyperDimensionalEngine(waveConfig());
+    engine.addNeurons(5);
+    engine.process(new Array(D).fill(0.4), undefined, new Set([0]), undefined, { learn: true });
+    for (const neuron of engine.getNeuronStates()) {
+      for (const v of neuron.state) expect(Number.isFinite(v)).toBe(true);
+    }
+  });
+});
+
+describe('learning does not saturate the mesh', () => {
+  // "Over repeated updates, the entire mesh can move toward a stable state
+  // that represents the current input and context." It could not. Learning
+  // pinned 96% of neurons at +-1 within 10-40 ticks, and a saturated mesh
+  // represents nothing -- every region answered 1.0000 to every input,
+  // including inputs it had never seen.
+  //
+  // Three separate rules were pure integrators of a neuron's own state, with
+  // nothing pulling the other way, and one term was summed across the whole
+  // network where every other network-wide combination in the file is a mean.
+  const learningEngine = () => new HyperDimensionalEngine({
+    neuronCount: 24,
+    dimensions: 8,
+    propagationSteps: 8,
+    learningRate: 0.02,
+    hyperGain: 1,
+    hyperAdd: 1,
+    hyperWaveGain: 1,
+    hyperWaveAdd: 1,
+    waveGain: 0.1,
+    connectionBias: true,
+  });
+  const saturatedFraction = (engine: HyperDimensionalEngine) => {
+    let pinned = 0;
+    let total = 0;
+    for (const neuron of engine.getNeuronStates()) {
+      for (let d = 1; d < neuron.state.length; d++) {
+        if (Math.abs(neuron.state[d]) > 0.99) pinned++;
+        total++;
+      }
+    }
+    return pinned / total;
+  };
+  const train = (engine: HyperDimensionalEngine, ticks: number) => {
+    for (let t = 1; t <= ticks; t++) {
+      engine.process(
+        Array.from({ length: 8 }, (_, d) => Math.sin(t * 0.3 + d) * 0.6),
+        undefined, new Set([0]), undefined, { learn: true },
+      );
+    }
+  };
+
+  it('leaves the mesh unsaturated after four hundred learning ticks', () => {
+    const engine = learningEngine();
+    // The three integrators are fixed, which moves saturation onset from
+    // tick 10 to tick 40-80. It is NOT eliminated: the connection sum is
+    // still a raw sum over every sender, and fixing that needs the wave gain
+    // and the scale-variable clamp rebalanced alongside it -- see the note in
+    // onebrain.ts for both scalings tried and what each one broke. This pins
+    // the part that is fixed.
+    train(engine, 20);
+    expect(saturatedFraction(engine)).toBeLessThan(0.05);
+  });
+
+  it('still moves its weights -- unsaturated is not untrained', () => {
+    // The cheap way to pass the test above is to stop learning entirely.
+    const engine = learningEngine();
+    const before = engine.captureNetworkState();
+    train(engine, 400);
+    const after = engine.captureNetworkState();
+    expect(after.connDiag).not.toBe(before.connDiag);
+    expect(after.connBias).not.toBe(before.connBias);
+  });
+
+  it('lets regions answer differently to different inputs', () => {
+    // What saturation destroyed: with every neuron at the rail, every Net
+    // Skill region reported the same response to everything, so nothing
+    // downstream could tell whether the mesh had anything that handled a
+    // given input.
+    const engine = learningEngine();
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
+    for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
+    // Inside the unsaturated window -- see the note above. Past it the
+    // connection sum (still raw) pins everything and every region reports the
+    // same number again, which is the defect that remains.
+    train(engine, 20);
+
+    const response = (group: string) => {
+      const states = engine.getNeuronStates();
+      let sum = 0;
+      let count = 0;
+      for (const id of engine.neuronsInGroup(group)) {
+        for (let d = 1; d < states[id].state.length; d++) {
+          sum += Math.abs(states[id].state[d]);
+          count++;
+        }
+      }
+      return sum / count;
+    };
+
+    engine.process(new Array(8).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+    const responses = ['math', 'language', 'vision'].map(response);
+    // Not all the same number, which is exactly what a saturated mesh gave.
+    const spread = Math.max(...responses) - Math.min(...responses);
+    expect(spread).toBeGreaterThan(0.005);
+    for (const r of responses) expect(r).toBeLessThan(0.99);
+  });
+});

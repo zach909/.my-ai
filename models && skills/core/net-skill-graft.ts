@@ -254,6 +254,12 @@ export function graftNetSkill(
       ? asked.phase
       : derived.phase;
     engine.setWaveSignature(id, frequency, phase);
+    // And which skill it belongs to. Without this a grafted skill is a pile
+    // of neurons that happen to have arrived together: the engine's own
+    // gating could not select it, and nothing could ask how close it had
+    // grown to another skill. A Net Skill is a REGION, and this is the only
+    // thing that makes it one.
+    engine.setNeuronGroup(id, skillName);
   });
 
   // The skill's own structure, so it arrives as a network rather than as a
