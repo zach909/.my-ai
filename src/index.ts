@@ -976,7 +976,46 @@ export class NeuroclawSystem {
             ? offeredNeurons
             : [{ name, definition: information }];
           const { graftNetSkill } = await import("../models && skills/core/net-skill-graft.js");
-          graftNetSkill(this.pipeline.ensureBrain(), name, neurons);
+          const graft = graftNetSkill(this.pipeline.ensureBrain(), name, neurons);
+
+          // USE IT, AND PUT THE RESULT BACK IN THE LOOP.
+          //
+          // "The AI can use the extension, observe its result, and feed that
+          // result back into the Zip Loop" is the arrow that made this a
+          // cycle rather than a line, and it was the one still missing.
+          // Creation ended here: a region appeared in the mesh and nothing
+          // ever ran through it, so the system had no way to know whether
+          // building the thing had helped.
+          //
+          // Using it is running the mesh over the input that prompted it, now
+          // that the new region exists and is tuned to answer it -- which is
+          // exactly the "next time the AI encounters that type of file" the
+          // architecture describes. Observing the result is asking the same
+          // question that fired the builder in the first place: does the mesh
+          // still have nothing that handles this?
+          const outcome = graft.added > 0
+            ? `Built "${name}" and connected ${graft.added} neuron(s) to the network.`
+            : `Tried to build "${name}" but nothing joined the network${graft.skipped ? `: ${graft.skipped}` : "."}`;
+          if (graft.added > 0) {
+            const engine = this.pipeline.ensureBrain();
+            const dims = engine.getDimensions();
+            const embedded = embedText(information, dims);
+            let norm = 0;
+            for (const v of embedded) norm += v * v;
+            norm = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+            const vector = Array.from(embedded, v => v * norm * Math.sqrt(dims) * 0.4);
+            // Learning ON: the point of the round trip is that the network
+            // keeps something from having used the new capability.
+            engine.process(vector, undefined, new Set([0]), undefined, { learn: true });
+            const after = engine.capabilityGap();
+            // Straight back onto the loop, as input, so the next cycle
+            // processes what happened rather than only what was asked.
+            await this.zipIO.ingest(after.needed
+              ? `${outcome} The network still has nothing that handles this.`
+              : `${outcome} The network now has something that handles this.`);
+          } else {
+            await this.zipIO.ingest(outcome);
+          }
         } catch { /* unparseable creation, or the mesh is full */ }
       }
 
