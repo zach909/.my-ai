@@ -2246,6 +2246,16 @@ function clampNetworkVariable(value) {
         return NETWORK_VARIABLE_LIMIT;
     return value;
 }
+/**
+ * A wave network settles into an oscillation, not a fixed point, so "settled"
+ * has to mean "the residual has stopped falling" as well as "the residual is
+ * nearly zero". These are how flat, and for how long, before the settle loop
+ * calls it: a twentieth of itself is well outside the ~10% wobble measured on
+ * a steady oscillation, and three iterations avoids stopping on one flat step
+ * during the initial decay.
+ */
+const SETTLED_RESIDUAL_CHANGE = 0.05;
+const SETTLED_RESIDUAL_TICKS = 3;
 /** However high a caller asks for, the loop gain stays below one. */
 const WAVE_FEEDBACK_CEILING = 0.9;
 /** Below this a bin holds float dust from cancelled waves rather than a wave. */
@@ -3769,6 +3779,10 @@ export class HyperDimensionalEngine {
         deltas.fill(0);
         let liveCorrections = 0;
         let iterations = 0;
+        // For the second settle test below: is the residual still falling?
+        let previousResidual = 0;
+        let hasPreviousResidual = false;
+        let flatResidualRun = 0;
         const nextStates = this.nextStatesBuffer;
         const strength = this.config.crossInfluenceStrength;
         const dims = this.config.dimensions;
@@ -4461,10 +4475,41 @@ export class HyperDimensionalEngine {
                     residual += diff;
                 }
             }
+            // ── Has it settled? ─────────────────────────────────────────────
+            //
+            // Two ways to be settled, because there are two kinds of settled.
+            //
+            // A network with no wave comes to REST: the residual falls away to
+            // nothing and stays there. Measured on a 24-neuron network with a steady
+            // input, it goes 1.0e+2 -> 3.7e-1 -> 2.6e-3 -> 3.9e-7. The absolute
+            // threshold catches that.
+            //
+            // A network WITH a wave never comes to rest, and should not be expected
+            // to. Every neuron's phase advances each iteration, so the wave term is
+            // different each time by construction -- the network converges to a
+            // steady oscillation rather than a fixed point. Same measurement with
+            // the wave on: 1.0e+2 -> 3.2e-1 -> 1.7e-1 -> 1.7e-1, flat forever. The
+            // absolute threshold never fires, so the loop always ran to its ceiling
+            // and never once reported having settled.
+            //
+            // So the second test is that the residual has STOPPED FALLING. When it
+            // changes by less than a twentieth of itself for a few iterations
+            // running, the network is as settled as this network gets -- a limit
+            // cycle rather than a point, which is what a wave system settles into.
             if (residual < this.config.convergenceThreshold) {
                 iterations++;
                 break;
             }
+            if (hasPreviousResidual && residual > 0) {
+                const change = Math.abs(residual - previousResidual) / residual;
+                flatResidualRun = change < SETTLED_RESIDUAL_CHANGE ? flatResidualRun + 1 : 0;
+                if (flatResidualRun >= SETTLED_RESIDUAL_TICKS) {
+                    iterations++;
+                    break;
+                }
+            }
+            previousResidual = residual;
+            hasPreviousResidual = true;
         }
         const stateDeltas = new Map();
         for (let i = 0; i < N; i++)
