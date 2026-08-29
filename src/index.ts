@@ -1010,7 +1010,17 @@ export class NeuroclawSystem {
           // A region of one. It can grow later the way any region does; what
           // matters is that it EXISTS there, so the next time this input
           // arrives the wave arrives somewhere.
-          const parsed = JSON.parse(created) as Record<string, unknown>;
+          // Parsed leniently. A maker that returns something other than JSON
+          // still built a capability, and the graft below needs a name and a
+          // definition, both of which the learned text can supply. Letting a
+          // parse failure throw out of here silently skipped everything after
+          // it -- including recording that the build had failed, which is the
+          // one thing a failed build must not do.
+          let parsed: Record<string, unknown> = {};
+          try {
+            const candidate = JSON.parse(created) as unknown;
+            if (candidate && typeof candidate === "object") parsed = candidate as Record<string, unknown>;
+          } catch { /* not JSON: the learned text names it below */ }
           const offered = parsed.skill ?? parsed.plugin ?? parsed.name;
           const name = typeof offered === "string" && offered.trim().length > 0
             ? offered.trim()
@@ -1058,8 +1068,39 @@ export class NeuroclawSystem {
             await this.zipIO.ingest(after.needed
               ? `${outcome} The network still has nothing that handles this.`
               : `${outcome} The network now has something that handles this.`);
+            // Success or failure, observed and kept.
+            //
+            // "If it fails, the failure can be used to modify the extension or
+            // the relevant skills" -- the other half of the learning cycle,
+            // and the half that had nowhere to go. A build that left the mesh
+            // exactly as unable as before was reported onto the loop and then
+            // forgotten, so the next time the same thing arrived the system
+            // would build it again the same way and learn nothing.
+            //
+            // MistakeTracker already de-duplicates identical failures and
+            // counts recurrences, and lessons() is already read when the
+            // system plans, so recording it here is what makes a second
+            // attempt able to go differently.
+            if (after.needed) {
+              this.mistakes.record({
+                task: information,
+                description: `Built "${name}" for this and the network still has nothing that handles it.`,
+                cause: "incorrect-skill",
+                failedSkill: name,
+                prevention: `Building "${name}" from this description did not give the network a capability for it -- a different shape of extension is needed, not another copy of this one.`,
+              });
+            }
           } else {
             await this.zipIO.ingest(outcome);
+            this.mistakes.record({
+              task: information,
+              description: outcome,
+              cause: "incorrect-skill",
+              failedSkill: name,
+              prevention: graft.skipped
+                ? `Grafting "${name}" was refused: ${graft.skipped}`
+                : `Nothing joined the network when building "${name}".`,
+            });
           }
         } catch { /* unparseable creation, or the mesh is full */ }
       }

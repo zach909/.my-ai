@@ -339,3 +339,41 @@ describe('a self-built extension joins the mesh', () => {
     }
   }, 120_000);
 });
+
+describe('a failed build becomes a lesson', () => {
+  /**
+   * Section 9's other arm: "If it fails, the failure can be used to modify
+   * the extension or the relevant skills."
+   *
+   * A build that left the mesh exactly as unable as before was reported onto
+   * the zip loop and then forgotten, so the next time the same thing arrived
+   * the system would build it the same way and learn nothing. MistakeTracker
+   * already de-duplicates identical failures and counts recurrences, and its
+   * lessons are already read when the system plans -- recording here is what
+   * lets a second attempt go differently.
+   */
+  it('records why the build did not give the network a capability', async () => {
+    const { getNeuroclawSystem } = await import('../../src/index.js');
+    const graft = await import('../../models && skills/core/net-skill-graft.js');
+    const system = await getNeuroclawSystem();
+    const engine = system.pipeline.ensureBrain();
+
+    // Fill the mesh, so grafting genuinely cannot add anything and the build
+    // fails for a real reason rather than a stubbed one.
+    let room = graft.MAX_MESH_NEURONS - engine.getNeuronCount();
+    while (room > 0) {
+      const step = Math.min(200, room);
+      engine.addNeurons(step);
+      room -= step;
+    }
+    expect(engine.getNeuronCount()).toBe(graft.MAX_MESH_NEURONS);
+
+    const procedure = 'To read a .wxy stream: first, open the header. Then decode frames. '
+      + 'Next, check parity. Finally, emit rows.';
+    for (let i = 0; i < 6; i++) await system.learn(procedure);
+
+    const lessons = system.mistakes.lessons(procedure);
+    expect(lessons.length).toBeGreaterThan(0);
+    expect(lessons.some(l => l.includes('full') || l.includes('did not give'))).toBe(true);
+  }, 180_000);
+});
