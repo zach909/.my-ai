@@ -2559,6 +2559,8 @@ export class HyperDimensionalEngine {
         // a reason to.
         this.connWaveGain = new Float32Array(N * N).fill(1);
         this.connWavePhase = new Float32Array(N * N);
+        this.connWaveCos = new Float32Array(N * N).fill(1);
+        this.connWaveSin = new Float32Array(N * N);
         this.connWaveBias = new Float32Array(N * N);
         this.connWaveBiasIm = new Float32Array(N * N);
     }
@@ -2637,7 +2639,21 @@ export class HyperDimensionalEngine {
         if (this.lastOutputVector) {
             const predicted = this.selfModelPredict(this.lastOutputVector);
             selfModelSurprise = this.meanAbsDiff(predicted, outputVector);
-            this.selfModelTrainStep(this.lastOutputVector, predicted, outputVector);
+            // Reading is not learning -- here too.
+            //
+            // The self-model trained on every tick, including ticks the caller had
+            // explicitly asked not to learn. So `learn: false` did not mean the
+            // network was left alone: pulling an answer out of it still changed the
+            // part that predicts its own answers, and reading the same thing twice
+            // gave two different networks. That is the exact defect already fixed
+            // for the connections, in the same method, one field over.
+            //
+            // The surprise is still MEASURED on a read-only tick, because novelty
+            // is something a caller reads and it costs a prediction either way.
+            // Only the training step is skipped.
+            if (options?.learn !== false) {
+                this.selfModelTrainStep(this.lastOutputVector, predicted, outputVector);
+            }
         }
         this.lastOutputVector = outputVector;
         const noveltyScore = clamp(0.6 * patternNovelty + 0.4 * selfModelSurprise, 0, 1);
@@ -2872,6 +2888,7 @@ export class HyperDimensionalEngine {
         this.wavePhase.set(phase);
         this.connWaveGain.set(waveGain);
         this.connWavePhase.set(waveTurn);
+        this.refreshWavePhaseTable();
         this.connWaveBias.set(waveBias);
         this.connWaveBiasIm.set(waveBiasTurned);
         this.senderGain.set(senderGain);
@@ -3043,6 +3060,8 @@ export class HyperDimensionalEngine {
         }
         this.connWaveGain = growPairs(this.connWaveGain, 1);
         this.connWavePhase = growPairs(this.connWavePhase, 0);
+        this.connWaveCos = growPairs(this.connWaveCos, 1);
+        this.connWaveSin = growPairs(this.connWaveSin, 0);
         this.connWaveBias = growPairs(this.connWaveBias, 0);
         this.connWaveBiasIm = growPairs(this.connWaveBiasIm, 0);
         this.connWaveShift = growPairs(this.connWaveShift, 0);
@@ -4344,7 +4363,8 @@ export class HyperDimensionalEngine {
         const prevWaveRe = this.prevWaveRe;
         const prevWaveIm = this.prevWaveIm;
         const connWaveGain = this.connWaveGain;
-        const connWavePhase = this.connWavePhase;
+        const connWaveCos = this.connWaveCos;
+        const connWaveSin = this.connWaveSin;
         const connWaveBias = this.connWaveBias;
         const connWaveBiasIm = this.connWaveBiasIm;
         const phaseCos = this.phaseCos;
@@ -4557,11 +4577,12 @@ export class HyperDimensionalEngine {
                         const inRe = prevWaveRe[k];
                         const inIm = prevWaveIm[k];
                         const gain = connWaveGain[editRow + k];
-                        const turn = connWavePhase[editRow + k];
                         // The connection's own wave weight, as a wave: how much of what
-                        // arrives gets through, and how far it is turned.
-                        const ownWeightRe = gain * Math.cos(turn);
-                        const ownWeightIm = gain * Math.sin(turn);
+                        // arrives gets through, and how far it is turned. cos and sin of
+                        // the turn are kept beside the phase and refreshed when learning
+                        // moves it -- see connWaveCos.
+                        const ownWeightRe = gain * connWaveCos[editRow + k];
+                        const ownWeightIm = gain * connWaveSin[editRow + k];
                         // The two weights added, and the two biases added. This pair IS
                         // the wave of this connection -- part it, part what the entire
                         // network is doing -- and running it against the wave of the
@@ -4792,22 +4813,78 @@ export class HyperDimensionalEngine {
                     for (let k = 0; k < N; k++)
                         sent += row[k] * senderGain[k];
                     meanRow[d] = sent * invN;
-                    for (let i = 0; i < N; i++) {
-                        const varRow = i * N;
-                        let modulation = 0;
-                        let offset = 0;
-                        for (let k = 0; k < N; k++) {
-                            const state = row[k];
-                            modulation += state * modWeight[varRow + k];
-                            offset += state * addWeight[varRow + k];
+                }
+                // Four dimensions at a time.
+                //
+                // modWeight and addWeight are indexed [i][k] with no dimension in
+                // them, so a loop with d outermost re-reads both N*N arrays once per
+                // dimension: at 336 neurons and 65 dimensions that is 29 MB of
+                // traffic per iteration for two 450 KB arrays, and the pass spends
+                // its time fetching the same weights again. Taking four dimensions
+                // per pass fetches them a quarter as often while every stream --
+                // the four state rows and the two weight rows -- stays sequential.
+                for (let d0 = 0; d0 < D; d0 += HYPER_DIM_TILE) {
+                    const dEnd = d0 + HYPER_DIM_TILE <= D ? d0 + HYPER_DIM_TILE : D;
+                    if (dEnd - d0 === HYPER_DIM_TILE) {
+                        // The whole tile, with no per-element branch in the inner loop.
+                        const r0 = stateViews[d0];
+                        const r1 = stateViews[d0 + 1];
+                        const r2 = stateViews[d0 + 2];
+                        const r3 = stateViews[d0 + 3];
+                        for (let i = 0; i < N; i++) {
+                            const varRow = i * N;
+                            let m0 = 0, m1 = 0, m2 = 0, m3 = 0;
+                            let o0 = 0, o1 = 0, o2 = 0, o3 = 0;
+                            for (let k = 0; k < N; k++) {
+                                const w = modWeight[varRow + k];
+                                const a = addWeight[varRow + k];
+                                const s0 = r0[k], s1 = r1[k], s2 = r2[k], s3 = r3[k];
+                                m0 += s0 * w;
+                                o0 += s0 * a;
+                                m1 += s1 * w;
+                                o1 += s1 * a;
+                                m2 += s2 * w;
+                                o2 += s2 * a;
+                                m3 += s3 * w;
+                                o3 += s3 * a;
+                            }
+                            const base = i * D + d0;
+                            const say0 = m0 * invN, say1 = m1 * invN, say2 = m2 * invN, say3 = m3 * invN;
+                            gainRow[base] = hyperGain * say0;
+                            gainRow[base + 1] = hyperGain * say1;
+                            gainRow[base + 2] = hyperGain * say2;
+                            gainRow[base + 3] = hyperGain * say3;
+                            // 1 when off, so off is untouched rather than scaled by
+                            // something near 1.
+                            scaleRow[base] = hyperScale === 0 ? 1 : hyperScale * say0;
+                            scaleRow[base + 1] = hyperScale === 0 ? 1 : hyperScale * say1;
+                            scaleRow[base + 2] = hyperScale === 0 ? 1 : hyperScale * say2;
+                            scaleRow[base + 3] = hyperScale === 0 ? 1 : hyperScale * say3;
+                            addRow[base] = hyperAdd * o0 * invN;
+                            addRow[base + 1] = hyperAdd * o1 * invN;
+                            addRow[base + 2] = hyperAdd * o2 * invN;
+                            addRow[base + 3] = hyperAdd * o3 * invN;
                         }
-                        const say = modulation * invN;
-                        const at = i * D + d;
-                        gainRow[at] = hyperGain * say;
-                        // 1 when off, so off is untouched rather than scaled by something
-                        // near 1.
-                        scaleRow[at] = hyperScale === 0 ? 1 : hyperScale * say;
-                        addRow[at] = hyperAdd * offset * invN;
+                        continue;
+                    }
+                    // The leftover dimensions, one at a time.
+                    for (let d = d0; d < dEnd; d++) {
+                        const row = stateViews[d];
+                        for (let i = 0; i < N; i++) {
+                            const varRow = i * N;
+                            let modulation = 0;
+                            let offset = 0;
+                            for (let k = 0; k < N; k++) {
+                                const state = row[k];
+                                modulation += state * modWeight[varRow + k];
+                                offset += state * addWeight[varRow + k];
+                            }
+                            const say = modulation * invN;
+                            const at = i * D + d;
+                            gainRow[at] = hyperGain * say;
+                            scaleRow[at] = hyperScale === 0 ? 1 : hyperScale * say;
+                            addRow[at] = hyperAdd * offset * invN;
+                        }
                     }
                 }
             }
@@ -5901,6 +5978,14 @@ export class HyperDimensionalEngine {
      * a half-turn, and the phase term already expresses that. Two ways of saying
      * the same thing let learning oscillate between them forever.
      */
+    /** Rebuild the whole cos/sin table -- after a restore, where every phase changed at once. */
+    refreshWavePhaseTable() {
+        const turn = this.connWavePhase;
+        for (let i = 0; i < turn.length; i++) {
+            this.connWaveCos[i] = Math.cos(turn[i]);
+            this.connWaveSin[i] = Math.sin(turn[i]);
+        }
+    }
     learnWaveConnections(rates) {
         const N = this.neurons.length;
         const amplitude = this.waveAmpScratch;
@@ -5947,6 +6032,9 @@ export class HyperDimensionalEngine {
                 if (nextTurn < 0)
                     nextTurn += TWO_PI;
                 turn[row + k] = nextTurn;
+                // The pair the settle loop reads instead of recomputing it.
+                this.connWaveCos[row + k] = Math.cos(nextTurn);
+                this.connWaveSin[row + k] = Math.sin(nextTurn);
                 // The bias: what this connection contributes with nothing arriving.
                 // A wave in its own right, so both halves move, along the phase the
                 // receiving neuron is sitting at -- a bias that only ever grew in one
@@ -6222,6 +6310,8 @@ const SILENT_OUTPUT_RATIO = 1.5;
  * an answer takes several -- measured, 8 to 12 while it was still moving.
  */
 const ZIP_SETTLED_ITERATIONS = 2;
+/** Dimensions the hyperdimensional pass handles per sweep of the weights. */
+const HYPER_DIM_TILE = 4;
 /** The wave the Zip Loop's bit neurons share. Its value does not matter; that all four share it does. */
 const ZIP_BIT_FREQUENCY = 0.25;
 /** Shared options for every read tick: reading the network must not rewrite it. */
