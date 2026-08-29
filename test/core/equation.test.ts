@@ -11,7 +11,7 @@
  * network, same input, same answer.
  */
 import { describe, it, expect } from 'vitest';
-import { HyperDimensionalEngine, MIN_WAVE_FREQ, MAX_WAVE_FREQ } from '../../models && skills/core/onebrain';
+import { HyperDimensionalEngine, ElasticCoreBlock, MIN_WAVE_FREQ, MAX_WAVE_FREQ } from '../../models && skills/core/onebrain';
 import { applyEquation, type EquationState, type EquationSettings } from '../../models && skills/core/equation';
 
 const decode = (b64: string) => {
@@ -75,7 +75,11 @@ describe('one equation, two implementations, one answer', () => {
    * propagationSteps is 1 so this compares ONE application of the equation
    * rather than a settled fixed point, where a difference could hide.
    */
-  const agree = (config: Record<string, number | boolean>, driven = new Set([0])) => {
+  const agree = (
+    config: Record<string, number | boolean>,
+    driven = new Set([0]),
+    vale?: Map<number, number>,
+  ) => {
     const engine = new HyperDimensionalEngine({
       neuronCount: 9,
       dimensions: 4,
@@ -84,13 +88,18 @@ describe('one equation, two implementations, one answer', () => {
     });
     // A few ticks first, so nothing is being compared at its initial values:
     // the waves have formed, the pool has content, the connections have moved.
-    for (let t = 0; t < 3; t++) engine.process(new Array(4).fill(0.35), undefined, driven);
+    for (let t = 0; t < 3; t++) engine.process(new Array(4).fill(0.35), undefined, driven, vale);
 
     const before = readEngine(engine);
     const snapshot = engine.captureNetworkState();
     const input = [0.4, -0.2, 0.15, 0.6];
     // Live correction's own state travels too: it fires rarely, and a run
     // where it fired in the engine and not here disagreed by 0.14.
+    if (vale) {
+      const asArray = new Float32Array(before.neurons);
+      for (const [id, v] of vale) asArray[id] = v;
+      before.vale = asArray;
+    }
     const plain = applyEquation(before, settingsFor(config), input, driven, new Set(), {
       emaEnergy: snapshot.emaEnergy ?? 0,
       hasEma: snapshot.hasEma ?? false,
@@ -98,7 +107,7 @@ describe('one equation, two implementations, one answer', () => {
       influenceDecay: 0.95,
     });
 
-    engine.process(input, undefined, driven, undefined, { learn: false });
+    engine.process(input, undefined, driven, vale, { learn: false });
     const after = readEngine(engine);
 
     const worst = (a: Float32Array, b: Float32Array) =>
@@ -163,9 +172,162 @@ describe('one equation, two implementations, one answer', () => {
     expect(d.pool).toBeLessThan(1e-6);
   });
 
+  it('agrees on vale -- how much each neuron holds still', () => {
+    // The blend v*previous + (1-v)*computed. Every implementation of the
+    // equation has it and the written-down one did not, which is exactly the
+    // kind of omission this comparison exists to find.
+    const vale = new Map([[1, 0.9], [2, 0.4], [3, 0.0], [5, 0.75]]);
+    const d = agree({ hyperGain: 1, hyperAdd: 1, waveGain: 0.3 }, new Set([0]), vale);
+    expect(d.states).toBeLessThan(1e-6);
+    expect(d.waves).toBeLessThan(1e-6);
+  });
+
   it('agrees about which neurons are driven', () => {
     const d = agree({ hyperGain: 1, waveGain: 0.3 }, new Set([2, 5]));
     expect(d.states).toBeLessThan(1e-6);
     expect(d.waves).toBeLessThan(1e-6);
+  });
+});
+
+describe('the elastic core is the same equation', () => {
+  /**
+   * The elastic core keeps a whole block per connection -- every source
+   * dimension reaching every receiving dimension -- where the engine keeps two
+   * bands of that block. That is the only difference between them, and the
+   * equation file says so in one place rather than the two files each having
+   * their own arithmetic.
+   *
+   * So: run the elastic core one tick, run the written-down equation on the
+   * same numbers in its block form, and require the same answer.
+   */
+  const SD = 4;
+  const N = 5;
+
+  /**
+   * Give the core something to hold before comparing.
+   *
+   * A fresh ElasticCoreBlock starts at zero, and one tick from zero is
+   * tanh(bias) whatever the weights are -- so the comparison passed even with
+   * the connection term deliberately broken. Caught by mutating the equation
+   * and watching nothing fail.
+   */
+  const warm = (core: ElasticCoreBlock) => {
+    for (let t = 0; t < 3; t++) {
+      core.forward(Float32Array.from({ length: SD }, (_, i) => 0.4 - i * 0.15), {
+        drivenNeurons: new Set([0, 2]),
+      });
+    }
+  };
+
+  const stateOf = (core: ElasticCoreBlock): Float32Array => {
+    // Dimension-major, the layout the equation takes.
+    const states = new Float32Array(SD * N);
+    for (let i = 0; i < N; i++) {
+      const readout = core.checkDefinition(i).readout;
+      for (let d = 0; d < SD; d++) states[d * N + i] = readout[d];
+    }
+    return states;
+  };
+
+  const blank = (n: number) => new Float32Array(n);
+
+  const equationStateFor = (core: ElasticCoreBlock, vale?: Float32Array): EquationState => {
+    const params = core.getParameters();
+    return {
+      neurons: N,
+      dimensions: SD,
+      states: stateOf(core),
+      bias: Float32Array.from(params.biases),
+      connDiag: blank(N * SD * N),
+      connShift: blank(N * SD * N),
+      connBias: blank(0),
+      connBlock: Float32Array.from(params.weights),
+      vale,
+      modWeight: blank(N * N),
+      addWeight: blank(N * N),
+      senderGain: new Float32Array(N).fill(1),
+      connWaveGain: blank(N * N),
+      connWavePhase: blank(N * N),
+      connWaveBias: blank(N * N),
+      connWaveBiasIm: blank(N * N),
+      connWaveShift: blank(N * N),
+      modWaveWeight: blank(N * N),
+      addWaveWeight: blank(N * N),
+      neuronWaveBiasRe: blank(N),
+      neuronWaveBiasIm: blank(N),
+      waveFreq: blank(N),
+      wavePhase: blank(N),
+      waveRe: blank(N),
+      waveIm: blank(N),
+      poolRe: blank(64),
+      poolIm: blank(64),
+    };
+  };
+
+  const settings: EquationSettings = {
+    hyperGain: 0, hyperAdd: 0, hyperScale: 0,
+    hyperWaveGain: 0, hyperWaveAdd: 0,
+    waveGain: 0, waveFeedback: 0,
+    crossInfluenceStrength: 0,
+    connectionBias: false,
+    minWaveFreq: MIN_WAVE_FREQ, maxWaveFreq: MAX_WAVE_FREQ, waveBins: 64, poolCeiling: 8,
+    // Live correction is the engine's; the elastic core has none, so it must
+    // never fire here.
+    divergenceTolerance: Number.POSITIVE_INFINITY, sustainedDivergenceTicks: 1_000_000,
+    // The elastic core wipes the input flag before every tick; the engine
+    // computes that dimension. The only difference between them.
+    clearInputFlagFirst: true,
+  };
+
+  const worst = (a: Float32Array, b: Float32Array) =>
+    a.reduce((max, v, i) => Math.max(max, Math.abs(v - b[i])), 0);
+
+  it('computes what the equation file says, block form and all', () => {
+    const core = new ElasticCoreBlock({
+      neuronCount: N, stateDim: SD, inputDim: SD, outputDim: SD,
+      maxTicks: 1, convergenceThreshold: 0, seed: 17,
+    });
+    warm(core);
+    const before = equationStateFor(core);
+    // No driven neurons: the elastic core projects an input through its own
+    // input projection when it has one, which is a different thing from the
+    // equation and not what is being compared here. This compares the update.
+    const plain = applyEquation(before, settings, [], new Set());
+    core.forward(new Float32Array(SD), { drivenNeurons: new Set() });
+    expect(worst(stateOf(core), plain.states)).toBeLessThan(1e-6);
+  });
+
+  it('agrees on vale, the same blend the engine uses', () => {
+    const core = new ElasticCoreBlock({
+      neuronCount: N, stateDim: SD, inputDim: SD, outputDim: SD,
+      maxTicks: 1, convergenceThreshold: 0, seed: 23,
+    });
+    const vale = new Map([[0, 0.9], [2, 0.5], [4, 0.25]]);
+    const asArray = new Float32Array(N);
+    for (const [id, v] of vale) asArray[id] = v;
+
+    warm(core);
+    const before = equationStateFor(core, asArray);
+    const plain = applyEquation(before, settings, [], new Set());
+    core.forward(new Float32Array(SD), { drivenNeurons: new Set(), vale });
+    expect(worst(stateOf(core), plain.states)).toBeLessThan(1e-6);
+  });
+
+  it('agrees on a held group, which both call holding still', () => {
+    const core = new ElasticCoreBlock({
+      neuronCount: N, stateDim: SD, inputDim: SD, outputDim: SD,
+      maxTicks: 1, convergenceThreshold: 0, seed: 31,
+    });
+    core.setNeuronGroup(3, 'weather');
+    core.setNeuronGroup(4, 'tides');
+    warm(core);
+
+    const before = equationStateFor(core);
+    const plain = applyEquation(before, settings, [], new Set(), new Set([4]));
+    core.forward(new Float32Array(SD), {
+      drivenNeurons: new Set(),
+      activeGroups: new Set(['weather']),
+    });
+    expect(worst(stateOf(core), plain.states)).toBeLessThan(1e-6);
   });
 });
