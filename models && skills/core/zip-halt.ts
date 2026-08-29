@@ -183,7 +183,25 @@ export type HaltReason =
    * the ceiling, so on the live mesh every run ended on the ceiling and no
    * run ever ended because the network stopped.
    */
-  | "went-quiet";
+  | "went-quiet"
+  /**
+   * The network reached a stable state and stayed there.
+   *
+   * The ending the architecture actually describes -- "the process continues
+   * until the network reaches a sufficiently stable state, and that settled
+   * state can be interpreted as the output" -- and nothing was watching for
+   * it. The other two endings cannot fire on a live mesh: the stop call needs
+   * the network trained to spell a string, and silence is impossible because
+   * the output neurons sit in the same all-connected mesh as everything else
+   * and are driven by all of it.
+   *
+   * Settling it does. Measured per output byte on the live network, worst
+   * bit of each: 10 4 4 4 4 5 4 4 4 4 4 1 4 4 4 5 5 6 6 6 -- one expensive
+   * byte while it works the input out, then a plateau. The plateau is the
+   * stable state, so the test is the cost having stopped FALLING, which is
+   * the same test the settle loop itself uses one level down.
+   */
+  | "settled";
 
 export interface HaltDecision {
   halted: boolean;
@@ -238,6 +256,17 @@ const MIN_OUTPUT_BUDGET = 8;
 const SILENT_STOP_MULTIPLIER = 3;
 
 /**
+ * Consecutive output bytes whose settle cost has stopped falling before the
+ * network counts as having reached its stable state.
+ *
+ * More than a couple, because the cost wobbles by a step either way at the
+ * plateau, and a single flat pair is not a plateau.
+ */
+const SETTLED_BYTES = 4;
+/** How much the settle cost may still move and still count as flat. */
+const SETTLED_TOLERANCE = 0.25;
+
+/**
  * Watches a run and decides when it is over.
  *
  * Internal: a caller gets its verdict through runUntilStopped(). Nothing
@@ -254,6 +283,9 @@ class HaltWatcher {
   private quiet = 0;
   private sawStop = false;
   private bytes: number[] = [];
+  /** Consecutive bytes whose settle cost has stopped falling. */
+  private settledRun = 0;
+  private lastSettleCost = -1;
 
   constructor(private readonly config: HaltConfig = DEFAULT_HALT) {}
 
@@ -262,6 +294,27 @@ class HaltWatcher {
    * tick -- silence is information here, so it has to be reported rather than
    * skipped.
    */
+  /**
+   * How hard the mesh worked on the byte just observed.
+   *
+   * Called before observe() so the stable-state test has this byte's cost.
+   * Absent on a doorway that is a recording or a stub, and then the run
+   * simply cannot end this way.
+   */
+  noteSettleCost(cost: number | undefined): void {
+    if (cost === undefined || !Number.isFinite(cost)) return;
+    if (this.lastSettleCost < 0) {
+      this.lastSettleCost = cost;
+      return;
+    }
+    // Flat means it has stopped FALLING. A cost still coming down is a
+    // network still working the answer out; one that has levelled off has
+    // reached the state it is going to reach.
+    const drop = (this.lastSettleCost - cost) / Math.max(1, this.lastSettleCost);
+    this.settledRun = drop > SETTLED_TOLERANCE ? 0 : this.settledRun + 1;
+    this.lastSettleCost = cost;
+  }
+
   observe(byte: number | null): HaltDecision {
     this.ticks++;
 
@@ -289,6 +342,10 @@ class HaltWatcher {
     // answer must not be mistaken for the end of it. Not "complete" either,
     // for the same reason the ceiling is not -- it stopped, but it never told
     // us it was done.
+    if (this.settledRun >= SETTLED_BYTES) {
+      return { halted: true, reason: "settled", ticks: this.ticks, sawStop: this.sawStop, complete: true };
+    }
+
     if (!this.sawStop && this.quiet >= this.config.quietTicks * SILENT_STOP_MULTIPLIER) {
       return { halted: true, reason: "went-quiet", ticks: this.ticks, sawStop: false, complete: false };
     }
@@ -334,6 +391,11 @@ export interface BitDoorway {
   sendByte?(byte: number): void;
   /** Learn from everything fed since the last one. Paired with sendByte(). */
   learnFromEvent?(): void;
+  /**
+   * Iterations the hardest bit of the last byte needed to reach a stable
+   * state. The signal the run stops on -- see "settled" in HaltReason.
+   */
+  worstSettleIterations?(): number;
   /** One tick of output. Null means the network emitted nothing this tick. */
   nextOutputByte(): number | null;
   /**
@@ -445,7 +507,9 @@ function runLoop(
     doorway.sendBytes(packed);
     let read = 0;
     while (!decision.halted && read < budget) {
-      decision = watcher.observe(doorway.nextOutputByte());
+      const byte = doorway.nextOutputByte();
+      watcher.noteSettleCost(doorway.worstSettleIterations?.());
+      decision = watcher.observe(byte);
       read++;
     }
     // Out of budget: the same ending the watcher's own ceiling gives, named
@@ -472,7 +536,9 @@ function runLoop(
 
     let read = 0;
     while (!decision.halted && read < budget) {
-      decision = watcher.observe(doorway.nextOutputByte());
+      const byte = doorway.nextOutputByte();
+      watcher.noteSettleCost(doorway.worstSettleIterations?.());
+      decision = watcher.observe(byte);
       read++;
       await yieldTo();
     }

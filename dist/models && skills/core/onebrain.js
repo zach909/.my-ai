@@ -6216,6 +6216,12 @@ const SILENT_OUTPUT = 1e-6;
  * neuron in a resting mesh is doing.
  */
 const SILENT_OUTPUT_RATIO = 1.5;
+/**
+ * Settle iterations at or below which a read counts as the mesh having
+ * nothing further to work out. Above one, because a network still developing
+ * an answer takes several -- measured, 8 to 12 while it was still moving.
+ */
+const ZIP_SETTLED_ITERATIONS = 2;
 /** The wave the Zip Loop's bit neurons share. Its value does not matter; that all four share it does. */
 const ZIP_BIT_FREQUENCY = 0.25;
 /** Shared options for every read tick: reading the network must not rewrite it. */
@@ -6238,6 +6244,8 @@ export class ZipLoopInterface {
         this.idleScratch = null;
         /** The last bit fed in, so the learning pass can re-drive it. */
         this.lastBit = null;
+        /** Settle iterations the last output read needed. */
+        this.lastSettleIterations = Number.MAX_SAFE_INTEGER;
         this.drivenBit0 = new Set([ids.bit0In]);
         this.drivenBit1 = new Set([ids.bit1In]);
         // Perfect enemies. The two input neurons carry the same wave half a cycle
@@ -6380,7 +6388,12 @@ export class ZipLoopInterface {
             // to apply a full Hebbian update, so pulling an answer out of the
             // network changed the network it was pulled from, and reading the same
             // thing twice gave two different networks.
-            this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+            const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+            // How hard the mesh had to work to reach a stable state on this tick.
+            // The smallest of the eight is what the byte cost at its easiest.
+            if (i === 0 || read.settleIterations > this.lastSettleIterations) {
+                this.lastSettleIterations = read.settleIterations;
+            }
             bits[i] = this.engine.getNeuronEnergy(bit1Out) > this.engine.getNeuronEnergy(bit0Out) ? 1 : 0;
         }
         return bits;
@@ -6408,7 +6421,15 @@ export class ZipLoopInterface {
         let heard = false;
         for (let b = 0; b < 8; b++) {
             // Reading, so not learning -- see receiveBits().
-            this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+            const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+            // How hard the mesh worked to reach a stable state on this tick. The
+            // HARDEST of the eight is what the byte cost: a byte is settled only if
+            // the network settled on every bit of it. Taking the easiest instead
+            // called every byte settled, because at least one bit of any byte lands
+            // in one iteration.
+            if (b === 0 || read.settleIterations > this.lastSettleIterations) {
+                this.lastSettleIterations = read.settleIterations;
+            }
             const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
             const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
             // Speaking means standing out from the network's own floor, not
@@ -6433,6 +6454,34 @@ export class ZipLoopInterface {
             byte = (byte << 1) | (one > zero ? 1 : 0);
         }
         return heard ? byte : null;
+    }
+    /**
+     * Did the network reach a stable state while producing the last byte?
+     *
+     * This is the stop signal the architecture actually describes -- "the
+     * process continues until the network reaches a sufficiently stable state,
+     * and that settled state can be interpreted as the output" -- and nothing
+     * was reading it.
+     *
+     * The two signals that were being read cannot fire here. The stop call
+     * needs the network trained to spell a particular string. Silence cannot
+     * happen at all: the output neurons sit in the same all-connected mesh as
+     * everything else, so they are driven by all 336 neurons and never go
+     * quiet. Measured, the output is not speech but a drifting bit pattern --
+     * f8 78 78 78 7c 3c 3c 3c 3e 1e 1f 07 -- a mesh oscillating, with nothing
+     * left to say and no way to say so.
+     *
+     * Settling it can do, and does: 12, 1, 1, 1, 1, 8, 1, 1, 1, 9, 1, 1
+     * iterations against a ceiling of 32. A run of cheap settles means the mesh
+     * has reached its steady state and further reads only draw out more of the
+     * same oscillation.
+     */
+    /** Iterations the hardest bit of the last byte needed. */
+    worstSettleIterations() {
+        return this.lastSettleIterations;
+    }
+    settledWhileReading() {
+        return this.lastSettleIterations <= ZIP_SETTLED_ITERATIONS;
     }
     /**
      * Everything the network is holding right now -- neuron states and every
