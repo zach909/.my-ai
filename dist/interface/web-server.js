@@ -1853,10 +1853,21 @@ export class WebServer {
                     this.sendJson(res, { neuronCount: 0, skills: [], note: 'the network has not been built yet' });
                     return;
                 }
+                // Plus how close the regions have grown to each other. Two skills
+                // that keep being active together keep strengthening the connections
+                // between them, and until this was reported that was happening where
+                // nobody could see it -- which makes "the network develops new
+                // combinations of expertise" indistinguishable from a story about a
+                // network that does not. Strongest pair first, with the neurons the
+                // two hold in common.
                 this.sendJson(res, {
                     neuronCount: engine.getNeuronCount(),
                     dimensions: engine.getDimensions(),
-                    skills: graftedSkills(engine),
+                    skills: graftedSkills(engine).map(entry => ({
+                        ...entry,
+                        neurons: engine.neuronsInGroup(entry.skill),
+                    })),
+                    affinity: engine.skillAffinity(),
                 });
             }
             catch (err) {

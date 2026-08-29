@@ -3062,6 +3062,12 @@ const WAVE_SHIFT_RATE = 0.005;
 export const MIN_WAVE_FREQ = 0.02;
 export const MAX_WAVE_FREQ = 0.6;
 
+/** True when a neuron belongs to at least one of the skills asked for. */
+function anyGroupActive(groups: Set<string>, active: Set<string>): boolean {
+  for (const name of groups) if (active.has(name)) return true;
+  return false;
+}
+
 export class HyperDimensionalEngine {
   private config: HyperConfig;
   private neurons: HyperNeuron[];
@@ -3182,7 +3188,7 @@ export class HyperDimensionalEngine {
    * other. The group decides only whether it is asked to compute on a given
    * tick -- see ProcessOptions.activeGroups.
    */
-  private neuronGroups: Map<number, string> = new Map();
+  private neuronGroups: Map<number, Set<string>> = new Map();
   /** What each neuron with a definition is supposed to say. */
   private definitionTargets: Map<number, Float32Array> = new Map();
   /** Neurons holding their state this tick because their group was not asked. */
@@ -4127,19 +4133,126 @@ export class HyperDimensionalEngine {
    */
   setNeuronGroup(id: number, group: string): boolean {
     if (id < 0 || id >= this.neurons.length) return false;
-    this.neuronGroups.set(id, group);
+    const existing = this.neuronGroups.get(id);
+    if (existing) existing.add(group);
+    else this.neuronGroups.set(id, new Set([group]));
     return true;
   }
 
-  /** Which group a neuron belongs to, or undefined for an ungrouped one. */
+  /**
+   * Take one neuron out of one skill, leaving whatever else it belongs to.
+   *
+   * The counterpart to setNeuronGroup adding rather than replacing: without
+   * this there would be no way to shrink a region, only to grow it.
+   */
+  clearNeuronGroup(id: number, group: string): boolean {
+    const groups = this.neuronGroups.get(id);
+    if (!groups || !groups.delete(group)) return false;
+    if (groups.size === 0) this.neuronGroups.delete(id);
+    return true;
+  }
+
+  /** Every skill a neuron belongs to, in the order it joined them. */
+  neuronGroupsOf(id: number): string[] {
+    const groups = this.neuronGroups.get(id);
+    return groups ? Array.from(groups) : [];
+  }
+
+  /**
+   * How strongly every pair of skills is wired to each other, strongest
+   * first.
+   *
+   * The connection rule is Hebbian, so two regions that keep being active at
+   * the same time keep strengthening the connections between them -- that
+   * happens whether or not anybody looks. What was missing was the looking.
+   * "Over time the network could develop new combinations of expertise" is a
+   * claim about something that can be READ: maths and physics drifting
+   * together into physics reasoning is a number here going up, and if it
+   * never goes up the combination is not emerging no matter how good the
+   * story is.
+   *
+   * `strength` is the mean |weight| over every connection running between the
+   * two regions in both directions, so a big skill does not outscore a small
+   * one just by having more connections. `overlap` is how many neurons the
+   * two hold in common.
+   */
+  skillAffinity(): Array<{ a: string; b: string; strength: number; overlap: number }> {
+    const names = new Set<string>();
+    for (const groups of this.neuronGroups.values()) for (const g of groups) names.add(g);
+    const skills = Array.from(names).sort();
+    const members = new Map<string, number[]>();
+    for (const name of skills) members.set(name, this.neuronsInGroup(name));
+
+    const N = this.neurons.length;
+    const D = this.getDimensions();
+    const out: Array<{ a: string; b: string; strength: number; overlap: number }> = [];
+    for (let x = 0; x < skills.length; x++) {
+      for (let y = x + 1; y < skills.length; y++) {
+        const a = skills[x];
+        const b = skills[y];
+        const left = members.get(a)!;
+        const right = members.get(b)!;
+        let sum = 0;
+        let count = 0;
+        // Both directions: a -> b and b -> a are different connections, and a
+        // pair can be lopsided.
+        for (const [receivers, senders] of [[left, right], [right, left]] as const) {
+          const senderSet = new Set(senders);
+          for (const i of receivers) {
+            if (i >= N) continue;
+            for (let d = 0; d < D; d++) {
+              const row = (i * D + d) * N;
+              for (const j of senderSet) {
+                if (j === i || j >= N) continue;
+                sum += Math.abs(this.connDiag[row + j]) + Math.abs(this.connShift[row + j]);
+                count += 2;
+              }
+            }
+          }
+        }
+        out.push({
+          a,
+          b,
+          strength: count > 0 ? sum / count : 0,
+          overlap: this.groupOverlap(a, b).length,
+        });
+      }
+    }
+    return out.sort((p, q) => q.strength - p.strength);
+  }
+
+  /**
+   * The neurons two skills hold in common.
+   *
+   * An overlap is the whole point of regions rather than partitions: a neuron
+   * that belongs to both maths and physics fires for both, and is the place
+   * where "physics reasoning" can live without anybody having built it.
+   */
+  groupOverlap(a: string, b: string): number[] {
+    const ids: number[] = [];
+    for (const [id, groups] of this.neuronGroups) {
+      if (groups.has(a) && groups.has(b)) ids.push(id);
+    }
+    return ids.sort((x, y) => x - y);
+  }
+
+  /**
+   * The first group a neuron joined, or undefined for an ungrouped one.
+   *
+   * Kept for callers that only ever expected one. A neuron can belong to
+   * several -- neuronGroupsOf() is the honest answer.
+   */
   neuronGroup(id: number): string | undefined {
-    return this.neuronGroups.get(id);
+    const groups = this.neuronGroups.get(id);
+    if (!groups) return undefined;
+    for (const name of groups) return name;
+    return undefined;
   }
 
   /** Every neuron belonging to one group, in id order. */
   neuronsInGroup(group: string): number[] {
     const ids: number[] = [];
-    for (const [id, name] of this.neuronGroups) if (name === group) ids.push(id);
+    for (const [id, names] of this.neuronGroups) if (names.has(group)) ids.push(id);
     return ids.sort((a, b) => a - b);
   }
 
@@ -4873,8 +4986,12 @@ export class HyperDimensionalEngine {
         continue;
       }
       if (gated) {
-        const group = this.neuronGroups.get(i);
-        if (group !== undefined && !activeGroups!.has(group)) {
+        // A neuron holds only if NONE of its skills was asked for. One
+        // shared between maths and language computes whenever either is
+        // active, which is what makes the boundary an overlap rather than a
+        // wall.
+        const groups = this.neuronGroups.get(i);
+        if (groups !== undefined && !anyGroupActive(groups, activeGroups!)) {
           heldIndices[heldCount++] = i;
           continue;
         }

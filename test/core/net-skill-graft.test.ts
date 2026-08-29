@@ -527,3 +527,31 @@ describe('experts are groups inside the one network', () => {
     expect(outOfHeld).toBeGreaterThan(0);
   });
 });
+
+describe('a grafted skill arrives as a region', () => {
+  it('labels every neuron it added with the skill it belongs to', () => {
+    // Grafting used to add neurons and wire them and then leave them
+    // anonymous: the engine's own gating could not select the skill, and
+    // skillAffinity() could not see it. A Net Skill that the network cannot
+    // name is not a region, it is a pile of neurons that arrived together.
+    const engine = new HyperDimensionalEngine({ neuronCount: 8, dimensions: 8 });
+    const result = graftNetSkill(engine, 'optics', [
+      { name: 'lens', definition: 'bends light toward a focus' },
+      { name: 'ray', definition: 'a straight path of light', connections: { lens: 0.6 } },
+    ]);
+
+    expect(result.added).toBe(2);
+    const ids = Object.values(result.ids);
+    for (const id of ids) expect(engine.neuronGroupsOf(id)).toContain('optics');
+    expect(engine.neuronsInGroup('optics').sort((a, b) => a - b)).toEqual(ids.sort((a, b) => a - b));
+  });
+
+  it('lets a grafted skill be asked for by name on a tick', () => {
+    const engine = new HyperDimensionalEngine({ neuronCount: 8, dimensions: 8 });
+    graftNetSkill(engine, 'optics', [{ name: 'lens', definition: 'bends light' }]);
+    const before = engine.captureNetworkState().states;
+    engine.process(new Array(8).fill(0.4), undefined, new Set([0]), undefined,
+      { learn: false, activeGroups: new Set(['optics']) });
+    expect(engine.captureNetworkState().states).not.toBe(before);
+  });
+});

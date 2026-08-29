@@ -1259,3 +1259,98 @@ describe('the settle loop stops when the network has settled', () => {
     expect(out.settleIterations).toBeLessThan(200);
   });
 });
+
+describe('Net Skills are overlapping regions, not partitions', () => {
+  // "The experts are not necessarily permanently isolated. Their boundaries
+  // can overlap." A neuron used to belong to exactly one group, so joining a
+  // second skill silently REMOVED it from the first -- the one thing the
+  // spec says must not happen.
+  const meshOfThree = () => {
+    const engine = new HyperDimensionalEngine({ neuronCount: 24, dimensions: 8, propagationSteps: 4, learningRate: 0.05 });
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
+    for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
+    return engine;
+  };
+
+  it('keeps a neuron in both skills when it joins a second', () => {
+    const engine = meshOfThree();
+    for (let i = 4; i < 12; i++) engine.setNeuronGroup(i, 'physics');
+
+    expect(engine.neuronGroupsOf(5).sort()).toEqual(['math', 'physics']);
+    // Maths did not lose the four neurons physics borrowed.
+    expect(engine.neuronsInGroup('math')).toEqual([0, 1, 2, 3, 4, 5, 6, 7]);
+    expect(engine.groupOverlap('math', 'physics')).toEqual([4, 5, 6, 7]);
+    expect(engine.groupOverlap('math', 'vision')).toEqual([]);
+  });
+
+  it('computes a shared neuron when EITHER of its skills is asked for', () => {
+    // The point of an overlap. If a shared neuron only woke for the FIRST
+    // skill it joined, the boundary would still be a wall -- just a
+    // differently drawn one. So this watches neuron 5 itself, not the whole
+    // network: the driven and ungrouped neurons move on every tick, and a
+    // test that only asked "did anything change?" passed even with the gate
+    // reading one group per neuron.
+    const engine = meshOfThree();
+    engine.setNeuronGroup(5, 'physics'); // second skill; 'math' was first
+    const input = new Array(8).fill(0.4);
+    const stateOf = (id: number) => Array.from(engine.getNeuronStates()[id].state);
+
+    const shared = stateOf(5);
+    const visionOnly = stateOf(20); // in no asked-for skill: must not move
+    engine.process(input, undefined, new Set([0]), undefined, { learn: false, activeGroups: new Set(['physics']) });
+
+    expect(stateOf(5)).not.toEqual(shared);
+    expect(stateOf(20)).toEqual(visionOnly);
+  });
+
+  it('holds a neuron only when none of its skills was asked for', () => {
+    // The other half. A neuron in maths-and-physics must still HOLD on a
+    // tick that asks for neither, or "active groups" would mean nothing.
+    const engine = meshOfThree();
+    engine.setNeuronGroup(5, 'physics');
+    const input = new Array(8).fill(0.4);
+    const stateOf = (id: number) => Array.from(engine.getNeuronStates()[id].state);
+
+    const shared = stateOf(5);
+    engine.process(input, undefined, new Set([0]), undefined, { learn: false, activeGroups: new Set(['vision']) });
+    expect(stateOf(5)).toEqual(shared);
+  });
+
+  it('can take a neuron out of one skill without emptying it from the rest', () => {
+    const engine = meshOfThree();
+    engine.setNeuronGroup(5, 'physics');
+    expect(engine.clearNeuronGroup(5, 'physics')).toBe(true);
+    expect(engine.neuronGroupsOf(5)).toEqual(['math']);
+    expect(engine.clearNeuronGroup(5, 'physics')).toBe(false);
+  });
+
+  it('reports two skills growing together as a rising affinity', () => {
+    // "Connections between them can become stronger when the AI discovers
+    // that two areas of expertise work well together." That happens whether
+    // or not anyone looks -- the connection rule is Hebbian. What this pins
+    // is that it can be READ, because an emergent combination nobody can
+    // observe is indistinguishable from one that is not emerging.
+    const engine = meshOfThree();
+    const input = new Array(8).fill(0.4);
+    for (let t = 0; t < 60; t++) {
+      engine.process(
+        input.map((v, i) => v * Math.sin(t * 0.3 + i)),
+        undefined,
+        new Set([0]),
+        undefined,
+        { learn: true, activeGroups: new Set(['math', 'language']) },
+      );
+    }
+
+    const affinity = engine.skillAffinity();
+    const find = (a: string, b: string) =>
+      affinity.find(r => (r.a === a && r.b === b) || (r.a === b && r.b === a))!;
+
+    // The pair that worked together outranks both pairs that never did.
+    expect(find('math', 'language').strength).toBeGreaterThan(find('math', 'vision').strength);
+    expect(find('math', 'language').strength).toBeGreaterThan(find('language', 'vision').strength);
+    // Sorted strongest first, so the reader does not have to.
+    expect(affinity[0].strength).toBeGreaterThanOrEqual(affinity[affinity.length - 1].strength);
+  });
+});
