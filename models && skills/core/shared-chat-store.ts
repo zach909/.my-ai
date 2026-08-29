@@ -30,11 +30,22 @@
  * ephemeral conversation between real people talking to each other and to
  * the AI on one running server -- "it is just people talking", not a
  * generated artifact meant for git history. "Public" for chat means
- * "anyone who reaches this server sees the same room" (remoteAccessLock
- * still governs who that is), not "committed to GitHub".
+ * "anyone who reaches this server sees the same room", not "committed to
+ * GitHub".
+ *
+ * And it means it literally: reading a room, posting in one, making one, and
+ * summoning the bot into one need no password and no account of any kind --
+ * see interface/web-server.ts's isSharedChatPublicRoute. A room hangs off a
+ * wiki page anyone can read and contribute to, and a discussion only the
+ * owner could see would not be a discussion. All someone types is a display
+ * name.
+ *
+ * Deleting is the exception, and it is the whole reason the rest can be open:
+ * deleteAllRooms() is privileged, like every other destruction in this
+ * project. Anyone can add. Removing takes authority.
  */
 
-import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
 import { randomUUID } from "node:crypto";
@@ -192,6 +203,29 @@ export class SharedChatStore {
     if (!since) return messages;
     const index = messages.findIndex((m) => m.id === since);
     return index === -1 ? messages : messages.slice(index + 1);
+  }
+
+  /**
+   * Delete every room and every message in all of them. Returns how many
+   * rooms went.
+   *
+   * The one privileged thing in this store. Reading and posting are open to
+   * anyone who can reach the server -- that is what makes a room public --
+   * and this is the reason that can be true: everything can be added by
+   * anyone precisely because removal is not.
+   *
+   * "General" comes back the next time anyone opens the chat, empty, because
+   * ensureRoom() creates it on demand. That is a fresh room with the same
+   * name, not a survivor.
+   */
+  deleteAllRooms(): number {
+    const rooms = this.readRoomsIndex();
+    for (const room of rooms) {
+      const dir = this.roomDir(room.id);
+      if (existsSync(dir)) rmSync(dir, { recursive: true, force: true });
+    }
+    this.writeRoomsIndex([]);
+    return rooms.length;
   }
 
   post(roomId: string, author: string, text: string, isBot = false): SharedChatMessage {

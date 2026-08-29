@@ -283,8 +283,14 @@ function ChatPage() {
    * had mid-answer was one you had to hold until it finished. Now it is
    * always typeable -- but a second request must not go out on top of the
    * first, or two answers race and land in whichever order the network
-   * decides. So it queues, in the order it was typed, and goes as soon as the
-   * current one is done.
+   * decides. So the REPLY queues, in the order it was typed, and goes as soon
+   * as the current one is done.
+   *
+   * The text itself does not wait. It goes straight onto the running loop's
+   * zip input the moment it is typed, so the network is already working with
+   * it while it finishes what it was saying. Waiting for a turn is about not
+   * racing two answers; it was never a reason to keep what you said from the
+   * thing that is thinking.
    *
    * The ref is what the send loop reads (a plain function closing over state
    * would see whatever was true when it started); the state is what the
@@ -296,6 +302,17 @@ function ChatPage() {
   const enqueue = useCallback((text: string) => {
     queuedRef.current = [...queuedRef.current, text]
     setQueued(queuedRef.current)
+    // Into the zip input now, not when its turn comes. Deliberately not
+    // awaited and deliberately swallowing its own failure: this is an extra
+    // path into the network, and the message is still going to be sent
+    // properly when the current reply finishes. A failure here must not
+    // become an error in the transcript for a message that has not been
+    // sent yet.
+    void fetch('/api/continuous/input', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ text, speaker: 'user' }),
+    }).catch(() => {})
   }, [])
 
   const takeNext = useCallback((): string | undefined => {
@@ -616,7 +633,14 @@ function ChatPage() {
           <ul className="space-y-1 text-xs text-muted-foreground" aria-label="Waiting to send">
             {queued.map((text, index) => (
               <li key={`${index}-${text}`} className="flex items-center gap-1.5">
-                <span className="shrink-0 rounded bg-muted px-1.5 py-0.5">next</span>
+                {/* "in" rather than "next": it is already in the network's
+                    input. What is waiting is its reply, not the message. */}
+                <span
+                  className="shrink-0 rounded bg-muted px-1.5 py-0.5"
+                  title="Already added to what the network is working on; its reply comes when the current one finishes"
+                >
+                  in
+                </span>
                 <span className="truncate">{text}</span>
               </li>
             ))}

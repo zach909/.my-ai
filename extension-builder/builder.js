@@ -103,6 +103,13 @@ export class ExtensionBuilder {
             x: position?.x ?? 0,
             y: position?.y ?? 0,
             vale: 0.5,
+            // The wave this neuron carries in the shared pool. null means "let
+            // the graft work it out from what the neuron MEANS", which is the
+            // right default: neurons defined the same way then land on the
+            // same frequency and reinforce each other. Set it by hand when two
+            // neurons have to be exact opposites -- same frequency, half a
+            // cycle apart -- which meaning alone cannot say.
+            wave: null,
             endpoint: '',
             method: 'POST',
             external: [],
@@ -966,6 +973,9 @@ export class ExtensionBuilder {
                 lines.push(`"${neuron.name}"@value="${neuron.value}"`);
                 if (neuron.definition) {
                     lines.push(`"${neuron.name}"@definition="${neuron.definition}"`);
+                }
+                if (neuron.wave) {
+                    lines.push(`"${neuron.name}"@wave="${neuron.wave.frequency},${neuron.wave.phase}"`);
                 }
             }
             else if (neuron.type === 'codenet') {

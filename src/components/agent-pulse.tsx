@@ -10,6 +10,9 @@ import { useEffect, useRef, useState } from 'react'
  * work happening, and relax back toward a circle as it eases off. Someone
  * glancing at it can tell busy from nearly-done without reading a word.
  *
+ * It does not turn. Expanding and contracting is the whole motion -- a ring
+ * that also rotates is a spinner, which is the thing this replaced.
+ *
  * Two things drive it. `activity` (0..1) is the caller's own measure when it
  * has one -- tokens arriving, ticks propagating, agents running. When it does
  * not, the ring still breathes on its own slow cycle, so "running" never looks
@@ -78,6 +81,10 @@ export interface AgentPulseProps {
  * `shape` is the odd power that turns a soft sine into something with points
  * on it. Odd on purpose: an even power would fold the troughs up into peaks
  * and give twelve bumps instead of six.
+ *
+ * `phase` is where the points sit. The animation holds it at zero -- the
+ * points are anchored, and only their reach changes -- but it stays a
+ * parameter so the shape can be drawn at any orientation.
  */
 function ringPath(amplitude: number, sharpness: number, phase: number): string {
   let path = ''
@@ -125,9 +132,10 @@ export function AgentPulse({ activity, size = 20, className, label }: AgentPulse
       // out, and sharpen as they go. The count never changes.
       const amplitude = AMPLITUDE_CALM + (AMPLITUDE_BUSY - AMPLITUDE_CALM) * eased
       const sharpness = SHARPNESS_CALM + (SHARPNESS_BUSY - SHARPNESS_CALM) * eased
-      // Rotation speeds up with the work, so a busy ring reads as busy even in
-      // a still screenshot's worth of attention.
-      setPath(ringPath(amplitude, sharpness, t * (0.8 + eased * 2.6)))
+      // The points stay where they are. The ring used to turn as well, and a
+      // turning ring reads as a spinner -- the generic "waiting" animation
+      // this exists precisely not to be. Only the reach of the points moves.
+      setPath(ringPath(amplitude, sharpness, 0))
       frame = requestAnimationFrame(draw)
     }
 

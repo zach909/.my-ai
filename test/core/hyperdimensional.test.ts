@@ -211,11 +211,11 @@ describe('every neuron in every connection', () => {
     expect(thrice).toBeGreaterThan(once);
   });
 
-  it('lets a distant neuron change what a connection contributes, through the gain', () => {
+  it('lets a distant neuron change what a connection contributes, through the network weight', () => {
     // Weights zeroed and every connection bias set to the same constant: the
     // connection's own result is now a fixed number that no neuron's state can
     // touch. Anything a distant neuron does must therefore have arrived
-    // through the gain that multiplies it.
+    // through the network's weight, which is added to every connection's own.
     const withBias = { ...base, connectionBias: true };
     const rig = (engine: HyperDimensionalEngine) => {
       const snapshot = engine.captureNetworkState();
@@ -250,6 +250,105 @@ describe('every neuron in every connection', () => {
     expect(measure({})).toBe(0);
     expect(measure({ hyperGain: 1 })).toBeGreaterThan(0);
     expect(measure({ hyperGain: 3 })).toBeGreaterThan(measure({ hyperGain: 1 }));
+  });
+
+  it('still moves a neuron whose every incoming weight is zero', () => {
+    // The difference between adding the network's weight and multiplying by
+    // it, made decisive. With every connection weight at zero and no
+    // connection bias, a multiplying network term has nothing to act on --
+    // zero times whatever the network says is zero, and the neuron cannot
+    // move. Added, the network's weight is a weight of its own, and it does.
+    const silence = (engine: HyperDimensionalEngine) => {
+      const snapshot = engine.captureNetworkState();
+      engine.restoreNetworkState({
+        ...snapshot,
+        connDiag: encode(new Float32Array(decode(snapshot.connDiag).length)),
+        connShift: encode(new Float32Array(decode(snapshot.connShift).length)),
+        bias: encode(new Float32Array(decode(snapshot.bias).length)),
+      });
+    };
+
+    const measure = (config: Record<string, number>) => {
+      const engine = new HyperDimensionalEngine({ ...base, ...config });
+      silence(engine);
+      engine.process(input, undefined, driven, undefined, { learn: false });
+      const states = decode(engine.captureNetworkState().states);
+      // The undriven half: whatever moved here came from the network term.
+      let moved = 0;
+      for (let i = base.neuronCount / 2; i < base.neuronCount; i++) {
+        for (let d = 1; d <= base.dimensions; d++) moved += Math.abs(states[d * base.neuronCount + i]);
+      }
+      return moved;
+    };
+
+    expect(measure({})).toBeCloseTo(0, 6);
+    expect(measure({ hyperGain: 1 })).toBeGreaterThan(1e-6);
+    expect(measure({ hyperAdd: 1 })).toBeGreaterThan(1e-6);
+  });
+
+  it('lets the whole network scale every connection as well as add to it', () => {
+    // The two ways the network's say can combine with a connection's own
+    // weight, and both are in the spec: multiply what the connection produced,
+    // and add to the weight that produced it. They fail differently, which is
+    // the reason for having both -- a scale near zero can hold the entire mesh
+    // still, an added weight never can.
+    const seed = new HyperDimensionalEngine(base).captureNetworkState();
+    const measure = (config: Record<string, number>) => {
+      const engine = new HyperDimensionalEngine({ ...base, ...config });
+      engine.restoreNetworkState(seed);
+      engine.process(input, undefined, driven, undefined, { learn: false });
+      return decode(engine.captureNetworkState().states);
+    };
+
+    const off = measure({});
+    const scaled = measure({ hyperScale: 1 });
+    const added = measure({ hyperGain: 1 });
+    const both = measure({ hyperScale: 1, hyperGain: 1 });
+
+    // Each does something...
+    expect(spread(scaled, off, -1)).toBeGreaterThan(1e-6);
+    expect(spread(added, off, -1)).toBeGreaterThan(1e-6);
+    // ...and they are not each other.
+    expect(spread(scaled, added, -1)).toBeGreaterThan(1e-6);
+    expect(spread(both, scaled, -1)).toBeGreaterThan(1e-6);
+    expect(spread(both, added, -1)).toBeGreaterThan(1e-6);
+  });
+
+  it('leaves every connection exactly as it was when the scale is off', () => {
+    // Off has to be a scale of exactly 1. Anything merely close to 1 makes
+    // "the feature is off" and "the feature is on and nearly neutral"
+    // indistinguishable, which is how a default quietly becomes a behaviour.
+    const seed = new HyperDimensionalEngine(base).captureNetworkState();
+    const run = (config: Record<string, number>) => {
+      const engine = new HyperDimensionalEngine({ ...base, ...config });
+      engine.restoreNetworkState(seed);
+      engine.process(input, undefined, driven, undefined, { learn: false });
+      return engine.captureNetworkState().states;
+    };
+    expect(run({ hyperScale: 0 })).toBe(run({}));
+  });
+
+  it('lets the network hold the whole mesh still, which an added weight cannot', () => {
+    // What the scale can do and the added weight cannot: with every neuron's
+    // say cancelling to nothing, every connection in the network contributes
+    // nothing at once. That is the mechanism, not a bug in it.
+    const engine = new HyperDimensionalEngine({ ...base, hyperScale: 1 });
+    const snapshot = engine.captureNetworkState();
+    // Every neuron's variable zero: the network's say is exactly zero however
+    // loud the states are.
+    engine.restoreNetworkState({
+      ...snapshot,
+      modWeight: encode(new Float32Array(base.neuronCount)),
+      bias: encode(new Float32Array(decode(snapshot.bias).length)),
+    });
+    engine.process(input, undefined, driven, undefined, { learn: false });
+    const states = decode(engine.captureNetworkState().states);
+    for (let i = 0; i < base.neuronCount; i++) {
+      if (driven.has(i)) continue;
+      for (let d = 1; d <= base.dimensions; d++) {
+        expect(Math.abs(states[d * base.neuronCount + i])).toBeLessThan(1e-6);
+      }
+    }
   });
 
   it('gives every connection its own bias, and moves it', () => {
@@ -350,14 +449,21 @@ describe('the wave pool', () => {
     wavePhases: [0, 0, Math.PI, 0],
   };
 
-  /** Only these neurons carry anything; everything else is silent. */
+  /**
+   * Only these neurons carry anything, and they are DRIVEN.
+   *
+   * A neuron's wave is whatever formed inside it out of what flowed in, so a
+   * neuron with nothing flowing in has no wave to contribute. Sources are the
+   * exception and the origin: driven from outside, they emit their own
+   * signature, and everything else in the pool descends from them.
+   */
   const poolAfter = (speakers: number[]) => {
     const engine = new HyperDimensionalEngine(config);
     const snapshot = engine.captureNetworkState();
     const states = new Float32Array(decode(snapshot.states).length);
     for (const speaker of speakers) for (let d = 1; d <= D; d++) states[d * N + speaker] = 0.5;
     engine.restoreNetworkState({ ...snapshot, states: encode(states) });
-    engine.process(new Array(D).fill(0), undefined, new Set([]), undefined, { learn: false });
+    engine.process(new Array(D).fill(0.5), undefined, new Set(speakers), undefined, { learn: false });
     return engine.poolContent();
   };
 
@@ -389,6 +495,144 @@ describe('the wave pool', () => {
     expect(frequencies[1]).toBeCloseTo(0.3, 1);
   });
 
+  it('gives a neuron with nothing flowing into it no wave to contribute', () => {
+    // Its wave is whatever formed inside it, so with an empty pool and no
+    // source driving it there is nothing to be made of. This caught a real
+    // one: with the self-removal left unguarded, an undriven network with an
+    // empty pool reported waves in it, conjured out of the subtraction alone.
+    const engine = new HyperDimensionalEngine(config);
+    const snapshot = engine.captureNetworkState();
+    const states = new Float32Array(decode(snapshot.states).length);
+    for (let d = 1; d <= D; d++) states[d * N + 1] = 0.5;
+    engine.restoreNetworkState({ ...snapshot, states: encode(states) });
+    engine.process(new Array(D).fill(0.5), undefined, new Set([]), undefined, { learn: false });
+    expect(engine.poolContent()).toEqual([]);
+  });
+
+  it('carries a source\'s wave onward through the neurons that heard it', () => {
+    // How a wave gets past the neurons that can hear its source directly:
+    // each one passes on what formed inside it, edited by the connection it
+    // arrived through.
+    const engine = new HyperDimensionalEngine({ ...config, waveFeedback: 0.5 });
+    const snapshot = engine.captureNetworkState();
+    const states = new Float32Array(decode(snapshot.states).length);
+    for (let d = 1; d <= D; d++) states[d * N + 0] = 0.5;
+    engine.restoreNetworkState({ ...snapshot, states: encode(states) });
+
+    // The source's own frequency, followed by name rather than by position --
+    // and named by what the pool reports rather than by the configured 0.3,
+    // since poolContent() gives the frequency of the BIN, which is the
+    // configured value rounded to the nearest bin centre.
+    //
+    // Position stops working the moment the wave reaches a frequency below the
+    // source's, which is exactly what travelling looks like: "the first bin"
+    // silently becomes a different bin.
+    let sourceFrequency = 0;
+    const at = (f: number) => engine.poolContent().find(b => b.frequency === f)?.magnitude ?? 0;
+    const elsewhere = (f: number) => engine.poolContent().filter(b => b.frequency !== f).length;
+
+    const magnitudes: number[] = [];
+    const spread: number[] = [];
+    for (let t = 0; t < 3; t++) {
+      engine.process(new Array(D).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+      if (t === 0) {
+        // Only the source has emitted yet, so the loudest bin is its own.
+        sourceFrequency = engine.poolContent().reduce(
+          (loudest, bin) => (bin.magnitude > loudest.magnitude ? bin : loudest),
+        ).frequency;
+      }
+      magnitudes.push(at(sourceFrequency));
+      spread.push(elsewhere(sourceFrequency));
+    }
+    // It reaches a frequency the source does not occupy: a neuron that heard
+    // it is passing on what formed inside it, at its own pitch.
+    expect(spread[2]).toBeGreaterThan(0);
+    // And at the source's own frequency it grows -- the neuron that shares
+    // that wave is adding to it -- without running away.
+    expect(magnitudes[2]).toBeGreaterThan(magnitudes[0]);
+    expect(magnitudes[2]).toBeLessThan(magnitudes[0] * 4);
+  });
+
+  it('carries the giving neuron\'s own wave, not everyone\'s at that pitch', () => {
+    // "You run the wave with the wave of the neuron that is giving a wave."
+    //
+    // A connection used to multiply the shared POOL's content at the giving
+    // neuron's frequency. Two neurons on the same frequency were therefore
+    // indistinguishable to everything downstream: silence one of them and the
+    // other's wave arrived in its place, because what the connection read was
+    // the bin, not the neuron.
+    //
+    // Three neurons share 0.3 here, so the bin is shared and the neurons are
+    // not. Drive two of them and the receiver hears two different waves; drive
+    // one and it hears one. If the connection read the bin, the totals would
+    // match whenever the bin's content matched.
+    const settings = { ...config, waveFeedback: 0.5, propagationSteps: 1 };
+    const seed = new HyperDimensionalEngine(settings).captureNetworkState();
+
+    const heardBy3 = (speakers: number[]) => {
+      const engine = new HyperDimensionalEngine(settings);
+      engine.restoreNetworkState(seed);
+      const snapshot = engine.captureNetworkState();
+      const states = Float32Array.from(decode(snapshot.states));
+      for (const speaker of speakers) {
+        for (let d = 1; d <= D; d++) states[d * N + speaker] = 0.5;
+      }
+      engine.restoreNetworkState({ ...snapshot, states: encode(states) });
+      for (let t = 0; t < 2; t++) {
+        engine.process(new Array(D).fill(0.5), undefined, new Set(speakers), undefined, { learn: false });
+      }
+      const after = decode(engine.captureNetworkState().states);
+      // Neuron 3 is on its own frequency and is nobody's source here.
+      return after[1 * N + 3];
+    };
+
+    // Neurons 0 and 2 are both on 0.3, half a cycle apart (see config's
+    // wavePhases), so as SIGNATURES in one bin they largely cancel. As two
+    // separate waves along two separate connections they do not.
+    const fromOne = heardBy3([0]);
+    const fromBoth = heardBy3([0, 2]);
+    expect(Math.abs(fromBoth - fromOne)).toBeGreaterThan(1e-6);
+  });
+
+  it('starts again with the wave each neuron was carrying', () => {
+    // "When it stops it saves the input of each neuron... then it'll start at
+    // the same place." A neuron's wave is part of what it was holding, so a
+    // restore that dropped it would bring the network back with its numbers
+    // intact and every neuron silent.
+    const engine = new HyperDimensionalEngine({ ...config, waveFeedback: 0.5 });
+    const snapshot = engine.captureNetworkState();
+    const states = Float32Array.from(decode(snapshot.states));
+    for (let d = 1; d <= D; d++) states[d * N + 0] = 0.5;
+    engine.restoreNetworkState({ ...snapshot, states: encode(states) });
+    for (let t = 0; t < 3; t++) {
+      engine.process(new Array(D).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+    }
+
+    const stopped = engine.captureNetworkState();
+    expect(typeof stopped.neuronWaveRe).toBe('string');
+    expect(decode(stopped.neuronWaveRe as string)).toHaveLength(N);
+    // Something was actually being carried, or this proves nothing.
+    expect(decode(stopped.neuronWaveRe as string).some(v => v !== 0)).toBe(true);
+
+    // Brought back and carried on: the same next tick, not a network that
+    // has to build its waves again from nothing.
+    const resumed = new HyperDimensionalEngine({ ...config, waveFeedback: 0.5 });
+    expect(resumed.restoreNetworkState(stopped)).toBe(true);
+    resumed.process(new Array(D).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+    engine.process(new Array(D).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+    expect(resumed.captureNetworkState().states).toBe(engine.captureNetworkState().states);
+
+    // And a snapshot from before neurons had a wave still loads, as silence.
+    const older = { ...stopped };
+    delete (older as Record<string, unknown>).neuronWaveRe;
+    delete (older as Record<string, unknown>).neuronWaveIm;
+    delete (older as Record<string, unknown>).wavePoolRe;
+    delete (older as Record<string, unknown>).wavePoolIm;
+    const revived = new HyperDimensionalEngine({ ...config, waveFeedback: 0.5 });
+    expect(revived.restoreNetworkState(older)).toBe(true);
+    expect(decode(revived.captureNetworkState().neuronWaveRe as string).every(v => v === 0)).toBe(true);
+  });
+
   it('holds nothing when the pool is off', () => {
     const engine = new HyperDimensionalEngine({ ...config, waveGain: 0 });
     engine.process(new Array(D).fill(0.5));
@@ -413,7 +657,7 @@ describe('the wave pool', () => {
         connShift: encode(new Float32Array(decode(snapshot.connShift).length)),
       });
       for (let t = 0; t < 2; t++) {
-        engine.process(new Array(D).fill(0.05), undefined, new Set([]), undefined, { learn: false });
+        engine.process(new Array(D).fill(0.05), undefined, new Set([speaker]), undefined, { learn: false });
       }
       const after = decode(engine.captureNetworkState().states);
       return [after[1 * N + 1], after[2 * N + 1]];
@@ -565,4 +809,292 @@ describe('the Zip Loop\'s two bits are perfect enemies', () => {
     // Nothing left in the pool at the bits' shared frequency.
     expect(engine.poolContent()).toEqual([]);
   });
+});
+
+/**
+ * Every weight in the hyperdimensional structure has a wave beside it.
+ *
+ * The numeric side of a connection is its own result -- weight and bias --
+ * times what the whole network says, plus what the whole network adds, each
+ * network term being every neuron's value through a personalised variable.
+ * The wave side now has that same shape, part for part, rather than being a
+ * separate answer added on at the end.
+ */
+describe('the personalised variable every neuron carries', () => {
+  const decode = (b64: string) => {
+    const buf = Buffer.from(b64, 'base64');
+    return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+  };
+
+  const settings = {
+    neuronCount: 16,
+    dimensions: 6,
+    hyperGain: 1,
+    hyperAdd: 1,
+    waveGain: 1,
+    waveFeedback: 0.5,
+    connectionBias: true,
+  };
+
+  /** A drive that is coherent but not the same vector every tick. */
+  const drive = (engine: HyperDimensionalEngine, ticks: number, sign = 1) => {
+    for (let t = 0; t < ticks; t++) {
+      engine.process(
+        Array.from({ length: 6 }, (_, d) => sign * 0.3 * Math.sin(t * 0.31 + d)),
+        undefined,
+        new Set([t % 4, (t % 4) + 4]),
+      );
+    }
+  };
+
+  it('lets a variable go down, not only up', () => {
+    // The rule used to be a product of magnitudes -- always positive -- so
+    // every one of these climbed to its bound together and the "different
+    // weight for each one" the design rests on stopped being different at all.
+    const engine = new HyperDimensionalEngine(settings);
+    drive(engine, 200);
+    const after = decode(engine.captureNetworkState().modWeight);
+    expect(after.some(v => v < 0)).toBe(true);
+    expect(after.some(v => v > 0)).toBe(true);
+  });
+
+  it('learns the weight variables and the bias variables from different things', () => {
+    // Two sets of variables, one for the weight the network adds and one for
+    // the bias. They took the identical step before, which made them one
+    // number kept in two arrays -- and then the weight half and the bias half
+    // of the equation could not say different things.
+    const engine = new HyperDimensionalEngine(settings);
+    drive(engine, 200);
+    const snapshot = engine.captureNetworkState();
+    const mod = decode(snapshot.modWeight);
+    const add = decode(snapshot.addWeight);
+    const identical = mod.filter((v, i) => Math.abs(v - add[i]) < 1e-6).length;
+    // Some will coincide by chance -- both live in [-1, 1] and both saturate.
+    // What must not happen is all of them.
+    expect(identical).toBeLessThan(mod.length);
+    expect(mod).not.toEqual(add);
+  });
+
+  it('never freezes a variable at its bound', () => {
+    // The step is scaled by the room left before the limit, so a variable
+    // eases in rather than slamming into it. A variable landing exactly ON the
+    // limit would have no room left, its step would be multiplied by zero, and
+    // it could never move again however the evidence changed.
+    const engine = new HyperDimensionalEngine(settings);
+    drive(engine, 300);
+    const before = decode(engine.captureNetworkState().modWeight);
+    expect(before.every(v => Math.abs(v) < 1)).toBe(true);
+
+    // Reverse the evidence and it still has room to move afterwards. Both
+    // assertions are about the BOUND rather than about how far anything
+    // travelled: how much a particular variable moves depends on the random
+    // start, and asserting a distance made this test fail about one run in
+    // ten. What must be true every time is that no variable is ever sitting
+    // where its step would be multiplied by zero.
+    drive(engine, 300, -1);
+    const after = decode(engine.captureNetworkState().modWeight);
+    expect(after.every(v => Math.abs(v) < 1)).toBe(true);
+    expect(after.every(v => 1 - Math.abs(v) > 0)).toBe(true);
+  });
+});
+
+describe('the wave copy of every weight', () => {
+  const decode = (b64: string) => {
+    const buf = Buffer.from(b64, 'base64');
+    return new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4);
+  };
+  const encode = (f: Float32Array) =>
+    Buffer.from(f.buffer, f.byteOffset, f.byteLength).toString('base64');
+
+  const N = 6;
+  const D = 2;
+  const base = {
+    neuronCount: N,
+    dimensions: D,
+    propagationSteps: 1,
+    waveGain: 1,
+    waveFeedback: 0.5,
+    waveFrequencies: [0.3, 0.3, 0.12, 0.2, 0.4, 0.5],
+    wavePhases: [0, Math.PI, 0, 0, 0, 0],
+  };
+
+  /**
+   * One shared network, so comparing two settings compares the SETTING and
+   * not two different random draws. Every weight and every wave copy of one
+   * starts identical in both engines.
+   */
+  const seed = (() => {
+    const snapshot = new HyperDimensionalEngine(base).captureNetworkState();
+    const states = new Float32Array(decode(snapshot.states).length);
+    for (let d = 1; d <= D; d++) states[d * N + 0] = 0.5;
+    return { ...snapshot, states: encode(states) };
+  })();
+
+  /** One source driven for three ticks; what ends up in the pool. */
+  const poolAfter = (extra: Record<string, unknown>) => {
+    const engine = new HyperDimensionalEngine({ ...base, ...extra });
+    engine.restoreNetworkState(seed);
+    for (let t = 0; t < 3; t++) {
+      engine.process(new Array(D).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+    }
+    return engine.poolContent();
+  };
+
+  it('has one for every numeric weight, and each travels in the snapshot', () => {
+    // The correspondence itself. A wave copy that could not be saved would be
+    // lost on every restore, and the network would come back with its numbers
+    // intact and its waves reset to a fresh network's.
+    const engine = new HyperDimensionalEngine({ ...base, connectionBias: true });
+    const snapshot = engine.captureNetworkState();
+    const pairs: Array<[keyof typeof snapshot, keyof typeof snapshot]> = [
+      ['connDiag', 'connWaveGain'],
+      ['connShift', 'connWaveShift'],
+      ['connBias', 'connWaveBias'],
+      ['bias', 'neuronWaveBiasRe'],
+      ['modWeight', 'modWaveWeight'],
+      ['addWeight', 'addWaveWeight'],
+    ];
+    for (const [numeric, wave] of pairs) {
+      expect(typeof snapshot[numeric]).toBe('string');
+      expect(typeof snapshot[wave]).toBe('string');
+      expect(decode(snapshot[wave] as string).length).toBeGreaterThan(0);
+    }
+  });
+
+  it('adds the network\'s wave weight to every connection\'s own', () => {
+    // The second weight: every neuron's wave through a variable of its own,
+    // added together, then added to what the connection itself is worth.
+    // Off means nothing added, so the two must genuinely differ.
+    const off = poolAfter({});
+    const on = poolAfter({ hyperWaveGain: 1 });
+    // Relative, not to a fixed number of decimals. What a connection produces
+    // is a mean over the connections into a neuron, so the network's share of
+    // it is small in absolute terms and perfectly real -- a fixed tolerance
+    // measures the network's size, not whether the term did anything.
+    const change = Math.abs(on[0].magnitude - off[0].magnitude) / off[0].magnitude;
+    expect(change).toBeGreaterThan(1e-4);
+    // And more of it does more.
+    const harder = poolAfter({ hyperWaveGain: 8 });
+    const bigger = Math.abs(harder[0].magnitude - off[0].magnitude) / off[0].magnitude;
+    expect(bigger).toBeGreaterThan(change);
+  });
+
+  it('adds the network\'s wave bias to every connection\'s own', () => {
+    // The second bias, made the same way out of a different set of variables.
+    //
+    // Measured on what the pool holds rather than on how many frequencies it
+    // reaches: waves reach every neuron's own frequency now in any case, since
+    // a connection carries the giving neuron's wave and every neuron emits at
+    // its own pitch. What the bias changes is the CONTENT, and it changes it
+    // whether or not anything arrived -- which is what makes it a bias.
+    const off = poolAfter({});
+    const on = poolAfter({ hyperWaveAdd: 1 });
+    const total = (pool: Array<{ magnitude: number }>) =>
+      pool.reduce((sum, bin) => sum + bin.magnitude, 0);
+    expect(total(on)).not.toBeCloseTo(total(off), 5);
+  });
+
+  it('still carries a wave through a connection whose own weight is zero', () => {
+    // The point of ADDING the two weights rather than multiplying them. With
+    // the connection's own wave weight at zero there is nothing for a
+    // multiplier to act on, and the old shape produced silence no matter what
+    // the network said. Added, the network's weight is a weight in its own
+    // right, and the wave still gets through.
+    const silent = { ...seed, connWaveGain: encode(new Float32Array(N * N)) };
+    const carry = (extra: Record<string, unknown>) => {
+      const engine = new HyperDimensionalEngine({ ...base, ...extra });
+      engine.restoreNetworkState(silent);
+      for (let t = 0; t < 3; t++) {
+        engine.process(new Array(D).fill(0.5), undefined, new Set([0]), undefined, { learn: false });
+      }
+      return engine.poolContent();
+    };
+
+    const total = (pool: Array<{ magnitude: number }>) =>
+      pool.reduce((sum, bin) => sum + bin.magnitude, 0);
+
+    // With its own weight at zero and no network weight to add, a connection
+    // carries nothing: all that is left in the pool is what the source itself
+    // put there. Every neuron downstream of it emits silence.
+    const own = carry({});
+    // Add the network's half of the weight and waves cross the connections
+    // again -- the same connections, still worth nothing on their own.
+    const withNetwork = carry({ hyperWaveGain: 1 });
+    // Different, not louder. What comes back can interfere with the source
+    // either way, and asserting "more" would be asserting the sign of a random
+    // draw rather than that the weight did anything.
+    expect(total(withNetwork)).not.toBeCloseTo(total(own), 6);
+  });
+
+  it('gives a connection\'s wave bias a turned half, and saves it', () => {
+    // A bias on a wave that can only be taller is not a wave, it is a volume.
+    // Both halves have to exist and both have to survive a restore.
+    const engine = new HyperDimensionalEngine({ ...base, hyperWaveGain: 1, hyperWaveAdd: 1 });
+    const before = engine.captureNetworkState();
+    expect(typeof before.connWaveBiasIm).toBe('string');
+    expect(decode(before.connWaveBiasIm as string)).toHaveLength(N * N);
+
+    for (let i = 0; i < 40; i++) engine.process(new Array(D).fill(0.5), undefined, new Set([0, 1]));
+    const after = engine.captureNetworkState();
+    expect(after.connWaveBiasIm).not.toBe(before.connWaveBiasIm);
+
+    // And a snapshot from before the turned half existed still loads, with
+    // the turned half read as the zero it effectively was.
+    const older = { ...after };
+    delete (older as Record<string, unknown>).connWaveBiasIm;
+    const revived = new HyperDimensionalEngine(base);
+    expect(revived.restoreNetworkState(older)).toBe(true);
+    expect(decode(revived.captureNetworkState().connWaveBiasIm as string).every(v => v === 0)).toBe(true);
+  });
+
+  it('leaves the wave exactly as it was when both are off', () => {
+    const plain = poolAfter({});
+    const explicit = poolAfter({ hyperWaveGain: 0, hyperWaveAdd: 0 });
+    expect(explicit).toEqual(plain);
+  });
+
+  it('moves every wave copy as it runs, like its numeric twin', () => {
+    const engine = new HyperDimensionalEngine({
+      ...base,
+      hyperWaveGain: 1,
+      hyperWaveAdd: 1,
+      connectionBias: true,
+    });
+    const before = engine.captureNetworkState();
+    for (let i = 0; i < 30; i++) engine.process(new Array(D).fill(0.5), undefined, new Set([0, 1]));
+    const after = engine.captureNetworkState();
+
+    for (const key of ['connWaveGain', 'connWavePhase', 'connWaveBias', 'modWaveWeight'] as const) {
+      expect(after[key], `${key} never moved`).not.toBe(before[key]);
+    }
+  });
+
+  it('stays finite and bounded with every part of it turned on', () => {
+    // Numbers and waves, connection and network, all learning at once. This is
+    // the configuration where a runaway would actually happen.
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 16,
+      dimensions: 6,
+      waveGain: 1,
+      waveFeedback: 0.5,
+      hyperWaveGain: 1,
+      hyperWaveAdd: 1,
+      hyperGain: 1,
+      hyperAdd: 1,
+      connectionBias: true,
+    });
+    let out;
+    for (let i = 0; i < 60; i++) {
+      out = engine.process(new Array(6).fill(0.4), undefined, new Set([0, 1]));
+    }
+    expect(out!.outputVector.every(Number.isFinite)).toBe(true);
+    expect(Number.isFinite(out!.waveEnergy)).toBe(true);
+
+    const snapshot = engine.captureNetworkState();
+    for (const key of ['connWaveGain', 'connWaveShift', 'neuronWaveBiasRe', 'modWaveWeight'] as const) {
+      const values = decode(snapshot[key]);
+      expect(values.every(Number.isFinite), `${key} went non-finite`).toBe(true);
+      expect(Math.max(...Array.from(values).map(Math.abs))).toBeLessThanOrEqual(2);
+    }
+  }, 30_000);
 });
