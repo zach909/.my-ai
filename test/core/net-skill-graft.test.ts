@@ -455,3 +455,75 @@ describe('a skill that names its own waves', () => {
     expect(signature.phase).toBeCloseTo(waveForMeaning('a thing').phase, 5);
   });
 });
+
+describe('experts are groups inside the one network', () => {
+  const settings = { neuronCount: 12, dimensions: 4, propagationSteps: 2, hyperGain: 1, hyperAdd: 1, waveGain: 0.1 };
+  const input = new Array(4).fill(0.3);
+
+  const decode = (b64: string) => {
+    const buf = Buffer.from(b64, 'base64');
+    return Array.from(new Float32Array(buf.buffer, buf.byteOffset, buf.byteLength / 4));
+  };
+  const moved = (before: number[], after: number[], i: number, N = 12) => {
+    for (let d = 1; d <= 4; d++) if (Math.abs(before[d * N + i] - after[d * N + i]) > 1e-9) return true;
+    return false;
+  };
+
+  const grouped = () => {
+    const engine = new HyperDimensionalEngine(settings);
+    for (let i = 4; i < 8; i++) engine.setNeuronGroup(i, 'weather');
+    for (let i = 8; i < 12; i++) engine.setNeuronGroup(i, 'tides');
+    return engine;
+  };
+
+  it('computes the groups that were asked for and holds the ones that were not', () => {
+    // The neuron-level MoE, and the reason the second network could go: gating
+    // used to mean a separate ElasticCoreBlock stage running in front of this
+    // one, whose neurons computed a plain weighted sum with none of the
+    // equation. A group is a label on a neuron here, not a network of its own.
+    const engine = grouped();
+    const before = decode(engine.captureNetworkState().states);
+    engine.process(input, undefined, new Set([0]), undefined, { activeGroups: new Set(['weather']) });
+    const after = decode(engine.captureNetworkState().states);
+
+    expect([1, 2, 3].every(i => moved(before, after, i))).toBe(true);   // ungrouped: always computes
+    expect([4, 5, 6, 7].every(i => moved(before, after, i))).toBe(true); // asked for
+    expect([8, 9, 10, 11].some(i => moved(before, after, i))).toBe(false); // held
+  });
+
+  it('computes everything when no groups are named', () => {
+    const engine = grouped();
+    const before = decode(engine.captureNetworkState().states);
+    engine.process(input, undefined, new Set([0]));
+    const after = decode(engine.captureNetworkState().states);
+    expect([1, 5, 9, 11].every(i => moved(before, after, i))).toBe(true);
+  });
+
+  it('feeds a driven neuron whatever its group says', () => {
+    // Driven wins. Something being fed from outside is being fed, whatever
+    // else is true of it.
+    const engine = grouped();
+    const before = decode(engine.captureNetworkState().states);
+    engine.process(input, undefined, new Set([9]), undefined, { activeGroups: new Set(['weather']) });
+    const after = decode(engine.captureNetworkState().states);
+    expect(moved(before, after, 9)).toBe(true);
+    expect([8, 10, 11].some(i => moved(before, after, i))).toBe(false);
+  });
+
+  it('keeps a held neuron wired to everything, not disconnected', () => {
+    // Held is not removed. The neuron is still all-to-all: it is simply not
+    // asked to move this tick, and everything that IS moving still reads it.
+    const engine = grouped();
+    const N = 12, D = 5;
+    const diag = decode(engine.captureNetworkState().connDiag);
+    let intoHeld = 0, outOfHeld = 0;
+    for (let d = 0; d < D; d++) {
+      for (let j = 0; j < N; j++) {
+        if (j !== 9 && diag[(9 * D + d) * N + j] !== 0) intoHeld++;
+        if (j !== 9 && diag[(j * D + d) * N + 9] !== 0) outOfHeld++;
+      }
+    }
+    expect(intoHeld).toBeGreaterThan(0);
+    expect(outOfHeld).toBeGreaterThan(0);
+  });
+});

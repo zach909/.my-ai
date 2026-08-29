@@ -1,12 +1,10 @@
 import { MoERouter } from './onebrain.js';
-import { NeuronMesh } from './onebrain.js';
 import { HyperDimensionalEngine } from './onebrain.js';
 import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
 import { QuantumNeuralNet } from './onebrain.js';
 import { ZipIOSystem } from './zip-io.js';
 import { AlignmentVeto, type VetoDecision } from './alignment-veto.js';
-import { ElasticCoreBlock } from './elastic-core.js';
 import type { NeuronState } from '../../interface/types.js';
 import { pluginExtensions } from '../../plugins/index.js';
 import { PROGRAMMING_SKILLS } from '../programming-skills.js';
@@ -14,6 +12,11 @@ import { PROGRAMMING_SKILLS } from '../programming-skills.js';
 export interface PipelineConfig {
   embeddingDim: number;
   hiddenDim: number;
+  /**
+   * Kept for callers that still pass it; it no longer sizes a mesh, because
+   * the separate mesh is gone. The one network's size is HYPER_NEURON_COUNT
+   * plus however many neurons the experts and installed skills grew it by.
+   */
   meshNodes: number;
   hyperDimensions: number;
   /**
@@ -32,7 +35,14 @@ export interface PipelineConfig {
    *  iteration must exceed to count toward sustained divergence. Defaults
    *  to the engine's own default (0.05) when omitted. */
   hyperDivergenceTolerance?: number;
-  /** Use the multidimensional all-to-all ElasticCoreBlock as the transformer-core replacement. */
+  /**
+   * Kept so existing configs still load. It selects nothing any more: there is
+   * one network, and it is the hyperdimensional mesh. The two stages this used
+   * to choose between -- an Elastic Core and a fallback NeuronMesh -- both
+   * computed a plain weighted sum in front of the real network, which is what
+   * made "every other neuron is part of it" false for half the agent's
+   * neurons.
+   */
   useElasticCore?: boolean;
 }
 
@@ -56,7 +66,8 @@ export interface PipelineResult {
   /** Section 3.3: 1 if live correction fired on this tick's hyperdimensional settle, else 0. */
   liveCorrections: number;
   /** Per-elastic-core-neuron movement from this tick, keyed by neuron id. */
-  elasticStateDeltas: Map<number, number>;
+  /** Per-neuron state change this tick, from the one network. */
+  networkStateDeltas: Map<number, number>;
 }
 
 interface RunRecord {
@@ -79,14 +90,12 @@ export class NeuroPipeline {
 
   // Subsystem instances — initialized lazily on first run to keep construction fast
   private moeRouter: MoERouter | null = null;
-  private mesh: NeuronMesh | null = null;
   private hyperEngine: HyperDimensionalEngine | null = null;
   private rlm: RLMTrainer | null = null;
   private valueRange: ValueRangeAllocator | null = null;
   private quantumNet: QuantumNeuralNet | null = null;
   private zipIO: ZipIOSystem | null = null;
   private alignmentVeto: AlignmentVeto | null = null;
-  private elasticCore: ElasticCoreBlock | null = null;
 
   // Elastic value budget: how many neuron slots it covers, and whether
   // initializeNeurons() has been called yet for this pipeline instance.
@@ -98,10 +107,12 @@ export class NeuroPipeline {
   // anonymous randomly-initialized expert network.
   private expertPluginMap: Map<number, string> = new Map();
 
-  // Deterministic registry from real expert id -> Elastic Core neuron ids.
-  // Every plugin/skill expert gets at least one concrete neuron; when the
-  // expert catalog outgrows meshNodes, ensureSubsystems() grows the Elastic
-  // Core and value budget instead of silently reusing/folding ids.
+  // Deterministic registry from real expert id -> neuron ids in the network.
+  // Every plugin/skill expert gets at least one concrete neuron in the ONE
+  // mesh; when the expert catalog outgrows the base size, ensureSubsystems()
+  // grows the network and the value budget instead of silently reusing or
+  // folding ids. An expert is a group of neurons inside the network, not a
+  // network of its own.
   private expertNeuronRegistry: Map<string, number[]> = new Map();
 
   // Timing history for stats
@@ -171,31 +182,23 @@ export class NeuroPipeline {
       this.expertPluginMap.set(expertId, id);
     }
 
-    this.elasticCore = new ElasticCoreBlock({
-      neuronCount: this.config.meshNodes,
-      stateDim: Math.max(4, Math.min(64, this.config.hyperDimensions)),
-      inputDim: this.config.hiddenDim,
-      outputDim: this.config.hiddenDim,
-      maxTicks: 20,
-      convergenceThreshold: 0.01,
-      seed: 42,
-      quantizationAware: true,
-      quantizationBits: 8,
-    });
-
-    const expertIds = Array.from(this.expertPluginMap.values());
-    this.expertNeuronRegistry.clear();
-    for (let i = 0; i < expertIds.length; i++) {
-      const expertId = expertIds[i];
-      const neuronId = i < this.config.meshNodes ? i : this.elasticCore.addNeuron(expertId);
-      this.elasticCore.setNeuronGroup(neuronId, expertId);
-      this.expertNeuronRegistry.set(expertId, [neuronId]);
-    }
+    // Expert neurons live in the ONE network, not in a stage in front of it.
+    //
+    // They used to be neurons of the Elastic Core, which ran before the
+    // hyperdimensional engine and computed a plain weighted sum -- no network
+    // weight, no network bias, no wave. So the neurons that carry the agent's
+    // skills were the ones NOT running the equation, which is the wrong way
+    // round. They are grouped neurons of the hyperdimensional mesh now: wired
+    // all-to-all like every other, carrying every term, and gated per tick by
+    // the group label rather than by living somewhere else.
+    //
+    // Registered after the engine is built, below, because it is the thing
+    // they are being registered into.
 
     // The value budget must cover every neuron that consults it for a
     // learning rate — mesh nodes, any Elastic Core neurons grown for expert
     // coverage, and the separately-indexed hyperdimensional neurons.
-    this.valueBudgetSize = Math.max(this.elasticCore.getNeuronCount(), HYPER_NEURON_COUNT);
+    this.valueBudgetSize = HYPER_NEURON_COUNT;
     this.valueRange = new ValueRangeAllocator({
       enabled: true,
       totalPoints: this.valueBudgetSize * 10,
@@ -203,18 +206,6 @@ export class NeuroPipeline {
       maxLearningRate: 0.01,
       redistributionInterval: 100,
       decayFactor: 0.01,
-    });
-
-    this.mesh = new NeuronMesh({
-      nodeCount: this.config.meshNodes,
-      connectionDensity: 1.0,
-      propagationSteps: 20,
-      convergenceThreshold: 0.01,
-      activationFn: 'relu',
-      learningRate: 0.01,
-      initialConnectionWeight: 0.01,
-      dampingFactor: 0.85,
-      seed: 42,
     });
 
     this.hyperEngine = new HyperDimensionalEngine({
@@ -255,6 +246,20 @@ export class NeuroPipeline {
       ...(this.config.hyperDivergenceTolerance !== undefined
         ? { divergenceTolerance: this.config.hyperDivergenceTolerance } : {}),
     });
+
+    // Every expert gets its neurons in that one network. Grown past the base
+    // size when the catalogue outruns it, so a machine with many plugins does
+    // not have to share one neuron between two skills.
+    const expertIds = Array.from(this.expertPluginMap.values());
+    this.expertNeuronRegistry.clear();
+    for (let i = 0; i < expertIds.length; i++) {
+      const expertId = expertIds[i];
+      const neuronId = i < HYPER_NEURON_COUNT ? i : this.hyperEngine.addNeurons(1)[0];
+      if (neuronId === undefined) continue;
+      this.hyperEngine.setNeuronGroup(neuronId, expertId);
+      this.expertNeuronRegistry.set(expertId, [neuronId]);
+    }
+    this.valueBudgetSize = Math.max(this.valueBudgetSize, this.hyperEngine.getNeuronCount());
 
     this.rlm = new RLMTrainer({
       hiddenDim: this.config.hiddenDim,
@@ -356,13 +361,20 @@ export class NeuroPipeline {
   }
 
   /**
-   * Grow the Elastic Core by one neuron and enroll the new neuron id in the
-   * zero-sum ValueRangeAllocator without reinitializing existing allocations.
+   * Grow the network by one neuron and enroll it in the zero-sum
+   * ValueRangeAllocator without reinitializing existing allocations.
+   *
+   * Was addElasticNeuron(), and grew the Elastic Core -- a stage that no
+   * longer exists. There is one network now, so growing is unambiguous: the
+   * new neuron joins the mesh all-to-all and carries the same equation as
+   * every neuron already in it.
    */
-  addElasticNeuron(group?: string): number {
+  growNetwork(group?: string): number {
     this.ensureSubsystems();
     this.ensureValueInitialized();
-    const neuronId = this.elasticCore!.addNeuron(group);
+    const [neuronId] = this.hyperEngine!.addNeurons(1);
+    if (neuronId === undefined) return -1;
+    if (group) this.hyperEngine!.setNeuronGroup(neuronId, group);
     this.valueRange!.addNeuron(String(neuronId));
     this.valueBudgetSize = Math.max(this.valueBudgetSize, neuronId + 1);
     return neuronId;
@@ -419,60 +431,42 @@ export class NeuroPipeline {
       });
     }
 
-    // ── Step 2: Transformer-core replacement / fallback mesh ───────────────
-    let coreOutput: number[];
-    let elasticStateDeltas = new Map<number, number>();
-    if (this.config.useElasticCore !== false) {
-      const t0 = Date.now();
-      const coreInput = this.resizeVector(moeOutput, this.config.hiddenDim);
-      const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
-      const drivenNeurons = this.neuronIdsForExperts(selectedPlugins);
-      const result = this.elasticCore!.forward(coreInput, {
-        vale: this.getValeFractions(),
-        activeGroups,
-        drivenNeurons: drivenNeurons.size > 0 ? drivenNeurons : new Set([0]),
-      });
-      coreOutput = Array.from(result.output);
-      elasticStateDeltas = new Map(result.stateDeltas);
-      this.feedbackToValueBudget(result.stateDeltas);
-      const durationMs = Date.now() - t0;
-      steps.push({
-        name: 'elastic-core',
-        inputShape: [coreInput.length],
-        outputShape: [coreOutput.length],
-        durationMs,
-      });
-    } else {
-      const t0 = Date.now();
-      const meshInputs = new Map<number, number>();
-      const meshNodeCount = Math.min(this.config.meshNodes, moeOutput.length);
-      for (let i = 0; i < meshNodeCount; i++) meshInputs.set(i, moeOutput[i] || 0);
-      const propagation = this.mesh!.propagate(meshInputs, this.getValeFractions());
-      coreOutput = Array.from(propagation.finalStates.values());
-      const meshDeltas = this.mesh!.applyValueWeightedLearning(this.getValueLearningRates());
-      this.feedbackToValueBudget(meshDeltas);
-      const durationMs = Date.now() - t0;
-      steps.push({
-        name: 'mesh-propagation',
-        inputShape: [meshNodeCount],
-        outputShape: [coreOutput.length],
-        durationMs,
-      });
-    }
-
-    // ── Step 3: Hyper-dimensional processing ────────────────────────────────
+    // ── Step 2: the network ─────────────────────────────────────────────
+    //
+    // ONE network, one equation. This used to be two stages: an Elastic Core
+    // that computed a plain weighted sum, and then the hyperdimensional engine
+    // that computed the real thing on whatever the first stage handed it. Half
+    // the agent's neurons -- including every expert's, which is the worst half
+    // to pick -- were therefore outside the equation entirely: no network
+    // weight, no network bias, no wave, not connected to the neurons in the
+    // other stage at all.
+    //
+    // Now the router's output goes straight into the mesh every neuron lives
+    // in. Experts are groups of neurons inside it rather than a stage in front
+    // of it: `activeGroups` says which are being asked this tick, `driven`
+    // says which are fed the input directly, and everything else in the
+    // network still computes, still all-to-all, still carrying its own weight
+    // and bias plus the whole network's, in numbers and in waves.
     let hyperOutput: number[];
     let selfModelSurprise = 0;
     let liveCorrections = 0;
+    let networkStateDeltas = new Map<number, number>();
     {
       const t0 = Date.now();
-      // Pad/truncate elastic core output to hyperDimensions
-      const hyperInput = this.resizeArray(coreOutput, this.config.hyperDimensions);
-      const learningRates = this.getValueLearningRates();
-      const hyperResult = this.hyperEngine!.process(hyperInput, learningRates, undefined, this.getValeFractions());
+      const networkInput = this.resizeArray(Array.from(this.resizeVector(moeOutput, this.config.hiddenDim)), this.config.hyperDimensions);
+      const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
+      const driven = this.neuronIdsForExperts(selectedPlugins);
+      const hyperResult = this.hyperEngine!.process(
+        networkInput,
+        this.getValueLearningRates(),
+        driven.size > 0 ? driven : new Set([0]),
+        this.getValeFractions(),
+        { activeGroups },
+      );
       hyperOutput = hyperResult.outputVector;
       selfModelSurprise = hyperResult.selfModelSurprise;
       liveCorrections = hyperResult.liveCorrections;
+      networkStateDeltas = new Map(hyperResult.stateDeltas);
       this.feedbackToValueBudget(hyperResult.stateDeltas);
       const durationMs = Date.now() - t0;
       steps.push({
@@ -631,7 +625,7 @@ export class NeuroPipeline {
       alignment,
       selfModelSurprise,
       liveCorrections,
-      elasticStateDeltas,
+      networkStateDeltas,
     };
   }
 
@@ -672,11 +666,9 @@ export class NeuroPipeline {
     this.totalRunsCount = 0;
     // Tear down subsystems so they are re-created fresh on next run
     this.moeRouter = null;
-    this.mesh = null;
     this.hyperEngine = null;
     this.rlm = null;
     this.valueRange = null;
-    this.elasticCore = null;
     this.expertNeuronRegistry.clear();
     this.quantumNet = null;
     this.zipIO = null;

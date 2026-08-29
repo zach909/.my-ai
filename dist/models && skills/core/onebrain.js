@@ -2292,6 +2292,14 @@ export class HyperDimensionalEngine {
         this.emaEnergy = 0;
         this.hasEma = false;
         this.sustainedDivergence = 0;
+        /**
+         * Which expert or skill each neuron belongs to, when it belongs to one.
+         *
+         * A label, not a wall: a grouped neuron is wired all-to-all like every
+         * other. The group decides only whether it is asked to compute on a given
+         * tick -- see ProcessOptions.activeGroups.
+         */
+        this.neuronGroups = new Map();
         /** |shared wave pool value| from the most recent settle() iteration -- genuinely observable evidence the wave mechanism ran, surfaced on HyperDimensionalOutput. */
         this.lastWaveEnergy = 0;
         this.config = {
@@ -2416,6 +2424,7 @@ export class HyperDimensionalEngine {
         this.isDrivenScratch = new Uint8Array(N);
         this.drivenIndicesScratch = new Int32Array(N);
         this.nonDrivenIndicesScratch = new Int32Array(N);
+        this.heldIndicesScratch = new Int32Array(N);
         this.vsScratch = new Float32Array(N);
         this.hasVScratch = new Uint8Array(N);
         this.ratesScratch = new Float32Array(N);
@@ -2494,7 +2503,7 @@ export class HyperDimensionalEngine {
         const drivenIds = directInputNeuronIds ?? this.defaultDrivenIds;
         const N = this.neurons.length;
         const D = this.totalDims;
-        const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds, vale);
+        const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds, vale, options?.activeGroups);
         // Weight learning is on by default -- a tick that receives input is
         // supposed to change the network. A tick that is only READING is not: see
         // ProcessOptions.learn.
@@ -2952,6 +2961,7 @@ export class HyperDimensionalEngine {
         this.isDrivenScratch = new Uint8Array(newN);
         this.drivenIndicesScratch = new Int32Array(newN);
         this.nonDrivenIndicesScratch = new Int32Array(newN);
+        this.heldIndicesScratch = new Int32Array(newN);
         this.vsScratch = new Float32Array(newN);
         this.hasVScratch = new Uint8Array(newN);
         this.ratesScratch = new Float32Array(newN);
@@ -3049,6 +3059,33 @@ export class HyperDimensionalEngine {
             neuron.state[k + 1] = value;
         }
         return true;
+    }
+    /**
+     * Label a neuron with the expert or skill it belongs to.
+     *
+     * The neuron-level MoE (Section 2.1): experts are groups of neurons inside
+     * ONE network, not separate networks consulted in turn. Grouping changes no
+     * wiring at all -- the neuron keeps every connection it had, in both
+     * directions -- it only lets a tick say which groups are the ones being
+     * asked this time.
+     */
+    setNeuronGroup(id, group) {
+        if (id < 0 || id >= this.neurons.length)
+            return false;
+        this.neuronGroups.set(id, group);
+        return true;
+    }
+    /** Which group a neuron belongs to, or undefined for an ungrouped one. */
+    neuronGroup(id) {
+        return this.neuronGroups.get(id);
+    }
+    /** Every neuron belonging to one group, in id order. */
+    neuronsInGroup(group) {
+        const ids = [];
+        for (const [id, name] of this.neuronGroups)
+            if (name === group)
+                ids.push(id);
+        return ids.sort((a, b) => a - b);
     }
     /**
      * Set one neuron's wave by hand.
@@ -3567,7 +3604,7 @@ export class HyperDimensionalEngine {
      * Optimized for cache locality by using row-major access on weights
      * and consolidated sequential access on states.
      */
-    settle(resolvedInput, drivenIds, vale) {
+    settle(resolvedInput, drivenIds, vale, activeGroups) {
         const D = this.totalDims;
         const N = this.neurons.length;
         const deltas = this.stateDeltasBuffer;
@@ -3591,13 +3628,27 @@ export class HyperDimensionalEngine {
         const nonDrivenIndices = this.nonDrivenIndicesScratch;
         let drivenCount = 0;
         let nonDrivenCount = 0;
+        // A neuron in a group nobody asked for this tick HOLDS: it keeps the state
+        // it had instead of being recomputed. Driven always wins -- something
+        // being fed from outside is being fed whatever else is true of it -- and
+        // an ungrouped neuron always computes, so a network that never labels
+        // anything behaves exactly as it did before groups existed.
+        const gated = activeGroups !== undefined && this.neuronGroups.size > 0;
+        let heldCount = 0;
+        const heldIndices = this.heldIndicesScratch;
         for (let i = 0; i < N; i++) {
             if (isDriven[i]) {
                 drivenIndices[drivenCount++] = i;
+                continue;
             }
-            else {
-                nonDrivenIndices[nonDrivenCount++] = i;
+            if (gated) {
+                const group = this.neuronGroups.get(i);
+                if (group !== undefined && !activeGroups.has(group)) {
+                    heldIndices[heldCount++] = i;
+                    continue;
+                }
             }
+            nonDrivenIndices[nonDrivenCount++] = i;
         }
         const hasVale = vale !== undefined && vale.size > 0;
         const vs = this.vsScratch;
@@ -3995,6 +4046,17 @@ export class HyperDimensionalEngine {
                 for (let d = 0; d < dims; d++) {
                     nextStates[offset + d + 1] = clampedInput[d];
                 }
+            }
+            // Neurons whose group was not asked for this tick keep what they had.
+            // Carried across explicitly rather than left alone: nextStates is a
+            // buffer that gets swapped in, so "not written" is not "unchanged" --
+            // it is whatever the previous iteration left in that slot.
+            for (let idx = 0; idx < heldCount; idx++) {
+                const i = heldIndices[idx];
+                const offset = i * D;
+                const state = this.neurons[i].state;
+                for (let d = 0; d < D; d++)
+                    nextStates[offset + d] = state[d];
             }
             // Handle non-driven neurons using loop-swapping to hoist dimension/state/weight views
             // BOLT OPTIMIZATION: Fast branch-free path when vale gating is inactive (the common case).

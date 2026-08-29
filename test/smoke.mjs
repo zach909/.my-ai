@@ -74,10 +74,18 @@ async function testPipeline() {
     lastAlignment = res.alignment;
   }
   check(bad === 0, 'Pipeline output finite across 3 ticks (NaN regression)');
-  check(stageNames.includes('elastic-core'), 'Pipeline runs the ElasticCoreBlock transformer replacement stage');
+  // ONE network. There used to be a stage in front of the hyperdimensional
+  // engine -- an Elastic Core, or a NeuronMesh when useElasticCore was false --
+  // and it computed a plain weighted sum: no network weight, no network bias,
+  // no wave, and its neurons not connected to the engine's at all. Half the
+  // agent's neurons, including every expert's, were outside the equation.
+  check(stageNames.includes('hyper-dimensional'), 'Pipeline runs the one network');
+  check(!stageNames.includes('elastic-core') && !stageNames.includes('mesh-propagation'),
+    `Pipeline has no second network in front of it (stages: ${stageNames.join(', ')})`);
   const fallback = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 16, hyperDimensions: 16, useElasticCore: false });
   const fallbackStages = (await fallback.run(embedding(32, 99), 'fallback')).steps.map(s => s.name);
-  check(fallbackStages.includes('mesh-propagation') && !fallbackStages.includes('elastic-core'), 'Pipeline honors legacy mesh fallback when useElasticCore=false');
+  check(fallbackStages.includes('hyper-dimensional') && !fallbackStages.includes('mesh-propagation'),
+    'useElasticCore=false selects nothing any more -- there is one network either way');
   check(stageNames.includes('alignment-veto'), 'Pipeline runs the alignment-veto stage');
   check(lastAlignment && typeof lastAlignment.allowed === 'boolean' && Array.isArray(lastAlignment.reasons),
     'Pipeline result carries an alignment verdict');
@@ -116,16 +124,22 @@ async function testPipelineElasticGrowth() {
   const { NeuroPipeline } = await load('models && skills/core/pipeline.js');
   const p = new NeuroPipeline({ embeddingDim: 32, hiddenDim: 32, meshNodes: 65, hyperDimensions: 8 });
   await p.run(embedding(32, 10), 'initialize value budget');
-  const newId = p.addElasticNeuron('smoke-growth');
+  const sizeBefore = p.getHyperEngine().getNeuronCount();
+  const newId = p.growNetwork('smoke-growth');
   const valeBefore = p.getValeFraction(newId);
-  const res = await p.run(embedding(32, 11), 'after elastic growth');
+  const res = await p.run(embedding(32, 11), 'after growth');
   const valeAfter = p.getValeFraction(newId);
 
-  check(Number.isInteger(newId) && newId === 65, `Pipeline addElasticNeuron returns the new Elastic Core neuron id (got ${newId})`);
+  // The id is the network's previous size, because the new neuron is appended
+  // to the one network rather than to a stage in front of it.
+  check(Number.isInteger(newId) && newId === sizeBefore,
+    `Pipeline growNetwork appends to the one network (got ${newId}, network was ${sizeBefore})`);
+  check(p.getHyperEngine().neuronGroup(newId) === 'smoke-growth',
+    'A grown neuron carries the group it was grown for');
   check(Number.isFinite(valeBefore) && valeBefore >= 0 && valeBefore <= 1, `Pipeline-enrolled new neuron has an initial vale fraction (${valeBefore})`);
   check(Number.isFinite(valeAfter) && valeAfter >= 0 && valeAfter <= 1, `Pipeline-enrolled new neuron keeps a vale fraction after one tick (${valeAfter})`);
-  check(res.elasticStateDeltas instanceof Map && res.elasticStateDeltas.has(newId) && Number.isFinite(res.elasticStateDeltas.get(newId)),
-    'Grown Elastic Core neuron participates in per-tick stateDeltas');
+  check(res.networkStateDeltas instanceof Map && res.networkStateDeltas.has(newId) && Number.isFinite(res.networkStateDeltas.get(newId)),
+    'A grown neuron participates in the network\'s per-tick stateDeltas');
 }
 
 async function testLLM() {
