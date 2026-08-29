@@ -3794,6 +3794,21 @@ export class HyperDimensionalEngine {
     getWaveReading() {
         return { re: new Float32Array(this.waveReadRe), im: new Float32Array(this.waveReadIm) };
     }
+    /** The settle loop's iteration ceiling. */
+    getPropagationSteps() {
+        return this.config.propagationSteps;
+    }
+    /**
+     * Change the settle ceiling.
+     *
+     * For callers that stream input in and read answers out with different
+     * needs -- the Zip Loop feeds a bit with a couple of steps and settles fully
+     * only when producing output.
+     */
+    setPropagationSteps(steps) {
+        if (Number.isFinite(steps) && steps >= 1)
+            this.config.propagationSteps = Math.floor(steps);
+    }
     /** Content dimensions per neuron (excludes the reserved input-flag dimension). */
     getDimensions() {
         return this.config.dimensions;
@@ -6182,6 +6197,15 @@ const SILENT_OUTPUT = 1e-6;
 const ZIP_BIT_FREQUENCY = 0.25;
 /** Shared options for every read tick: reading the network must not rewrite it. */
 const ZIP_LOOP_READ_ONLY = { learn: false };
+/**
+ * Settle iterations while a bit is being streamed IN.
+ *
+ * Not one: a single step would leave the bit sitting on the input neuron
+ * without reaching anything. Not the full ceiling either -- that is for
+ * producing an answer, and paying it per bit is what made a two-character
+ * prompt take over eight minutes to say.
+ */
+const ZIP_INPUT_STEPS = 2;
 export class ZipLoopInterface {
     constructor(engine, ids) {
         this.engine = engine;
@@ -6206,12 +6230,20 @@ export class ZipLoopInterface {
         this.engine.setWaveSignature(ids.bit1Out, ZIP_BIT_FREQUENCY, Math.PI);
     }
     /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
+    /** One byte in, MSB-first, without ending the message. */
+    sendByte(byte) {
+        for (let b = 7; b >= 0; b--)
+            this.sendBit(((byte >> b) & 1));
+    }
+    /** Streams every bit in, then learns from the message as one event. */
     sendBytes(bytes) {
         for (const byte of bytes) {
             for (let b = 7; b >= 0; b--) {
                 this.sendBit(((byte >> b) & 1));
             }
         }
+        // The whole message has arrived: THIS is the event.
+        this.learnFromEvent();
     }
     /**
      * Drives exactly one of the two input neurons (bit0In for 0, bit1In for 1)
@@ -6223,7 +6255,57 @@ export class ZipLoopInterface {
      * fresh `dims`-length array plus a fresh Set for values that never change.
      */
     sendBit(bit) {
-        this.engine.process(this.pulseVector(), undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0);
+        // Feeding a bit in is not an event to learn from.
+        //
+        // This used to learn on EVERY bit, and learning is the expensive half of
+        // a tick -- O(N^2 * D) across the whole mesh, plus the row normalisation
+        // and the connection-bias pass. Measured on the live network of 336
+        // neurons at 64 dimensions: 1281 ms per input bit against 104 ms for a
+        // read-only settle. Feeding a 51-byte archive -- the packed form of the
+        // two-character prompt "hi" -- is 408 bits, so 522 SECONDS went by before
+        // the network had finished hearing the question. The Zip Loop endpoint
+        // never returned, and because the settle loop is synchronous it took the
+        // whole server down with it: every other request, health checks included,
+        // got nothing while it ran.
+        //
+        // It is also the wrong shape. The elastic core learns from an EVENT,
+        // weighted by how much input each neuron received during it. A single bit
+        // is not an event; the message is. So the bits go in read-only and the
+        // learning happens once, in learnFromEvent(), when the whole thing has
+        // arrived -- which is both 400 times cheaper and closer to what the
+        // architecture actually says.
+        //
+        // And a bit arriving is one step of propagation, not a settle to
+        // convergence. Every bit perturbs the network, so the settle loop never
+        // converged early and ran its full ceiling -- 32 iterations of an
+        // O(N^2 * D) pass -- for each of the 408 bits in a two-character prompt.
+        // Settling to convergence is what you do when you want the ANSWER, and
+        // that still happens: nextOutputByte() and learnFromEvent() both settle
+        // fully. Streaming the question in does not need it.
+        const ceiling = this.engine.getPropagationSteps();
+        this.engine.setPropagationSteps(ZIP_INPUT_STEPS);
+        try {
+            this.engine.process(this.pulseVector(), undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0, undefined, ZIP_LOOP_READ_ONLY);
+        }
+        finally {
+            this.engine.setPropagationSteps(ceiling);
+        }
+    }
+    /**
+     * Learn from everything that has just arrived, once.
+     *
+     * The counterpart to feeding bits read-only: the mesh has now settled around
+     * the whole message, so this is the moment its state means "the event", and
+     * one learning pass here is what the elastic core is described as doing.
+     */
+    learnFromEvent() {
+        this.engine.process(this.idleVector(), undefined, ZIP_LOOP_NO_DRIVEN);
+    }
+    /** Lazily built idle vector, shared with nextOutputByte(). */
+    idleVector() {
+        if (!this.idleScratch)
+            this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
+        return this.idleScratch;
     }
     /** Lazily built (engine dimensions are fixed at construction) and reused by every sendBit(). */
     pulseVector() {

@@ -194,10 +194,27 @@ export interface HaltConfig {
    */
   quietTicks: number;
   /** Hard ceiling. Not a halt condition -- a guarantee of termination. */
+  /**
+   * The ceiling on the WHOLE run -- the bits going in as well as the bytes
+   * coming out. It used to bound output only, which left the input
+   * unbounded: the packed form of a two-character prompt is 408 bits, so a
+   * caller asking for a ceiling of six still waited through all of them
+   * before the cap applied to anything.
+   */
   maxTicks: number;
 }
 
 export const DEFAULT_HALT: HaltConfig = { quietTicks: 32, maxTicks: 100_000 };
+
+/**
+ * Output bytes a run always gets, however much of its ceiling the input ate.
+ *
+ * A caller who asks for a small ceiling and sends a large archive would
+ * otherwise get a run with no room to answer at all, which reads as "the
+ * network said nothing" when what happened is that it was never allowed to
+ * speak.
+ */
+const MIN_OUTPUT_BUDGET = 8;
 
 /**
  * Watches a run and decides when it is over.
@@ -274,6 +291,17 @@ class HaltWatcher {
 /** The two-neuron doorway, seen the only way a run needs to see it. */
 export interface BitDoorway {
   sendBytes(bytes: Uint8Array): void;
+  /**
+   * Feed one byte without treating it as the end of the message.
+   *
+   * Optional, and only used by the yielding run: sendBytes() streams the
+   * whole archive in one synchronous burst, which on a server is the half
+   * that holds the thread -- 408 bits of a two-character prompt went by
+   * before the output loop, with its yields, ever began.
+   */
+  sendByte?(byte: number): void;
+  /** Learn from everything fed since the last one. Paired with sendByte(). */
+  learnFromEvent?(): void;
   /** One tick of output. Null means the network emitted nothing this tick. */
   nextOutputByte(): number | null;
   /**
@@ -316,33 +344,112 @@ export function runUntilStopped(
   input: ZipTree,
   config: HaltConfig = DEFAULT_HALT,
 ): RunResult {
-  doorway.sendBytes(packZip(input));
+  return runLoop(doorway, input, config);
+}
+
+/**
+ * The same run, yielding to the event loop between output bytes.
+ *
+ * A settle at the live mesh size costs about a second, and reading one byte
+ * back is eight of them. Run synchronously on a server, that is not merely
+ * slow -- it holds the only thread. Measured: while one /api/zip-loop/run was
+ * in flight, every other request returned nothing, health checks included,
+ * and the process sat at 96.7% CPU. Awaiting between bytes gives the server
+ * its thread back often enough to answer anything else that arrives.
+ */
+export async function runUntilStoppedAsync(
+  doorway: BitDoorway,
+  input: ZipTree,
+  config: HaltConfig = DEFAULT_HALT,
+): Promise<RunResult> {
+  return runLoop(doorway, input, config, () => new Promise<void>(resolve => setImmediate(resolve)));
+}
+
+function runLoop(
+  doorway: BitDoorway,
+  input: ZipTree,
+  config: HaltConfig,
+  yieldTo?: () => Promise<void>,
+): RunResult;
+function runLoop(
+  doorway: BitDoorway,
+  input: ZipTree,
+  config: HaltConfig,
+  yieldTo: () => Promise<void>,
+): Promise<RunResult>;
+function runLoop(
+  doorway: BitDoorway,
+  input: ZipTree,
+  config: HaltConfig,
+  yieldTo?: () => Promise<void>,
+): RunResult | Promise<RunResult> {
+  const packed = packZip(input);
 
   const watcher = new HaltWatcher(config);
   let decision: HaltDecision = { halted: false, ticks: 0, sawStop: false, complete: false };
-  while (!decision.halted) {
-    decision = watcher.observe(doorway.nextOutputByte());
+
+  // The ceiling counts the WHOLE run, not just the answer.
+  //
+  // maxTicks used to cap output bytes only, so the bits going in were
+  // unbounded -- and feeding the packed form of a two-character prompt is 408
+  // of them. A caller asking for maxTicks: 6 still waited through the entire
+  // input before the ceiling could apply to anything, which is why a run with
+  // a ceiling of six never came back.
+  const spentOnInput = packed.length;
+  let budget = config.maxTicks - spentOnInput;
+  if (budget < MIN_OUTPUT_BUDGET) budget = MIN_OUTPUT_BUDGET;
+
+  const finish = (): RunResult => {
+    const networkState = doorway.captureNetworkState?.();
+    const tree = watcher.tree();
+    const withMemory =
+      tree && networkState !== undefined
+        ? { files: { ...tree.files, [NETWORK_STATE_FILE]: JSON.stringify(networkState) } }
+        : tree;
+    return { ...decision, tree: withMemory, raw: watcher.collected(), networkState };
+  };
+
+  if (!yieldTo) {
+    doorway.sendBytes(packed);
+    let read = 0;
+    while (!decision.halted && read < budget) {
+      decision = watcher.observe(doorway.nextOutputByte());
+      read++;
+    }
+    // Out of budget: the same ending the watcher's own ceiling gives, named
+    // the same way, so a caller cannot tell which ceiling stopped it -- only
+    // that it was cut off rather than finishing.
+    if (!decision.halted) decision = { ...decision, halted: true, reason: "ceiling" };
+    return finish();
   }
 
-  // Saved whatever the reason, so the next run starts in the same place. A run
-  // that hit the ceiling has MORE worth keeping than one that finished
-  // cleanly, not less: it was cut off mid-thought, and its state is the only
-  // record of how far it got. Saving only on the tidy ending would lose
-  // exactly the runs worth resuming.
-  const networkState = doorway.captureNetworkState?.();
+  return (async () => {
+    // Feed the archive in with the thread handed back between bytes, then
+    // learn from the whole message as one event -- the same two steps
+    // sendBytes() does, just not all at once.
+    if (doorway.sendByte && doorway.learnFromEvent) {
+      for (const byte of packed) {
+        doorway.sendByte(byte);
+        await yieldTo();
+      }
+      doorway.learnFromEvent();
+    } else {
+      doorway.sendBytes(packed);
+    }
+    await yieldTo();
 
-  // Into state/, not memory/: memory is the chat history, this is the mesh's
-  // own condition. It leaves through the same doorway everything else does.
-  //
-  // Only when there IS a tree: a null tree means the network produced nothing
-  // readable, and manufacturing one out of the state we saved ourselves would
-  // erase that distinction. The state still comes back on neuronInputs, so a
-  // caller that wants to persist it can, whether or not the run said anything.
-  const tree = watcher.tree();
-  const withMemory =
-    tree && networkState !== undefined
-      ? { files: { ...tree.files, [NETWORK_STATE_FILE]: JSON.stringify(networkState) } }
-      : tree;
-
-  return { ...decision, tree: withMemory, raw: watcher.collected(), networkState };
+    let read = 0;
+    while (!decision.halted && read < budget) {
+      decision = watcher.observe(doorway.nextOutputByte());
+      read++;
+      await yieldTo();
+    }
+    // Out of budget: the same ending the watcher's own ceiling gives, named
+    // the same way, so a caller cannot tell which ceiling stopped it -- only
+    // that it was cut off rather than finishing.
+    if (!decision.halted) decision = { ...decision, halted: true, reason: "ceiling" };
+    return finish();
+  })();
 }
+
+

@@ -105,7 +105,15 @@ describe('stopping', () => {
     expect(result.reason).toBe('ceiling');
     expect(result.complete).toBe(false);
     expect(result.sawStop).toBe(false);
-    expect(result.ticks).toBe(200);
+    // The ceiling bounds the WHOLE run, input included, not just the answer.
+    // It used to cap output bytes only, so the bits going in were unbounded --
+    // and the packed form of even a two-character prompt is 408 of them. A
+    // caller asking for a ceiling of six still waited through all of that
+    // before the cap could apply to anything, which is why a bounded run
+    // could take minutes and never come back. Here the empty tree still packs
+    // to a real archive, so the output budget is 200 minus that.
+    expect(result.ticks).toBeLessThanOrEqual(200);
+    expect(result.ticks).toBeGreaterThan(100);
   });
 
   it('never un-sees a stop call once it has been seen', () => {

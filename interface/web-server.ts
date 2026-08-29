@@ -3588,7 +3588,7 @@ export class WebServer {
         }
 
         const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
-        const { runUntilStopped, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
+        const { runUntilStoppedAsync, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
         const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
 
         // Capped hard. One settle per bit means an unbounded ceiling here
@@ -3610,7 +3610,7 @@ export class WebServer {
           if (saved) resumed = engine.restoreNetworkState(saved);
         }
 
-        const result = runUntilStopped(zip, { files, binary }, { quietTicks, maxTicks });
+        const result = await runUntilStoppedAsync(zip, { files, binary }, { quietTicks, maxTicks });
 
         // When it stops it saves the input of every neuron -- whatever the
         // reason it stopped. A run cut off at the ceiling has MORE worth
