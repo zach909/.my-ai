@@ -8,6 +8,7 @@ import { AlignmentVeto, type VetoDecision } from './alignment-veto.js';
 import type { NeuronState } from '../../interface/types.js';
 import { pluginExtensions } from '../../plugins/index.js';
 import { PROGRAMMING_SKILLS } from '../programming-skills.js';
+import { embedText } from './neuro-lang.js';
 
 export interface PipelineConfig {
   embeddingDim: number;
@@ -266,6 +267,18 @@ export class NeuroPipeline {
       const neuronId = i < HYPER_NEURON_COUNT ? i : this.hyperEngine.addNeurons(1)[0];
       if (neuronId === undefined) continue;
       this.hyperEngine.setNeuronGroup(neuronId, expertId);
+      // Make the region a SPECIALITY, not just a label.
+      //
+      // Grouping a neuron and doing nothing else left every expert region
+      // identical, so capabilityGap() -- which asks which region took the
+      // input up -- had 43 regions that all answered the same thing to
+      // everything. A familiar sentence read 0.955 of the usual level and a
+      // string of symbols nothing had ever seen read 1.000.
+      //
+      // Tuning the incoming weights is what makes a region able to answer
+      // differently; its state cannot, because a non-driven neuron is
+      // recomputed from its inputs every tick.
+      this.hyperEngine.tuneNeuronTo(neuronId, 0, embedText(expertId, this.hyperEngine.getDimensions()));
       this.expertNeuronRegistry.set(expertId, [neuronId]);
     }
     this.valueBudgetSize = Math.max(this.valueBudgetSize, this.hyperEngine.getNeuronCount());

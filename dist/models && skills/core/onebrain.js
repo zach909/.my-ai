@@ -3129,6 +3129,41 @@ export class HyperDimensionalEngine {
         return true;
     }
     /**
+     * Tune one neuron to answer a particular direction.
+     *
+     * setConnection() writes the same weight to every dimension, which cannot
+     * make a neuron prefer one input over another -- it scales everything
+     * equally. This writes a weight PER DIMENSION on one incoming connection,
+     * so the neuron's activity rises when what arrives lines up with `toward`
+     * and stays low when it does not.
+     *
+     * This is what a single-neuron region needs in order to be a speciality
+     * rather than a label. A region's state cannot carry one: a non-driven
+     * neuron is recomputed from its inputs every tick, so seeding its state
+     * places it nowhere (measured -- [0.9,-0.9,...] reads [0.01,-0.02,...] one
+     * tick later). Incoming weights survive, and they are what capabilityGap()
+     * ends up reading.
+     */
+    tuneNeuronTo(id, from, toward) {
+        const N = this.neurons.length;
+        if (id < 0 || id >= N || from < 0 || from >= N || id === from)
+            return false;
+        const D = this.totalDims;
+        let norm = 0;
+        for (let k = 0; k < toward.length; k++)
+            norm += toward[k] * toward[k];
+        if (!(norm > 0))
+            return false;
+        const scale = 1 / Math.sqrt(norm);
+        for (let d = 1; d < D; d++) {
+            const v = toward[d - 1] ?? 0;
+            if (!Number.isFinite(v))
+                continue;
+            this.connDiag[(id * D + d) * N + from] = v * scale;
+        }
+        return true;
+    }
+    /**
      * Put one neuron where its meaning points.
      *
      * A grafted skill neuron starts somewhere rather than nowhere: its
@@ -3198,6 +3233,30 @@ export class HyperDimensionalEngine {
     /**
      * Does the mesh have anything that handles what it is currently holding?
      *
+     * IT CANNOT TELL YET. Read this before relying on it.
+     *
+     * The measurement below is sound and the plumbing is real, but the mesh
+     * does not currently answer differently to an input it knows and one it has
+     * never seen -- measured at 1.01-1.05 of the usual level for an unfamiliar
+     * input against 0.946 for a region's own trained pattern, which is the
+     * wrong way round and inside the noise either way. So it reports no gap,
+     * and the text heuristic in learn() goes on deciding by itself.
+     *
+     * It appeared to work for a while, and the reason is worth keeping. Region
+     * response used to include DRIVEN neurons, whose state is clamped to the
+     * input rather than computed from it. Expert regions take neurons from
+     * index 0 up, so the first region owned neuron 0 -- the neuron the input is
+     * fed into -- and always scored the maximum. `best` was the input's own
+     * magnitude handed back, which is why a string of symbols nothing had ever
+     * seen scored 1.000 and a familiar sentence 0.955. The tests that covered
+     * this passed on that artifact. They now pin the honest behaviour instead.
+     *
+     * What is missing is upstream: the live regions are one neuron each and
+     * never learn to be different from one another, so there is nothing for
+     * this to read. Tuning their incoming weights to their own meaning helps
+     * measurably -- separation between familiar and unfamiliar inputs went from
+     * 0.008 to 0.048 -- and is not nearly enough.
+     *
      * This is the "Determine Required Capability" step, read off the network
      * rather than off the input text. After the Zip Loop settles, each Net
      * Skill region has a response -- how much its neurons are actually doing --
@@ -3263,6 +3322,21 @@ export class HyperDimensionalEngine {
             let count = 0;
             for (const i of ids) {
                 if (i >= N)
+                    continue;
+                // Skip DRIVEN neurons. A driven neuron is clamped to the input, so
+                // its state is the input rather than a response to it -- its
+                // "response" is just the input's magnitude, near enough constant
+                // whatever the input says.
+                //
+                // This was the whole reason the signal read flat on the live agent.
+                // Expert regions are assigned neurons from index 0 up, so the first
+                // expert owned neuron 0, which is the neuron the input is fed into.
+                // Its region therefore always scored the maximum, `best` was that
+                // region every single time, and the ratio came out 1.000 for a string
+                // of symbols nothing had ever seen -- indistinguishable from 0.955
+                // for a familiar sentence. The measurement was reading the input back
+                // to itself.
+                if (states[0 * N + i] >= 1)
                     continue;
                 // Content dimensions only: dimension 0 is the input flag, which is 1
                 // on anything driven and says nothing about whether the region

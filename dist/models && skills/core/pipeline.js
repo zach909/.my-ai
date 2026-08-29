@@ -7,6 +7,7 @@ import { ZipIOSystem } from './zip-io.js';
 import { AlignmentVeto } from './alignment-veto.js';
 import { pluginExtensions } from '../../plugins/index.js';
 import { PROGRAMMING_SKILLS } from '../programming-skills.js';
+import { embedText } from './neuro-lang.js';
 const DEFAULT_CONFIG = {
     embeddingDim: 768,
     hiddenDim: 512,
@@ -182,6 +183,18 @@ export class NeuroPipeline {
             if (neuronId === undefined)
                 continue;
             this.hyperEngine.setNeuronGroup(neuronId, expertId);
+            // Make the region a SPECIALITY, not just a label.
+            //
+            // Grouping a neuron and doing nothing else left every expert region
+            // identical, so capabilityGap() -- which asks which region took the
+            // input up -- had 43 regions that all answered the same thing to
+            // everything. A familiar sentence read 0.955 of the usual level and a
+            // string of symbols nothing had ever seen read 1.000.
+            //
+            // Tuning the incoming weights is what makes a region able to answer
+            // differently; its state cannot, because a non-driven neuron is
+            // recomputed from its inputs every tick.
+            this.hyperEngine.tuneNeuronTo(neuronId, 0, embedText(expertId, this.hyperEngine.getDimensions()));
             this.expertNeuronRegistry.set(expertId, [neuronId]);
         }
         this.valueBudgetSize = Math.max(this.valueBudgetSize, this.hyperEngine.getNeuronCount());
