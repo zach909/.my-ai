@@ -6263,6 +6263,54 @@ export class HyperDimensionalEngine {
       deltaSums[i] = deltaSum;
     }
 
+    // Hold every weight ROW to unit length.
+    //
+    // Oja's per-weight decay is the right shape but it only normalises a row
+    // when the receiver is linear, and these receivers are tanh: s_i is the
+    // squashed output, not the sum that produced it, so the property it
+    // relies on does not hold and the row is free to keep growing in the
+    // direction learning keeps pushing it. That is what still saturated a
+    // long-lived mesh -- an aligned row of N weights each near 1 puts
+    // something of order N into tanh, every neuron pins at +-1, and every
+    // region then answers the same number to every input.
+    //
+    // Measured before this: separation between an input a region was trained
+    // on and one nothing had seen fell from 0.0152 to 0.0071 as the mesh
+    // saturated, while the absolute responses ballooned to 0.79. The
+    // capability-gap signal is exactly that separation, so a long-running
+    // agent quietly lost the ability to notice it was missing something.
+    //
+    // Normalising the row makes |sum| <= ||w||*||s|| = ||s|| by
+    // Cauchy-Schwarz, which with the 1/sqrt(N) already on the sum is O(1) for
+    // any neuron count. Only rows that have OVERGROWN are pulled back, so a
+    // fresh or lightly-trained network is left exactly as it was.
+    for (let i = 0; i < N; i++) {
+      // Only where learning is actually happening. Rescaling the row of a
+      // neuron pinned to a zero learning rate would move weights that are
+      // supposed to be frozen -- normalisation is part of the learning step,
+      // not something done to the network behind it.
+      if (rates[i] === 0) continue;
+      for (let d = 0; d < D; d++) {
+        const rowOffset = (i * D + d) * N;
+        let normDiag = 0;
+        let normShift = 0;
+        for (let j = 0; j < N; j++) {
+          const wd = connDiag[rowOffset + j];
+          const ws = connShift[rowOffset + j];
+          normDiag += wd * wd;
+          normShift += ws * ws;
+        }
+        if (normDiag > 1) {
+          const k = 1 / Math.sqrt(normDiag);
+          for (let j = 0; j < N; j++) connDiag[rowOffset + j] *= k;
+        }
+        if (normShift > 1) {
+          const k = 1 / Math.sqrt(normShift);
+          for (let j = 0; j < N; j++) connShift[rowOffset + j] *= k;
+        }
+      }
+    }
+
     // Everything the hyperdimensional term introduced has to learn too. A
     // per-connection bias that never moves is a constant; a per-neuron
     // modulation variable that never moves means every neuron says the same
@@ -6696,8 +6744,18 @@ export class HyperDimensionalEngine {
       for (let k = 0; k < N; k++) {
         const at = varRow + k;
         const contribution = k === i ? 1 : agreementWith[k];
-        const modRoom = 1 - Math.abs(modWeight[at]);
-        modWeight[at] = clampNetworkVariable(modWeight[at] + step * agreement * contribution * modRoom);
+        // Tracks the agreement rather than accumulating it. `modRoom` only
+        // slowed the approach to the rail; nothing pulled back, so a neuron
+        // that kept agreeing ratcheted to the clamp and stopped being
+        // personal to itself -- the fourth integrator of this exact shape in
+        // the file. Measured: 0.102 -> 0.832 against a clamp of 0.999 over
+        // 630 ticks, and because this variable scales every neuron's reading
+        // of the whole network, railing it adds one big COMMON signal to
+        // everything. Mean activity went 0.021 -> 0.725 behind it, and the
+        // separation between an input a region knew and one nothing had seen
+        // fell to 0.0024 -- which is the capability-gap signal disappearing.
+        const target = agreement * contribution;
+        modWeight[at] = clampNetworkVariable(modWeight[at] + step * (target - modWeight[at]));
       }
       // And how much a connection FROM this neuron scales its receiver's
       // reading. Bounded around 1: a sender that mutes every receiver's view
@@ -6719,8 +6777,9 @@ export class HyperDimensionalEngine {
       for (let k = 0; k < N; k++) {
         const at = varRow + k;
         const contribution = k === i ? 1 : agreementWith[k];
-        const addRoom = 1 - Math.abs(addWeight[at]);
-        addWeight[at] = clampNetworkVariable(addWeight[at] + step * level * contribution * addRoom);
+        // The same, for the same reason.
+        const addTarget = level * contribution;
+        addWeight[at] = clampNetworkVariable(addWeight[at] + step * (addTarget - addWeight[at]));
       }
     }
   }

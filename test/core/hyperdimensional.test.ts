@@ -1539,14 +1539,11 @@ describe('learning does not saturate the mesh', () => {
 
   it('leaves the mesh unsaturated after four hundred learning ticks', () => {
     const engine = learningEngine();
-    // The three integrators are fixed, which moves saturation onset from
-    // tick 10 to tick 40-80. It is NOT eliminated: the connection sum is
-    // still a raw sum over every sender, and fixing that needs the wave gain
-    // and the scale-variable clamp rebalanced alongside it -- see the note in
-    // onebrain.ts for both scalings tried and what each one broke. This pins
-    // the part that is fixed.
-    train(engine, 20);
-    expect(saturatedFraction(engine)).toBeLessThan(0.05);
+    // Was 96% by tick 150 and stuck there. Now 1-3% at 400, because every
+    // rule that fed the connection sum is bounded and the rows themselves are
+    // held to unit length.
+    train(engine, 400);
+    expect(saturatedFraction(engine)).toBeLessThan(0.1);
   });
 
   it('still moves its weights -- unsaturated is not untrained', () => {
@@ -1706,5 +1703,52 @@ describe('the mesh says when it has nothing that handles an input', () => {
     const first = engine.capabilityGap();
     expect(first.hasBaseline).toBe(false);
     expect(first.needed).toBe(false);
+  });
+});
+
+describe('a long-trained mesh can still tell inputs apart', () => {
+  // capabilityGap() reads how strongly each Net Skill region responded, so
+  // the thing that actually has to survive training is the SEPARATION between
+  // an input some region knows and one nothing has seen. Saturation and
+  // common-mode drift both destroy it without either one looking like a bug:
+  // the network keeps running, every region just answers the same number.
+  //
+  // Measured before the fixes: separation fell from 0.0152 to 0.0071 as the
+  // mesh saturated, while absolute responses ballooned to 0.79.
+  const D = 8;
+  const N = 24;
+  const trained = () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: N, dimensions: D, propagationSteps: 8, learningRate: 0.02,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    for (let i = 0; i < 8; i++) engine.setNeuronGroup(i, 'math');
+    for (let i = 8; i < 16; i++) engine.setNeuronGroup(i, 'language');
+    for (let i = 16; i < 24; i++) engine.setNeuronGroup(i, 'vision');
+    return engine;
+  };
+  const known = Array.from({ length: D }, (_, d) => Math.sin(d * 1.1) * 0.8);
+  const alien = Array.from({ length: D }, (_, d) => Math.tan(d * 0.31) * 0.2);
+
+  it('keeps a known input ahead of an unseen one after long training', () => {
+    const engine = trained();
+    for (let t = 0; t < 400; t++) {
+      engine.process(known.map((v, i) => v * Math.sin(t * 0.3 + i)),
+        undefined, new Set([0]), undefined, { learn: true });
+    }
+    for (let k = 0; k < 12; k++) {
+      engine.process(known, undefined, new Set([0]), undefined, { learn: false });
+      engine.capabilityGap();
+    }
+    const onKnown = engine.capabilityGap().bestResponse;
+    engine.process(alien, undefined, new Set([0]), undefined, { learn: false });
+    const onAlien = engine.capabilityGap().bestResponse;
+
+    // The direction is what matters: a region must still respond MORE to what
+    // it was trained on. With the network variables railing this collapsed to
+    // 0.0024, and taking the deviation instead of the level inverted it
+    // outright (-0.0006) -- which is the gap signal reporting backwards.
+    expect(onKnown).toBeGreaterThan(onAlien);
   });
 });
