@@ -4254,6 +4254,22 @@ export class HyperDimensionalEngine {
    * everything.
    *
    * Call it after process(), which is when the states mean something.
+   *
+   * WHERE THIS DOES NOT WORK YET, measured on the live agent. The mesh there
+   * carries 43 regions, one neuron each, registered from the expert
+   * catalogue -- and nothing ever trains them on their specialities. So their
+   * responses carry no information about the input: a familiar sentence read
+   * 0.955 of the usual level and a string of symbols nothing had ever seen
+   * read 1.000. No gap is reportable from that, and none is reported.
+   *
+   * It is not the measurement. Region response separates cleanly in a mesh
+   * whose regions HAVE specialised -- 0.070 against 0.055 for three regions
+   * of eight neurons trained on distinct patterns, which is what the tests
+   * cover. Per-region baselines were tried, on the theory that the max across
+   * 43 regions washes the signal out; they did not help (1.076 familiar
+   * against 1.084 unfamiliar) and broke the cases that do work, so they were
+   * reverted. The missing piece is that the live regions never learn to be
+   * different from each other, which is training, not reading.
    */
   capabilityGap(threshold = CAPABILITY_GAP_RATIO): CapabilityGap {
     const D = this.totalDims;

@@ -947,26 +947,37 @@ export class NeuroclawSystem {
       // creation.
       if (created) {
         try {
-          const parsed = JSON.parse(created);
-          const name = parsed.skill ?? parsed.plugin ?? parsed.name;
           // The makers emit a plugin, not a net skill, so there are usually no
-          // neurons to graft -- which is why nothing reached the mesh even
-          // once this was wired. A capability with no neuron is a capability
-          // the wave cannot reach, so one is derived from what was learned:
-          // the extension's name, and the procedure it was built from as its
-          // definition, which is what places its state and its wave.
+          // neurons to graft. A capability with no neuron is a capability the
+          // wave cannot reach, so one is derived from what was LEARNED: the
+          // procedure itself as the definition, which is what places the
+          // neuron's state and its wave.
           //
-          // A region of one. It can grow later, the way any region does; what
-          // matters is that it EXISTS in the mesh, so the next time this
-          // input arrives the wave arrives somewhere.
-          const neurons = Array.isArray(parsed.neurons) && parsed.neurons.length > 0
-            ? parsed.neurons
-            : [{ name: String(name ?? "extension"), definition: information }];
-          if (name && neurons.length > 0) {
-            const { graftNetSkill } = await import("../models && skills/core/net-skill-graft.js");
-            graftNetSkill(this.pipeline.ensureBrain(), String(name), neurons);
-          }
-        } catch { /* not a net-skill-shaped creation, or the mesh is full */ }
+          // The name must not come from the maker's output shape. Which maker
+          // answers depends on the content -- plugin-maker returns
+          // {type, plugin}, but a different one returned
+          // {original, formatted, analysis, generated, ...} with no name
+          // anywhere, and the graft silently skipped: created said yes and
+          // the mesh stayed at 64 neurons. So the maker's name is used when
+          // it offers one and the learned text names it otherwise. A
+          // capability joins the mesh regardless of who built it.
+          //
+          // A region of one. It can grow later the way any region does; what
+          // matters is that it EXISTS there, so the next time this input
+          // arrives the wave arrives somewhere.
+          const parsed = JSON.parse(created) as Record<string, unknown>;
+          const offered = parsed.skill ?? parsed.plugin ?? parsed.name;
+          const name = typeof offered === "string" && offered.trim().length > 0
+            ? offered.trim()
+            : information.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80)
+              || "extension";
+          const offeredNeurons = parsed.neurons;
+          const neurons = Array.isArray(offeredNeurons) && offeredNeurons.length > 0
+            ? offeredNeurons
+            : [{ name, definition: information }];
+          const { graftNetSkill } = await import("../models && skills/core/net-skill-graft.js");
+          graftNetSkill(this.pipeline.ensureBrain(), name, neurons);
+        } catch { /* unparseable creation, or the mesh is full */ }
       }
 
       // Unlike the other five entry points, `created` here is structured JSON
