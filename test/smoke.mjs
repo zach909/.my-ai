@@ -1066,7 +1066,7 @@ async function testElasticCoreBlock() {
   const idToChar = new Map(chars.map((c, i) => [i, c]));
   const trainer = new NeuroclawTrainer(chars.length, charToId, idToChar, { useElasticCore: true, epochs: 1, contextWindow: 2, hiddenDim: 4, elasticNeurons: 4, elasticStateDim: 3, learningRate: 0.05 });
   await trainer.train('ab ab ab ab ');
-  check(trainer.getElasticCore() !== null && trainer.getSamplesProcessed() > 0 && Number.isFinite(trainer.getTrainingLoss()), 'TinyGPT trainer can route hidden-layer training through ElasticCoreBlock and update its parameters');
+  check(trainer.getElasticCore() !== null && trainer.getSamplesProcessed() > 0 && Number.isFinite(trainer.getTrainingLoss()), 'The n-gram trainer can route hidden-layer training through ElasticCoreBlock and update its parameters');
   const qat = new ElasticCoreBlock({ neuronCount: 8, stateDim: 4, inputDim: 4, outputDim: 4, maxTicks: 4, seed: 8, quantizationAware: true, quantizationBits: 4 });
   const q = qat.forward(input, { drivenNeurons: new Set([0]) });
   check(Number.isFinite(q.quantizationDrift) && q.quantizationDrift > 0, 'ElasticCoreBlock QAT residual is tracked when quantization-aware settling is enabled');

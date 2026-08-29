@@ -9,7 +9,6 @@ The system uses Chrome applications to connect with supported local services —
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `plugins/browser.ts` — `BrowserPlugin` | Registers, connects, and reads data from local Chrome apps as `ChromeAppConfig` entries |
-| Python training core | `tinygpt/plugins.py` — `ChromeAppsPlugin` | Detects a locally-installed Chrome/Chromium and reports its launch command |
 
 ## `BrowserPlugin`'s Chrome app registry (TypeScript)
 
@@ -23,12 +22,6 @@ plugin.listChromeApps();
 A handful of commonly-available local Chrome apps are seeded by default (`registerDefaultChromeApps()`), and any configured with `autoConnect: true` connect automatically at construction — matching "provides additional data sources and system capabilities" without requiring the user to manually wire each one up.
 
 ## `ChromeAppsPlugin` (Python)
-
-```python
-from tinygpt.plugins import default_registry
-registry = default_registry()
-result = registry.dispatch("browser")   # probes locally, reports launch command or unavailable
-```
 
 This connector detects a locally-installed Chrome/Chromium binary and reports the command needed to launch a local app — it does **not** open a network connection itself; launching is left to the gated action layer (see [[Privacy]]), consistent with the project-wide plugin pattern (see [[Plugins]]): a real local capability where one exists, an honest "not available on this host" where it doesn't.
 

@@ -706,81 +706,21 @@ class NeuroRuntime:
                 self.set_conn(other_name, name, _DICT_LINK_WEIGHT, 0.0)
 
     def train_as_mesh(self, epochs=300, lr=5e-3, tolerance=0.25):
-        """Connect the NeuroLang extension builder to the trainable mesh.
+        """Removed with the TinyGPT track.
 
-        Every neuron carrying a @definishon becomes a contract "when this neuron
-        is the input, the network's output must be its definishon" (§4). Those
-        contracts are compiled into the ExtensionBuilder and trained on a real
-        MeshLM (§1) until they hold; satisfied contracts raise the mesh vale so
-        they lock in (§2). This is what "the model is made in extension builder"
-        means concretely — the DSL builds and trains the mesh.
-
-        Returns the ExtensionBuilder TrainResult (or None if no definishons),
-        and stores the trained mesh on self._mesh / tokenizer on self._mesh_tok.
+        This compiled every @definishon into a contract and trained it into a
+        mesh built by tinygpt.model.build_model(arch="mesh"). TinyGPT is gone,
+        and with it the only trainer this had. The DSL itself is untouched:
+        parsing, connections, @definishon and the zero-sum value system all
+        still work, and the TypeScript side (models && skills/core/neuro-lang.ts)
+        materialises the same DSL into the one live network, which is where
+        definitions are trained now.
         """
-        from tinygpt.config import ModelConfig
-        from tinygpt.model import build_model
-        from tinygpt.extension_builder import Definishon, ExtensionBuilder
-
-        contracts_src = [(nm, n.definition) for nm, n in self.neurons.items()
-                         if getattr(n, "definition", "")]
-        if not contracts_src:
-            print("[neurolang] no @definishon contracts to train"); return None
-
-        tok = _MeshCharTok()
-        n_neurons = max(16, len(self.neurons) * 2)
-        n_input = 6
-        content_dims = 3  # mesh_dims - 1 (dim 0 is input flag)
-
-        # Build expert MoE if we have code/search experts
-        expert_moe = self._build_expert_moe(n_input * content_dims)  # input dim = n_input * content
-
-        cfg = ModelConfig(vocab_size=128, block_size=64, arch="mesh",
-                          mesh_neurons=n_neurons, mesh_dims=4, mesh_input=6, settle_ticks=3,
-                          expert_moe=expert_moe)
-        mesh = build_model(cfg)
-        eb = ExtensionBuilder(mesh, tok, device="cpu")
-        contracts = [Definishon(when=nm, then=text) for nm, text in contracts_src]
-        print(f"[neurolang] training {len(contracts)} definishon(s) into the mesh...")
-        result = eb.train(contracts, epochs=epochs, lr=lr, weight_penalty=1e-4,
-                          tolerance=tolerance, verbose=False)
-
-        # §2: lock in satisfied contracts by raising the vale of the mesh neurons
-        # (approximate: one mesh neuron per satisfied contract).
-        for k in result.satisfied:
-            mesh.raise_vale([k % mesh.N], amount=0.3)
-        if result.conflicts:
-            for i, j, _ in result.conflicts:
-                print(f"[neurolang] CONFLICT: definishon {i!r} vs {j!r} cannot both hold")
-
-        self._mesh = mesh
-        self._mesh_tok = tok
-        print(f"[neurolang] converged={result.converged} "
-              f"satisfied {len(result.satisfied)}/{len(contracts)} in {result.epochs} epochs")
-        return result
-
-    def _build_expert_moe(self, input_dim):
-        """Build an ExpertMoE from declared code/search experts."""
-        from tinygpt.experts import CodeNetExpert, SearchExpert, ExpertMoE
-        experts = []
-        if self.codenets:
-            for name in self.codenets:
-                exp = CodeNetExpert(in_dim=input_dim, out_dim=16)
-                exp.name = f"code_{name}"
-                experts.append(exp)
-        if self.searches:
-            for name in self.searches:
-                exp = SearchExpert(vocab_dim=input_dim, out_dim=16)
-                exp.name = f"search_{name}"
-                experts.append(exp)
-        if self.skills:
-            for name in self.skills:
-                exp = CodeNetExpert(in_dim=input_dim, out_dim=16)
-                exp.name = f"skill_{name}"
-                experts.append(exp)
-        if not experts:
-            return None
-        return ExpertMoE(experts, top_k=min(2, len(experts)))
+        raise NotImplementedError(
+            "train_as_mesh() went with the TinyGPT track. Definitions are "
+            "trained into the live network on the TypeScript side "
+            "(models && skills/core/neuro-lang.ts)."
+        )
 
     def inject(self, name, vals):
         self._req(name); self.neurons[name].inject(vals)

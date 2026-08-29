@@ -12,7 +12,6 @@ Like the mesh itself, there are two real, connected implementations:
 |---|---|---|
 | TypeScript runtime backend | `extension-builder/builder.js` (JS-only module; no `.ts` source has ever existed here) — `ExtensionBuilder` | Project/neuron/connection CRUD, Net Search, Code-to-Net, save/install |
 | React visual editor | `src/features/builder/builder-canvas.tsx` + `use-builder.ts` | The actual drag-and-connect canvas — pointer-drag to move, click-click to connect, HTML5-drag to attach a label, click a connection's weight to delete it |
-| Python training core | `model && skills manager/tinygpt/extension_builder.py` — `ExtensionBuilder`, `Definishon` | Trains **contracts** (`when X then Y`) into a real mesh via gradient descent, then saves/installs |
 
 ## The visual editor (drag-and-connect)
 
@@ -35,15 +34,6 @@ builder.installWithQuantization(projectId, { bits: 8, ... });  // compressed, de
 This is the direct implementation of "Save projects without quantization. Install projects using quantization." — a project stays full-precision and editable until you're ready to deploy it, at which point installing quantizes it (see [[Quantization]]).
 
 ## Training contracts (`ExtensionBuilder`, Python)
-
-```python
-from tinygpt.extension_builder import Definishon, ExtensionBuilder
-
-eb = ExtensionBuilder(mesh, tokenizer, device="cpu")
-contracts = [Definishon(when="greeter", then="hello there")]
-eb.save_project("greeter.ext", contracts)          # exact, editable
-eb.install("greeter.install.ext", contracts, bits=8)  # quantized, smaller on disk
-```
 
 `eb.train(contracts, ...)` actually trains the mesh with gradient descent until each contract's constraint loss drops below tolerance (or the epoch budget runs out); satisfied contracts are the mesh's own [[Elastic-Value-Budget]] locking in via `raise_vale()`. This is also the real mechanism behind the **Skill Builder** skill (`build_skill()`, see [[Skills]]) — building an extension and building a new skill are the same operation, just registered differently afterward.
 

@@ -84,8 +84,10 @@ describe('the heavy tiers stay opt-in', () => {
   })
 
   it('still declares torch where it is genuinely needed', () => {
-    // The tinygpt transformer track is a real PyTorch model. Making the
-    // default install empty must not mean pretending that track has no needs.
+    // The Python mesh track (neurolang.py, the value system) uses tensors.
+    // Making the default install empty must not mean pretending it has no
+    // needs. The TinyGPT transformer that used to live here is gone -- torch
+    // is still declared, for the track that genuinely still uses it.
     expect(declaredPackages('model && skills manager/requirements.txt').join(' ')).toMatch(/torch/)
   })
 

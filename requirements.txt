@@ -33,9 +33,12 @@
 #
 # These are separate tracks. Install a tier only if you are actually using it.
 #
-# 1. The tinygpt transformer track ("model && skills manager/tinygpt/").
-#    A real PyTorch model -- pretraining, finetuning, the elastic mesh
-#    experiment. Genuinely needs a tensor framework.
+# 1. The Python mesh track ("model && skills manager/neurolang.py" and its
+#    value-system tests). The DSL, the zero-sum value system and the Python
+#    mesh, which use tensors. There used to be a TinyGPT transformer track here
+#    as well -- pretraining, finetuning, a checkpoint served to the chat box.
+#    It is gone: there is one model now, the all-to-all network in the
+#    TypeScript backend, and it needs no tensor framework at all.
 #
 #      pip install -r "model && skills manager/requirements.txt"
 #

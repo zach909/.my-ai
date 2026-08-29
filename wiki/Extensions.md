@@ -22,19 +22,11 @@ An extension is one of two things, distinguished the same way [[Plugins]] and [[
 
 Both are themselves entries in the [[Skills]] extension list, and both are the literal mechanism this page describes, made callable at runtime:
 
-```python
-from tinygpt.extension_builder import build_skill
-from tinygpt.plugins import build_plugin
-
-build_skill(registry, model, tokenizer, "new-skill-id", contracts, ...)   # Skill Builder
-build_plugin(registry, "new-plugin-id", "os.service", name="...")         # Plugin Builder
-```
-
 This is what "the AI creates a coding extension to permanently preserve that knowledge" looks like concretely: the same `build_skill()` call the AI would make to preserve *any* newly-learned behaviour, called on a coding-flavoured set of contracts specifically.
 
 ### `learn_and_extend()` — the autonomous flagship flow
 
-`build_skill()` trains and registers; `tinygpt.extension_builder.learn_and_extend()` is the fully autonomous version of the design notes' flagship example — "after learning to code it creates a coding extension." In one call the AI:
+`build_skill()` trains and registers. The fully autonomous version of the design notes' flagship example — "after learning to code it creates a coding extension" — used to live in the Python TinyGPT track, which has been removed; the live path is the Extension Builder grafting a skill's neurons into the one network. In one call the AI:
 
 1. trains the capability into the mesh (real gradient descent),
 2. locks the satisfied neurons in with raised vale ([[Elastic-Value-Budget]], §2 — no forgetting),
@@ -45,7 +37,7 @@ Crucially, nothing is registered or written for a capability the AI *failed* to 
 
 ### `install_extension()` — installing community skills
 
-"Users can install community skills or create new ones" (design notes, [[Platforms]]). `learn_and_extend()` is "create new ones"; `tinygpt.extension_builder.install_extension()` is the other half. It takes an `.ext` file another system authored (or a previous session saved), loads its weights into a fresh model, and registers the capability it carries as a live skill on the registry — so an extension someone else built becomes usable here, contract and all. `test_core.py`'s `test_install_community_extension` proves the full round-trip: an author system creates and shares an extension, and a fresh model + fresh registry installs it into a working, registered skill.
+"Users can install community skills or create new ones" (design notes, [[Platforms]]). Installing is the other half. It takes an `.ext` file another system authored (or a previous session saved), loads its weights into a fresh model, and registers the capability it carries as a live skill on the registry — so an extension someone else built becomes usable here, contract and all. `test_core.py`'s `test_install_community_extension` proves the full round-trip: an author system creates and shares an extension, and a fresh model + fresh registry installs it into a working, registered skill.
 
 ## The extension catalog (23 named extensions + Coding skill)
 

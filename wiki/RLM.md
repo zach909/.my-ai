@@ -13,7 +13,6 @@ There are two real, independent implementations — one per layer of the project
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `models && skills/core/rlm.ts` — `RLMTrainer` | A small Q-learning trainer: experience replay, TD-error policy updates, exploration decay, and loop detection over the mesh's own hidden state |
-| Python training core | `model && skills manager/tinygpt/rl.py` — `ReasoningLedger` | A lightweight ledger that scores and discounts repeated candidate replies during generation (`core.py`'s `--select` sampling) |
 
 ## `RLMTrainer` (TypeScript)
 
@@ -33,19 +32,9 @@ const result = await rlm.train();
 
 ## `ReasoningLedger` (Python)
 
-```python
-from tinygpt.rl import ReasoningLedger
-
-ledger = ReasoningLedger(capacity=1000, repeat_penalty=0.35)
-ledger.record("hello there")               # note that this reply was produced
-ledger.penalty("hello there")               # -> nonzero: seen before, discount it
-ranked = ledger.rescore(candidates)         # apply the discount across candidates
-ledger.save()  /  ledger.load()             # persists to --ledger (local JSON, no external API)
-```
-
 `core.py` wires this into both selection strategies:
 
-- `best_of_n` (confidence ranking) and `select_by_interference` (§5 quantum-interference selection, `tinygpt/selection.py`) both call `ledger.rescore()` before picking a winner, so a candidate that matches something already said recently is discounted regardless of which selection strategy is active.
+- `best_of_n` (confidence ranking) and interference-based selection (§5) both call `ledger.rescore()` before picking a winner, so a candidate that matches something already said recently is discounted regardless of which selection strategy is active.
 - The penalty scales with `times_seen()` — the more often a reply has recurred, the harder it's discounted, so the model is pushed toward genuinely new phrasing rather than looping on a comfortable answer.
 - State round-trips through `--ledger <path>` exactly like the empathy state and memory buffer, so a restarted session remembers what it already tried.
 
