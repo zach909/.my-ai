@@ -4623,7 +4623,15 @@ async function testZipLoopInterface() {
     const origProcess = hd.process.bind(hd);
     hd.process = (...args) => { calls++; return origProcess(...args); };
     zip.sendBytes(new Uint8Array([0b10110010, 0xff]));
-    check(calls === 16, `sendBytes() of 2 bytes drives exactly 16 settle() ticks, one per bit (got ${calls})`);
+    // 16 bits, plus one more for the learning event at the end.
+    //
+    // The bits themselves go in read-only now: learning on every bit ran a
+    // full O(N^2*D) pass per bit, which at the live mesh size was 1281 ms
+    // against 104 ms for a read-only settle, and the elastic core is meant to
+    // learn from an EVENT weighted by the input received during it. A bit is
+    // not an event; the message is. So the seventeenth tick is where the
+    // learning actually happens.
+    check(calls === 17, `sendBytes() of 2 bytes drives 16 settle() ticks, one per bit, plus one learning event (got ${calls})`);
   }
 }
 

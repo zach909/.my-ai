@@ -66,6 +66,14 @@ import { embedText } from "../models && skills/core/neuro-lang.js";
  * retrieval: this gates giving a stored fact AS the answer, so a weak or
  * incidental match must not qualify.
  */
+/**
+ * How many stored instructions go onto the Zip Loop with one message.
+ *
+ * The loop is a working context with a finite size, so every instruction put
+ * on it is room the conversation does not get. Three is enough for one skill
+ * per step of a perceive-think-act cycle, which is what the categories are.
+ */
+const PROMPTING_SKILLS_PER_TURN = 3;
 const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
 
 /**
@@ -634,6 +642,43 @@ export class NeuroclawSystem {
     //    emotionally-charged messages are retained more strongly and evicted
     //    last under capacity pressure.
     await this.zipIO.ingest(input);
+
+    // Prompting Skills enter here, as information.
+    //
+    //   Prompting Skill -> Skill Folder -> Prompt -> INPUT -> ZIP LOOP
+    //
+    // They were reachable from exactly one place, the chat-bot service, where
+    // they steer a separate procedural perceive-think-act loop. That is a
+    // real use of them and it is not this one: the architecture says the
+    // prompt is "provided to the Zip Loop as part of the information being
+    // processed", so the neural side can see the instruction alongside the
+    // question. It never was. A skill folder full of instructions had no
+    // effect whatsoever on anything the mesh computed.
+    //
+    // Only the ones that apply to what actually arrived -- a skill declares
+    // when it applies, and putting every stored instruction on the loop for
+    // every message would drown the input in advice about other tasks.
+    try {
+      const { loadRegistry } = await import("../models && skills/core/prompting-skill-store.js");
+      const registry = loadRegistry();
+      const applicable = [
+        ...registry.forStep("perception", input),
+        ...registry.forStep("cognitive", input),
+        ...registry.forStep("action", input),
+      ];
+      // Highest priority first, and capped: the loop is a working context with
+      // a size, and instructions must not crowd out the conversation.
+      const chosen = applicable
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, PROMPTING_SKILLS_PER_TURN);
+      for (const skill of chosen) {
+        await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
+      }
+    } catch {
+      // No registry on disk, or an unreadable one. A missing instruction is
+      // not a reason to drop the message it was meant to help with.
+    }
+
     const turnImportance = Math.min(1, 0.4 + Math.max(0, emotion.arousal) * 0.4);
     // Retrieve relevant prior conversation turns *before* recording the current
     // one (so the current message can't match itself). This is the continuous-
@@ -965,7 +1010,17 @@ export class NeuroclawSystem {
           // A region of one. It can grow later the way any region does; what
           // matters is that it EXISTS there, so the next time this input
           // arrives the wave arrives somewhere.
-          const parsed = JSON.parse(created) as Record<string, unknown>;
+          // Parsed leniently. A maker that returns something other than JSON
+          // still built a capability, and the graft below needs a name and a
+          // definition, both of which the learned text can supply. Letting a
+          // parse failure throw out of here silently skipped everything after
+          // it -- including recording that the build had failed, which is the
+          // one thing a failed build must not do.
+          let parsed: Record<string, unknown> = {};
+          try {
+            const candidate = JSON.parse(created) as unknown;
+            if (candidate && typeof candidate === "object") parsed = candidate as Record<string, unknown>;
+          } catch { /* not JSON: the learned text names it below */ }
           const offered = parsed.skill ?? parsed.plugin ?? parsed.name;
           const name = typeof offered === "string" && offered.trim().length > 0
             ? offered.trim()
@@ -1013,8 +1068,39 @@ export class NeuroclawSystem {
             await this.zipIO.ingest(after.needed
               ? `${outcome} The network still has nothing that handles this.`
               : `${outcome} The network now has something that handles this.`);
+            // Success or failure, observed and kept.
+            //
+            // "If it fails, the failure can be used to modify the extension or
+            // the relevant skills" -- the other half of the learning cycle,
+            // and the half that had nowhere to go. A build that left the mesh
+            // exactly as unable as before was reported onto the loop and then
+            // forgotten, so the next time the same thing arrived the system
+            // would build it again the same way and learn nothing.
+            //
+            // MistakeTracker already de-duplicates identical failures and
+            // counts recurrences, and lessons() is already read when the
+            // system plans, so recording it here is what makes a second
+            // attempt able to go differently.
+            if (after.needed) {
+              this.mistakes.record({
+                task: information,
+                description: `Built "${name}" for this and the network still has nothing that handles it.`,
+                cause: "incorrect-skill",
+                failedSkill: name,
+                prevention: `Building "${name}" from this description did not give the network a capability for it -- a different shape of extension is needed, not another copy of this one.`,
+              });
+            }
           } else {
             await this.zipIO.ingest(outcome);
+            this.mistakes.record({
+              task: information,
+              description: outcome,
+              cause: "incorrect-skill",
+              failedSkill: name,
+              prevention: graft.skipped
+                ? `Grafting "${name}" was refused: ${graft.skipped}`
+                : `Nothing joined the network when building "${name}".`,
+            });
           }
         } catch { /* unparseable creation, or the mesh is full */ }
       }

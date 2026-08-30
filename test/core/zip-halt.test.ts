@@ -16,9 +16,12 @@ import {
   ZIP_FOLDERS,
   STOP_CALL,
   NETWORK_STATE_FILE,
+  STOP_REPORT_FILE,
+  runStopCommand,
   type BitDoorway,
   type ZipTree,
 } from '../../models && skills/core/zip-halt.js';
+import { HyperDimensionalEngine, ZipLoopInterface } from '../../models && skills/core/onebrain.js';
 
 /** A doorway that replays a fixed archive, then goes quiet forever. */
 function replay(tree: ZipTree, options: { trailingNoise?: number } = {}): BitDoorway {
@@ -65,7 +68,13 @@ describe('the archive that goes through two neurons', () => {
       { quietTicks: 4, maxTicks: 120 },
     );
     expect(result.sawStop).toBe(false);
-    expect(result.reason).toBe('ceiling');
+    // The claim here is sawStop: calling `search` is not asking to finish. The
+    // ENDING is now "went-quiet" rather than "ceiling", because the replay
+    // falls silent after its one call and silence held long enough is itself a
+    // way of stopping. Neither is "complete" -- the network never said it was
+    // done -- so nothing about "a plugin call is not a stop call" has moved.
+    expect(result.reason).toBe('went-quiet');
+    expect(result.complete).toBe(false);
   });
 });
 
@@ -105,7 +114,15 @@ describe('stopping', () => {
     expect(result.reason).toBe('ceiling');
     expect(result.complete).toBe(false);
     expect(result.sawStop).toBe(false);
-    expect(result.ticks).toBe(200);
+    // The ceiling bounds the WHOLE run, input included, not just the answer.
+    // It used to cap output bytes only, so the bits going in were unbounded --
+    // and the packed form of even a two-character prompt is 408 of them. A
+    // caller asking for a ceiling of six still waited through all of that
+    // before the cap could apply to anything, which is why a bounded run
+    // could take minutes and never come back. Here the empty tree still packs
+    // to a real archive, so the output budget is 200 minus that.
+    expect(result.ticks).toBeLessThanOrEqual(200);
+    expect(result.ticks).toBeGreaterThan(100);
   });
 
   it('never un-sees a stop call once it has been seen', () => {
@@ -327,4 +344,94 @@ describe('the folders in the archive', () => {
     expect(Object.values(ZIP_FOLDERS)).not.toContain('net-skills/');
     expect(Object.values(ZIP_FOLDERS)).not.toContain('skills/');
   });
+});
+
+describe('the stop command', () => {
+  /**
+   * "When it stops it will run a command that will stop it and see if all the
+   * neuron states."
+   *
+   * The second half was never happening. `plugins/stop` existed only as a
+   * STRING to look for: asksToStop() checked whether the network had written
+   * that path, and if it had, the run ended. Nothing was ever executed, and
+   * nothing ever looked at the neurons beyond serialising them -- a capture
+   * holding 300 states for 336 neurons, or a column of NaN from a graft that
+   * went wrong, travelled back looking exactly like a healthy one.
+   */
+  const snapshotOf = (neurons: number, dimensions: number, fill: number) => {
+    const per = dimensions + 1;
+    const values = new Float32Array(neurons * per);
+    values.fill(fill);
+    return { values, neurons, dimensions };
+  };
+  const encode = (s: { values: Float32Array; neurons: number; dimensions: number }) => ({
+    shape: { neurons: s.neurons, dimensions: s.dimensions },
+    states: Buffer.from(s.values.buffer, s.values.byteOffset, s.values.byteLength).toString('base64'),
+  });
+
+  it('accounts for every neuron on a healthy run', () => {
+    const report = runStopCommand(encode(snapshotOf(16, 8, 0.2)), 'settled');
+    expect(report.reason).toBe('settled');
+    expect(report.expectedNeurons).toBe(16);
+    expect(report.statesFound).toBe(16);
+    expect(report.finite).toBe(16);
+    expect(report.allAccountedFor).toBe(true);
+    expect(report.notes).toEqual([]);
+  });
+
+  it('says so when neurons are missing from the capture', () => {
+    // The network claims 64; only 50 states came back.
+    const short = encode(snapshotOf(50, 16, 0.2));
+    short.shape.neurons = 64;
+    const report = runStopCommand(short, 'settled');
+    expect(report.allAccountedFor).toBe(false);
+    expect(report.notes.join(' ')).toContain('64 neurons but 50 states');
+  });
+
+  it('says so when a neuron comes back holding something that is not a number', () => {
+    // The failure a bad graft produced once: whole neurons of NaN, which
+    // serialise and travel back looking like any other state.
+    const broken = snapshotOf(8, 4, 0.2);
+    broken.values[3 * 8 + 1] = NaN;
+    broken.values[2 * 8 + 5] = NaN;
+    const report = runStopCommand(encode(broken), 'settled');
+    expect(report.finite).toBe(6);
+    expect(report.allAccountedFor).toBe(false);
+    expect(report.notes.join(' ')).toContain('not a number');
+  });
+
+  it('says so when the mesh came back pinned at the rail', () => {
+    const report = runStopCommand(encode(snapshotOf(16, 8, 1)), 'ceiling');
+    expect(report.saturated).toBeGreaterThan(0);
+    expect(report.notes.join(' ')).toContain('pinned at the rail');
+  });
+
+  it('says so when there is nothing to look at', () => {
+    const report = runStopCommand(undefined, undefined);
+    expect(report.reason).toBe('unknown');
+    expect(report.allAccountedFor).toBe(false);
+    expect(report.notes.join(' ')).toContain('no states at all');
+  });
+
+  it('runs on a real stopped run and leaves its findings in the tree', () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 64, dimensions: 16, propagationSteps: 16,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+      waveGain: 0.1, connectionBias: true,
+    });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const result = runUntilStopped(zip, { files: { 'prompt/prompt.txt': 'hi' } }, { quietTicks: 3, maxTicks: 120 });
+
+    expect(result.stopReport).toBeTruthy();
+    expect(result.stopReport!.expectedNeurons).toBe(64);
+    expect(result.stopReport!.allAccountedFor).toBe(true);
+    // The report comes back whatever happened, because a run that produced
+    // nothing readable is exactly when you want to know what state it left.
+    // It also rides IN the output tree -- but only when there is one: a null
+    // tree means the network said nothing, and manufacturing a tree out of
+    // files we wrote ourselves would erase that distinction.
+    if (result.tree) {
+      expect(Object.keys(result.tree.files)).toContain(STOP_REPORT_FILE);
+    }
+  }, 60_000);
 });

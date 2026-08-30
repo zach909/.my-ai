@@ -2259,6 +2259,45 @@ export class WebServer {
             return;
         }
         // GET /api/plugins — list all plugins and their status
+        // GET /api/terminals -- every background terminal and what it has said.
+        //
+        // The architecture's cross-terminal awareness: one terminal running a
+        // server, another running tests, and the agent able to see what happened
+        // in either from wherever it currently is. Both halves were missing.
+        // runBg() spawned with stdio: "ignore", so the operating system threw the
+        // output away before anything could read it, and nothing outside the
+        // tests ever called runBg at all -- so a background terminal was neither
+        // observable nor reachable.
+        //
+        // Read-only on purpose. Starting and killing processes over HTTP is a
+        // different decision with a different blast radius; this endpoint only
+        // lets you see what is already running.
+        if (pathname === '/api/terminals' && method === 'GET') {
+            try {
+                const registry = this.runner.getPluginRegistry();
+                // getPluginInstance, not getPlugin -- the latter returns the
+                // definition (name, version, capabilities), which has no terminals on
+                // it and would have made this endpoint quietly report none.
+                const terminal = registry.getPluginInstance('terminal');
+                if (!terminal?.terminals) {
+                    this.sendJson(res, { terminals: [], note: 'the terminal plug-in is not loaded' });
+                    return;
+                }
+                const terminals = terminal.terminals();
+                this.sendJson(res, {
+                    terminals,
+                    running: terminals.filter(t => t.running).length,
+                    failed: terminals.filter(t => {
+                        const code = t.exitCode;
+                        return code !== null && code !== undefined && code !== 0;
+                    }).length,
+                });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         if (pathname === '/api/plugins' && method === 'GET') {
             const registry = this.runner.getPluginRegistry();
             const plugins = registry.listPlugins();
@@ -3294,7 +3333,7 @@ export class WebServer {
         if (pathname === '/api/zip-loop/run' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
-                const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL, NETWORK_STATE_FILE } = await import('../models && skills/core/zip-halt.js');
+                const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL, NETWORK_STATE_FILE, STOP_REPORT_FILE } = await import('../models && skills/core/zip-halt.js');
                 // Three ways to say what goes in, because the whole point of an
                 // archive doorway is that complicated things fit through it: a plain
                 // prompt (dropped into input/ for you), an explicit tree of folders
@@ -3395,7 +3434,7 @@ export class WebServer {
                     return;
                 }
                 const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
-                const { runUntilStopped, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
+                const { runUntilStoppedAsync, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
                 const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
                 // Capped hard. One settle per bit means an unbounded ceiling here
                 // would be a request that never returns.
@@ -3414,7 +3453,7 @@ export class WebServer {
                     if (saved)
                         resumed = engine.restoreNetworkState(saved);
                 }
-                const result = runUntilStopped(zip, { files, binary }, { quietTicks, maxTicks });
+                const result = await runUntilStoppedAsync(zip, { files, binary }, { quietTicks, maxTicks });
                 // When it stops it saves the input of every neuron -- whatever the
                 // reason it stopped. A run cut off at the ceiling has MORE worth
                 // keeping than one that ended tidily, since its state is the only
@@ -3443,6 +3482,9 @@ export class WebServer {
                     // Where the state went, on disk and inside the archive.
                     savedNeurons,
                     stateFile: NETWORK_STATE_FILE,
+                    // What the stop command found when it looked at every neuron.
+                    stopReport: result.stopReport,
+                    stopReportFile: STOP_REPORT_FILE,
                     resumed,
                 });
             }

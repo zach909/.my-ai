@@ -3022,6 +3022,18 @@ const WAVE_FEEDBACK = 0.5;
  * sixteen after 300 ticks. Stopping a hair short means there is always
  * something left to move with, so a neuron can still change its mind.
  */
+/**
+ * How far the input a neuron received during an event may push its learning
+ * rate, as a multiple of what the average neuron received.
+ *
+ * "High input equals more change, low input equals less change" -- but a
+ * neuron that happens to be the only loud one in an otherwise quiet tick
+ * would otherwise get an unbounded rate, which would undo the stability the
+ * value half of the elastic core exists to provide.
+ */
+const INPUT_FORCE_FLOOR = 0.25;
+const INPUT_FORCE_CEILING = 3;
+
 const NETWORK_VARIABLE_LIMIT = 0.999;
 
 function clampNetworkVariable(value: number): number {
@@ -3230,6 +3242,8 @@ export class HyperDimensionalEngine {
   private definitionTargets: Map<number, Float32Array> = new Map();
   /** Neurons holding their state this tick because their group was not asked. */
   private heldIndicesScratch: Int32Array;
+  /** Who was held out of this tick, so learning can skip them. */
+  private heldThisTick: Uint8Array;
   /** Per-receiver network wave weight and bias, rebuilt each settle iteration. */
   private netWaveWeightReScratch: Float32Array;
   private netWaveWeightImScratch: Float32Array;
@@ -3239,6 +3253,8 @@ export class HyperDimensionalEngine {
   private vsScratch: Float32Array;
   private hasVScratch: Uint8Array;
   private ratesScratch: Float32Array;
+  /** How hard each neuron was driven this event -- the other half of the elastic core. */
+  private forceScratch: Float32Array;
   private deltaSumsScratch: Float32Array;
 
   /** Per-neuron wave phase (radians, wraps at 2*PI) -- advances every settle() iteration at that neuron's own waveFreq. */
@@ -3327,6 +3343,18 @@ export class HyperDimensionalEngine {
    */
   private connWaveGain: Float32Array;
   private connWavePhase: Float32Array;
+  /**
+   * cos and sin of connWavePhase, kept alongside it.
+   *
+   * The settle loop turned a phase into a wave with Math.cos and Math.sin per
+   * CONNECTION, per receiver, per iteration -- at 336 neurons and a ceiling of
+   * 32 that is 3.6 million of each, per settle, and a CPU profile put 76% of
+   * a read in settle(). The phase only moves when learning runs, so the pair
+   * is computed there instead: once per changed connection rather than once
+   * per connection per iteration.
+   */
+  private connWaveCos: Float32Array;
+  private connWaveSin: Float32Array;
   private connWaveBias: Float32Array;
   private connWaveBiasIm: Float32Array;
   /** Cos/sin of each neuron's phase, rebuilt once per iteration instead of per connection. */
@@ -3499,6 +3527,8 @@ export class HyperDimensionalEngine {
     this.ratesScratch = new Float32Array(N);
     this.deltaSumsScratch = new Float32Array(N);
 
+    this.forceScratch = new Float32Array(N);
+    this.heldThisTick = new Uint8Array(N);
     // Wave pool state -- see waveGain's doc comment on HyperConfig. Frequencies
     // are spread deterministically (not randomly) across [0.05, 0.5) radians/iteration
     // via a golden-ratio sequence, so N neurons don't cluster into just a few
@@ -3551,6 +3581,8 @@ export class HyperDimensionalEngine {
     // a reason to.
     this.connWaveGain = new Float32Array(N * N).fill(1);
     this.connWavePhase = new Float32Array(N * N);
+    this.connWaveCos = new Float32Array(N * N).fill(1);
+    this.connWaveSin = new Float32Array(N * N);
     this.connWaveBias = new Float32Array(N * N);
     this.connWaveBiasIm = new Float32Array(N * N);
   }
@@ -3644,7 +3676,21 @@ export class HyperDimensionalEngine {
     if (this.lastOutputVector) {
       const predicted = this.selfModelPredict(this.lastOutputVector);
       selfModelSurprise = this.meanAbsDiff(predicted, outputVector);
-      this.selfModelTrainStep(this.lastOutputVector, predicted, outputVector);
+      // Reading is not learning -- here too.
+      //
+      // The self-model trained on every tick, including ticks the caller had
+      // explicitly asked not to learn. So `learn: false` did not mean the
+      // network was left alone: pulling an answer out of it still changed the
+      // part that predicts its own answers, and reading the same thing twice
+      // gave two different networks. That is the exact defect already fixed
+      // for the connections, in the same method, one field over.
+      //
+      // The surprise is still MEASURED on a read-only tick, because novelty
+      // is something a caller reads and it costs a prediction either way.
+      // Only the training step is skipped.
+      if (options?.learn !== false) {
+        this.selfModelTrainStep(this.lastOutputVector, predicted, outputVector);
+      }
     }
     this.lastOutputVector = outputVector;
 
@@ -3715,6 +3761,20 @@ export class HyperDimensionalEngine {
    * silently degrades to a scan rather than returning the wrong neuron if that
    * ever stops holding.
    */
+  /**
+   * The mean energy across every neuron -- the network's own floor.
+   *
+   * What "quiet" has to be measured against: an absolute threshold that suits
+   * a small mesh calls a large one permanently noisy.
+   */
+  meanNeuronEnergy(): number {
+    const N = this.neurons.length;
+    if (N === 0) return 0;
+    let total = 0;
+    for (let i = 0; i < N; i++) total += this.neurons[i].energy;
+    return total / N;
+  }
+
   getNeuronEnergy(id: number): number {
     return this.neuronById(id)?.energy ?? 0;
   }
@@ -3877,6 +3937,7 @@ export class HyperDimensionalEngine {
     this.wavePhase.set(phase);
     this.connWaveGain.set(waveGain);
     this.connWavePhase.set(waveTurn);
+    this.refreshWavePhaseTable();
     this.connWaveBias.set(waveBias);
     this.connWaveBiasIm.set(waveBiasTurned);
     this.senderGain.set(senderGain);
@@ -4051,6 +4112,8 @@ export class HyperDimensionalEngine {
 
     this.connWaveGain = growPairs(this.connWaveGain, 1);
     this.connWavePhase = growPairs(this.connWavePhase, 0);
+    this.connWaveCos = growPairs(this.connWaveCos, 1);
+    this.connWaveSin = growPairs(this.connWaveSin, 0);
     this.connWaveBias = growPairs(this.connWaveBias, 0);
     this.connWaveBiasIm = growPairs(this.connWaveBiasIm, 0);
     this.connWaveShift = growPairs(this.connWaveShift, 0);
@@ -4101,6 +4164,8 @@ export class HyperDimensionalEngine {
     this.vsScratch = new Float32Array(newN);
     this.hasVScratch = new Uint8Array(newN);
     this.ratesScratch = new Float32Array(newN);
+    this.forceScratch = new Float32Array(newN);
+    this.heldThisTick = new Uint8Array(newN);
     this.deltaSumsScratch = new Float32Array(newN);
     this.waveAmpScratch = new Float32Array(newN);
     this.waveTermScratch = new Float32Array(newN);
@@ -4813,6 +4878,22 @@ export class HyperDimensionalEngine {
     return { re: new Float32Array(this.waveReadRe), im: new Float32Array(this.waveReadIm) };
   }
 
+  /** The settle loop's iteration ceiling. */
+  getPropagationSteps(): number {
+    return this.config.propagationSteps;
+  }
+
+  /**
+   * Change the settle ceiling.
+   *
+   * For callers that stream input in and read answers out with different
+   * needs -- the Zip Loop feeds a bit with a couple of steps and settles fully
+   * only when producing output.
+   */
+  setPropagationSteps(steps: number): void {
+    if (Number.isFinite(steps) && steps >= 1) this.config.propagationSteps = Math.floor(steps);
+  }
+
   /** Content dimensions per neuron (excludes the reserved input-flag dimension). */
   getDimensions(): number {
     return this.config.dimensions;
@@ -5283,6 +5364,7 @@ export class HyperDimensionalEngine {
     const nonDrivenIndices = this.nonDrivenIndicesScratch;
     let drivenCount = 0;
     let nonDrivenCount = 0;
+    this.heldThisTick.fill(0);
     // A neuron in a group nobody asked for this tick HOLDS: it keeps the state
     // it had instead of being recomputed. Driven always wins -- something
     // being fed from outside is being fed whatever else is true of it -- and
@@ -5304,6 +5386,7 @@ export class HyperDimensionalEngine {
         const groups = this.neuronGroups.get(i);
         if (groups !== undefined && !anyGroupActive(groups, activeGroups!)) {
           heldIndices[heldCount++] = i;
+          this.heldThisTick[i] = 1;
           continue;
         }
       }
@@ -5397,7 +5480,8 @@ export class HyperDimensionalEngine {
     const prevWaveRe = this.prevWaveRe;
     const prevWaveIm = this.prevWaveIm;
     const connWaveGain = this.connWaveGain;
-    const connWavePhase = this.connWavePhase;
+    const connWaveCos = this.connWaveCos;
+    const connWaveSin = this.connWaveSin;
     const connWaveBias = this.connWaveBias;
     const connWaveBiasIm = this.connWaveBiasIm;
     const phaseCos = this.phaseCos;
@@ -5596,8 +5680,12 @@ export class HyperDimensionalEngine {
           // inside this neuron exactly as they would in the big pool, and what
           // they add up to is this neuron's wave.
           const editRow = i * N;
-          let heardRe = 0;
+          // The running product starts at 1 (the multiplicative identity),
+          // with its size carried in logs alongside.
+          let heardRe = 1;
           let heardIm = 0;
+          let heardLogMag = 0;
+          let heardCount = 0;
           for (let k = 0; k < N; k++) {
             // Not from itself. A neuron hearing its own wave back through its
             // own connection is a loop with nothing opposing it; what it does
@@ -5609,11 +5697,12 @@ export class HyperDimensionalEngine {
             const inIm = prevWaveIm[k];
 
             const gain = connWaveGain[editRow + k];
-            const turn = connWavePhase[editRow + k];
             // The connection's own wave weight, as a wave: how much of what
-            // arrives gets through, and how far it is turned.
-            const ownWeightRe = gain * Math.cos(turn);
-            const ownWeightIm = gain * Math.sin(turn);
+            // arrives gets through, and how far it is turned. cos and sin of
+            // the turn are kept beside the phase and refreshed when learning
+            // moves it -- see connWaveCos.
+            const ownWeightRe = gain * connWaveCos[editRow + k];
+            const ownWeightIm = gain * connWaveSin[editRow + k];
 
             // The two weights added, and the two biases added. This pair IS
             // the wave of this connection -- part it, part what the entire
@@ -5628,8 +5717,29 @@ export class HyperDimensionalEngine {
             const biasRe = connWaveBias[editRow + k] + netWaveBiasRe[i] * share;
             const biasIm = connWaveBiasIm[editRow + k] + netWaveBiasIm[i] * share;
 
-            let editedRe = weightRe * inRe - weightIm * inIm + biasRe;
-            let editedIm = weightRe * inIm + weightIm * inRe + biasIm;
+            // The weight and the bias MAKE A WAVE, and that wave multiplies
+            // the sender's.
+            //
+            // This used to be `weight * wave + bias` -- the numeric step's
+            // shape, x*w + b, borrowed for the wave. It is the wrong shape
+            // here. On the numeric side the bias is what a connection
+            // contributes with nothing arriving; on the wave side there is no
+            // such thing, because a wave with nothing arriving is not a small
+            // wave, it is no wave. Adding a bias gave every connection a
+            // standing wave of its own that no sender could cancel, and a
+            // standing wave that cannot be cancelled is exactly what
+            // interference is not.
+            //
+            // So the two combined numbers become one editing wave, added the
+            // same way the weights and biases were each combined, and the
+            // edit is a pure complex multiply: amplitudes multiply, phases
+            // add. A silent sender stays silent through every connection it
+            // has, and two edited copies of opposite waves are still exactly
+            // opposite when they meet in the pool.
+            const editRe = weightRe + biasRe;
+            const editIm = weightIm + biasIm;
+            let editedRe = editRe * inRe - editIm * inIm;
+            let editedIm = editRe * inIm + editIm * inRe;
 
             // ...and its shift weight, reaching across to the neighbouring
             // frequency in the shared pool the way connShift reaches across to
@@ -5643,15 +5753,60 @@ export class HyperDimensionalEngine {
               editedIm += shiftWeight * prevPoolIm[neighbour];
             }
 
-            heardRe += editedRe;
-            heardIm += editedIm;
+            // The receiving neuron MULTIPLIES the waves coming into it.
+            //
+            // Adding them was the numeric side's habit again. Multiplying is
+            // what one wave does to another: amplitudes multiply and phases
+            // add, so a connection that turns a wave turns everything that
+            // reaches this neuron through it.
+            //
+            // Two things make the literal product unusable in an
+            // all-connected mesh, and both are handled here rather than
+            // pretended away:
+            //
+            //   A silent sender would annihilate everything. Zero times
+            //   anything is zero, and on a fresh network most neurons have no
+            //   wave yet, so one silent connection would leave the whole mesh
+            //   permanently silent. Senders with no wave are skipped -- they
+            //   contribute nothing, which is what having nothing to say
+            //   should mean.
+            //
+            //   The magnitude would vanish or explode with neuron count. Sixty
+            //   connections each around 0.5 multiply to 1e-19. So the
+            //   magnitudes are combined as a GEOMETRIC mean -- the nth root of
+            //   the product -- which is to multiplication exactly what the
+            //   mean is to addition, and is the same rule the rest of this
+            //   file already follows for every network-wide combination.
+            //
+            // The running product is kept at unit magnitude and the size
+            // carried separately in logs, so it cannot underflow on the way.
+            const mag = Math.sqrt(editedRe * editedRe + editedIm * editedIm);
+            if (mag > 0) {
+              heardLogMag += Math.log(mag);
+              const ur = editedRe / mag;
+              const ui = editedIm / mag;
+              const nr = heardRe * ur - heardIm * ui;
+              heardIm = heardRe * ui + heardIm * ur;
+              heardRe = nr;
+              heardCount++;
+            }
           }
 
-          // A mean over the connections, not a sum, for the same reason every
-          // other network-wide combination here is: a sum grows with neuron
-          // count until the wave term alone saturates every neuron.
-          heardRe *= invN;
-          heardIm *= invN;
+          if (heardCount > 0) {
+            // The nth root: geometric mean of the magnitudes, and the phases
+            // averaged rather than left summed. A summed phase over sixty
+            // connections wraps many times, so two nearly identical inputs
+            // would land at unrelated phases and nothing stable could be
+            // represented -- the root is what keeps multiplication's character
+            // without that.
+            const scale = Math.exp(heardLogMag / heardCount);
+            const angle = Math.atan2(heardIm, heardRe) / heardCount;
+            heardRe = scale * Math.cos(angle);
+            heardIm = scale * Math.sin(angle);
+          } else {
+            heardRe = 0;
+            heardIm = 0;
+          }
 
           // The neuron's own bias on the wave: what it contributes with
           // nothing arriving, the wave beside bias[i][d].
@@ -5786,22 +5941,75 @@ export class HyperDimensionalEngine {
           for (let k = 0; k < N; k++) sent += row[k] * senderGain[k];
           meanRow[d] = sent * invN;
 
-          for (let i = 0; i < N; i++) {
-            const varRow = i * N;
-            let modulation = 0;
-            let offset = 0;
-            for (let k = 0; k < N; k++) {
-              const state = row[k];
-              modulation += state * modWeight[varRow + k];
-              offset += state * addWeight[varRow + k];
+        }
+
+        // Four dimensions at a time.
+        //
+        // modWeight and addWeight are indexed [i][k] with no dimension in
+        // them, so a loop with d outermost re-reads both N*N arrays once per
+        // dimension: at 336 neurons and 65 dimensions that is 29 MB of
+        // traffic per iteration for two 450 KB arrays, and the pass spends
+        // its time fetching the same weights again. Taking four dimensions
+        // per pass fetches them a quarter as often while every stream --
+        // the four state rows and the two weight rows -- stays sequential.
+        for (let d0 = 0; d0 < D; d0 += HYPER_DIM_TILE) {
+          const dEnd = d0 + HYPER_DIM_TILE <= D ? d0 + HYPER_DIM_TILE : D;
+          if (dEnd - d0 === HYPER_DIM_TILE) {
+            // The whole tile, with no per-element branch in the inner loop.
+            const r0 = stateViews[d0];
+            const r1 = stateViews[d0 + 1];
+            const r2 = stateViews[d0 + 2];
+            const r3 = stateViews[d0 + 3];
+            for (let i = 0; i < N; i++) {
+              const varRow = i * N;
+              let m0 = 0, m1 = 0, m2 = 0, m3 = 0;
+              let o0 = 0, o1 = 0, o2 = 0, o3 = 0;
+              for (let k = 0; k < N; k++) {
+                const w = modWeight[varRow + k];
+                const a = addWeight[varRow + k];
+                const s0 = r0[k], s1 = r1[k], s2 = r2[k], s3 = r3[k];
+                m0 += s0 * w; o0 += s0 * a;
+                m1 += s1 * w; o1 += s1 * a;
+                m2 += s2 * w; o2 += s2 * a;
+                m3 += s3 * w; o3 += s3 * a;
+              }
+              const base = i * D + d0;
+              const say0 = m0 * invN, say1 = m1 * invN, say2 = m2 * invN, say3 = m3 * invN;
+              gainRow[base] = hyperGain * say0;
+              gainRow[base + 1] = hyperGain * say1;
+              gainRow[base + 2] = hyperGain * say2;
+              gainRow[base + 3] = hyperGain * say3;
+              // 1 when off, so off is untouched rather than scaled by
+              // something near 1.
+              scaleRow[base] = hyperScale === 0 ? 1 : hyperScale * say0;
+              scaleRow[base + 1] = hyperScale === 0 ? 1 : hyperScale * say1;
+              scaleRow[base + 2] = hyperScale === 0 ? 1 : hyperScale * say2;
+              scaleRow[base + 3] = hyperScale === 0 ? 1 : hyperScale * say3;
+              addRow[base] = hyperAdd * o0 * invN;
+              addRow[base + 1] = hyperAdd * o1 * invN;
+              addRow[base + 2] = hyperAdd * o2 * invN;
+              addRow[base + 3] = hyperAdd * o3 * invN;
             }
-            const say = modulation * invN;
-            const at = i * D + d;
-            gainRow[at] = hyperGain * say;
-            // 1 when off, so off is untouched rather than scaled by something
-            // near 1.
-            scaleRow[at] = hyperScale === 0 ? 1 : hyperScale * say;
-            addRow[at] = hyperAdd * offset * invN;
+            continue;
+          }
+          // The leftover dimensions, one at a time.
+          for (let d = d0; d < dEnd; d++) {
+            const row = stateViews[d];
+            for (let i = 0; i < N; i++) {
+              const varRow = i * N;
+              let modulation = 0;
+              let offset = 0;
+              for (let k = 0; k < N; k++) {
+                const state = row[k];
+                modulation += state * modWeight[varRow + k];
+                offset += state * addWeight[varRow + k];
+              }
+              const say = modulation * invN;
+              const at = i * D + d;
+              gainRow[at] = hyperGain * say;
+              scaleRow[at] = hyperScale === 0 ? 1 : hyperScale * say;
+              addRow[at] = hyperAdd * offset * invN;
+            }
           }
         }
       } else {
@@ -6152,6 +6360,58 @@ export class HyperDimensionalEngine {
     const defaultRate = this.config.learningRate;
     for (let i = 0; i < N; i++) {
       rates[i] = learningRates?.get(i) ?? defaultRate;
+    }
+
+    // And how much input the neuron was given during this event.
+    //
+    // The elastic core has two halves and only one was here. A neuron's VALUE
+    // made it change less -- high points, slow to re-weight, resistant to
+    // having its state overwritten -- and that half was real. The other half
+    // was not: how hard a neuron was driven made no difference at all. The
+    // rate was a pure function of value points, so a neuron sitting almost
+    // silent through an event learned from it exactly as fast as the neuron
+    // the event was about.
+    //
+    // Force is measured RELATIVE to what the network is doing this tick, not
+    // as an absolute. An absolute would quietly rescale every learning rate
+    // in the system the moment the mesh got louder or quieter, which is a
+    // change to everything rather than to the thing being described. Relative
+    // means the average neuron learns at the rate it always did, a neuron
+    // driven harder than its neighbours learns faster, and one barely touched
+    // learns slower.
+    // A neuron held out of this event does not learn from it.
+    //
+    // Holding was only ever applied to the state: a neuron whose group was
+    // not asked for kept what it had instead of being recomputed -- and then
+    // learned from the tick anyway, as if it had taken part. That was
+    // invisible while every rate was a pure function of value points. Once
+    // the rate follows the input a neuron actually received, it stopped
+    // being invisible and started being backwards: a held neuron keeps a
+    // stale state, which reads as high force, so the neurons that sat the
+    // event out were learning FASTER than the ones it happened to.
+    for (let i = 0; i < N; i++) {
+      if (this.heldThisTick[i]) rates[i] = 0;
+    }
+
+    let forceSum = 0;
+    for (let i = 0; i < N; i++) {
+      const si = this.neurons[i].state;
+      let energy = 0;
+      for (let d = 1; d < D; d++) energy += si[d] * si[d];
+      const force = Math.sqrt(energy / Math.max(1, D - 1));
+      this.forceScratch[i] = force;
+      forceSum += force;
+    }
+    const meanForce = forceSum / Math.max(1, N);
+    if (meanForce > 1e-9) {
+      for (let i = 0; i < N; i++) {
+        // Bounded either side: a neuron that happens to be the only loud one
+        // in a quiet tick must not get a rate large enough to undo the
+        // stability the value half is there to provide.
+        const relative = this.forceScratch[i] / meanForce;
+        rates[i] *= relative < INPUT_FORCE_FLOOR ? INPUT_FORCE_FLOOR
+          : (relative > INPUT_FORCE_CEILING ? INPUT_FORCE_CEILING : relative);
+      }
     }
 
     const connDiag = this.connDiag;
@@ -6910,6 +7170,15 @@ export class HyperDimensionalEngine {
    * a half-turn, and the phase term already expresses that. Two ways of saying
    * the same thing let learning oscillate between them forever.
    */
+  /** Rebuild the whole cos/sin table -- after a restore, where every phase changed at once. */
+  private refreshWavePhaseTable(): void {
+    const turn = this.connWavePhase;
+    for (let i = 0; i < turn.length; i++) {
+      this.connWaveCos[i] = Math.cos(turn[i]);
+      this.connWaveSin[i] = Math.sin(turn[i]);
+    }
+  }
+
   private learnWaveConnections(rates: Float32Array): void {
     const N = this.neurons.length;
     const amplitude = this.waveAmpScratch;
@@ -6959,6 +7228,9 @@ export class HyperDimensionalEngine {
         nextTurn %= TWO_PI;
         if (nextTurn < 0) nextTurn += TWO_PI;
         turn[row + k] = nextTurn;
+        // The pair the settle loop reads instead of recomputing it.
+        this.connWaveCos[row + k] = Math.cos(nextTurn);
+        this.connWaveSin[row + k] = Math.sin(nextTurn);
 
         // The bias: what this connection contributes with nothing arriving.
         // A wave in its own right, so both halves move, along the phase the
@@ -7276,12 +7548,37 @@ const ZIP_LOOP_NO_DRIVEN: Set<number> = new Set<number>();
 
 /** Below this, an output neuron counts as saying nothing rather than saying zero. */
 const SILENT_OUTPUT = 1e-6;
+/**
+ * How far above the network's own mean energy an output neuron must sit to
+ * count as speaking.
+ *
+ * Above 1 because being exactly as active as the average neuron is what every
+ * neuron in a resting mesh is doing.
+ */
+const SILENT_OUTPUT_RATIO = 1.5;
+/**
+ * Settle iterations at or below which a read counts as the mesh having
+ * nothing further to work out. Above one, because a network still developing
+ * an answer takes several -- measured, 8 to 12 while it was still moving.
+ */
+const ZIP_SETTLED_ITERATIONS = 2;
+/** Dimensions the hyperdimensional pass handles per sweep of the weights. */
+const HYPER_DIM_TILE = 4;
 
 /** The wave the Zip Loop's bit neurons share. Its value does not matter; that all four share it does. */
 const ZIP_BIT_FREQUENCY = 0.25;
 
 /** Shared options for every read tick: reading the network must not rewrite it. */
 const ZIP_LOOP_READ_ONLY: ProcessOptions = { learn: false };
+/**
+ * Settle iterations while a bit is being streamed IN.
+ *
+ * Not one: a single step would leave the bit sitting on the input neuron
+ * without reaching anything. Not the full ceiling either -- that is for
+ * producing an answer, and paying it per bit is what made a two-character
+ * prompt take over eight minutes to say.
+ */
+const ZIP_INPUT_STEPS = 2;
 
 export class ZipLoopInterface {
   /** Constant per-interface drive sets, built once instead of per bit (see sendBit()). */
@@ -7290,6 +7587,10 @@ export class ZipLoopInterface {
   /** Reused input vectors; engine dimensions are fixed at construction, so these never need rebuilding. */
   private pulseScratch: number[] | null = null;
   private idleScratch: number[] | null = null;
+  /** The last bit fed in, so the learning pass can re-drive it. */
+  private lastBit: 0 | 1 | null = null;
+  /** Settle iterations the last output read needed. */
+  private lastSettleIterations = Number.MAX_SAFE_INTEGER;
 
   constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds) {
     this.drivenBit0 = new Set([ids.bit0In]);
@@ -7311,12 +7612,20 @@ export class ZipLoopInterface {
   }
 
   /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
+  /** One byte in, MSB-first, without ending the message. */
+  sendByte(byte: number): void {
+    for (let b = 7; b >= 0; b--) this.sendBit(((byte >> b) & 1) as 0 | 1);
+  }
+
+  /** Streams every bit in, then learns from the message as one event. */
   sendBytes(bytes: Uint8Array): void {
     for (const byte of bytes) {
       for (let b = 7; b >= 0; b--) {
         this.sendBit(((byte >> b) & 1) as 0 | 1);
       }
     }
+    // The whole message has arrived: THIS is the event.
+    this.learnFromEvent();
   }
 
   /**
@@ -7329,7 +7638,82 @@ export class ZipLoopInterface {
    * fresh `dims`-length array plus a fresh Set for values that never change.
    */
   sendBit(bit: 0 | 1): void {
-    this.engine.process(this.pulseVector(), undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0);
+    // Feeding a bit in is not an event to learn from.
+    //
+    // This used to learn on EVERY bit, and learning is the expensive half of
+    // a tick -- O(N^2 * D) across the whole mesh, plus the row normalisation
+    // and the connection-bias pass. Measured on the live network of 336
+    // neurons at 64 dimensions: 1281 ms per input bit against 104 ms for a
+    // read-only settle. Feeding a 51-byte archive -- the packed form of the
+    // two-character prompt "hi" -- is 408 bits, so 522 SECONDS went by before
+    // the network had finished hearing the question. The Zip Loop endpoint
+    // never returned, and because the settle loop is synchronous it took the
+    // whole server down with it: every other request, health checks included,
+    // got nothing while it ran.
+    //
+    // It is also the wrong shape. The elastic core learns from an EVENT,
+    // weighted by how much input each neuron received during it. A single bit
+    // is not an event; the message is. So the bits go in read-only and the
+    // learning happens once, in learnFromEvent(), when the whole thing has
+    // arrived -- which is both 400 times cheaper and closer to what the
+    // architecture actually says.
+    //
+    // And a bit arriving is one step of propagation, not a settle to
+    // convergence. Every bit perturbs the network, so the settle loop never
+    // converged early and ran its full ceiling -- 32 iterations of an
+    // O(N^2 * D) pass -- for each of the 408 bits in a two-character prompt.
+    // Settling to convergence is what you do when you want the ANSWER, and
+    // that still happens: nextOutputByte() and learnFromEvent() both settle
+    // fully. Streaming the question in does not need it.
+    this.lastBit = bit;
+    const ceiling = this.engine.getPropagationSteps();
+    this.engine.setPropagationSteps(ZIP_INPUT_STEPS);
+    try {
+      this.engine.process(
+        this.pulseVector(),
+        undefined,
+        bit === 1 ? this.drivenBit1 : this.drivenBit0,
+        undefined,
+        ZIP_LOOP_READ_ONLY,
+      );
+    } finally {
+      this.engine.setPropagationSteps(ceiling);
+    }
+  }
+
+  /**
+   * Learn from everything that has just arrived, once.
+   *
+   * The counterpart to feeding bits read-only: the mesh has now settled around
+   * the whole message, so this is the moment its state means "the event", and
+   * one learning pass here is what the elastic core is described as doing.
+   */
+  learnFromEvent(): void {
+    if (this.lastBit === null) return;
+    // Learn while the input is still THERE.
+    //
+    // The first version of this drove nothing, on an idle vector, and learned
+    // whatever the network held afterwards. By then it held almost nothing:
+    // with no drive the states fell to 4e-6, so the Hebbian step came out at
+    // 1e-11 and vanished under Float32 against weights of 0.2 -- measured,
+    // exactly zero movement from a whole byte. The event was over before the
+    // learning ran.
+    //
+    // So the last bit of the message is re-driven with learning on, at the
+    // full settle ceiling. The states then mean "the message just arrived",
+    // which is the moment the elastic core is meant to learn from, and the
+    // input force each neuron felt is real rather than residual.
+    this.engine.process(
+      this.pulseVector(),
+      undefined,
+      this.lastBit === 1 ? this.drivenBit1 : this.drivenBit0,
+    );
+  }
+
+  /** Lazily built idle vector, shared with nextOutputByte(). */
+  private idleVector(): number[] {
+    if (!this.idleScratch) this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
+    return this.idleScratch;
   }
 
   /** Lazily built (engine dimensions are fixed at construction) and reused by every sendBit(). */
@@ -7364,7 +7748,12 @@ export class ZipLoopInterface {
       // to apply a full Hebbian update, so pulling an answer out of the
       // network changed the network it was pulled from, and reading the same
       // thing twice gave two different networks.
-      this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+      const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+      // How hard the mesh had to work to reach a stable state on this tick.
+      // The smallest of the eight is what the byte cost at its easiest.
+      if (i === 0 || read.settleIterations > this.lastSettleIterations) {
+        this.lastSettleIterations = read.settleIterations;
+      }
       bits[i] = this.engine.getNeuronEnergy(bit1Out) > this.engine.getNeuronEnergy(bit0Out) ? 1 : 0;
     }
     return bits;
@@ -7392,13 +7781,68 @@ export class ZipLoopInterface {
     let heard = false;
     for (let b = 0; b < 8; b++) {
       // Reading, so not learning -- see receiveBits().
-      this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+      const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+      // How hard the mesh worked to reach a stable state on this tick. The
+      // HARDEST of the eight is what the byte cost: a byte is settled only if
+      // the network settled on every bit of it. Taking the easiest instead
+      // called every byte settled, because at least one bit of any byte lands
+      // in one iteration.
+      if (b === 0 || read.settleIterations > this.lastSettleIterations) {
+        this.lastSettleIterations = read.settleIterations;
+      }
       const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
       const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
-      if (zero > SILENT_OUTPUT || one > SILENT_OUTPUT) heard = true;
+      // Speaking means standing out from the network's own floor, not
+      // clearing a fixed constant.
+      //
+      // SILENT_OUTPUT is 1e-6, which suited a small mesh where a quiet neuron
+      // really did sit near zero. On the live network of 336 neurons every
+      // neuron carries residual activity around 1e-3 -- a thousand times the
+      // threshold -- so the output neurons NEVER read as silent and the run
+      // could never end by going quiet. Measured over five reads: bit0Out
+      // 9.98e-4 against bit1Out 9.93e-4, both far above the line and barely
+      // half a percent apart, which is noise being reported as speech.
+      //
+      // Against the network's own mean energy instead, the same way the
+      // capability gap is measured against what a region usually manages. A
+      // network whose output neurons are merely as active as everything else
+      // is not saying anything; one where they stand above the rest is.
+      const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
+      const line = floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
+      if (zero > line || one > line) heard = true;
       byte = (byte << 1) | (one > zero ? 1 : 0);
     }
     return heard ? byte : null;
+  }
+
+  /**
+   * Did the network reach a stable state while producing the last byte?
+   *
+   * This is the stop signal the architecture actually describes -- "the
+   * process continues until the network reaches a sufficiently stable state,
+   * and that settled state can be interpreted as the output" -- and nothing
+   * was reading it.
+   *
+   * The two signals that were being read cannot fire here. The stop call
+   * needs the network trained to spell a particular string. Silence cannot
+   * happen at all: the output neurons sit in the same all-connected mesh as
+   * everything else, so they are driven by all 336 neurons and never go
+   * quiet. Measured, the output is not speech but a drifting bit pattern --
+   * f8 78 78 78 7c 3c 3c 3c 3e 1e 1f 07 -- a mesh oscillating, with nothing
+   * left to say and no way to say so.
+   *
+   * Settling it can do, and does: 12, 1, 1, 1, 1, 8, 1, 1, 1, 9, 1, 1
+   * iterations against a ceiling of 32. A run of cheap settles means the mesh
+   * has reached its steady state and further reads only draw out more of the
+   * same oscillation.
+   */
+  /** Iterations the hardest bit of the last byte needed. */
+  worstSettleIterations(): number {
+    return this.lastSettleIterations;
+  }
+
+  settledWhileReading(): boolean {
+    return this.lastSettleIterations <= ZIP_SETTLED_ITERATIONS;
   }
 
   /**
