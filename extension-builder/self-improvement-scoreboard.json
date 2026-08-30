@@ -1,0 +1,25 @@
+{
+  "targets": {
+    "extension-builder/build-self-knowledge-network.mjs": {
+      "bestHyperparams": {
+        "epochs": 1384,
+        "learningRate": 0.03130883046036128,
+        "tolerance": 0.0007314382063533505
+      },
+      "bestScore": 1,
+      "history": [
+        {
+          "at": "2026-08-09T22:25:00.036Z",
+          "candidate": {
+            "epochs": 1384,
+            "learningRate": 0.03130883046036128,
+            "tolerance": 0.0007314382063533505
+          },
+          "ok": true,
+          "score": 1,
+          "runnerOk": true
+        }
+      ]
+    }
+  }
+}
