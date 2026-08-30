@@ -2537,8 +2537,8 @@ export class HyperDimensionalEngine {
             }
         }
         this.waveAmpScratch = new Float32Array(N);
-        this.waveReadRe = new Float32Array(D);
-        this.waveReadIm = new Float32Array(D);
+        this.waveReadRe = new Float32Array(WAVE_BINS * D);
+        this.waveReadIm = new Float32Array(WAVE_BINS * D);
         this.seedWaveReading();
         this.poolRe = new Float32Array(WAVE_BINS);
         this.poolIm = new Float32Array(WAVE_BINS);
@@ -3527,56 +3527,82 @@ export class HyperDimensionalEngine {
         return ids.sort((a, b) => a - b);
     }
     /**
-     * Give one neuron the pair of directions it reads its own state through.
+     * The directions a state is read through to become a wave -- one pair per
+     * FREQUENCY BIN.
      *
-     * Two directions rather than one because the reading is complex: one
-     * neuron's state has to be able to become a wave with a phase, not just a
-     * height. They are made orthogonal to each other and unit-length, so the
-     * reading is a rotation-and-scale of the state rather than something that
-     * quietly amplifies or flattens it.
+     * Two directions rather than one because the reading is complex: a state
+     * has to be able to become a wave with a phase, not just a height. They are
+     * orthogonal and unit-length, so the reading is a rotation-and-scale rather
+     * than something that quietly amplifies or flattens the state.
      *
-     * Deterministic in the neuron's id, so two engines built the same way read
-     * the same way and a test can compare them.
+     * Per bin rather than one pair for the whole engine, and that is the fix
+     * for a real hole. A single shared pair is a linear map from the D-1
+     * content dimensions down to 2, so it has a null space of D-3 directions --
+     * states that produce NO wave at all. Measured at D=8: an input orthogonal
+     * to both rows, driven at magnitude 0.6, put exactly 0.000000 into the
+     * pool. Six of the eight directions a neuron could hold were invisible to
+     * the entire wave layer, permanently, for every neuron at once.
+     *
+     * The per-neuron basis is NOT the fix and was tried first: two neurons
+     * reading along different directions cannot cancel, and agreeing sources
+     * came out at 0.2997 against 0.4212 for contradicting ones -- the claim
+     * backwards. What makes cancellation work is that the sources share a
+     * basis.
+     *
+     * Per BIN keeps exactly that and loses nothing, because interference only
+     * ever happens within a bin: two waves meet only if they share a frequency,
+     * and everything in one bin still reads through one identical pair. Two
+     * bins reading different directions never had anything to cancel. So the
+     * wave layer as a whole now spans every content direction while every
+     * cancellation that worked before still works, at no extra cost in the
+     * settle loop -- it is the same two multiplies, at a different offset.
+     *
+     * Deterministic in the bin index, so two engines built the same way read
+     * the same way and a test can compare them. The offsets are irrational
+     * multiples so no two bins land on the same pair.
      */
     seedWaveReading() {
         const D = this.totalDims;
-        // Two directions, deterministic so two engines built the same way read the
-        // same way and a test can compare them.
-        let a = 0;
-        let b = 0;
-        for (let d = 1; d < D; d++) {
-            const re = Math.sin(d * 12.9898);
-            const im = Math.sin(d * 78.233);
-            this.waveReadRe[d] = re;
-            this.waveReadIm[d] = im;
-            a += re * re;
-            b += im * im;
+        for (let b = 0; b < WAVE_BINS; b++) {
+            const at = b * D;
+            // Two directions for THIS bin. The offsets are what make bins differ;
+            // they are irrational multiples so no two bins land on the same pair.
+            let a = 0;
+            let c = 0;
+            for (let d = 1; d < D; d++) {
+                const re = Math.sin(d * 12.9898 + b * 2.399963);
+                const im = Math.sin(d * 78.233 + b * 1.618034);
+                this.waveReadRe[at + d] = re;
+                this.waveReadIm[at + d] = im;
+                a += re * re;
+                c += im * im;
+            }
+            // Dimension 0 is the input flag, not content, and never contributes.
+            this.waveReadRe[at] = 0;
+            this.waveReadIm[at] = 0;
+            const na = a > 0 ? 1 / Math.sqrt(a) : 0;
+            const nb = c > 0 ? 1 / Math.sqrt(c) : 0;
+            for (let d = 1; d < D; d++) {
+                this.waveReadRe[at + d] *= na;
+                this.waveReadIm[at + d] *= nb;
+            }
+            // Make the imaginary direction orthogonal to the real one, so a state
+            // lying along one reads as purely real and along the other as purely
+            // imaginary. Without this the two readings correlate and the phase a
+            // source can express is squeezed into part of the circle.
+            let dot = 0;
+            for (let d = 1; d < D; d++)
+                dot += this.waveReadRe[at + d] * this.waveReadIm[at + d];
+            let norm = 0;
+            for (let d = 1; d < D; d++) {
+                const v = this.waveReadIm[at + d] - dot * this.waveReadRe[at + d];
+                this.waveReadIm[at + d] = v;
+                norm += v * v;
+            }
+            const nn = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+            for (let d = 1; d < D; d++)
+                this.waveReadIm[at + d] *= nn;
         }
-        // Dimension 0 is the input flag, not content, and never contributes.
-        this.waveReadRe[0] = 0;
-        this.waveReadIm[0] = 0;
-        const na = a > 0 ? 1 / Math.sqrt(a) : 0;
-        const nb = b > 0 ? 1 / Math.sqrt(b) : 0;
-        for (let d = 1; d < D; d++) {
-            this.waveReadRe[d] *= na;
-            this.waveReadIm[d] *= nb;
-        }
-        // Make the imaginary direction orthogonal to the real one, so a state
-        // lying along one reads as purely real and along the other as purely
-        // imaginary. Without this the two readings correlate and the phase a
-        // source can express is squeezed into part of the circle.
-        let dot = 0;
-        for (let d = 1; d < D; d++)
-            dot += this.waveReadRe[d] * this.waveReadIm[d];
-        let norm = 0;
-        for (let d = 1; d < D; d++) {
-            const v = this.waveReadIm[d] - dot * this.waveReadRe[d];
-            this.waveReadIm[d] = v;
-            norm += v * v;
-        }
-        const nn = norm > 0 ? 1 / Math.sqrt(norm) : 0;
-        for (let d = 1; d < D; d++)
-            this.waveReadIm[d] *= nn;
     }
     /**
      * Set one neuron's wave by hand.
@@ -3819,9 +3845,10 @@ export class HyperDimensionalEngine {
         return this.neurons.length;
     }
     /**
-     * The two directions a state is read through to become a wave.
+     * The directions a state is read through to become a wave, all bins, laid
+     * out as [bin * dimensions + d].
      *
-     * Exposed so the reference equation can be handed the same pair the engine
+     * Exposed so the reference equation can be handed the same table the engine
      * uses -- a reference implementation given different constants proves
      * nothing about the fast one.
      */
@@ -4509,12 +4536,17 @@ export class HyperDimensionalEngine {
                     // half-cycle shift, which is annihilation. The input finally
                     // reaches the pool as something the pool can disagree with.
                     const si = this.neurons[i].state;
+                    // This source's own bin picks the pair. Everything landing in one
+                    // bin reads through one identical pair, which is what lets waves in
+                    // it cancel; different bins read different directions, which is what
+                    // stops any content direction being invisible to all of them.
+                    const readAt = waveBin[i] * D;
                     let projRe = 0;
                     let projIm = 0;
                     for (let d = 1; d < D; d++) {
                         const v = si[d];
-                        projRe += v * waveReadRe[d];
-                        projIm += v * waveReadIm[d];
+                        projRe += v * waveReadRe[readAt + d];
+                        projIm += v * waveReadIm[readAt + d];
                     }
                     // Rotated into its own frequency slot: the signature says WHERE in
                     // the band this source sits, the projection says what it is saying

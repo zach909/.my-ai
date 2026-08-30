@@ -434,6 +434,56 @@ export function isAuthPublicRoute(pathname, method) {
     }
     return false;
 }
+/**
+ * An error whose cause is the request, not the server.
+ *
+ * Carries the status so a handler does not have to know which failures
+ * parseBody can produce -- it catches, and sendError reads the number off the
+ * error. Anything else thrown still answers 500, which is correct for it.
+ */
+export class HttpClientError extends Error {
+    constructor(message, status) {
+        super(message);
+        this.status = status;
+        this.name = 'HttpClientError';
+    }
+}
+/**
+ * The status a thrown error should answer with.
+ *
+ * Pure and exported so the mapping can be tested without standing up a
+ * server: an HttpClientError answers with what it carries, anything else is
+ * this server's fault and answers 500.
+ */
+export function statusForError(err) {
+    return err instanceof HttpClientError ? err.status : 500;
+}
+/**
+ * Reject a POST body that is not declared as JSON.
+ *
+ * Not a formality: this server sends no Access-Control-Allow-Origin, so a
+ * cross-origin page cannot READ a response -- but a POST whose content type
+ * is one of the CORS "simple" types is sent with no preflight at all, so it
+ * would still be acted on. Requiring application/json forces a real preflight
+ * the browser then refuses. 415 rather than 400: the body may be perfectly
+ * well formed, it is the type that is unacceptable.
+ */
+export function assertJsonContentType(contentType) {
+    if (!/^application\/json(;|$)/i.test(contentType.trim())) {
+        throw new HttpClientError('Content-Type must be application/json', 415);
+    }
+}
+/** Parse a request body, or throw the 400 that a malformed one deserves. */
+export function parseJsonBody(raw) {
+    if (!raw)
+        return null;
+    try {
+        return JSON.parse(raw);
+    }
+    catch {
+        throw new HttpClientError('Invalid JSON', 400);
+    }
+}
 export class WebServer {
     /**
      * Where a stopped run leaves what every neuron and every connection was.
@@ -824,6 +874,21 @@ export class WebServer {
         res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
         res.end(html);
     }
+    /**
+     * Turn a thrown error into a response, using the status the error carries.
+     *
+     * Every POST handler used to answer 500 for anything parseBody rejected --
+     * malformed JSON, a missing content type, a body over the limit. All three
+     * are the CALLER's mistake, and 500 tells a caller the opposite: that the
+     * request was fine and this server broke. A client retrying a 500 is doing
+     * the right thing for a 500 and the wrong thing for a body it will never
+     * fix, and monitoring counts it against this server's error rate.
+     */
+    sendError(res, err) {
+        const msg = err instanceof Error ? err.message : String(err);
+        const status = statusForError(err);
+        this.sendJson(res, { error: msg }, status);
+    }
     async parseBody(req) {
         // CSRF: this server has no auth and setSecurityHeaders() never sends
         // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
@@ -838,10 +903,7 @@ export class WebServer {
         // forces a real preflight for every POST body this server accepts --
         // and that preflight gets rejected by the browser itself, since no
         // Access-Control-Allow-Origin is ever sent back.
-        const contentType = req.headers['content-type'] ?? '';
-        if (!/^application\/json(;|$)/i.test(contentType.trim())) {
-            throw new Error('Content-Type must be application/json');
-        }
+        assertJsonContentType(req.headers['content-type'] ?? '');
         const LIMIT = 1024 * 1024; // 1MB limit
         let totalSize = 0;
         return new Promise((resolve, reject) => {
@@ -850,7 +912,7 @@ export class WebServer {
                 totalSize += chunk.length;
                 if (totalSize > LIMIT) {
                     req.destroy();
-                    reject(new Error('Request body too large (limit: 1MB)'));
+                    reject(new HttpClientError('Request body too large (limit: 1MB)', 413));
                 }
                 else {
                     chunks.push(chunk);
@@ -860,15 +922,11 @@ export class WebServer {
                 if (totalSize > LIMIT)
                     return;
                 const raw = Buffer.concat(chunks).toString('utf8');
-                if (!raw) {
-                    resolve(null);
-                    return;
-                }
                 try {
-                    resolve(JSON.parse(raw));
+                    resolve(parseJsonBody(raw));
                 }
-                catch {
-                    reject(new Error('Invalid JSON'));
+                catch (err) {
+                    reject(err);
                 }
             });
             req.on('error', reject);
@@ -1966,8 +2024,7 @@ export class WebServer {
                 this.sendJson(res, { response, timestamp: Date.now() });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -1998,8 +2055,7 @@ export class WebServer {
                 });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -2018,8 +2074,7 @@ export class WebServer {
                 this.sendJson(res, { agents: system.hive.list().map(a => a.snapshot()) });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -2051,8 +2106,7 @@ export class WebServer {
                 });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -2158,8 +2212,7 @@ export class WebServer {
                 });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -2216,8 +2269,7 @@ export class WebServer {
                 this.sendJson(res, { neurons: result, printOutputs: parsed.printOutputs });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -2253,8 +2305,7 @@ export class WebServer {
                 this.sendJson(res, { ok: true, samplesProcessed: stats.samplesProcessed });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -2932,8 +2983,7 @@ export class WebServer {
                 this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered, grafted });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -3723,8 +3773,7 @@ export class WebServer {
                 });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -3758,8 +3807,7 @@ export class WebServer {
                 this.sendJson(res, { extensions, total: extensions.length });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -3790,8 +3838,7 @@ export class WebServer {
                 });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -3818,8 +3865,7 @@ export class WebServer {
                 this.sendJson(res, { ok: closed, appId: body.appId });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
@@ -3879,8 +3925,7 @@ export class WebServer {
                 });
             }
             catch (err) {
-                const msg = err instanceof Error ? err.message : String(err);
-                this.sendJson(res, { error: msg }, 500);
+                this.sendError(res, err);
             }
             return;
         }
