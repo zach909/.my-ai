@@ -1,9 +1,31 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { listWikiPages, readWikiPage, publishWikiPage, deleteWikiPage, WikiNameError, type WikiPageSummary, type WikiPage } from "../models && skills/core/wiki-store.js";
+import {
+  listWikiPages,
+  readWikiPage,
+  publishWikiPageAndSync,
+  deleteWikiPageAndSync,
+  WikiNameError,
+  type WikiPageSummary,
+  type WikiPage,
+} from "../models && skills/core/wiki-store.js";
+import type { StoreSyncResult } from "../models && skills/core/store-sync.js";
 
 function tokenize(text: string): string[] {
   return text.toLowerCase().match(/[a-z0-9]+/g) ?? [];
+}
+
+/**
+ * Says plainly whether a sync actually left the device. The same distinction
+ * StorePlugin's own chat replies make -- "pushed" and "saved locally" are
+ * different outcomes, and the whole point of surfacing sync here is that a
+ * bot-published page saying "Published" with nothing after it used to mean
+ * nothing about whether anyone else would ever see it.
+ */
+function describeSync(sync: StoreSyncResult): string {
+  return sync.pushed
+    ? `Pushed${sync.branch ? ` to ${sync.branch}` : ""} — everyone who pulls now gets it.`
+    : `Saved on this device only — ${sync.reason ?? "it has not reached anyone else yet"}.`;
 }
 
 /**
@@ -11,10 +33,17 @@ function tokenize(text: string): string[] {
  * "push the wiki page" step: list()/read() let it check what's already
  * documented before researching further (the loop's step 1, covering both
  * the curated wiki/ and its own past wiki/bot/ pages), and publish() lets
- * it write a new page itself once something is learned/verified, exactly
- * like a human would through the /app/wiki "New Page" form -- both paths
- * go through the same models && skills/core/wiki-store.ts and always land
- * in wiki/bot/, tagged source: "bot", never the curated wiki/ collection.
+ * it write a new page itself once something is learned/verified.
+ *
+ * publish()/edit()/remove() call the *AndSync form of every wiki-store
+ * function, the same one POST /api/wiki (the human /app/wiki form) calls --
+ * not the plain form, which only writes the file locally. They did not
+ * always: the first version called publishWikiPage()/deleteWikiPage()
+ * directly, so a page the bot published landed on disk correctly and was
+ * NEVER committed or pushed. Nothing failed and nothing reported an error --
+ * there was no reason to report, because sync was never attempted. A bot
+ * page and a human page went through completely different code paths while
+ * this doc comment claimed they were "exactly" the same one.
  */
 export class WikiPlugin extends BasePlugin {
   constructor(definition: PluginDefinition) {
@@ -40,7 +69,7 @@ export class WikiPlugin extends BasePlugin {
   }
 
   /** The AI publishing a page "with itself" -- no human in the loop required. */
-  async publish(name: string, title: string, content: string): Promise<WikiPage> {
+  async publish(name: string, title: string, content: string): Promise<{ page: WikiPage; sync: StoreSyncResult }> {
     if (typeof name !== "string") {
       throw new Error("Security Error: Page name must be a string.");
     }
@@ -71,19 +100,19 @@ export class WikiPlugin extends BasePlugin {
       throw new Error("Security Error: Page content exceeds maximum length limit of 100,000 characters.");
     }
 
-    return publishWikiPage(name, title, content);
+    return publishWikiPageAndSync(name, title, content);
   }
 
   /**
-   * Same underlying call as publish() -- publishWikiPage() already
+   * Same underlying call as publish() -- publishWikiPageAndSync() already
    * overwrites a same-named wiki/bot/*.md file unconditionally -- but
    * requires the page to already exist first, so an "edit" can't silently
    * turn into creating a brand-new page from a typo'd name, and can't
-   * touch a curated wiki/ page (publishWikiPage() already refuses that on
-   * its own, but the error there is generic; this one names the actual
-   * mistake).
+   * touch a curated wiki/ page (publishWikiPageAndSync() already refuses
+   * that on its own, but the error there is generic; this one names the
+   * actual mistake).
    */
-  async edit(name: string, title: string, content: string): Promise<WikiPage> {
+  async edit(name: string, title: string, content: string): Promise<{ page: WikiPage; sync: StoreSyncResult }> {
     const existing = await this.read(name);
     if (!existing) {
       throw new WikiNameError(`No existing page named "${name}" to edit -- use publish() to create a new one.`);
@@ -91,12 +120,12 @@ export class WikiPlugin extends BasePlugin {
     if (existing.source !== "bot") {
       throw new WikiNameError(`"${name}" is a curated wiki page and can't be edited here.`);
     }
-    return publishWikiPage(name, title, content);
+    return publishWikiPageAndSync(name, title, content);
   }
 
-  /** deleteWikiPage() already refuses a curated wiki/ name; this just forwards. */
-  async remove(name: string): Promise<void> {
-    return deleteWikiPage(name);
+  /** deleteWikiPage() already refuses a curated wiki/ name; deleteWikiPageAndSync() forwards to it and then propagates the removal, so a later `git pull` cannot resurrect a page this just deleted. */
+  async remove(name: string): Promise<StoreSyncResult> {
+    return deleteWikiPageAndSync(name);
   }
 
   /**
@@ -154,8 +183,8 @@ export class WikiPlugin extends BasePlugin {
     if (publishMatch) {
       const [, name, title, content] = publishMatch;
       try {
-        const page = await this.publish(name, title, content);
-        return `[Wiki] Published "${page.title}" to wiki/bot/${page.name}.md.`;
+        const { page, sync } = await this.publish(name, title, content);
+        return `[Wiki] Published "${page.title}" to wiki/bot/${page.name}.md. ${describeSync(sync)}`;
       } catch (err) {
         const detail = err instanceof WikiNameError ? err.message : "Failed to publish.";
         return `[Wiki] ${detail}`;
@@ -167,8 +196,8 @@ export class WikiPlugin extends BasePlugin {
     if (editMatch) {
       const [, name, title, content] = editMatch;
       try {
-        const page = await this.edit(name, title, content);
-        return `[Wiki] Saved changes to "${page.title}" (wiki/bot/${page.name}.md).`;
+        const { page, sync } = await this.edit(name, title, content);
+        return `[Wiki] Saved changes to "${page.title}" (wiki/bot/${page.name}.md). ${describeSync(sync)}`;
       } catch (err) {
         const detail = err instanceof WikiNameError ? err.message : "Failed to save changes.";
         return `[Wiki] ${detail}`;
@@ -180,8 +209,8 @@ export class WikiPlugin extends BasePlugin {
     if (deleteMatch?.[1]) {
       const name = deleteMatch[1];
       try {
-        await this.remove(name);
-        return `[Wiki] Deleted wiki/bot/${name}.md.`;
+        const sync = await this.remove(name);
+        return `[Wiki] Deleted wiki/bot/${name}.md. ${describeSync(sync)}`;
       } catch (err) {
         const detail = err instanceof WikiNameError ? err.message : "Failed to delete.";
         return `[Wiki] ${detail}`;

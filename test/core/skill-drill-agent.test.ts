@@ -22,15 +22,53 @@ import {
 import { generateArithmeticProblem, generateArithmeticBatch } from '../../scripts/drill-generators/arithmetic.mjs';
 
 describe('classifyDrillCategory()', () => {
-  it('recognizes the one concrete category this session shipped: arithmetic/math topics', () => {
+  it('recognizes arithmetic/math topics', () => {
     expect(classifyDrillCategory('arithmetic')).toBe('arithmetic');
     expect(classifyDrillCategory('basic algebra')).toBe('arithmetic');
     expect(classifyDrillCategory('number theory and primes')).toBe('arithmetic');
   });
 
-  it('falls back to generic for anything else, rather than guessing', () => {
-    expect(classifyDrillCategory('quantum computing error correction')).toBe('generic');
-    expect(classifyDrillCategory('organic chemistry reaction mechanisms')).toBe('generic');
+  it('routes every domain that now has a real generator', () => {
+    // These two used to be asserted as 'generic', which encoded the
+    // limitation rather than a requirement: there was exactly one generator,
+    // so everything else fell through to a regression check that replays a
+    // skill's own page back at it and cannot teach. Both have real
+    // generators now, so routing them to 'generic' would be the bug.
+    expect(classifyDrillCategory('quantum computing error correction')).toBe('quantum-computers');
+    expect(classifyDrillCategory('organic chemistry reaction mechanisms')).toBe('science');
+
+    expect(classifyDrillCategory('coding')).toBe('coding');
+    expect(classifyDrillCategory('logic')).toBe('logic');
+    expect(classifyDrillCategory('building ai')).toBe('building-ai');
+    expect(classifyDrillCategory('building classical computers')).toBe('classical-computers');
+    expect(classifyDrillCategory('building quantum computers')).toBe('quantum-computers');
+    expect(classifyDrillCategory('building operating systems')).toBe('operating-systems');
+    expect(classifyDrillCategory('building apps')).toBe('building-apps');
+    expect(classifyDrillCategory('science')).toBe('science');
+  });
+
+  it('routes real-world phrasings, not just the exact domain names', () => {
+    expect(classifyDrillCategory('how to write a scheduler')).toBe('operating-systems');
+    expect(classifyDrillCategory('CPU cache hierarchy and pipelining')).toBe('classical-computers');
+    expect(classifyDrillCategory('neural network training')).toBe('building-ai');
+    expect(classifyDrillCategory('React app pagination')).toBe('building-apps');
+    expect(classifyDrillCategory('propositional truth tables')).toBe('logic');
+    expect(classifyDrillCategory('recursion and data structures')).toBe('coding');
+  });
+
+  it('keeps a quantum computer out of the classical-computer bucket', () => {
+    // The rules are ordered, not alphabetical, and this is why: 'quantum
+    // computer design' contains 'computer', so a naive ordering hands it to
+    // classical-computers and the agent drills the wrong domain while
+    // reporting success.
+    expect(classifyDrillCategory('quantum computer design')).toBe('quantum-computers');
+    expect(classifyDrillCategory('qubit coherence times')).toBe('quantum-computers');
+  });
+
+  it('still falls back to generic rather than guessing', () => {
+    expect(classifyDrillCategory('underwater basket weaving')).toBe('generic');
+    expect(classifyDrillCategory('')).toBe('generic');
+    expect(classifyDrillCategory(undefined)).toBe('generic');
   });
 });
 

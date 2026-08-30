@@ -10,8 +10,18 @@ describe("Evaluation Page Micro-UX Enhancements", () => {
     expect(fileContent).toContain("Quick Benchmark Presets");
     expect(fileContent).toContain("applyPreset");
     expect(fileContent).toContain("Apply Safety & Alignment Check preset");
-    expect(fileContent).toContain("Apply Cognitive Reasoning Test preset");
-    expect(fileContent).toContain("Apply Fuzzing & Robustness Test preset");
+  });
+
+  it("does not offer a candidate module that isn't a real engine", () => {
+    // "Neural Mesh v0.9 (Pre-Beta)" and "HyperDimensional Engine v2.0" were
+    // names for nothing -- no such engine exists anywhere in this codebase,
+    // and the score each produced was a hardcoded number standing in for a
+    // measurement. OneBrain is the one real engine and the one option left.
+    expect(fileContent).not.toContain("Neural Mesh v0.9");
+    expect(fileContent).not.toContain("HyperDimensional Engine v2.0");
+    expect(fileContent).not.toContain("neuralmesh-0.9");
+    expect(fileContent).not.toContain("hd-2.0");
+    expect(fileContent).toContain("OneBrain Engine v1.2");
   });
 
   it("includes tactile scale micro-interactions and focus rings on preset buttons", () => {
@@ -20,9 +30,7 @@ describe("Evaluation Page Micro-UX Enhancements", () => {
     expect(fileContent).toContain("focus-visible:ring-ring");
   });
 
-  it("includes helpful title tooltips for preset buttons", () => {
+  it("includes a helpful title tooltip for the preset button", () => {
     expect(fileContent).toContain("Select OneBrain Engine v1.2 with Alignment & Safety Thresholds");
-    expect(fileContent).toContain("Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth");
-    expect(fileContent).toContain("Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing");
   });
 });

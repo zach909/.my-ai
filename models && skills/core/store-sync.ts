@@ -8,30 +8,43 @@
  * module is the other half: it commits the item's own paths and pushes them,
  * so `git pull` on any other clone is a complete sync.
  *
- * Three rules shape everything here.
+ * Four rules shape everything here.
  *
  * 1. Only the store's own paths are ever committed. Never a blanket
  *    `git add -A`, never a branch change. Someone publishing a skill has not
  *    asked to commit whatever else is in their working tree, and a store
  *    publish that swept up unrelated edits would be a far worse bug than one
- *    that failed to sync. (A rebase may autostash their edits and put them
- *    straight back -- that moves nothing into a commit.)
+ *    that failed to sync.
  *
- * 2. Failure is reported, never swallowed and never faked. No git, no remote,
+ * 2. Store content lives on its own branch (`store` by default, see
+ *    NEUROCLAW_STORE_BRANCH), never on whatever branch a machine happens to
+ *    have checked out. Skills, plugins, wiki pages, and anything else
+ *    published here are shared state, not part of any one feature branch's
+ *    history -- publishing must never depend on which branch a developer is
+ *    mid-task on, and must never land a "store: publish x" commit in their
+ *    feature branch's history. This is done entirely with plumbing
+ *    (read-tree / write-tree / commit-tree) against a throwaway index, so a
+ *    publish never touches the developer's actual checkout, HEAD, or index
+ *    at all -- there is no branch to switch back to afterwards because none
+ *    was ever switched.
+ *
+ * 3. Failure is reported, never swallowed and never faked. No git, no remote,
  *    no credentials, no network, a rejected push -- each is a real outcome
  *    with a real reason, returned to the caller so the UI can say "saved on
  *    this device only" instead of implying the item reached everyone. The
  *    files are already written by the time we get here, so a sync failure
  *    must not fail the publish; it downgrades it.
  *
- * 3. A rejected push is retried exactly once, after rebasing on the remote.
- *    Two people publishing at the same time is the normal case, not an
- *    error. Retrying forever is not -- one retry resolves the race, and a
- *    second failure is a real problem the caller should hear about.
+ * 4. A rejected push is retried exactly once, after re-fetching the store
+ *    branch's current tip and rebuilding the commit on top of it. Two people
+ *    publishing at the same time is the normal case, not an error. Retrying
+ *    forever is not -- one retry resolves the race, and a second failure is
+ *    a real problem the caller should hear about.
  */
 
 import { execFile } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 
 /** What a sync attempt actually did. Every field is observed, never assumed. */
@@ -40,7 +53,7 @@ export interface StoreSyncResult {
   committed: boolean;
   /** True only when a push actually succeeded. */
   pushed: boolean;
-  /** The branch that was pushed, when there was one. */
+  /** The branch that was (or would have been) pushed. */
   branch?: string;
   /**
    * Why the sync did not fully happen. Present whenever `pushed` is false,
@@ -55,6 +68,17 @@ export interface StoreSyncResult {
  */
 const GIT_TIMEOUT_MS = 30_000;
 
+/** The hash of the empty tree -- the same in every git repository ever. */
+const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
+
+/**
+ * The branch all store content lives on. Fixed, not derived from whatever a
+ * machine has checked out -- see rule 2 above. Overridable for anyone
+ * running a private instance with a different naming convention, and for
+ * tests that want isolation from each other.
+ */
+export const DEFAULT_STORE_BRANCH = process.env.NEUROCLAW_STORE_BRANCH?.trim() || "store";
+
 interface GitRun {
   ok: boolean;
   stdout: string;
@@ -67,7 +91,7 @@ interface GitRun {
  * of name validation upstream is a good reason to hand attacker-influenced
  * text to a shell.
  */
-function git(args: string[], cwd: string): Promise<GitRun> {
+function git(args: string[], cwd: string, extraEnv?: NodeJS.ProcessEnv): Promise<GitRun> {
   return new Promise(resolve => {
     execFile(
       "git",
@@ -79,7 +103,7 @@ function git(args: string[], cwd: string): Promise<GitRun> {
         // A publish must never block on git asking a human for a password.
         // Without this a missing credential turns into a hung request
         // instead of a clean "could not push" the user can act on.
-        env: { ...process.env, GIT_TERMINAL_PROMPT: "0" },
+        env: { ...process.env, GIT_TERMINAL_PROMPT: "0", ...extraEnv },
       },
       (err, stdout, stderr) => {
         resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") });
@@ -98,7 +122,77 @@ async function repoRoot(storeDir: string): Promise<string | null> {
 }
 
 /**
- * Commits the given store paths and pushes them.
+ * One attempt at building and pushing the store branch's next commit,
+ * entirely against a throwaway index (GIT_INDEX_FILE) rooted on the store
+ * branch's current remote tip -- never the developer's real index, and never
+ * their checked-out branch or HEAD.
+ */
+async function attemptSync(
+  root: string,
+  remote: string,
+  branch: string,
+  relPaths: string[],
+  message: string,
+  tmpIndex: string,
+): Promise<{ pushed: boolean; changed: boolean; error?: string }> {
+  const envIdx = { GIT_INDEX_FILE: tmpIndex };
+
+  // Best-effort: an unreachable remote or a store branch that does not exist
+  // yet both leave this simply not updating the remote-tracking ref, which
+  // rev-parse below reports honestly.
+  await git(["fetch", remote, `${branch}:refs/remotes/${remote}/${branch}`], root);
+  const rev = await git(["rev-parse", `${remote}/${branch}`], root);
+  const parent = rev.ok ? rev.stdout.trim() : null;
+  const baseTree = parent ? `${parent}^{tree}` : EMPTY_TREE;
+
+  const read = await git(["read-tree", baseTree], root, envIdx);
+  if (!read.ok) {
+    return { pushed: false, changed: false, error: `Could not read the store branch: ${firstLine(read.stderr)}` };
+  }
+
+  // -A so a removed item stages as a deletion; `--` so a path can never be
+  // read as an option. `git add` reads the actual files on disk regardless
+  // of which index is active, so this picks up exactly what the caller
+  // wrote, without disturbing the developer's own staged changes.
+  const add = await git(["add", "-A", "--", ...relPaths], root, envIdx);
+  if (!add.ok) {
+    return { pushed: false, changed: false, error: `Could not stage the change: ${firstLine(add.stderr)}` };
+  }
+
+  // Nothing staged means the files on disk already match the store branch --
+  // a republish of identical content. That is a success with no work to do,
+  // not a failure, and committing an empty change would be noise in
+  // everyone's log.
+  const diff = await git(["diff-index", "--quiet", "--cached", baseTree], root, envIdx);
+  if (diff.ok) return { pushed: true, changed: false };
+
+  const writeTree = await git(["write-tree"], root, envIdx);
+  if (!writeTree.ok) {
+    return { pushed: false, changed: true, error: `Could not build the tree: ${firstLine(writeTree.stderr)}` };
+  }
+  const newTree = writeTree.stdout.trim();
+
+  const commitArgs = parent
+    ? ["commit-tree", newTree, "-p", parent, "-m", message]
+    : ["commit-tree", newTree, "-m", message];
+  const commitTree = await git(commitArgs, root, envIdx);
+  if (!commitTree.ok) {
+    return { pushed: false, changed: true, error: `Could not commit: ${firstLine(commitTree.stderr)}` };
+  }
+  const commit = commitTree.stdout.trim();
+
+  const push = await git(["push", remote, `${commit}:refs/heads/${branch}`], root);
+  if (!push.ok) {
+    return { pushed: false, changed: true, error: firstLine(push.stderr) };
+  }
+  // Keep the local view of the store branch fresh without a second network
+  // round trip -- purely a courtesy, not load-bearing for anything above.
+  await git(["update-ref", `refs/remotes/${remote}/${branch}`, commit], root);
+  return { pushed: true, changed: true };
+}
+
+/**
+ * Commits the given store paths onto the store branch and pushes them.
  *
  * `paths` are absolute; they are made repo-relative before staging so the
  * command is identical no matter where the process was started from.
@@ -109,7 +203,7 @@ async function repoRoot(storeDir: string): Promise<string | null> {
 export async function syncStorePaths(
   paths: string[],
   message: string,
-  opts: { storeDir: string; remote?: string },
+  opts: { storeDir: string; remote?: string; branch?: string },
 ): Promise<StoreSyncResult> {
   // An explicit opt-out, for anyone running a private instance who does not
   // want publishes leaving the machine at all. Off by default: the store's
@@ -132,79 +226,49 @@ export async function syncStorePaths(
     return { committed: false, pushed: false, reason: "Nothing inside the repository to commit." };
   }
 
-  // -A so a removed item stages as a deletion; `--` so a path can never be
-  // read as an option.
-  const add = await git(["add", "-A", "--", ...relPaths], root);
-  if (!add.ok) {
-    return { committed: false, pushed: false, reason: `Could not stage the change: ${firstLine(add.stderr)}` };
-  }
-
-  // Nothing staged means the files on disk already match HEAD -- a republish
-  // of identical content. That is a success with no work to do, not a
-  // failure, and committing an empty change would be noise in everyone's log.
-  const staged = await git(["diff", "--cached", "--quiet", "--", ...relPaths], root);
-  if (staged.ok) {
-    return { committed: false, pushed: true, reason: "Already up to date — the store already had exactly this." };
-  }
-
-  // Only the store paths are committed, even if the working tree has other
-  // changes staged: `--only` restricts the commit to these pathspecs.
-  const commit = await git(["commit", "--only", "-m", message, "--", ...relPaths], root);
-  if (!commit.ok) {
-    return { committed: false, pushed: false, reason: `Could not commit: ${firstLine(commit.stderr || commit.stdout)}` };
-  }
-
-  const branchRes = await git(["rev-parse", "--abbrev-ref", "HEAD"], root);
-  const branch = branchRes.stdout.trim();
-  if (!branchRes.ok || branch === "" || branch === "HEAD") {
-    return {
-      committed: true,
-      pushed: false,
-      reason: "Committed, but HEAD is detached so there is no branch to push. Check out a branch and push to share it.",
-    };
-  }
-
+  const branch = opts.branch ?? DEFAULT_STORE_BRANCH;
   const remote = opts.remote ?? "origin";
+
   const remotes = await git(["remote"], root);
   if (!remotes.ok || !remotes.stdout.split("\n").map(s => s.trim()).includes(remote)) {
     return {
-      committed: true,
+      committed: false,
       pushed: false,
       branch,
-      reason: `Committed, but this clone has no "${remote}" remote, so it stayed on this device.`,
+      reason: `This clone has no "${remote}" remote, so the item is saved on this device only.`,
     };
   }
 
-  const push = await git(["push", remote, `HEAD:${branch}`], root);
-  if (push.ok) return { committed: true, pushed: true, branch };
+  const tmpDir = mkdtempSync(path.join(tmpdir(), "neuroclaw-store-sync-"));
+  const tmpIndex = path.join(tmpDir, "index");
+  try {
+    const first = await attemptSync(root, remote, branch, relPaths, message, tmpIndex);
+    if (!first.changed) {
+      if (first.error) return { committed: false, pushed: false, branch, reason: first.error };
+      return { committed: false, pushed: true, branch, reason: "Already up to date — the store already had exactly this." };
+    }
+    if (first.pushed) return { committed: true, pushed: true, branch };
 
-  // Someone else pushed first. Rebase our single store commit on top of
-  // theirs and try once more -- concurrent publishes are the expected case.
-  //
-  // --autostash because the publisher is a person who was in the middle of
-  // something: having unstaged edits is the normal state of a working tree,
-  // and without this git refuses to rebase and the publish silently never
-  // reaches anyone. Autostash restores those edits afterwards and never
-  // commits them -- the commit above was already restricted to the store
-  // paths by --only.
-  const pull = await git(["pull", "--rebase", "--autostash", remote, branch], root);
-  if (!pull.ok) {
+    // Someone else published to the store branch first. Re-fetch its new
+    // tip, rebuild the commit on top of it, and try exactly once more --
+    // concurrent publishes are the expected case, not an error.
+    const second = await attemptSync(root, remote, branch, relPaths, message, tmpIndex);
+    if (!second.changed) {
+      // The retry's rebuild landed on content identical to the new tip --
+      // someone else published exactly this first.
+      return { committed: true, pushed: true, branch, reason: "Already up to date — the store already had exactly this." };
+    }
+    if (second.pushed) return { committed: true, pushed: true, branch };
+
     return {
       committed: true,
       pushed: false,
       branch,
-      reason: `Committed, but the push was rejected and rebasing on ${remote}/${branch} failed: ${firstLine(pull.stderr)}`,
+      reason: `Committed, but the push to ${remote}/${branch} failed: ${second.error ?? first.error ?? "unknown error"}`,
     };
+  } finally {
+    rmSync(tmpDir, { recursive: true, force: true });
   }
-  const retry = await git(["push", remote, `HEAD:${branch}`], root);
-  if (retry.ok) return { committed: true, pushed: true, branch };
-
-  return {
-    committed: true,
-    pushed: false,
-    branch,
-    reason: `Committed on this device, but the push failed: ${firstLine(retry.stderr)}`,
-  };
 }
 
 /**
