@@ -1496,30 +1496,87 @@ describe('the input creates the wave', () => {
     expect(apart).toBeGreaterThan(poolEnergy(base) * 0.5);
   });
 
-  it('reads every neuron the same way, so two neurons can be exact enemies', () => {
-    // Tried first with a reading basis per neuron, which is wrong: two
+  it('reads every neuron in a bin the same way, so two of them can be exact enemies', () => {
+    // Tried first with a reading basis per NEURON, which is wrong: two
     // neurons holding the same state then emit DIFFERENT waves, so they
     // cannot agree, and two given deliberately opposite signatures cannot
     // annihilate either. The Zip Loop's bit neurons depend on being able to.
+    // Measured then: agreeing sources 0.2997 against contradicting 0.4212,
+    // the claim backwards.
+    //
+    // The basis is per frequency BIN, which keeps that property exactly --
+    // waves only ever meet inside a bin, and everything in one bin reads
+    // through one identical pair.
     const engine = new HyperDimensionalEngine(waveConfig());
     const reading = engine.getWaveReading();
-    expect(reading.re.length).toBe(D + 1);
-    // Orthogonal and unit-length, so reading a state is a rotation rather
-    // than something that quietly stretches it.
-    let dot = 0;
-    let normRe = 0;
-    let normIm = 0;
-    for (let d = 1; d <= D; d++) {
-      dot += reading.re[d] * reading.im[d];
-      normRe += reading.re[d] * reading.re[d];
-      normIm += reading.im[d] * reading.im[d];
+    const TD = D + 1;
+    expect(reading.re.length % TD).toBe(0);
+    const bins = reading.re.length / TD;
+    expect(bins).toBeGreaterThan(1);
+
+    // Every bin's pair is orthogonal and unit-length, so reading a state is a
+    // rotation rather than something that quietly stretches it -- and the
+    // input flag never reaches a wave.
+    for (let b = 0; b < bins; b++) {
+      const at = b * TD;
+      let dot = 0;
+      let normRe = 0;
+      let normIm = 0;
+      for (let d = 1; d < TD; d++) {
+        dot += reading.re[at + d] * reading.im[at + d];
+        normRe += reading.re[at + d] * reading.re[at + d];
+        normIm += reading.im[at + d] * reading.im[at + d];
+      }
+      expect(Math.abs(dot)).toBeLessThan(1e-5);
+      expect(normRe).toBeCloseTo(1, 4);
+      expect(normIm).toBeCloseTo(1, 4);
+      expect(reading.re[at]).toBe(0);
+      expect(reading.im[at]).toBe(0);
     }
-    expect(Math.abs(dot)).toBeLessThan(1e-5);
-    expect(normRe).toBeCloseTo(1, 5);
-    expect(normIm).toBeCloseTo(1, 5);
-    // Dimension 0 is the input flag, not content, and must never reach a wave.
-    expect(reading.re[0]).toBe(0);
-    expect(reading.im[0]).toBe(0);
+  });
+
+  it('leaves no content direction invisible to the whole wave layer', () => {
+    // The hole this fixed. ONE shared pair is a linear map from the D-1
+    // content dimensions down to 2, so D-3 directions produce no wave at all
+    // -- for every neuron, permanently. Measured before: a state orthogonal
+    // to both rows, driven at magnitude 0.6, put exactly 0.000000 into the
+    // pool while shouting.
+    const engine = new HyperDimensionalEngine(waveConfig());
+    const reading = engine.getWaveReading();
+    const TD = D + 1;
+    const bins = reading.re.length / TD;
+    const proj = (v: number[], arr: Float32Array, b: number) => {
+      let s = 0;
+      for (let d = 1; d < TD; d++) s += v[d] * arr[b * TD + d];
+      return s;
+    };
+
+    let quietestBest = Infinity;
+    let quietestSingle = Infinity;
+    for (let t = 0; t < 500; t++) {
+      const v = new Array(TD).fill(0);
+      let n = 0;
+      for (let d = 1; d < TD; d++) {
+        const x = Math.sin(t * 7.3 + d * 2.1) + Math.cos(t * 1.9 - d * 3.7);
+        v[d] = x;
+        n += x * x;
+      }
+      n = Math.sqrt(n);
+      for (let d = 1; d < TD; d++) v[d] /= n;
+      let best = 0;
+      for (let b = 0; b < bins; b++) {
+        best = Math.max(best, Math.hypot(proj(v, reading.re, b), proj(v, reading.im, b)));
+      }
+      quietestBest = Math.min(quietestBest, best);
+      quietestSingle = Math.min(quietestSingle, Math.hypot(proj(v, reading.re, 0), proj(v, reading.im, 0)));
+    }
+
+    // Some bin always hears it, whatever direction the state points in.
+    expect(quietestBest).toBeGreaterThan(0.2);
+    // And the reason that is worth asserting: a SINGLE bin really can be
+    // almost blind to a direction, which is exactly what one shared pair was
+    // for every neuron at once.
+    expect(quietestSingle).toBeLessThan(quietestBest * 0.2);
   });
 
   it('still gives a grown network finite states', () => {

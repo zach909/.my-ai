@@ -173,6 +173,7 @@ export interface EquationSettings {
   waveGain: number;
   waveFeedback: number;
   /** The two directions a state is read through to become a wave. Shared by every neuron. */
+  /** [bin * dimensions + d] -- one reading pair per frequency bin. */
   waveReadRe: Float32Array;
   waveReadIm: Float32Array;
   crossInfluenceStrength: number;
@@ -327,12 +328,17 @@ export function applyEquation(
     const prevRe = Float32Array.from(state.waveRe);
     const prevIm = Float32Array.from(state.waveIm);
     for (const i of driven) {
+      // One reading pair per frequency BIN, indexed [bin * D + d]. Shared
+      // within a bin, which is what lets two waves there cancel; different
+      // between bins, which is what stops any content direction being
+      // invisible to the whole wave layer. See seedWaveReading().
+      const readAt = bin[i] * D;
       let projRe = 0;
       let projIm = 0;
       for (let d = 1; d < D; d++) {
         const v = at(d, i);
-        projRe += v * settings.waveReadRe[d];
-        projIm += v * settings.waveReadIm[d];
+        projRe += v * settings.waveReadRe[readAt + d];
+        projIm += v * settings.waveReadIm[readAt + d];
       }
       const c = Math.cos(state.wavePhase[i]);
       const sn = Math.sin(state.wavePhase[i]);
