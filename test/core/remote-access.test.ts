@@ -22,6 +22,10 @@ import {
   isAuthPublicRoute,
   isWikiPublicRoute,
   isStorePublicRoute,
+  HttpClientError,
+  statusForError,
+  parseJsonBody,
+  assertJsonContentType,
 } from '../../interface/web-server';
 
 describe('the remote password', () => {
@@ -162,5 +166,59 @@ describe('what needs no password', () => {
     expect(isAuthPublicRoute('/api/auth/password', 'DELETE')).toBe(false);
     expect(isAuthPublicRoute('/api/chat', 'POST')).toBe(false);
     expect(isAuthPublicRoute('/', 'GET')).toBe(false);
+  });
+});
+
+/**
+ * A bad request is the caller's fault, and has to say so.
+ *
+ * Every POST handler answered 500 for anything parseBody rejected: malformed
+ * JSON, a missing content type, a body over the limit. All three are the
+ * caller's mistake. 500 tells the caller the opposite -- that the request was
+ * fine and this server broke -- so a client retries a body it will never fix,
+ * and the failure is counted against this server's error rate.
+ */
+describe('a malformed request answers as a client error', () => {
+  it('malformed JSON is 400, not 500', () => {
+    let thrown: unknown;
+    try { parseJsonBody('{"message":'); } catch (err) { thrown = err; }
+    expect(thrown).toBeInstanceOf(HttpClientError);
+    expect(statusForError(thrown)).toBe(400);
+  });
+
+  it('a body that is not declared JSON is 415', () => {
+    let thrown: unknown;
+    try { assertJsonContentType('text/plain'); } catch (err) { thrown = err; }
+    expect(statusForError(thrown)).toBe(415);
+    // The CORS-simple types are the ones that skip preflight, so each has to
+    // be refused rather than only the obvious one.
+    for (const type of ['text/plain', 'multipart/form-data', 'application/x-www-form-urlencoded', '']) {
+      expect(() => assertJsonContentType(type)).toThrow();
+    }
+  });
+
+  it('accepts real JSON content types, charset and all', () => {
+    expect(() => assertJsonContentType('application/json')).not.toThrow();
+    expect(() => assertJsonContentType('application/json; charset=utf-8')).not.toThrow();
+    expect(() => assertJsonContentType('  APPLICATION/JSON  ')).not.toThrow();
+  });
+
+  it('an empty body is not an error, it is null', () => {
+    expect(parseJsonBody('')).toBeNull();
+  });
+
+  it('parses a good body', () => {
+    expect(parseJsonBody('{"message":"hi"}')).toEqual({ message: 'hi' });
+  });
+
+  /**
+   * The half that matters: an error this server is actually responsible for
+   * must still be 500. A mapping that answered 400 for everything would pass
+   * every test above.
+   */
+  it('still answers 500 for a fault that is this server\'s', () => {
+    expect(statusForError(new Error('database is on fire'))).toBe(500);
+    expect(statusForError('a bare string')).toBe(500);
+    expect(statusForError(new TypeError('undefined is not a function'))).toBe(500);
   });
 });
