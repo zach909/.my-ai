@@ -1,9 +1,0 @@
-{
-  "id": "self_ext_70",
-  "name": "Memory: I observe that",
-  "description": "Self-authored extension storing learned patterns from generation 70",
-  "createdAt": 1782417334323,
-  "prompt": "I observe that",
-  "neuronCount": 20,
-  "connectionCount": 100
-}

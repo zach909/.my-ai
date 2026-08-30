@@ -1,3 +1,0 @@
-# Runtime output of the Extension Builder (POST /api/extension/build).
-# User-built extensions are local artifacts, regenerable from the builder UI.
-extensions/*.ext.json
