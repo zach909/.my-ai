@@ -1,0 +1,763 @@
+{
+  "project": {
+    "id": "proj_1787818543892_0",
+    "name": "zip-doorway",
+    "description": "How anything gets through two neurons. Files, folders and whole plugin trees are zipped into one byte stream, sent one bit at a time through the 0 and 1 input neurons, and read back the same way.",
+    "dims": 3,
+    "createdAt": 1787818543892,
+    "updatedAt": 1787818543892
+  },
+  "neurons": [
+    {
+      "id": "neuron_1787818543892_1",
+      "name": "bit-zero",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "the input neuron that fires for a 0",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    },
+    {
+      "id": "neuron_1787818543892_2",
+      "name": "bit-one",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "the input neuron that fires for a 1",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    },
+    {
+      "id": "neuron_1787818543892_3",
+      "name": "archive",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "everything zipped into one stream, which is why folders fit through two neurons",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    },
+    {
+      "id": "neuron_1787818543892_4",
+      "name": "input-folder",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "input/ : what I am being asked about",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    },
+    {
+      "id": "neuron_1787818543892_5",
+      "name": "plugins-folder-in",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "plugins/ : calls I make out to the world",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    },
+    {
+      "id": "neuron_1787818543892_6",
+      "name": "error-folder",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "plugins/error/ : what came back from those calls, including what went wrong",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    },
+    {
+      "id": "neuron_1787818543892_7",
+      "name": "prompting-skills-folder",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "prompting-skills/ : specialised instructions, fed in with everything else",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    },
+    {
+      "id": "neuron_1787818543892_8",
+      "name": "memory-folder",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "memory/ : what I am handed of my own past, and what I hand back to keep",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    },
+    {
+      "id": "neuron_1787818543892_9",
+      "name": "output-folder",
+      "type": "neuron",
+      "value": 0,
+      "dims": 3,
+      "definition": "output/ : what I produced",
+      "code": "",
+      "corpus": "",
+      "netPath": "",
+      "query": "",
+      "x": 0,
+      "y": 0,
+      "vale": 0.5,
+      "endpoint": "",
+      "method": "POST",
+      "external": [],
+      "scripts": []
+    }
+  ],
+  "connections": [
+    {
+      "id": "conn_neuron_1787818543892_1_neuron_1787818543892_2_1787818543892",
+      "fromId": "neuron_1787818543892_1",
+      "toId": "neuron_1787818543892_2",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_1_neuron_1787818543892_3_1787818543892",
+      "fromId": "neuron_1787818543892_1",
+      "toId": "neuron_1787818543892_3",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_1_neuron_1787818543892_4_1787818543892",
+      "fromId": "neuron_1787818543892_1",
+      "toId": "neuron_1787818543892_4",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_1_neuron_1787818543892_5_1787818543892",
+      "fromId": "neuron_1787818543892_1",
+      "toId": "neuron_1787818543892_5",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_1_neuron_1787818543892_6_1787818543892",
+      "fromId": "neuron_1787818543892_1",
+      "toId": "neuron_1787818543892_6",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_1_neuron_1787818543892_7_1787818543892",
+      "fromId": "neuron_1787818543892_1",
+      "toId": "neuron_1787818543892_7",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_1_neuron_1787818543892_8_1787818543892",
+      "fromId": "neuron_1787818543892_1",
+      "toId": "neuron_1787818543892_8",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_1_neuron_1787818543892_9_1787818543892",
+      "fromId": "neuron_1787818543892_1",
+      "toId": "neuron_1787818543892_9",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_2_neuron_1787818543892_3_1787818543892",
+      "fromId": "neuron_1787818543892_2",
+      "toId": "neuron_1787818543892_3",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_2_neuron_1787818543892_1_1787818543892",
+      "fromId": "neuron_1787818543892_2",
+      "toId": "neuron_1787818543892_1",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_2_neuron_1787818543892_4_1787818543892",
+      "fromId": "neuron_1787818543892_2",
+      "toId": "neuron_1787818543892_4",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_2_neuron_1787818543892_5_1787818543892",
+      "fromId": "neuron_1787818543892_2",
+      "toId": "neuron_1787818543892_5",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_2_neuron_1787818543892_6_1787818543892",
+      "fromId": "neuron_1787818543892_2",
+      "toId": "neuron_1787818543892_6",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_2_neuron_1787818543892_7_1787818543892",
+      "fromId": "neuron_1787818543892_2",
+      "toId": "neuron_1787818543892_7",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_2_neuron_1787818543892_8_1787818543892",
+      "fromId": "neuron_1787818543892_2",
+      "toId": "neuron_1787818543892_8",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_2_neuron_1787818543892_9_1787818543892",
+      "fromId": "neuron_1787818543892_2",
+      "toId": "neuron_1787818543892_9",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_3_neuron_1787818543892_4_1787818543892",
+      "fromId": "neuron_1787818543892_3",
+      "toId": "neuron_1787818543892_4",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_3_neuron_1787818543892_1_1787818543892",
+      "fromId": "neuron_1787818543892_3",
+      "toId": "neuron_1787818543892_1",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_3_neuron_1787818543892_2_1787818543892",
+      "fromId": "neuron_1787818543892_3",
+      "toId": "neuron_1787818543892_2",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_3_neuron_1787818543892_5_1787818543892",
+      "fromId": "neuron_1787818543892_3",
+      "toId": "neuron_1787818543892_5",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_3_neuron_1787818543892_6_1787818543892",
+      "fromId": "neuron_1787818543892_3",
+      "toId": "neuron_1787818543892_6",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_3_neuron_1787818543892_7_1787818543892",
+      "fromId": "neuron_1787818543892_3",
+      "toId": "neuron_1787818543892_7",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_3_neuron_1787818543892_8_1787818543892",
+      "fromId": "neuron_1787818543892_3",
+      "toId": "neuron_1787818543892_8",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_3_neuron_1787818543892_9_1787818543892",
+      "fromId": "neuron_1787818543892_3",
+      "toId": "neuron_1787818543892_9",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_4_neuron_1787818543892_5_1787818543892",
+      "fromId": "neuron_1787818543892_4",
+      "toId": "neuron_1787818543892_5",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_4_neuron_1787818543892_1_1787818543892",
+      "fromId": "neuron_1787818543892_4",
+      "toId": "neuron_1787818543892_1",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_4_neuron_1787818543892_2_1787818543892",
+      "fromId": "neuron_1787818543892_4",
+      "toId": "neuron_1787818543892_2",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_4_neuron_1787818543892_3_1787818543892",
+      "fromId": "neuron_1787818543892_4",
+      "toId": "neuron_1787818543892_3",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_4_neuron_1787818543892_6_1787818543892",
+      "fromId": "neuron_1787818543892_4",
+      "toId": "neuron_1787818543892_6",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_4_neuron_1787818543892_7_1787818543892",
+      "fromId": "neuron_1787818543892_4",
+      "toId": "neuron_1787818543892_7",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_4_neuron_1787818543892_8_1787818543892",
+      "fromId": "neuron_1787818543892_4",
+      "toId": "neuron_1787818543892_8",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_4_neuron_1787818543892_9_1787818543892",
+      "fromId": "neuron_1787818543892_4",
+      "toId": "neuron_1787818543892_9",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_5_neuron_1787818543892_6_1787818543892",
+      "fromId": "neuron_1787818543892_5",
+      "toId": "neuron_1787818543892_6",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_5_neuron_1787818543892_1_1787818543892",
+      "fromId": "neuron_1787818543892_5",
+      "toId": "neuron_1787818543892_1",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_5_neuron_1787818543892_2_1787818543892",
+      "fromId": "neuron_1787818543892_5",
+      "toId": "neuron_1787818543892_2",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_5_neuron_1787818543892_3_1787818543892",
+      "fromId": "neuron_1787818543892_5",
+      "toId": "neuron_1787818543892_3",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_5_neuron_1787818543892_4_1787818543892",
+      "fromId": "neuron_1787818543892_5",
+      "toId": "neuron_1787818543892_4",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_5_neuron_1787818543892_7_1787818543892",
+      "fromId": "neuron_1787818543892_5",
+      "toId": "neuron_1787818543892_7",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_5_neuron_1787818543892_8_1787818543892",
+      "fromId": "neuron_1787818543892_5",
+      "toId": "neuron_1787818543892_8",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_5_neuron_1787818543892_9_1787818543892",
+      "fromId": "neuron_1787818543892_5",
+      "toId": "neuron_1787818543892_9",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_6_neuron_1787818543892_7_1787818543892",
+      "fromId": "neuron_1787818543892_6",
+      "toId": "neuron_1787818543892_7",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_6_neuron_1787818543892_1_1787818543892",
+      "fromId": "neuron_1787818543892_6",
+      "toId": "neuron_1787818543892_1",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_6_neuron_1787818543892_2_1787818543892",
+      "fromId": "neuron_1787818543892_6",
+      "toId": "neuron_1787818543892_2",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_6_neuron_1787818543892_3_1787818543892",
+      "fromId": "neuron_1787818543892_6",
+      "toId": "neuron_1787818543892_3",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_6_neuron_1787818543892_4_1787818543892",
+      "fromId": "neuron_1787818543892_6",
+      "toId": "neuron_1787818543892_4",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_6_neuron_1787818543892_5_1787818543892",
+      "fromId": "neuron_1787818543892_6",
+      "toId": "neuron_1787818543892_5",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_6_neuron_1787818543892_8_1787818543892",
+      "fromId": "neuron_1787818543892_6",
+      "toId": "neuron_1787818543892_8",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_6_neuron_1787818543892_9_1787818543892",
+      "fromId": "neuron_1787818543892_6",
+      "toId": "neuron_1787818543892_9",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_7_neuron_1787818543892_8_1787818543892",
+      "fromId": "neuron_1787818543892_7",
+      "toId": "neuron_1787818543892_8",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_7_neuron_1787818543892_1_1787818543892",
+      "fromId": "neuron_1787818543892_7",
+      "toId": "neuron_1787818543892_1",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_7_neuron_1787818543892_2_1787818543892",
+      "fromId": "neuron_1787818543892_7",
+      "toId": "neuron_1787818543892_2",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_7_neuron_1787818543892_3_1787818543892",
+      "fromId": "neuron_1787818543892_7",
+      "toId": "neuron_1787818543892_3",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_7_neuron_1787818543892_4_1787818543892",
+      "fromId": "neuron_1787818543892_7",
+      "toId": "neuron_1787818543892_4",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_7_neuron_1787818543892_5_1787818543892",
+      "fromId": "neuron_1787818543892_7",
+      "toId": "neuron_1787818543892_5",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_7_neuron_1787818543892_6_1787818543892",
+      "fromId": "neuron_1787818543892_7",
+      "toId": "neuron_1787818543892_6",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_7_neuron_1787818543892_9_1787818543892",
+      "fromId": "neuron_1787818543892_7",
+      "toId": "neuron_1787818543892_9",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_8_neuron_1787818543892_9_1787818543892",
+      "fromId": "neuron_1787818543892_8",
+      "toId": "neuron_1787818543892_9",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_8_neuron_1787818543892_1_1787818543892",
+      "fromId": "neuron_1787818543892_8",
+      "toId": "neuron_1787818543892_1",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_8_neuron_1787818543892_2_1787818543892",
+      "fromId": "neuron_1787818543892_8",
+      "toId": "neuron_1787818543892_2",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_8_neuron_1787818543892_3_1787818543892",
+      "fromId": "neuron_1787818543892_8",
+      "toId": "neuron_1787818543892_3",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_8_neuron_1787818543892_4_1787818543892",
+      "fromId": "neuron_1787818543892_8",
+      "toId": "neuron_1787818543892_4",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_8_neuron_1787818543892_5_1787818543892",
+      "fromId": "neuron_1787818543892_8",
+      "toId": "neuron_1787818543892_5",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_8_neuron_1787818543892_6_1787818543892",
+      "fromId": "neuron_1787818543892_8",
+      "toId": "neuron_1787818543892_6",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_8_neuron_1787818543892_7_1787818543892",
+      "fromId": "neuron_1787818543892_8",
+      "toId": "neuron_1787818543892_7",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_9_neuron_1787818543892_1_1787818543892",
+      "fromId": "neuron_1787818543892_9",
+      "toId": "neuron_1787818543892_1",
+      "weight": 1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_9_neuron_1787818543892_2_1787818543892",
+      "fromId": "neuron_1787818543892_9",
+      "toId": "neuron_1787818543892_2",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_9_neuron_1787818543892_3_1787818543892",
+      "fromId": "neuron_1787818543892_9",
+      "toId": "neuron_1787818543892_3",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_9_neuron_1787818543892_4_1787818543892",
+      "fromId": "neuron_1787818543892_9",
+      "toId": "neuron_1787818543892_4",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_9_neuron_1787818543892_5_1787818543892",
+      "fromId": "neuron_1787818543892_9",
+      "toId": "neuron_1787818543892_5",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_9_neuron_1787818543892_6_1787818543892",
+      "fromId": "neuron_1787818543892_9",
+      "toId": "neuron_1787818543892_6",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_9_neuron_1787818543892_7_1787818543892",
+      "fromId": "neuron_1787818543892_9",
+      "toId": "neuron_1787818543892_7",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    },
+    {
+      "id": "conn_neuron_1787818543892_9_neuron_1787818543892_8_1787818543892",
+      "fromId": "neuron_1787818543892_9",
+      "toId": "neuron_1787818543892_8",
+      "weight": 0.1,
+      "bias": 0,
+      "locked": false
+    }
+  ],
+  "layers": [],
+  "labels": []
+}
