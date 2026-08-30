@@ -37,9 +37,9 @@ install_dependencies() {
         exit 1
     fi
     
-    # Check if Python is installed
+    # Check if python3 is installed
     if ! command -v python3 &> /dev/null; then
-        echo -e "${RED}Python 3 is not installed. Please install Python 3.11+ first.${NC}"
+        echo -e "${RED}python3 3 is not installed. Please install python3 3.11+ first.${NC}"
         exit 1
     fi
     
@@ -54,10 +54,13 @@ install_dependencies() {
         exit 1
     fi
     
-    # Install Python dependencies
-    echo "Installing Python dependencies..."
+    # Install python3 dependencies
+    echo "Installing python3 dependencies..."
     cd "model && skills manager"
     if [ -f "requirements.txt" ]; then
+    	python3 -m venv .venv --quiet
+    	source .venv/bin/activate
+    	.venv\Scripts\activate.bat
         pip3 install -r requirements.txt --quiet
     fi
     cd ..

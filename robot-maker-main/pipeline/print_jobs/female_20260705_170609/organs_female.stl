@@ -1,0 +1,43 @@
+# STL Organs Export - FEMALE
+# Total Organs: 79
+# Reproductive System: Ovaries(2), Fallopian_Tubes(2), Uterus, Cervix, Vagina, Vulva, Labia, Clitoris, Bartholins_Glands(2), Mammary_Glands(2)
+# Distortion Scale: 1.000
+# ORGAN_LIST:
+#   Nervous/Brain
+#   Nervous/Spinal_Cord
+#   Nervous/Eyes
+#   Nervous/Ears
+#   Nervous/Nose
+#   Nervous/Tongue
+#   Cardio/Heart
+#   Cardio/Arteries
+#   Cardio/Veins
+#   Cardio/Lungs
+#   Cardio/Trachea
+#   Cardio/Bronchi
+#   Cardio/Larynx
+#   Cardio/Pharynx
+#   Cardio/Diaphragm
+#   Digestive/Mouth
+#   Digestive/Salivary_Glands
+#   Digestive/Esophagus
+#   Digestive/Stomach
+#   Digestive/Intestines(Small/Large)
+#   Digestive/Liver
+#   Digestive/Gallbladder
+#   Digestive/Pancreas
+#   Urinary/Kidneys(2)
+#   Urinary/Ureters(2)
+#   Urinary/Bladder
+#   Urinary/Urethra
+#   Reproductive/Ovaries(2)
+#   Reproductive/Fallopian_Tubes(2)
+#   Reproductive/Uterus
+#   Reproductive/Cervix
+#   Reproductive/Vagina
+#   Reproductive/Vulva
+#   Reproductive/Labia
+#   Reproductive/Clitoris
+#   Reproductive/Bartholins_Glands(2)
+#   Reproductive/Mammary_Glands(2)
+# VERTICES: [simulated - would contain actual organ meshes]
