@@ -58,8 +58,43 @@ export interface RunResult {
   error?: string;
 }
 
+/** How much of a background terminal's output is kept readable, per stream. */
+const SESSION_BUFFER_CHARS = 64_000;
+
+/** One background terminal, and what it has said so far. */
+export interface TerminalSession {
+  pid: number;
+  command: string;
+  cwd?: string;
+  running: boolean;
+  exitCode: number | null;
+  signal: string | null;
+  startedAt: number;
+  endedAt?: number;
+  stdout: string;
+  stderr: string;
+  /** True when the buffer dropped the oldest output to stay bounded. */
+  truncated: boolean;
+}
+
 export class TerminalPlugin extends BasePlugin {
   private bgProcs: ChildProcess[] = [];
+  /**
+   * What every background terminal has said, kept readable.
+   *
+   * runBg() span with stdio: "ignore", so a background terminal's output was
+   * discarded by the operating system before anything could look at it. The
+   * agent got a process id and nothing else -- no logs, no errors, no exit
+   * code. "If a development server running in one terminal crashes, the AI
+   * can detect the event and respond from another terminal" was not possible:
+   * the crash went to /dev/null.
+   *
+   * Bounded per stream, and the oldest output goes first, because a server
+   * left running for a day must not become the reason the process runs out of
+   * memory. Losing the start of a long log is a smaller loss than losing the
+   * machine.
+   */
+  private sessions: Map<number, TerminalSession> = new Map();
 
   constructor(definition: PluginDefinition) {
     super(definition);
@@ -89,10 +124,80 @@ export class TerminalPlugin extends BasePlugin {
     if (isBlockedCommand(cmd)) {
       throw new Error("Blocked: destructive command pattern detected");
     }
-    const proc = spawn(cmd, { shell: true, cwd, stdio: "ignore" });
+    // Piped, not ignored: a terminal nobody can read is not a terminal the
+    // agent can work with.
+    const proc = spawn(cmd, { shell: true, cwd, stdio: ["ignore", "pipe", "pipe"] });
     this.bgProcs.push(proc);
     if (proc.pid === undefined) throw new Error("Failed to start background process");
+
+    const session: TerminalSession = {
+      pid: proc.pid,
+      command: cmd,
+      cwd,
+      running: true,
+      exitCode: null,
+      signal: null,
+      startedAt: Date.now(),
+      stdout: "",
+      stderr: "",
+      truncated: false,
+    };
+    this.sessions.set(proc.pid, session);
+
+    const append = (stream: "stdout" | "stderr", chunk: Buffer | string): void => {
+      const text = session[stream] + String(chunk);
+      if (text.length > SESSION_BUFFER_CHARS) {
+        session[stream] = text.slice(text.length - SESSION_BUFFER_CHARS);
+        session.truncated = true;
+      } else {
+        session[stream] = text;
+      }
+    };
+    proc.stdout?.on("data", chunk => append("stdout", chunk));
+    proc.stderr?.on("data", chunk => append("stderr", chunk));
+    proc.on("exit", (code, signal) => {
+      session.running = false;
+      session.exitCode = code;
+      session.signal = signal ?? null;
+      session.endedAt = Date.now();
+    });
+    proc.on("error", err => {
+      append("stderr", `\n${err.message}\n`);
+      session.running = false;
+      session.endedAt = Date.now();
+    });
+
     return proc.pid;
+  }
+
+  /**
+   * Every background terminal and what it is doing.
+   *
+   * This is the cross-terminal awareness the architecture asks for: one
+   * terminal running a server, another running tests, and the agent able to
+   * see what happened in either from wherever it currently is.
+   */
+  terminals(): TerminalSession[] {
+    return Array.from(this.sessions.values(), session => ({ ...session }));
+  }
+
+  /** One background terminal, or null when no such session was started here. */
+  terminal(pid: number): TerminalSession | null {
+    const session = this.sessions.get(pid);
+    return session ? { ...session } : null;
+  }
+
+  /**
+   * Forget a finished terminal.
+   *
+   * Only a finished one: dropping the record of a process that is still
+   * running would leave it going with nothing watching it.
+   */
+  forgetTerminal(pid: number): boolean {
+    const session = this.sessions.get(pid);
+    if (!session || session.running) return false;
+    this.sessions.delete(pid);
+    return true;
   }
 
   which(name: string): string | null {

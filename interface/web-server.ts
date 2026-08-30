@@ -2388,6 +2388,46 @@ export class WebServer {
     }
 
     // GET /api/plugins — list all plugins and their status
+    // GET /api/terminals -- every background terminal and what it has said.
+    //
+    // The architecture's cross-terminal awareness: one terminal running a
+    // server, another running tests, and the agent able to see what happened
+    // in either from wherever it currently is. Both halves were missing.
+    // runBg() spawned with stdio: "ignore", so the operating system threw the
+    // output away before anything could read it, and nothing outside the
+    // tests ever called runBg at all -- so a background terminal was neither
+    // observable nor reachable.
+    //
+    // Read-only on purpose. Starting and killing processes over HTTP is a
+    // different decision with a different blast radius; this endpoint only
+    // lets you see what is already running.
+    if (pathname === '/api/terminals' && method === 'GET') {
+      try {
+        const registry = this.runner.getPluginRegistry();
+        // getPluginInstance, not getPlugin -- the latter returns the
+        // definition (name, version, capabilities), which has no terminals on
+        // it and would have made this endpoint quietly report none.
+        const terminal = registry.getPluginInstance('terminal') as unknown as
+          { terminals?: () => unknown[] } | undefined;
+        if (!terminal?.terminals) {
+          this.sendJson(res, { terminals: [], note: 'the terminal plug-in is not loaded' });
+          return;
+        }
+        const terminals = terminal.terminals();
+        this.sendJson(res, {
+          terminals,
+          running: terminals.filter(t => (t as { running?: boolean }).running).length,
+          failed: terminals.filter(t => {
+            const code = (t as { exitCode?: number | null }).exitCode;
+            return code !== null && code !== undefined && code !== 0;
+          }).length,
+        });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
     if (pathname === '/api/plugins' && method === 'GET') {
       const registry = this.runner.getPluginRegistry();
       const plugins = registry.listPlugins();
