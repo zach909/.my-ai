@@ -23,7 +23,7 @@
  */
 
 import { describe, it, expect } from 'vitest'
-import { verifyCode } from '../../models && skills/core/code-iteration.js'
+import { verifyCode, sandboxRejections, clearSandboxRejections } from '../../models && skills/core/code-iteration.js'
 
 /** Runs a probe and returns what it managed to observe, as a string. */
 function reach(expression: string): string {
@@ -100,5 +100,51 @@ describe('a candidate cannot take the host down', () => {
       { name: 'reads', expression: 'importantValue', expected: 42 },
     ])
     expect(r.passed).toBe(true)
+  })
+})
+
+/**
+ * A candidate can start a promise nobody holds. The rejection then lands on
+ * the HOST process, where Node's default is to terminate -- so untrusted code
+ * could halt the process evaluating it, without ever escaping the sandbox.
+ *
+ * Found because vitest reported a failure against this file while every
+ * assertion in it passed: the async-function vector above leaves exactly such
+ * a promise behind.
+ */
+describe('a candidate cannot leave a rejection on the host', () => {
+  it('records the dropped rejection instead of letting it escape', async () => {
+    clearSandboxRejections()
+    // The promise is created and discarded inside the expression, so the
+    // candidate's own try/catch never sees it and nothing can catch it at
+    // the source.
+    verifyCode(
+      `globalThis.__r = (() => { try { return String((async function(){}).constructor('return process')().pid) } catch (e) { return 'sync:' + e.name } })()`,
+      [{ name: 'evidence', expression: '__r', expected: '__never__' }],
+    )
+    // Let the microtask checkpoint run, where rejections are reported.
+    await new Promise(resolve => setImmediate(resolve))
+    const caught = sandboxRejections()
+    expect(caught.length).toBeGreaterThan(0)
+    expect(caught.join('\n')).toMatch(/process is not defined/)
+  })
+
+  it('survives a tight loop without piling listeners on the process', async () => {
+    clearSandboxRejections()
+    const before = process.listenerCount('unhandledRejection')
+    for (let i = 0; i < 25; i++) {
+      verifyCode(`globalThis.__x = ${i}`, [{ name: 'v', expression: '__x', expected: i }])
+    }
+    // Never more than the one this module installs, however many runs overlap
+    // the drain window.
+    expect(process.listenerCount('unhandledRejection')).toBeLessThanOrEqual(before + 1)
+    await new Promise(resolve => setImmediate(resolve))
+  })
+
+  it('still reports the checks that passed while trapping', () => {
+    clearSandboxRejections()
+    const r = verifyCode(`globalThis.__v = 6 * 7`, [{ name: 'answer', expression: '__v', expected: 42 }])
+    expect(r.passed).toBe(true)
+    expect(r.outcomes[0].actual).toBe(42)
   })
 })

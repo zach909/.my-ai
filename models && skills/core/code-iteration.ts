@@ -128,7 +128,112 @@ function scriptOptions(filename: string) {
 const DYNAMIC_IMPORT = /\bimport\s*(\(|\.)/;
 
 /** Run a candidate against its checks. Never throws -- a crash is a result. */
+
+/**
+ * Rejections a candidate leaves behind, kept away from the host.
+ *
+ * Sandboxed code can start a promise nobody is holding. The clearest example
+ * is in the escape-vector suite: `(async function(){}).constructor('return
+ * process')()` builds an async function in the sandbox and calls it, which
+ * returns a promise that rejects with "process is not defined". Reading
+ * `.pid` off that promise gives `undefined`, so the candidate's own
+ * try/catch sees nothing wrong and `runInContext` returns normally -- the
+ * rejection happens on a later microtask, after verifyCode has already
+ * returned, with no one to catch it.
+ *
+ * That is not cosmetic. An unhandled rejection reaches the HOST process, and
+ * Node's default for one is to terminate. Candidate code is written by the
+ * agent, not by a person reviewing it, so "a candidate can halt the process
+ * that is evaluating it" is a live failure mode rather than a hypothetical.
+ * It also makes the test suite report a failure against a file whose own
+ * assertions all pass, which is how it was found.
+ *
+ * The promise itself is unreachable -- it is created and discarded inside an
+ * expression -- so it cannot be caught at the source. Instead a listener owns
+ * the window: armed while a candidate is running and disarmed one macrotask
+ * after it finishes, which is strictly after the microtask checkpoint where
+ * rejections are reported. Anything caught in that window is recorded and
+ * swallowed rather than allowed to reach the default handler.
+ *
+ * The window is deliberately narrow. It is not zero, so a rejection raised
+ * elsewhere in the host during those few milliseconds would be swallowed too;
+ * that is the accepted cost of not letting sandboxed code end the process.
+ * `sandboxRejections()` exists so a swallowed one is still visible rather
+ * than silently gone.
+ */
+let sandboxDepth = 0;
+/** Whether the listener is on `process` right now. */
+let trapInstalled = false;
+/** The pending disarm, so a run starting during the drain window cancels it. */
+let drainTimer: ReturnType<typeof setTimeout> | null = null;
+const swallowed: string[] = [];
+const SWALLOWED_LIMIT = 32;
+
+const onUnhandledRejection = (reason: unknown) => {
+  const text = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
+  swallowed.push(text);
+  if (swallowed.length > SWALLOWED_LIMIT) swallowed.shift();
+};
+
+/** Rejections swallowed while sandboxed code was running, newest last. */
+export function sandboxRejections(): string[] {
+  return [...swallowed];
+}
+
+/** Forget the recorded rejections. For tests, and for a caller that has read them. */
+export function clearSandboxRejections(): void {
+  swallowed.length = 0;
+}
+
+/**
+ * Run `fn` with sandbox rejections trapped. Re-entrant, and safe to call in a
+ * tight loop.
+ *
+ * `trapInstalled` is what makes the loop safe: the disarm is deferred by a
+ * macrotask, so a second call arrives while the first listener is still on
+ * `process`. Adding one per call instead put eleven copies on the emitter and
+ * Node warned about a listener leak -- which is the same defect class this
+ * function exists to prevent, produced by the fix for it.
+ */
+function withRejectionTrap<T>(fn: () => T): T {
+  if (drainTimer !== null) {
+    clearTimeout(drainTimer);
+    drainTimer = null;
+  }
+  if (!trapInstalled) {
+    process.on("unhandledRejection", onUnhandledRejection);
+    trapInstalled = true;
+  }
+  sandboxDepth++;
+  try {
+    return fn();
+  } finally {
+    sandboxDepth--;
+    if (sandboxDepth === 0) {
+      // One macrotask later: microtasks -- where rejections are reported --
+      // all run before this fires, so the listener is still installed for
+      // them. Unref'd so an armed trap cannot hold the process open.
+      drainTimer = setTimeout(() => {
+        drainTimer = null;
+        if (sandboxDepth === 0 && trapInstalled) {
+          process.off("unhandledRejection", onUnhandledRejection);
+          trapInstalled = false;
+        }
+      }, 0);
+      if (typeof drainTimer === "object" && drainTimer && "unref" in drainTimer) {
+        (drainTimer as { unref(): void }).unref();
+      }
+    }
+  }
+}
+
 export function verifyCode(code: string, checks: CodeCheck[]): VerifyResult {
+  // Everything a candidate starts, including promises it drops, stays inside
+  // this window -- see withRejectionTrap.
+  return withRejectionTrap(() => verifyCodeInner(code, checks));
+}
+
+function verifyCodeInner(code: string, checks: CodeCheck[]): VerifyResult {
   const started = Date.now();
   const outcomes: CheckOutcome[] = [];
 
