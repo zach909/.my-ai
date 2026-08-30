@@ -79,7 +79,14 @@
  *     waveBias   = connWaveBias[i][k] + i·connWaveBiasIm[i][k]
  *                + hyperWaveAdd  · mean_k( pool[bin_k] · addWaveWeight[k] )
  *
- *     heard[i] = mean_k≠i( waveWeight·wave[k] + waveBias
+ *   The weight and the bias then make ONE wave, and that wave MULTIPLIES the
+ *   sender's -- amplitudes multiply, phases add. Not w·wave + b: on the wave
+ *   side there is no "what this connection contributes with nothing
+ *   arriving", because a wave with nothing arriving is no wave, and an added
+ *   bias is a standing wave no sender can cancel.
+ *
+ *     edit[i][k]  = waveWeight + waveBias
+ *     heard[i] = mean_k≠i( edit[i][k]·wave[k]
  *                        + connWaveShift[i][k]·pool[bin_k - 1] )
  *              + neuronWaveBias[i]
  *              + pool[bin_i] - wave[i]        ← the pool at its own frequency
@@ -360,7 +367,9 @@ export function applyEquation(
     for (let i = 0; i < N; i++) if (amplitude[i] > loudest) loudest = amplitude[i];
     const maxAmplitude = loudest > 1e-9 ? loudest : Math.sqrt(Math.max(1, D - 1));
     for (let i = 0; i < N; i++) {
-      let heardRe = 0, heardIm = 0;
+      // The running product starts at 1, its size carried in logs alongside.
+      let heardRe = 1, heardIm = 0;
+      let heardLogMag = 0, heardCount = 0;
       for (let k = 0; k < N; k++) {
         if (k === i) continue; // a neuron does not carry its own wave to itself
         const gain = state.connWaveGain[i * N + k];
@@ -373,19 +382,48 @@ export function applyEquation(
         const bRe = state.connWaveBias[i * N + k] + netBiasRe[i] * share;
         const bIm = state.connWaveBiasIm[i * N + k] + netBiasIm[i] * share;
         // Run against the wave of the neuron giving it.
-        let editedRe = wRe * prevRe[k] - wIm * prevIm[k] + bRe;
-        let editedIm = wRe * prevIm[k] + wIm * prevRe[k] + bIm;
+        // The weight and the bias make ONE editing wave, and the edit is a
+        // pure complex multiply -- amplitudes multiply, phases add. Not
+        // `w*wave + b`: on the wave side there is no "what this connection
+        // contributes with nothing arriving", because a wave with nothing
+        // arriving is no wave. An added bias is a standing wave no sender can
+        // cancel, which is the opposite of interference.
+        const editRe = wRe + bRe;
+        const editIm = wIm + bIm;
+        let editedRe = editRe * prevRe[k] - editIm * prevIm[k];
+        let editedIm = editRe * prevIm[k] + editIm * prevRe[k];
         const shift = state.connWaveShift[i * N + k];
         if (shift !== 0) {
           const neighbour = bin[k] === 0 ? settings.waveBins - 1 : bin[k] - 1;
           editedRe += shift * state.poolRe[neighbour];
           editedIm += shift * state.poolIm[neighbour];
         }
-        heardRe += editedRe;
-        heardIm += editedIm;
+        // The receiving neuron MULTIPLIES the waves coming into it --
+        // amplitudes multiply, phases add. Two adjustments make the literal
+        // product usable in an all-connected mesh, and both are deliberate:
+        // a sender with no wave is skipped rather than annihilating
+        // everything, and the magnitudes are combined as a GEOMETRIC mean,
+        // which is to multiplication what the mean is to addition.
+        const mag = Math.hypot(editedRe, editedIm);
+        if (mag > 0) {
+          heardLogMag += Math.log(mag);
+          const ur = editedRe / mag;
+          const ui = editedIm / mag;
+          const nr = heardRe * ur - heardIm * ui;
+          heardIm = heardRe * ui + heardIm * ur;
+          heardRe = nr;
+          heardCount++;
+        }
       }
-      heardRe /= N;
-      heardIm /= N;
+      if (heardCount > 0) {
+        const scale = Math.exp(heardLogMag / heardCount);
+        const angle = Math.atan2(heardIm, heardRe) / heardCount;
+        heardRe = scale * Math.cos(angle);
+        heardIm = scale * Math.sin(angle);
+      } else {
+        heardRe = 0;
+        heardIm = 0;
+      }
       heardRe += state.neuronWaveBiasRe[i];
       heardIm += state.neuronWaveBiasIm[i];
       // And the pool at its own frequency, its own last contribution removed.

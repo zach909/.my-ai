@@ -339,3 +339,93 @@ describe('a self-built extension joins the mesh', () => {
     }
   }, 120_000);
 });
+
+describe('a failed build becomes a lesson', () => {
+  /**
+   * Section 9's other arm: "If it fails, the failure can be used to modify
+   * the extension or the relevant skills."
+   *
+   * A build that left the mesh exactly as unable as before was reported onto
+   * the zip loop and then forgotten, so the next time the same thing arrived
+   * the system would build it the same way and learn nothing. MistakeTracker
+   * already de-duplicates identical failures and counts recurrences, and its
+   * lessons are already read when the system plans -- recording here is what
+   * lets a second attempt go differently.
+   */
+  it('records why the build did not give the network a capability', async () => {
+    const { getNeuroclawSystem } = await import('../../src/index.js');
+    const graft = await import('../../models && skills/core/net-skill-graft.js');
+    const system = await getNeuroclawSystem();
+    const engine = system.pipeline.ensureBrain();
+
+    // Fill the mesh, so grafting genuinely cannot add anything and the build
+    // fails for a real reason rather than a stubbed one.
+    let room = graft.MAX_MESH_NEURONS - engine.getNeuronCount();
+    while (room > 0) {
+      const step = Math.min(200, room);
+      engine.addNeurons(step);
+      room -= step;
+    }
+    expect(engine.getNeuronCount()).toBe(graft.MAX_MESH_NEURONS);
+
+    const procedure = 'To read a .wxy stream: first, open the header. Then decode frames. '
+      + 'Next, check parity. Finally, emit rows.';
+    for (let i = 0; i < 6; i++) await system.learn(procedure);
+
+    const lessons = system.mistakes.lessons(procedure);
+    expect(lessons.length).toBeGreaterThan(0);
+    expect(lessons.some(l => l.includes('full') || l.includes('did not give'))).toBe(true);
+  }, 180_000);
+});
+
+describe('background terminals are observable', () => {
+  /**
+   * "One of the most important parts of the idea is that the AI can view what
+   * is happening across its other terminals. If a development server running
+   * in one terminal crashes, the AI can detect the event and respond from
+   * another terminal."
+   *
+   * Neither half was possible. runBg() spawned with stdio: "ignore", so the
+   * operating system discarded a background terminal's output before anything
+   * could read it -- the crash went to /dev/null and the agent got back a
+   * process id and nothing else. And nothing outside the tests ever called
+   * runBg, so a background terminal was neither observable nor reachable.
+   */
+  it('keeps what each terminal said, and which one failed', async () => {
+    const { TerminalPlugin } = await import('../../plugins/terminal.js');
+    const terminal = new TerminalPlugin({
+      name: 'terminal', version: '1', description: 'test', capabilities: [],
+    } as never);
+
+    // One terminal that works, one that fails -- the shape the architecture
+    // describes: a server in one, tests in another.
+    terminal.runBg("echo 'server listening'");
+    terminal.runBg("echo 'running tests'; echo 'FAIL: expected 3 got 4' >&2; exit 7");
+    await new Promise(resolve => setTimeout(resolve, 1200));
+
+    const sessions = terminal.terminals();
+    expect(sessions.length).toBe(2);
+    // Output survived rather than going to /dev/null.
+    expect(sessions.map(s => s.stdout).join(' ')).toContain('server listening');
+    expect(sessions.map(s => s.stderr).join(' ')).toContain('FAIL: expected 3 got 4');
+
+    // And the failure is identifiable from outside the terminal it happened
+    // in, which is the whole point.
+    const failed = sessions.filter(s => s.exitCode !== null && s.exitCode !== 0);
+    expect(failed.length).toBe(1);
+    expect(failed[0].exitCode).toBe(7);
+    expect(failed[0].running).toBe(false);
+  }, 30_000);
+
+  it('will not forget a terminal that is still running', async () => {
+    // Dropping the record of a live process would leave it going with nothing
+    // watching it.
+    const { TerminalPlugin } = await import('../../plugins/terminal.js');
+    const terminal = new TerminalPlugin({
+      name: 'terminal', version: '1', description: 'test', capabilities: [],
+    } as never);
+    const pid = terminal.runBg('sleep 5');
+    expect(terminal.forgetTerminal(pid)).toBe(false);
+    expect(terminal.terminal(pid)?.running).toBe(true);
+  }, 30_000);
+});
