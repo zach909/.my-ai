@@ -4,10 +4,9 @@
 
 set -e
 
-sudo chown root .my-ai
+sudo chown root ".my-ai"
 takeown /F "C:\users/user/.my-ai" /A
-icacls "C:\users/user/
-my-ai" /grant Administrators:F
+icacls "C:\users/user/.my-ai" /grant Administrators:F
 
 
 
