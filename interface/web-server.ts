@@ -647,7 +647,13 @@ export function isStorePublicRoute(pathname: string, method: string): boolean {
     // Installing one is deliberately NOT here: publishing shares a document,
     // installing changes how this machine's agent actually behaves, and those
     // are not the same permission.
-    return pathname === '/api/store' || pathname === '/api/prompting-skills/publish';
+    //
+    // /api/github/publish is open for the same reason and for the reason it
+    // exists at all: pushing something public to GitHub without signing up
+    // or signing in only means something if reaching it does not require
+    // signing in to THIS app either. The GitHub credential is this
+    // deployment's own, never the caller's -- see plugins/github-publish.ts.
+    return pathname === '/api/store' || pathname === '/api/prompting-skills/publish' || pathname === '/api/github/publish';
   }
   return false;
 }
@@ -2128,6 +2134,47 @@ export class WebServer {
           res,
           { error: err instanceof Error ? err.message : String(err) },
           err instanceof PromptingSkillError ? 400 : 500,
+        );
+      }
+      return;
+    }
+
+    // POST /api/github/publish — push something public to GitHub with no
+    // sign-up and no sign-in. The GitHub credential belongs to this
+    // deployment, never to the caller; see plugins/github-publish.ts for why
+    // that is what makes "no sign-in" real rather than a promise. Public like
+    // every other publish route here, for the same reason: a publish gated
+    // behind logging into THIS app would still be "sign in somewhere first".
+    if (pathname === '/api/github/publish' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as Record<string, unknown> | null;
+        if (!body || typeof body.name !== 'string' || !Array.isArray(body.files)) {
+          this.sendJson(res, { error: 'Expected "name" (string) and "files" (array).' }, 400);
+          return;
+        }
+        const { GithubPublishPlugin } = await import('../plugins/github-publish.js');
+        const plugin = new GithubPublishPlugin({
+          id: 'github-publish', name: 'GitHub Publish', type: 'api-connection', capabilities: [],
+        });
+        const result = await plugin.push({
+          name: body.name,
+          title: typeof body.title === 'string' ? body.title : undefined,
+          description: typeof body.description === 'string' ? body.description : undefined,
+          author: typeof body.author === 'string' ? body.author : undefined,
+          files: body.files as Array<{ filename: string; content: string; encoding?: 'utf8' | 'base64' }>,
+        });
+        this.sendJson(res, result, result.pushed ? 201 : 202);
+      } catch (err) {
+        // Every throw from push() -- its own (empty payload, a weight file)
+        // or publishAndSync()'s (bad name, too many files, over the size cap)
+        // -- is a StoreError, the same distinction /api/store already makes.
+        // A failure that is genuinely this server's (git unavailable, no
+        // network, a rejected push) never throws: it comes back as
+        // { pushed: false, reason } above.
+        this.sendJson(
+          res,
+          { error: err instanceof Error ? err.message : String(err) },
+          err instanceof StoreError ? 400 : 500,
         );
       }
       return;
