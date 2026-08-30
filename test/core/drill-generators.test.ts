@@ -242,27 +242,48 @@ describe('the answers are actually correct', () => {
 });
 
 /**
- * The blocker between "the agent has training material" and "the agent's
- * regions specialise", measured rather than assumed.
+ * A correction to a claim this file used to make.
  *
- * The generators below are correct and the mesh regions exist, but training
- * them does not make a region answer its own domain more strongly than
- * anyone else's. The reason is upstream of the mesh: embedText() carries no
- * domain signal at all, so the information the regions would need to
- * specialise on is destroyed before a single neuron sees it.
+ * An earlier version of this test measured RAW PAIRWISE cosine similarity
+ * between embedText() outputs -- (within-domain similarity) minus
+ * (between-domain similarity) -- got a value near zero, and concluded from
+ * that alone that "the embedding carries no domain signal, which is why
+ * regions cannot specialise." Both halves of that conclusion were wrong.
  *
- * Measured as (within-domain similarity - between-domain similarity):
- * positive means two problems of the same kind look more alike than two
- * different domains do, which is the minimum for any classifier downstream
- * to work. It came out NEGATIVE at 16 dimensions (-0.05) and hovered around
- * zero at every width from 8 to 256, so this is not a "needs more
- * dimensions" problem.
+ * Pairwise cosine between individual short, noisy vectors is a weak metric:
+ * two problems from the same domain can differ in length, symbols, and
+ * incidental words enough to look unrelated to each other even when both are
+ * clearly separable from a different domain's problems in bulk. Centroid
+ * classification is the metric that actually answers "does this embedding
+ * carry domain signal" -- average out the noise, then ask whether a fresh
+ * problem lands nearest its own domain's average. Measured on the same
+ * embedding the first version called blind: 217/270 = 80.4% held-out
+ * accuracy over 9 domains, against 11.1% chance. The signal is there.
  *
- * This test asserts the situation as it IS, and is written to fail loudly if
- * someone fixes it -- at which point the fix is real and this test should be
- * rewritten to demand the separation rather than record its absence.
+ * The mesh confirms it end to end. A trained region's FULL neuron STATE
+ * VECTOR (not a scalar) after settling on a fresh, unseen problem in its
+ * domain lands nearest that region's own training centroid 100% of the time
+ * (test/core/domain-skills.test.ts). The specialisation the first version of
+ * this test said was impossible is real and measured.
+ *
+ * What actually IS still true, and worth keeping: raw pairwise cosine
+ * between two individual embeddings is close to zero separation, and that
+ * measurement below is unchanged. It was just the wrong question -- it asks
+ * whether two SHORT VECTORS resemble each other, when the property that
+ * matters is whether a MESH REGION, integrating many such vectors under
+ * training, comes to represent its domain distinctly. It does.
+ *
+ * The real, still-open finding is narrower and different: capabilityGap()
+ * and getNeuronEnergy() -- the functions this codebase actually uses to read
+ * "which region engaged" -- measure mean ABSOLUTE MAGNITUDE per neuron, a
+ * scalar. Magnitude is exactly what training saturates identically across
+ * every region (measured earlier: 0.0002 -> ~0.98 after 30 epochs, at the
+ * rail for all eight). DIRECTION is where the domain identity actually
+ * lives, and nothing in the engine's public surface reads direction against
+ * a region's own history. That is the real gap between "the mesh has
+ * specialised" (true, shown above) and "the agent can tell" (not yet built).
  */
-describe('the embedding is what blocks domain specialisation', () => {
+describe('the embedding carries real domain signal (a correction)', () => {
   const DIMS = 64;
 
   const cosine = (a: number[], b: number[]) => {
@@ -276,13 +297,49 @@ describe('the embedding is what blocks domain specialisation', () => {
     return m;
   };
 
-  it('carries no usable domain signal, which is why regions cannot specialise', async () => {
+  it('classifies a held-out problem by its domain far better than chance', async () => {
+    const { embedText } = await import('../../models && skills/core/neuro-lang');
+    const cats = Object.keys(DRILL_CATEGORIES);
+    const trainRand = seeded(20260830);
+
+    const centroids: Record<string, number[]> = {};
+    for (const c of cats) {
+      const vs = generateForCategory(c, 40, trainRand)!.map(q => embedText(q.problem, DIMS));
+      centroids[c] = centroid(vs);
+    }
+
+    const testRand = seeded(999);
+    let right = 0, total = 0;
+    for (const c of cats) {
+      for (const q of generateForCategory(c, 30, testRand)!) {
+        const v = embedText(q.problem, DIMS);
+        let best: string | null = null, bestScore = -Infinity;
+        for (const o of cats) {
+          const s = cosine(v, centroids[o]);
+          if (s > bestScore) { bestScore = s; best = o; }
+        }
+        if (best === c) right++;
+        total++;
+      }
+    }
+    const accuracy = right / total;
+    const chance = 1 / cats.length;
+    // 80.4% measured. A wide margin rather than the exact figure, so this
+    // does not become a flaky pin on a specific decimal.
+    expect(accuracy).toBeGreaterThan(chance * 4);
+  });
+
+  it('raw pairwise similarity is still near zero -- the metric that was wrong, not the fact', async () => {
+    // Kept because it is a real, reproducible measurement, and because a
+    // reader comparing this file against the earlier commit should be able
+    // to see that the NUMBER did not change -- only what it was taken to
+    // mean did.
     const { embedText } = await import('../../models && skills/core/neuro-lang');
     const cats = Object.keys(DRILL_CATEGORIES);
     const rand = seeded(20260830);
 
-    const centroids: number[][] = [];
     let withinTotal = 0;
+    const centroids: number[][] = [];
     for (const c of cats) {
       const vs = generateForCategory(c, 40, rand)!.map(q => embedText(q.problem, DIMS));
       centroids.push(centroid(vs));
@@ -298,36 +355,7 @@ describe('the embedding is what blocks domain specialisation', () => {
     for (let i = 0; i < centroids.length; i++) {
       for (let j = i + 1; j < centroids.length; j++) { betweenTotal += cosine(centroids[i], centroids[j]); pairs++; }
     }
-    const between = betweenTotal / pairs;
-    const separation = within - between;
-
-    // Recorded, not desired. Measured around 0 (-0.05 to +0.03) at every
-    // width from 8 to 256 dimensions.
+    const separation = within - betweenTotal / pairs;
     expect(Math.abs(separation)).toBeLessThan(0.15);
-
-    // The half that makes this a finding rather than a tautology: the
-    // problems themselves ARE distinguishable as text. If they were not,
-    // the embedding would be blameless.
-    const texts = cats.map(c => generateForCategory(c, 12, rand)!.map(q => q.problem).join(' '));
-    const vocab = texts.map(t => new Set(t.toLowerCase().match(/[a-z]{3,}/g) ?? []));
-    let overlapTotal = 0, vp = 0;
-    for (let i = 0; i < vocab.length; i++) {
-      for (let j = i + 1; j < vocab.length; j++) {
-        // Arithmetic problems are pure symbols ("12 + 5") and have no words
-        // at all, so their vocabulary is empty and the overlap ratio is 0/0.
-        // Skipped rather than counted as zero overlap: a domain with no words
-        // is not evidence that domains use different words.
-        const smaller = Math.min(vocab[i].size, vocab[j].size);
-        if (smaller === 0) continue;
-        const shared = [...vocab[i]].filter(w => vocab[j].has(w)).length;
-        overlapTotal += shared / smaller;
-        vp++;
-      }
-    }
-    // The comparison has to have actually happened.
-    expect(vp).toBeGreaterThan(20);
-    // Domains share well under half their vocabulary -- the signal is right
-    // there in the text, and the embedding is where it is lost.
-    expect(overlapTotal / vp).toBeLessThan(0.5);
   });
 });
