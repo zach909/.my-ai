@@ -3294,7 +3294,7 @@ export class WebServer {
         if (pathname === '/api/zip-loop/run' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
-                const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL, NETWORK_STATE_FILE } = await import('../models && skills/core/zip-halt.js');
+                const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL, NETWORK_STATE_FILE, STOP_REPORT_FILE } = await import('../models && skills/core/zip-halt.js');
                 // Three ways to say what goes in, because the whole point of an
                 // archive doorway is that complicated things fit through it: a plain
                 // prompt (dropped into input/ for you), an explicit tree of folders
@@ -3443,6 +3443,9 @@ export class WebServer {
                     // Where the state went, on disk and inside the archive.
                     savedNeurons,
                     stateFile: NETWORK_STATE_FILE,
+                    // What the stop command found when it looked at every neuron.
+                    stopReport: result.stopReport,
+                    stopReportFile: STOP_REPORT_FILE,
                     resumed,
                 });
             }

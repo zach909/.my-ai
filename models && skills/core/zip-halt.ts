@@ -408,6 +408,120 @@ export interface BitDoorway {
   captureNetworkState?(): unknown;
 }
 
+/** Where the stop command leaves what it found. */
+export const STOP_REPORT_FILE = `${ZIP_FOLDERS.state}stop-report.json`;
+
+/** What the stop command found when it looked at every neuron. */
+export interface StopReport {
+  /** Why the run ended, as the command was told it. */
+  reason: HaltReason | "unknown";
+  /** Neurons the network said it had, and states actually present for them. */
+  expectedNeurons: number;
+  dimensions: number;
+  statesFound: number;
+  /** States that are real numbers. Anything else is a neuron that came back broken. */
+  finite: number;
+  /** States pinned at the rail -- a saturated mesh represents nothing. */
+  saturated: number;
+  quietest: number;
+  loudest: number;
+  meanMagnitude: number;
+  /** True when every neuron the network claimed is present and finite. */
+  allAccountedFor: boolean;
+  notes: string[];
+}
+
+/**
+ * The command that runs when the network stops.
+ *
+ * "When it stops it will run a command that will stop it and see if all the
+ * neuron states" -- and the second half was never happening. `plugins/stop`
+ * existed only as a STRING to look for in the output: asksToStop() checked
+ * whether the network had written that path, and if it had, the run ended.
+ * Nothing was ever executed, and nothing ever looked at the neurons beyond
+ * serialising them.
+ *
+ * So this actually runs, on every ending, and actually looks: every neuron the
+ * network claims to have, present or missing, finite or broken, at the rail or
+ * not. A capture that silently held 300 states for 336 neurons, or a column of
+ * NaN from a graft that went wrong, used to travel back looking exactly like a
+ * healthy one.
+ */
+export function runStopCommand(state: unknown, reason: HaltReason | undefined): StopReport {
+  const notes: string[] = [];
+  const snapshot = (state ?? {}) as {
+    shape?: { neurons?: number; dimensions?: number };
+    states?: string;
+  };
+  const expectedNeurons = Number(snapshot.shape?.neurons ?? 0);
+  const dimensions = Number(snapshot.shape?.dimensions ?? 0);
+
+  let values: Float32Array = new Float32Array(0);
+  if (typeof snapshot.states === "string" && snapshot.states.length > 0) {
+    try {
+      const binary = Buffer.from(snapshot.states, "base64");
+      values = new Float32Array(binary.buffer, binary.byteOffset, Math.floor(binary.byteLength / 4));
+    } catch {
+      notes.push("the captured states could not be decoded");
+    }
+  } else {
+    notes.push("the network returned no states at all");
+  }
+
+  // Total dimensions per neuron includes the reserved input flag.
+  const perNeuron = dimensions > 0 ? dimensions + 1 : 0;
+  const statesFound = perNeuron > 0 ? Math.floor(values.length / perNeuron) : 0;
+
+  let finite = 0;
+  let saturated = 0;
+  let quietest = Number.POSITIVE_INFINITY;
+  let loudest = 0;
+  let total = 0;
+  for (let i = 0; i < statesFound; i++) {
+    let sum = 0;
+    let ok = true;
+    for (let d = 1; d < perNeuron; d++) {
+      const v = values[d * statesFound + i];
+      if (!Number.isFinite(v)) { ok = false; break; }
+      const mag = v < 0 ? -v : v;
+      if (mag > 0.99) saturated++;
+      sum += mag;
+    }
+    if (!ok) continue;
+    finite++;
+    const mean = perNeuron > 1 ? sum / (perNeuron - 1) : 0;
+    if (mean < quietest) quietest = mean;
+    if (mean > loudest) loudest = mean;
+    total += mean;
+  }
+  if (!Number.isFinite(quietest)) quietest = 0;
+
+  if (statesFound !== expectedNeurons) {
+    notes.push(`the network says ${expectedNeurons} neurons but ${statesFound} states came back`);
+  }
+  if (finite !== statesFound) {
+    notes.push(`${statesFound - finite} neuron(s) came back holding something that is not a number`);
+  }
+  const cells = statesFound * Math.max(0, perNeuron - 1);
+  if (cells > 0 && saturated / cells > 0.5) {
+    notes.push("over half the mesh is pinned at the rail, which represents nothing");
+  }
+
+  return {
+    reason: reason ?? "unknown",
+    expectedNeurons,
+    dimensions,
+    statesFound,
+    finite,
+    saturated,
+    quietest,
+    loudest,
+    meanMagnitude: finite > 0 ? total / finite : 0,
+    allAccountedFor: expectedNeurons > 0 && statesFound === expectedNeurons && finite === statesFound,
+    notes,
+  };
+}
+
 /** Where a stopped run leaves what every neuron and every connection was. */
 export const NETWORK_STATE_FILE = `${ZIP_FOLDERS.state}network-state.json`;
 
@@ -422,6 +536,8 @@ export interface RunResult extends HaltDecision {
    * rather than beside it.
    */
   networkState?: unknown;
+  /** What the stop command found when it looked at every neuron. */
+  stopReport?: StopReport;
 }
 
 /**
@@ -495,12 +611,23 @@ function runLoop(
 
   const finish = (): RunResult => {
     const networkState = doorway.captureNetworkState?.();
+    // The run has stopped, so the stop command runs: it looks at every neuron
+    // the network claims to have and says whether they are all there and all
+    // sound. It runs on EVERY ending, including the ceiling -- a run cut off
+    // mid-thought is exactly when you want to know what state it left behind.
+    const stopReport = runStopCommand(networkState, decision.reason);
     const tree = watcher.tree();
     const withMemory =
       tree && networkState !== undefined
-        ? { files: { ...tree.files, [NETWORK_STATE_FILE]: JSON.stringify(networkState) } }
+        ? {
+          files: {
+            ...tree.files,
+            [NETWORK_STATE_FILE]: JSON.stringify(networkState),
+            [STOP_REPORT_FILE]: JSON.stringify(stopReport),
+          },
+        }
         : tree;
-    return { ...decision, tree: withMemory, raw: watcher.collected(), networkState };
+    return { ...decision, tree: withMemory, raw: watcher.collected(), networkState, stopReport };
   };
 
   if (!yieldTo) {

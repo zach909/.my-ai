@@ -3478,7 +3478,7 @@ export class WebServer {
             maxTicks?: number;
           } | null;
 
-        const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL, NETWORK_STATE_FILE } =
+        const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL, NETWORK_STATE_FILE, STOP_REPORT_FILE } =
           await import('../models && skills/core/zip-halt.js');
 
         // Three ways to say what goes in, because the whole point of an
@@ -3640,6 +3640,9 @@ export class WebServer {
           // Where the state went, on disk and inside the archive.
           savedNeurons,
           stateFile: NETWORK_STATE_FILE,
+          // What the stop command found when it looked at every neuron.
+          stopReport: result.stopReport,
+          stopReportFile: STOP_REPORT_FILE,
           resumed,
         });
       } catch (err) {
