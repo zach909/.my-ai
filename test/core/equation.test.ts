@@ -12,7 +12,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import { HyperDimensionalEngine, ElasticCoreBlock, MIN_WAVE_FREQ, MAX_WAVE_FREQ } from '../../models && skills/core/onebrain';
-import { applyEquation, type EquationState, type EquationSettings } from '../../models && skills/core/equation';
+import { applyEquation, connectionwiseInput, type EquationState, type EquationSettings } from '../../models && skills/core/equation';
 
 const decode = (b64: string) => {
   const buf = Buffer.from(b64, 'base64');
@@ -335,5 +335,106 @@ describe('the elastic core is the same equation', () => {
       activeGroups: new Set(['weather']),
     });
     expect(worst(stateOf(core), plain.states)).toBeLessThan(1e-6);
+  });
+});
+
+/**
+ * The same equation a third time, written connection by connection.
+ *
+ * `applyEquation` is already a readable form of the engine, but it is
+ * readable in the engine's SHAPE: the network's weight is worked out once per
+ * receiving neuron and folded into the whole row at once, because adding one
+ * constant to every weight in a row is that constant times the sum of what
+ * arrived. That identity is the whole reason the term costs N^2 instead of
+ * N^3 -- and it is also the reason the code stops resembling the rule.
+ *
+ * `connectionwiseInput` writes the rule instead: for each connection into a
+ * neuron, build its combined weight and its combined bias, then
+ * sender * weight + bias. Slow, and never used at runtime. Its only job is to
+ * be the version a person can check against what was asked for, so this
+ * block checks the fast one still equals it.
+ */
+describe('the connection form and the folded form are the same equation', () => {
+  const matches = (config: Record<string, number | boolean>) => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 9,
+      dimensions: 4,
+      propagationSteps: 1,
+      ...config,
+    });
+    const driven = new Set([0]);
+    for (let t = 0; t < 3; t++) engine.process(new Array(4).fill(0.35), undefined, driven);
+
+    const before = readEngine(engine);
+    const settings = settingsFor(config, engine.getWaveReading());
+    // hasEma false so live correction cannot fire: it damps computed neurons
+    // halfway back, which is not part of the connection rule.
+    const plain = applyEquation(before, settings, [0.4, -0.2, 0.15, 0.6], driven, new Set(), {
+      emaEnergy: 0,
+      hasEma: false,
+      sustainedDivergence: 0,
+      influenceDecay: 0.95,
+    });
+
+    const N = before.neurons;
+    const D = before.dimensions;
+    let worst = 0;
+    let compared = 0;
+    for (let i = 0; i < N; i++) {
+      if (driven.has(i)) continue;
+      for (let d = 0; d < D; d++) {
+        const own = Math.tanh(connectionwiseInput(before, settings, i, d, plain.readStates) + plain.waveTerm[i]);
+        worst = Math.max(worst, Math.abs(own - plain.states[d * N + i]));
+        compared++;
+      }
+    }
+    // A comparison over nothing passes for free.
+    expect(compared).toBe((N - 1) * D);
+    return worst;
+  };
+
+  it('agrees on the plain connection: sender * its own weight', () => {
+    expect(matches({})).toBeLessThan(1e-6);
+  });
+
+  it('agrees when the weight has a network half added to it', () => {
+    expect(matches({ hyperGain: 1 })).toBeLessThan(1e-6);
+  });
+
+  it('agrees when the bias has a network half added to it', () => {
+    expect(matches({ hyperAdd: 1 })).toBeLessThan(1e-6);
+  });
+
+  it('agrees when both halves are on, with a bias per connection', () => {
+    expect(matches({ hyperGain: 1, hyperAdd: 1, connectionBias: true })).toBeLessThan(1e-6);
+  });
+
+  it('agrees when the network scales the connection instead of adding to it', () => {
+    expect(matches({ hyperScale: 1, hyperGain: 1, hyperAdd: 1 })).toBeLessThan(1e-6);
+  });
+
+  /**
+   * The network's half is not decoration: switching it off has to move the
+   * answer, or every test above would pass on an equation that ignored it.
+   */
+  it('the network half of the weight is doing something', () => {
+    const engine = new HyperDimensionalEngine({
+      neuronCount: 9, dimensions: 4, propagationSteps: 1, hyperGain: 1, hyperAdd: 1,
+    });
+    const driven = new Set([0]);
+    for (let t = 0; t < 3; t++) engine.process(new Array(4).fill(0.35), undefined, driven);
+    const before = readEngine(engine);
+    const on = settingsFor({ hyperGain: 1, hyperAdd: 1 }, engine.getWaveReading());
+    const off = settingsFor({}, engine.getWaveReading());
+
+    let moved = 0;
+    for (let i = 1; i < before.neurons; i++) {
+      for (let d = 0; d < before.dimensions; d++) {
+        moved = Math.max(moved, Math.abs(
+          connectionwiseInput(before, on, i, d) - connectionwiseInput(before, off, i, d),
+        ));
+      }
+    }
+    expect(moved).toBeGreaterThan(1e-3);
   });
 });
