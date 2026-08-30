@@ -1,0 +1,33 @@
+{
+  "switches": {
+    "all": true,
+    "desktop": true,
+    "workspace": true
+  },
+  "grants": [
+    {
+      "capability": "files.read",
+      "level": "observe"
+    },
+    {
+      "capability": "screen.observe",
+      "level": "observe"
+    },
+    {
+      "capability": "system.info",
+      "level": "observe"
+    },
+    {
+      "capability": "terminal.execute",
+      "level": "execute"
+    },
+    {
+      "capability": "terminal.open",
+      "level": "execute"
+    },
+    {
+      "capability": "user.observe",
+      "level": "observe"
+    }
+  ]
+}
