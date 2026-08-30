@@ -247,6 +247,17 @@ interface PromptingSkillView {
   strategy?: string
   plugin?: string
   replaced?: boolean
+  /**
+   * The actual prompts inside a skill -- `query` (perception, what to ask
+   * for) and `input`/`expect` (action, what to send and what a plugin was
+   * meant to produce). The backend has always sent these (every prompting-
+   * skill endpoint spreads the full PromptingSkill object); this view type
+   * just never declared them, so they were invisible in the UI and, with no
+   * edit surface at all, unreachable to change once a skill existed.
+   */
+  query?: string
+  input?: string
+  expect?: string
 }
 
 const CATEGORY_BLURB: Record<string, string> = {
@@ -265,6 +276,13 @@ function PromptingSkillsPanel() {
   const [loading, setLoading] = useState(true)
   const [error, setError] = useState<string | null>(null)
   const [busy, setBusy] = useState<string | null>(null)
+  // The skill currently open in the edit form below, or null when the form
+  // is in "write a new one" mode. Set from an Edit button on any active
+  // skill's card -- built-in or installed, since editing a built-in and
+  // saving is exactly how you get a customised copy of it (installing under
+  // its own name is already how removing a customised one restores the
+  // built-in, so the two are the same mechanism from opposite directions).
+  const [editing, setEditing] = useState<PromptingSkillView | null>(null)
 
   const load = useCallback(async () => {
     setLoading(true)
@@ -381,26 +399,63 @@ function PromptingSkillsPanel() {
                     </div>
 
                     {/* The triggers are the skill's own answer to "when is this
-                        mine?", so they are shown rather than hidden -- it is the
-                        part most worth editing. */}
+                        mine?", so they are shown rather than hidden -- it is
+                        one of the parts most worth editing. */}
                     <p className="text-[11px] text-muted-foreground">
                       {skill.when.length === 0
                         ? 'runs on every message'
                         : `runs when the message mentions: ${skill.when.slice(0, 8).join(', ')}${skill.when.length > 8 ? '…' : ''}`}
                     </p>
 
-                    {isInstalled && (
+                    {/* The prompt actually inside the skill -- what it asks for
+                        (perception) or sends and expects back (action). The
+                        backend has always had this; there was simply nowhere
+                        in the UI that showed it, so a skill's real behavior was
+                        invisible next to its name and description. */}
+                    {(skill.query || skill.input || skill.expect) && (
+                      <div className="space-y-1 rounded border border-border bg-muted/30 p-2">
+                        {skill.query && (
+                          <p className="text-[11px] font-mono leading-snug">
+                            <span className="text-muted-foreground">query: </span>{skill.query}
+                          </p>
+                        )}
+                        {skill.input && (
+                          <p className="text-[11px] font-mono leading-snug">
+                            <span className="text-muted-foreground">input: </span>{skill.input}
+                          </p>
+                        )}
+                        {skill.expect && (
+                          <p className="text-[11px] font-mono leading-snug">
+                            <span className="text-muted-foreground">expect: </span>{skill.expect}
+                          </p>
+                        )}
+                      </div>
+                    )}
+
+                    <div className="flex flex-wrap gap-2">
                       <Button
                         variant="outline"
                         size="sm"
                         className="gap-2"
                         disabled={busy === skill.name}
-                        onClick={() => void remove(skill.name)}
+                        onClick={() => setEditing(skill)}
                       >
-                        <Trash2 className="h-3.5 w-3.5" />
-                        {busy === skill.name ? 'Removing…' : 'Remove'}
+                        <Pencil className="h-3.5 w-3.5" />
+                        Edit
                       </Button>
-                    )}
+                      {isInstalled && (
+                        <Button
+                          variant="outline"
+                          size="sm"
+                          className="gap-2"
+                          disabled={busy === skill.name}
+                          onClick={() => void remove(skill.name)}
+                        >
+                          <Trash2 className="h-3.5 w-3.5" />
+                          {busy === skill.name ? 'Removing…' : 'Remove'}
+                        </Button>
+                      )}
+                    </div>
                   </Card>
                 )
               })}
@@ -410,7 +465,14 @@ function PromptingSkillsPanel() {
       })}
 
       {!loading && !error && <PublishedPromptingSkills onChanged={() => void load()} />}
-      {!loading && !error && <PublishPromptingSkill onPublished={() => void load()} />}
+      {!loading && !error && (
+        <PublishPromptingSkill
+          key={editing?.name ?? 'new'}
+          initial={editing}
+          onPublished={() => { setEditing(null); void load() }}
+          onCancel={() => setEditing(null)}
+        />
+      )}
     </div>
   )
 }
@@ -493,22 +555,48 @@ function PublishedPromptingSkills({ onChanged }: { onChanged: () => void }) {
 }
 
 /**
- * The upload half: write a prompting skill and publish it.
+ * The upload half: write a prompting skill and publish it -- and the edit
+ * half, the same form pre-filled from an existing skill.
+ *
+ * publishPromptingSkill()/installPromptingSkill() on the backend already
+ * overwrite by name (the same republish-replaces pattern every store kind
+ * uses), so "edit" needed no new backend mutation -- only somewhere in the
+ * UI that opened this form with an existing skill's fields already in it,
+ * which did not exist before: skills could be written once and removed, and
+ * the actual PROMPT inside one -- `query` for perception, `input`/`expect`
+ * for action -- was never even a field in the form that DOES exist, so a
+ * skill created here could never really carry the thing that decides what
+ * it does.
  *
  * The form is shaped by the category, because the three categories genuinely
  * need different things -- a perception skill picks a source, a cognitive one
  * picks a strategy, an action one names a plugin -- and offering all three at
  * once would invite exactly the malformed documents the parser then rejects.
  */
-function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
-  const [open, setOpen] = useState(false)
-  const [category, setCategory] = useState<'perception' | 'cognitive' | 'action'>('perception')
-  const [name, setName] = useState('')
-  const [title, setTitle] = useState('')
-  const [description, setDescription] = useState('')
-  const [author, setAuthor] = useState('')
-  const [target, setTarget] = useState('memory')
-  const [when, setWhen] = useState('')
+function PublishPromptingSkill({
+  initial,
+  onPublished,
+  onCancel,
+}: {
+  /** An existing skill to edit, or null/undefined to write a new one. */
+  initial?: PromptingSkillView | null
+  onPublished: () => void
+  onCancel?: () => void
+}) {
+  const editing = Boolean(initial)
+  const [open, setOpen] = useState(editing)
+  const [category, setCategory] = useState<'perception' | 'cognitive' | 'action'>(initial?.category ?? 'perception')
+  const [name, setName] = useState(initial?.name ?? '')
+  const [title, setTitle] = useState(initial?.title ?? '')
+  const [description, setDescription] = useState(initial?.description ?? '')
+  const [author, setAuthor] = useState(initial?.author ?? '')
+  const [target, setTarget] = useState(initial?.source ?? initial?.strategy ?? initial?.plugin ?? 'memory')
+  const [when, setWhen] = useState((initial?.when ?? []).join(', '))
+  // The prompt actually inside the skill. query is perception's; input and
+  // expect are action's; cognitive has neither in the schema.
+  const [query, setQuery] = useState(initial?.query ?? '')
+  const [input, setInput] = useState(initial?.input ?? '')
+  const [expectField, setExpectField] = useState(initial?.expect ?? '')
   const [busy, setBusy] = useState(false)
 
   const targets =
@@ -528,11 +616,18 @@ function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
         description: description.trim(),
         author: author.trim() || 'anonymous',
         when: when.split(',').map(w => w.trim()).filter(Boolean),
-        priority: 50,
+        priority: initial?.priority ?? 50,
       }
-      if (category === 'perception') skill.source = target
-      else if (category === 'cognitive') skill.strategy = target
-      else skill.plugin = target
+      if (category === 'perception') {
+        skill.source = target
+        if (query.trim()) skill.query = query.trim()
+      } else if (category === 'cognitive') {
+        skill.strategy = target
+      } else {
+        skill.plugin = target
+        if (input.trim()) skill.input = input.trim()
+        if (expectField.trim()) skill.expect = expectField.trim()
+      }
 
       const res = await fetch('/api/prompting-skills/publish', {
         method: 'POST',
@@ -541,7 +636,10 @@ function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
       })
       const body = await res.json()
       if (!res.ok) throw new Error(body.error || 'Could not publish it')
-      reportSync(body.sync as SyncStatus | undefined, `Prompting skill "${skill.name}" published`)
+      reportSync(
+        body.sync as SyncStatus | undefined,
+        editing ? `Prompting skill "${skill.name}" updated` : `Prompting skill "${skill.name}" published`,
+      )
 
       if (alsoInstall) {
         const ins = await fetch('/api/prompting-skills/install', {
@@ -558,8 +656,8 @@ function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
           toast.success(`Installed "${skill.name}" on this device`)
         }
       }
-      setName(''); setTitle(''); setDescription(''); setWhen('')
-      setOpen(false)
+      if (!editing) { setName(''); setTitle(''); setDescription(''); setWhen(''); setQuery(''); setInput(''); setExpectField('') }
+      setOpen(editing ? true : false)
       onPublished()
     } catch (e) {
       toast.error(e instanceof Error ? e.message : String(e))
@@ -580,8 +678,12 @@ function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
   return (
     <Card className="p-4 space-y-3">
       <div className="flex items-center justify-between">
-        <p className="text-sm font-medium">New prompting skill</p>
-        <Button variant="ghost" size="sm" onClick={() => setOpen(false)}><X className="h-4 w-4" /></Button>
+        <p className="text-sm font-medium">{editing ? `Editing "${initial?.title ?? initial?.name}"` : 'New prompting skill'}</p>
+        <Button
+          variant="ghost"
+          size="sm"
+          onClick={() => { setOpen(false); onCancel?.() }}
+        ><X className="h-4 w-4" /></Button>
       </div>
 
       <div className="flex flex-wrap gap-1.5">
@@ -589,12 +691,17 @@ function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
           <button
             key={c}
             type="button"
+            // Locked while editing: the category decides which fields are
+            // required (source vs strategy vs plugin, query vs input/expect),
+            // and switching it mid-edit would silently drop whichever ones
+            // belonged to the old category with no warning.
+            disabled={editing}
             onClick={() => {
               setCategory(c)
               setTarget(c === 'perception' ? 'memory' : c === 'cognitive' ? 'decompose' : 'tools')
             }}
             className={
-              'rounded-full border px-3 py-1 text-xs transition-colors ' +
+              'rounded-full border px-3 py-1 text-xs transition-colors disabled:cursor-not-allowed disabled:opacity-60 ' +
               (category === c ? 'bg-primary text-primary-foreground border-primary' : 'border-border hover:bg-accent')
             }
           >
@@ -606,7 +713,15 @@ function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
       <div className="grid gap-2 sm:grid-cols-2">
         <div>
           <Label className="text-xs">Name</Label>
-          <Input value={name} onChange={e => setName(e.target.value)} placeholder="check-the-news" />
+          <Input
+            value={name}
+            onChange={e => setName(e.target.value)}
+            placeholder="check-the-news"
+            // Locked while editing: publish/install both replace BY NAME, so
+            // changing it here would create a second skill alongside the one
+            // being edited rather than updating it.
+            disabled={editing}
+          />
         </div>
         <div>
           <Label className="text-xs">Author</Label>
@@ -641,6 +756,50 @@ function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
           ))}
         </div>
       </div>
+
+      {/* The prompt actually inside the skill. Perception asks a question;
+          action sends one and names what it expected back. Neither field
+          existed anywhere in this form before -- a skill written here could
+          set everything ABOUT itself and nothing that decided what it
+          actually asked for or sent. */}
+      {category === 'perception' && (
+        <div>
+          <Label className="text-xs">
+            Query -- what to ask for. <code className="text-[10px]">{'{goal}'}</code> and{' '}
+            <code className="text-[10px]">{'{observation}'}</code> are substituted. Blank defaults to{' '}
+            <code className="text-[10px]">{'{goal}'}</code>.
+          </Label>
+          <textarea
+            value={query}
+            onChange={e => setQuery(e.target.value)}
+            placeholder="What did {goal} say about this, in the last day?"
+            rows={2}
+            className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+          />
+        </div>
+      )}
+      {category === 'action' && (
+        <>
+          <div>
+            <Label className="text-xs">
+              Input -- what to send the plugin. <code className="text-[10px]">{'{goal}'}</code> and{' '}
+              <code className="text-[10px]">{'{observation}'}</code> are substituted.
+            </Label>
+            <textarea
+              value={input}
+              onChange={e => setInput(e.target.value)}
+              placeholder="search for {goal}"
+              rows={2}
+              className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 text-sm outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            />
+          </div>
+          <div>
+            <Label className="text-xs">Expect -- what the plugin was meant to produce, so the observe step has something to compare against.</Label>
+            <Input value={expectField} onChange={e => setExpectField(e.target.value)} placeholder="a list of results" />
+          </div>
+        </>
+      )}
+
       <div>
         <Label className="text-xs">Trigger words, comma separated (blank = every message)</Label>
         <Input value={when} onChange={e => setWhen(e.target.value)} placeholder="news, headline, today" />
@@ -649,15 +808,21 @@ function PublishPromptingSkill({ onPublished }: { onPublished: () => void }) {
       <div className="flex flex-wrap gap-2">
         <Button size="sm" disabled={busy || !name.trim()} onClick={() => void publish(true)} className="gap-2">
           <Upload className="h-4 w-4" />
-          {busy ? 'Publishing…' : 'Publish and install here'}
+          {busy ? (editing ? 'Saving…' : 'Publishing…') : editing ? 'Save and install here' : 'Publish and install here'}
         </Button>
         <Button size="sm" variant="outline" disabled={busy || !name.trim()} onClick={() => void publish(false)}>
-          Publish only
+          {editing ? 'Save (publish only)' : 'Publish only'}
         </Button>
+        {editing && (
+          <Button size="sm" variant="ghost" disabled={busy} onClick={() => { setOpen(false); onCancel?.() }}>
+            Cancel
+          </Button>
+        )}
       </div>
       <p className="text-[11px] text-muted-foreground">
-        Publishing shares it with everyone who pulls the repository. Installing changes how this
-        machine&apos;s agent behaves — they are deliberately separate.
+        {editing
+          ? 'Saving republishes under the same name -- everyone who pulls gets the update, and installing here changes how this machine\'s agent behaves right away.'
+          : 'Publishing shares it with everyone who pulls the repository. Installing changes how this machine\'s agent behaves — they are deliberately separate.'}
       </p>
     </Card>
   )
