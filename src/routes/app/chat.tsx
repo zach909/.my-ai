@@ -26,7 +26,9 @@ import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from 'sonner'
 import { VoiceRecorder } from '@/components/VoiceRecorder'
 import { AttachFile } from '@/components/AttachFile'
+import { EditMessage } from '@/components/EditMessage'
 import { stageFile, StageError, generatedName, type StagedFile } from '@/lib/stage-file'
+import { canSend, formatArchiveMessage, formatArchiveCaption, type ArchiveOutcome } from '@/lib/chat-send'
 import { usePageVisible } from '@/hooks/usePageVisible'
 
 export const Route = createFileRoute('/app/chat')({
@@ -45,6 +47,15 @@ interface Message {
   content: string
   timestamp: number
   suggestions?: string[]
+  /** True once this reply has been rewritten through the pen -- see EditMessage. */
+  edited?: boolean
+  /**
+   * How the zip-loop send of a text-only user turn went, once it resolves.
+   * Compact by design -- see sendMessage's own doc comment for why a typed
+   * message's archive send does not get a full assistant bubble the way an
+   * attached FILE's does.
+   */
+  archiveNote?: string
 }
 
 interface ChatMatch {
@@ -322,32 +333,75 @@ function ChatPage() {
     return next
   }, [])
 
+  /**
+   * `messageText` may be empty -- a file (or a recording) staged with
+   * nothing typed is a real, complete thing to send, not half of one. The
+   * doorway takes bytes; it was never the text that made a send valid, the
+   * text was just the only thing that had ever been WIRED to the button.
+   */
   const sendMessage = async (messageText: string) => {
+    const hasText = messageText.trim().length > 0
+    const filesToSend = staged
     const userMsg: Message = {
       id: `msg_${Date.now()}_user`,
       role: 'user',
-      content: messageText,
+      // A file-only send shows what is actually going in rather than a blank
+      // bubble -- there is no text to fall back on to say what happened.
+      content: hasText
+        ? messageText
+        : `📎 ${filesToSend.map((f) => f.path).join(', ') || 'file'}`,
       timestamp: Date.now(),
     }
     setMessages((prev) => [...prev, userMsg])
     setInput('')
     setLoading(true)
 
+    // Reassigned below only when there is text to save a history turn for;
+    // a file-only send still needs SOME thread id for the archive outcome
+    // message that follows it.
+    let savedId = threadId
+
     try {
-      const savedId = await saveToHistory('user', messageText, threadId)
-      if (savedId !== threadId) setThreadId(savedId)
+      if (hasText) {
+        savedId = await saveToHistory('user', messageText, threadId)
+        if (savedId !== threadId) setThreadId(savedId)
+      }
 
       // Everything staged goes in with this message, zipped together into one
-      // archive rather than one run each.
-      if (staged.length > 0) {
-        const attached = staged
+      // archive rather than one run each. sendArchive packs messageText into
+      // the same archive as the files, so this branch already covers "text
+      // plus attachments" as one combined send -- the plain-text branch
+      // below only has to cover the case this one does not.
+      if (filesToSend.length > 0) {
         setStaged([])
-        const outcome = await sendArchive(messageText, attached)
+        const outcome = await sendArchive(messageText, filesToSend)
+        const names = filesToSend.map((f) => f.path).join(', ') || 'the file'
         setMessages((prev) => [
           ...prev,
-          { id: `msg_${Date.now()}_archive`, role: 'assistant', content: outcome, timestamp: Date.now() },
+          { id: `msg_${Date.now()}_archive`, role: 'assistant', content: formatArchiveMessage(names, outcome), timestamp: Date.now() },
         ])
+      } else if (hasText) {
+        // Everything typed goes in as a file too, not only what was
+        // attached -- the doorway takes bytes, and typing was never a
+        // different kind of input from a paste or an upload, only a
+        // narrower one. Not awaited before the reply: a real send is one
+        // settle of the mesh per BIT, and making every question wait for
+        // that before it could even be asked would be a second, much
+        // slower chat hiding behind this one. It resolves independently and
+        // annotates this same user bubble with a compact note once it does,
+        // rather than a doubled reply for every single turn.
+        const thisMsgId = userMsg.id
+        void sendArchive(messageText, []).then((outcome) => {
+          setMessages((prev) =>
+            prev.map((m) => (m.id === thisMsgId ? { ...m, archiveNote: formatArchiveCaption(outcome) } : m)),
+          )
+        })
       }
+
+      // Nothing typed means nothing to ask the bot -- an attached file's
+      // outcome above already told the user what happened to it. Asking the
+      // bot to answer "" would be a request with nothing in it.
+      if (!hasText) return
 
       const response = await callBotAPI(messageText)
       const agentMsg: Message = {
@@ -448,10 +502,22 @@ function ChatPage() {
    * even a small file is thousands of ticks. Saying "sent" for a run that was
    * cut off would be a lie the next person has to discover themselves.
    */
-  const sendArchive = async (messageText: string, files: StagedFile[]): Promise<string> => {
+  /**
+   * Zip `messageText` (and any files) together and send it through the two
+   * input neurons. Structured, not pre-formatted: an attached FILE gets a
+   * full assistant bubble reporting the outcome (sendMessage below), while a
+   * plain typed message gets a small caption under the user's own bubble --
+   * two different presentations of the same underlying send.
+   *
+   * Reported honestly: "ceiling" means the run was cut off at its tick
+   * budget rather than the network deciding it was done, and one settle per
+   * BIT means even a short message is hundreds of ticks. Saying "sent" for a
+   * run that was cut off would be a lie the next person has to discover
+   * themselves.
+   */
+  const sendArchive = async (messageText: string, files: StagedFile[]): Promise<ArchiveOutcome> => {
     const binary: Record<string, string> = {}
     for (const file of files) Object.assign(binary, file.binary)
-    const names = files.map((f) => f.path).join(', ')
     try {
       const res = await fetch('/api/zip-loop/run', {
         method: 'POST',
@@ -459,31 +525,39 @@ function ChatPage() {
         body: JSON.stringify({ prompt: messageText, binary, maxTicks: 512 }),
       })
       const data = await res.json().catch(() => ({}))
-      if (!res.ok) return `Could not send ${names} into the network: ${data?.error ?? res.status}`
-      return data.complete
-        ? `Sent ${names} into the network (${data.bytesIn} bytes zipped, ${data.sendTicks} ticks in). It stopped itself.`
-        : `Sent ${names} into the network (${data.bytesIn} bytes zipped, ${data.sendTicks} ticks in). It hit the tick ceiling rather than stopping itself — it has not been trained to say when it is done.`
+      if (!res.ok) return { ok: false, error: data?.error ?? String(res.status) }
+      return { ok: true, bytesIn: data.bytesIn, sendTicks: data.sendTicks, complete: Boolean(data.complete) }
     } catch (err) {
-      return `Could not reach the network: ${err instanceof Error ? err.message : String(err)}`
+      return { ok: false, error: err instanceof Error ? err.message : String(err) }
     }
   }
 
   const handleSendMessage = async (text?: string) => {
     const messageText = (text ?? input).trim()
-    if (!messageText) return
+    // A staged file with nothing typed is a real, complete send -- see
+    // sendMessage's own doc comment for why the text was never what made a
+    // send valid.
+    if (!canSend(messageText, staged.length)) return
 
     // Still working: take it now, send it next. Typing is never blocked, and
-    // two requests never go out at once.
+    // two requests never go out at once. A file staged while busy stays
+    // staged rather than being queued -- enqueue()'s zip-input fast path is
+    // built for text, and the archive send is not something to fire twice.
     if (loading) {
-      enqueue(messageText)
-      setInput('')
+      if (messageText) {
+        enqueue(messageText)
+        setInput('')
+      } else {
+        toast.info('Still working on the last one — send the file once this finishes.')
+      }
       return
     }
 
     // Only check for a match at the start of a genuinely new conversation
     // (no thread adopted yet, nothing sent this session) -- once a thread is
-    // underway there's nothing to "continue" into instead.
-    if (!incognito && !threadId && messages.length === 1) {
+    // underway there's nothing to "continue" into instead. Skipped for a
+    // file-only send: there is no text to search history against.
+    if (messageText && !incognito && !threadId && messages.length === 1) {
       try {
         const res = await fetch(`/api/chat-history/search?q=${encodeURIComponent(messageText)}&source=chat`)
         if (res.ok) {
@@ -573,7 +647,7 @@ function ChatPage() {
           </div>
         )}
 
-        {messages.map((msg) => (
+        {messages.map((msg, i) => (
           <div
             key={msg.id}
             className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
@@ -582,11 +656,38 @@ function ChatPage() {
               className={`group relative max-w-xl rounded-lg px-4 py-3 ${
                 msg.role === 'user'
                   ? 'bg-primary text-primary-foreground'
-                  : 'bg-card border border-border text-foreground pr-10'
+                  : 'bg-card border border-border text-foreground pr-16'
               }`}
             >
               <p className="whitespace-pre-wrap text-sm leading-relaxed">{msg.content}</p>
-              {msg.role === 'assistant' && <CopyButton text={msg.content} />}
+              {msg.edited && (
+                <span className="mt-1 block text-[10px] text-muted-foreground/70">(edited)</span>
+              )}
+              {msg.archiveNote && (
+                <span
+                  className={`mt-1 block text-[10px] ${
+                    msg.role === 'user' ? 'text-primary-foreground/70' : 'text-muted-foreground/70'
+                  }`}
+                >
+                  {msg.archiveNote}
+                </span>
+              )}
+              {msg.role === 'assistant' && (
+                <>
+                  <CopyButton text={msg.content} />
+                  <EditMessage
+                    content={msg.content}
+                    // The last user turn before this reply -- what the pen's
+                    // mistake record blames the correction on.
+                    prompt={[...messages.slice(0, i)].reverse().find((m) => m.role === 'user')?.content ?? ''}
+                    onSaved={(next) => {
+                      setMessages((prev) =>
+                        prev.map((m) => (m.id === msg.id ? { ...m, content: next, edited: true } : m)),
+                      )
+                    }}
+                  />
+                </>
+              )}
             </div>
 
             {/* Agent-suggested follow-up prompts */}
@@ -696,10 +797,14 @@ function ChatPage() {
           <VoiceRecorder onRecorded={addStaged} />
           <Button
             onClick={() => handleSendMessage()}
-            disabled={!input.trim()}
+            // A staged file with nothing typed is a real, complete send --
+            // gating on input.trim() alone made an attached file, with no
+            // text next to it, un-sendable: nothing on this row would submit
+            // it.
+            disabled={!canSend(input, staged.length)}
             size="sm"
             className="gap-2 active:scale-95 transition-all duration-150"
-            aria-label={loading ? 'Queue message' : 'Send message'}
+            aria-label={loading ? 'Queue message' : staged.length > 0 && !input.trim() ? 'Send file' : 'Send message'}
             title={loading ? 'It is still working — this goes next' : 'Send message (or press Enter)'}
           >
             {loading ? (
