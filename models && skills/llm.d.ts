@@ -1,8 +1,8 @@
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
-import { MoERouter } from "./core/moe-router.js";
-import { NeuronMesh } from "./core/mesh.js";
-import { HyperDimensionalEngine } from "./core/hyperdimensional.js";
+import { MoERouter } from "./core/onebrain.js";
+import { NeuronMesh } from "./core/onebrain.js";
+import { HyperDimensionalEngine } from "./core/onebrain.js";
 import { ValueRangeAllocator } from "./core/value-range.js";
 import { UnifiedBrain, type BrainSnapshot } from "./core/unified-brain.js";
 import { NeuroPipeline } from "./core/pipeline.js";
@@ -65,6 +65,10 @@ export declare class NeuroclawLLM {
     build(code?: string): Promise<void>;
     buildFromCode(code: string): Promise<void>;
     trainOnText(text: string): Promise<void>;
+    /** Teach the prose predictor new text WITHOUT erasing prior lessons (trainOnText rebuilds from scratch and erases). */
+    learnText(text: string): Promise<void>;
+    /** Characters of accumulated teaching material behind the prose predictor. */
+    getLearnedCorpusSize(): number;
     generate(prompt: string, options?: Partial<GenerateOptions>): Promise<string>;
     private generateTokens;
     runAutonomous(

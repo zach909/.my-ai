@@ -1,5 +1,5 @@
 /**
- * NeuroClaw — Control Panel
+ * Corona — Control Panel
  *
  * Input injection, mesh controls, neuron inspector, and real-time statistics.
  * The user-facing control surface for driving the mesh.

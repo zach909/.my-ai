@@ -1,0 +1,69 @@
+# Python requirements for Corona.
+#
+# The short version: this neural network needs nothing from PyPI. The list
+# below is empty on purpose, and that is the optimisation.
+#
+# ---------------------------------------------------------------------------
+# Why it is empty
+# ---------------------------------------------------------------------------
+#
+# Corona's neural network is an all-to-all mesh implemented directly, twice:
+# once in TypeScript (models && skills/core/onebrain.ts) and once in Python
+# (asi_core/neural_mesh.py). Neither is built on a tensor framework. The
+# Python mesh imports math, time, random, dataclasses, typing, enum and json --
+# every one of them standard library.
+#
+# Verified, not assumed:
+#
+#   python3 -S -c "import importlib.util, sys; sys.path.insert(0,'.'); \
+#     s=importlib.util.spec_from_file_location('m','asi_core/neural_mesh.py'); \
+#     m=importlib.util.module_from_spec(s); s.loader.exec_module(m); print(m.NeuralMesh)"
+#
+# `-S` disables site-packages entirely, so that command proves the mesh runs
+# with nothing installed rather than merely appearing to.
+#
+# A default install therefore downloads zero packages. Requiring torch here --
+# roughly 2.5 GB installed, with a CUDA build to match your GPU -- for a mesh
+# that never calls it would be the single largest cost in getting this running,
+# paid by everyone, for nothing.
+#
+# ---------------------------------------------------------------------------
+# What DOES need packages, and when
+# ---------------------------------------------------------------------------
+#
+# These are separate tracks. Install a tier only if you are actually using it.
+#
+# 1. The Python mesh track ("model && skills manager/neurolang.py" and its
+#    value-system tests). The DSL, the zero-sum value system and the Python
+#    mesh, which use tensors. There used to be a TinyGPT transformer track here
+#    as well -- pretraining, finetuning, a checkpoint served to the chat box.
+#    It is gone: there is one model now, the all-to-all network in the
+#    TypeScript backend, and it needs no tensor framework at all.
+#
+#      pip install -r "model && skills manager/requirements.txt"
+#
+# 2. Running a third-party model published in the store.
+#    Each store item ships its own requirements, because what a model needs is
+#    a fact about that model, not about Corona:
+#
+#      pip install -r store/skills/<item-name>/requirements.txt
+#
+#    Weights are downloaded to your machine under their own licence. This
+#    repository never redistributes them.
+#
+# 3. The optional desktop chat window ("model && skills manager/desktop_app.py").
+#    Uses tkinter, which is Python's own stdlib GUI toolkit and not a pip
+#    package. It ships with the python.org installers; on Debian/Ubuntu it is
+#    an OS package matched to your Python version:
+#
+#      sudo apt install python3.11-tk    # check with: python3 --version
+#
+# ---------------------------------------------------------------------------
+# Keeping this honest
+# ---------------------------------------------------------------------------
+#
+# If you add a dependency here, it should be because something in the default
+# path imports it and fails without it. "It might be useful later" is how a
+# requirements file becomes a list nobody trusts and everybody installs.
+#
+# (No requirements below this line. That is the point.)

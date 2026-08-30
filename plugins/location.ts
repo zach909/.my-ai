@@ -1,4 +1,4 @@
-import { execSync } from 'node:child_process';
+import { execFileSync } from 'node:child_process';
 import { networkInterfaces } from 'node:os';
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
@@ -47,6 +47,21 @@ export class LocationPlugin extends BasePlugin {
     super(definition);
   }
 
+  /**
+   * How someone would ASK for this, not what the plugin calls itself.
+   *
+   * Added after the agent exam measured routing and found this plugin
+   * unreachable for the obvious phrasing: the only terms available were its id
+   * and its manifest capabilities, so a request had to contain the plugin's
+   * own name to find it.
+   */
+  describeCapabilities() {
+    return {
+      verbs: ["locate", "navigate"],
+      nouns: ["location", "position", "gps", "coordinates", "address", "whereabouts", "map"],
+    };
+  }
+
   async callEndpoint(endpoint: string): Promise<unknown> {
     if (endpoint === "/position") return this.getCurrentPosition();
     if (endpoint.startsWith("/geocode/")) return this.geocode(endpoint.replace("/geocode/", ""));
@@ -60,29 +75,43 @@ export class LocationPlugin extends BasePlugin {
 
     let coords: Coordinates = { latitude: 0, longitude: 0, accuracy: 0, altitude: null, altitudeAccuracy: null, heading: null, speed: null };
 
+    let ipStr = '';
     try {
-      const ipStr = execSync('curl -s --max-time 3 https://ipapi.co/json/ 2>/dev/null || curl -s --max-time 3 https://ipinfo.io/json 2>/dev/null || echo ""', { timeout: 5000, encoding: 'utf8' });
-      if (ipStr) {
+      ipStr = execFileSync('curl', ['-s', '--max-time', '3', 'https://ipapi.co/json/'], { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+    } catch {
+      try {
+        ipStr = execFileSync('curl', ['-s', '--max-time', '3', 'https://ipinfo.io/json'], { timeout: 5000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch { /* fall through */ }
+    }
+
+    if (ipStr) {
+      try {
         const data = JSON.parse(ipStr);
         const lat = parseFloat(data.latitude ?? data.loc?.split(',')[0]);
         const lon = parseFloat(data.longitude ?? data.loc?.split(',')[1]);
         if (!isNaN(lat) && !isNaN(lon)) {
           coords = { latitude: lat, longitude: lon, accuracy: data.accuracy ?? 1000, altitude: null, altitudeAccuracy: null, heading: null, speed: null };
         }
-      }
-    } catch { /* fall through */ }
+      } catch { /* fall through */ }
+    }
 
     if (coords.latitude === 0 && coords.longitude === 0) {
+      let output = '';
       try {
-        const output = execSync('geoclue 2>/dev/null || where-am-i 2>/dev/null || echo "FALLBACK"', { timeout: 3000, encoding: 'utf8' });
-        if (!output.includes('FALLBACK')) {
-          const lat = parseFloat(output.match(/lat[^0-9.-]*([0-9.-]+)/i)?.[1] ?? '');
-          const lon = parseFloat(output.match(/lon[^0-9.-]*([0-9.-]+)/i)?.[1] ?? '');
-          if (!isNaN(lat) && !isNaN(lon)) {
-            coords = { latitude: lat, longitude: lon, accuracy: 500, altitude: null, altitudeAccuracy: null, heading: null, speed: null };
-          }
+        output = execFileSync('geoclue', [], { timeout: 3000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+      } catch {
+        try {
+          output = execFileSync('where-am-i', [], { timeout: 3000, encoding: 'utf8', stdio: ['ignore', 'pipe', 'ignore'] });
+        } catch { /* fall through */ }
+      }
+
+      if (output) {
+        const lat = parseFloat(output.match(/lat[^0-9.-]*([0-9.-]+)/i)?.[1] ?? '');
+        const lon = parseFloat(output.match(/lon[^0-9.-]*([0-9.-]+)/i)?.[1] ?? '');
+        if (!isNaN(lat) && !isNaN(lon)) {
+          coords = { latitude: lat, longitude: lon, accuracy: 500, altitude: null, altitudeAccuracy: null, heading: null, speed: null };
         }
-      } catch { /* fall through */ }
+      }
     }
 
     if (coords.latitude === 0 && coords.longitude === 0) {
@@ -121,6 +150,19 @@ export class LocationPlugin extends BasePlugin {
   }
 
   async geocode(address: string): Promise<GeocodeResult> {
+    if (typeof address !== "string") {
+      throw new Error("Security Error: Input must be a string.");
+    }
+    if (address.length === 0) {
+      throw new Error("Security Error: Address cannot be empty.");
+    }
+    if (address.length > 100) {
+      throw new Error("Security Error: Address exceeds maximum length limit.");
+    }
+    if (address.includes("..") || address.includes("/") || address.includes("\\")) {
+      throw new Error("Security Error: Invalid address format.");
+    }
+
     const normalized = Object.keys(CITY_DATABASE).find(k => k.toLowerCase() === address.toLowerCase());
     if (normalized) {
       const c = CITY_DATABASE[normalized];

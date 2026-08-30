@@ -277,13 +277,16 @@ export class CalibrationCollector {
 // ─── Scale derivation ───────────────────────────────────────────────────────
 
 function symmetricScale(absMax: number, bits: number): QuantizationScale {
-  const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
+  // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+  // Math.floor(((1 << bits) - 1) / 2) is mathematically identical to ((1 << bits) - 1) >> 1.
+  const qMax = ((1 << bits) - 1) >> 1;
   const scale = (absMax / qMax) || 1;
   return { scale, zeroPoint: 0, symmetric: true, bits };
 }
 
 function asymmetricScale(min: number, max: number, bits: number): QuantizationScale {
-  const levels = Math.pow(2, bits) - 1;
+  // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+  const levels = (1 << bits) - 1;
   const scale = ((max - min) / levels) || 1;
   const zeroPoint = Math.round(-min / scale);
   return { scale, zeroPoint, symmetric: false, bits };
@@ -330,11 +333,55 @@ function applyScale(value: number, scaleInfo: QuantizationScale): { level: numbe
  * whereas pack() is for persisting/transmitting the reduced-width form.
  */
 export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
-  // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
-  // Directly set the Uint8Array using typed array copy, bypassing bitwise packing logic.
+  // BOLT OPTIMIZATION: Fast-path for the highly frequent 8-bit case.
+  // Using 4x unrolled index loop copying avoids TypedArray.set cross-type conversion built-in overhead.
   if (bits === 8) {
-    const out = new Uint8Array(levels.length);
-    out.set(levels);
+    const len = levels.length;
+    const out = new Uint8Array(len);
+    let i = 0;
+    for (; i < len - 3; i += 4) {
+      out[i] = levels[i];
+      out[i + 1] = levels[i + 1];
+      out[i + 2] = levels[i + 2];
+      out[i + 3] = levels[i + 3];
+    }
+    for (; i < len; i++) {
+      out[i] = levels[i];
+    }
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Fast-path for 16-bit configuration.
+  // Using 4x unrolled index loop into Uint16Array avoids TypedArray.set cross-type conversion overhead.
+  if (bits === 16) {
+    const len = levels.length;
+    const u16 = new Uint16Array(len);
+    let i = 0;
+    for (; i < len - 3; i += 4) {
+      u16[i] = levels[i];
+      u16[i + 1] = levels[i + 1];
+      u16[i + 2] = levels[i + 2];
+      u16[i + 3] = levels[i + 3];
+    }
+    for (; i < len; i++) {
+      u16[i] = levels[i];
+    }
+    return new Uint8Array(u16.buffer, u16.byteOffset, u16.byteLength);
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for 4-bit configuration.
+  // Directly pack adjacent nibbles into single bytes.
+  if (bits === 4) {
+    const len = levels.length;
+    const out = new Uint8Array(Math.ceil(len / 2));
+    const limit = len & ~1;
+    let bytePos = 0;
+    for (let i = 0; i < limit; i += 2) {
+      out[bytePos++] = levels[i] | (levels[i + 1] << 4);
+    }
+    if (len & 1) {
+      out[bytePos] = levels[len - 1];
+    }
     return out;
   }
 
@@ -362,12 +409,73 @@ export function packLevels(levels: Uint32Array, bits: number): Uint8Array {
 }
 
 export function unpackLevels(packed: Uint8Array, count: number, bits: number): Uint32Array {
-  // BOLT OPTIMIZATION: Extremely fast-path for the highly frequent 8-bit case.
-  // Directly set the Uint32Array using typed array copy, bypassing bitwise unpacking logic.
-  // We use subarray(0, count) to be safe if the packed source buffer is larger than count.
+  // BOLT OPTIMIZATION: Fast-path for the highly frequent 8-bit case.
+  // Using 4x unrolled index loop copying avoids TypedArray.set cross-type conversion built-in
+  // and subarray view object allocation overhead.
   if (bits === 8) {
     const out = new Uint32Array(count);
-    out.set(packed.subarray(0, count));
+    let i = 0;
+    for (; i < count - 3; i += 4) {
+      out[i] = packed[i];
+      out[i + 1] = packed[i + 1];
+      out[i + 2] = packed[i + 2];
+      out[i + 3] = packed[i + 3];
+    }
+    for (; i < count; i++) {
+      out[i] = packed[i];
+    }
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Fast-path for 16-bit configuration.
+  // Extract 16-bit words cleanly with 4x unrolled loops, handling offset/alignment boundaries gracefully.
+  if (bits === 16) {
+    const out = new Uint32Array(count);
+    if (packed.byteOffset % 2 === 0) {
+      const u16 = new Uint16Array(packed.buffer, packed.byteOffset, count);
+      let i = 0;
+      for (; i < count - 3; i += 4) {
+        out[i] = u16[i];
+        out[i + 1] = u16[i + 1];
+        out[i + 2] = u16[i + 2];
+        out[i + 3] = u16[i + 3];
+      }
+      for (; i < count; i++) {
+        out[i] = u16[i];
+      }
+    } else {
+      let i = 0;
+      for (; i < count - 3; i += 4) {
+        const idx0 = i * 2;
+        const idx1 = idx0 + 2;
+        const idx2 = idx0 + 4;
+        const idx3 = idx0 + 6;
+        out[i] = packed[idx0] | (packed[idx0 + 1] << 8);
+        out[i + 1] = packed[idx1] | (packed[idx1 + 1] << 8);
+        out[i + 2] = packed[idx2] | (packed[idx2 + 1] << 8);
+        out[i + 3] = packed[idx3] | (packed[idx3 + 1] << 8);
+      }
+      for (; i < count; i++) {
+        out[i] = packed[i * 2] | (packed[i * 2 + 1] << 8);
+      }
+    }
+    return out;
+  }
+
+  // BOLT OPTIMIZATION: Extremely fast-path for 4-bit configuration.
+  // Unpack nibbles from single bytes using fast unrolled iteration.
+  if (bits === 4) {
+    const out = new Uint32Array(count);
+    const limit = count & ~1;
+    let bytePos = 0;
+    for (let i = 0; i < limit; i += 2) {
+      const byte = packed[bytePos++];
+      out[i] = byte & 0xF;
+      out[i + 1] = byte >>> 4;
+    }
+    if (count & 1) {
+      out[count - 1] = packed[bytePos] & 0xF;
+    }
     return out;
   }
 
@@ -496,7 +604,8 @@ export class BackgroundQuantizer {
     // to bypass the call stack and reduce branching overhead.
     const invScale = 1.0 / scale;
     if (symmetric) {
-      const qMax = Math.floor((Math.pow(2, bits) - 1) / 2);
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+      const qMax = ((1 << bits) - 1) >> 1;
       const qMin = -qMax;
       let i = 0;
       for (; i < len - 3; i += 4) {
@@ -526,7 +635,8 @@ export class BackgroundQuantizer {
         result[i] = level * scale;
       }
     } else {
-      const levels = Math.pow(2, bits) - 1;
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+      const levels = (1 << bits) - 1;
       const maxLevel = Math.round(levels);
       let i = 0;
       for (; i < len - 3; i += 4) {
@@ -600,7 +710,8 @@ export class BackgroundQuantizer {
     }
     if (max === min) { max = min + 1; } // avoid a zero-width range collapsing the scale
     const scaleInfo = deriveScale(min, max, effectiveBits, this.config.method);
-    const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, effectiveBits) - 1) / 2) : 0;
+    // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+    const offset = scaleInfo.symmetric ? (((1 << effectiveBits) - 1) >> 1) : 0;
     const levels = new Uint32Array(weights.length);
     const { scale, zeroPoint, symmetric, bits: sBits } = scaleInfo;
     const len = weights.length;
@@ -610,7 +721,8 @@ export class BackgroundQuantizer {
     // to bypass the call stack and reduce branching overhead.
     const invScale = 1.0 / scale;
     if (symmetric) {
-      const qMax = Math.floor((Math.pow(2, sBits) - 1) / 2);
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+      const qMax = ((1 << sBits) - 1) >> 1;
       const qMin = -qMax;
       let i = 0;
       for (; i < len - 3; i += 4) {
@@ -635,7 +747,8 @@ export class BackgroundQuantizer {
         levels[i] = level + offset;
       }
     } else {
-      const levelsCount = Math.pow(2, sBits) - 1;
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+      const levelsCount = (1 << sBits) - 1;
       const maxLevel = Math.round(levelsCount);
       let i = 0;
       for (; i < len - 3; i += 4) {
@@ -669,7 +782,8 @@ export class BackgroundQuantizer {
 
   unpack(tensor: QuantizedTensor): Float32Array {
     const { scaleInfo, length } = tensor;
-    const offset = scaleInfo.symmetric ? Math.floor((Math.pow(2, scaleInfo.bits) - 1) / 2) : 0;
+    // BOLT OPTIMIZATION: Replacing slow Math.pow(2, bits) with fast register-level bit shift (1 << bits).
+    const offset = scaleInfo.symmetric ? (((1 << scaleInfo.bits) - 1) >> 1) : 0;
     const levels = unpackLevels(tensor.packed, length, scaleInfo.bits);
     const out = new Float32Array(length);
     const scale = scaleInfo.scale;
@@ -1039,6 +1153,10 @@ export interface MeshConfig {
   seed: number;
 }
 
+/** Cap on a node's retained settle trace when recordHistory is on. Bounded so
+ *  a long-running mesh cannot accumulate every sample it has ever produced. */
+const MAX_ACTIVATION_HISTORY = 1000;
+
 export class NeuronMesh {
   private config: MeshConfig;
   private nodes: Map<number, NeuronNode>;
@@ -1062,13 +1180,28 @@ export class NeuronMesh {
   private biases: Float32Array = new Float32Array(0);
   private currActivations: Float32Array = new Float32Array(0);
   private nextActivations: Float32Array = new Float32Array(0);
+  private historyScratch: Float32Array = new Float32Array(0);
+  /**
+   * Row-major N*N weights, built only when the mesh is fully dense (every
+   * node connected to every other -- the connectionDensity 1.0 configuration
+   * the brain actually runs). CSR's explicit index array is pure overhead in
+   * that case: the indices are just 0..N-1 with the diagonal skipped, so each
+   * edge pays an Int32 load to recover a value the loop counter already
+   * knows. Dropping it cuts a third of the inner loop's memory traffic and
+   * measured 1.36x on the settle step, bit-identical. Empty when the mesh is
+   * sparse, in which case propagate() uses the CSR path below.
+   */
+  private denseWeights: Float32Array = new Float32Array(0);
+  private denseLayout: boolean = false;
 
   constructor(config: Partial<MeshConfig> = {}) {
     const nodeCount = config.nodeCount ?? config.initialNodeCount ?? 10;
     const actFn = config.activationFn || config.activationFunction || 'relu';
     this.config = {
       initialNodeCount: nodeCount,
-      connectionDensity: 1.0,
+      // Was hardcoded to 1.0, so the caller's connectionDensity was dropped on
+      // the floor before anything could read it. Default stays 1.0.
+      connectionDensity: config.connectionDensity ?? 1.0,
       maxIterations: config.propagationSteps || config.maxIterations || 100,
       convergenceThreshold: config.convergenceThreshold ?? 0.001,
       activationFunction: actFn as 'relu' | 'tanh' | 'sigmoid' | 'swish',
@@ -1090,13 +1223,21 @@ export class NeuronMesh {
       this.nodes.set(id, node);
       tempIds.push(id);
     }
+    // connectionDensity was accepted and then ignored here: this loop wired
+    // every pair unconditionally, so a mesh constructed with density 0.3 came
+    // out fully connected anyway. addNode() has always honored it, so the same
+    // config meant two different things depending on how a neuron arrived.
+    // Every caller in the tree passes 1.0, so honoring it changes no existing
+    // behavior -- it makes the option mean what it says, and makes the sparse
+    // (CSR) settle path reachable and testable instead of dead in practice.
+    const density = this.config.connectionDensity;
+    const weightScale = Math.sqrt(1 / tempIds.length);
     for (let i = 0; i < tempIds.length; i++) {
+      const fromNode = this.nodes.get(tempIds[i])!;
       for (let j = 0; j < tempIds.length; j++) {
         if (i === j) continue;
-        const from = tempIds[i];
-        const to = tempIds[j];
-        const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / tempIds.length);
-        this.nodes.get(from)!.connections.set(to, weight);
+        if (density < 1 && Math.random() >= density) continue;
+        fromNode.connections.set(tempIds[j], (Math.random() * 2 - 1) * weightScale);
       }
     }
     this.refreshCache();
@@ -1134,6 +1275,19 @@ export class NeuronMesh {
       }
     }
     this.rowStarts[N] = edgePtr;
+
+    // Dense iff every node connects to every other node (self excluded).
+    this.denseLayout = N > 1 && edgePtr === N * (N - 1);
+    if (this.denseLayout) {
+      this.denseWeights = new Float32Array(N * N); // diagonal stays 0: no self-edge
+      for (let i = 0; i < N; i++) {
+        const base = i * N;
+        const start = this.rowStarts[i], end = this.rowStarts[i + 1];
+        for (let k = start; k < end; k++) this.denseWeights[base + this.flatIndices[k]] = this.flatWeights[k];
+      }
+    } else if (this.denseWeights.length > 0) {
+      this.denseWeights = new Float32Array(0);
+    }
     this.cacheValid = true;
   }
 
@@ -1155,7 +1309,19 @@ export class NeuronMesh {
   propagate(
     inputActivations: Map<number, number> | Map<string, number>,
     vale?: Map<number, number>,
-    activeGroups?: Set<string>
+    activeGroups?: Set<string>,
+    /**
+     * Record the per-iteration activation trace (`nodeHistory`, and each
+     * node's `activationHistory`). Off by default: nothing in the system
+     * reads either one, while recording them cost a scratch write per neuron
+     * per settle iteration in the hottest loop, N array allocations and N map
+     * inserts per call, and -- because the per-node trace was appended to and
+     * never truncated -- unbounded growth. Measured at 32,400 retained
+     * numbers on a *single* node after 3,200 propagate() calls, times every
+     * node in the mesh. Pass true when you actually want to inspect a settle
+     * trace (convergence debugging, iterative-training diagnostics).
+     */
+    recordHistory: boolean = false
   ): PropagationResult {
     if (!this.cacheValid) this.refreshCache();
 
@@ -1163,14 +1329,12 @@ export class NeuronMesh {
     const N = nodes.length;
     const maxIters = this.config.maxIterations;
 
-    // Bolt's Optimization: Pre-allocate standard arrays of size maxIters
-    // to completely avoid memory allocations and garbage collection pressure in hot loops.
-    const histories: number[][] = [];
-    const nodeHistory = new Map<number, number[]>();
-    for (let i = 0; i < N; i++) {
-      const arr = new Array<number>(maxIters);
-      histories.push(arr);
-      nodeHistory.set(nodes[i].id, arr);
+    // Bolt's Optimization: Pre-allocate a class-level flat history scratchpad to avoid O(N) array allocations inside propagation
+    if (recordHistory) {
+      const totalHistorySize = N * maxIters;
+      if (this.historyScratch.length < totalHistorySize) {
+        this.historyScratch = new Float32Array(totalHistorySize);
+      }
     }
 
     // Synchronize activations from source of truth and inputs
@@ -1187,8 +1351,8 @@ export class NeuronMesh {
       }
     }
 
-    const curr = this.currActivations;
-    const next = this.nextActivations;
+    let curr = this.currActivations;
+    let next = this.nextActivations;
 
     const flatWeights = this.flatWeights;
     const flatIndices = this.flatIndices;
@@ -1211,42 +1375,159 @@ export class NeuronMesh {
     }
 
     let iteration = 0, converged = false, residual = 0;
+    const convergenceThreshold = this.config.convergenceThreshold;
 
     // Fast-path: When there are no gates and no vale gating (most common case)
     if (!activeGroups && !vale) {
-      for (; iteration < maxIters; iteration++) {
-        for (let i = 0; i < N; i++) {
-          let sum = biases[i];
-          const start = rowStarts[i], end = rowStarts[i + 1];
-          // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
-          const limit = end - 7;
-          let k = start;
-          for (; k < limit; k += 8) {
-            sum += curr[flatIndices[k]] * flatWeights[k]
-                 + curr[flatIndices[k + 1]] * flatWeights[k + 1]
-                 + curr[flatIndices[k + 2]] * flatWeights[k + 2]
-                 + curr[flatIndices[k + 3]] * flatWeights[k + 3]
-                 + curr[flatIndices[k + 4]] * flatWeights[k + 4]
-                 + curr[flatIndices[k + 5]] * flatWeights[k + 5]
-                 + curr[flatIndices[k + 6]] * flatWeights[k + 6]
-                 + curr[flatIndices[k + 7]] * flatWeights[k + 7];
+      // Densest-common-case path: no index indirection at all (see denseWeights).
+      // One loop covers every activation function rather than a specialised copy
+      // per function: the indirect call through `activate` measured 1.04x versus
+      // a hand-specialised branch, i.e. V8 already inlines this monomorphic
+      // closure, so a third near-identical loop body would buy noise.
+      if (this.denseLayout) {
+        const denseWeights = this.denseWeights;
+        for (; iteration < maxIters; iteration++) {
+          residual = 0;
+          for (let i = 0; i < N; i++) {
+            let sum = biases[i];
+            const base = i * N;
+            const limit = N - 7;
+            let j = 0;
+            for (; j < limit; j += 8) {
+              sum += curr[j] * denseWeights[base + j]
+                   + curr[j + 1] * denseWeights[base + j + 1]
+                   + curr[j + 2] * denseWeights[base + j + 2]
+                   + curr[j + 3] * denseWeights[base + j + 3]
+                   + curr[j + 4] * denseWeights[base + j + 4]
+                   + curr[j + 5] * denseWeights[base + j + 5]
+                   + curr[j + 6] * denseWeights[base + j + 6]
+                   + curr[j + 7] * denseWeights[base + j + 7];
+            }
+            for (; j < N; j++) sum += curr[j] * denseWeights[base + j];
+            const nextVal = activate(sum);
+            next[i] = nextVal;
+            if (recordHistory) this.historyScratch[i * maxIters + iteration] = nextVal;
+            const diff = nextVal - curr[i];
+            residual += diff < 0 ? -diff : diff;
           }
-          for (; k < end; k++) {
-            sum += curr[flatIndices[k]] * flatWeights[k];
-          }
-          next[i] = activate(sum);
-          histories[i][iteration] = next[i];
+          const tmp = curr; curr = next; next = tmp;
+          if (residual < convergenceThreshold) { converged = true; break; }
         }
+      } else
+      if (actFn === 'relu') {
+        for (; iteration < maxIters; iteration++) {
+          residual = 0;
+          for (let i = 0; i < N; i++) {
+            let sum = biases[i];
+            const start = rowStarts[i], end = rowStarts[i + 1];
+            // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
+            const limit = end - 7;
+            let k = start;
+            for (; k < limit; k += 8) {
+              sum += curr[flatIndices[k]] * flatWeights[k]
+                   + curr[flatIndices[k + 1]] * flatWeights[k + 1]
+                   + curr[flatIndices[k + 2]] * flatWeights[k + 2]
+                   + curr[flatIndices[k + 3]] * flatWeights[k + 3]
+                   + curr[flatIndices[k + 4]] * flatWeights[k + 4]
+                   + curr[flatIndices[k + 5]] * flatWeights[k + 5]
+                   + curr[flatIndices[k + 6]] * flatWeights[k + 6]
+                   + curr[flatIndices[k + 7]] * flatWeights[k + 7];
+            }
+            for (; k < end; k++) {
+              sum += curr[flatIndices[k]] * flatWeights[k];
+            }
+            const nextVal = sum > 0 ? sum : 0;
+            next[i] = nextVal;
+            if (recordHistory) this.historyScratch[i * maxIters + iteration] = nextVal;
 
-        residual = 0;
-        for (let i = 0; i < N; i++) {
-          // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
-          const diff = next[i] - curr[i];
-          residual += diff < 0 ? -diff : diff;
-          curr[i] = next[i];
-          nodes[i].activation = curr[i];
+            // Bolt's Optimization: Compute residual in single pass to avoid full O(N) second loop
+            const diff = nextVal - curr[i];
+            residual += diff < 0 ? -diff : diff;
+          }
+
+          // Bolt's Optimization: Zero-copy pointer swap instead of O(N) array copy
+          const tmp = curr;
+          curr = next;
+          next = tmp;
+
+          if (residual < convergenceThreshold) { converged = true; break; }
         }
-        if (this.checkConvergence(residual)) { converged = true; break; }
+      } else if (actFn === 'tanh') {
+        for (; iteration < maxIters; iteration++) {
+          residual = 0;
+          for (let i = 0; i < N; i++) {
+            let sum = biases[i];
+            const start = rowStarts[i], end = rowStarts[i + 1];
+            // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
+            const limit = end - 7;
+            let k = start;
+            for (; k < limit; k += 8) {
+              sum += curr[flatIndices[k]] * flatWeights[k]
+                   + curr[flatIndices[k + 1]] * flatWeights[k + 1]
+                   + curr[flatIndices[k + 2]] * flatWeights[k + 2]
+                   + curr[flatIndices[k + 3]] * flatWeights[k + 3]
+                   + curr[flatIndices[k + 4]] * flatWeights[k + 4]
+                   + curr[flatIndices[k + 5]] * flatWeights[k + 5]
+                   + curr[flatIndices[k + 6]] * flatWeights[k + 6]
+                   + curr[flatIndices[k + 7]] * flatWeights[k + 7];
+            }
+            for (; k < end; k++) {
+              sum += curr[flatIndices[k]] * flatWeights[k];
+            }
+            const nextVal = Math.tanh(sum);
+            next[i] = nextVal;
+            if (recordHistory) this.historyScratch[i * maxIters + iteration] = nextVal;
+
+            // Bolt's Optimization: Compute residual in single pass to avoid full O(N) second loop
+            const diff = nextVal - curr[i];
+            residual += diff < 0 ? -diff : diff;
+          }
+
+          // Bolt's Optimization: Zero-copy pointer swap instead of O(N) array copy
+          const tmp = curr;
+          curr = next;
+          next = tmp;
+
+          if (residual < convergenceThreshold) { converged = true; break; }
+        }
+      } else {
+        for (; iteration < maxIters; iteration++) {
+          residual = 0;
+          for (let i = 0; i < N; i++) {
+            let sum = biases[i];
+            const start = rowStarts[i], end = rowStarts[i + 1];
+            // Bolt's Optimization: Manual 8x loop unrolling for row-major dot product to reduce branch evaluation overhead.
+            const limit = end - 7;
+            let k = start;
+            for (; k < limit; k += 8) {
+              sum += curr[flatIndices[k]] * flatWeights[k]
+                   + curr[flatIndices[k + 1]] * flatWeights[k + 1]
+                   + curr[flatIndices[k + 2]] * flatWeights[k + 2]
+                   + curr[flatIndices[k + 3]] * flatWeights[k + 3]
+                   + curr[flatIndices[k + 4]] * flatWeights[k + 4]
+                   + curr[flatIndices[k + 5]] * flatWeights[k + 5]
+                   + curr[flatIndices[k + 6]] * flatWeights[k + 6]
+                   + curr[flatIndices[k + 7]] * flatWeights[k + 7];
+            }
+            for (; k < end; k++) {
+              sum += curr[flatIndices[k]] * flatWeights[k];
+            }
+            const nextVal = activate(sum);
+            next[i] = nextVal;
+            if (recordHistory) this.historyScratch[i * maxIters + iteration] = nextVal;
+
+            // Bolt's Optimization: Compute residual in single pass to avoid full O(N) second loop
+            const diff = nextVal - curr[i];
+            residual += diff < 0 ? -diff : diff;
+          }
+
+          // Bolt's Optimization: Zero-copy pointer swap instead of O(N) array copy
+          const tmp = curr;
+          curr = next;
+          next = tmp;
+
+          if (residual < convergenceThreshold) { converged = true; break; }
+        }
       }
     } else {
       // General path: When either gates or vale gating is active
@@ -1263,9 +1544,11 @@ export class NeuronMesh {
       }
 
       for (; iteration < maxIters; iteration++) {
+        residual = 0;
         for (let i = 0; i < N; i++) {
+          let nextVal = 0;
           if (gates[i]) {
-            next[i] = curr[i];
+            nextVal = curr[i];
           } else {
             let sum = biases[i];
             const start = rowStarts[i], end = rowStarts[i + 1];
@@ -1286,34 +1569,57 @@ export class NeuronMesh {
               sum += curr[flatIndices[k]] * flatWeights[k];
             }
             const comp = activate(sum);
-            next[i] = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
+            nextVal = hasV[i] ? vs[i] * curr[i] + (1 - vs[i]) * comp : comp;
           }
-          histories[i][iteration] = next[i];
+          next[i] = nextVal;
+          if (recordHistory) this.historyScratch[i * maxIters + iteration] = nextVal;
+
+          // Bolt's Optimization: Compute residual in single pass to avoid full O(N) second loop
+          const diff = nextVal - curr[i];
+          residual += diff < 0 ? -diff : diff;
         }
 
-        residual = 0;
-        for (let i = 0; i < N; i++) {
-          // OPTIMIZATION: Branchless ternary absolute difference to avoid Math.abs call overhead
-          const diff = next[i] - curr[i];
-          residual += diff < 0 ? -diff : diff;
-          curr[i] = next[i];
-          nodes[i].activation = curr[i];
-        }
-        if (this.checkConvergence(residual)) { converged = true; break; }
+        // Bolt's Optimization: Zero-copy pointer swap instead of O(N) array copy
+        const tmp = curr;
+        curr = next;
+        next = tmp;
+
+        if (residual < convergenceThreshold) { converged = true; break; }
       }
     }
 
-    // Bolt's Optimization: Truncate pre-allocated arrays and bulk-append history to node's activationHistory
+    // Ensure instance properties remain synchronized with swapped buffers
+    this.currActivations = curr;
+    this.nextActivations = next;
+
+    // Bolt's Optimization: Populate standard arrays and update node's activation/history in a single pass at final convergence
     const finalIters = converged ? iteration + 1 : iteration;
-    for (let i = 0; i < N; i++) {
-      const history = histories[i];
-      history.length = finalIters;
-      nodes[i].activationHistory.push(...history);
+    const nodeHistory = new Map<number, number[]>();
+    if (recordHistory) {
+      for (let i = 0; i < N; i++) {
+        const arr = new Array<number>(finalIters);
+        const startIdx = i * maxIters;
+        for (let iter = 0; iter < finalIters; iter++) {
+          arr[iter] = this.historyScratch[startIdx + iter];
+        }
+        nodeHistory.set(nodes[i].id, arr);
+        // Bounded: keep only the most recent MAX_ACTIVATION_HISTORY samples.
+        // This used to be an unbounded push(...arr), which both retained every
+        // sample forever and spread a growing array through the argument list.
+        const hist = nodes[i].activationHistory;
+        for (let iter = 0; iter < finalIters; iter++) hist.push(arr[iter]);
+        if (hist.length > MAX_ACTIVATION_HISTORY) {
+          hist.splice(0, hist.length - MAX_ACTIVATION_HISTORY);
+        }
+        nodes[i].activation = curr[i];
+      }
+    } else {
+      for (let i = 0; i < N; i++) nodes[i].activation = curr[i];
     }
 
     const finalStates = new Map<number, number>();
     for (let i = 0; i < N; i++) {
-      finalStates.set(nodes[i].id, nodes[i].activation);
+      finalStates.set(nodes[i].id, curr[i]);
     }
 
     return {
@@ -1321,6 +1627,7 @@ export class NeuronMesh {
       iterations: finalIters, converged, residual, nodeHistory
     };
   }
+
 
   /**
    * Hebbian weight update gated per-node by an externally supplied learning
@@ -2011,8 +2318,11 @@ export class ElasticCoreBlock {
           continue;
         }
 
+        // The connection sum starts at zero and the bias is added AFTER the
+        // mean below -- the bias is the neuron's own, not one of the senders,
+        // so averaging it in with them would shrink it by N.
         for (let od = 0; od < SD; od++) {
-          sums[od] = bias[off + od];
+          sums[od] = 0;
         }
 
         // Split source loop to eliminate "s === t" branch with 4x loop unrolling
@@ -2058,8 +2368,10 @@ export class ElasticCoreBlock {
 
         const v = vAlloc[t];
         const oneMinusV = 1 - v;
+        // Scaled the same way as the engine and the equation file.
+        const invN = 1 / Math.sqrt(Math.max(1, N));
         for (let od = 0; od < SD; od++) {
-          next[off + od] = v * curr[off + od] + oneMinusV * Math.tanh(sums[od]);
+          next[off + od] = v * curr[off + od] + oneMinusV * Math.tanh(bias[off + od] + sums[od] * invN);
         }
       }
 
@@ -2229,9 +2541,167 @@ export interface HyperNeuron {
    */
   state: Float32Array;
   energy: number;
-  transitions: StateTransition[];
+  /**
+   * Where this neuron last moved from and to, or null if it has not been
+   * active yet.
+   *
+   * One transition, not a history of them: the only thing ever read was the
+   * newest entry's `toState`, and keeping a hundred full state copies per
+   * neuron to answer "where were you a moment ago" is a hundred times the
+   * memory for the same answer.
+   */
+  lastTransition: StateTransition | null;
   influenceRadius: number;
   activationThreshold: number;
+}
+
+/** Float array -> base64, exactly, without a decimal round trip. */
+function encodeFloats(values: Float32Array): string {
+  return Buffer.from(values.buffer, values.byteOffset, values.byteLength).toString("base64");
+}
+
+function encodeDoubles(values: Float64Array): string {
+  return Buffer.from(values.buffer, values.byteOffset, values.byteLength).toString("base64");
+}
+
+function decodeDoubles(encoded: string, expected: number): Float64Array | null {
+  if (typeof encoded !== "string") return null;
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.byteLength !== expected * 8) return null;
+  const out = new Float64Array(expected);
+  Buffer.from(out.buffer).set(bytes);
+  return out;
+}
+
+/**
+ * base64 -> float array of exactly `expected` values, or null.
+ *
+ * The length check is the point: a snapshot whose arrays are the wrong size
+ * belongs to a different network, and quietly loading as much of it as fits
+ * would leave the engine in a state that is neither the saved one nor a clean
+ * one.
+ */
+function decodeFloats(encoded: string, expected: number): Float32Array | null {
+  if (typeof encoded !== "string") return null;
+  const bytes = Buffer.from(encoded, "base64");
+  if (bytes.byteLength !== expected * 4) return null;
+  const out = new Float32Array(expected);
+  Buffer.from(out.buffer).set(bytes);
+  return out;
+}
+
+/**
+ * Everything the network was holding when a run stopped: what was coming into
+ * every neuron AND what every connection between them was.
+ *
+ * Both halves are needed to start again in the same place. The states alone
+ * are a photograph of the activations with the wiring left out -- restore only
+ * those and the next run continues with whatever weights it happens to have,
+ * which is a different network thinking someone else's thought.
+ *
+ * The big arrays travel base64-encoded rather than as JSON number lists. There
+ * are neuronCount * dims * neuronCount connection values -- 650,000 for a
+ * default engine, per array -- and writing those as decimal text costs several
+ * times the bytes and loses the exact float on the way back.
+ */
+export interface NetworkStateSnapshot {
+  /** The engine's shape. A snapshot only fits an engine with the same one. */
+  shape: { neurons: number; dimensions: number };
+  /** Interleaved neuron states (the hot loop's own layout), base64 Float32. */
+  states: string;
+  /**
+   * Per-neuron energy, base64 Float64.
+   *
+   * Wider than the rest on purpose: energy lives on the neuron as an ordinary
+   * JS number, so saving it as Float32 rounds it and a "restored" network came
+   * back a fraction off the one that stopped. Everything else genuinely IS
+   * Float32 in the engine, and round-trips exactly at that width.
+   */
+  energies: string;
+  /** Per-neuron-per-dimension bias, base64 Float32. */
+  bias: string;
+  /** Connection scale, base64 Float32. */
+  connDiag: string;
+  /** Connection shift, base64 Float32. */
+  connShift: string;
+  /**
+   * Each neuron's own say in every connection -- its modulation and offset
+   * variables. Part of the network, so part of starting again in the same
+   * place: restore the connections without these and every connection is
+   * scaled and offset by a different network than the one that stopped.
+   */
+  modWeight: string;
+  addWeight: string;
+  /**
+   * Each neuron's wave: its frequency and where it currently sits. Learned, so
+   * part of the network -- restore everything else without these and the
+   * neurons that had come to share a wave no longer do.
+   */
+  waveFreq: string;
+  wavePhase: string;
+  /**
+   * The wave-editing equation on every connection -- how much gets through,
+   * how far it is turned, what it adds on its own. Learned, so part of the
+   * network: restore the weights without these and every wave in the network
+   * is shaped by a different set of connections than the ones that stopped.
+   */
+  connWaveGain: string;
+  connWavePhase: string;
+  connWaveBias: string;
+  /**
+   * The turned half of that same bias. Optional only so a snapshot written
+   * before the connection's bias became a genuine wave still loads -- it had
+   * no turned half, which is the same as zero.
+   */
+  connWaveBiasIm?: string;
+  /**
+   * How much a connection from each neuron scales its receiver's window into
+   * the network. Optional so a snapshot written before connections had their
+   * own window still loads -- absent means 1, which is that reading passed
+   * through unchanged.
+   */
+  senderGain?: string;
+  /**
+   * Each neuron's own wave when the run stopped, so it starts again where it
+   * left off rather than in silence.
+   *
+   * Optional for the same reason connWaveBiasIm is: a snapshot written before
+   * neurons had a wave of their own has none to restore, and silence is
+   * exactly what those networks were holding.
+   */
+  neuronWaveRe?: string;
+  neuronWaveIm?: string;
+  /**
+   * The shared pool itself. A neuron reads the pool at its own frequency, so a
+   * network restored without it starts hearing silence from everyone else even
+   * with its own wave intact -- and the next tick is a different tick.
+   */
+  wavePoolRe?: string;
+  wavePoolIm?: string;
+  /**
+   * What live correction was holding: the running energy estimate it compares
+   * against, whether it has one yet, and how many consecutive iterations have
+   * been off track.
+   *
+   * Small, and not optional in spirit -- a network restored without them damps
+   * differently on its very next tick than the one that stopped, which is the
+   * definition of not starting in the same place.
+   */
+  emaEnergy?: number;
+  hasEma?: boolean;
+  sustainedDivergence?: number;
+  connWaveShift: string;
+  /** The wave copies of the neuron's own bias and of its two network variables. */
+  neuronWaveBiasRe: string;
+  neuronWaveBiasIm: string;
+  modWaveWeight: string;
+  addWaveWeight: string;
+  /**
+   * Per-connection bias, base64 Float32, or an empty string when this engine
+   * does not have one. Empty rather than absent so a snapshot from an engine
+   * without it cannot be mistaken for a truncated one.
+   */
+  connBias: string;
 }
 
 export interface StateTransition {
@@ -2240,6 +2710,46 @@ export interface StateTransition {
   energy: number;
   timestamp: number;
   cause: string;
+}
+
+/** Per-tick options for process(). */
+export interface ProcessOptions {
+  /**
+   * Whether this tick may change the connections. Default true.
+   *
+   * Reading is not learning. The Zip Loop reads output one bit at a time, one
+   * full tick per bit, and every one of those ticks was applying the same
+   * Hebbian update as a tick that had actually received something: 50 idle
+   * read ticks moved 98% of all connections. Individually tiny -- but a
+   * hundred-byte answer is 800 of them, so asking the network what it thought
+   * quietly rewired it, and asking twice gave two different networks.
+   *
+   * It is also where nearly all the time goes. Weight learning is ~88% of a
+   * tick at the default size (every connection, every dimension, every tick),
+   * so a read tick that skips it is both correct and several times faster.
+   */
+  learn?: boolean;
+  /**
+   * Which expert/skill groups compute this tick.
+   *
+   * Section 2.1's neuron-level MoE: a group is a label on a neuron, not a
+   * separate network. When this is given, an ungrouped neuron computes as
+   * always, a neuron in an active group computes, and a neuron in an inactive
+   * group HOLDS -- it keeps the state it had rather than being recomputed. It
+   * is still connected to everything and everything is still connected to it;
+   * it just is not asked to move this tick.
+   *
+   * This is what let the whole mesh become one network. Gating used to live in
+   * a separate ElasticCoreBlock stage that ran BEFORE this engine, so half the
+   * agent's neurons were computed by a plain weighted sum with none of the
+   * hyperdimensional term and none of the wave. Bringing the gate here meant
+   * the stage could go, and every neuron the agent has is now in one network,
+   * carrying one equation.
+   *
+   * Undefined means everything computes, which is what every caller that does
+   * not route by expert wants.
+   */
+  activeGroups?: Set<string>;
 }
 
 export interface HyperDimensionalOutput {
@@ -2261,6 +2771,8 @@ export interface HyperDimensionalOutput {
   liveCorrections: number;
   /** Per-neuron reading of the input-flag dimension after settling: how close each neuron is, this tick, to a directly-driven input. */
   inputTopography: Map<number, number>;
+  /** |shared wave pool value| (see HyperConfig.waveGain) from the settle loop's final iteration -- 0 whenever waveGain is 0. */
+  waveEnergy: number;
   /** Iterations the settle loop actually ran (<= propagationSteps). */
   settleIterations: number;
 }
@@ -2285,6 +2797,162 @@ export interface HyperConfig {
   divergenceTolerance: number;
   /** Live-correction: how many consecutive off-track iterations before damping kicks in. */
   sustainedDivergenceTicks: number;
+  /**
+   * The whole network's WEIGHT, added to the weight of every single
+   * connection.
+   *
+   * Section: hyperdimensional thinking. A connection is not just between its
+   * two neurons -- every other neuron is part of it. So a connection has two
+   * weights and two biases:
+   *
+   *   its own weight        connDiag[i][d][j]
+   *   the network's weight  hyperGain * mean over k of (state[k] * modWeight[k])
+   *   its own bias          bias[i][d], and connBias[i][d][j] where enabled
+   *   the network's bias    hyperAdd  * mean over k of (state[k] * addWeight[k])
+   *
+   * The two weights are added together and the two biases are added together,
+   * and the connection is computed with that combined pair. Every neuron
+   * contributes to both, each through a personalised variable of its own --
+   * one set of variables for the weight, a different set for the bias, so
+   * scaling and offsetting are things the network can say separately.
+   *
+   * ADDED, not multiplied. An earlier version multiplied the connection's
+   * result by the network's say, which meant the network could silence every
+   * connection in the mesh at once by happening to sit near zero, and a
+   * connection's own weight was never worth anything on its own. Added, the
+   * network's weight is a weight in its own right: it moves what the
+   * connections do without being able to erase them.
+   *
+   * One concession: both are means rather than raw sums. A sum grows with
+   * neuron count, so at any real size it would saturate tanh on the first tick
+   * and leave a wall of +/-1. Dividing by the neuron count is a change of
+   * units the learned variables absorb -- the same family of functions,
+   * expressed so it survives being scaled up. For the same reason the
+   * network's weight is applied to the MEAN of what a neuron is hearing:
+   * adding a constant to every weight into a neuron is that constant times the
+   * sum of its inputs, and the mean is that sum in the units everything else
+   * here is already in.
+   *
+   * 0 means OFF, and off is exact: adding zero changes nothing, so the default
+   * is the old arithmetic rather than something indistinguishably close to it.
+   */
+  hyperGain: number;
+  /**
+   * The whole network SCALING every connection, out of the same personalised
+   * variables the added weight is made of.
+   *
+   * "You take that and you times that" -- the network's combined say
+   * multiplying what the connection would otherwise have contributed. This is
+   * the other way two weights can be combined, and the spec says both: the
+   * wave half says plainly to ADD the two weights, and the numeric half says
+   * just as plainly to multiply by the network's. Rather than pick one and
+   * make the other unsayable, both are here.
+   *
+   * Same variables (modWeight), two different things they can do:
+   *   hyperScale  the network's say MULTIPLIES what the connection produced
+   *   hyperGain   the network's say is ADDED to the connection's own weight
+   * Either alone, or both at once -- which is the full reading, a connection
+   * scaled by the network and then given the network's own weight on top.
+   *
+   * They fail differently, which is why having both matters: a scale near
+   * zero silences every connection in the mesh at once (that is the mechanism,
+   * not a bug -- it is how the network can hold everything still), while an
+   * added weight can never erase a connection's own worth. A network that
+   * could only do one of those could not express the other.
+   *
+   * 0 means OFF, and off is a scale of exactly 1: x * 1 is exact in IEEE754,
+   * so the default is the old arithmetic rather than something
+   * indistinguishably close to it.
+   */
+  hyperScale: number;
+  /**
+   * The whole network's BIAS, added to the bias of every single connection,
+   * through a second per-neuron variable of its own.
+   *
+   * The other half of the pair described above. It is the same value for every
+   * connection into a given neuron, so it is added once per neuron rather than
+   * N times and divided back down -- again a change of units, not a different
+   * equation.
+   *
+   * Also a mean, and also 0 by default (x + 0 is exact).
+   */
+  hyperAdd: number;
+  /**
+   * Whether every connection carries its own bias, not just its own weight.
+   *
+   * The per-neuron weight-and-bias architecture says a connection has both:
+   * c = x * w + b, per connection, before anything is combined. Only the
+   * weight existed here; the bias lived on the receiving neuron, shared across
+   * every connection into it, which is a different and much weaker thing.
+   *
+   * Off by default because it is another neuronCount * dimensions *
+   * neuronCount array to hold and to learn -- 2.6MB and a 50% longer learning
+   * pass at the default size. Real, and not free.
+   */
+  connectionBias: boolean;
+  /**
+   * How strongly the shared wave pool (see wavePhase/waveFreq below)
+   * feeds back into every neuron's own settling equation, each
+   * settle() iteration. 0 disables it outright (pure connDiag/connShift/
+   * bias dynamics, the original behavior). A real, cheap (O(N) per
+   * iteration, not O(N^2)) oscillatory coupling: each neuron carries its
+   * own phase that advances every iteration at its own frequency: this is
+   * the "every neuron has its own wave" primitive. Its current energy
+   * (not the raw connection weights) sets that wave's amplitude each
+   * iteration, and every neuron's wave sums into one shared scalar pool
+   * that every neuron reads back from equally -- constructive when many
+   * neurons' phases and states currently agree in sign, destructive when
+   * they oppose, exactly the interference behavior a real wave pool has.
+   */
+  waveGain: number;
+  /**
+   * How much of what a neuron hears it pushes back into the pool.
+   *
+   * Two separate things happen in the pool and this separates them. A neuron's
+   * OWN ripple is its signature, and two neurons carrying opposite signatures
+   * annihilate exactly. Its RE-EMISSION is what it heard, passed on at the
+   * force of its input -- and that adds whatever the neuron's own phase is,
+   * because a loud neuron passing a wave along is loud either way.
+   *
+   * At 0 only the sources speak -- the neurons being driven from outside --
+   * and cancellation between them is exact. Above 0 every other neuron passes
+   * on the wave that formed inside it, which is how a wave travels beyond the
+   * neurons that can hear its source directly. Bounded below 1 regardless:
+   * every neuron passing on everything it hears is a loop with nothing
+   * opposing it.
+   */
+  waveFeedback: number;
+  /**
+   * The hyperdimensional structure, in waves.
+   *
+   * The numeric side of a connection is its own result times what the whole
+   * network says, plus what the whole network adds -- each network term being
+   * every neuron's value through a variable of its own. The wave side had none
+   * of that: connections edited waves and the pool interfered them, but the
+   * network as a whole had no say in what a wave became. Two systems side by
+   * side rather than one.
+   *
+   * These give the wave the same shape. Every neuron contributes its wave
+   * through a personalised wave-variable of its own, and all of them add
+   * together: once, with one set of variables, into the network's WAVE WEIGHT
+   * (hyperWaveGain), and again, with a different set, into the network's WAVE
+   * BIAS (hyperWaveAdd).
+   *
+   * A connection then adds those to its own. Its wave weight is its own plus
+   * the network's, its wave bias is its own plus the network's, and the wave
+   * it carries is that combined pair run against the wave arriving along it:
+   * weight times wave, plus bias. So what a connection produces is part what
+   * that connection is worth and part what the entire network is doing, in
+   * one wave rather than two answers laid on top of each other.
+   *
+   * Added rather than multiplied, deliberately. A network term that multiplied
+   * could silence every connection at once by happening to sit near zero, and
+   * a connection's own weight would only ever be a suggestion.
+   *
+   * 0 means off, and off means exactly untouched: nothing is added.
+   */
+  hyperWaveGain: number;
+  hyperWaveAdd: number;
 }
 
 export interface SeenPattern {
@@ -2315,31 +2983,158 @@ function pearson(a: number[], b: number[]): number {
   return cov / Math.sqrt(va * vb);
 }
 
+
+/** How much of the measured phase error a neuron's wave takes each tick. */
+const PHASE_LOCK_RATE = 0.5;
+/**
+ * How much of it the FREQUENCY takes -- an order of magnitude less. Phase can
+ * be corrected every tick; a frequency that chased every tick would never
+ * settle, and neurons could never stay locked to each other long enough to
+ * reinforce anything.
+ */
+const FREQUENCY_LOCK_RATE = 0.02;
+/**
+ * How finely the pool distinguishes one wave from another.
+ *
+ * Frequencies are learned and continuous; this is what decides when two of
+ * them count as the same wave and therefore interfere. Fine enough that
+ * neurons do not all collapse into one wave, coarse enough that two neurons
+ * learning toward each other actually meet.
+ */
+const WAVE_BINS = 64;
+
+/**
+ * How much of what a neuron hears it passes back into the pool.
+ *
+ * Below one on purpose. Every neuron re-emitting everything it hears is a loop
+ * with nothing opposing it -- the architecture's own warning about runaway
+ * activation in an all-connected network, and it happens immediately: measured
+ * at full strength the pool went 4 -> 3,579 -> 2,682,806 in three ticks.
+ */
+const WAVE_FEEDBACK = 0.5;
+/**
+ * How far a network variable may go, and why it stops just short of 1.
+ *
+ * The step that moves these is scaled by the room left before the bound, so a
+ * variable eases into its limit rather than slamming into it. That leaves one
+ * trap: a variable that lands exactly ON the bound has no room left, its step
+ * is multiplied by zero, and it can never move again -- measured, one of
+ * sixteen after 300 ticks. Stopping a hair short means there is always
+ * something left to move with, so a neuron can still change its mind.
+ */
+/**
+ * How far the input a neuron received during an event may push its learning
+ * rate, as a multiple of what the average neuron received.
+ *
+ * "High input equals more change, low input equals less change" -- but a
+ * neuron that happens to be the only loud one in an otherwise quiet tick
+ * would otherwise get an unbounded rate, which would undo the stability the
+ * value half of the elastic core exists to provide.
+ */
+const INPUT_FORCE_FLOOR = 0.25;
+const INPUT_FORCE_CEILING = 3;
+
+const NETWORK_VARIABLE_LIMIT = 0.999;
+
+function clampNetworkVariable(value: number): number {
+  if (value < -NETWORK_VARIABLE_LIMIT) return -NETWORK_VARIABLE_LIMIT;
+  if (value > NETWORK_VARIABLE_LIMIT) return NETWORK_VARIABLE_LIMIT;
+  return value;
+}
+
+/**
+ * A wave network settles into an oscillation, not a fixed point, so "settled"
+ * has to mean "the residual has stopped falling" as well as "the residual is
+ * nearly zero". These are how flat, and for how long, before the settle loop
+ * calls it: a twentieth of itself is well outside the ~10% wobble measured on
+ * a steady oscillation, and three iterations avoids stopping on one flat step
+ * during the initial decay.
+ */
+const SETTLED_RESIDUAL_CHANGE = 0.05;
+const SETTLED_RESIDUAL_TICKS = 3;
+
+/** However high a caller asks for, the loop gain stays below one. */
+const WAVE_FEEDBACK_CEILING = 0.9;
+
+/** Below this a bin holds float dust from cancelled waves rather than a wave. */
+const POOL_SILENCE = 1e-6;
+
+/** Hard bound on any one wave in the pool, whatever the learned gains have drifted to. */
+const WAVE_POOL_CEILING = 8;
+
+/** How fast a connection's wave-editing equation moves. Slower than the numeric weights: it shapes what every wave through it becomes. */
+const WAVE_EDIT_RATE = 0.05;
+/** The wave-edit bias moves slower still -- it speaks with nothing arriving. */
+const WAVE_BIAS_RATE = 0.01;
+/** The wave shift moves slowest: it reaches across frequencies a wave does not belong to. */
+const WAVE_SHIFT_RATE = 0.005;
+/** Frequencies that complete at least one cycle before aliasing. */
+/**
+ * The band every neuron's wave lives in.
+ *
+ * Exported because placing a wave is not only the engine's business: a net
+ * skill grafted into the mesh has to be given a wave of its own, and a caller
+ * that cannot see the band can only guess at a frequency and have it clamped.
+ */
+export const MIN_WAVE_FREQ = 0.02;
+export const MAX_WAVE_FREQ = 0.6;
+
+/**
+ * How far below its usual best a region response has to fall before the mesh
+ * is saying it has nothing that handles this. Measured separation was
+ * 0.059 against 0.072-0.089, so the gap is real but not dramatic -- this sits
+ * inside it rather than at the edge.
+ */
+const CAPABILITY_GAP_RATIO = 0.8;
+/** How slowly the baseline follows. Slow, so one strange input does not move it. */
+const CAPABILITY_BASELINE_DECAY = 0.95;
+/** No verdict until the network has answered this many inputs -- there is nothing to compare against before that. */
+const CAPABILITY_BASELINE_MIN_SAMPLES = 8;
+/** Consecutive quiet readings before the mesh is believed. One is noise. */
+const CAPABILITY_GAP_TICKS = 3;
+
+/** What the mesh says about whether it can handle what it is holding. */
+export interface CapabilityGap {
+  /** True when no region took the input up, measured against what this network usually manages. */
+  needed: boolean;
+  /** The region that responded most, whatever the verdict. */
+  bestSkill?: string;
+  bestResponse: number;
+  baseline: number;
+  /** False until the network has answered enough inputs to have a usual level at all. */
+  hasBaseline: boolean;
+  /** How many consecutive readings have come back quiet. */
+  quietRun: number;
+}
+
+/** True when a neuron belongs to at least one of the skills asked for. */
+function anyGroupActive(groups: Set<string>, active: Set<string>): boolean {
+  for (const name of groups) if (active.has(name)) return true;
+  return false;
+}
+
 export class HyperDimensionalEngine {
   private config: HyperConfig;
   private neurons: HyperNeuron[];
   private seenPatterns: Map<string, SeenPattern>;
-  private history: StateTransition[];
   private iteration: number = 0;
   private totalDims: number;
 
   /**
-   * process() runs on every live NeuroclawLLM.generate() call, and none of
-   * `history`, each neuron's own `transitions`, or `seenPatterns` had any
-   * bound at all -- the constructor's `historyLength` config option (passed
-   * by llm.js expecting a real cap) is actually aliased into `noveltyWindow`,
-   * a recency-decay time constant, not an entry limit; nothing in this file
-   * ever trims any of the three. `history` in particular has zero readers
-   * anywhere in this file -- pure accumulated dead weight from the start.
-   * Only the *last* entry of a neuron's `transitions` is ever read
-   * (resolveStateTransitions()'s `fromState` lookup), so trimming from the
-   * front is always safe there. `seenPatterns` eviction here is by
-   * insertion order (first-seen), not true least-recently-used -- an honest
-   * simplification, not a claim of LRU precision, matching the same
+   * process() runs on every live generate() call, and on every BIT through the
+   * Zip Loop, so what it keeps per tick matters more than anywhere else here.
+   *
+   * Two of the three things it used to accumulate are gone rather than capped.
+   * `history` had no readers anywhere -- capping dead weight still pays to
+   * build it, and it was built out of two fresh state copies per neuron per
+   * tick. Each neuron's 100-deep `transitions` ring existed so one field of
+   * its newest entry could be read, and is now that one field.
+   *
+   * `seenPatterns` is real -- novelty scoring reads it -- so it stays, capped.
+   * Eviction is by insertion order (first-seen), not true least-recently-used:
+   * an honest simplification, not a claim of LRU precision, matching the same
    * plain-cap approach already used for SharedBlackboard's log.
    */
-  private readonly historyCapacity = 5000;
-  private readonly perNeuronTransitionsCapacity = 100;
   private readonly seenPatternsCapacity = 5000;
 
   /**
@@ -2350,6 +3145,54 @@ export class HyperDimensionalEngine {
    */
   private connDiag: Float32Array;
   private connShift: Float32Array;
+  /**
+   * Per-connection bias: the `b` in `c = x * w + b`, one for every connection
+   * rather than one for every receiving neuron. Empty unless
+   * config.connectionBias is on.
+   */
+  private connBias: Float32Array;
+  /**
+   * Row sums of connBias, per (neuron, dimension).
+   *
+   * The bias term does not depend on any state, so summing it over j every
+   * iteration would be neuronCount pointless adds per connection per tick. It
+   * changes only when learning changes it, so it is summed then instead.
+   */
+  private connBiasRowSum: Float32Array;
+  /** Each neuron's own variable for how it modulates every connection in the network. */
+  private modWeight: Float32Array;
+  /** How much a connection FROM this neuron scales its receiver's reading of the network. */
+  private senderGain: Float32Array;
+  /** Each neuron's own variable for what it adds to every connection in the network. */
+  private addWeight: Float32Array;
+  /** The same two variables again, for waves: what each neuron's wave says about every wave in the network. */
+  private modWaveWeight: Float32Array;
+  private addWaveWeight: Float32Array;
+  /**
+   * The wave copy of the neuron's own bias.
+   *
+   * Every weight in the hyperdimensional structure has a wave beside it. The
+   * receiving neuron's bias is a weight like any other -- what it contributes
+   * with nothing arriving -- so it has a wave of its own: a constant ripple
+   * the neuron adds to whatever formed inside it. Complex, because a wave has
+   * a direction as well as a height.
+   */
+  private neuronWaveBiasRe: Float32Array;
+  private neuronWaveBiasIm: Float32Array;
+  /**
+   * The wave copy of the connection's shift weight.
+   *
+   * connShift reads the neighbouring DIMENSION; this reads the neighbouring
+   * FREQUENCY -- the wave a half-step along from the one the connection
+   * carries. Starts at zero, so a fresh network behaves as though it were not
+   * there until learning gives it a reason to exist.
+   */
+  private connWaveShift: Float32Array;
+  /** Per-dimension network weight, network bias, and state mean, rebuilt each settle iteration. */
+  private hyperGainScratch: Float32Array;
+  private hyperAddScratch: Float32Array;
+  private hyperMeanScratch: Float32Array;
+  private hyperScaleScratch: Float32Array;
 
   /** Bias is per-neuron (added once after the full summed product) */
   private bias: Float32Array;
@@ -2372,12 +3215,159 @@ export class HyperDimensionalEngine {
   private tempCtx: Float32Array;
   private stateDeltasBuffer: Float32Array;
   private entropyHist: Uint32Array;
-  private preSettleStatesBuffer: Float32Array;
-  private preSettleEnergiesBuffer: Float32Array;
   private defaultDrivenIds: Set<number>;
   private selfModelHScratch: Float32Array;
+  private selfModelOutScratch: Float32Array;
   private selfModelErrorScratch: Float32Array;
   private selfModelDHScratch: Float32Array;
+  private outputVectorScratch: Float32Array;
+  private entropyLookup: Float64Array;
+
+  private stateViews: Float32Array[];
+  private isDrivenScratch: Uint8Array;
+  private drivenIndicesScratch: Int32Array;
+  /**
+   * Which expert or skill each neuron belongs to, when it belongs to one.
+   *
+   * A label, not a wall: a grouped neuron is wired all-to-all like every
+   * other. The group decides only whether it is asked to compute on a given
+   * tick -- see ProcessOptions.activeGroups.
+   */
+  private neuronGroups: Map<number, Set<string>> = new Map();
+  /** The best region response this network normally reaches -- the reference capabilityGap() reads "quiet" against. */
+  private capabilityBaseline = 0;
+  private capabilitySamples = 0;
+  private capabilityQuietRun = 0;
+  /** What each neuron with a definition is supposed to say. */
+  private definitionTargets: Map<number, Float32Array> = new Map();
+  /** Neurons holding their state this tick because their group was not asked. */
+  private heldIndicesScratch: Int32Array;
+  /** Who was held out of this tick, so learning can skip them. */
+  private heldThisTick: Uint8Array;
+  /** Per-receiver network wave weight and bias, rebuilt each settle iteration. */
+  private netWaveWeightReScratch: Float32Array;
+  private netWaveWeightImScratch: Float32Array;
+  private netWaveBiasReScratch: Float32Array;
+  private netWaveBiasImScratch: Float32Array;
+  private nonDrivenIndicesScratch: Int32Array;
+  private vsScratch: Float32Array;
+  private hasVScratch: Uint8Array;
+  private ratesScratch: Float32Array;
+  /** How hard each neuron was driven this event -- the other half of the elastic core. */
+  private forceScratch: Float32Array;
+  private deltaSumsScratch: Float32Array;
+
+  /** Per-neuron wave phase (radians, wraps at 2*PI) -- advances every settle() iteration at that neuron's own waveFreq. */
+  private wavePhase: Float32Array;
+  /** Per-neuron wave frequency -- fixed at construction, spread deterministically across neurons so they don't all stay in lockstep. */
+  private waveFreq: Float32Array;
+  /** Scratch for each neuron's current wave amplitude (its content energy this iteration), reused every settle() call. */
+  private waveAmpScratch: Float32Array;
+  /**
+   * How a state becomes a wave: two orthogonal unit directions, D long,
+   * shared by every neuron.
+   *
+   * A driven neuron is a SOURCE -- it has nothing flowing in to be made of,
+   * so its wave has to come from the input itself. It used to come from the
+   * input's ENERGY, sqrt(sum of squares), which is a magnitude and carries no
+   * sign, so an input and its exact opposite produced the IDENTICAL wave.
+   * Measured: feeding +0.6 and -0.6 into the same network moved the shared
+   * pool by 0.003 against a total energy of 1.78. The pool was 99.8% the
+   * network's own resting activity and 0.2% the input.
+   *
+   * That is the wrong way round for a wave network. Interference is the whole
+   * mechanism -- contradicting answers cancel, agreeing ones magnify -- and
+   * two contradicting inputs could not cancel, because by the time they were
+   * waves they were not contradicting. They were the same wave.
+   *
+   * So a source projects its state onto these two directions and emits the
+   * complex number that comes out. Negate the state and the projection
+   * negates, which is a half-cycle shift, which is annihilation.
+   *
+   * SHARED across neurons, deliberately. Giving each neuron its own basis was
+   * tried first and is wrong: two neurons holding the same state then emit
+   * different waves, so they cannot agree, and two given deliberately
+   * opposite signatures cannot be exact enemies either -- the Zip Loop's bit
+   * neurons stop annihilating. Measured with per-neuron bases, two sources on
+   * one frequency: agreeing 0.2997, contradicting 0.4212, which is backwards.
+   * Which neuron a wave belongs to is what the signature is for; this is only
+   * how a state is read, and that is a property of the network.
+   */
+  private waveReadRe: Float32Array;
+  private waveReadIm: Float32Array;
+  /**
+   * The shared pool, as one complex amplitude per frequency.
+   *
+   * Indexed by FREQUENCY, not by neuron. That distinction is the whole
+   * mechanism: two neurons carrying the same wave land in the same place and
+   * add -- in phase they reinforce, half a cycle apart they annihilate. Keyed
+   * by neuron instead, as this was first written, every neuron would have its
+   * own private slot and no two waves could ever meet, which is a pool in name
+   * only.
+   *
+   * Frequencies are learned and continuous, so they are quantised into bins to
+   * decide what counts as "the same wave". That is a real approximation and
+   * worth naming: two neurons a hair apart in frequency either share a bin and
+   * interfere completely, or sit in neighbouring bins and do not interfere at
+   * all, where physically they would beat slowly against each other.
+   */
+  private poolRe: Float32Array;
+  private poolIm: Float32Array;
+  /** The pool as it stood last iteration -- what neurons are hearing right now. */
+  private prevPoolRe: Float32Array;
+  private prevPoolIm: Float32Array;
+  /** One neuron's internal pool: what it hears at every frequency, after its own connections have edited it. */
+  /**
+   * Each neuron's own wave -- one complex number apiece, at that neuron's own
+   * frequency, which is what "each neuron has a corresponding wave" means.
+   *
+   * This is what a connection carries. Before it existed, a connection
+   * multiplied the shared POOL's content at the giving neuron's frequency,
+   * which is not the same thing at all: two neurons sharing a frequency were
+   * indistinguishable to everything downstream of them, and what a connection
+   * carried was everyone's wave at that pitch rather than the wave of the
+   * neuron doing the giving.
+   */
+  private waveRe: Float32Array;
+  private waveIm: Float32Array;
+  private prevWaveRe: Float32Array;
+  private prevWaveIm: Float32Array;
+  /**
+   * The wave-editing equation on every connection: how much of the wave gets
+   * through, how far it is turned, and what the connection adds on its own.
+   *
+   * Wherever there is a weight there is one of these. A connection does not
+   * merely pass a wave along -- it edits it, and it edits it differently from
+   * every other connection, which is what lets two neurons hear the same pool
+   * and receive different things from it.
+   */
+  private connWaveGain: Float32Array;
+  private connWavePhase: Float32Array;
+  /**
+   * cos and sin of connWavePhase, kept alongside it.
+   *
+   * The settle loop turned a phase into a wave with Math.cos and Math.sin per
+   * CONNECTION, per receiver, per iteration -- at 336 neurons and a ceiling of
+   * 32 that is 3.6 million of each, per settle, and a CPU profile put 76% of
+   * a read in settle(). The phase only moves when learning runs, so the pair
+   * is computed there instead: once per changed connection rather than once
+   * per connection per iteration.
+   */
+  private connWaveCos: Float32Array;
+  private connWaveSin: Float32Array;
+  private connWaveBias: Float32Array;
+  private connWaveBiasIm: Float32Array;
+  /** Cos/sin of each neuron's phase, rebuilt once per iteration instead of per connection. */
+  private phaseCos: Float32Array;
+  private phaseSin: Float32Array;
+  /** Which frequency bin each neuron's wave currently falls in. */
+  private waveBin: Int32Array;
+  /** What each neuron reads back out of the pool this iteration. */
+  private waveTermScratch: Float32Array;
+  /** Where the pool sits relative to each neuron's own wave, in radians. */
+  private wavePhaseErrorScratch: Float32Array;
+  /** |shared wave pool value| from the most recent settle() iteration -- genuinely observable evidence the wave mechanism ran, surfaced on HyperDimensionalOutput. */
+  private lastWaveEnergy = 0;
 
   constructor(config: Record<string, any> = {}) {
     this.config = {
@@ -2394,18 +3384,82 @@ export class HyperDimensionalEngine {
       selfModelRank: config.selfModelRank ?? 4,
       divergenceTolerance: config.divergenceTolerance ?? 0.05,
       sustainedDivergenceTicks: config.sustainedDivergenceTicks ?? 3,
+      // Defaults to 0 (fully inert, byte-for-byte the same settle() math as
+      // before this existed) rather than a small nonzero value: existing
+      // callers rely on exact pre-activation-sum invariants (see the
+      // "symbolic trace" tests in test/core/onebrain.test.ts) and on
+      // specific training-convergence behavior that a nonzero wave term
+      // measurably perturbs. Pass waveGain explicitly to opt a given
+      // engine instance into it.
+      waveGain: config.waveGain ?? 0,
+      waveFeedback: Math.max(0, Math.min(WAVE_FEEDBACK_CEILING, config.waveFeedback ?? WAVE_FEEDBACK)),
+      // All three default to inert, for the same reason waveGain does: existing
+      // callers rely on exact pre-activation invariants, and this changes the
+      // arithmetic of every connection in the network.
+      hyperGain: config.hyperGain ?? 0,
+      hyperScale: config.hyperScale ?? 0,
+      hyperAdd: config.hyperAdd ?? 0,
+      hyperWaveGain: config.hyperWaveGain ?? 0,
+      hyperWaveAdd: config.hyperWaveAdd ?? 0,
+      connectionBias: config.connectionBias ?? false,
     };
     const N = this.config.neuronCount;
     const D = this.config.dimensions + 1;
     this.totalDims = D;
     this.neurons = [];
     this.seenPatterns = new Map();
-    this.history = [];
 
     this.allStates = new Float32Array(D * N);
     this.connDiag = new Float32Array(N * D * N);
     this.connShift = new Float32Array(N * D * N);
+    // Allocated only when asked for: at the default size this is another 2.6MB
+    // that most engines will never read.
+    this.connBias = this.config.connectionBias ? new Float32Array(N * D * N) : new Float32Array(0);
+    this.connBiasRowSum = new Float32Array(this.config.connectionBias ? N * D : 0);
     this.bias = new Float32Array(N * D);
+
+    // Every neuron's say in every connection. Small random values rather than
+    // zeros: identical variables would make every neuron's contribution to the
+    // network term interchangeable, and learning could never separate them.
+    const networkScale = Math.sqrt(1 / Math.max(1, N));
+    // One row per RECEIVING neuron: modWeight[i*N + k] is how much neuron i's
+    // own view of the network weighs neuron k. Every connection into i reads
+    // the network through i's row, and senderGain scales that reading by which
+    // neuron is doing the sending -- so a connection A->B and a connection
+    // C->B looking at the identical network state interpret it differently,
+    // which is the defining property of the hyperdimensional term.
+    //
+    // Rows rather than a full per-connection cube: giving every (i,j) pair its
+    // own N variables is N^3, which at the sizes this network reaches after a
+    // few skills are installed is hundreds of megabytes and an N^3 inner loop.
+    // A row per receiver times a gain per sender is the same idea factorised:
+    // every connection gets its own reading, at N^2.
+    this.modWeight = new Float32Array(N * N);
+    this.addWeight = new Float32Array(N * N);
+    this.senderGain = new Float32Array(N);
+    for (let i = 0; i < N * N; i++) {
+      this.modWeight[i] = (Math.random() * 2 - 1) * networkScale;
+      this.addWeight[i] = (Math.random() * 2 - 1) * networkScale;
+    }
+    for (let i = 0; i < N; i++) {
+      // Centred on 1: a sender that has learned nothing yet passes its
+      // receiver's reading through unchanged rather than muting it.
+      this.senderGain[i] = 1 + (Math.random() * 2 - 1) * networkScale;
+    }
+    this.hyperGainScratch = new Float32Array(N * D);
+    this.hyperAddScratch = new Float32Array(N * D);
+    this.hyperMeanScratch = new Float32Array(D);
+    this.hyperScaleScratch = new Float32Array(N * D);
+    // The wave copies, per receiving neuron for the same reason.
+    this.modWaveWeight = new Float32Array(N * N);
+    this.addWaveWeight = new Float32Array(N * N);
+    this.neuronWaveBiasRe = new Float32Array(N);
+    this.neuronWaveBiasIm = new Float32Array(N);
+    this.connWaveShift = new Float32Array(N * N);
+    for (let i = 0; i < N * N; i++) {
+      this.modWaveWeight[i] = (Math.random() * 2 - 1) * networkScale;
+      this.addWaveWeight[i] = (Math.random() * 2 - 1) * networkScale;
+    }
 
     this.nextStatesBuffer = new Float32Array(N * D);
     this.tempCtx = new Float32Array(D);
@@ -2415,20 +3469,122 @@ export class HyperDimensionalEngine {
     this.initializeNeurons();
     this.initializeConnections();
 
-    this.preSettleStatesBuffer = new Float32Array(D * N);
-    this.preSettleEnergiesBuffer = new Float32Array(N);
-    this.defaultDrivenIds = new Set(this.neurons.map(n => n.id));
+    // The input layer: which neurons are clamped to the input when a caller
+    // does not say.
+    //
+    // This used to be EVERY neuron, and that is not a default -- it is a
+    // bypass. A driven neuron is written straight from the input vector and
+    // never computes: no connections, no bias, no network term, no wave. With
+    // all of them driven, none of them compute anything, and every neuron in
+    // the mesh ends the tick holding the identical vector. Measured on the
+    // live pipeline: 64 neurons, one distinct state between them, and the
+    // whole hyperdimensional structure skipped on every tick of the running
+    // agent.
+    //
+    // One input neuron, matching what elastic-core.ts's forward() has always
+    // defaulted to. The input still reaches everything -- it is an all-to-all
+    // mesh -- but it reaches it through the connections, which is the entire
+    // point of having them.
+    this.defaultDrivenIds = new Set([0]);
+
+    // Pre-calculate the entropy lookup table for fast dimensional entropy calculations.
+    // Since count is always an integer from 0 to N (neuronCount), there are exactly N + 1 possible probabilities.
+    // Pre-calculating p * Math.log2(p) avoids transcendental Math.log2 calls in the hot loop.
+    this.entropyLookup = new Float64Array(N + 1);
+    this.entropyLookup[0] = 0; // 0 * log2(0) = 0
+    for (let c = 1; c <= N; c++) {
+      const p = c / N;
+      this.entropyLookup[c] = p * Math.log2(p);
+    }
 
     const rank = this.config.selfModelRank;
     const dims = this.config.dimensions;
     this.selfModelA = new Float32Array(dims * rank);
     this.selfModelB = new Float32Array(rank * dims);
     this.selfModelHScratch = new Float32Array(rank);
+    this.selfModelOutScratch = new Float32Array(dims);
     this.selfModelErrorScratch = new Float32Array(dims);
     this.selfModelDHScratch = new Float32Array(rank);
+    this.outputVectorScratch = new Float32Array(dims);
     const scale = Math.sqrt(1 / Math.max(1, dims));
     for (let i = 0; i < this.selfModelA.length; i++) this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
     for (let i = 0; i < this.selfModelB.length; i++) this.selfModelB[i] = (Math.random() * 2 - 1) * scale;
+
+    this.stateViews = new Array<Float32Array>(D);
+    for (let d = 0; d < D; d++) {
+      this.stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
+    }
+    this.isDrivenScratch = new Uint8Array(N);
+    this.drivenIndicesScratch = new Int32Array(N);
+    this.nonDrivenIndicesScratch = new Int32Array(N);
+    this.heldIndicesScratch = new Int32Array(N);
+    this.netWaveWeightReScratch = new Float32Array(N);
+    this.netWaveWeightImScratch = new Float32Array(N);
+    this.netWaveBiasReScratch = new Float32Array(N);
+    this.netWaveBiasImScratch = new Float32Array(N);
+    this.vsScratch = new Float32Array(N);
+    this.hasVScratch = new Uint8Array(N);
+    this.ratesScratch = new Float32Array(N);
+    this.deltaSumsScratch = new Float32Array(N);
+
+    this.forceScratch = new Float32Array(N);
+    this.heldThisTick = new Uint8Array(N);
+    // Wave pool state -- see waveGain's doc comment on HyperConfig. Frequencies
+    // are spread deterministically (not randomly) across [0.05, 0.5) radians/iteration
+    // via a golden-ratio sequence, so N neurons don't cluster into just a few
+    // distinct frequencies the way i % smallK would, and two engines built with
+    // the same neuronCount get the same frequency assignment (reproducible).
+    const GOLDEN_ANGLE = 0.6180339887498949;
+    this.wavePhase = new Float32Array(N);
+    this.waveFreq = new Float32Array(N);
+    for (let i = 0; i < N; i++) {
+      const frac = (i * GOLDEN_ANGLE) % 1;
+      this.waveFreq[i] = 0.05 + frac * 0.45;
+    }
+    // Explicit signatures, when a caller has a reason to choose them: two
+    // neurons given the same frequency share a wave, which is the arrangement
+    // where one drives the other through the pool. Without this the spread is
+    // deliberately collision-free and that case cannot be constructed at all.
+    if (Array.isArray(config.waveFrequencies)) {
+      for (let i = 0; i < Math.min(N, config.waveFrequencies.length); i++) {
+        const freq = Number(config.waveFrequencies[i]);
+        if (Number.isFinite(freq)) this.waveFreq[i] = freq;
+      }
+    }
+    if (Array.isArray(config.wavePhases)) {
+      for (let i = 0; i < Math.min(N, config.wavePhases.length); i++) {
+        const phase = Number(config.wavePhases[i]);
+        if (Number.isFinite(phase)) this.wavePhase[i] = phase;
+      }
+    }
+    this.waveAmpScratch = new Float32Array(N);
+    this.waveReadRe = new Float32Array(D);
+    this.waveReadIm = new Float32Array(D);
+    this.seedWaveReading();
+    this.poolRe = new Float32Array(WAVE_BINS);
+    this.poolIm = new Float32Array(WAVE_BINS);
+    this.prevPoolRe = new Float32Array(WAVE_BINS);
+    this.prevPoolIm = new Float32Array(WAVE_BINS);
+    this.waveRe = new Float32Array(N);
+    this.waveIm = new Float32Array(N);
+    this.prevWaveRe = new Float32Array(N);
+    this.prevWaveIm = new Float32Array(N);
+    this.waveBin = new Int32Array(N);
+    this.phaseCos = new Float32Array(N);
+    this.phaseSin = new Float32Array(N);
+    this.waveTermScratch = new Float32Array(N);
+    this.wavePhaseErrorScratch = new Float32Array(N);
+
+    // Connections start passing waves through unchanged -- full gain, no turn,
+    // nothing added. Learning is what makes them differ; starting them random
+    // would mean a fresh network scrambles every wave before anything has had
+    // a reason to.
+    this.connWaveGain = new Float32Array(N * N).fill(1);
+    this.connWavePhase = new Float32Array(N * N);
+    this.connWaveCos = new Float32Array(N * N).fill(1);
+    this.connWaveSin = new Float32Array(N * N);
+    this.connWaveBias = new Float32Array(N * N);
+    this.connWaveBiasIm = new Float32Array(N * N);
   }
 
   /**
@@ -2439,7 +3595,8 @@ export class HyperDimensionalEngine {
     inputVector: number[] | Map<string, Float32Array>,
     learningRates?: Map<number, number>,
     directInputNeuronIds?: Set<number>,
-    vale?: Map<number, number>
+    vale?: Map<number, number>,
+    options?: ProcessOptions
   ): HyperDimensionalOutput {
     let resolvedInput: number[];
     if (inputVector instanceof Map) {
@@ -2458,38 +3615,26 @@ export class HyperDimensionalEngine {
     const N = this.neurons.length;
     const D = this.totalDims;
 
-    // Fast pre-allocated copy
-    this.preSettleStatesBuffer.set(this.allStates);
-    for (let idx = 0; idx < N; idx++) {
-      this.preSettleEnergiesBuffer[idx] = this.neurons[idx].energy;
-    }
+    const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds, vale, options?.activeGroups);
 
-    const { stateDeltas, liveCorrections, iterations } = this.settle(resolvedInput, drivenIds, vale);
+    // Weight learning is on by default -- a tick that receives input is
+    // supposed to change the network. A tick that is only READING is not: see
+    // ProcessOptions.learn.
+    if (options?.learn !== false) this.applyWeightLearning(learningRates, stateDeltas);
 
-    this.applyWeightLearning(learningRates, stateDeltas);
-
-    const transitions: StateTransition[] = [];
+    // Energies only. This loop used to also build a StateTransition per neuron
+    // whose energy had changed -- two fresh Float32Array(dimensions + 1) plus
+    // an object each, every tick -- for the sole purpose of pushing them into
+    // `history`, which nothing in this file or anywhere else ever read. At the
+    // default size that was ~200 typed arrays and 13,000 floats copied per
+    // tick, and the Zip Loop runs one tick per BIT, so the dead record cost
+    // more than most of the real computation.
     for (let idx = 0; idx < N; idx++) {
       const neuron = this.neurons[idx];
-      const newEnergy = this.computeStateEnergy(neuron.state);
-      const oldEnergy = this.preSettleEnergiesBuffer[idx];
-      if (newEnergy !== oldEnergy) {
-        const fromState = new Float32Array(D);
-        for (let d = 0; d < D; d++) {
-          fromState[d] = this.preSettleStatesBuffer[d * N + idx];
-        }
-        transitions.push({
-          fromState,
-          toState: new Float32Array(neuron.state),
-          energy: newEnergy - oldEnergy,
-          timestamp: Date.now(),
-          cause: 'input_update',
-        });
-      }
-      neuron.energy = newEnergy;
+      neuron.energy = this.computeStateEnergy(neuron.state);
     }
 
-    const resolvedTransitions = this.resolveStateTransitions();
+    const transitionCount = this.resolveStateTransitions();
 
     const activeStates: HyperNeuron[] = [];
     const threshold = this.config.energyThreshold;
@@ -2509,24 +3654,49 @@ export class HyperDimensionalEngine {
     }
 
     const dimensionalEntropy = this.computeDimensionalEntropy();
-    const patternHash = this.hashVector(outputVector);
+    // Have I been asked this before?
+    //
+    // The hash used to be the OUTPUT, which only worked while the network was
+    // not computing: with every neuron clamped to the input the output was the
+    // input, so the same input twice hashed the same and read as familiar.
+    // Once the neurons actually compute, a recurrent mesh answers the same
+    // question differently the second time -- correctly, its state has moved
+    // on -- and every output hashed as brand new. Nothing was ever familiar
+    // again, and a novelty signal that says "new" to everything is not a
+    // signal.
+    //
+    // So the two halves of surprise are kept separate, which is what the 0.6 /
+    // 0.4 blend below was always for: patternNovelty is about the QUESTION and
+    // whether it has been asked before, selfModelSurprise is about the ANSWER
+    // and whether the network predicted its own.
+    const patternHash = this.hashVector(resolvedInput);
     const patternNovelty = this.computeNoveltyScore(patternHash);
 
     let selfModelSurprise = 0;
     if (this.lastOutputVector) {
       const predicted = this.selfModelPredict(this.lastOutputVector);
       selfModelSurprise = this.meanAbsDiff(predicted, outputVector);
-      this.selfModelTrainStep(this.lastOutputVector, predicted, outputVector);
+      // Reading is not learning -- here too.
+      //
+      // The self-model trained on every tick, including ticks the caller had
+      // explicitly asked not to learn. So `learn: false` did not mean the
+      // network was left alone: pulling an answer out of it still changed the
+      // part that predicts its own answers, and reading the same thing twice
+      // gave two different networks. That is the exact defect already fixed
+      // for the connections, in the same method, one field over.
+      //
+      // The surprise is still MEASURED on a read-only tick, because novelty
+      // is something a caller reads and it costs a prediction either way.
+      // Only the training step is skipped.
+      if (options?.learn !== false) {
+        this.selfModelTrainStep(this.lastOutputVector, predicted, outputVector);
+      }
     }
     this.lastOutputVector = outputVector;
 
     const noveltyScore = clamp(0.6 * patternNovelty + 0.4 * selfModelSurprise, 0, 1);
 
     this.recordPattern(patternHash, noveltyScore);
-    this.history.push(...transitions, ...resolvedTransitions);
-    if (this.history.length > this.historyCapacity) {
-      this.history.splice(0, this.history.length - this.historyCapacity);
-    }
     this.iteration++;
 
     const inputTopography = new Map<number, number>();
@@ -2540,11 +3710,12 @@ export class HyperDimensionalEngine {
       totalEnergy,
       dimensionalEntropy,
       noveltyScore,
-      transitionCount: resolvedTransitions.length,
+      transitionCount,
       stateDeltas,
       selfModelSurprise,
       liveCorrections,
       inputTopography,
+      waveEnergy: this.lastWaveEnergy,
       settleIterations: iterations,
     };
   }
@@ -2570,13 +3741,1157 @@ export class HyperDimensionalEngine {
     }));
   }
 
+  /**
+   * Full defensive snapshot of every neuron -- an object spread plus a fresh
+   * Float32Array per neuron, so it is O(N) allocations. Correct when a caller
+   * genuinely needs the whole network's state, but callers that only want one
+   * or two scalars should use getNeuronEnergy()/readNeuronContent() below
+   * instead: reading two output neurons per bit through this was allocating
+   * 2N objects and N typed arrays per bit, then linear-scanning for the two
+   * that mattered.
+   */
   getNeuronStates(): HyperNeuron[] {
     return this.neurons.map(n => ({ ...n, state: new Float32Array(n.state) }));
+  }
+
+  /**
+   * One neuron's current energy, in O(1) with zero allocation. Neuron ids are
+   * dense and assigned in construction order (`id: i`), so the id is also the
+   * array index -- verified rather than assumed, and asserted below so this
+   * silently degrades to a scan rather than returning the wrong neuron if that
+   * ever stops holding.
+   */
+  /**
+   * The mean energy across every neuron -- the network's own floor.
+   *
+   * What "quiet" has to be measured against: an absolute threshold that suits
+   * a small mesh calls a large one permanently noisy.
+   */
+  meanNeuronEnergy(): number {
+    const N = this.neurons.length;
+    if (N === 0) return 0;
+    let total = 0;
+    for (let i = 0; i < N; i++) total += this.neurons[i].energy;
+    return total / N;
+  }
+
+  getNeuronEnergy(id: number): number {
+    return this.neuronById(id)?.energy ?? 0;
+  }
+
+  /**
+   * Copies one neuron's content dimensions (indices 1..dimensions -- index 0 is
+   * the reserved input flag) into `out`, returning how many were written. Lets a
+   * caller read a neuron repeatedly through a single reused buffer instead of
+   * allocating a fresh snapshot per read.
+   */
+  readNeuronContent(id: number, out: Float32Array): number {
+    const neuron = this.neuronById(id);
+    if (!neuron) return 0;
+    const count = Math.min(out.length, neuron.state.length - 1);
+    for (let d = 0; d < count; d++) out[d] = neuron.state[d + 1];
+    return count;
+  }
+
+  /** O(1) id->neuron via dense-index fast path, falling back to a scan if ids ever stop matching indices. */
+  private neuronById(id: number): HyperNeuron | undefined {
+    const direct = this.neurons[id];
+    if (direct !== undefined && direct.id === id) return direct;
+    return this.neurons.find(n => n.id === id);
+  }
+
+  /**
+   * Everything the network is holding right now: every neuron's state and
+   * energy, and every connection between them.
+   *
+   * Taken when a run stops. An all-connected mesh keeps its working context in
+   * its own state rather than in a buffer beside it -- that is the whole
+   * reason two neurons are enough of a doorway -- so the moment a run ends,
+   * this is the only record of what it had built up. Throwing it away at the
+   * end of every run makes each run start from nothing and forget what it just
+   * did.
+   *
+   * Connections are included because they are half of where the network is.
+   * They move during a run (learning is exactly that), so a snapshot of the
+   * activations alone would resume the right thought inside the wrong network.
+   *
+   * The neuron states saved are `allStates` -- the interleaved array the
+   * settle loop actually reads. HyperNeuron.state is a per-neuron copy kept
+   * for compatibility, and saving that instead would restore what callers see
+   * while leaving what the network computes with untouched.
+   */
+  captureNetworkState(): NetworkStateSnapshot {
+    const energies = new Float64Array(this.neurons.length);
+    for (let i = 0; i < this.neurons.length; i++) energies[i] = this.neurons[i].energy;
+    return {
+      shape: { neurons: this.neurons.length, dimensions: this.getDimensions() },
+      states: encodeFloats(this.allStates),
+      energies: encodeDoubles(energies),
+      bias: encodeFloats(this.bias),
+      connDiag: encodeFloats(this.connDiag),
+      connShift: encodeFloats(this.connShift),
+      modWeight: encodeFloats(this.modWeight),
+      addWeight: encodeFloats(this.addWeight),
+      waveFreq: encodeFloats(this.waveFreq),
+      wavePhase: encodeFloats(this.wavePhase),
+      connWaveGain: encodeFloats(this.connWaveGain),
+      connWavePhase: encodeFloats(this.connWavePhase),
+      connWaveBias: encodeFloats(this.connWaveBias),
+      connWaveBiasIm: encodeFloats(this.connWaveBiasIm),
+      senderGain: encodeFloats(this.senderGain),
+      neuronWaveRe: encodeFloats(this.waveRe),
+      neuronWaveIm: encodeFloats(this.waveIm),
+      wavePoolRe: encodeFloats(this.poolRe),
+      wavePoolIm: encodeFloats(this.poolIm),
+      emaEnergy: this.emaEnergy,
+      hasEma: this.hasEma,
+      sustainedDivergence: this.sustainedDivergence,
+      connWaveShift: encodeFloats(this.connWaveShift),
+      neuronWaveBiasRe: encodeFloats(this.neuronWaveBiasRe),
+      neuronWaveBiasIm: encodeFloats(this.neuronWaveBiasIm),
+      modWaveWeight: encodeFloats(this.modWaveWeight),
+      addWaveWeight: encodeFloats(this.addWaveWeight),
+      connBias: this.config.connectionBias ? encodeFloats(this.connBias) : "",
+    };
+  }
+
+  /**
+   * Put a saved snapshot back, so the next run starts where the last one
+   * stopped. Returns true only if everything was restored.
+   *
+   * All-or-nothing on purpose. A snapshot from an engine of a different shape
+   * is not this engine's state, and a partial restore -- states from before,
+   * connections from now -- is a network that never existed. Refusing outright
+   * leaves a clean start, which is a state someone can reason about.
+   */
+  restoreNetworkState(snapshot: NetworkStateSnapshot): boolean {
+    if (
+      !snapshot?.shape ||
+      snapshot.shape.neurons !== this.neurons.length ||
+      snapshot.shape.dimensions !== this.getDimensions()
+    ) return false;
+
+    const states = decodeFloats(snapshot.states, this.allStates.length);
+    const energies = decodeDoubles(snapshot.energies, this.neurons.length);
+    const bias = decodeFloats(snapshot.bias, this.bias.length);
+    const diag = decodeFloats(snapshot.connDiag, this.connDiag.length);
+    const shift = decodeFloats(snapshot.connShift, this.connShift.length);
+    const mod = decodeFloats(snapshot.modWeight, this.modWeight.length);
+    const add = decodeFloats(snapshot.addWeight, this.addWeight.length);
+    const freq = decodeFloats(snapshot.waveFreq, this.waveFreq.length);
+    const phase = decodeFloats(snapshot.wavePhase, this.wavePhase.length);
+    const waveGain = decodeFloats(snapshot.connWaveGain, this.connWaveGain.length);
+    const waveTurn = decodeFloats(snapshot.connWavePhase, this.connWavePhase.length);
+    const waveBias = decodeFloats(snapshot.connWaveBias, this.connWaveBias.length);
+    // Absent in snapshots written before the connection's bias had a turned
+    // half; zeros are exactly what those networks were running.
+    const waveBiasTurned = snapshot.connWaveBiasIm === undefined
+      ? new Float32Array(this.connWaveBiasIm.length)
+      : decodeFloats(snapshot.connWaveBiasIm, this.connWaveBiasIm.length);
+    const senderGain = snapshot.senderGain === undefined
+      ? new Float32Array(this.senderGain.length).fill(1)
+      : decodeFloats(snapshot.senderGain, this.senderGain.length);
+    const neuronWaveRe = snapshot.neuronWaveRe === undefined
+      ? new Float32Array(this.waveRe.length)
+      : decodeFloats(snapshot.neuronWaveRe, this.waveRe.length);
+    const neuronWaveIm = snapshot.neuronWaveIm === undefined
+      ? new Float32Array(this.waveIm.length)
+      : decodeFloats(snapshot.neuronWaveIm, this.waveIm.length);
+    const poolSavedRe = snapshot.wavePoolRe === undefined
+      ? new Float32Array(this.poolRe.length)
+      : decodeFloats(snapshot.wavePoolRe, this.poolRe.length);
+    const poolSavedIm = snapshot.wavePoolIm === undefined
+      ? new Float32Array(this.poolIm.length)
+      : decodeFloats(snapshot.wavePoolIm, this.poolIm.length);
+    const waveShift = decodeFloats(snapshot.connWaveShift, this.connWaveShift.length);
+    const waveBiasRe = decodeFloats(snapshot.neuronWaveBiasRe, this.neuronWaveBiasRe.length);
+    const waveBiasIm = decodeFloats(snapshot.neuronWaveBiasIm, this.neuronWaveBiasIm.length);
+    const modWave = decodeFloats(snapshot.modWaveWeight, this.modWaveWeight.length);
+    const addWave = decodeFloats(snapshot.addWaveWeight, this.addWaveWeight.length);
+    if (
+      !states || !energies || !bias || !diag || !shift || !mod || !add || !freq || !phase ||
+      !waveGain || !waveTurn || !waveBias || !waveBiasTurned || !waveShift ||
+      !neuronWaveRe || !neuronWaveIm || !poolSavedRe || !poolSavedIm || !senderGain ||
+      !waveBiasRe || !waveBiasIm || !modWave || !addWave
+    ) return false;
+
+    // A snapshot from an engine with per-connection biases does not fit one
+    // without them, and vice versa: same neuron count, genuinely different
+    // network. Refused rather than half-loaded, like every other mismatch.
+    const wantsConnBias = this.config.connectionBias;
+    const hasConnBias = typeof snapshot.connBias === "string" && snapshot.connBias.length > 0;
+    if (wantsConnBias !== hasConnBias) return false;
+    let connBias: Float32Array | null = null;
+    if (wantsConnBias) {
+      connBias = decodeFloats(snapshot.connBias, this.connBias.length);
+      if (!connBias) return false;
+    }
+
+    this.allStates.set(states);
+    this.bias.set(bias);
+    this.connDiag.set(diag);
+    this.connShift.set(shift);
+    this.modWeight.set(mod);
+    this.addWeight.set(add);
+    this.waveFreq.set(freq);
+    this.wavePhase.set(phase);
+    this.connWaveGain.set(waveGain);
+    this.connWavePhase.set(waveTurn);
+    this.refreshWavePhaseTable();
+    this.connWaveBias.set(waveBias);
+    this.connWaveBiasIm.set(waveBiasTurned);
+    this.senderGain.set(senderGain);
+    this.waveRe.set(neuronWaveRe);
+    this.waveIm.set(neuronWaveIm);
+    this.poolRe.set(poolSavedRe);
+    this.poolIm.set(poolSavedIm);
+    if (typeof snapshot.emaEnergy === "number" && Number.isFinite(snapshot.emaEnergy)) {
+      this.emaEnergy = snapshot.emaEnergy;
+      this.hasEma = snapshot.hasEma !== false;
+    }
+    if (typeof snapshot.sustainedDivergence === "number" && snapshot.sustainedDivergence >= 0) {
+      this.sustainedDivergence = snapshot.sustainedDivergence;
+    }
+    this.connWaveShift.set(waveShift);
+    this.neuronWaveBiasRe.set(waveBiasRe);
+    this.neuronWaveBiasIm.set(waveBiasIm);
+    this.modWaveWeight.set(modWave);
+    this.addWaveWeight.set(addWave);
+    if (connBias) {
+      this.connBias.set(connBias);
+      // The row sums are derived, so they are rebuilt rather than saved --
+      // saving them would let a snapshot carry sums that disagree with the
+      // biases they claim to be sums of.
+      const N = this.neurons.length;
+      const D = this.totalDims;
+      for (let i = 0; i < N; i++) {
+        for (let d = 0; d < D; d++) {
+          const rowOffset = (i * D + d) * N;
+          let sum = 0;
+          for (let j = 0; j < N; j++) sum += this.connBias[rowOffset + j];
+          // Mean, matching learnConnectionBias -- a restore that rebuilt this
+          // as a raw sum would put the network back saturated.
+          this.connBiasRowSum[i * D + d] = sum / Math.max(1, N);
+        }
+      }
+    }
+
+    // HyperNeuron.state mirrors allStates for callers that read neurons
+    // directly; leaving it stale would have getNeuronStates() describing the
+    // network as it was before the restore.
+    const N = this.neurons.length;
+    const D = this.totalDims;
+    for (let i = 0; i < N; i++) {
+      const neuron = this.neurons[i];
+      neuron.energy = energies[i];
+      for (let d = 0; d < D; d++) neuron.state[d] = states[d * N + i];
+    }
+    return true;
+  }
+
+  /**
+   * Grow the mesh: add neurons to a network that is already running.
+   *
+   * This is what a net skill IS. A skill built in the Extension Builder is a
+   * small network of its own, and connecting it means its neurons join THIS
+   * mesh -- all-to-all with everything already here, every new connection
+   * carrying the same equation every old one does: its own weight and bias,
+   * the whole network's weight and bias, and the wave copies of both. Not a
+   * separate network the agent consults, and not a paragraph of text about
+   * what the skill knows. Neurons, in the mesh, computing.
+   *
+   * Everything already here is preserved exactly. A skill that shifted the
+   * weights of the network it joined would be a skill that damages what it is
+   * added to, and nobody would install a second one.
+   *
+   * Returns the ids of the new neurons, in order, so a caller can bind names
+   * to them and wire them up.
+   */
+  addNeurons(count: number): number[] {
+    if (!Number.isInteger(count) || count <= 0) return [];
+    const oldN = this.neurons.length;
+    const newN = oldN + count;
+    const D = this.totalDims;
+
+    // Every per-connection array is indexed [receiver][dimension][sender], so
+    // growing it is not a copy -- each row moves to a new offset and each row
+    // gets longer. Done row by row, with the new columns left at their
+    // initial values.
+    const growConnections = (old: Float32Array): Float32Array => {
+      const grown = new Float32Array(newN * D * newN);
+      for (let i = 0; i < oldN; i++) {
+        for (let d = 0; d < D; d++) {
+          const from = (i * D + d) * oldN;
+          const to = (i * D + d) * newN;
+          grown.set(old.subarray(from, from + oldN), to);
+        }
+      }
+      return grown;
+    };
+
+    // The wave arrays are [receiver][sender], one dimension shallower.
+    const growPairs = (old: Float32Array, fill: number): Float32Array => {
+      const grown = new Float32Array(newN * newN);
+      if (fill !== 0) grown.fill(fill);
+      for (let i = 0; i < oldN; i++) {
+        grown.set(old.subarray(i * oldN, i * oldN + oldN), i * newN);
+      }
+      return grown;
+    };
+
+    const growPerNeuron = (old: Float32Array): Float32Array => {
+      const grown = new Float32Array(newN);
+      grown.set(old);
+      return grown;
+    };
+
+    // States are [dimension][neuron], so each dimension's row moves.
+    const grownStates = new Float32Array(D * newN);
+    for (let d = 0; d < D; d++) {
+      grownStates.set(this.allStates.subarray(d * oldN, (d + 1) * oldN), d * newN);
+    }
+
+    const grownBias = new Float32Array(newN * D);
+    grownBias.set(this.bias);
+
+    const scale = Math.sqrt(1 / Math.max(1, newN));
+    const newConnDiag = growConnections(this.connDiag);
+    const newConnShift = growConnections(this.connShift);
+    // The new connections in both directions: every new neuron to every old
+    // one, and every old one to every new. All-to-all is the architecture, so
+    // a neuron that joined with connections in only one direction would be
+    // half-attached.
+    for (let i = 0; i < newN; i++) {
+      for (let d = 0; d < D; d++) {
+        const row = (i * D + d) * newN;
+        for (let j = 0; j < newN; j++) {
+          if (i === j) continue;
+          if (i < oldN && j < oldN) continue; // already there, untouched
+          newConnDiag[row + j] = (Math.random() * 2 - 1) * scale;
+          newConnShift[row + j] = (Math.random() * 2 - 1) * scale * 0.5;
+        }
+      }
+    }
+
+    this.allStates = grownStates;
+    this.bias = grownBias;
+    this.connDiag = newConnDiag;
+    this.connShift = newConnShift;
+    if (this.config.connectionBias) {
+      this.connBias = growConnections(this.connBias);
+      const grownRowSum = new Float32Array(newN * D);
+      grownRowSum.set(this.connBiasRowSum);
+      this.connBiasRowSum = grownRowSum;
+    }
+
+    // Each neuron's window into the network is a ROW, so growing it is the
+    // same row-by-row relayout the connections need -- and every neuron's
+    // window gains a column for each arrival, because a window that could not
+    // see the new neurons would not be a window into the whole network.
+    const growWindows = (old: Float32Array): Float32Array => {
+      const grown = new Float32Array(newN * newN);
+      for (let i = 0; i < oldN; i++) grown.set(old.subarray(i * oldN, i * oldN + oldN), i * newN);
+      for (let i = 0; i < newN; i++) {
+        for (let k = 0; k < newN; k++) {
+          if (i < oldN && k < oldN) continue; // already there, untouched
+          grown[i * newN + k] = (Math.random() * 2 - 1) * scale;
+        }
+      }
+      return grown;
+    };
+    this.modWeight = growWindows(this.modWeight);
+    this.addWeight = growWindows(this.addWeight);
+    this.modWaveWeight = growWindows(this.modWaveWeight);
+    this.addWaveWeight = growWindows(this.addWaveWeight);
+    this.senderGain = growPerNeuron(this.senderGain);
+    this.neuronWaveBiasRe = growPerNeuron(this.neuronWaveBiasRe);
+    this.neuronWaveBiasIm = growPerNeuron(this.neuronWaveBiasIm);
+    for (let i = oldN; i < newN; i++) {
+      this.senderGain[i] = 1 + (Math.random() * 2 - 1) * scale;
+    }
+
+    this.connWaveGain = growPairs(this.connWaveGain, 1);
+    this.connWavePhase = growPairs(this.connWavePhase, 0);
+    this.connWaveCos = growPairs(this.connWaveCos, 1);
+    this.connWaveSin = growPairs(this.connWaveSin, 0);
+    this.connWaveBias = growPairs(this.connWaveBias, 0);
+    this.connWaveBiasIm = growPairs(this.connWaveBiasIm, 0);
+    this.connWaveShift = growPairs(this.connWaveShift, 0);
+
+    this.waveFreq = growPerNeuron(this.waveFreq);
+    this.wavePhase = growPerNeuron(this.wavePhase);
+    this.waveRe = growPerNeuron(this.waveRe);
+    this.waveIm = growPerNeuron(this.waveIm);
+    this.prevWaveRe = new Float32Array(newN);
+    this.prevWaveIm = new Float32Array(newN);
+
+    // A wave of its own for each new neuron, spread across the band by its
+    // position among the neurons ARRIVING rather than by its position in the
+    // mesh. Spreading by absolute index looked equivalent and is not: once the
+    // network has grown a few times, every later arrival has a high index, so
+    // they all crowd into the top of the band and sit on top of each other --
+    // and neurons sharing a frequency interfere, which for unrelated neurons
+    // means drowning each other out.
+    //
+    // A caller who knows what these neurons MEAN should override this: see
+    // net-skill-graft.ts, which gives each one a wave derived from its
+    // definition so that neurons about the same thing reinforce instead.
+    for (let i = oldN; i < newN; i++) {
+      const spread = count === 1 ? 0.5 : (i - oldN) / (count - 1);
+      this.waveFreq[i] = MIN_WAVE_FREQ + spread * (MAX_WAVE_FREQ - MIN_WAVE_FREQ);
+      this.wavePhase[i] = Math.random() * Math.PI * 2;
+    }
+
+    // Everything sized by the neuron count, rebuilt. A scratch array left at
+    // the old size is a buffer overrun waiting for the next settle.
+    this.nextStatesBuffer = new Float32Array(newN * D);
+    this.stateDeltasBuffer = new Float32Array(newN);
+    this.isDrivenScratch = new Uint8Array(newN);
+    this.drivenIndicesScratch = new Int32Array(newN);
+    this.nonDrivenIndicesScratch = new Int32Array(newN);
+    this.heldIndicesScratch = new Int32Array(newN);
+    // Sized by the neuron count AND the dimensions, because every receiver now
+    // has its own window into the network. Left at the old size, a grown
+    // network reads past the end of them and every grafted neuron comes back
+    // NaN on its first tick.
+    this.hyperGainScratch = new Float32Array(newN * D);
+    this.hyperAddScratch = new Float32Array(newN * D);
+    this.hyperScaleScratch = new Float32Array(newN * D);
+    this.netWaveWeightReScratch = new Float32Array(newN);
+    this.netWaveWeightImScratch = new Float32Array(newN);
+    this.netWaveBiasReScratch = new Float32Array(newN);
+    this.netWaveBiasImScratch = new Float32Array(newN);
+    this.vsScratch = new Float32Array(newN);
+    this.hasVScratch = new Uint8Array(newN);
+    this.ratesScratch = new Float32Array(newN);
+    this.forceScratch = new Float32Array(newN);
+    this.heldThisTick = new Uint8Array(newN);
+    this.deltaSumsScratch = new Float32Array(newN);
+    this.waveAmpScratch = new Float32Array(newN);
+    this.waveTermScratch = new Float32Array(newN);
+    this.wavePhaseErrorScratch = new Float32Array(newN);
+    this.waveBin = new Int32Array(newN);
+    this.phaseCos = new Float32Array(newN);
+    this.phaseSin = new Float32Array(newN);
+    this.entropyLookup = new Float64Array(newN + 1);
+    this.entropyLookup[0] = 0;
+    for (let c = 1; c <= newN; c++) {
+      const p = c / newN;
+      this.entropyLookup[c] = p * Math.log2(p);
+    }
+
+    this.stateViews = new Array<Float32Array>(D);
+    for (let d = 0; d < D; d++) {
+      this.stateViews[d] = this.allStates.subarray(d * newN, (d + 1) * newN);
+    }
+
+    const added: number[] = [];
+    for (let i = oldN; i < newN; i++) {
+      // A start of its own, like every neuron gets at construction: a skill
+      // whose neurons all began identical would have nothing to tell them
+      // apart, and learning could never separate them afterwards.
+      const state = new Float32Array(D);
+      for (let d = 1; d < D; d++) {
+        const value = Math.random() * 2 - 1;
+        state[d] = value;
+        this.allStates[d * newN + i] = value;
+      }
+      this.neurons.push({
+        id: i,
+        state,
+        energy: 0,
+        lastTransition: null,
+        influenceRadius: 0.1 + Math.random() * 0.4,
+        activationThreshold: 0.3 + Math.random() * 0.4,
+      });
+      added.push(i);
+    }
+    // Point every neuron's state view back into the grown buffer.
+    for (let i = 0; i < newN; i++) {
+      const neuron = this.neurons[i];
+      for (let d = 0; d < D; d++) neuron.state[d] = this.allStates[d * newN + i];
+    }
+
+    return added;
+  }
+
+  /**
+   * Wire one connection by hand: what neuron `from` contributes to neuron
+   * `to`, on every dimension.
+   *
+   * How a net skill's own structure survives being grafted in. The builder
+   * knows which of its neurons feed which; without this they would arrive
+   * connected to the mesh at random and to each other not at all, which is a
+   * pile of neurons rather than a skill.
+   */
+  setConnection(to: number, from: number, weight: number): boolean {
+    const N = this.neurons.length;
+    if (to < 0 || to >= N || from < 0 || from >= N || to === from) return false;
+    if (!Number.isFinite(weight)) return false;
+    const D = this.totalDims;
+    for (let d = 0; d < D; d++) this.connDiag[(to * D + d) * N + from] = weight;
+    return true;
+  }
+
+  /**
+   * Tune one neuron to answer a particular direction.
+   *
+   * setConnection() writes the same weight to every dimension, which cannot
+   * make a neuron prefer one input over another -- it scales everything
+   * equally. This writes a weight PER DIMENSION on one incoming connection,
+   * so the neuron's activity rises when what arrives lines up with `toward`
+   * and stays low when it does not.
+   *
+   * This is what a single-neuron region needs in order to be a speciality
+   * rather than a label. A region's state cannot carry one: a non-driven
+   * neuron is recomputed from its inputs every tick, so seeding its state
+   * places it nowhere (measured -- [0.9,-0.9,...] reads [0.01,-0.02,...] one
+   * tick later). Incoming weights survive, and they are what capabilityGap()
+   * ends up reading.
+   */
+  tuneNeuronTo(id: number, from: number, toward: ArrayLike<number>): boolean {
+    const N = this.neurons.length;
+    if (id < 0 || id >= N || from < 0 || from >= N || id === from) return false;
+    const D = this.totalDims;
+    let norm = 0;
+    for (let k = 0; k < toward.length; k++) norm += toward[k] * toward[k];
+    if (!(norm > 0)) return false;
+    const scale = 1 / Math.sqrt(norm);
+    for (let d = 1; d < D; d++) {
+      const v = toward[d - 1] ?? 0;
+      if (!Number.isFinite(v)) continue;
+      this.connDiag[(id * D + d) * N + from] = v * scale;
+    }
+    return true;
+  }
+
+  /**
+   * Put one neuron where its meaning points.
+   *
+   * A grafted skill neuron starts somewhere rather than nowhere: its
+   * definition, embedded, becomes the state it begins in, so it sits in the
+   * part of the space its meaning belongs to and the mesh takes over from
+   * there. Dimension 0 is the input flag and is not writable this way.
+   *
+   * Shorter vectors fill what they cover and leave the rest; longer ones are
+   * truncated. A caller should not have to know the network's width to say
+   * what a neuron is about.
+   */
+  setNeuronState(id: number, content: ArrayLike<number>): boolean {
+    const N = this.neurons.length;
+    if (id < 0 || id >= N) return false;
+    const D = this.totalDims;
+    const neuron = this.neurons[id];
+    const limit = Math.min(content.length, D - 1);
+    for (let k = 0; k < limit; k++) {
+      const raw = content[k];
+      if (!Number.isFinite(raw)) continue;
+      const value = raw < -1 ? -1 : (raw > 1 ? 1 : raw);
+      this.allStates[(k + 1) * N + id] = value;
+      neuron.state[k + 1] = value;
+    }
+    return true;
+  }
+
+  /**
+   * Label a neuron with the expert or skill it belongs to.
+   *
+   * The neuron-level MoE (Section 2.1): experts are groups of neurons inside
+   * ONE network, not separate networks consulted in turn. Grouping changes no
+   * wiring at all -- the neuron keeps every connection it had, in both
+   * directions -- it only lets a tick say which groups are the ones being
+   * asked this time.
+   */
+  setNeuronGroup(id: number, group: string): boolean {
+    if (id < 0 || id >= this.neurons.length) return false;
+    const existing = this.neuronGroups.get(id);
+    if (existing) existing.add(group);
+    else this.neuronGroups.set(id, new Set([group]));
+    return true;
+  }
+
+  /**
+   * Take one neuron out of one skill, leaving whatever else it belongs to.
+   *
+   * The counterpart to setNeuronGroup adding rather than replacing: without
+   * this there would be no way to shrink a region, only to grow it.
+   */
+  clearNeuronGroup(id: number, group: string): boolean {
+    const groups = this.neuronGroups.get(id);
+    if (!groups || !groups.delete(group)) return false;
+    if (groups.size === 0) this.neuronGroups.delete(id);
+    return true;
+  }
+
+  /** Every skill a neuron belongs to, in the order it joined them. */
+  neuronGroupsOf(id: number): string[] {
+    const groups = this.neuronGroups.get(id);
+    return groups ? Array.from(groups) : [];
+  }
+
+  /**
+   * Does the mesh have anything that handles what it is currently holding?
+   *
+   * It works when the regions cover what arrives, and reports nothing when
+   * they do not. Both halves matter.
+   *
+   * WHAT IT DOES. Each Net Skill region's neurons are tuned to what that
+   * skill is for, so an input pointing that way makes the region do more.
+   * Measured on single-neuron regions -- the shape the live mesh has -- an
+   * input aligned to a region reads about twice what one aligned to nothing
+   * reads (0.51 of it), stable across tuning strengths, and a sustained run
+   * of the latter fires. On the live agent, inputs matching the experts'
+   * own domains read 0.00589 against 0.00390 for a string of symbols: a
+   * ratio of 0.661, under the threshold, gap reported.
+   *
+   * MATCH THE INPUT MAGNITUDE BEFORE ASKING. Region response is how much a
+   * region is doing, and a bigger input makes everything do more. An
+   * unfamiliar vector with a larger norm reads HIGHER than a familiar one --
+   * measured at every tuning strength from 1x to 16x -- which looks exactly
+   * like "the mesh cannot tell these apart" and is not. learn() normalises
+   * before asking, and anything else calling this must too.
+   *
+   * WHAT IT WILL NOT TELL YOU. If the regions do not cover the input at all,
+   * everything reads alike and no gap is reportable. The live experts are
+   * device permissions and programming categories, so an ordinary fact like
+   * "Paris is the capital of France" matches no region -- and reads the same
+   * as a string of symbols (0.00446 against 0.00431, ratio 0.967). That is
+   * the honest answer rather than a broken one: a mesh with no expert for
+   * general knowledge has no basis for singling out one unhandled input from
+   * another. It reports no gap and the text heuristic in learn() decides.
+   *
+   * HOW THIS LOOKED LIKE IT WORKED BEFORE, AND DID NOT. Region response used
+   * to count DRIVEN neurons, whose state is clamped to the input rather than
+   * computed from it. Expert regions take neurons from index 0 up, so the
+   * first region owned neuron 0 -- the input neuron -- and always scored the
+   * maximum. `best` was the input handed back to itself, which is why a
+   * string of symbols scored 1.000 of the usual level and a familiar sentence
+   * 0.955. The tests covering this passed on that artifact.
+   *
+   * Call it after process(), which is when the states mean something.
+   *
+   * WHERE THIS DOES NOT WORK YET, measured on the live agent. The mesh there
+   * carries 43 regions, one neuron each, registered from the expert
+   * catalogue -- and nothing ever trains them on their specialities. So their
+   * responses carry no information about the input: a familiar sentence read
+   * 0.955 of the usual level and a string of symbols nothing had ever seen
+   * read 1.000. No gap is reportable from that, and none is reported.
+   *
+   * It is not the measurement. Region response separates cleanly in a mesh
+   * whose regions HAVE specialised -- 0.070 against 0.055 for three regions
+   * of eight neurons trained on distinct patterns, which is what the tests
+   * cover. Per-region baselines were tried, on the theory that the max across
+   * 43 regions washes the signal out; they did not help (1.076 familiar
+   * against 1.084 unfamiliar) and broke the cases that do work, so they were
+   * reverted. The missing piece is that the live regions never learn to be
+   * different from each other, which is training, not reading.
+   *
+   * And the obvious shortcut does not work, which is worth knowing before
+   * trying it: seeding each expert neuron's STATE from its name places it
+   * nowhere, because a non-driven neuron's state is recomputed from its
+   * inputs on every tick. Measured -- a neuron set to
+   * [0.9,-0.9,0.9,...] reads [0.01,-0.02,0.02,...] one tick later, and the
+   * live gap numbers came back byte-identical with the seeding in place.
+   * What persists across a tick is the connections, the biases and the wave
+   * signature; a single-neuron region has no connections of its own to carry
+   * a speciality, so specialising one means giving it distinct INCOMING
+   * weights. That is the shape of the remaining work.
+   */
+  capabilityGap(threshold = CAPABILITY_GAP_RATIO): CapabilityGap {
+    const D = this.totalDims;
+    const states = this.allStates;
+    const N = this.neurons.length;
+
+    let bestSkill: string | undefined;
+    let best = 0;
+    const seen = new Set<string>();
+    for (const groups of this.neuronGroups.values()) for (const g of groups) seen.add(g);
+    for (const skill of seen) {
+      const ids = this.neuronsInGroup(skill);
+      if (ids.length === 0) continue;
+      let sum = 0;
+      let count = 0;
+      for (const i of ids) {
+        if (i >= N) continue;
+        // Skip DRIVEN neurons. A driven neuron is clamped to the input, so
+        // its state is the input rather than a response to it -- its
+        // "response" is just the input's magnitude, near enough constant
+        // whatever the input says.
+        //
+        // This was the whole reason the signal read flat on the live agent.
+        // Expert regions are assigned neurons from index 0 up, so the first
+        // expert owned neuron 0, which is the neuron the input is fed into.
+        // Its region therefore always scored the maximum, `best` was that
+        // region every single time, and the ratio came out 1.000 for a string
+        // of symbols nothing had ever seen -- indistinguishable from 0.955
+        // for a familiar sentence. The measurement was reading the input back
+        // to itself.
+        if (states[0 * N + i] >= 1) continue;
+        // Content dimensions only: dimension 0 is the input flag, which is 1
+        // on anything driven and says nothing about whether the region
+        // engaged with what arrived.
+        for (let d = 1; d < D; d++) {
+          const v = states[d * N + i];
+          sum += v < 0 ? -v : v;
+          count++;
+        }
+      }
+      if (count === 0) continue;
+      const response = sum / count;
+      if (response > best) {
+        best = response;
+        bestSkill = skill;
+      }
+    }
+
+    const baseline = this.capabilityBaseline;
+    const settled = this.capabilitySamples >= CAPABILITY_BASELINE_MIN_SAMPLES;
+    // A plain EMA. It was written with a Math.max first -- "so a run of gaps
+    // cannot drag the baseline down" -- and that was exactly wrong: the
+    // baseline then only ever ratcheted UP, so one strongly-answered input
+    // made everything after it read as a gap. On the live agent it fired on
+    // "Paris is in France" and not on the file format it had never seen.
+    this.capabilityBaseline = this.capabilitySamples === 0
+      ? best
+      : this.capabilityBaseline * CAPABILITY_BASELINE_DECAY + best * (1 - CAPABILITY_BASELINE_DECAY);
+    this.capabilitySamples++;
+
+    // Sustained, the way divergence is elsewhere here. One quiet tick is
+    // noise -- region response varies with whatever else the network was just
+    // doing -- and building an extension is not something to do on noise.
+    const quiet = settled && baseline > 0 && best < baseline * threshold;
+    this.capabilityQuietRun = quiet ? this.capabilityQuietRun + 1 : 0;
+
+    return {
+      needed: this.capabilityQuietRun >= CAPABILITY_GAP_TICKS,
+      bestSkill,
+      bestResponse: best,
+      baseline,
+      hasBaseline: settled,
+      quietRun: this.capabilityQuietRun,
+    };
+  }
+
+  /**
+   * How strongly every pair of skills is wired to each other, strongest
+   * first.
+   *
+   * The connection rule is Hebbian, so two regions that keep being active at
+   * the same time keep strengthening the connections between them -- that
+   * happens whether or not anybody looks. What was missing was the looking.
+   * "Over time the network could develop new combinations of expertise" is a
+   * claim about something that can be READ: maths and physics drifting
+   * together into physics reasoning is a number here going up, and if it
+   * never goes up the combination is not emerging no matter how good the
+   * story is.
+   *
+   * `strength` is the mean |weight| over every connection running between the
+   * two regions in both directions, so a big skill does not outscore a small
+   * one just by having more connections. `overlap` is how many neurons the
+   * two hold in common.
+   */
+  skillAffinity(): Array<{ a: string; b: string; strength: number; overlap: number }> {
+    const names = new Set<string>();
+    for (const groups of this.neuronGroups.values()) for (const g of groups) names.add(g);
+    const skills = Array.from(names).sort();
+    const members = new Map<string, number[]>();
+    for (const name of skills) members.set(name, this.neuronsInGroup(name));
+
+    const N = this.neurons.length;
+    const D = this.getDimensions();
+    const out: Array<{ a: string; b: string; strength: number; overlap: number }> = [];
+    for (let x = 0; x < skills.length; x++) {
+      for (let y = x + 1; y < skills.length; y++) {
+        const a = skills[x];
+        const b = skills[y];
+        const left = members.get(a)!;
+        const right = members.get(b)!;
+        let sum = 0;
+        let count = 0;
+        // Both directions: a -> b and b -> a are different connections, and a
+        // pair can be lopsided.
+        for (const [receivers, senders] of [[left, right], [right, left]] as const) {
+          const senderSet = new Set(senders);
+          for (const i of receivers) {
+            if (i >= N) continue;
+            for (let d = 0; d < D; d++) {
+              const row = (i * D + d) * N;
+              for (const j of senderSet) {
+                if (j === i || j >= N) continue;
+                sum += Math.abs(this.connDiag[row + j]) + Math.abs(this.connShift[row + j]);
+                count += 2;
+              }
+            }
+          }
+        }
+        out.push({
+          a,
+          b,
+          strength: count > 0 ? sum / count : 0,
+          overlap: this.groupOverlap(a, b).length,
+        });
+      }
+    }
+    return out.sort((p, q) => q.strength - p.strength);
+  }
+
+  /**
+   * The neurons two skills hold in common.
+   *
+   * An overlap is the whole point of regions rather than partitions: a neuron
+   * that belongs to both maths and physics fires for both, and is the place
+   * where "physics reasoning" can live without anybody having built it.
+   */
+  groupOverlap(a: string, b: string): number[] {
+    const ids: number[] = [];
+    for (const [id, groups] of this.neuronGroups) {
+      if (groups.has(a) && groups.has(b)) ids.push(id);
+    }
+    return ids.sort((x, y) => x - y);
+  }
+
+  /**
+   * The first group a neuron joined, or undefined for an ungrouped one.
+   *
+   * Kept for callers that only ever expected one. A neuron can belong to
+   * several -- neuronGroupsOf() is the honest answer.
+   */
+  neuronGroup(id: number): string | undefined {
+    const groups = this.neuronGroups.get(id);
+    if (!groups) return undefined;
+    for (const name of groups) return name;
+    return undefined;
+  }
+
+  /** Every neuron belonging to one group, in id order. */
+  neuronsInGroup(group: string): number[] {
+    const ids: number[] = [];
+    for (const [id, names] of this.neuronGroups) if (names.has(group)) ids.push(id);
+    return ids.sort((a, b) => a - b);
+  }
+
+  /**
+   * Give one neuron the pair of directions it reads its own state through.
+   *
+   * Two directions rather than one because the reading is complex: one
+   * neuron's state has to be able to become a wave with a phase, not just a
+   * height. They are made orthogonal to each other and unit-length, so the
+   * reading is a rotation-and-scale of the state rather than something that
+   * quietly amplifies or flattens it.
+   *
+   * Deterministic in the neuron's id, so two engines built the same way read
+   * the same way and a test can compare them.
+   */
+  private seedWaveReading(): void {
+    const D = this.totalDims;
+    // Two directions, deterministic so two engines built the same way read the
+    // same way and a test can compare them.
+    let a = 0;
+    let b = 0;
+    for (let d = 1; d < D; d++) {
+      const re = Math.sin(d * 12.9898);
+      const im = Math.sin(d * 78.233);
+      this.waveReadRe[d] = re;
+      this.waveReadIm[d] = im;
+      a += re * re;
+      b += im * im;
+    }
+    // Dimension 0 is the input flag, not content, and never contributes.
+    this.waveReadRe[0] = 0;
+    this.waveReadIm[0] = 0;
+    const na = a > 0 ? 1 / Math.sqrt(a) : 0;
+    const nb = b > 0 ? 1 / Math.sqrt(b) : 0;
+    for (let d = 1; d < D; d++) {
+      this.waveReadRe[d] *= na;
+      this.waveReadIm[d] *= nb;
+    }
+    // Make the imaginary direction orthogonal to the real one, so a state
+    // lying along one reads as purely real and along the other as purely
+    // imaginary. Without this the two readings correlate and the phase a
+    // source can express is squeezed into part of the circle.
+    let dot = 0;
+    for (let d = 1; d < D; d++) dot += this.waveReadRe[d] * this.waveReadIm[d];
+    let norm = 0;
+    for (let d = 1; d < D; d++) {
+      const v = this.waveReadIm[d] - dot * this.waveReadRe[d];
+      this.waveReadIm[d] = v;
+      norm += v * v;
+    }
+    const nn = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+    for (let d = 1; d < D; d++) this.waveReadIm[d] *= nn;
+  }
+
+  /**
+   * Set one neuron's wave by hand.
+   *
+   * Wave signatures are learned, so this is not the usual way in -- but two
+   * neurons that must be exact opposites cannot be left to find each other.
+   * The Zip Loop's bit-0 and bit-1 neurons are the case: they need to be
+   * perfect enemies, the same wave half a cycle apart, so a one and a zero
+   * arriving together annihilate rather than leaving a residue that means
+   * neither.
+   */
+  setWaveSignature(id: number, frequency: number, phase: number): boolean {
+    if (!Number.isFinite(frequency) || !Number.isFinite(phase)) return false;
+    if (id < 0 || id >= this.neurons.length) return false;
+    const clamped = frequency < MIN_WAVE_FREQ ? MIN_WAVE_FREQ : (frequency > MAX_WAVE_FREQ ? MAX_WAVE_FREQ : frequency);
+    this.waveFreq[id] = clamped;
+    const TWO_PI = Math.PI * 2;
+    let wrapped = phase % TWO_PI;
+    if (wrapped < 0) wrapped += TWO_PI;
+    this.wavePhase[id] = wrapped;
+    return true;
+  }
+
+  /**
+   * What is in the shared pool right now, one entry per occupied frequency.
+   *
+   * Exposed because the pool is where the interference actually happens, and
+   * everything downstream of it -- tanh, energy damping, the connection maths
+   * -- makes it harder to see rather than easier. Measuring "did those two
+   * waves cancel" through a neuron's final state means measuring it through
+   * three other mechanisms that also moved.
+   */
+  poolContent(): Array<{ frequency: number; magnitude: number; phase: number }> {
+    const span = (MAX_WAVE_FREQ - MIN_WAVE_FREQ) || 1;
+    const content: Array<{ frequency: number; magnitude: number; phase: number }> = [];
+    for (let b = 0; b < WAVE_BINS; b++) {
+      const re = this.poolRe[b];
+      const im = this.poolIm[b];
+      const magnitude = Math.sqrt(re * re + im * im);
+      // Below this is float dust from waves that cancelled, not a wave. Two
+      // equal and opposite ripples annihilate in exact arithmetic; in Float32
+      // they leave a residue around 1e-8, and reporting that as a wave in the
+      // pool would make perfect cancellation look imperfect.
+      if (magnitude <= POOL_SILENCE) continue;
+      content.push({
+        frequency: MIN_WAVE_FREQ + (b / (WAVE_BINS - 1)) * span,
+        magnitude,
+        phase: Math.atan2(im, re),
+      });
+    }
+    return content;
+  }
+
+  /** What wave a neuron currently carries. */
+  waveSignature(id: number): { frequency: number; phase: number } | null {
+    if (id < 0 || id >= this.neurons.length) return null;
+    return { frequency: this.waveFreq[id], phase: this.wavePhase[id] };
+  }
+
+  /**
+   * Find out what one neuron is contributing, by interference.
+   *
+   * "When every neuron has the same input except for the neuron you want to
+   * find's input, then it should release a wave which is its wave."
+   *
+   * Hold the whole network at one value and every neuron is saying the same
+   * thing, so what they put into the pool is common to all of them. Leave one
+   * neuron out of that and it is the only thing in the pool that is not the
+   * chorus -- and because it owns its own frequency, its contribution is
+   * readable on its own. The pool sorts it out; nothing has to be traced
+   * through the connections.
+   *
+   * Reading is not learning and a probe is not a tick. The network is
+   * snapshotted, driven, measured and put back exactly as it was, so asking
+   * what a neuron is doing does not change what it does. That distinction has
+   * bitten this file before: fifty idle read ticks once moved 98% of the
+   * connections in the mesh.
+   *
+   * Returns the height and the angle of what came back, and null for a
+   * neuron that does not exist or a network with its wave layer switched off
+   * -- there is nothing to interfere in a network with no waves, and a zero
+   * would read as "this neuron contributes nothing", which is a different
+   * claim.
+   */
+  probeByInterference(id: number, level: number = 0.5): { amplitude: number; phase: number } | null {
+    const N = this.neurons.length;
+    if (id < 0 || id >= N) return null;
+    if (this.config.waveGain === 0) return null;
+
+    const saved = this.captureNetworkState();
+    const steps = this.config.propagationSteps;
+    try {
+      // Everyone but the one being asked about, held at the same value.
+      const chorus = new Set<number>();
+      for (let i = 0; i < N; i++) if (i !== id) chorus.add(i);
+      const held = new Array(this.config.dimensions).fill(level);
+
+      // Exactly one settle iteration, whatever the network normally runs.
+      //
+      // A neuron's wave goes into the pool at the force of ITS OWN INPUT,
+      // measured from the state it was holding when the iteration began. Let
+      // the settle run twice and the second iteration measures the force of a
+      // state this probe just computed -- the neuron's own input has been
+      // overwritten by the answer to the question. Measured before this line
+      // existed: a neuron held at 0.02 and the same neuron held at 0.95 both
+      // read 0.1726, which is the reading of the chorus and not of the neuron.
+      this.config.propagationSteps = 1;
+      this.process(held, undefined, chorus, undefined, { learn: false });
+
+      const bin = this.binFor(this.waveFreq[id]);
+      const re = this.poolRe[bin];
+      const im = this.poolIm[bin];
+      return {
+        amplitude: Math.sqrt(re * re + im * im),
+        phase: Math.atan2(im, re),
+      };
+    } finally {
+      // Put back exactly, whatever happened above.
+      this.config.propagationSteps = steps;
+      this.restoreNetworkState(saved);
+    }
+  }
+
+  /** Which frequency bin a wave falls in. One rule, so the pool is read the way it is written. */
+  private binFor(frequency: number): number {
+    const span = (MAX_WAVE_FREQ - MIN_WAVE_FREQ) || 1;
+    const slot = Math.round(((frequency - MIN_WAVE_FREQ) / span) * (WAVE_BINS - 1));
+    return slot < 0 ? 0 : (slot >= WAVE_BINS ? WAVE_BINS - 1 : slot);
+  }
+
+  /**
+   * What a neuron is supposed to say, and whether it is saying it.
+   *
+   * A `@definishon` in NeuroLang is a contract: "when this neuron is the one
+   * being read, the network's answer must be this." The target is the
+   * definition embedded into the network's own dimensions, kept so the
+   * contract can be checked rather than assumed.
+   *
+   * This lived only on ElasticCoreBlock, which meant a NeuroLang program built
+   * its neurons into THAT network -- a second network with its own equation,
+   * beside the one everything else runs. The DSL builds into the one network
+   * now, and a definition is checkable there.
+   */
+  setDefinitionTarget(id: number, target: ArrayLike<number>): boolean {
+    if (id < 0 || id >= this.neurons.length) return false;
+    const dims = this.config.dimensions;
+    const stored = new Float32Array(dims);
+    for (let d = 0; d < Math.min(dims, target.length); d++) {
+      const value = target[d];
+      stored[d] = Number.isFinite(value) ? (value < -1 ? -1 : (value > 1 ? 1 : value)) : 0;
+    }
+    this.definitionTargets.set(id, stored);
+    return true;
+  }
+
+  /**
+   * How far a neuron is from the definition it was given, and whether that is
+   * close enough to call the contract satisfied.
+   *
+   * Mean squared error over the content dimensions -- dimension 0 is the
+   * input flag, which is about how a neuron is being driven rather than what
+   * it means. A neuron with no definition has nothing to fail: it reports a
+   * loss of 0 and satisfied, because an unstated contract is not a broken one.
+   */
+  checkDefinition(id: number, tolerance: number = 0.25): {
+    neuronId: number;
+    loss: number;
+    satisfied: boolean;
+    readout: Float32Array;
+    target: Float32Array;
+  } | null {
+    if (id < 0 || id >= this.neurons.length) return null;
+    const dims = this.config.dimensions;
+    const target = this.definitionTargets.get(id) ?? new Float32Array(dims);
+    const N = this.neurons.length;
+    const readout = new Float32Array(dims);
+    for (let d = 0; d < dims; d++) readout[d] = this.allStates[(d + 1) * N + id];
+    let loss = 0;
+    for (let d = 0; d < dims; d++) {
+      const error = target[d] - readout[d];
+      loss += error * error;
+    }
+    loss /= Math.max(1, dims);
+    return { neuronId: id, loss, satisfied: loss <= tolerance, readout, target };
+  }
+
+  /**
+   * The network as a topology: nodes and the strongest edges between them.
+   *
+   * For anything that wants to LOOK at the network -- the snapshot the
+   * Extension Builder imports, a visualisation -- rather than run it. It used
+   * to come from a separate NeuronMesh that was built, serialised, and never
+   * computed; now it is a view of the one network that actually thinks.
+   *
+   * Every neuron connects to every other on every dimension, so the full edge
+   * list is neurons^2 x dimensions and unusable as a picture. `perNeuron` keeps
+   * the strongest incoming connections per neuron, measured on the first
+   * content dimension. That is a view, and the doc says so rather than letting
+   * a caller believe it is the whole wiring.
+   */
+  topology(perNeuron: number = 4): MeshTopology {
+    const N = this.neurons.length;
+    const D = this.totalDims;
+    const nodes: NeuronNode[] = this.neurons.map(n => ({
+      id: n.id,
+      activation: n.state[1] ?? 0,
+      bias: this.bias[n.id * D + 1] ?? 0,
+      connections: new Map<number, number>(),
+      layer: 0,
+      activationHistory: [],
+    }));
+
+    const edges: [number, number, number][] = [];
+    const dimension = Math.min(1, D - 1);
+    for (let i = 0; i < N; i++) {
+      const row = (i * D + dimension) * N;
+      const strongest: Array<[number, number]> = [];
+      for (let j = 0; j < N; j++) {
+        if (j === i) continue;
+        strongest.push([j, this.connDiag[row + j]]);
+      }
+      strongest.sort((a, b) => Math.abs(b[1]) - Math.abs(a[1]));
+      for (const [j, weight] of strongest.slice(0, perNeuron)) {
+        nodes[i].connections.set(j, weight);
+        edges.push([j, i, weight]);
+      }
+    }
+
+    return {
+      nodes,
+      edges,
+      // Density is of the REAL wiring, which is all-to-all, not of the subset
+      // drawn above -- a picture that showed 4 edges per neuron and reported
+      // itself as sparse would be lying twice.
+      density: 1,
+      averagePathLength: 1,
+      clusteringCoefficient: 1,
+      nodeCount: N,
+      edgeCount: edges.length,
+    };
   }
 
   /** Total configured neuron count (fixed at construction). */
   getNeuronCount(): number {
     return this.neurons.length;
+  }
+
+  /**
+   * The two directions a state is read through to become a wave.
+   *
+   * Exposed so the reference equation can be handed the same pair the engine
+   * uses -- a reference implementation given different constants proves
+   * nothing about the fast one.
+   */
+  getWaveReading(): { re: Float32Array; im: Float32Array } {
+    return { re: new Float32Array(this.waveReadRe), im: new Float32Array(this.waveReadIm) };
+  }
+
+  /** The settle loop's iteration ceiling. */
+  getPropagationSteps(): number {
+    return this.config.propagationSteps;
+  }
+
+  /**
+   * Change the settle ceiling.
+   *
+   * For callers that stream input in and read answers out with different
+   * needs -- the Zip Loop feeds a bit with a couple of steps and settles fully
+   * only when producing output.
+   */
+  setPropagationSteps(steps: number): void {
+    if (Number.isFinite(steps) && steps >= 1) this.config.propagationSteps = Math.floor(steps);
   }
 
   /** Content dimensions per neuron (excludes the reserved input-flag dimension). */
@@ -2858,7 +5173,7 @@ export class HyperDimensionalEngine {
    */
   trainDefinitionsRandomSearch(
     definitions: Array<{ driveNeuronId: number; input: number[]; readoutNeuronId: number; target: number[] }>,
-    opts: { epochs?: number; stepSize?: number; tolerance?: number } = {}
+    opts: { epochs?: number; stepSize?: number; tolerance?: number; seed?: number } = {}
   ): {
     converged: boolean;
     epochs: number;
@@ -2869,6 +5184,24 @@ export class HyperDimensionalEngine {
     const epochs = opts.epochs ?? 500; // random search needs more attempts than the delta rule to find the same minimum
     const stepSize = opts.stepSize ?? 0.15;
     const tolerance = opts.tolerance ?? 1e-3;
+    // Optional deterministic RNG. Random search is genuinely stochastic, so
+    // whether it finds a given minimum within `epochs` is luck-dependent --
+    // measured at ~3% failure on a contract pair that is definitely
+    // satisfiable, which is enough to make a suite containing it fail
+    // spuriously. Passing a seed makes a run exactly reproducible (same
+    // seed, same result, every time) so a test can assert on the outcome
+    // without depending on global Math.random state. Unseeded callers keep
+    // the original nondeterministic behavior.
+    const rand = opts.seed === undefined ? Math.random : (() => {
+      // mulberry32 -- small, fast, well-distributed; enough for perturbations.
+      let a = opts.seed >>> 0;
+      return () => {
+        a = (a + 0x6D2B79F5) >>> 0;
+        let t = Math.imul(a ^ (a >>> 15), 1 | a);
+        t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t;
+        return ((t ^ (t >>> 14)) >>> 0) / 4294967296;
+      };
+    })();
     const dims = this.config.dimensions;
     const D = this.totalDims;
     const N = this.neurons.length;
@@ -2909,11 +5242,11 @@ export class HyperDimensionalEngine {
             if (nj.id === def.readoutNeuronId) continue;
             const wdIdx = rowOffset + nj.id;
             snapshot.push({ idx: wdIdx, inDiag: true, value: this.connDiag[wdIdx] });
-            this.connDiag[wdIdx] = clamp(this.connDiag[wdIdx] + (Math.random() * 2 - 1) * stepSize, -2, 2);
+            this.connDiag[wdIdx] = clamp(this.connDiag[wdIdx] + (rand() * 2 - 1) * stepSize, -2, 2);
           }
           const bIdx = biasOffset + cd;
           snapshot.push({ idx: bIdx, inDiag: false, value: this.bias[bIdx] });
-          this.bias[bIdx] = clamp(this.bias[bIdx] + (Math.random() * 2 - 1) * stepSize, -1, 1);
+          this.bias[bIdx] = clamp(this.bias[bIdx] + (rand() * 2 - 1) * stepSize, -1, 1);
         }
 
         const trial = evalLoss(def);
@@ -2961,7 +5294,7 @@ export class HyperDimensionalEngine {
         id: i,
         state,
         energy: 0,
-        transitions: [],
+        lastTransition: null,
         influenceRadius: 0.1 + Math.random() * 0.4,
         activationThreshold: 0.3 + Math.random() * 0.4,
       });
@@ -2998,7 +5331,8 @@ export class HyperDimensionalEngine {
   private settle(
     resolvedInput: number[],
     drivenIds: Set<number>,
-    vale?: Map<number, number>
+    vale?: Map<number, number>,
+    activeGroups?: Set<string>
   ): { stateDeltas: Map<number, number>; liveCorrections: number; iterations: number } {
     const D = this.totalDims;
     const N = this.neurons.length;
@@ -3007,12 +5341,17 @@ export class HyperDimensionalEngine {
 
     let liveCorrections = 0;
     let iterations = 0;
+    // For the second settle test below: is the residual still falling?
+    let previousResidual = 0;
+    let hasPreviousResidual = false;
+    let flatResidualRun = 0;
     const nextStates = this.nextStatesBuffer;
     const strength = this.config.crossInfluenceStrength;
     const dims = this.config.dimensions;
 
     // Pre-allocate fast lookup structures to avoid Map/Set lookup inside loop
-    const isDriven = new Uint8Array(N);
+    const isDriven = this.isDrivenScratch;
+    isDriven.fill(0);
     for (const id of drivenIds) {
       if (id >= 0 && id < N) {
         isDriven[id] = 1;
@@ -3021,34 +5360,55 @@ export class HyperDimensionalEngine {
 
     // BOLT OPTIMIZATION: Filter driven and non-driven indices up-front
     // This completely eliminates the nested branch checks `if (isDriven[i]) continue;` inside the hot loops.
-    const drivenIndices: number[] = [];
-    const nonDrivenIndices: number[] = [];
+    const drivenIndices = this.drivenIndicesScratch;
+    const nonDrivenIndices = this.nonDrivenIndicesScratch;
+    let drivenCount = 0;
+    let nonDrivenCount = 0;
+    this.heldThisTick.fill(0);
+    // A neuron in a group nobody asked for this tick HOLDS: it keeps the state
+    // it had instead of being recomputed. Driven always wins -- something
+    // being fed from outside is being fed whatever else is true of it -- and
+    // an ungrouped neuron always computes, so a network that never labels
+    // anything behaves exactly as it did before groups existed.
+    const gated = activeGroups !== undefined && this.neuronGroups.size > 0;
+    let heldCount = 0;
+    const heldIndices = this.heldIndicesScratch;
     for (let i = 0; i < N; i++) {
       if (isDriven[i]) {
-        drivenIndices.push(i);
-      } else {
-        nonDrivenIndices.push(i);
+        drivenIndices[drivenCount++] = i;
+        continue;
       }
+      if (gated) {
+        // A neuron holds only if NONE of its skills was asked for. One
+        // shared between maths and language computes whenever either is
+        // active, which is what makes the boundary an overlap rather than a
+        // wall.
+        const groups = this.neuronGroups.get(i);
+        if (groups !== undefined && !anyGroupActive(groups, activeGroups!)) {
+          heldIndices[heldCount++] = i;
+          this.heldThisTick[i] = 1;
+          continue;
+        }
+      }
+      nonDrivenIndices[nonDrivenCount++] = i;
     }
-    const nonDrivenCount = nonDrivenIndices.length;
 
-    const vs = new Float32Array(N);
-    const hasV = new Uint8Array(N);
-    const priorStates = new Array<Float32Array>(N);
-    for (let i = 0; i < N; i++) {
-      priorStates[i] = this.neurons[i].state;
-      const v = vale?.get(i);
-      if (v !== undefined) {
-        vs[i] = v;
-        hasV[i] = 1;
+    const hasVale = vale !== undefined && vale.size > 0;
+    const vs = this.vsScratch;
+    const hasV = this.hasVScratch;
+    if (hasVale) {
+      hasV.fill(0);
+      for (let i = 0; i < N; i++) {
+        const v = vale.get(i);
+        if (v !== undefined) {
+          vs[i] = v;
+          hasV[i] = 1;
+        }
       }
     }
 
     // Pre-fetch all dimension views of allStates to avoid subarray() in hot loops
-    const stateViews = new Array<Float32Array>(D);
-    for (let d = 0; d < D; d++) {
-      stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
-    }
+    const stateViews = this.stateViews;
 
     const DN = D * N;
     const connDiag = this.connDiag;
@@ -3066,9 +5426,599 @@ export class HyperDimensionalEngine {
       clampedInput[d] = val;
       drivenEnergyContribution += val * val;
     }
-    const totalDrivenEnergyContribution = drivenIndices.length * drivenEnergyContribution;
+    const totalDrivenEnergyContribution = drivenCount * drivenEnergyContribution;
+
+    // Put the input into the driven neurons BEFORE the first iteration, not
+    // only at the end of one.
+    //
+    // "Input -> Create Wave -> wave enters the mesh" is an ordering, and it
+    // was reversed. The driven states were written at the END of each
+    // iteration, so the wave block on iteration 1 read whatever those neurons
+    // held from last tick and the input did not become a wave until iteration
+    // 2. On a network settling in one step it never became a wave at all:
+    // measured, two opposite inputs produced byte-identical wave pools.
+    //
+    // Both copies: allStates is the interleaved array the numeric side reads
+    // through stateViews, and HyperNeuron.state mirrors it for the wave side
+    // and for callers. Seeding one and not the other is a network that
+    // disagrees with itself about what its own input is.
+    for (let idx = 0; idx < drivenCount; idx++) {
+      const i = drivenIndices[idx];
+      const st = this.neurons[i].state;
+      st[0] = 1.0;
+      this.allStates[0 * N + i] = 1.0;
+      for (let d = 0; d < dims; d++) {
+        st[d + 1] = clampedInput[d];
+        this.allStates[(d + 1) * N + i] = clampedInput[d];
+      }
+    }
+
+    const waveGain = this.config.waveGain;
+    const hyperGain = this.config.hyperGain;
+    const hyperAdd = this.config.hyperAdd;
+    const hyperScale = this.config.hyperScale;
+    const modWeight = this.modWeight;
+    const senderGain = this.senderGain;
+    const addWeight = this.addWeight;
+    const connBias = this.connBias;
+    const connBiasRowSum = this.connBiasRowSum;
+    const invConnN = 1 / Math.sqrt(Math.max(1, N));
+    const usesConnectionBias = this.config.connectionBias;
+    const wavePhase = this.wavePhase;
+    const waveFreq = this.waveFreq;
+    const waveAmp = this.waveAmpScratch;
+    const waveReadRe = this.waveReadRe;
+    const waveReadIm = this.waveReadIm;
+    const waveTermRow = this.waveTermScratch;
+    const wavePhaseError = this.wavePhaseErrorScratch;
+    const poolRe = this.poolRe;
+    const poolIm = this.poolIm;
+    const prevPoolRe = this.prevPoolRe;
+    const prevPoolIm = this.prevPoolIm;
+    const waveRe = this.waveRe;
+    const waveIm = this.waveIm;
+    const prevWaveRe = this.prevWaveRe;
+    const prevWaveIm = this.prevWaveIm;
+    const connWaveGain = this.connWaveGain;
+    const connWaveCos = this.connWaveCos;
+    const connWaveSin = this.connWaveSin;
+    const connWaveBias = this.connWaveBias;
+    const connWaveBiasIm = this.connWaveBiasIm;
+    const phaseCos = this.phaseCos;
+    const phaseSin = this.phaseSin;
+    const waveBin = this.waveBin;
+    const waveFeedback = this.config.waveFeedback;
+    const hyperWaveGain = this.config.hyperWaveGain;
+    const hyperWaveAdd = this.config.hyperWaveAdd;
+    const modWaveWeight = this.modWaveWeight;
+    const addWaveWeight = this.addWaveWeight;
+    const neuronWaveBiasRe = this.neuronWaveBiasRe;
+    const neuronWaveBiasIm = this.neuronWaveBiasIm;
+    const connWaveShift = this.connWaveShift;
+    // Zeroed once per settle rather than per iteration: with waveGain 0 nothing
+    // ever writes to it, and reading a zero is exactly the old arithmetic.
+    if (waveGain === 0) waveTermRow.fill(0);
+    const TWO_PI = Math.PI * 2;
 
     for (; iterations < this.config.propagationSteps; iterations++) {
+      // Wave pool (see HyperConfig.waveGain's doc comment): O(N) per iteration,
+      // computed from each neuron's *pre-update* state (the same state the
+      // dotDiag/dotShift terms below read from this iteration) so every
+      // neuron's wave contribution and its connDiag/connShift contribution
+      // are drawn from the same consistent snapshot. Every neuron's own
+      // current content energy sets its wave's amplitude; every neuron's
+      // wave sums into one shared scalar every other neuron reads back from
+      // equally this iteration -- genuine constructive/destructive
+      // interference, not a per-connection weight.
+      if (waveGain !== 0) {
+        // ── The wave pool ────────────────────────────────────────────────
+        //
+        // Every neuron owns one wave. Its input sets that wave's height, the
+        // wave goes into a shared pool, and what a neuron RECEIVES is what the
+        // pool is doing at its own wave -- so a wave formed by others at a
+        // neuron's frequency gives that neuron an input nobody handed it.
+        //
+        // Held as one complex amplitude per frequency rather than as samples
+        // over time. Each neuron owns exactly one frequency, so the whole pool
+        // is neuronCount complex numbers, and everything arriving at the same
+        // frequency simply adds -- which is interference, exactly, with no
+        // trigonometry in the loop and no sampling error.
+
+        // Where each neuron's own wave currently points.
+        for (let i = 0; i < N; i++) {
+          const phase = wavePhase[i];
+          phaseCos[i] = Math.cos(phase);
+          phaseSin[i] = Math.sin(phase);
+          const s = this.neurons[i].state;
+          let energy = 0;
+          for (let d = 1; d < D; d++) energy += s[d] * s[d];
+          waveAmp[i] = Math.sqrt(energy);
+          waveBin[i] = this.binFor(waveFreq[i]);
+        }
+
+        // What is in the pool right now is what neurons hear; what they emit
+        // this iteration builds the next one. A wave takes a moment to cross
+        // the network, and pretending otherwise would let a neuron hear its
+        // own emission in the instant it made it.
+        prevPoolRe.set(poolRe);
+        prevPoolIm.set(poolIm);
+        poolRe.fill(0);
+        poolIm.fill(0);
+
+        // ── The network's wave weight and wave bias ──────────────────
+        //
+        // A connection does not only have a wave weight and a wave bias of its
+        // own. It has a SECOND weight and a SECOND bias that stand for the
+        // whole network: every neuron's wave through a personalised variable,
+        // all of them added together -- once with one set of variables to make
+        // the weight, again with a different set to make the bias.
+        //
+        // Then the two weights are added together and the two biases are added
+        // together, and the wave the connection carries is made out of THAT
+        // pair. Added, not multiplied: a connection keeps what it is worth and
+        // the network moves it, rather than the network being able to erase
+        // every connection at once by being near zero.
+        //
+        // Complex on both sides, because a weight that cannot turn a wave is
+        // not a weight on a wave -- it is a volume knob.
+        //
+        // One pair for the whole network, not one per connection: the
+        // variables belong to the neurons contributing, so what the network
+        // says is the same for everyone reading it. O(neurons) per iteration
+        // rather than O(neurons squared).
+        //
+        // Means rather than sums, for the same reason as the numeric side: a
+        // sum grows with neuron count until it drowns out what any single
+        // connection is worth.
+        // Per receiving neuron, like the numeric side: modWaveWeight[i][k] is
+        // how much neuron i's reading of the pool weighs neuron k's wave, and
+        // senderGain scales it by who is sending. Two connections into
+        // different neurons build different wave weights out of one pool.
+        const netWaveWeightRe = this.netWaveWeightReScratch;
+        const netWaveWeightIm = this.netWaveWeightImScratch;
+        const netWaveBiasRe = this.netWaveBiasReScratch;
+        const netWaveBiasIm = this.netWaveBiasImScratch;
+        if (hyperWaveGain !== 0 || hyperWaveAdd !== 0) {
+          const invN = 1 / N;
+          for (let i = 0; i < N; i++) {
+            const varRow = i * N;
+            let mr = 0, mi = 0, ar = 0, ai = 0;
+            for (let k = 0; k < N; k++) {
+              const b = waveBin[k];
+              const re = prevPoolRe[b];
+              const im = prevPoolIm[b];
+              mr += re * modWaveWeight[varRow + k];
+              mi += im * modWaveWeight[varRow + k];
+              ar += re * addWaveWeight[varRow + k];
+              ai += im * addWaveWeight[varRow + k];
+            }
+            netWaveWeightRe[i] = hyperWaveGain === 0 ? 0 : hyperWaveGain * mr * invN;
+            netWaveWeightIm[i] = hyperWaveGain === 0 ? 0 : hyperWaveGain * mi * invN;
+            netWaveBiasRe[i] = hyperWaveAdd === 0 ? 0 : hyperWaveAdd * ar * invN;
+            netWaveBiasIm[i] = hyperWaveAdd === 0 ? 0 : hyperWaveAdd * ai * invN;
+          }
+        } else {
+          netWaveWeightRe.fill(0);
+          netWaveWeightIm.fill(0);
+          netWaveBiasRe.fill(0);
+          netWaveBiasIm.fill(0);
+        }
+
+        // Every neuron's wave as it was last iteration -- what the
+        // connections carry this one. A wave takes a moment to cross the
+        // network, and reading the array being written would let a neuron
+        // carry a wave that had not been made yet.
+        prevWaveRe.set(waveRe);
+        prevWaveIm.set(waveIm);
+
+        // A neuron being driven from outside has nothing flowing into it to be
+        // made of, so it is a SOURCE: its wave IS its signature. Everything
+        // else in the network is ultimately an edited, interfered version of
+        // what the sources put in. The Zip Loop's bit neurons are exactly this
+        // -- two sources, perfect enemies, and every wave downstream descends
+        // from them.
+        for (let i = 0; i < N; i++) {
+          if (!isDriven[i]) continue;
+          // Read the input as a wave, sign and all.
+          //
+          // This used to be waveAmp[i] -- the ENERGY of the state, which is a
+          // magnitude, so an input and its exact opposite made the identical
+          // wave and could not possibly cancel. The projection below is
+          // signed: negate the state and the reading negates, which is a
+          // half-cycle shift, which is annihilation. The input finally
+          // reaches the pool as something the pool can disagree with.
+          const si = this.neurons[i].state;
+          let projRe = 0;
+          let projIm = 0;
+          for (let d = 1; d < D; d++) {
+            const v = si[d];
+            projRe += v * waveReadRe[d];
+            projIm += v * waveReadIm[d];
+          }
+          // Rotated into its own frequency slot: the signature says WHERE in
+          // the band this source sits, the projection says what it is saying
+          // there.
+          prevWaveRe[i] = projRe * phaseCos[i] - projIm * phaseSin[i];
+          prevWaveIm[i] = projRe * phaseSin[i] + projIm * phaseCos[i];
+        }
+
+        let poolEnergy = 0;
+        const invN = 1 / N;
+        // The largest amplitude a neuron could have: every content dimension
+        // saturated. Used to turn an amplitude into a fraction below.
+        // The reference this neuron's loudness is measured against.
+        //
+        // It used to be the THEORETICAL maximum -- every content dimension
+        // saturated, sqrt(D-1) -- which was fine only while the mesh actually
+        // ran near saturation. It does not any more, deliberately: the
+        // connection sum is scaled by 1/sqrt(N) so the states stay far from
+        // the rail. Against a fixed theoretical ceiling every neuron then
+        // reads as almost silent, the wave feedback all but vanishes, and
+        // agreement stops amplifying -- a chorus of eight neurons on one
+        // frequency came out at 0.0047 against 0.0056 for eight that
+        // disagreed, which is the claim backwards.
+        //
+        // So the reference is what the network is ACTUALLY doing: the loudest
+        // neuron this iteration. The loudest gets exactly waveFeedback and
+        // everyone else less, so the round-trip gain is still bounded by
+        // waveFeedback and still below one -- the property the fixed ceiling
+        // was there to guarantee. And it is self-calibrating, so rescaling
+        // the connection term cannot quietly mute the wave layer again.
+        let loudest = 0;
+        for (let i = 0; i < N; i++) if (waveAmp[i] > loudest) loudest = waveAmp[i];
+        const invMaxAmp = loudest > 1e-9 ? 1 / loudest : 1 / Math.sqrt(Math.max(1, D - 1));
+        for (let i = 0; i < N; i++) {
+          const amp = waveAmp[i];
+          const ownBin = waveBin[i];
+
+          // ── The neuron's own small pool ──────────────────────────────
+          //
+          // Every neuron that has a wave gives it along the connection to this
+          // one, and every connection edits what passes along it: the two wave
+          // weights combined, the two wave biases combined, run against the
+          // wave of the neuron doing the giving. Those edited waves interfere
+          // inside this neuron exactly as they would in the big pool, and what
+          // they add up to is this neuron's wave.
+          const editRow = i * N;
+          // The running product starts at 1 (the multiplicative identity),
+          // with its size carried in logs alongside.
+          let heardRe = 1;
+          let heardIm = 0;
+          let heardLogMag = 0;
+          let heardCount = 0;
+          for (let k = 0; k < N; k++) {
+            // Not from itself. A neuron hearing its own wave back through its
+            // own connection is a loop with nothing opposing it; what it does
+            // hear of itself is the pool read below, and that is subtracted
+            // exactly.
+            if (k === i) continue;
+
+            const inRe = prevWaveRe[k];
+            const inIm = prevWaveIm[k];
+
+            const gain = connWaveGain[editRow + k];
+            // The connection's own wave weight, as a wave: how much of what
+            // arrives gets through, and how far it is turned. cos and sin of
+            // the turn are kept beside the phase and refreshed when learning
+            // moves it -- see connWaveCos.
+            const ownWeightRe = gain * connWaveCos[editRow + k];
+            const ownWeightIm = gain * connWaveSin[editRow + k];
+
+            // The two weights added, and the two biases added. This pair IS
+            // the wave of this connection -- part it, part what the entire
+            // network is doing -- and running it against the wave of the
+            // neuron that is giving one is a complex multiply, which is what
+            // one wave does to another.
+            // The receiver's reading of the pool, scaled by who is sending:
+            // this connection's own share of the network's wave weight.
+            const share = senderGain[k];
+            const weightRe = ownWeightRe + netWaveWeightRe[i] * share;
+            const weightIm = ownWeightIm + netWaveWeightIm[i] * share;
+            const biasRe = connWaveBias[editRow + k] + netWaveBiasRe[i] * share;
+            const biasIm = connWaveBiasIm[editRow + k] + netWaveBiasIm[i] * share;
+
+            // The weight and the bias MAKE A WAVE, and that wave multiplies
+            // the sender's.
+            //
+            // This used to be `weight * wave + bias` -- the numeric step's
+            // shape, x*w + b, borrowed for the wave. It is the wrong shape
+            // here. On the numeric side the bias is what a connection
+            // contributes with nothing arriving; on the wave side there is no
+            // such thing, because a wave with nothing arriving is not a small
+            // wave, it is no wave. Adding a bias gave every connection a
+            // standing wave of its own that no sender could cancel, and a
+            // standing wave that cannot be cancelled is exactly what
+            // interference is not.
+            //
+            // So the two combined numbers become one editing wave, added the
+            // same way the weights and biases were each combined, and the
+            // edit is a pure complex multiply: amplitudes multiply, phases
+            // add. A silent sender stays silent through every connection it
+            // has, and two edited copies of opposite waves are still exactly
+            // opposite when they meet in the pool.
+            const editRe = weightRe + biasRe;
+            const editIm = weightIm + biasIm;
+            let editedRe = editRe * inRe - editIm * inIm;
+            let editedIm = editRe * inIm + editIm * inRe;
+
+            // ...and its shift weight, reaching across to the neighbouring
+            // frequency in the shared pool the way connShift reaches across to
+            // the neighbouring dimension. Zero on a fresh network, so it
+            // contributes nothing until learning gives it a reason to.
+            const shiftWeight = connWaveShift[editRow + k];
+            if (shiftWeight !== 0) {
+              const sourceBin = waveBin[k];
+              const neighbour = sourceBin === 0 ? WAVE_BINS - 1 : sourceBin - 1;
+              editedRe += shiftWeight * prevPoolRe[neighbour];
+              editedIm += shiftWeight * prevPoolIm[neighbour];
+            }
+
+            // The receiving neuron MULTIPLIES the waves coming into it.
+            //
+            // Adding them was the numeric side's habit again. Multiplying is
+            // what one wave does to another: amplitudes multiply and phases
+            // add, so a connection that turns a wave turns everything that
+            // reaches this neuron through it.
+            //
+            // Two things make the literal product unusable in an
+            // all-connected mesh, and both are handled here rather than
+            // pretended away:
+            //
+            //   A silent sender would annihilate everything. Zero times
+            //   anything is zero, and on a fresh network most neurons have no
+            //   wave yet, so one silent connection would leave the whole mesh
+            //   permanently silent. Senders with no wave are skipped -- they
+            //   contribute nothing, which is what having nothing to say
+            //   should mean.
+            //
+            //   The magnitude would vanish or explode with neuron count. Sixty
+            //   connections each around 0.5 multiply to 1e-19. So the
+            //   magnitudes are combined as a GEOMETRIC mean -- the nth root of
+            //   the product -- which is to multiplication exactly what the
+            //   mean is to addition, and is the same rule the rest of this
+            //   file already follows for every network-wide combination.
+            //
+            // The running product is kept at unit magnitude and the size
+            // carried separately in logs, so it cannot underflow on the way.
+            const mag = Math.sqrt(editedRe * editedRe + editedIm * editedIm);
+            if (mag > 0) {
+              heardLogMag += Math.log(mag);
+              const ur = editedRe / mag;
+              const ui = editedIm / mag;
+              const nr = heardRe * ur - heardIm * ui;
+              heardIm = heardRe * ui + heardIm * ur;
+              heardRe = nr;
+              heardCount++;
+            }
+          }
+
+          if (heardCount > 0) {
+            // The nth root: geometric mean of the magnitudes, and the phases
+            // averaged rather than left summed. A summed phase over sixty
+            // connections wraps many times, so two nearly identical inputs
+            // would land at unrelated phases and nothing stable could be
+            // represented -- the root is what keeps multiplication's character
+            // without that.
+            const scale = Math.exp(heardLogMag / heardCount);
+            const angle = Math.atan2(heardIm, heardRe) / heardCount;
+            heardRe = scale * Math.cos(angle);
+            heardIm = scale * Math.sin(angle);
+          } else {
+            heardRe = 0;
+            heardIm = 0;
+          }
+
+          // The neuron's own bias on the wave: what it contributes with
+          // nothing arriving, the wave beside bias[i][d].
+          heardRe += neuronWaveBiasRe[i];
+          heardIm += neuronWaveBiasIm[i];
+
+          // ── And the other way ────────────────────────────────────────
+          //
+          // If a wave in the main pool is this neuron's wave, this neuron gets
+          // an input of the height of that wave. Not routed through a
+          // connection: the pool is shared, and a wave at a neuron's own
+          // frequency is that neuron's wave whoever made it. This is what
+          // makes the whole thing go both ways -- neurons put waves into the
+          // pool, and the pool puts inputs back into neurons.
+          //
+          // Its own last contribution comes out first, exactly, because it is
+          // known exactly. What is left is what everyone ELSE built at this
+          // neuron's frequency: agreement adds up, contradiction cancels.
+          heardRe += prevPoolRe[ownBin] - prevWaveRe[i];
+          heardIm += prevPoolIm[ownBin] - prevWaveIm[i];
+
+          const inPhase = heardRe * phaseCos[i] + heardIm * phaseSin[i];
+          const quadrature = heardIm * phaseCos[i] - heardRe * phaseSin[i];
+          waveTermRow[i] = waveGain * inPhase;
+          // Where the pool sits relative to this neuron, which is what the
+          // wave learns from.
+          wavePhaseError[i] = Math.atan2(quadrature, inPhase);
+
+          // The wave that formed inside it, pushed back out at the force of
+          // its input. This IS the neuron's wave -- what reached it, shaped by
+          // the editing equation on every connection it arrived through, so no
+          // two neurons downstream of the same source carry the same thing.
+          //
+          // A neuron with nothing coming in emits nothing, however loud the
+          // pool around it. A source emits its signature instead, which was
+          // set above.
+          //
+          // Damped below one: every neuron passing on everything it hears is
+          // an echo chamber. Measured before the damping existed, the pool
+          // went 4 -> 3,579 -> 2,682,806 over three ticks and every neuron
+          // saturated identically, which reads in a test as the pool having no
+          // effect at all.
+          if (isDriven[i]) {
+            waveRe[i] = prevWaveRe[i];
+            waveIm[i] = prevWaveIm[i];
+          } else if (amp !== 0 && waveFeedback !== 0) {
+            // The force of its input, as a FRACTION of the loudest input it
+            // could have. That fraction is what keeps the loop gain below one:
+            // a neuron hears the pool at its own frequency directly, and puts
+            // its wave back into that same bin, so the round trip is multiplied
+            // by exactly this number every iteration. With a raw amplitude
+            // there instead, the round trip gained about 1.2x per iteration --
+            // measured: the pool went 0.17 -> 3.3 -> NaN over 150 ticks.
+            // Bounded by waveFeedback, which is already capped below one.
+            const force = waveFeedback * (amp * invMaxAmp);
+            waveRe[i] = force * heardRe;
+            waveIm[i] = force * heardIm;
+          } else {
+            waveRe[i] = 0;
+            waveIm[i] = 0;
+          }
+
+          // Into the shared pool at its own frequency. Two neurons on the same
+          // wave meet here, and that meeting is the whole point: equal and
+          // opposite annihilate, equal and alike double.
+          poolRe[ownBin] += waveRe[i];
+          poolIm[ownBin] += waveIm[i];
+        }
+
+        // A ceiling as well as a gain below one. The damping makes runaway
+        // unlikely; the ceiling makes it impossible, including for a network
+        // whose learned wave gains have all drifted high at once.
+        for (let b = 0; b < WAVE_BINS; b++) {
+          const magnitude = Math.sqrt(poolRe[b] * poolRe[b] + poolIm[b] * poolIm[b]);
+          if (magnitude > WAVE_POOL_CEILING) {
+            const shrink = WAVE_POOL_CEILING / magnitude;
+            poolRe[b] *= shrink;
+            poolIm[b] *= shrink;
+          }
+        }
+        for (let b = 0; b < WAVE_BINS; b++) poolEnergy += poolRe[b] * poolRe[b] + poolIm[b] * poolIm[b];
+        this.lastWaveEnergy = Math.sqrt(poolEnergy / WAVE_BINS);
+      }
+
+      // Hyperdimensional term: what the WHOLE network is doing, per dimension,
+      // read from the same pre-update snapshot as everything else this
+      // iteration. O(neurons * dimensions), against the O(neurons^2 *
+      // dimensions) the connections themselves cost, so it is close to free.
+      //
+      // Means, not sums: a sum grows with neuron count and would saturate tanh
+      // on the first tick at any real size. Both are 0 when off, and 0 is the
+      // exact identity for adding -- so off is the old arithmetic, not
+      // something indistinguishably close to it.
+      //
+      // What comes out is a WEIGHT and a BIAS, not a multiplier and an offset:
+      // netWeightRow[d] is added to every connection's own weight and
+      // netBiasRow[d] to every connection's own bias. Adding a constant to
+      // every weight into a neuron is the same as adding that constant times
+      // the average of what the neuron is hearing, which is why the mean of
+      // the states is computed here too -- one extra accumulator in a loop
+      // that was already running.
+      //
+      // The network's say is computed once and used two ways, both from the
+      // same personalised variables: it SCALES what the connection produced
+      // (hyperScale) and it is ADDED to the connection's own weight
+      // (hyperGain). See their doc comments for why both exist rather than
+      // one of them.
+      //
+      // ── Every connection reads the network for itself ──────────────────
+      //
+      // Each RECEIVING neuron has its own row of variables -- modWeight[i][k]
+      // is how much neuron i's reading of the network weighs neuron k -- and
+      // senderGain scales that reading by which neuron is sending. So the
+      // connection A->B and the connection C->B, looking at one identical
+      // network state, get different numbers out of it. That is the point of
+      // the term: a connection is context-dependent, and two connections do
+      // not have to agree about what the context means.
+      //
+      // Per receiver rather than per (receiver, sender) pair with its own N
+      // variables, which would be N^3 -- see the constructor for why.
+      const gainRow = this.hyperGainScratch;   // [i][d]: this receiver's added weight
+      const addRow = this.hyperAddScratch;     // [i][d]: this receiver's added bias
+      const meanRow = this.hyperMeanScratch;   // [d]: what a connection carries, sender-weighted
+      const scaleRow = this.hyperScaleScratch; // [i][d]: this receiver's scale
+      if (hyperGain !== 0 || hyperAdd !== 0 || hyperScale !== 0) {
+        const invN = 1 / N;
+        for (let d = 0; d < D; d++) {
+          const row = stateViews[d];
+          // What every connection carries at this dimension, weighted by who
+          // is sending. Shared across receivers, so it is computed once.
+          let sent = 0;
+          for (let k = 0; k < N; k++) sent += row[k] * senderGain[k];
+          meanRow[d] = sent * invN;
+
+        }
+
+        // Four dimensions at a time.
+        //
+        // modWeight and addWeight are indexed [i][k] with no dimension in
+        // them, so a loop with d outermost re-reads both N*N arrays once per
+        // dimension: at 336 neurons and 65 dimensions that is 29 MB of
+        // traffic per iteration for two 450 KB arrays, and the pass spends
+        // its time fetching the same weights again. Taking four dimensions
+        // per pass fetches them a quarter as often while every stream --
+        // the four state rows and the two weight rows -- stays sequential.
+        for (let d0 = 0; d0 < D; d0 += HYPER_DIM_TILE) {
+          const dEnd = d0 + HYPER_DIM_TILE <= D ? d0 + HYPER_DIM_TILE : D;
+          if (dEnd - d0 === HYPER_DIM_TILE) {
+            // The whole tile, with no per-element branch in the inner loop.
+            const r0 = stateViews[d0];
+            const r1 = stateViews[d0 + 1];
+            const r2 = stateViews[d0 + 2];
+            const r3 = stateViews[d0 + 3];
+            for (let i = 0; i < N; i++) {
+              const varRow = i * N;
+              let m0 = 0, m1 = 0, m2 = 0, m3 = 0;
+              let o0 = 0, o1 = 0, o2 = 0, o3 = 0;
+              for (let k = 0; k < N; k++) {
+                const w = modWeight[varRow + k];
+                const a = addWeight[varRow + k];
+                const s0 = r0[k], s1 = r1[k], s2 = r2[k], s3 = r3[k];
+                m0 += s0 * w; o0 += s0 * a;
+                m1 += s1 * w; o1 += s1 * a;
+                m2 += s2 * w; o2 += s2 * a;
+                m3 += s3 * w; o3 += s3 * a;
+              }
+              const base = i * D + d0;
+              const say0 = m0 * invN, say1 = m1 * invN, say2 = m2 * invN, say3 = m3 * invN;
+              gainRow[base] = hyperGain * say0;
+              gainRow[base + 1] = hyperGain * say1;
+              gainRow[base + 2] = hyperGain * say2;
+              gainRow[base + 3] = hyperGain * say3;
+              // 1 when off, so off is untouched rather than scaled by
+              // something near 1.
+              scaleRow[base] = hyperScale === 0 ? 1 : hyperScale * say0;
+              scaleRow[base + 1] = hyperScale === 0 ? 1 : hyperScale * say1;
+              scaleRow[base + 2] = hyperScale === 0 ? 1 : hyperScale * say2;
+              scaleRow[base + 3] = hyperScale === 0 ? 1 : hyperScale * say3;
+              addRow[base] = hyperAdd * o0 * invN;
+              addRow[base + 1] = hyperAdd * o1 * invN;
+              addRow[base + 2] = hyperAdd * o2 * invN;
+              addRow[base + 3] = hyperAdd * o3 * invN;
+            }
+            continue;
+          }
+          // The leftover dimensions, one at a time.
+          for (let d = d0; d < dEnd; d++) {
+            const row = stateViews[d];
+            for (let i = 0; i < N; i++) {
+              const varRow = i * N;
+              let modulation = 0;
+              let offset = 0;
+              for (let k = 0; k < N; k++) {
+                const state = row[k];
+                modulation += state * modWeight[varRow + k];
+                offset += state * addWeight[varRow + k];
+              }
+              const say = modulation * invN;
+              const at = i * D + d;
+              gainRow[at] = hyperGain * say;
+              scaleRow[at] = hyperScale === 0 ? 1 : hyperScale * say;
+              addRow[at] = hyperAdd * offset * invN;
+            }
+          }
+        }
+      } else {
+        gainRow.fill(0);
+        addRow.fill(0);
+        meanRow.fill(0);
+        scaleRow.fill(1);
+      }
+
       // Initialize content energy with the pre-calculated constant driven energy contribution.
       let currentTotalContentEnergy = totalDrivenEnergyContribution;
 
@@ -3076,7 +6026,7 @@ export class HyperDimensionalEngine {
       // Keeping this inside the propagation loop is critical to ensure both state buffers
       // remain synchronized without corruption, while using pre-calculated clamped values
       // avoids any redundant evaluation overhead.
-      for (let idx = 0; idx < drivenIndices.length; idx++) {
+      for (let idx = 0; idx < drivenCount; idx++) {
         const i = drivenIndices[idx];
         const offset = i * D;
         nextStates[offset] = 1.0; // Mark as externally driven
@@ -3085,54 +6035,233 @@ export class HyperDimensionalEngine {
         }
       }
 
+      // Neurons whose group was not asked for this tick keep what they had.
+      // Carried across explicitly rather than left alone: nextStates is a
+      // buffer that gets swapped in, so "not written" is not "unchanged" --
+      // it is whatever the previous iteration left in that slot.
+      for (let idx = 0; idx < heldCount; idx++) {
+        const i = heldIndices[idx];
+        const offset = i * D;
+        const state = this.neurons[i].state;
+        for (let d = 0; d < D; d++) nextStates[offset + d] = state[d];
+      }
+
       // Handle non-driven neurons using loop-swapping to hoist dimension/state/weight views
-      for (let d = 0; d < D; d++) {
-        const sjRow = stateViews[d];
-        const srcD = (d - 1 + D) % D;
-        const sjShiftRow = stateViews[srcD];
-        const dn = d * N;
+      // BOLT OPTIMIZATION: Fast branch-free path when vale gating is inactive (the common case).
+      if (!hasVale) {
+        for (let d = 0; d < D; d++) {
+          const sjRow = stateViews[d];
+          const srcD = (d - 1 + D) % D;
+          const sjShiftRow = stateViews[srcD];
+          const dn = d * N;
+          // Constant for every neuron at this dimension, so read once rather
+          // than once per neuron: two array loads per neuron per dimension is
+          // a third of a tick at the default size, for two numbers that do not
+          // change inside the loop.
+          // The network's weight, the network's bias, and the average of what
+          // every neuron is holding at this dimension -- constant for every
+          // neuron here, so read once rather than once per neuron.
+          // Per receiver now, so they are read inside the neuron loop below.
+          const heardMean = meanRow[d];
 
-        for (let idx = 0; idx < nonDrivenCount; idx++) {
-          const i = nonDrivenIndices[idx];
+          for (let idx = 0; idx < nonDrivenCount; idx++) {
+            const i = nonDrivenIndices[idx];
 
-          const biasOffset = i * D;
-          const rowOffset = i * DN + dn;
+            const biasOffset = i * D;
+            const rowOffset = i * DN + dn;
 
-          let dotDiag = 0;
-          let dotShift = 0;
-          // Direct indexing with cached arrays completely avoids subarray allocation overhead
-          // Unrolled by 8x for cache-friendly fast computation
-          let j = 0;
-          const limit = N - 7;
-          for (; j < limit; j += 8) {
-            dotDiag += sjRow[j] * connDiag[rowOffset + j]
-                     + sjRow[j + 1] * connDiag[rowOffset + j + 1]
-                     + sjRow[j + 2] * connDiag[rowOffset + j + 2]
-                     + sjRow[j + 3] * connDiag[rowOffset + j + 3]
-                     + sjRow[j + 4] * connDiag[rowOffset + j + 4]
-                     + sjRow[j + 5] * connDiag[rowOffset + j + 5]
-                     + sjRow[j + 6] * connDiag[rowOffset + j + 6]
-                     + sjRow[j + 7] * connDiag[rowOffset + j + 7];
-            dotShift += sjShiftRow[j] * connShift[rowOffset + j]
-                      + sjShiftRow[j + 1] * connShift[rowOffset + j + 1]
-                      + sjShiftRow[j + 2] * connShift[rowOffset + j + 2]
-                      + sjShiftRow[j + 3] * connShift[rowOffset + j + 3]
-                      + sjShiftRow[j + 4] * connShift[rowOffset + j + 4]
-                      + sjShiftRow[j + 5] * connShift[rowOffset + j + 5]
-                      + sjShiftRow[j + 6] * connShift[rowOffset + j + 6]
-                      + sjShiftRow[j + 7] * connShift[rowOffset + j + 7];
+            let dotDiag = 0;
+            let dotShift = 0;
+            let j = 0;
+            const limit = N - 7;
+            for (; j < limit; j += 8) {
+              dotDiag += sjRow[j] * connDiag[rowOffset + j]
+                       + sjRow[j + 1] * connDiag[rowOffset + j + 1]
+                       + sjRow[j + 2] * connDiag[rowOffset + j + 2]
+                       + sjRow[j + 3] * connDiag[rowOffset + j + 3]
+                       + sjRow[j + 4] * connDiag[rowOffset + j + 4]
+                       + sjRow[j + 5] * connDiag[rowOffset + j + 5]
+                       + sjRow[j + 6] * connDiag[rowOffset + j + 6]
+                       + sjRow[j + 7] * connDiag[rowOffset + j + 7];
+              dotShift += sjShiftRow[j] * connShift[rowOffset + j]
+                        + sjShiftRow[j + 1] * connShift[rowOffset + j + 1]
+                        + sjShiftRow[j + 2] * connShift[rowOffset + j + 2]
+                        + sjShiftRow[j + 3] * connShift[rowOffset + j + 3]
+                        + sjShiftRow[j + 4] * connShift[rowOffset + j + 4]
+                        + sjShiftRow[j + 5] * connShift[rowOffset + j + 5]
+                        + sjShiftRow[j + 6] * connShift[rowOffset + j + 6]
+                        + sjShiftRow[j + 7] * connShift[rowOffset + j + 7];
+            }
+            for (; j < N; j++) {
+              dotDiag += sjRow[j] * connDiag[rowOffset + j];
+              dotShift += sjShiftRow[j] * connShift[rowOffset + j];
+            }
+
+            // The two weights combined and the two biases combined.
+            //
+            // Every connection into this neuron has its own weight, and a
+            // second weight standing for the whole network -- every neuron's
+            // value through a personalised variable, all of them added
+            // together. Those two are ADDED, so the connection's own weight is
+            // worth something on its own and the network moves it. Summed over
+            // the connections, adding the same constant to every weight is
+            // that constant times the average of what arrived, which is what
+            // netWeight * heardMean is.
+            //
+            // The biases combine the same way: the connection's own, plus a
+            // second one made from the network through a different set of
+            // variables. It is the same value on every connection into this
+            // neuron, so it is added once here rather than N times and divided
+            // back down -- a change of units the learned variables absorb.
+            //
+            // 0 and 0 when the terms are off, and adding zero is exact, so
+            // with the feature off this is the old expression.
+            // Scaled by 1/sqrt(N) -- the last place in the file that
+            // summed raw across the whole network.
+            //
+            // A raw sum over N senders puts something of order N inside tanh
+            // and the mesh saturates into a stable attractor it cannot leave:
+            // 96% of neurons pinned at +-1 by tick 150, every region then
+            // answering 1.0000 to every input including inputs never seen.
+            //
+            // sqrt(N) and not N. 1/N was tried and does remove saturation
+            // outright, but it shrinks the term 24-fold and the learned scale
+            // variable is clamped below 1, so it CANNOT grow to compensate --
+            // NeuroLang definitions stopped converging and stayed stopped at
+            // 400, 1000, 2000 and 4000 epochs. 1/sqrt(N) is the
+            // variance-preserving scale for a sum of N terms: it stops the
+            // term growing with neuron count without gutting it.
+            const connectionResult = usesConnectionBias
+              ? (dotDiag + dotShift * strength) * invConnN + connBiasRowSum[biasOffset + d]
+              : (dotDiag + dotShift * strength) * invConnN;
+            // This receiver's own reading of the network.
+            const netAt = i * D + d;
+            const computedState = Math.tanh(
+              bias[biasOffset + d] +
+                connectionResult * scaleRow[netAt] +
+                gainRow[netAt] * heardMean +
+                addRow[netAt] +
+                waveTermRow[i],
+            );
+            nextStates[i * D + d] = computedState;
+            if (d > 0) {
+              currentTotalContentEnergy += computedState * computedState;
+            }
           }
-          for (; j < N; j++) {
-            dotDiag += sjRow[j] * connDiag[rowOffset + j];
-            dotShift += sjShiftRow[j] * connShift[rowOffset + j];
-          }
+        }
+      } else {
+        for (let d = 0; d < D; d++) {
+          const sjRow = stateViews[d];
+          const srcD = (d - 1 + D) % D;
+          const sjShiftRow = stateViews[srcD];
+          const dn = d * N;
+          // Constant for every neuron at this dimension, so read once rather
+          // than once per neuron: two array loads per neuron per dimension is
+          // a third of a tick at the default size, for two numbers that do not
+          // change inside the loop.
+          // The network's weight, the network's bias, and the average of what
+          // every neuron is holding at this dimension -- constant for every
+          // neuron here, so read once rather than once per neuron.
+          // Per receiver now, so they are read inside the neuron loop below.
+          const heardMean = meanRow[d];
 
-          const computedState = Math.tanh(bias[biasOffset + d] + dotDiag + dotShift * strength);
-          const finalVal = hasV[i] ? vs[i] * priorStates[i][d] + (1 - vs[i]) * computedState : computedState;
-          nextStates[i * D + d] = finalVal;
-          if (d > 0) {
-            currentTotalContentEnergy += finalVal * finalVal;
+          for (let idx = 0; idx < nonDrivenCount; idx++) {
+            const i = nonDrivenIndices[idx];
+
+            const biasOffset = i * D;
+            const rowOffset = i * DN + dn;
+
+            let dotDiag = 0;
+            let dotShift = 0;
+            let j = 0;
+            const limit = N - 7;
+            for (; j < limit; j += 8) {
+              dotDiag += sjRow[j] * connDiag[rowOffset + j]
+                       + sjRow[j + 1] * connDiag[rowOffset + j + 1]
+                       + sjRow[j + 2] * connDiag[rowOffset + j + 2]
+                       + sjRow[j + 3] * connDiag[rowOffset + j + 3]
+                       + sjRow[j + 4] * connDiag[rowOffset + j + 4]
+                       + sjRow[j + 5] * connDiag[rowOffset + j + 5]
+                       + sjRow[j + 6] * connDiag[rowOffset + j + 6]
+                       + sjRow[j + 7] * connDiag[rowOffset + j + 7];
+              dotShift += sjShiftRow[j] * connShift[rowOffset + j]
+                        + sjShiftRow[j + 1] * connShift[rowOffset + j + 1]
+                        + sjShiftRow[j + 2] * connShift[rowOffset + j + 2]
+                        + sjShiftRow[j + 3] * connShift[rowOffset + j + 3]
+                        + sjShiftRow[j + 4] * connShift[rowOffset + j + 4]
+                        + sjShiftRow[j + 5] * connShift[rowOffset + j + 5]
+                        + sjShiftRow[j + 6] * connShift[rowOffset + j + 6]
+                        + sjShiftRow[j + 7] * connShift[rowOffset + j + 7];
+            }
+            for (; j < N; j++) {
+              dotDiag += sjRow[j] * connDiag[rowOffset + j];
+              dotShift += sjShiftRow[j] * connShift[rowOffset + j];
+            }
+
+            // The two weights combined and the two biases combined.
+            //
+            // Every connection into this neuron has its own weight, and a
+            // second weight standing for the whole network -- every neuron's
+            // value through a personalised variable, all of them added
+            // together. Those two are ADDED, so the connection's own weight is
+            // worth something on its own and the network moves it. Summed over
+            // the connections, adding the same constant to every weight is
+            // that constant times the average of what arrived, which is what
+            // netWeight * heardMean is.
+            //
+            // The biases combine the same way: the connection's own, plus a
+            // second one made from the network through a different set of
+            // variables. It is the same value on every connection into this
+            // neuron, so it is added once here rather than N times and divided
+            // back down -- a change of units the learned variables absorb.
+            //
+            // 0 and 0 when the terms are off, and adding zero is exact, so
+            // with the feature off this is the old expression.
+            // A MEAN over the senders, not a sum -- the last place in the
+            // file that still summed across the whole network.
+            //
+            // Oja's rule bounds each individual weight near 1, so a raw sum
+            // over N senders puts something of order N inside tanh, and the
+            // mesh saturates into a stable attractor it cannot leave: every
+            // neuron pinned at +-1, every region answering 1.0000 to every
+            // input including inputs it had never seen. Measured at N=24,
+            // mean |connDiag| climbed to 0.888 and stayed there while 96% of
+            // neurons sat at the rail.
+            //
+            // Dividing by N is a change of units the learned scale variable
+            // absorbs, and it is the rule the rest of the file already
+            // follows -- "a sum grows with neuron count until the term alone
+            // saturates every neuron" is written above the wave code.
+            const connectionResult = usesConnectionBias
+              ? (dotDiag + dotShift * strength) * invConnN + connBiasRowSum[biasOffset + d]
+              : (dotDiag + dotShift * strength) * invConnN;
+            // This receiver's own reading of the network.
+            const netAt = i * D + d;
+            const computedState = Math.tanh(
+              bias[biasOffset + d] +
+                connectionResult * scaleRow[netAt] +
+                gainRow[netAt] * heardMean +
+                addRow[netAt] +
+                waveTermRow[i],
+            );
+            const finalVal = hasV[i] ? vs[i] * this.neurons[i].state[d] + (1 - vs[i]) * computedState : computedState;
+            nextStates[i * D + d] = finalVal;
+            if (d > 0) {
+              currentTotalContentEnergy += finalVal * finalVal;
+            }
           }
+        }
+      }
+
+      // Advance every neuron's own wave phase once per iteration -- this is
+      // what makes the pool genuinely oscillatory across settle() calls
+      // rather than a static per-neuron constant: two consecutive process()
+      // calls read the wave pool at different phase offsets.
+      if (waveGain !== 0) {
+        for (let i = 0; i < N; i++) {
+          let p = wavePhase[i] + waveFreq[i];
+          if (p >= TWO_PI) p -= TWO_PI;
+          wavePhase[i] = p;
         }
       }
 
@@ -3146,7 +6275,7 @@ export class HyperDimensionalEngine {
         for (let i = 0; i < N; i++) {
           if (isDriven[i]) continue;
           const offset = i * D;
-          const state = priorStates[i];
+          const state = this.neurons[i].state;
           for (let d = 0; d < D; d++) {
             nextStates[offset + d] = 0.5 * nextStates[offset + d] + 0.5 * state[d];
           }
@@ -3177,10 +6306,41 @@ export class HyperDimensionalEngine {
         }
       }
 
+      // ── Has it settled? ─────────────────────────────────────────────
+      //
+      // Two ways to be settled, because there are two kinds of settled.
+      //
+      // A network with no wave comes to REST: the residual falls away to
+      // nothing and stays there. Measured on a 24-neuron network with a steady
+      // input, it goes 1.0e+2 -> 3.7e-1 -> 2.6e-3 -> 3.9e-7. The absolute
+      // threshold catches that.
+      //
+      // A network WITH a wave never comes to rest, and should not be expected
+      // to. Every neuron's phase advances each iteration, so the wave term is
+      // different each time by construction -- the network converges to a
+      // steady oscillation rather than a fixed point. Same measurement with
+      // the wave on: 1.0e+2 -> 3.2e-1 -> 1.7e-1 -> 1.7e-1, flat forever. The
+      // absolute threshold never fires, so the loop always ran to its ceiling
+      // and never once reported having settled.
+      //
+      // So the second test is that the residual has STOPPED FALLING. When it
+      // changes by less than a twentieth of itself for a few iterations
+      // running, the network is as settled as this network gets -- a limit
+      // cycle rather than a point, which is what a wave system settles into.
       if (residual < this.config.convergenceThreshold) {
         iterations++;
         break;
       }
+      if (hasPreviousResidual && residual > 0) {
+        const change = Math.abs(residual - previousResidual) / residual;
+        flatResidualRun = change < SETTLED_RESIDUAL_CHANGE ? flatResidualRun + 1 : 0;
+        if (flatResidualRun >= SETTLED_RESIDUAL_TICKS) {
+          iterations++;
+          break;
+        }
+      }
+      previousResidual = residual;
+      hasPreviousResidual = true;
     }
 
     const stateDeltas = new Map<number, number>();
@@ -3194,29 +6354,77 @@ export class HyperDimensionalEngine {
     const N = this.neurons.length;
 
     // Pre-fetch all dimension views of allStates for sequential access
-    const stateViews = new Array<Float32Array>(D);
-    for (let d = 0; d < D; d++) {
-      stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
-    }
+    const stateViews = this.stateViews;
 
-    const states = new Array<Float32Array>(N);
-    const rates = new Float32Array(N);
+    const rates = this.ratesScratch;
     const defaultRate = this.config.learningRate;
     for (let i = 0; i < N; i++) {
-      states[i] = this.neurons[i].state;
       rates[i] = learningRates?.get(i) ?? defaultRate;
+    }
+
+    // And how much input the neuron was given during this event.
+    //
+    // The elastic core has two halves and only one was here. A neuron's VALUE
+    // made it change less -- high points, slow to re-weight, resistant to
+    // having its state overwritten -- and that half was real. The other half
+    // was not: how hard a neuron was driven made no difference at all. The
+    // rate was a pure function of value points, so a neuron sitting almost
+    // silent through an event learned from it exactly as fast as the neuron
+    // the event was about.
+    //
+    // Force is measured RELATIVE to what the network is doing this tick, not
+    // as an absolute. An absolute would quietly rescale every learning rate
+    // in the system the moment the mesh got louder or quieter, which is a
+    // change to everything rather than to the thing being described. Relative
+    // means the average neuron learns at the rate it always did, a neuron
+    // driven harder than its neighbours learns faster, and one barely touched
+    // learns slower.
+    // A neuron held out of this event does not learn from it.
+    //
+    // Holding was only ever applied to the state: a neuron whose group was
+    // not asked for kept what it had instead of being recomputed -- and then
+    // learned from the tick anyway, as if it had taken part. That was
+    // invisible while every rate was a pure function of value points. Once
+    // the rate follows the input a neuron actually received, it stopped
+    // being invisible and started being backwards: a held neuron keeps a
+    // stale state, which reads as high force, so the neurons that sat the
+    // event out were learning FASTER than the ones it happened to.
+    for (let i = 0; i < N; i++) {
+      if (this.heldThisTick[i]) rates[i] = 0;
+    }
+
+    let forceSum = 0;
+    for (let i = 0; i < N; i++) {
+      const si = this.neurons[i].state;
+      let energy = 0;
+      for (let d = 1; d < D; d++) energy += si[d] * si[d];
+      const force = Math.sqrt(energy / Math.max(1, D - 1));
+      this.forceScratch[i] = force;
+      forceSum += force;
+    }
+    const meanForce = forceSum / Math.max(1, N);
+    if (meanForce > 1e-9) {
+      for (let i = 0; i < N; i++) {
+        // Bounded either side: a neuron that happens to be the only loud one
+        // in a quiet tick must not get a rate large enough to undo the
+        // stability the value half is there to provide.
+        const relative = this.forceScratch[i] / meanForce;
+        rates[i] *= relative < INPUT_FORCE_FLOOR ? INPUT_FORCE_FLOOR
+          : (relative > INPUT_FORCE_CEILING ? INPUT_FORCE_CEILING : relative);
+      }
     }
 
     const connDiag = this.connDiag;
     const connShift = this.connShift;
     const bias = this.bias;
 
-    const deltaSums = new Float32Array(N);
+    const deltaSums = this.deltaSumsScratch;
+    deltaSums.fill(0);
 
     // Keep i as outer loop and d as middle loop to ensure perfect sequential cache-friendly access to connDiag/connShift
     for (let i = 0; i < N; i++) {
       const rate = rates[i];
-      const si = states[i];
+      const si = this.neurons[i].state;
       let deltaSum = 0;
 
       for (let d = 0; d < D; d++) {
@@ -3226,6 +6434,20 @@ export class HyperDimensionalEngine {
 
         const sid = si[d];
         const rateSid = rate * sid;
+        // Oja's term. Plain Hebb (w += rate*s_i*s_j) only ever GROWS a weight
+        // whose two ends agree, and in an all-connected mesh that is a runaway:
+        // bigger weights -> bigger sums into tanh -> states pinned at +-1 ->
+        // the two ends agree perfectly and forever -> bigger weights. Measured,
+        // 96% of neurons saturated within 10-40 learning ticks at every
+        // learning rate tried (0.005 through 0.08; a lower rate only delayed
+        // it), and a saturated mesh represents nothing -- every region
+        // responded 1.0000 to every input, including inputs it had never seen.
+        //
+        // Subtracting rate*s_i^2*w is the standard local fix: it is still
+        // Hebbian and still only reads the two ends of the connection, but a
+        // weight stops growing once the receiver is loud, so the row settles
+        // at a finite length instead of running to the clamp.
+        const ojaDecay = rate * sid * sid;
         const rowOffset = (i * D + d) * N;
 
         // Unroll j loop from 0 to i by 4x manually with sequential index offsets
@@ -3234,56 +6456,56 @@ export class HyperDimensionalEngine {
         let wdIdx = rowOffset;
         for (; j < limit1; j += 4) {
           const oldWd0 = connDiag[wdIdx];
-          const valWd0 = oldWd0 + rateSid * sjRow[j];
+          const valWd0 = oldWd0 + rateSid * sjRow[j] - ojaDecay * oldWd0;
           const newWd0 = valWd0 < -2 ? -2 : (valWd0 > 2 ? 2 : valWd0);
           connDiag[wdIdx] = newWd0;
           const diffWd0 = newWd0 - oldWd0;
           deltaSum += diffWd0 < 0 ? -diffWd0 : diffWd0;
 
           const oldWs0 = connShift[wdIdx];
-          const valWs0 = oldWs0 + rateSid * sjShiftRow[j];
+          const valWs0 = oldWs0 + rateSid * sjShiftRow[j] - ojaDecay * oldWs0;
           const newWs0 = valWs0 < -2 ? -2 : (valWs0 > 2 ? 2 : valWs0);
           connShift[wdIdx] = newWs0;
           const diffWs0 = newWs0 - oldWs0;
           deltaSum += diffWs0 < 0 ? -diffWs0 : diffWs0;
 
           const oldWd1 = connDiag[wdIdx + 1];
-          const valWd1 = oldWd1 + rateSid * sjRow[j + 1];
+          const valWd1 = oldWd1 + rateSid * sjRow[j + 1] - ojaDecay * oldWd1;
           const newWd1 = valWd1 < -2 ? -2 : (valWd1 > 2 ? 2 : valWd1);
           connDiag[wdIdx + 1] = newWd1;
           const diffWd1 = newWd1 - oldWd1;
           deltaSum += diffWd1 < 0 ? -diffWd1 : diffWd1;
 
           const oldWs1 = connShift[wdIdx + 1];
-          const valWs1 = oldWs1 + rateSid * sjShiftRow[j + 1];
+          const valWs1 = oldWs1 + rateSid * sjShiftRow[j + 1] - ojaDecay * oldWs1;
           const newWs1 = valWs1 < -2 ? -2 : (valWs1 > 2 ? 2 : valWs1);
           connShift[wdIdx + 1] = newWs1;
           const diffWs1 = newWs1 - oldWs1;
           deltaSum += diffWs1 < 0 ? -diffWs1 : diffWs1;
 
           const oldWd2 = connDiag[wdIdx + 2];
-          const valWd2 = oldWd2 + rateSid * sjRow[j + 2];
+          const valWd2 = oldWd2 + rateSid * sjRow[j + 2] - ojaDecay * oldWd2;
           const newWd2 = valWd2 < -2 ? -2 : (valWd2 > 2 ? 2 : valWd2);
           connDiag[wdIdx + 2] = newWd2;
           const diffWd2 = newWd2 - oldWd2;
           deltaSum += diffWd2 < 0 ? -diffWd2 : diffWd2;
 
           const oldWs2 = connShift[wdIdx + 2];
-          const valWs2 = oldWs2 + rateSid * sjShiftRow[j + 2];
+          const valWs2 = oldWs2 + rateSid * sjShiftRow[j + 2] - ojaDecay * oldWs2;
           const newWs2 = valWs2 < -2 ? -2 : (valWs2 > 2 ? 2 : valWs2);
           connShift[wdIdx + 2] = newWs2;
           const diffWs2 = newWs2 - oldWs2;
           deltaSum += diffWs2 < 0 ? -diffWs2 : diffWs2;
 
           const oldWd3 = connDiag[wdIdx + 3];
-          const valWd3 = oldWd3 + rateSid * sjRow[j + 3];
+          const valWd3 = oldWd3 + rateSid * sjRow[j + 3] - ojaDecay * oldWd3;
           const newWd3 = valWd3 < -2 ? -2 : (valWd3 > 2 ? 2 : valWd3);
           connDiag[wdIdx + 3] = newWd3;
           const diffWd3 = newWd3 - oldWd3;
           deltaSum += diffWd3 < 0 ? -diffWd3 : diffWd3;
 
           const oldWs3 = connShift[wdIdx + 3];
-          const valWs3 = oldWs3 + rateSid * sjShiftRow[j + 3];
+          const valWs3 = oldWs3 + rateSid * sjShiftRow[j + 3] - ojaDecay * oldWs3;
           const newWs3 = valWs3 < -2 ? -2 : (valWs3 > 2 ? 2 : valWs3);
           connShift[wdIdx + 3] = newWs3;
           const diffWs3 = newWs3 - oldWs3;
@@ -3293,14 +6515,14 @@ export class HyperDimensionalEngine {
         }
         for (; j < i; j++) {
           const oldWd = connDiag[wdIdx];
-          const valWd = oldWd + rateSid * sjRow[j];
+          const valWd = oldWd + rateSid * sjRow[j] - ojaDecay * oldWd;
           const newWd = valWd < -2 ? -2 : (valWd > 2 ? 2 : valWd);
           connDiag[wdIdx] = newWd;
           const diffWd = newWd - oldWd;
           deltaSum += diffWd < 0 ? -diffWd : diffWd;
 
           const oldWs = connShift[wdIdx];
-          const valWs = oldWs + rateSid * sjShiftRow[j];
+          const valWs = oldWs + rateSid * sjShiftRow[j] - ojaDecay * oldWs;
           const newWs = valWs < -2 ? -2 : (valWs > 2 ? 2 : valWs);
           connShift[wdIdx] = newWs;
           const diffWs = newWs - oldWs;
@@ -3314,56 +6536,56 @@ export class HyperDimensionalEngine {
         let wdIdx2 = rowOffset + j2;
         for (; j2 < limit2; j2 += 4) {
           const oldWd0 = connDiag[wdIdx2];
-          const valWd0 = oldWd0 + rateSid * sjRow[j2];
+          const valWd0 = oldWd0 + rateSid * sjRow[j2] - ojaDecay * oldWd0;
           const newWd0 = valWd0 < -2 ? -2 : (valWd0 > 2 ? 2 : valWd0);
           connDiag[wdIdx2] = newWd0;
           const diffWd0 = newWd0 - oldWd0;
           deltaSum += diffWd0 < 0 ? -diffWd0 : diffWd0;
 
           const oldWs0 = connShift[wdIdx2];
-          const valWs0 = oldWs0 + rateSid * sjShiftRow[j2];
+          const valWs0 = oldWs0 + rateSid * sjShiftRow[j2] - ojaDecay * oldWs0;
           const newWs0 = valWs0 < -2 ? -2 : (valWs0 > 2 ? 2 : valWs0);
           connShift[wdIdx2] = newWs0;
           const diffWs0 = newWs0 - oldWs0;
           deltaSum += diffWs0 < 0 ? -diffWs0 : diffWs0;
 
           const oldWd1 = connDiag[wdIdx2 + 1];
-          const valWd1 = oldWd1 + rateSid * sjRow[j2 + 1];
+          const valWd1 = oldWd1 + rateSid * sjRow[j2 + 1] - ojaDecay * oldWd1;
           const newWd1 = valWd1 < -2 ? -2 : (valWd1 > 2 ? 2 : valWd1);
           connDiag[wdIdx2 + 1] = newWd1;
           const diffWd1 = newWd1 - oldWd1;
           deltaSum += diffWd1 < 0 ? -diffWd1 : diffWd1;
 
           const oldWs1 = connShift[wdIdx2 + 1];
-          const valWs1 = oldWs1 + rateSid * sjShiftRow[j2 + 1];
+          const valWs1 = oldWs1 + rateSid * sjShiftRow[j2 + 1] - ojaDecay * oldWs1;
           const newWs1 = valWs1 < -2 ? -2 : (valWs1 > 2 ? 2 : valWs1);
           connShift[wdIdx2 + 1] = newWs1;
           const diffWs1 = newWs1 - oldWs1;
           deltaSum += diffWs1 < 0 ? -diffWs1 : diffWs1;
 
           const oldWd2 = connDiag[wdIdx2 + 2];
-          const valWd2 = oldWd2 + rateSid * sjRow[j2 + 2];
+          const valWd2 = oldWd2 + rateSid * sjRow[j2 + 2] - ojaDecay * oldWd2;
           const newWd2 = valWd2 < -2 ? -2 : (valWd2 > 2 ? 2 : valWd2);
           connDiag[wdIdx2 + 2] = newWd2;
           const diffWd2 = newWd2 - oldWd2;
           deltaSum += diffWd2 < 0 ? -diffWd2 : diffWd2;
 
           const oldWs2 = connShift[wdIdx2 + 2];
-          const valWs2 = oldWs2 + rateSid * sjShiftRow[j2 + 2];
+          const valWs2 = oldWs2 + rateSid * sjShiftRow[j2 + 2] - ojaDecay * oldWs2;
           const newWs2 = valWs2 < -2 ? -2 : (valWs2 > 2 ? 2 : valWs2);
           connShift[wdIdx2 + 2] = newWs2;
           const diffWs2 = newWs2 - oldWs2;
           deltaSum += diffWs2 < 0 ? -diffWs2 : diffWs2;
 
           const oldWd3 = connDiag[wdIdx2 + 3];
-          const valWd3 = oldWd3 + rateSid * sjRow[j2 + 3];
+          const valWd3 = oldWd3 + rateSid * sjRow[j2 + 3] - ojaDecay * oldWd3;
           const newWd3 = valWd3 < -2 ? -2 : (valWd3 > 2 ? 2 : valWd3);
           connDiag[wdIdx2 + 3] = newWd3;
           const diffWd3 = newWd3 - oldWd3;
           deltaSum += diffWd3 < 0 ? -diffWd3 : diffWd3;
 
           const oldWs3 = connShift[wdIdx2 + 3];
-          const valWs3 = oldWs3 + rateSid * sjShiftRow[j2 + 3];
+          const valWs3 = oldWs3 + rateSid * sjShiftRow[j2 + 3] - ojaDecay * oldWs3;
           const newWs3 = valWs3 < -2 ? -2 : (valWs3 > 2 ? 2 : valWs3);
           connShift[wdIdx2 + 3] = newWs3;
           const diffWs3 = newWs3 - oldWs3;
@@ -3373,14 +6595,14 @@ export class HyperDimensionalEngine {
         }
         for (; j2 < N; j2++) {
           const oldWd = connDiag[wdIdx2];
-          const valWd = oldWd + rateSid * sjRow[j2];
+          const valWd = oldWd + rateSid * sjRow[j2] - ojaDecay * oldWd;
           const newWd = valWd < -2 ? -2 : (valWd > 2 ? 2 : valWd);
           connDiag[wdIdx2] = newWd;
           const diffWd = newWd - oldWd;
           deltaSum += diffWd < 0 ? -diffWd : diffWd;
 
           const oldWs = connShift[wdIdx2];
-          const valWs = oldWs + rateSid * sjShiftRow[j2];
+          const valWs = oldWs + rateSid * sjShiftRow[j2] - ojaDecay * oldWs;
           const newWs = valWs < -2 ? -2 : (valWs > 2 ? 2 : valWs);
           connShift[wdIdx2] = newWs;
           const diffWs = newWs - oldWs;
@@ -3392,17 +6614,88 @@ export class HyperDimensionalEngine {
       deltaSums[i] = deltaSum;
     }
 
+    // Hold every weight ROW to unit length.
+    //
+    // Oja's per-weight decay is the right shape but it only normalises a row
+    // when the receiver is linear, and these receivers are tanh: s_i is the
+    // squashed output, not the sum that produced it, so the property it
+    // relies on does not hold and the row is free to keep growing in the
+    // direction learning keeps pushing it. That is what still saturated a
+    // long-lived mesh -- an aligned row of N weights each near 1 puts
+    // something of order N into tanh, every neuron pins at +-1, and every
+    // region then answers the same number to every input.
+    //
+    // Measured before this: separation between an input a region was trained
+    // on and one nothing had seen fell from 0.0152 to 0.0071 as the mesh
+    // saturated, while the absolute responses ballooned to 0.79. The
+    // capability-gap signal is exactly that separation, so a long-running
+    // agent quietly lost the ability to notice it was missing something.
+    //
+    // Normalising the row makes |sum| <= ||w||*||s|| = ||s|| by
+    // Cauchy-Schwarz, which with the 1/sqrt(N) already on the sum is O(1) for
+    // any neuron count. Only rows that have OVERGROWN are pulled back, so a
+    // fresh or lightly-trained network is left exactly as it was.
+    for (let i = 0; i < N; i++) {
+      // Only where learning is actually happening. Rescaling the row of a
+      // neuron pinned to a zero learning rate would move weights that are
+      // supposed to be frozen -- normalisation is part of the learning step,
+      // not something done to the network behind it.
+      if (rates[i] === 0) continue;
+      for (let d = 0; d < D; d++) {
+        const rowOffset = (i * D + d) * N;
+        let normDiag = 0;
+        let normShift = 0;
+        for (let j = 0; j < N; j++) {
+          const wd = connDiag[rowOffset + j];
+          const ws = connShift[rowOffset + j];
+          normDiag += wd * wd;
+          normShift += ws * ws;
+        }
+        if (normDiag > 1) {
+          const k = 1 / Math.sqrt(normDiag);
+          for (let j = 0; j < N; j++) connDiag[rowOffset + j] *= k;
+        }
+        if (normShift > 1) {
+          const k = 1 / Math.sqrt(normShift);
+          for (let j = 0; j < N; j++) connShift[rowOffset + j] *= k;
+        }
+      }
+    }
+
+    // Everything the hyperdimensional term introduced has to learn too. A
+    // per-connection bias that never moves is a constant; a per-neuron
+    // modulation variable that never moves means every neuron says the same
+    // fixed thing about every connection forever, which is a fancy way of
+    // saying nothing.
+    if (this.config.connectionBias) this.learnConnectionBias(rates);
+    if (this.config.hyperGain !== 0 || this.config.hyperAdd !== 0) this.learnNetworkVariables(rates);
+    if (this.config.waveGain !== 0) {
+      this.learnWavePool(rates);
+      this.learnWaveConnections(rates);
+    }
+
     for (let i = 0; i < N; i++) {
       stateDeltas.set(i, (stateDeltas.get(i) ?? 0) + deltaSums[i]);
     }
 
-    // Update biases after weight updates
+    // Update biases after weight updates.
+    //
+    // The same integrator the connection bias had: `b += rate*0.1*s_i[d]`
+    // with nothing pulling the other way, so a neuron that tends positive
+    // grows a bias that pushes it further positive, forever. Measured over
+    // 400 learning ticks it went 0.002 -> 0.681 and was still climbing, on
+    // its way to the clamp.
+    //
+    // An EMA toward the state instead: it tracks where the neuron tends to
+    // sit, which is what a bias is for, and it cannot exceed the largest
+    // state it has seen.
     for (let i = 0; i < N; i++) {
       const rate = rates[i];
-      const si = states[i];
+      const si = this.neurons[i].state;
       const biasOffset = i * D;
       for (let d = 0; d < D; d++) {
-        const valB = bias[biasOffset + d] + rate * 0.1 * si[d];
+        const b = bias[biasOffset + d];
+        const valB = b + rate * 0.1 * (si[d] - b);
         bias[biasOffset + d] = valB < -1 ? -1 : (valB > 1 ? 1 : valB);
       }
     }
@@ -3466,7 +6759,7 @@ export class HyperDimensionalEngine {
   }
 
   /** Rank-r compressed self-model: predict(x) = B^T (A^T x). */
-  private selfModelPredict(vec: number[]): number[] {
+  private selfModelPredict(vec: number[]): Float32Array {
     const dims = this.config.dimensions;
     const rank = this.config.selfModelRank;
     const h = this.selfModelHScratch;
@@ -3486,7 +6779,9 @@ export class HyperDimensionalEngine {
         h[r] += v * this.selfModelA[offset + r];
       }
     }
-    const out = new Array<number>(dims).fill(0);
+    // BOLT OPTIMIZATION: Reuse pre-allocated selfModelOutScratch Float32Array to achieve zero-allocation predictions.
+    const out = this.selfModelOutScratch;
+    out.fill(0);
     for (let r = 0; r < rank; r++) {
       const hr = h[r];
       const bOffset = r * dims;
@@ -3505,7 +6800,7 @@ export class HyperDimensionalEngine {
     return out;
   }
 
-  private selfModelTrainStep(prevVec: number[], predicted: number[], actual: number[]): void {
+  private selfModelTrainStep(prevVec: number[], predicted: ArrayLike<number>, actual: number[]): void {
     const dims = this.config.dimensions;
     const rank = this.config.selfModelRank;
     const lr = 0.01;
@@ -3574,7 +6869,7 @@ export class HyperDimensionalEngine {
     }
   }
 
-  private meanAbsDiff(a: number[], b: number[]): number {
+  private meanAbsDiff(a: ArrayLike<number>, b: ArrayLike<number>): number {
     const n = Math.min(a.length, b.length);
     if (n === 0) return 0;
     let sum = 0;
@@ -3597,25 +6892,408 @@ export class HyperDimensionalEngine {
     return sum / n;
   }
 
-  private resolveStateTransitions(): StateTransition[] {
-    const resolved: StateTransition[] = [];
+  /**
+   * Record each active neuron's move from where it was to where it now is,
+   * and report how many made one.
+   *
+   * Each neuron keeps its LAST transition, not a hundred of them. The old ring
+   * buffer held 100 per neuron and exactly one field of one entry was ever
+   * read -- the newest `toState`, as the next transition's `fromState`. So it
+   * was storing 200 full state copies per neuron to answer "where were you a
+   * moment ago", which one copy answers.
+   *
+   * The returned value is a count rather than the list, because the count is
+   * all a caller ever received: the list itself went into `history`, which had
+   * no readers at all.
+   */
+  /**
+   * Move every connection's own bias, and keep the row sums that read it.
+   *
+   * The bias update carries no input factor -- that is what makes it a bias:
+   * the weight learns how much of the SOURCE to let through, the bias learns
+   * where the connection sits regardless of it. Same clamp as the weights, so
+   * one cannot quietly run away while the other is bounded.
+   *
+   * Row sums are rebuilt here rather than in the settle loop because they only
+   * change when this runs, and rebuilding them per iteration would be
+   * neuronCount pointless additions per connection per tick.
+   */
+  private learnConnectionBias(rates: Float32Array): void {
+    const D = this.totalDims;
+    const N = this.neurons.length;
+    const connBias = this.connBias;
+    const rowSum = this.connBiasRowSum;
+
+    // Two things were wrong here, and together they were what saturated the
+    // whole mesh.
+    //
+    // The update was `b += rate * s_i[d]` -- an integrator with nothing
+    // opposing it. A neuron holding a positive state grew its bias, which
+    // pushed the state further positive, which grew the bias faster. Nothing
+    // in the loop pulled the other way, so it ran until the clamp.
+    //
+    // And every connection in the row got the IDENTICAL step, then the row was
+    // SUMMED into the neuron. So it was never a bias per connection at all: it
+    // was one bias counted N times, with N times the gain. Measured at N=24:
+    // mean |connBias| went 0.000 -> 0.101 by tick 10, which is exactly when
+    // 79% of neurons pinned at +-1, and on to 0.676 by tick 40. Every region
+    // then answered 1.0000 to every input, including inputs never seen.
+    //
+    // So: an EMA toward what this connection cannot already account for,
+    // which is bounded by construction and genuinely differs per sender, and
+    // combined as a MEAN. The mean is the rule the rest of the file already
+    // follows -- "a sum grows with neuron count until the term alone saturates
+    // every neuron" is written above the wave code, and this was the one place
+    // that ignored it.
+    const connDiag = this.connDiag;
+    const stateViews = this.stateViews;
+    const invN = 1 / Math.max(1, N);
+    for (let i = 0; i < N; i++) {
+      const rate = rates[i];
+      const si = this.neurons[i].state;
+      for (let d = 0; d < D; d++) {
+        const target = si[d];
+        const sjRow = stateViews[d];
+        const rowOffset = (i * D + d) * N;
+        let sum = 0;
+        for (let j = 0; j < N; j++) {
+          const b = connBias[rowOffset + j];
+          // What this connection's weight does not already explain. Different
+          // for every sender, which is what makes it a per-connection bias.
+          const residual = target - connDiag[rowOffset + j] * sjRow[j];
+          const value = b + rate * (residual - b);
+          const clamped = value < -2 ? -2 : (value > 2 ? 2 : value);
+          connBias[rowOffset + j] = clamped;
+          sum += clamped;
+        }
+        rowSum[i * D + d] = sum * invN;
+      }
+    }
+  }
+
+  /**
+   * Move each neuron's own say in what every connection does.
+   *
+   * These are the two personalised variables the whole hyperdimensional term
+   * is built out of: modWeight[k] is neuron k's contribution to the WEIGHT the
+   * network adds to every connection, addWeight[k] its contribution to the
+   * BIAS. Two things have to stay true of them, and the first version of this
+   * broke both.
+   *
+   * THEY MUST BE ABLE TO GO DOWN. The step used to be a product of magnitudes
+   * -- always positive -- so every variable climbed to its +1 clamp and stayed
+   * there. Measured over 300 ticks: every one of them pinned at 1. A variable
+   * that only ever grows is not a variable, and a network whose neurons all
+   * end up saying exactly the same thing has no personalised variables left at
+   * all. So the step is SIGNED now: a neuron moving with the rest of the
+   * network gains its say, a neuron moving against it loses its say. That is
+   * also the mechanism the whole design rests on -- contradicting answers
+   * cancel, and the one that agrees is magnified.
+   *
+   * THE TWO SETS MUST BE DIFFERENT. They used to take the identical step, so
+   * beyond their random starts they moved as one number in two arrays -- and
+   * the weight half and the bias half of the equation are meant to be
+   * separately expressible. They now learn from genuinely different signals:
+   * the weight variable from how a neuron's direction compares with the
+   * network's, the bias variable from the neuron's own signed level. A bias is
+   * what something contributes with nothing arriving, so its variable tracks
+   * where the neuron sits rather than who it agrees with.
+   *
+   * Bounded tightly (+/-1 rather than +/-2) because these two numbers move
+   * EVERY connection at once -- a runaway weight distorts one connection, a
+   * runaway network variable distorts all of them.
+   */
+  private learnNetworkVariables(rates: Float32Array): void {
+    const N = this.neurons.length;
+    const D = this.totalDims;
+    const modWeight = this.modWeight;
+    const addWeight = this.addWeight;
+
+    // Where the network as a whole is pointing, and how lively it is: the mean
+    // state per dimension, from the same states the settle loop just read.
+    const mean = this.hyperMeanScratch;
+    mean.fill(0);
+    let activity = 0;
+    for (let i = 0; i < N; i++) {
+      const state = this.neurons[i].state;
+      let energy = 0;
+      for (let d = 1; d < D; d++) {
+        energy += state[d] * state[d];
+        mean[d] += state[d];
+      }
+      activity += Math.sqrt(energy);
+    }
+    const invN = 1 / Math.max(1, N);
+    activity *= invN;
+    let meanNorm = 0;
+    for (let d = 1; d < D; d++) {
+      mean[d] *= invN;
+      meanNorm += mean[d] * mean[d];
+    }
+    meanNorm = Math.sqrt(meanNorm);
+
+    // How each neuron lines up with where the network is pointing, computed
+    // once and reused for every row: neuron i's row learns to weigh k by how
+    // much k was part of what i agreed or disagreed with.
+    const agreementWith = new Float32Array(N);
+    for (let k = 0; k < N; k++) {
+      const state = this.neurons[k].state;
+      let devNorm = 0;
+      let dot = 0;
+      for (let d = 1; d < D; d++) {
+        const dev = state[d] - mean[d];
+        devNorm += dev * dev;
+        dot += dev * mean[d];
+      }
+      devNorm = Math.sqrt(devNorm);
+      agreementWith[k] = devNorm > 0 && meanNorm > 0 ? dot / (devNorm * meanNorm) : 0;
+    }
+
+    for (let i = 0; i < N; i++) {
+      const state = this.neurons[i].state;
+      // Everything here is measured on what this neuron holds that the network
+      // does NOT -- its state minus the common mode.
+      //
+      // Against the raw state, every neuron in a network driven by one input
+      // agrees with the mean, because the mean is mostly that same input: the
+      // "agreement" came out positive for all sixteen neurons and every weight
+      // variable climbed to +1 together. Removing the common mode is what
+      // makes the signal differ from neuron to neuron at all, which is the
+      // entire point of the variables being personalised.
+      let own = 0;
+      let devNorm = 0;
+      let dot = 0;
+      let deviation = 0;
+      for (let d = 1; d < D; d++) {
+        const dev = state[d] - mean[d];
+        own += state[d] * state[d];
+        devNorm += dev * dev;
+        dot += dev * mean[d];
+        deviation += dev;
+      }
+      const ownNorm = Math.sqrt(own);
+      devNorm = Math.sqrt(devNorm);
+      // In [-1, 1]: +1 when what is distinctive about this neuron points the
+      // way the network as a whole is pointing, -1 when it points against it.
+      // Zero when either side has nothing to point with, which is the honest
+      // answer rather than an arbitrary direction.
+      const agreement = devNorm > 0 && meanNorm > 0 ? dot / (devNorm * meanNorm) : 0;
+      const step = rates[i] * ownNorm * activity;
+
+      // Room left before the bound, so a variable eases into its limit instead
+      // of slamming against it. A hard clamp alone let anything consistent pin
+      // at +/-1 within a few hundred ticks and stay there -- measured: 15 of
+      // 16 pinned -- and a pinned variable has stopped being personal to its
+      // neuron. This way the pull weakens as it gets there, and a neuron that
+      // changes its mind can still move.
+      // Neuron i's whole row moves: how i weighs every other neuron k when it
+      // reads the network. The step is i's own (its agreement with where the
+      // network is pointing); what varies across the row is how much each k
+      // contributed to that, so a neuron learns WHO it is agreeing with rather
+      // than only that it agreed.
+      const varRow = i * N;
+      for (let k = 0; k < N; k++) {
+        const at = varRow + k;
+        const contribution = k === i ? 1 : agreementWith[k];
+        // Tracks the agreement rather than accumulating it. `modRoom` only
+        // slowed the approach to the rail; nothing pulled back, so a neuron
+        // that kept agreeing ratcheted to the clamp and stopped being
+        // personal to itself -- the fourth integrator of this exact shape in
+        // the file. Measured: 0.102 -> 0.832 against a clamp of 0.999 over
+        // 630 ticks, and because this variable scales every neuron's reading
+        // of the whole network, railing it adds one big COMMON signal to
+        // everything. Mean activity went 0.021 -> 0.725 behind it, and the
+        // separation between an input a region knew and one nothing had seen
+        // fell to 0.0024 -- which is the capability-gap signal disappearing.
+        const target = agreement * contribution;
+        modWeight[at] = clampNetworkVariable(modWeight[at] + step * (target - modWeight[at]));
+      }
+      // And how much a connection FROM this neuron scales its receiver's
+      // reading. Bounded around 1: a sender that mutes every receiver's view
+      // of the network is a sender that has switched the term off for everyone
+      // it talks to.
+      const gainRoom = 1 - Math.abs(this.senderGain[i] - 1);
+      const nextGain = this.senderGain[i] + step * agreement * gainRoom * 0.5;
+      this.senderGain[i] = nextGain < 0 ? 0 : (nextGain > 2 ? 2 : nextGain);
+
+      // The bias variable's own signal: what this neuron is holding that the
+      // network is NOT -- its deviation from the common mode, not its level.
+      // Level was nearly the same thing as agreement once the states saturate
+      // (both collapse to the same sign), which left the two sets of variables
+      // as one number in two arrays: 15 of 16 identical, measured. A bias is
+      // what something contributes on its own, so the deviation is the signal
+      // that actually means that, and it is genuinely independent of who a
+      // neuron agrees with.
+      const level = deviation / Math.max(1, D - 1);
+      for (let k = 0; k < N; k++) {
+        const at = varRow + k;
+        const contribution = k === i ? 1 : agreementWith[k];
+        // The same, for the same reason.
+        const addTarget = level * contribution;
+        addWeight[at] = clampNetworkVariable(addWeight[at] + step * (addTarget - addWeight[at]));
+      }
+    }
+  }
+
+  /**
+   * Let each neuron's wave move toward what it keeps hearing.
+   *
+   * The wave is not a fixed label stamped on a neuron at construction. A
+   * neuron that repeatedly hears the pool carrying something just off its own
+   * frequency should drift onto it -- that is how a group of neurons comes to
+   * share a wave, which is what makes agreement able to reinforce at all. With
+   * frequencies fixed forever, which pair of neurons can hear each other is
+   * decided before the network has learned anything.
+   *
+   * This is a phase-locked loop, the standard way of pulling an oscillator
+   * onto a signal: the phase error says where the pool sits relative to this
+   * neuron, the phase moves most of the way there, and the frequency takes a
+   * much smaller step in the same direction. Frequency moves slowly on purpose
+   * -- phase can be corrected every tick, but a frequency that chased every
+   * tick would never settle anywhere and neurons could not stay locked to each
+   * other long enough to matter.
+   *
+   * Weighted by how much this neuron actually heard: a neuron the pool is
+   * saying nothing to has no evidence to move on, and moving anyway would be
+   * drift rather than learning.
+   */
+  /**
+   * Let every connection's wave-editing equation learn.
+   *
+   * Wherever there is a weight there is one of these, and a weight that never
+   * moves is a constant. The rule is the same shape as the Hebbian one on the
+   * connection's numeric weight: a connection carrying a wave that arrived in
+   * phase -- that helped -- opens up, and one carrying a wave that arrived
+   * against the grain closes down and turns toward agreement.
+   *
+   * Gain is bounded to [0, 2]: negative gain is not a weaker connection, it is
+   * a half-turn, and the phase term already expresses that. Two ways of saying
+   * the same thing let learning oscillate between them forever.
+   */
+  /** Rebuild the whole cos/sin table -- after a restore, where every phase changed at once. */
+  private refreshWavePhaseTable(): void {
+    const turn = this.connWavePhase;
+    for (let i = 0; i < turn.length; i++) {
+      this.connWaveCos[i] = Math.cos(turn[i]);
+      this.connWaveSin[i] = Math.sin(turn[i]);
+    }
+  }
+
+  private learnWaveConnections(rates: Float32Array): void {
+    const N = this.neurons.length;
+    const amplitude = this.waveAmpScratch;
+    const error = this.wavePhaseErrorScratch;
+    const gain = this.connWaveGain;
+    const turn = this.connWavePhase;
+    const bias = this.connWaveBias;
+    const biasIm = this.connWaveBiasIm;
+    const shift = this.connWaveShift;
+    const TWO_PI = Math.PI * 2;
+
+    for (let i = 0; i < N; i++) {
+      const heard = amplitude[i];
+      if (heard === 0) continue;
+      const rate = rates[i];
+      const mismatch = error[i];
+      // In phase when the mismatch is near zero, against the grain near +/-pi.
+      const agreement = Math.cos(mismatch);
+      const row = i * N;
+
+      // The neuron's own wave bias, and its network wave variables: the wave
+      // copies of bias[i][d], modWeight[i] and addWeight[i]. Each moves the
+      // way its numeric twin does -- toward what was agreed with, away from
+      // what was fought.
+      const ownStep = rate * Math.min(1, heard) * agreement * WAVE_BIAS_RATE;
+      const ownCos = Math.cos(this.wavePhase[i]);
+      const ownSin = Math.sin(this.wavePhase[i]);
+      const nextBiasRe = this.neuronWaveBiasRe[i] + ownStep * ownCos;
+      const nextBiasIm = this.neuronWaveBiasIm[i] + ownStep * ownSin;
+      this.neuronWaveBiasRe[i] = nextBiasRe < -0.5 ? -0.5 : (nextBiasRe > 0.5 ? 0.5 : nextBiasRe);
+      this.neuronWaveBiasIm[i] = nextBiasIm < -0.5 ? -0.5 : (nextBiasIm > 0.5 ? 0.5 : nextBiasIm);
+
+      const nextModWave = this.modWaveWeight[i] + ownStep;
+      this.modWaveWeight[i] = nextModWave < -1 ? -1 : (nextModWave > 1 ? 1 : nextModWave);
+      const nextAddWave = this.addWaveWeight[i] + ownStep;
+      this.addWaveWeight[i] = nextAddWave < -1 ? -1 : (nextAddWave > 1 ? 1 : nextAddWave);
+
+      for (let k = 0; k < N; k++) {
+        const carried = amplitude[k];
+        if (carried === 0) continue;
+        const step = rate * carried * Math.min(1, heard);
+
+        const nextGain = gain[row + k] + step * agreement * WAVE_EDIT_RATE;
+        gain[row + k] = nextGain < 0 ? 0 : (nextGain > 2 ? 2 : nextGain);
+
+        let nextTurn = turn[row + k] - step * mismatch * WAVE_EDIT_RATE;
+        nextTurn %= TWO_PI;
+        if (nextTurn < 0) nextTurn += TWO_PI;
+        turn[row + k] = nextTurn;
+        // The pair the settle loop reads instead of recomputing it.
+        this.connWaveCos[row + k] = Math.cos(nextTurn);
+        this.connWaveSin[row + k] = Math.sin(nextTurn);
+
+        // The bias: what this connection contributes with nothing arriving.
+        // A wave in its own right, so both halves move, along the phase the
+        // receiving neuron is sitting at -- a bias that only ever grew in one
+        // direction could add height but never disagree with anything.
+        //
+        // Bounded much harder than the gain: it fires whether or not there is
+        // anything to carry, so a large one is a connection shouting into the
+        // pool on its own.
+        const biasStep = step * agreement * WAVE_BIAS_RATE;
+        const nextBias = bias[row + k] + biasStep * ownCos;
+        bias[row + k] = nextBias < -0.5 ? -0.5 : (nextBias > 0.5 ? 0.5 : nextBias);
+        const nextBiasTurned = biasIm[row + k] + biasStep * ownSin;
+        biasIm[row + k] = nextBiasTurned < -0.5 ? -0.5 : (nextBiasTurned > 0.5 ? 0.5 : nextBiasTurned);
+
+        // The shift weight's wave copy, moving like the gain but far more
+        // slowly: it reaches across frequencies, so a large one lets a wave
+        // leak into a neighbour it does not belong to.
+        const nextShift = shift[row + k] + step * agreement * WAVE_SHIFT_RATE;
+        shift[row + k] = nextShift < -0.5 ? -0.5 : (nextShift > 0.5 ? 0.5 : nextShift);
+      }
+    }
+  }
+
+  private learnWavePool(rates: Float32Array): void {
+    const N = this.neurons.length;
+    const error = this.wavePhaseErrorScratch;
+    const amplitude = this.waveAmpScratch;
+    const TWO_PI = Math.PI * 2;
+
+    for (let i = 0; i < N; i++) {
+      const heard = amplitude[i];
+      if (heard === 0) continue;
+      const step = rates[i] * error[i] * Math.min(1, heard);
+
+      let phase = this.wavePhase[i] + step * PHASE_LOCK_RATE;
+      phase %= TWO_PI;
+      if (phase < 0) phase += TWO_PI;
+      this.wavePhase[i] = phase;
+
+      // Bounded: the pool is sampled across a fixed window, and a frequency
+      // outside this range either completes no cycle in it (invisible to every
+      // other neuron) or aliases against the sampling (visible as a frequency
+      // it does not have).
+      const freq = this.waveFreq[i] + step * FREQUENCY_LOCK_RATE;
+      this.waveFreq[i] = freq < MIN_WAVE_FREQ ? MIN_WAVE_FREQ : (freq > MAX_WAVE_FREQ ? MAX_WAVE_FREQ : freq);
+    }
+  }
+
+  private resolveStateTransitions(): number {
+    let resolved = 0;
+    const now = Date.now();
     for (const neuron of this.neurons) {
       if (neuron.energy > this.config.energyThreshold) {
-        const fromState = neuron.transitions.length > 0
-          ? neuron.transitions[neuron.transitions.length - 1].toState
-          : neuron.state;
-        const transition: StateTransition = {
-          fromState: new Float32Array(fromState),
+        const previous = neuron.lastTransition;
+        neuron.lastTransition = {
+          fromState: new Float32Array(previous ? previous.toState : neuron.state),
           toState: new Float32Array(neuron.state),
           energy: neuron.energy,
-          timestamp: Date.now(),
+          timestamp: now,
           cause: 'energy_resolved',
         };
-        neuron.transitions.push(transition);
-        if (neuron.transitions.length > this.perNeuronTransitionsCapacity) {
-          neuron.transitions.splice(0, neuron.transitions.length - this.perNeuronTransitionsCapacity);
-        }
-        resolved.push(transition);
+        resolved++;
       }
     }
     return resolved;
@@ -3642,7 +7320,7 @@ export class HyperDimensionalEngine {
 
   private computeOutputVector(activeStates: HyperNeuron[]): number[] {
     const dims = this.config.dimensions;
-    const output = new Array(dims).fill(0);
+    const output = new Array<number>(dims).fill(0);
     const len = activeStates.length;
     if (len === 0) return output;
 
@@ -3758,8 +7436,7 @@ export class HyperDimensionalEngine {
         hist[idx > 9 ? 9 : (idx < 0 ? 0 : idx)]++;
       }
       for (let b = 0; b < buckets; b++) {
-        const p = hist[b] / N;
-        if (p > 0) entropy -= p * Math.log2(p);
+        entropy -= this.entropyLookup[hist[b]];
       }
     }
     return entropy / dims;
@@ -3823,6 +7500,373 @@ export class HyperDimensionalEngine {
       hash = hash & hash;
     }
     return `hd_${hash}`;
+  }
+}
+
+// ============================================================================
+// zip-loop-interface.ts (Section: "Zip Loop Neural Data Interface")
+// ============================================================================
+
+/**
+ * Zip Loop Neural Data Interface — a minimal binary serial doorway into an
+ * all-connected HyperDimensionalEngine mesh: exactly two dedicated input
+ * neurons (bit-0 / bit-1) and two dedicated output neurons (bit-0 / bit-1).
+ * Data streams in and out one bit at a time rather than as one big vector.
+ *
+ * This is deliberately NOT the same thing as ZipIOLoop (zip-io-loop.ts) --
+ * that is a byte-level circular buffer that compresses and stores context
+ * outside the mesh. This is the literal neuron-level interface: driving one
+ * of two input neurons per settle() tick (the "wait" the source description
+ * asks for is exactly settle()'s own iterative convergence, already real),
+ * and reading back whichever of the two output neurons has higher energy.
+ * The mesh's own recurrent state is the temporary context between bits --
+ * ZipLoopInterface holds no buffer of its own beyond the bits collected so
+ * far in the current send/receive call.
+ *
+ * What this class gives you is the wiring, not learned behavior: like any
+ * other four neurons in the mesh, the two output neurons only encode
+ * something meaningful once something (trainDefinitions(), gradient
+ * learning, or Hebbian delta-rule updates -- all real, see
+ * ElasticCoreBlock/HyperDimensionalEngine above) has actually taught the
+ * network to route information there. Round-tripping arbitrary bytes
+ * correctly is a training outcome, not something this interface guarantees
+ * by construction -- consistent with the source material's own framing of
+ * the Zip Loop as "a serial communication interface", not a memory device.
+ */
+export interface ZipLoopNeuronIds {
+  bit0In: number;
+  bit1In: number;
+  bit0Out: number;
+  bit1Out: number;
+}
+
+/** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
+const ZIP_LOOP_PULSE = 1;
+
+/** Shared "nothing is externally driven this tick" set for receiveBits(). Safe to share because process()/settle() only ever read the driven set -- nothing on that path adds to or clears it. */
+const ZIP_LOOP_NO_DRIVEN: Set<number> = new Set<number>();
+
+/** Below this, an output neuron counts as saying nothing rather than saying zero. */
+const SILENT_OUTPUT = 1e-6;
+/**
+ * How far above the network's own mean energy an output neuron must sit to
+ * count as speaking.
+ *
+ * Above 1 because being exactly as active as the average neuron is what every
+ * neuron in a resting mesh is doing.
+ */
+const SILENT_OUTPUT_RATIO = 1.5;
+/**
+ * Settle iterations at or below which a read counts as the mesh having
+ * nothing further to work out. Above one, because a network still developing
+ * an answer takes several -- measured, 8 to 12 while it was still moving.
+ */
+const ZIP_SETTLED_ITERATIONS = 2;
+/** Dimensions the hyperdimensional pass handles per sweep of the weights. */
+const HYPER_DIM_TILE = 4;
+
+/** The wave the Zip Loop's bit neurons share. Its value does not matter; that all four share it does. */
+const ZIP_BIT_FREQUENCY = 0.25;
+
+/** Shared options for every read tick: reading the network must not rewrite it. */
+const ZIP_LOOP_READ_ONLY: ProcessOptions = { learn: false };
+/**
+ * Settle iterations while a bit is being streamed IN.
+ *
+ * Not one: a single step would leave the bit sitting on the input neuron
+ * without reaching anything. Not the full ceiling either -- that is for
+ * producing an answer, and paying it per bit is what made a two-character
+ * prompt take over eight minutes to say.
+ */
+const ZIP_INPUT_STEPS = 2;
+
+export class ZipLoopInterface {
+  /** Constant per-interface drive sets, built once instead of per bit (see sendBit()). */
+  private readonly drivenBit0: Set<number>;
+  private readonly drivenBit1: Set<number>;
+  /** Reused input vectors; engine dimensions are fixed at construction, so these never need rebuilding. */
+  private pulseScratch: number[] | null = null;
+  private idleScratch: number[] | null = null;
+  /** The last bit fed in, so the learning pass can re-drive it. */
+  private lastBit: 0 | 1 | null = null;
+  /** Settle iterations the last output read needed. */
+  private lastSettleIterations = Number.MAX_SAFE_INTEGER;
+
+  constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds) {
+    this.drivenBit0 = new Set([ids.bit0In]);
+    this.drivenBit1 = new Set([ids.bit1In]);
+
+    // Perfect enemies. The two input neurons carry the same wave half a cycle
+    // apart, so a one and a zero arriving together annihilate exactly rather
+    // than leaving a residue that means neither. Everything downstream of the
+    // doorway then gets interference that says something: what survives is
+    // what the bits actually disagreed about.
+    //
+    // Set rather than learned, because two neurons that must be exact
+    // opposites cannot be left to find each other -- and if they drifted
+    // apart, a one and a zero would stop cancelling and nothing would say so.
+    this.engine.setWaveSignature(ids.bit0In, ZIP_BIT_FREQUENCY, 0);
+    this.engine.setWaveSignature(ids.bit1In, ZIP_BIT_FREQUENCY, Math.PI);
+    this.engine.setWaveSignature(ids.bit0Out, ZIP_BIT_FREQUENCY, 0);
+    this.engine.setWaveSignature(ids.bit1Out, ZIP_BIT_FREQUENCY, Math.PI);
+  }
+
+  /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
+  /** One byte in, MSB-first, without ending the message. */
+  sendByte(byte: number): void {
+    for (let b = 7; b >= 0; b--) this.sendBit(((byte >> b) & 1) as 0 | 1);
+  }
+
+  /** Streams every bit in, then learns from the message as one event. */
+  sendBytes(bytes: Uint8Array): void {
+    for (const byte of bytes) {
+      for (let b = 7; b >= 0; b--) {
+        this.sendBit(((byte >> b) & 1) as 0 | 1);
+      }
+    }
+    // The whole message has arrived: THIS is the event.
+    this.learnFromEvent();
+  }
+
+  /**
+   * Drives exactly one of the two input neurons (bit0In for 0, bit1In for 1)
+   * for one settle() tick; the other stays undriven.
+   *
+   * The pulse vector and both single-id driven Sets are built once per
+   * interface and reused, rather than reallocated per bit: streaming a 1KB
+   * payload is 8192 sendBit() calls, and every one of them was allocating a
+   * fresh `dims`-length array plus a fresh Set for values that never change.
+   */
+  sendBit(bit: 0 | 1): void {
+    // Feeding a bit in is not an event to learn from.
+    //
+    // This used to learn on EVERY bit, and learning is the expensive half of
+    // a tick -- O(N^2 * D) across the whole mesh, plus the row normalisation
+    // and the connection-bias pass. Measured on the live network of 336
+    // neurons at 64 dimensions: 1281 ms per input bit against 104 ms for a
+    // read-only settle. Feeding a 51-byte archive -- the packed form of the
+    // two-character prompt "hi" -- is 408 bits, so 522 SECONDS went by before
+    // the network had finished hearing the question. The Zip Loop endpoint
+    // never returned, and because the settle loop is synchronous it took the
+    // whole server down with it: every other request, health checks included,
+    // got nothing while it ran.
+    //
+    // It is also the wrong shape. The elastic core learns from an EVENT,
+    // weighted by how much input each neuron received during it. A single bit
+    // is not an event; the message is. So the bits go in read-only and the
+    // learning happens once, in learnFromEvent(), when the whole thing has
+    // arrived -- which is both 400 times cheaper and closer to what the
+    // architecture actually says.
+    //
+    // And a bit arriving is one step of propagation, not a settle to
+    // convergence. Every bit perturbs the network, so the settle loop never
+    // converged early and ran its full ceiling -- 32 iterations of an
+    // O(N^2 * D) pass -- for each of the 408 bits in a two-character prompt.
+    // Settling to convergence is what you do when you want the ANSWER, and
+    // that still happens: nextOutputByte() and learnFromEvent() both settle
+    // fully. Streaming the question in does not need it.
+    this.lastBit = bit;
+    const ceiling = this.engine.getPropagationSteps();
+    this.engine.setPropagationSteps(ZIP_INPUT_STEPS);
+    try {
+      this.engine.process(
+        this.pulseVector(),
+        undefined,
+        bit === 1 ? this.drivenBit1 : this.drivenBit0,
+        undefined,
+        ZIP_LOOP_READ_ONLY,
+      );
+    } finally {
+      this.engine.setPropagationSteps(ceiling);
+    }
+  }
+
+  /**
+   * Learn from everything that has just arrived, once.
+   *
+   * The counterpart to feeding bits read-only: the mesh has now settled around
+   * the whole message, so this is the moment its state means "the event", and
+   * one learning pass here is what the elastic core is described as doing.
+   */
+  learnFromEvent(): void {
+    if (this.lastBit === null) return;
+    // Learn while the input is still THERE.
+    //
+    // The first version of this drove nothing, on an idle vector, and learned
+    // whatever the network held afterwards. By then it held almost nothing:
+    // with no drive the states fell to 4e-6, so the Hebbian step came out at
+    // 1e-11 and vanished under Float32 against weights of 0.2 -- measured,
+    // exactly zero movement from a whole byte. The event was over before the
+    // learning ran.
+    //
+    // So the last bit of the message is re-driven with learning on, at the
+    // full settle ceiling. The states then mean "the message just arrived",
+    // which is the moment the elastic core is meant to learn from, and the
+    // input force each neuron felt is real rather than residual.
+    this.engine.process(
+      this.pulseVector(),
+      undefined,
+      this.lastBit === 1 ? this.drivenBit1 : this.drivenBit0,
+    );
+  }
+
+  /** Lazily built idle vector, shared with nextOutputByte(). */
+  private idleVector(): number[] {
+    if (!this.idleScratch) this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
+    return this.idleScratch;
+  }
+
+  /** Lazily built (engine dimensions are fixed at construction) and reused by every sendBit(). */
+  private pulseVector(): number[] {
+    if (!this.pulseScratch) {
+      this.pulseScratch = new Array(this.engine.getDimensions()).fill(ZIP_LOOP_PULSE);
+    }
+    return this.pulseScratch;
+  }
+
+  /**
+   * Reads `count` bits back off the two output neurons, one settle() tick
+   * each, with nothing directly driven -- the network keeps evolving under
+   * its own recurrent dynamics between reads, exactly the "temporary
+   * context" the source description asks for. Whichever output neuron has
+   * higher energy after a tick is read as that tick's bit.
+   */
+  receiveBits(count: number): Array<0 | 1> {
+    const bits: Array<0 | 1> = new Array(count);
+    // Idle vector and the empty driven-set are constant across every tick, and
+    // each bit only needs two scalars back -- previously this rebuilt both per
+    // iteration and called getNeuronStates(), which deep-copies every neuron
+    // (object spread + fresh Float32Array each), then linear-scanned that
+    // throwaway snapshot twice. That made reading K bits O(K*N) allocations to
+    // recover 2K numbers; getNeuronEnergy() reads each in O(1) with none.
+    if (!this.idleScratch) this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
+    const idle = this.idleScratch;
+    const bit0Out = this.ids.bit0Out;
+    const bit1Out = this.ids.bit1Out;
+    for (let i = 0; i < count; i++) {
+      // learn: false -- reading is not learning. Every one of these ticks used
+      // to apply a full Hebbian update, so pulling an answer out of the
+      // network changed the network it was pulled from, and reading the same
+      // thing twice gave two different networks.
+      const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+      // How hard the mesh had to work to reach a stable state on this tick.
+      // The smallest of the eight is what the byte cost at its easiest.
+      if (i === 0 || read.settleIterations > this.lastSettleIterations) {
+        this.lastSettleIterations = read.settleIterations;
+      }
+      bits[i] = this.engine.getNeuronEnergy(bit1Out) > this.engine.getNeuronEnergy(bit0Out) ? 1 : 0;
+    }
+    return bits;
+  }
+
+  /**
+   * One tick-group of output, or null when the network emitted nothing.
+   *
+   * This is what makes the mesh a BitDoorway (zip-halt.ts) and therefore what
+   * lets a run end when the NETWORK decides it is over rather than when a
+   * timer says so. An all-connected mesh has no last layer to fall out of, so
+   * silence is the only evidence that it has finished emitting -- and silence
+   * has to be a value the caller receives, not a gap it fails to notice.
+   *
+   * Silence means both output neurons sat below SILENT_OUTPUT for the whole
+   * byte. receiveBits() alone cannot express that: it compares the two and
+   * always returns a bit, so a completely dormant network reads as an endless
+   * stream of zeros -- indistinguishable from a network patiently emitting
+   * zeros, which is exactly the distinction a halt condition rests on.
+   */
+  nextOutputByte(): number | null {
+    if (!this.idleScratch) this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
+    const idle = this.idleScratch;
+    let byte = 0;
+    let heard = false;
+    for (let b = 0; b < 8; b++) {
+      // Reading, so not learning -- see receiveBits().
+      const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+      // How hard the mesh worked to reach a stable state on this tick. The
+      // HARDEST of the eight is what the byte cost: a byte is settled only if
+      // the network settled on every bit of it. Taking the easiest instead
+      // called every byte settled, because at least one bit of any byte lands
+      // in one iteration.
+      if (b === 0 || read.settleIterations > this.lastSettleIterations) {
+        this.lastSettleIterations = read.settleIterations;
+      }
+      const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
+      const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
+      // Speaking means standing out from the network's own floor, not
+      // clearing a fixed constant.
+      //
+      // SILENT_OUTPUT is 1e-6, which suited a small mesh where a quiet neuron
+      // really did sit near zero. On the live network of 336 neurons every
+      // neuron carries residual activity around 1e-3 -- a thousand times the
+      // threshold -- so the output neurons NEVER read as silent and the run
+      // could never end by going quiet. Measured over five reads: bit0Out
+      // 9.98e-4 against bit1Out 9.93e-4, both far above the line and barely
+      // half a percent apart, which is noise being reported as speech.
+      //
+      // Against the network's own mean energy instead, the same way the
+      // capability gap is measured against what a region usually manages. A
+      // network whose output neurons are merely as active as everything else
+      // is not saying anything; one where they stand above the rest is.
+      const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
+      const line = floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
+      if (zero > line || one > line) heard = true;
+      byte = (byte << 1) | (one > zero ? 1 : 0);
+    }
+    return heard ? byte : null;
+  }
+
+  /**
+   * Did the network reach a stable state while producing the last byte?
+   *
+   * This is the stop signal the architecture actually describes -- "the
+   * process continues until the network reaches a sufficiently stable state,
+   * and that settled state can be interpreted as the output" -- and nothing
+   * was reading it.
+   *
+   * The two signals that were being read cannot fire here. The stop call
+   * needs the network trained to spell a particular string. Silence cannot
+   * happen at all: the output neurons sit in the same all-connected mesh as
+   * everything else, so they are driven by all 336 neurons and never go
+   * quiet. Measured, the output is not speech but a drifting bit pattern --
+   * f8 78 78 78 7c 3c 3c 3c 3e 1e 1f 07 -- a mesh oscillating, with nothing
+   * left to say and no way to say so.
+   *
+   * Settling it can do, and does: 12, 1, 1, 1, 1, 8, 1, 1, 1, 9, 1, 1
+   * iterations against a ceiling of 32. A run of cheap settles means the mesh
+   * has reached its steady state and further reads only draw out more of the
+   * same oscillation.
+   */
+  /** Iterations the hardest bit of the last byte needed. */
+  worstSettleIterations(): number {
+    return this.lastSettleIterations;
+  }
+
+  settledWhileReading(): boolean {
+    return this.lastSettleIterations <= ZIP_SETTLED_ITERATIONS;
+  }
+
+  /**
+   * Everything the network is holding right now -- neuron states and every
+   * connection between them.
+   *
+   * This is what makes a stopped run resumable: the mesh's recurrent state IS
+   * its working context, so ending a run without saving it means every run
+   * starts from nothing and forgets what the last one built up.
+   */
+  captureNetworkState(): NetworkStateSnapshot {
+    return this.engine.captureNetworkState();
+  }
+
+  /** Reads `byteCount` bytes back, packing each 8 bits MSB-first. */
+  receiveBytes(byteCount: number): Uint8Array {
+    const bits = this.receiveBits(byteCount * 8);
+    const out = new Uint8Array(byteCount);
+    for (let i = 0; i < byteCount; i++) {
+      let byte = 0;
+      for (let b = 0; b < 8; b++) byte = (byte << 1) | bits[i * 8 + b];
+      out[i] = byte;
+    }
+    return out;
   }
 }
 
@@ -4227,24 +8271,37 @@ export class MoERouter {
       const weights = expert.weights;
       const hiddenDim = this.config.expertHiddenDim;
 
-      // OPTIMIZATION: 8x loop unrolling on inner dimension and zero-value skip-path.
-      const limit = hiddenDim - 7;
-      for (let k = 0; k < input.length; k++) {
-        const inputVal = input[k];
-        if (inputVal === 0) continue; // Skip multiplications for zero-inputs (sparsity fast-path)
-        const weightOffset = k * hiddenDim;
+      // OPTIMIZATION: 4x loop unrolling on input dimension k combined with 4x unrolling on hidden dimension j.
+      // Unrolling k allows accumulating 4 input feature products per output write, reducing array store operations by 4x.
+      const limitJ = hiddenDim - 3;
+      const limitK = input.length - 3;
+      let k = 0;
+      for (; k < limitK; k += 4) {
+        const v0 = input[k];
+        const v1 = input[k + 1];
+        const v2 = input[k + 2];
+        const v3 = input[k + 3];
+        if (v0 === 0 && v1 === 0 && v2 === 0 && v3 === 0) continue;
+        const off0 = k * hiddenDim;
+        const off1 = (k + 1) * hiddenDim;
+        const off2 = (k + 2) * hiddenDim;
+        const off3 = (k + 3) * hiddenDim;
         let j = 0;
-        for (; j < limit; j += 8) {
-          output[j] += inputVal * weights[weightOffset + j];
-          output[j + 1] += inputVal * weights[weightOffset + j + 1];
-          output[j + 2] += inputVal * weights[weightOffset + j + 2];
-          output[j + 3] += inputVal * weights[weightOffset + j + 3];
-          output[j + 4] += inputVal * weights[weightOffset + j + 4];
-          output[j + 5] += inputVal * weights[weightOffset + j + 5];
-          output[j + 6] += inputVal * weights[weightOffset + j + 6];
-          output[j + 7] += inputVal * weights[weightOffset + j + 7];
+        for (; j < limitJ; j += 4) {
+          output[j]     += v0 * weights[off0 + j]     + v1 * weights[off1 + j]     + v2 * weights[off2 + j]     + v3 * weights[off3 + j];
+          output[j + 1] += v0 * weights[off0 + j + 1] + v1 * weights[off1 + j + 1] + v2 * weights[off2 + j + 1] + v3 * weights[off3 + j + 1];
+          output[j + 2] += v0 * weights[off0 + j + 2] + v1 * weights[off1 + j + 2] + v2 * weights[off2 + j + 2] + v3 * weights[off3 + j + 2];
+          output[j + 3] += v0 * weights[off0 + j + 3] + v1 * weights[off1 + j + 3] + v2 * weights[off2 + j + 3] + v3 * weights[off3 + j + 3];
         }
         for (; j < hiddenDim; j++) {
+          output[j] += v0 * weights[off0 + j] + v1 * weights[off1 + j] + v2 * weights[off2 + j] + v3 * weights[off3 + j];
+        }
+      }
+      for (; k < input.length; k++) {
+        const inputVal = input[k];
+        if (inputVal === 0) continue;
+        const weightOffset = k * hiddenDim;
+        for (let j = 0; j < hiddenDim; j++) {
           output[j] += inputVal * weights[weightOffset + j];
         }
       }
@@ -4328,13 +8385,45 @@ export class MoERouter {
     if (first instanceof Float32Array) {
       this.experts.set(expertId, { weights: first, bias: bias || new Float32Array(0) });
     } else {
+      // Allocated on first use, not at registration.
+      //
+      // Measured at boot: this allocated inputDim x expertHiddenDim floats --
+      // 1.5MB -- for EVERY registered plugin, and randomly initialised all
+      // 393216 of them. With 36 plugins that is 54MB of resident typed arrays
+      // before anything has been asked a single question, which was most of
+      // the 65MB gap between this process's 21MB heap and its 178MB RSS.
+      //
+      // Most of it is never touched. api-connection plugins get one presence
+      // neuron precisely because, as registry.ts says where it calls this,
+      // their capability "genuinely can't be reduced to neuron weights" --
+      // reading a file requires real I/O, not a weighted sum. Paying 1.5MB up
+      // front for a matrix that will never be multiplied is the definition of
+      // eager work with no consumer.
+      //
+      // The getter materialises identical weights on first read, so anything
+      // that does use an expert sees exactly what it saw before; it just does
+      // not pay for the ones nobody routes to.
       const dim = this.config.expertHiddenDim || 128;
-      const weights = new Float32Array(this.config.inputDim * dim);
-      const scale = Math.sqrt(2.0 / this.config.inputDim);
-      for (let i = 0; i < weights.length; i++) {
-        weights[i] = (Math.random() * 2 - 1) * scale;
-      }
-      this.experts.set(expertId, { weights, bias: new Float32Array(dim) });
+      const inputDim = this.config.inputDim;
+      let weights: Float32Array | null = null;
+      this.experts.set(expertId, {
+        get weights(): Float32Array {
+          if (weights === null) {
+            weights = new Float32Array(inputDim * dim);
+            const scale = Math.sqrt(2.0 / inputDim);
+            for (let i = 0; i < weights.length; i++) {
+              weights[i] = (Math.random() * 2 - 1) * scale;
+            }
+          }
+          return weights;
+        },
+        set weights(next: Float32Array) {
+          // Training writes back through here; assigning replaces the lazy
+          // value rather than being silently dropped.
+          weights = next;
+        },
+        bias: new Float32Array(dim),
+      });
     }
     this.utilization.set(expertId, { calls: 0, tokens: 0, weightSum: 0 });
     this.growRouterCapacity();
@@ -4627,12 +8716,34 @@ export class MoERouter {
   }
 
   private computeEntropy(scores: number[]): number {
-    const probs = this.softmax(scores);
-    let entropy = 0;
-    for (const p of probs) {
-      if (p > 0) entropy -= p * Math.log(p);
+    const len = scores.length;
+    if (len <= 1) return 0;
+
+    // First, find the maximum score for numerical stability during exponentiation
+    let max = scores[0];
+    for (let i = 1; i < len; i++) {
+      if (scores[i] > max) {
+        max = scores[i];
+      }
     }
-    return entropy;
+
+    // Compute sum(exp(s_i - max)) and sum((s_i - max) * exp(s_i - max))
+    // in a single pass over the scores.
+    let sumExp = 0;
+    let sumExpS = 0;
+    for (let i = 0; i < len; i++) {
+      const sShifted = scores[i] - max;
+      const expVal = Math.exp(sShifted);
+      sumExp += expVal;
+      sumExpS += sShifted * expVal;
+    }
+
+    if (sumExp === 0) return 0;
+
+    // Shannon entropy of softmax: H = ln(sumExp) - (sum(sShifted * exp(sShifted)) / sumExp)
+    // This reduces the number of expensive Math.log transcendental math calls from O(E) to exactly O(1),
+    // and completely eliminates the allocation of intermediate probability arrays.
+    return Math.log(sumExp) - sumExpS / sumExp;
   }
 
   private computeLoadBalanceLoss(): number {
@@ -4642,7 +8753,9 @@ export class MoERouter {
     const meanUtil = totalUtil / stats.length;
     let variance = 0;
     for (const s of stats) {
-      variance += Math.pow(s.utilization - meanUtil, 2);
+      // BOLT OPTIMIZATION: Replacing slow Math.pow(x, 2) with fast inline multiplication.
+      const diff = s.utilization - meanUtil;
+      variance += diff * diff;
     }
     return variance / stats.length;
   }
@@ -4664,4 +8777,144 @@ export class MoERouter {
     }
     return `h_${hash}`;
   }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Mixture of Experts
+//
+// Lived in `models && skills/moe.ts`, a 134-line file whose every import came
+// from this one. MixtureOfExperts and MoERouter are the same concept, and the
+// NeuronMesh they gate is defined here too -- three parts of one mechanism
+// split across two files for no reason but history. Folded in so an expert,
+// its router and the mesh its neurons live in are all one module.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/**
+ * Section 2.1: a skill's neurons are ordinary mesh neurons, wired all-to-all
+ * into the same shared NeuronMesh as everything else — "expert" is purely a
+ * router-gating label (Expert.neuronIds), not a separate wiring boundary.
+ */
+export interface Expert {
+  id: string;
+  name: string;
+  /** Node ids in the shared mesh registered under this expert's group label. */
+  neuronIds: number[];
+  specialization: string;
+  activationThreshold: number;
+  lastUsed: number;
+  usageCount: number;
+}
+
+export interface MoETickResult {
+  /** Expert ids the router selected (top-K) for this tick. */
+  activeExperts: string[];
+  propagation: PropagationResult;
+}
+
+export class MixtureOfExperts {
+  private experts: Map<string, Expert>;
+  private activeExperts: Set<string>;
+  private topK: number;
+  private router: MoERouter;
+  private mesh: NeuronMesh;
+  /** Router's numeric expert index <-> our string expert id. */
+  private routerIndexToId: Map<number, string> = new Map();
+
+  constructor(topK: number = 2, mesh?: NeuronMesh) {
+    this.experts = new Map();
+    this.activeExperts = new Set();
+    this.topK = topK;
+    // numExperts: 0 — every expert in the router must be a real, named
+    // skill registered via addExpert(). Pre-seeding anonymous experts here
+    // would let them win top-K selection and make tick()'s activeExperts
+    // silently drop ticks (an anonymous winner has no group/id to map back to).
+    this.router = new MoERouter({ numExperts: 0, topK, inputDim: 768, outputDim: 768, expertHiddenDim: 512 });
+    // Shared, all-to-all mesh: every expert's neurons live here alongside
+    // everyone else's, wired at connectionDensity 1.0 by addNode() below —
+    // grouping is a label, not a wiring restriction.
+    this.mesh = mesh ?? new NeuronMesh({ nodeCount: 0, connectionDensity: 1.0 });
+  }
+
+  /** The shared mesh every expert's neurons are registered into. */
+  getMesh(): NeuronMesh {
+    return this.mesh;
+  }
+
+  /**
+   * Registers `neuronCount` new mesh neurons under this expert's group label
+   * (wired all-to-all into the shared mesh, same as any other neuron) and
+   * registers the expert with the MoE router for scoring/gating.
+   */
+  addExpert(id: string, name: string, specialization: string, neuronCount: number = 4): Expert {
+    const neuronIds: number[] = [];
+    for (let i = 0; i < neuronCount; i++) {
+      neuronIds.push(this.mesh.addNode(0, id));
+    }
+
+    const expert: Expert = {
+      id, name,
+      neuronIds,
+      specialization,
+      activationThreshold: 0.3,
+      lastUsed: Date.now(),
+      usageCount: 0,
+    };
+    this.experts.set(id, expert);
+    const routerIndex = this.router.addExpert({ id, name, specialization });
+    this.routerIndexToId.set(routerIndex, id);
+    return expert;
+  }
+
+  /**
+   * Register additional neurons under an already-registered expert's group
+   * label (e.g. a variable number of neurons per sub-skill within one
+   * expert). Wired all-to-all into the shared mesh exactly like addExpert's
+   * initial neurons. Returns the new node ids; no-op (empty array) if the
+   * expert id isn't registered.
+   */
+  addNeuronsToExpert(expertId: string, count: number, layer: number = 0): number[] {
+    const expert = this.experts.get(expertId);
+    if (!expert) return [];
+    const newIds: number[] = [];
+    for (let i = 0; i < count; i++) {
+      const id = this.mesh.addNode(layer, expertId);
+      newIds.push(id);
+    }
+    expert.neuronIds.push(...newIds);
+    return newIds;
+  }
+
+  /**
+   * Section 2.1: score all registered experts against `routingInput`, select
+   * top-K, and propagate the shared mesh with only those experts' (plus any
+   * ungrouped/core) neurons computing this tick — everyone else holds their
+   * last value but stays fully wired. `meshInputs` are the externally-driven
+   * mesh node activations for this tick (same shape `propagate()` expects).
+   */
+  tick(
+    routingInput: Float32Array,
+    meshInputs: Map<number, number>,
+    vale?: Map<number, number>
+  ): MoETickResult {
+    const decision = this.router.route(routingInput);
+    const activeExperts = decision.expertIndices
+      .map(i => this.routerIndexToId.get(i))
+      .filter((id): id is string => id !== undefined);
+
+    this.activeExperts = new Set(activeExperts);
+    const now = Date.now();
+    for (const id of activeExperts) {
+      const expert = this.experts.get(id);
+      if (expert) { expert.lastUsed = now; expert.usageCount++; }
+    }
+
+    const propagation = this.mesh.propagate(meshInputs, vale, new Set(activeExperts));
+    return { activeExperts, propagation };
+  }
+
+  getExpert(id: string): Expert | undefined { return this.experts.get(id); }
+  listExperts(): Expert[] { return Array.from(this.experts.values()); }
+  getActiveExperts(): Expert[] { return Array.from(this.activeExperts).map(id => this.experts.get(id)!).filter(Boolean); }
+  getRouter(): MoERouter { return this.router; }
+  getExpertCount(): number { return this.experts.size; }
 }

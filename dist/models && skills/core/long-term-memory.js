@@ -25,7 +25,11 @@
 export class LongTermMemory {
     constructor(opts) {
         this.items = new Map();
+        /** Cached sparse vector representations for stored memory items. */
+        this.sparseMap = new Map();
         this.seq = 0;
+        /** Kept incrementally so the common insert never scans the whole store. */
+        this.unpinnedCount = 0;
         // A large sparse dimension keeps hash collisions rare, so cosine tracks
         // real shared vocabulary rather than collision noise.
         this.dim = opts?.dim ?? 512;
@@ -44,17 +48,30 @@ export class LongTermMemory {
     remember(content, opts = {}) {
         const id = opts.id ?? `mem-${Date.now()}-${++this.seq}`;
         const now = Date.now();
+        // Built, used, and dropped: the dense vector is a step on the way to the
+        // sparse one, not something worth keeping 512 slots of when 13 are used.
+        const sparse = embedSparseFromDense(this.embed(content));
         const item = {
             id,
             content,
-            embedding: this.embed(content),
+            sparse: { indices: Array.from(sparse.indices), values: Array.from(sparse.values), norm: sparse.norm },
             timestamp: now,
             importance: clamp01(opts.importance ?? 0.5),
             tags: opts.tags ?? [],
             accessCount: 0,
             lastAccess: now,
+            ...(opts.payload !== undefined ? { payload: opts.payload } : {}),
+            ...(opts.pinned ? { pinned: true } : {}),
         };
+        // Replacing an existing id must not double-count it.
+        const replaced = this.items.get(id);
+        if (replaced && !replaced.pinned)
+            this.unpinnedCount--;
         this.items.set(id, item);
+        if (!item.pinned)
+            this.unpinnedCount++;
+        // Cache precomputed sparse vector for fast $O(\text{nonZeros})$ retrieval
+        this.sparseMap.set(id, sparse);
         this.evictIfNeeded();
         return item;
     }
@@ -69,13 +86,27 @@ export class LongTermMemory {
         const iw = opts.importanceWeight ?? 0.3;
         const rw = opts.recencyWeight ?? 0.15;
         const minScore = opts.minScore ?? 0;
-        const q = this.embed(query);
+        const qDense = this.embed(query);
+        const qSparse = embedSparseFromDense(qDense);
+        if (qSparse.norm === 0)
+            return [];
         const now = Date.now();
         const hits = [];
         for (const item of this.items.values()) {
             if (opts.tag && !item.tags.includes(opts.tag))
                 continue;
-            const similarity = cosine(q, item.embedding);
+            let itemSparse = this.sparseMap.get(item.id);
+            if (!itemSparse) {
+                // Three sources, in order of preference: the item's own sparse form,
+                // a legacy dense array from an older save, or -- failing both -- the
+                // content re-embedded. The last is what makes a hand-edited or
+                // partially-written save still searchable instead of silently
+                // scoring zero against every query.
+                itemSparse = sparseOf(item) ?? embedSparseFromDense(this.embed(item.content));
+                this.sparseMap.set(item.id, itemSparse);
+            }
+            // Fast $O(\text{nonZeros})$ two-pointer sparse vector cosine similarity
+            const similarity = cosineSparse(qSparse, itemSparse);
             if (similarity <= 0)
                 continue;
             // Recency in [0,1]: decays over ~1 day since last access.
@@ -118,7 +149,32 @@ export class LongTermMemory {
             item.importance = clamp01(item.importance + delta);
     }
     forget(id) {
+        // The count has to be maintained on EVERY removal path, not just eviction,
+        // or it drifts from reality and the early return starts lying.
+        const item = this.items.get(id);
+        if (item && !item.pinned)
+            this.unpinnedCount--;
+        this.sparseMap.delete(id);
         return this.items.delete(id);
+    }
+    /**
+     * Forget everything, pinned included, and say how much was forgotten.
+     *
+     * Pinned memories are exempt from EVICTION -- being pushed out to make room
+     * for something newer, which is the store deciding on its own. This is not
+     * that. This is someone asking for it all to go, and "all" that quietly kept
+     * some of it would be a worse answer than refusing.
+     */
+    forgetAll() {
+        const held = this.items.size;
+        this.items.clear();
+        this.sparseMap.clear();
+        this.unpinnedCount = 0;
+        return held;
+    }
+    /** Unpinned memories held. Exposed so a test can prove the count never drifts. */
+    evictableCount() {
+        return this.unpinnedCount;
     }
     /**
      * Consolidate working-context snippets (e.g. drained from the ZipIO buffer)
@@ -134,8 +190,17 @@ export class LongTermMemory {
     static deserialize(json) {
         const data = JSON.parse(json);
         const mem = new LongTermMemory({ dim: data.dim, capacity: data.capacity });
-        for (const it of data.items)
+        for (const it of data.items) {
             mem.items.set(it.id, it);
+            if (!it.pinned)
+                mem.unpinnedCount++;
+            // Warmed here rather than lazily in recall(): deserialize knows it is
+            // about to hold every item, and rebuilding during the first search made
+            // that one search pay for all of them.
+            const sparse = sparseOf(it);
+            if (sparse)
+                mem.sparseMap.set(it.id, sparse);
+        }
         return mem;
     }
     /**
@@ -159,18 +224,45 @@ export class LongTermMemory {
         return v;
     }
     evictIfNeeded() {
-        if (this.items.size <= this.capacity)
+        // Pinned memories are installed knowledge, not observations, so they are
+        // never candidates. Capacity therefore bounds what the system picked up on
+        // its own -- which is the thing that grows without limit -- and never
+        // silently deletes something the user installed.
+        //
+        // That was the stated intent, and the code did something else: it compared
+        // items.size, which INCLUDES pinned, against capacity. On this machine
+        // that meant 3347 pinned installed memories against a capacity of 2000, so
+        // toRemove came out at 1347, capped at the number of evictable items --
+        // which evicted every unpinned memory in the store, on every single
+        // insert. Measured: five new memories at importance 0.9, none survived.
+        // The agent could not form a new memory at all, and nothing said so.
+        // Counted incrementally rather than scanned. Fixing the eviction bug above
+        // moved this filter BEFORE the early return, so every insert allocated and
+        // scanned the whole store even when nothing needed evicting -- a
+        // regression I introduced with the fix. The count answers the same
+        // question in constant time; the scan now happens only when it is actually
+        // going to evict something.
+        if (this.unpinnedCount <= this.capacity)
             return;
+        const evictable = this.all().filter(item => !item.pinned);
         const now = Date.now();
-        const ranked = this.all().map(item => {
+        const ranked = evictable.map(item => {
             const recency = Math.exp(-(now - item.lastAccess) / (1000 * 60 * 60 * 24));
             const retention = item.importance * 0.6 + recency * 0.25 + Math.min(1, item.accessCount / 10) * 0.15;
             return { item, retention };
         });
         ranked.sort((a, b) => a.retention - b.retention);
-        const toRemove = this.items.size - this.capacity;
-        for (let i = 0; i < toRemove; i++)
-            this.items.delete(ranked[i].item.id);
+        // Measured against the evictable population, not the total: when pinned
+        // items alone exceed capacity the store is allowed to be larger rather
+        // than emptying itself of everything it has learned since.
+        const toRemove = Math.min(evictable.length - this.capacity, ranked.length);
+        for (let i = 0; i < toRemove; i++) {
+            const removeId = ranked[i].item.id;
+            if (!ranked[i].item.pinned)
+                this.unpinnedCount--;
+            this.items.delete(removeId);
+            this.sparseMap.delete(removeId);
+        }
     }
 }
 function clamp01(x) {
@@ -190,16 +282,77 @@ function tokenize(text) {
         .split(/[^a-z0-9]+/)
         .filter(w => w.length > 1 && !STOPWORDS.has(w));
 }
-function cosine(a, b) {
-    const n = Math.min(a.length, b.length);
-    let dot = 0;
-    let na = 0;
-    let nb = 0;
-    for (let i = 0; i < n; i++) {
-        dot += a[i] * b[i];
-        na += a[i] * a[i];
-        nb += b[i] * b[i];
+/**
+ * The sparse vector for an item, from whichever representation it carries.
+ * Returns null when it has neither, so the caller can decide what to do
+ * rather than being handed a zero vector that silently matches nothing.
+ */
+function sparseOf(item) {
+    if (item.sparse && Array.isArray(item.sparse.indices) && Array.isArray(item.sparse.values)) {
+        return {
+            indices: Int32Array.from(item.sparse.indices),
+            values: Float32Array.from(item.sparse.values),
+            norm: Number(item.sparse.norm) || 0,
+        };
     }
-    const denom = Math.sqrt(na) * Math.sqrt(nb);
+    if (Array.isArray(item.embedding))
+        return embedSparseFromDense(item.embedding);
+    return null;
+}
+/**
+ * Converts a dense bag-of-words embedding vector into a sorted sparse vector representation with precomputed L2 norm.
+ */
+function embedSparseFromDense(v) {
+    let count = 0;
+    let sumSq = 0;
+    for (let i = 0; i < v.length; i++) {
+        if (v[i] !== 0) {
+            count++;
+            sumSq += v[i] * v[i];
+        }
+    }
+    const indices = new Int32Array(count);
+    const values = new Float32Array(count);
+    let pos = 0;
+    for (let i = 0; i < v.length; i++) {
+        if (v[i] !== 0) {
+            indices[pos] = i;
+            values[pos] = v[i];
+            pos++;
+        }
+    }
+    return { indices, values, norm: Math.sqrt(sumSq) };
+}
+/**
+ * Computes cosine similarity between two sorted sparse vectors in $O(\text{nonZeros}_a + \text{nonZeros}_b)$ time
+ * using a fast two-pointer intersection scan.
+ */
+function cosineSparse(a, b) {
+    if (a.norm === 0 || b.norm === 0)
+        return 0;
+    let dot = 0;
+    let i = 0;
+    let j = 0;
+    const aLen = a.indices.length;
+    const bLen = b.indices.length;
+    const aIdx = a.indices;
+    const bIdx = b.indices;
+    const aVal = a.values;
+    const bVal = b.values;
+    while (i < aLen && j < bLen) {
+        const diff = aIdx[i] - bIdx[j];
+        if (diff === 0) {
+            dot += aVal[i] * bVal[j];
+            i++;
+            j++;
+        }
+        else if (diff < 0) {
+            i++;
+        }
+        else {
+            j++;
+        }
+    }
+    const denom = a.norm * b.norm;
     return denom > 0 ? dot / denom : 0;
 }

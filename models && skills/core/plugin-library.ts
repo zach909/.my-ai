@@ -4,13 +4,15 @@
  *
  * PluginMakerExtension (plugins/extensions/index.ts) writes each
  * self-authored plugin to disk as a pair: a `.ts` source under
- * ~/.neuroclaw/plugins/ and a companion wiki report under
- * ~/.neuroclaw/plugins-wiki/ recording its description and capabilities.
- * That directory pair is a shared local library: every NeuroclawSystem
- * instance on the same machine -- including separate hive-mind agents --
- * reads and writes the same paths, so a plugin one instance builds is
- * discoverable and reusable by another instead of being recreated from
- * scratch.
+ * generated/plugins/ and a companion wiki report under
+ * generated/plugins-wiki/ recording its description and capabilities --
+ * repo-relative, not homedir-relative, so a self-authored plugin is
+ * genuinely public (committed/pushed like any other repo change) rather
+ * than living only in an ephemeral local sandbox. That directory pair is
+ * a shared local library: every NeuroclawSystem instance on the same
+ * machine -- including separate hive-mind agents -- reads and writes the
+ * same paths, so a plugin one instance builds is discoverable and
+ * reusable by another instead of being recreated from scratch.
  *
  * PluginLibrary is the search/read side: find a previously-built plugin by
  * keyword against its wiki report, then load its `.ts` source. "Download"
@@ -19,7 +21,6 @@
  */
 
 import { existsSync, readdirSync, readFileSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 export interface PluginWikiEntry {
@@ -53,8 +54,9 @@ export class PluginLibrary {
   private readonly wikiDir: string;
 
   constructor(pluginsDir?: string, wikiDir?: string) {
-    this.pluginsDir = pluginsDir ?? join(homedir(), ".neuroclaw", "plugins");
-    this.wikiDir = wikiDir ?? join(homedir(), ".neuroclaw", "plugins-wiki");
+    const base = process.env.NEUROCLAW_GENERATED_DIR || join(process.cwd(), "generated");
+    this.pluginsDir = pluginsDir ?? join(base, "plugins");
+    this.wikiDir = wikiDir ?? join(base, "plugins-wiki");
   }
 
   /** Every self-authored plugin with a wiki report, parsed back into structured form. */

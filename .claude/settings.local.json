@@ -16,7 +16,8 @@
       "Bash(curl -s -X POST http://localhost:7862/api/neuri -H \"Content-Type: application/json\" -d '{\"code\":\"name=\\\\\"test\\\\\"\\\\n\\\\\"test\\\\\"@value=\\\\\"3.14\\\\\"\"}')",
       "Bash(curl -s \"http://localhost:7862/api/neurons?q=embed\")",
       "Bash(kill %1)",
-      "Bash(timeout 40 npx tsx index.ts cli)"
+      "Bash(timeout 40 npx tsx index.ts cli)",
+      "Bash(git merge *)"
     ]
   }
 }

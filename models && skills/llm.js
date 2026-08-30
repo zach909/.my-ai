@@ -159,6 +159,20 @@ export class NeuroclawLLM {
         await this.trainer.train(text);
         this.trained = true;
     }
+    /**
+     * Teach the language model something new without erasing what it already
+     * knows. trainOnText() calls train(), which rebuilds every table from the
+     * one string it is given -- so two trainOnText() calls do not teach two
+     * things, the second erases the first. learnText() accumulates instead
+     * (see NeuroclawTrainer.learnText), which is what makes teaching a fact
+     * and then asking about it actually work.
+     */
+    async learnText(text) {
+        await this.trainer.learnText(text);
+        this.trained = true;
+    }
+    /** Characters of accumulated teaching material behind the prose predictor. */
+    getLearnedCorpusSize() { return this.trainer.getCorpusSize(); }
     async generate(prompt, options = {}) {
         if (!this.built)
             await this.build();

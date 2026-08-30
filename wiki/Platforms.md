@@ -12,7 +12,7 @@ The AI runs locally on macOS, Windows, and Linux — the design notes' "Runs on 
 
 - **Multi-desktop / virtual input** ([[System-Access]], [[Multi-Input]]): GNOME-specific (`gsettings`, `xinput`), so `hasMultiDesktopSupport()` / `hasVirtualInputSupport()` honestly report unavailable on Windows, macOS, or a non-GNOME Linux desktop, rather than silently no-op'ing.
 - **Plugins** ([[Plugins]]): each local-service plugin's `available()` probe is platform-aware where it needs to be (e.g. a hardware/OS service that simply doesn't exist on the current host reports unavailable, cleanly).
-- **The Python core** (`model && skills manager/`): pure Python + PyTorch, portable across all three platforms as-is; `tinygpt/utils.py`'s `resolve_device()` picks `cuda`/`mps`/`cpu` based on what's actually present, so the same training/inference code runs on an Nvidia GPU (Linux/Windows), Apple Silicon (macOS, via `mps`), or CPU-only, honoring the request but falling back gracefully.
+- **The Python core** (`model && skills manager/`): the NeuroLang DSL and the zero-sum value system, pure Python + PyTorch, portable across all three platforms as-is. The TinyGPT transformer track that used to live here — pretraining, finetuning, a checkpoint served to the chat box — has been removed; there is one model, and it is the all-to-all network in the TypeScript backend, which needs no tensor framework at all.
 
 ## What's genuinely platform-independent
 

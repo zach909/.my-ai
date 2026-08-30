@@ -14,14 +14,14 @@
  * lives exactly as long as the tab does.
  */
 
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState, useEffect, useRef } from 'react'
 import type { ReactNode } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Users, Send, Vote, Zap, Lock, EyeOff, History } from 'lucide-react'
+import { Users, Send, Vote, Zap, Lock, Eye, EyeOff, History, Loader2, Sparkles } from 'lucide-react'
 
 function Chip({ children, className = '' }: { children: ReactNode; className?: string }) {
   return (
@@ -36,7 +36,7 @@ function Chip({ children, className = '' }: { children: ReactNode; className?: s
 export const Route = createFileRoute('/app/chat-groups')({
   head: () => ({
     meta: [
-      { title: 'Chat Groups · ASI Architect' },
+      { title: 'Chat Groups · Corona' },
       { name: 'description', content: 'Hive-mind agents collaborating on a task through a shared chat group.' },
     ],
   }),
@@ -75,6 +75,7 @@ function chatGroupsHeaders(password: string | null): HeadersInit {
 /** Shown instead of the normal page while the server reports chat groups as locked and no valid password has been entered yet. */
 function LockScreen({ onUnlock }: { onUnlock: (password: string) => Promise<boolean> }) {
   const [password, setPassword] = useState('')
+  const [showPassword, setShowPassword] = useState(false)
   const [checking, setChecking] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
@@ -99,32 +100,48 @@ function LockScreen({ onUnlock }: { onUnlock: (password: string) => Promise<bool
         </p>
         {error && <p role="alert" className="text-xs text-destructive">{error}</p>}
         <div className="flex gap-2">
-          <Label htmlFor="chat-groups-password" className="sr-only">
-            Password
-          </Label>
-          <Input
-            id="chat-groups-password"
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter') {
-                e.preventDefault()
-                submit()
-              }
-            }}
-            placeholder="Password"
-            disabled={checking}
-            autoFocus
-            className="flex-1"
-          />
+          <div className="relative flex-1 flex items-center">
+            <Label htmlFor="chat-groups-password" className="sr-only">
+              Password
+            </Label>
+            <Input
+              id="chat-groups-password"
+              type={showPassword ? 'text' : 'password'}
+              value={password}
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter') {
+                  e.preventDefault()
+                  submit()
+                }
+              }}
+              placeholder="Password"
+              disabled={checking}
+              autoFocus
+              className="flex-1 pr-10"
+            />
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              onClick={() => setShowPassword((prev) => !prev)}
+              disabled={checking || !password}
+              className="absolute right-1 h-7 w-7 p-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+              aria-label={showPassword ? 'Hide password' : 'Show password'}
+              title={showPassword ? 'Hide password' : 'Show password'}
+            >
+              {showPassword ? <EyeOff size={14} /> : <Eye size={14} />}
+            </Button>
+          </div>
           <Button
             onClick={submit}
             disabled={checking || !password}
             size="sm"
-            className="active:scale-95 transition-all duration-150"
+            className="active:scale-95 transition-all duration-150 gap-2"
+            aria-label={checking ? "Unlocking Chat Groups" : "Unlock Chat Groups"}
           >
-            Unlock
+            {checking && <Loader2 size={14} className="animate-spin" />}
+            {checking ? "Unlocking..." : "Unlock"}
           </Button>
         </div>
       </Card>
@@ -399,9 +416,48 @@ function ChatGroupsPage() {
           )}
 
           {rounds.length === 0 && !loading && (
-            <p className="text-sm text-muted-foreground">
-              Submit a task below — the hive's chat group will discuss it and vote on a decision.
-            </p>
+            <div className="mx-auto my-auto flex max-w-md flex-col items-center justify-center rounded-xl border-2 border-dashed border-border/60 bg-card/40 p-6 text-center backdrop-blur-xs space-y-3">
+              <div className="flex h-10 w-10 items-center justify-center rounded-full bg-primary/10 text-primary">
+                <Users size={20} />
+              </div>
+              <div className="space-y-1">
+                <h3 className="text-sm font-semibold text-foreground">Hive Collaboration Ready</h3>
+                <p className="text-xs text-muted-foreground leading-relaxed">
+                  Submit a task below — the hive&apos;s agents will discuss it, weigh trust, and vote on a consensus decision.
+                </p>
+              </div>
+              <div className="space-y-1.5 pt-1 w-full">
+                <p className="text-[11px] text-muted-foreground italic">Try a sample task:</p>
+                <div className="flex flex-wrap justify-center gap-1.5">
+                  {[
+                    'Analyze sandbox safety boundaries',
+                    'Design consensus protocol',
+                    'Evaluate system architecture',
+                  ].map((sample) => (
+                    <button
+                      key={sample}
+                      type="button"
+                      onClick={() => {
+                        setTask(sample)
+                        inputRef.current?.focus()
+                      }}
+                      className="rounded-md border border-border bg-muted/50 px-2 py-1 text-[10px] text-muted-foreground hover:border-primary/40 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+                      aria-label={`Use sample task: ${sample}`}
+                    >
+                      +{sample}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="pt-2">
+                <Button asChild size="sm" variant="outline" className="active:scale-95 transition-all duration-150">
+                  <Link to="/app/chat">
+                    <Sparkles size={13} className="mr-1.5 text-primary" />
+                    Start AI Chat
+                  </Link>
+                </Button>
+              </div>
+            </div>
           )}
           {rounds.map((round) => (
             <div key={round.id} className="space-y-2">
@@ -459,11 +515,17 @@ function ChatGroupsPage() {
               disabled={loading || !task.trim()}
               size="sm"
               className="gap-2 active:scale-95 transition-all duration-150"
-              aria-label="Submit task to hive"
-              title="Submit task to hive"
+              aria-label={loading ? "Submitting task to hive" : "Submit task to hive"}
+              title={loading ? "Submitting..." : "Submit task to hive"}
             >
-              <Send size={16} />
-              <span className="hidden sm:inline">Submit</span>
+              {loading ? (
+                <Loader2 size={16} className="animate-spin" />
+              ) : (
+                <Send size={16} />
+              )}
+              <span className="hidden sm:inline">
+                {loading ? "Submitting..." : "Submit"}
+              </span>
             </Button>
           </div>
         </Card>

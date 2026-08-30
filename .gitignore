@@ -1,4 +1,3 @@
-```
 # Compiled and build artifacts
 *.pyc
 __pycache__/
@@ -16,6 +15,7 @@ venv/
 node_modules/
 dist/
 build/
+.vite-out/
 target/
 .gradle/
 .mypy_cache/
@@ -70,4 +70,39 @@ htmlcov/
 *.tar.bz2
 *.tar.xz
 *.tar.zst
-```
+
+# Claude Code agent worktrees (isolated scratch checkouts for background subagents)
+.claude/worktrees/
+# Runtime clone state written by SelfReplicatePlugin (plugins/self_replicate.ts) —
+# per-run artifacts, not source.
+clones/
+
+# electron-builder output (packaged installers, ~100-130 MB each)
+desktop-app/dist/
+desktop-app/node_modules/
+
+# An accidental clone of this repository inside itself, created by the
+# `git clone` that used to sit at the top of scripts/install.sh and run on
+# every source. It was committed as a gitlink (mode 160000) with no
+# .gitmodules, so every clone got a submodule entry git could not populate.
+# Ignored so the same accident cannot be committed again.
+.my-ai/
+
+# Probe files written by test/smoke.mjs into the LIVE extensions directory
+# (it has to, since it tests the boot loader that reads from there). They are
+# deleted after each run now; ignored so an interrupted run cannot commit one.
+extension-builder/extensions/autoload_probe_*
+extension-builder/extensions/source_autoload_probe_*
+extension-builder/extensions/good_bits_test_*
+
+# Store items installed on THIS machine. Installing is a local act -- someone
+# here chose to install a published skill -- so the copy under installed/
+# belongs to this machine, not to the repository. The published original in
+# store/ is the shared thing.
+extension-builder/installed/skills/*/
+
+# What the network was holding when its last run stopped (neuron states and
+# every connection, a few megabytes). Per-machine runtime state, rewritten on
+# every stop -- the point of it is that the NEXT run on THIS machine starts in
+# the same place, which is not something to share or to version.
+config/network-state.json

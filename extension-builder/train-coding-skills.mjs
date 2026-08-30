@@ -71,7 +71,13 @@ const neuroLang = new NeuroLangInterpreter();
 const MAX_ROUNDS = 6;
 const TARGET_ACCURACY = 0.95;
 const NEW_INSTANTIATIONS_PER_TEMPLATE_PER_ROUND = 25;
-const EPOCHS_PER_ROUND = 600;
+// Overridable via env vars for the same reason build-physics-chemistry-
+// network.mjs's are -- lets scripts/self-improve.mjs try mutated
+// hyperparameters without editing this file. Defaults match the values
+// this script always used before these existed.
+const EPOCHS_PER_ROUND = Number(process.env.SELF_IMPROVE_EPOCHS) || 600;
+const LEARNING_RATE = Number(process.env.SELF_IMPROVE_LR) || 0.05;
+const TOLERANCE = Number(process.env.SELF_IMPROVE_TOLERANCE) || 1e-3;
 
 function log(...args) { console.log('[train-coding-skills]', ...args); }
 function randInt(lo, hi) { return lo + Math.floor(Math.random() * (hi - lo + 1)); }
@@ -212,7 +218,7 @@ async function main() {
     const samples = allNeurons.flatMap((n, readout) => samplesFor(readout, n));
     const trainResult = await trainer.send({
       op: 'train', dims: DIMS, numReadouts: allNeurons.length,
-      epochs: EPOCHS_PER_ROUND, learningRate: 0.05, tolerance: 1e-3, samples,
+      epochs: EPOCHS_PER_ROUND, learningRate: LEARNING_RATE, tolerance: TOLERANCE, samples,
       // Full retrain each round, not a padded continuation: numReadouts
       // grows every round (new instantiations = new readouts), and a
       // fresh convergence run over the whole accumulated set is both

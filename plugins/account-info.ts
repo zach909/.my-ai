@@ -1,6 +1,6 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { homedir, hostname, userInfo, platform, release, arch, cpus, totalmem, freemem, uptime } from "node:os";
 
 export interface AccountInfo {
@@ -49,7 +49,16 @@ export class AccountInfoPlugin extends BasePlugin {
     // Regular expression matching potentially sensitive environment variables (keys, secrets, database configs, passwords, tokens, etc.)
     const SENSITIVE_ENV_PATTERN = /key|secret|password|token|auth|pass|credential|cert|cookie|jwt|hash|salt|ssh|database|db_|session|bearer|sig|private/i;
 
-    if (key) {
+    if (key !== undefined) {
+      if (typeof key !== "string") {
+        throw new Error("Security Error: Environment key must be a string.");
+      }
+      if (key.trim() === "") {
+        throw new Error("Security Error: Environment key cannot be empty.");
+      }
+      if (key.length > 200) {
+        throw new Error("Security Error: Environment key exceeds maximum length of 200 characters.");
+      }
       if (SENSITIVE_ENV_PATTERN.test(key)) {
         throw new Error(`Security Error: Access to sensitive environment variable is blocked: ${key}`);
       }
@@ -67,7 +76,7 @@ export class AccountInfoPlugin extends BasePlugin {
 
   async whoami(): Promise<string> {
     try {
-      return execSync("whoami", { encoding: "utf8", timeout: 3000 }).trim();
+      return execFileSync("whoami", [], { encoding: "utf8", timeout: 3000 }).trim();
     } catch {
       return userInfo().username;
     }

@@ -4,12 +4,14 @@
  * It handles native OS interactions, file system access, and process management.
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
 const { spawn, exec, execFileSync } = require('child_process');
-const { startAppServer } = require('./app-server');
+const crypto = require('crypto');
+const selfsigned = require('selfsigned');
+const { startAppServer, DESKTOP_TOKEN_HEADER } = require('./app-server');
 
 /**
  * Best-effort blocklist for the most common catastrophic-accident shell
@@ -39,13 +41,65 @@ let mainWindow;
 let backendProcess;
 let appServer;
 
-const REPO_ROOT = path.join(__dirname, '..', '..', '..');
+/**
+ * Where the built app (dist/interface/main.js + dist/index.html) lives.
+ *
+ * In a dev checkout that is three levels up from src/main -- the repo root.
+ * In a PACKAGED app it is not: __dirname is
+ * `<app>/resources/app.asar/src/main`, so the same climb lands on
+ * `resources/`, and the app looked for `resources/scripts/build-backend.mjs`
+ * and died on startup. `extraResources` in package.json now copies the built
+ * dist/ to `resources/dist`, which is exactly what process.resourcesPath
+ * points at.
+ */
+const IS_PACKAGED = Boolean(app && app.isPackaged);
+const REPO_ROOT = IS_PACKAGED ? process.resourcesPath : path.join(__dirname, '..', '..', '..');
 const BACKEND_PORT = 7861;
 const APP_PORT = 4173;
 // Set by test/ipc-handlers.test.js: that suite only exercises the IPC
 // handlers below via a fake Electron shell and must not spawn a real
 // backend process or block on ensureBuilt()/waitForBackend().
 const SKIP_BACKEND = process.env.DESKTOP_APP_SKIP_BACKEND === '1';
+
+/**
+ * Per-launch secret proving a request came from this app's own window rather
+ * than a browser pointed at the same localhost port. Regenerated every start
+ * and never persisted, so there is nothing to leak between runs.
+ */
+const DESKTOP_TOKEN = crypto.randomBytes(32).toString('hex');
+
+/**
+ * The certificate this launch serves the window over, and its fingerprint.
+ * Generated in memory at startup and never written to disk, so there is no key
+ * file to leak or to go stale, and every run is a fresh identity.
+ */
+let tlsCert = null;
+let tlsFingerprint = null;
+
+/** Generate the per-launch self-signed certificate for 127.0.0.1. */
+async function createTlsCert() {
+  const pems = await selfsigned.generate(
+    [{ name: 'commonName', value: '127.0.0.1' }],
+    {
+      days: 1,
+      keySize: 2048,
+      algorithm: 'sha256',
+      // Modern TLS clients ignore commonName entirely and match on SAN, so a
+      // cert without this is rejected outright by Chromium.
+      extensions: [
+        {
+          name: 'subjectAltName',
+          altNames: [
+            { type: 7, ip: '127.0.0.1' },
+            { type: 2, value: 'localhost' },
+          ],
+        },
+      ],
+    }
+  );
+  const x509 = new crypto.X509Certificate(pems.cert);
+  return { key: pems.private, cert: pems.cert, fingerprint: x509.fingerprint256 };
+}
 
 /**
  * Build whichever half of the app (backend JS / frontend static site) is
@@ -55,6 +109,21 @@ const SKIP_BACKEND = process.env.DESKTOP_APP_SKIP_BACKEND === '1';
  */
 function ensureBuilt() {
   const npmCmd = process.platform === 'win32' ? 'npm.cmd' : 'npm';
+
+  // A packaged app ships a prebuilt dist/ and has no repo, no npm scripts and
+  // a read-only bundle -- there is nothing to build and nothing to build it
+  // with. Say so plainly instead of shelling out to a build that cannot work.
+  if (IS_PACKAGED) {
+    const backendEntry = path.join(REPO_ROOT, 'dist', 'interface', 'main.js');
+    if (!fs.existsSync(backendEntry)) {
+      throw new Error(
+        `Packaged app is missing its built application at ${backendEntry}. ` +
+        'This means the build did not copy dist/ into the package -- check ' +
+        'the "extraResources" entry in desktop-app/package.json.'
+      );
+    }
+    return;
+  }
 
   if (!fs.existsSync(path.join(REPO_ROOT, 'dist', 'interface', 'main.js'))) {
     console.log('[desktop-app] backend not built — running scripts/build-backend.mjs...');
@@ -92,6 +161,20 @@ function waitForBackend(port, timeoutMs = 15000) {
  * template's demo HTML page.
  */
 function createWindow() {
+  // Stamp the per-launch token on every request this window makes -- the page,
+  // its assets, and its /api calls all go through here. A browser opening the
+  // same URL sends no such header and gets 403.
+  // Only when we actually started the token-protected app-server; with
+  // SKIP_BACKEND there is no server to authenticate to.
+  if (!SKIP_BACKEND) {
+    session.defaultSession.webRequest.onBeforeSendHeaders(
+      { urls: [`https://127.0.0.1:${APP_PORT}/*`] },
+      (details, callback) => {
+        callback({ requestHeaders: { ...details.requestHeaders, [DESKTOP_TOKEN_HEADER]: DESKTOP_TOKEN } });
+      }
+    );
+  }
+
   mainWindow = new BrowserWindow({
     width: 1200,
     height: 800,
@@ -106,7 +189,9 @@ function createWindow() {
   if (SKIP_BACKEND) {
     mainWindow.loadFile(path.join(__dirname, '../renderer/index.html'));
   } else {
-    mainWindow.loadURL(`http://127.0.0.1:${APP_PORT}`);
+    // The boot screen: instant, self-contained, no server needed. Replaced
+    // with the real app by whenReady() once startNeuroclaw() resolves.
+    mainWindow.loadFile(path.join(__dirname, '../renderer/loading.html'));
   }
 
   // Open DevTools in development (optional)
@@ -120,9 +205,15 @@ function createWindow() {
 async function startNeuroclaw() {
   ensureBuilt();
 
-  backendProcess = spawn('node', ['dist/interface/main.js', 'web', String(BACKEND_PORT)], {
+  // Run the backend on Electron's own bundled Node rather than a `node` from
+  // PATH: an end user installing a .deb or AppImage has no reason to have
+  // Node installed, and spawning a bare 'node' would fail on their machine
+  // while working fine on any developer's. ELECTRON_RUN_AS_NODE makes
+  // process.execPath behave as a plain Node binary.
+  backendProcess = spawn(process.execPath, ['dist/interface/main.js', 'web', String(BACKEND_PORT)], {
     cwd: REPO_ROOT,
     stdio: 'inherit',
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
   });
   backendProcess.on('exit', (code) => {
     console.log(`[desktop-app] backend process exited with code ${code}`);
@@ -130,10 +221,15 @@ async function startNeuroclaw() {
 
   await waitForBackend(BACKEND_PORT);
 
+  tlsCert = await createTlsCert();
+  tlsFingerprint = tlsCert.fingerprint;
+
   appServer = await startAppServer({
     distDir: path.join(REPO_ROOT, 'dist'),
     backendPort: BACKEND_PORT,
     port: APP_PORT,
+    authToken: DESKTOP_TOKEN,
+    tls: { key: tlsCert.key, cert: tlsCert.cert },
   });
 }
 
@@ -151,15 +247,94 @@ function stopNeuroclaw() {
 /**
  * Application lifecycle events
  */
+/**
+ * One running copy per machine. Clicking the desktop icon while Corona is
+ * already open used to launch a second process, which would then race the
+ * first for ports 7861/4173 and fail -- the icon appeared to do nothing. The
+ * second instance now hands off to the first, which raises and focuses its
+ * window, so the icon always means "show me Corona".
+ *
+ * Not applied under SKIP_BACKEND: the IPC test suite loads this file directly
+ * with a fake Electron whose app has no lock methods, and must not exit.
+ */
+if (!SKIP_BACKEND && typeof app.requestSingleInstanceLock === 'function' && !app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+
+if (!SKIP_BACKEND && typeof app.on === 'function') {
+  app.on('second-instance', () => {
+    if (!mainWindow) return;
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+  });
+}
+
+/**
+ * The window's certificate is self-signed, so Chromium rejects it by default.
+ * Rather than disabling verification (which would accept ANY certificate,
+ * including one presented by something else that grabbed the port first), this
+ * accepts exactly one: the certificate this launch generated, matched on its
+ * SHA-256 fingerprint. That is strictly stronger than ordinary CA trust here --
+ * a public CA would vouch for any holder of a cert for this name, whereas this
+ * accepts only the key pair created in this process a moment ago.
+ */
+if (!SKIP_BACKEND && typeof app.on === 'function') {
+  app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+    const expected = tlsFingerprint;
+    const presented = certificate && certificate.fingerprint;
+    // Electron reports fingerprints as "sha256/<base64>"; node's X509 gives
+    // colon-separated hex. Compare on the raw bytes so the formats cannot
+    // silently fail to match and quietly fall through to a rejection.
+    if (expected && presented && normalizeFingerprint(presented) === normalizeFingerprint(expected)) {
+      event.preventDefault();
+      callback(true);
+      return;
+    }
+    callback(false);
+  });
+}
+
+/** "sha256/<base64>" or "AA:BB:.." -> lowercase hex, for format-independent comparison. */
+function normalizeFingerprint(fp) {
+  if (typeof fp !== 'string') return ''
+  if (fp.startsWith('sha256/')) {
+    return Buffer.from(fp.slice('sha256/'.length), 'base64').toString('hex').toLowerCase();
+  }
+  return fp.replace(/:/g, '').toLowerCase();
+}
+
 app.whenReady().then(async () => {
+  // Window first, backend second. The other order meant the user clicked the
+  // icon and got nothing at all for as long as the backend took to boot
+  // (measured at 13-18s), which is indistinguishable from a failed launch.
+  // The window now appears immediately showing the boot screen, and swaps to
+  // the app once the server is actually up.
+  createWindow();
+
   if (!SKIP_BACKEND) {
     try {
       await startNeuroclaw();
+      // Only now does the real URL exist to load.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        mainWindow.loadURL(`https://127.0.0.1:${APP_PORT}`);
+      }
     } catch (error) {
       console.error('[desktop-app] failed to start Neuroclaw:', error);
+      // Leave the boot screen up and say what went wrong, rather than sitting
+      // on "Starting..." forever or dropping the user on a blank window.
+      if (mainWindow && !mainWindow.isDestroyed()) {
+        const message = String(error && error.message ? error.message : error);
+        mainWindow.webContents.executeJavaScript(
+          `(() => { const d = document.getElementById('detail');
+             if (d) { d.className = 'detail error';
+               d.textContent = ${JSON.stringify('Corona could not start: ' + message)}; }
+             const m = document.querySelector('.mark');
+             if (m) m.style.animation = 'none'; })()`
+        ).catch(() => { /* window may have closed */ });
+      }
     }
   }
-  createWindow();
 
   app.on('activate', () => {
     // On macOS, re-create window when dock icon is clicked
@@ -303,10 +478,21 @@ ipcMain.handle('exec-command', async (event, command, options = {}) => {
   });
 });
 
-// Open external URLs in default browser
+// Open external URLs in default browser, strictly validating protocol to prevent unsafe protocols (like file://, ms-msdt:) or RCE.
 ipcMain.handle('open-external', async (event, url) => {
-  await shell.openExternal(url);
-  return { success: true };
+  if (typeof url !== 'string') {
+    return { success: false, error: 'Blocked: invalid URL type' };
+  }
+  try {
+    const parsedUrl = new URL(url);
+    if (parsedUrl.protocol !== 'http:' && parsedUrl.protocol !== 'https:') {
+      return { success: false, error: 'Blocked: unsafe protocol scheme' };
+    }
+    await shell.openExternal(url);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: 'Blocked: invalid URL format' };
+  }
 });
 
 // Show item in file manager
@@ -318,3 +504,5 @@ ipcMain.handle('show-in-folder', async (event, filePath) => {
 console.log('Desktop App initialized successfully!');
 console.log(`Platform: ${process.platform}`);
 console.log(`Architecture: ${process.arch}`);
+
+} // end single-instance guard

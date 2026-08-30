@@ -35,6 +35,12 @@
 - [[Languages|Languages]]
 - [[Pipeline|Pipeline]]
 
+## Self-Improvement & Legal
+- [[Self-Improvement|Self-Improvement]] - Autonomous training loop, peer sync, diagnostics
+- [[Privacy-Policy|Privacy-Policy]] - What data leaves your machine
+- [[Terms|Terms]] - Terms of use
+- [[Privacy|Privacy]] - Technical encryption/security details
+
 ## External Links
 - [GitHub Repository](https://github.com/zach909/.my-ai)
 - [ARCHITECTURE.md](../ARCHITECTURE.md)

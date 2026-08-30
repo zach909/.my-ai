@@ -9,7 +9,6 @@ Specialized groups of neurons determine which experts execute a task, so only th
 | Layer | File | What it is |
 |---|---|---|
 | TypeScript runtime backend | `models && skills/core/moe-router.ts` — `MoERouter` | Top-k expert routing with load-balanced utilization tracking |
-| Python training core | `tinygpt/moe.py` — `Expert`, `MoELayer` | A real, trainable top-k sparse MoE layer (`nn.Module`) |
 
 ## `MoERouter` (TypeScript)
 
@@ -25,17 +24,9 @@ An expert can be added either as raw weights (`addExpert(weights, bias)`) or as 
 
 ## `MoELayer` (Python)
 
-```python
-from tinygpt.moe import MoELayer
-
-layer = MoELayer(n_embd=384, n_experts=8, top_k=2, bias=True)
-out = layer(x)              # only top_k experts contribute per token
-usage = layer.skill_usage()  # per-expert activation counts
-```
-
 This is a genuine trainable sparse layer — gradients only flow through the `top_k` experts selected per token, so unselected experts are skipped computationally, not just masked to zero afterward. `skill_usage()` is how load imbalance (one expert dominating routing) gets surfaced during training.
 
-`tinygpt/plugins.py`'s `PluginSkillRegistry.build_expert_moe()` / `attach_to_config()` is what turns the registered [[Skills]] into a real `ExpertMoE` wired onto the mesh's `ModelConfig` — every skill genuinely becomes a routable expert, not just a labeled placeholder (this was a real gap fixed during this project's development: the self-healing, plugin-builder, and skill-builder skills used to be indistinguishable generic experts with no actual matching behaviour behind their names).
+Experts are groups of neurons inside the one network rather than models consulted beside it: `HyperDimensionalEngine.setNeuronGroup()` labels a neuron with the expert it belongs to, and a tick's `activeGroups` says which are being asked. A neuron in a group nobody asked for holds its state; it keeps every connection it had in both directions. (The Python `ExpertMoE` this section used to describe went with the TinyGPT track.)
 
 ## Verifying it
 

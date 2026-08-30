@@ -6,3 +6,58 @@ extensions/*.ext.json
 # scripts (extension-builder/) -- regenerable by rerunning those scripts,
 # same reasoning as the .ext.json rule above.
 extensions/*_weights_*.json
+
+# Deployment-local peer list for scripts/peer-sync.mjs -- who a given
+# running instance talks to directly is specific to that deployment, not
+# something to commit (and not auto-discovered, by design).
+peers.txt
+
+# scripts/self-improve.mjs's own runtime scoreboard on the dev branch --
+# it only ever gets committed by the loop itself, and only to the
+# target branch (see pushScoreboardToTargetBranch() in that script),
+# never here. loadScoreboard() already degrades to an empty baseline
+# when this file doesn't exist, so a local test run of the loop doesn't
+# leave an untracked file behind on this branch.
+self-improvement-scoreboard.json
+
+# scripts/skill-agent.mjs's own runtime topic-coverage registry -- same
+# reasoning as the scoreboard above. The actual published output (a new
+# wiki/*.md page) is what gets committed; this registry is just local
+# bookkeeping for topic rotation.
+skill-agent-registry.json
+
+# The real local conversation log (src/lib/conversation-log.ts /
+# scripts/conversation-learning-agent.mjs) -- absolute privacy boundary,
+# not just a regenerable-artifact convenience like the entries above.
+# This file contains real message content. It must never be committed,
+# ever, under any circumstance -- see wiki/Privacy-Policy.md.
+conversation-log.jsonl
+
+# scripts/conversation-learning-agent.mjs's own runtime bookkeeping
+# (which turn it last trained on) -- local only, same reasoning as the
+# scoreboard/registry entries above.
+conversation-learning-state.json
+
+# Cross-process lock file (scripts/conversation-learning-agent.mjs's
+# acquireLock()/releaseLock()) so the immediate in-process trigger
+# (src/lib/conversation-learning-trigger.ts) and the background loop never
+# train concurrently. Transient -- created and removed at runtime, never
+# meant to persist or be shared.
+conversation-learning.lock
+
+# src/lib/skill-mesh-metrics.ts's own local ledger -- every real chat
+# message's skill-mesh direct-answer attempt (hit or miss), the data
+# GET /api/self-improvement/history and the Self-Improvement dashboard's
+# third graph read. Local diagnostic data about how well this machine's
+# trained skills cover real usage, same reasoning as the scoreboard/
+# quality-history entries above.
+skill-mesh-history.jsonl
+
+# scripts/skill-drill-agent.mjs's own local judge ledger -- every drill
+# attempt (win or not), the data GET /api/self-improvement/history and
+# the Self-Improvement dashboard graph read. Local bookkeeping about how
+# well drilling is going on THIS machine, same reasoning as
+# self-improvement-scoreboard.json above -- NOT the actual improved
+# skill weights (those live in extensions/drill-weights/*.json, which
+# ARE committed and pushed on genuine improvement).
+skill-quality-history.json

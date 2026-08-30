@@ -1,4 +1,4 @@
-import { MoERouter } from '../models && skills/core/moe-router.js';
+import { MoERouter } from '../models && skills/core/onebrain.js';
 
 function benchmark() {
   const cfg = {

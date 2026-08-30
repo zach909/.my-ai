@@ -2,17 +2,46 @@ import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare } from 'lucide-react'
+import { Goal, Sparkles, CheckCircle2, ChevronRight, MessageSquare, Copy, Check } from 'lucide-react'
+import { AgentPulse } from '@/components/agent-pulse'
 
 export const Route = createFileRoute('/app/planning')({
   head: () => ({
     meta: [
-      { title: 'Planning · ASI Architect' },
+      { title: 'Planning · Corona' },
       { name: 'description', content: 'Define goal hierarchies, task decomposition, and strategic planning for ASI agents.' },
     ],
   }),
   component: PlanningPage,
 })
+
+function CopyPlanButton({ planText }: { planText: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(planText)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy plan: ', err)
+    }
+  }
+
+  return (
+    <Button
+      variant="outline"
+      size="sm"
+      className="h-7 gap-1.5 text-xs active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+      onClick={handleCopy}
+      aria-label={copied ? 'Copied plan to clipboard' : 'Copy decomposed plan'}
+      title={copied ? 'Copied plan to clipboard' : 'Copy decomposed plan'}
+    >
+      {copied ? <Check size={13} className="text-emerald-500" /> : <Copy size={13} />}
+      <span>{copied ? 'Copied' : 'Copy plan'}</span>
+    </Button>
+  )
+}
 
 const GOALS = [
   { id: 'g1', title: 'Verify containment constraints', desc: 'Assess sandbox network isolation.' },
@@ -51,25 +80,40 @@ function PlanningPage() {
         <div className="space-y-3 md:col-span-1">
           <h2 className="text-sm font-semibold text-foreground">Select Goal to Decompose</h2>
           <div className="space-y-2">
-            {GOALS.map((g) => (
-              <button
-                key={g.id}
-                onClick={() => handleDecompose(g.id)}
-                disabled={planning}
-                className={`w-full text-left p-3 rounded-xl border text-xs transition-all duration-150 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
-                  selectedGoal === g.id
-                    ? 'border-primary bg-primary/5 text-foreground'
-                    : 'border-border bg-card hover:bg-accent/50 text-muted-foreground'
-                }`}
-                aria-label={`Select and decompose goal: ${g.title}`}
-              >
-                <div className="font-semibold text-foreground flex items-center gap-1.5">
-                  <Goal className="h-3.5 w-3.5 text-primary shrink-0" />
-                  {g.title}
-                </div>
-                <p className="mt-1 text-[11px] leading-relaxed">{g.desc}</p>
-              </button>
-            ))}
+            {GOALS.map((g) => {
+              const isSelected = selectedGoal === g.id;
+              return (
+                <button
+                  key={g.id}
+                  onClick={() => handleDecompose(g.id)}
+                  disabled={planning}
+                  aria-pressed={isSelected}
+                  aria-label={`${isSelected ? 'Selected' : 'Select and decompose'} goal: ${g.title}`}
+                  className={`group relative w-full text-left p-3 rounded-xl border text-xs transition-all duration-150 active:scale-95 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+                    isSelected
+                      ? 'border-primary bg-primary/5 text-foreground'
+                      : 'border-border bg-card hover:bg-accent/50 text-muted-foreground'
+                  }`}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="font-semibold text-foreground flex items-center gap-1.5 min-w-0">
+                      <Goal className="h-3.5 w-3.5 text-primary shrink-0" />
+                      <span className="truncate">{g.title}</span>
+                    </div>
+                    <ChevronRight
+                      size={14}
+                      className={`text-primary shrink-0 transition-all duration-150 ${
+                        isSelected
+                          ? 'opacity-100 translate-x-0'
+                          : 'opacity-0 -translate-x-1 group-hover:opacity-60 group-hover:translate-x-0 group-focus:opacity-60 group-focus:translate-x-0'
+                      }`}
+                      aria-hidden="true"
+                    />
+                  </div>
+                  <p className="mt-1 pr-4 text-[11px] leading-relaxed">{g.desc}</p>
+                </button>
+              );
+            })}
           </div>
         </div>
 
@@ -98,14 +142,18 @@ function PlanningPage() {
               </h3>
               {planning ? (
                 <div className="flex flex-col items-center justify-center py-8 space-y-2" role="status">
-                  <span className="text-xs text-muted-foreground animate-pulse">Decomposing objective...</span>
+                  <AgentPulse size={28} className="text-primary" label="The agent is planning" />
+                  <span className="text-xs text-muted-foreground">Decomposing objective...</span>
                 </div>
               ) : (
                 plan && (
                   <div className="space-y-3" role="log" aria-live="polite">
-                    <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
-                      <CheckCircle2 className="h-4 w-4" /> Goal decomposed successfully:
-                    </p>
+                    <div className="flex items-center justify-between gap-2">
+                      <p className="text-xs text-emerald-500 font-medium flex items-center gap-1.5">
+                        <CheckCircle2 className="h-4 w-4" /> Goal decomposed successfully:
+                      </p>
+                      <CopyPlanButton planText={plan.map((step, i) => `${i + 1}. ${step}`).join('\n')} />
+                    </div>
                     <ol className="space-y-2 pl-1">
                       {plan.map((step, i) => (
                         <li key={i} className="flex gap-2 text-xs text-muted-foreground leading-relaxed">

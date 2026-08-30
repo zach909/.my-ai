@@ -6,6 +6,8 @@ Welcome to the comprehensive wiki for NeuroClaw. NeuroClaw is the agent; it's po
 
 ### Core Documentation
 - [[Home|Home]] - Main wiki page
+- [AI & Neural Network Basics](../docs/AI_NEURAL_NETWORK_BASICS.md) - Plain-language primer on neurons, learning, elastic value, all-to-all connectivity, hyperdimensional thinking, and the Extension Builder
+- [Skill Acquisition Loop](../docs/SKILL_ACQUISITION_LOOP.md) - How an agent learns something new: check the wiki, fall back to web research, run experiments, then push the wiki page, skill source + binary, and the improvement algorithm
 - [[Architecture Overview|Architecture]] - System architecture and design
 - [[Quick Start Guide|Quick-Start]] - Getting started with installation and usage
 - [[NeuroLang Reference|NeuroLang]] - The custom neuron definition language
@@ -42,6 +44,14 @@ Welcome to the comprehensive wiki for NeuroClaw. NeuroClaw is the agent; it's po
 - [[Supported Languages|Languages]] - 500+ programming languages supported
 - [[Pipeline Flow|Pipeline]] - Data flow through the system
 - [[Chrome Apps|Chrome-Apps]] - Service connections via Chrome applications
+
+### Development & Repo Operations
+- [[Automated Bots|Bots]] - The Bolt/Sentinel/Palette/Jules PR bots that work on this repo, and the concurrent-corruption failure mode their overlapping PRs have caused more than once
+
+### Self-Improvement & Legal
+- [[Self-Improvement|Self-Improvement]] - `npm run server`'s autonomous training loop, direct peer-to-peer sync, and startup diagnostics — read this before running it
+- [[Privacy Policy|Privacy-Policy]] - Exactly what data leaves your machine, and when
+- [[Terms|Terms]] - Terms of use, including the autonomous behavior above
 
 ---
 

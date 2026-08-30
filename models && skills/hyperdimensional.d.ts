@@ -1,4 +1,4 @@
-import { HyperDimensionalEngine as CoreHyperDimensionalEngine } from './core/hyperdimensional.js';
+import { HyperDimensionalEngine as CoreHyperDimensionalEngine } from './core/onebrain.js';
 import type { Neuron } from './neuron.js';
 export { CoreHyperDimensionalEngine as HyperDimensionalEngine };
 export interface HyperDimensionalState {

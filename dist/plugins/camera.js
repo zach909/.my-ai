@@ -1,5 +1,5 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
-import { execSync } from "node:child_process";
+import { execFileSync } from "node:child_process";
 import { existsSync, readFileSync, unlinkSync, mkdtempSync, rmdirSync } from "node:fs";
 import { join } from "node:path";
 import { tmpdir } from "node:os";
@@ -9,26 +9,40 @@ export class CameraPlugin extends BasePlugin {
         this.streaming = false;
         this.streamDir = null;
     }
+    /**
+     * How someone would ASK for this, not what the plugin calls itself.
+     *
+     * Added after the agent exam measured routing and found this plugin
+     * unreachable for the obvious phrasing: the only terms available were its id
+     * and its manifest capabilities, so a request had to contain the plugin's
+     * own name to find it.
+     */
+    describeCapabilities() {
+        return {
+            verbs: ["photograph", "capture", "snap", "shoot", "film"],
+            nouns: ["camera", "photo", "picture", "image", "selfie", "webcam", "lens"],
+        };
+    }
     async captureImage() {
         const tmpDir = mkdtempSync(join(tmpdir(), "neuroclaw-cam-"));
         const outPath = join(tmpDir, "capture.jpeg");
         try {
-            if (existsSync("/usr/bin/ffmpeg") || existsSync("/usr/bin/fswebcam")) {
-                const cmd = existsSync("/usr/bin/fswebcam")
-                    ? `fswebcam --no-banner -r 1280x720 ${outPath} 2>/dev/null`
-                    : `ffmpeg -f video4linux2 -i /dev/video0 -vframes 1 ${outPath} -y 2>/dev/null`;
-                execSync(cmd, { timeout: 10000 });
-                if (existsSync(outPath)) {
-                    const data = readFileSync(outPath);
-                    return {
-                        imageData: data.toString("base64"),
-                        width: 1280,
-                        height: 720,
-                        format: "jpeg",
-                        timestamp: Date.now(),
-                        path: outPath,
-                    };
-                }
+            if (existsSync("/usr/bin/fswebcam")) {
+                execFileSync("fswebcam", ["--no-banner", "-r", "1280x720", outPath], { timeout: 10000, stdio: "ignore" });
+            }
+            else if (existsSync("/usr/bin/ffmpeg")) {
+                execFileSync("ffmpeg", ["-f", "video4linux2", "-i", "/dev/video0", "-vframes", "1", outPath, "-y"], { timeout: 10000, stdio: "ignore" });
+            }
+            if (existsSync(outPath)) {
+                const data = readFileSync(outPath);
+                return {
+                    imageData: data.toString("base64"),
+                    width: 1280,
+                    height: 720,
+                    format: "jpeg",
+                    timestamp: Date.now(),
+                    path: outPath,
+                };
             }
         }
         catch { }

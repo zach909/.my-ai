@@ -12,15 +12,17 @@
  *
  * Shared the same way skills and plugins already are (SkillLibrary /
  * PluginLibrary): every saved prompt is written to disk as a human-readable
- * wiki document under ~/.neuroclaw/prompts-wiki/, so any NeuroclawSystem
- * instance on the same machine -- including separate hive-mind agents --
- * can see and reuse a prompt another instance saved, instead of each
- * instance only ever holding its own in-memory copy. "Shared" here is
- * always a local filesystem read/write, never a network call (Section 17).
+ * wiki document under generated/prompts-wiki/ -- repo-relative, not
+ * homedir-relative, so a saved prompt is genuinely public (committed/
+ * pushed like any other repo change) rather than living only in an
+ * ephemeral local sandbox. Any NeuroclawSystem instance on the same
+ * machine -- including separate hive-mind agents -- can see and reuse a
+ * prompt another instance saved, instead of each instance only ever
+ * holding its own in-memory copy. "Shared" here is always a local
+ * filesystem read/write, never a network call (Section 17).
  */
 
 import { existsSync, readdirSync, readFileSync, writeFileSync, unlinkSync, mkdirSync } from "node:fs";
-import { homedir } from "node:os";
 import { join } from "node:path";
 
 export interface SavedPrompt {
@@ -52,7 +54,7 @@ export class PromptLibrary {
   private readonly wikiDir: string;
 
   constructor(wikiDir?: string) {
-    this.wikiDir = wikiDir ?? join(homedir(), ".neuroclaw", "prompts-wiki");
+    this.wikiDir = wikiDir ?? join(process.env.NEUROCLAW_GENERATED_DIR || join(process.cwd(), "generated"), "prompts-wiki");
     this.loadAll();
   }
 

@@ -64,7 +64,8 @@ export type ExtensionPermission =
   | "game-development"
   | "multi-desktop"
   | "multi-input"
-  | "virtual-devices";
+  | "virtual-devices"
+  | "wiki";
 
 export type APIEndpoint = {
   path: string;

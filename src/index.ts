@@ -1,11 +1,11 @@
 import { realpathSync } from "node:fs";
 import { writeFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
-import { homedir } from "node:os";
 import { join } from "node:path";
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
+import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
 import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";
@@ -47,6 +47,7 @@ import { CallHistoryPlugin } from "../plugins/call-history.js";
 import { PhoneCallsPlugin } from "../plugins/phone-calls.js";
 import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
 import type { SkillDefinition } from "../plugin_manager/types.js";
+import { embedText } from "../models && skills/core/neuro-lang.js";
 
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -58,6 +59,71 @@ import type { SkillDefinition } from "../plugin_manager/types.js";
  * - EmpathyEngine: tracks user emotion and alignment
  * - PluginRegistry: manages all plugins and skills
  */
+/**
+ * How similar a taught fact must be to the question before processQuery()
+ * answers from it directly instead of falling through to generation.
+ * Deliberately well above the 0.1 floor used for merely *contextual*
+ * retrieval: this gates giving a stored fact AS the answer, so a weak or
+ * incidental match must not qualify.
+ */
+/**
+ * How many stored instructions go onto the Zip Loop with one message.
+ *
+ * The loop is a working context with a finite size, so every instruction put
+ * on it is room the conversation does not get. Three is enough for one skill
+ * per step of a perceive-think-act cycle, which is what the categories are.
+ */
+const PROMPTING_SKILLS_PER_TURN = 3;
+const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
+
+/**
+ * Pull a standalone arithmetic expression out of free text and evaluate it
+ * exactly, or return null if the text does not contain one.
+ *
+ * Shared by processQuery() and the "mathematician" hive agent so the two can
+ * never drift into disagreeing about what counts as arithmetic. Uses
+ * evaluateExpression() (math-engine.ts's recursive-descent parser -- NOT
+ * eval()/Function(), so a hostile string cannot execute code) which is exact,
+ * unlike the prose predictor, whose character n-gram cannot compute anything.
+ */
+function tryExactArithmetic(text: string): string | null {
+  // Take the longest run of characters that could form an expression, rather
+  // than anchoring the match on a digit. Anchoring on a digit silently
+  // answered a DIFFERENT question than the one asked: "(8 + 4) / 3" matched
+  // only the inner "8 + 4" and confidently replied "8 + 4 = 12", dropping
+  // both the parenthesis and the division. A wrong answer stated confidently
+  // is worse than falling through to generation.
+  const spans = text.match(/[-+*/^()\d.\s]+/g);
+  if (!spans) return null;
+  const candidates = spans
+    .map(s => s.trim())
+    .filter(s => /\d/.test(s) && /[-+*/^]/.test(s))
+    .sort((a, b) => b.length - a.length);
+  for (const raw of candidates) {
+    // Trim characters off either end until the parentheses balance, so a
+    // trailing "(" swept up from surrounding prose cannot fail the whole match.
+    let expr = raw;
+    while (expr.length > 0) {
+      let depth = 0;
+      let balanced = true;
+      for (const ch of expr) {
+        if (ch === "(") depth++;
+        else if (ch === ")" && --depth < 0) { balanced = false; break; }
+      }
+      if (balanced && depth === 0) break;
+      expr = depth > 0 ? expr.slice(0, expr.lastIndexOf("(")).trim()
+                       : expr.slice(expr.indexOf(")") + 1).trim();
+    }
+    if (!expr || !/\d/.test(expr) || !/[-+*/^]/.test(expr)) continue;
+    try {
+      return `${expr} = ${evaluateExpression(expr)}`;
+    } catch {
+      // Not actually a valid expression -- try the next candidate.
+    }
+  }
+  return null;
+}
+
 export class NeuroclawSystem {
   llm: NeuroclawLLM;
   pipeline: NeuroPipeline;
@@ -144,7 +210,14 @@ export class NeuroclawSystem {
     this.pipeline = new NeuroPipeline({
       zipPersistDir: this.zipPersistDir ? join(this.zipPersistDir, "pipeline") : undefined,
     });
-    this.pluginRegistry = new PluginRegistry();
+    // ONE brain, not one per subsystem. PluginRegistry defaults to building
+    // its own MixtureOfExperts (and therefore its own NeuronMesh), which left
+    // every plugin's neurons wired all-to-all among *themselves* but severed
+    // from the language brain's neurons -- two disconnected networks in one
+    // agent. Handing it a MoE backed by UnifiedBrain's own mesh puts plugin
+    // neurons in the same all-to-all mesh as everything else, so a plugin
+    // firing genuinely propagates into the rest of the network.
+    this.pluginRegistry = new PluginRegistry(new MixtureOfExperts(2, this.llm.mesh));
     this.veto = new AlignmentVeto();
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     this.empathy = new EmpathyEngine();
@@ -197,7 +270,7 @@ export class NeuroclawSystem {
     // duplicating their logic.
     this.critic = new Critic({ knowledge: this.knowledge, math: this.math, mistakes: this.mistakes });
     // Skill library: search/load skills SkillMakerExtension has already
-    // written to disk (~/.neuroclaw/skills + skills-wiki), so a skill one
+    // written to disk (generated/skills + skills-wiki), so a skill one
     // instance built is discoverable and loadable by another instead of
     // being recreated from scratch.
     this.skillLibrary = new SkillLibrary();
@@ -434,7 +507,7 @@ export class NeuroclawSystem {
             }
           : undefined;
       try {
-        const instance = createPluginInstance(def.name, def, skillDef);
+        const instance = createPluginInstance(def.name, def, skillDef, this.pluginRegistry.getMoE().getMesh());
         this.pluginRegistry.register(def, instance);
         if (skillDef) this.pluginRegistry.registerSkill(skillDef, def.id);
       } catch (e) {
@@ -569,12 +642,57 @@ export class NeuroclawSystem {
     //    emotionally-charged messages are retained more strongly and evicted
     //    last under capacity pressure.
     await this.zipIO.ingest(input);
+
+    // Prompting Skills enter here, as information.
+    //
+    //   Prompting Skill -> Skill Folder -> Prompt -> INPUT -> ZIP LOOP
+    //
+    // They were reachable from exactly one place, the chat-bot service, where
+    // they steer a separate procedural perceive-think-act loop. That is a
+    // real use of them and it is not this one: the architecture says the
+    // prompt is "provided to the Zip Loop as part of the information being
+    // processed", so the neural side can see the instruction alongside the
+    // question. It never was. A skill folder full of instructions had no
+    // effect whatsoever on anything the mesh computed.
+    //
+    // Only the ones that apply to what actually arrived -- a skill declares
+    // when it applies, and putting every stored instruction on the loop for
+    // every message would drown the input in advice about other tasks.
+    try {
+      const { loadRegistry } = await import("../models && skills/core/prompting-skill-store.js");
+      const registry = loadRegistry();
+      const applicable = [
+        ...registry.forStep("perception", input),
+        ...registry.forStep("cognitive", input),
+        ...registry.forStep("action", input),
+      ];
+      // Highest priority first, and capped: the loop is a working context with
+      // a size, and instructions must not crowd out the conversation.
+      const chosen = applicable
+        .sort((a, b) => b.priority - a.priority)
+        .slice(0, PROMPTING_SKILLS_PER_TURN);
+      for (const skill of chosen) {
+        await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
+      }
+    } catch {
+      // No registry on disk, or an unreadable one. A missing instruction is
+      // not a reason to drop the message it was meant to help with.
+    }
+
     const turnImportance = Math.min(1, 0.4 + Math.max(0, emotion.arousal) * 0.4);
     // Retrieve relevant prior conversation turns *before* recording the current
     // one (so the current message can't match itself). This is the continuous-
     // context step: previous information is carried into the current response.
     const priorHistory = this.memory
       .retrieve(input, { topK: 3, tag: "chat-turn" })
+      .filter(h => h.similarity >= 0.1);
+    // Taught facts are tagged "knowledge", NOT "chat-turn", so the
+    // conversation-history retrieve above can never surface them -- asking
+    // about something the system was explicitly taught searched only the
+    // chat transcript and found nothing. Retrieved separately here so a
+    // lesson can actually inform the answer.
+    const knownFacts = this.memory
+      .retrieve(input, { topK: 3, tag: "knowledge" })
       .filter(h => h.similarity >= 0.1);
     this.memory.remember(`User: ${input}`, { tags: ["chat-turn", "user"], importance: turnImportance });
 
@@ -637,6 +755,44 @@ export class NeuroclawSystem {
     if (route.capability === "recall" && priorHistory.length > 0) {
       const recalled = priorHistory.map(h => `• ${h.item.content}`).join("\n");
       return this.respondDirect(`From our earlier conversation, here's what's relevant:\n${recalled}`, turnImportance);
+    }
+
+    // 5a. Exact arithmetic. The system contains a real, tested expression
+    // evaluator (math-engine.ts) and already used it for the "mathematician"
+    // hive agent -- but plain chat never reached it, so asking "what is 2 + 2"
+    // fell through to the prose predictor, whose character n-gram over a fixed
+    // proverb corpus cannot compute anything and answered with proverb
+    // fragments. Routing here makes a capability the system already had
+    // actually reachable, and the answer is exact rather than predicted.
+    const exactMath = tryExactArithmetic(input);
+    if (exactMath) return this.respondDirect(exactMath, turnImportance);
+
+    // 5b. Retrieval-grounded answering. When the system has actually been
+    // TAUGHT something that closely matches the question, answer from that
+    // instead of falling through to generation.
+    //
+    // This is not a shortcut around the neural path -- it is a correction of
+    // a real failure. The prose predictor is a character-level n-gram over a
+    // ~270-word hardcoded corpus (models && skills/trainer.ts's
+    // TRAINING_CORPUS), so generation cannot reproduce a fact it was taught
+    // no matter how well the fact was stored; it emits fragments of that
+    // fixed corpus. Returning what the system genuinely knows is strictly
+    // more truthful than sampling noise that ignores it.
+    //
+    // Deliberately gated on a strong match (weak/ambiguous matches still
+    // fall through to generation below) so this answers only when the system
+    // really was told something relevant, rather than dressing up every
+    // loosely-related memory as an answer.
+    const bestFact = knownFacts[0];
+    if (bestFact && bestFact.similarity >= GROUNDED_ANSWER_MIN_SIMILARITY) {
+      const supporting = knownFacts
+        .filter(h => h.similarity >= GROUNDED_ANSWER_MIN_SIMILARITY)
+        .map(h => `• ${h.item.content}`)
+        .join("\n");
+      return this.respondDirect(
+        `From what I've been taught:\n${supporting}`,
+        turnImportance,
+      );
     }
 
     // 6. Run the query through the real neural runner (THORNS intent →
@@ -704,7 +860,76 @@ export class NeuroclawSystem {
   }
 
   private async learnImpl(information: string, opts?: import("../models && skills/core/autonomous-learner.js").LearnOptions) {
-    const result = this.learner.learn(information, opts);
+    let result = this.learner.learn(information, opts);
+
+    // Ask the MESH whether it has anything that handles this.
+    //
+    // This is the "Determine Required Capability" step, and it used to be
+    // decided entirely by counting words in the input -- procedural phrases,
+    // a repetition threshold. That is a text heuristic wearing the
+    // architecture's clothes: the spec says the wave propagates through the
+    // mesh and the AI RECOGNIZES it has no way to handle what arrived, which
+    // is a question about the network's own response, not about vocabulary.
+    //
+    // So the information goes through the Zip Loop first, and every Net Skill
+    // region's response is read off the settled state. If nothing took it up
+    // -- measured against what this network normally manages, because the
+    // absolute level depends on its size and history -- that is the mesh
+    // asking for a capability, and it is enough on its own.
+    //
+    // It does not REPLACE the text path. Two different questions are being
+    // asked ("is this a procedure worth keeping?" and "can I already do
+    // this?") and either is a good reason to build something.
+    try {
+      const engine = this.pipeline.ensureBrain();
+      const dims = engine.getDimensions();
+      // The same embedding a grafted neuron's definition gets, so "what this
+      // text means" is the same question in both places. A hand-rolled
+      // character hash was tried first and measured what it deserved to: it
+      // grew with the length of the string, so the longest input scored the
+      // HIGHEST response and the signal was reading sentence length rather
+      // than familiarity.
+      const embedded = embedText(information, dims);
+      // Unit length, so magnitude cannot drive the response either. What is
+      // being asked is which DIRECTION the input points and whether any
+      // region has learned to answer it.
+      let norm = 0;
+      for (const v of embedded) norm += v * v;
+      norm = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+      const vector = Array.from(embedded, v => v * norm * Math.sqrt(dims) * 0.4);
+      engine.process(vector, undefined, new Set([0]), undefined, { learn: false });
+      const gap = engine.capabilityGap();
+      if (gap.needed && result.decision !== "ignored-unreliable") {
+        result = {
+          ...result,
+          decision: "recommend-extension",
+          reason: `${result.reason}; and the mesh has nothing that handles this`
+            + ` (best region "${gap.bestSkill ?? "none"}" responded ${gap.bestResponse.toFixed(4)}`
+            + ` against its usual ${gap.baseline.toFixed(4)})`,
+        };
+      }
+    } catch {
+      // A mesh that cannot be asked is not a reason to stop learning. The
+      // text path still decides on its own.
+    }
+    // Make the taught information RETRIEVABLE. learn() previously handed the
+    // text to the learner (and, above, the language model) but never put it
+    // in long-term memory, so nothing could ever look it up again -- the one
+    // store processQuery() actually searches when answering had no record
+    // that the lesson happened. Tagged "knowledge" to distinguish a taught
+    // fact from the "chat-turn" transcript of a conversation.
+    this.memory.remember(information, { tags: ["knowledge"], importance: 0.85 });
+    // Actually teach the language model the text it was just given.
+    // Previously learn() recorded the information in the learner/memory but
+    // never fed it to the prose predictor, so the thing generating replies
+    // had genuinely never seen it -- teaching a fact could not change a
+    // single word of any future answer. learnText() (not trainOnText())
+    // because the latter rebuilds the model from only this one string,
+    // erasing every earlier lesson; see NeuroclawTrainer.learnText().
+    // Non-fatal: a training failure must not lose the learned record above.
+    try {
+      await this.llm.learnText(information);
+    } catch { /* keep the recorded knowledge even if retraining fails */ }
     if (result.decision === "recommend-skill" || result.decision === "recommend-extension") {
       // ASI §3/§10/§13/§23: gate the real side effect through the same
       // AlignmentVeto safety layer every other action-taking entry point
@@ -750,6 +975,136 @@ export class NeuroclawSystem {
           if (name) this.improvement.snapshot(`${result.decision === "recommend-skill" ? "skill" : "extension"}:${name}`, parsed);
         } catch { /* non-JSON creation output — nothing structured to version */ }
       }
+
+      // Connect it to the neural system.
+      //
+      // This is the last arrow of the capability loop -- Create -> Test ->
+      // Connect -> Neural System -> Zip Loop -> Wave -> Mesh -- and it did not
+      // exist. Grafting only ever happened on the install paths, so an
+      // extension a PERSON installed became a region of the mesh and an
+      // extension the AI built FOR ITSELF did not: it was written to disk and
+      // registered as a plugin and the wave could never reach it. The loop
+      // stopped one step short of closing, on exactly the half the whole idea
+      // is about.
+      //
+      // Non-fatal, like the boot-time graft: a capability that cannot be
+      // grafted is still a capability, and losing the graft must not lose the
+      // creation.
+      if (created) {
+        try {
+          // The makers emit a plugin, not a net skill, so there are usually no
+          // neurons to graft. A capability with no neuron is a capability the
+          // wave cannot reach, so one is derived from what was LEARNED: the
+          // procedure itself as the definition, which is what places the
+          // neuron's state and its wave.
+          //
+          // The name must not come from the maker's output shape. Which maker
+          // answers depends on the content -- plugin-maker returns
+          // {type, plugin}, but a different one returned
+          // {original, formatted, analysis, generated, ...} with no name
+          // anywhere, and the graft silently skipped: created said yes and
+          // the mesh stayed at 64 neurons. So the maker's name is used when
+          // it offers one and the learned text names it otherwise. A
+          // capability joins the mesh regardless of who built it.
+          //
+          // A region of one. It can grow later the way any region does; what
+          // matters is that it EXISTS there, so the next time this input
+          // arrives the wave arrives somewhere.
+          // Parsed leniently. A maker that returns something other than JSON
+          // still built a capability, and the graft below needs a name and a
+          // definition, both of which the learned text can supply. Letting a
+          // parse failure throw out of here silently skipped everything after
+          // it -- including recording that the build had failed, which is the
+          // one thing a failed build must not do.
+          let parsed: Record<string, unknown> = {};
+          try {
+            const candidate = JSON.parse(created) as unknown;
+            if (candidate && typeof candidate === "object") parsed = candidate as Record<string, unknown>;
+          } catch { /* not JSON: the learned text names it below */ }
+          const offered = parsed.skill ?? parsed.plugin ?? parsed.name;
+          const name = typeof offered === "string" && offered.trim().length > 0
+            ? offered.trim()
+            : information.toLowerCase().replace(/[^a-z0-9]+/g, "-").replace(/^-|-$/g, "").slice(0, 80)
+              || "extension";
+          const offeredNeurons = parsed.neurons;
+          const neurons = Array.isArray(offeredNeurons) && offeredNeurons.length > 0
+            ? offeredNeurons
+            : [{ name, definition: information }];
+          const { graftNetSkill } = await import("../models && skills/core/net-skill-graft.js");
+          const graft = graftNetSkill(this.pipeline.ensureBrain(), name, neurons);
+
+          // USE IT, AND PUT THE RESULT BACK IN THE LOOP.
+          //
+          // "The AI can use the extension, observe its result, and feed that
+          // result back into the Zip Loop" is the arrow that made this a
+          // cycle rather than a line, and it was the one still missing.
+          // Creation ended here: a region appeared in the mesh and nothing
+          // ever ran through it, so the system had no way to know whether
+          // building the thing had helped.
+          //
+          // Using it is running the mesh over the input that prompted it, now
+          // that the new region exists and is tuned to answer it -- which is
+          // exactly the "next time the AI encounters that type of file" the
+          // architecture describes. Observing the result is asking the same
+          // question that fired the builder in the first place: does the mesh
+          // still have nothing that handles this?
+          const outcome = graft.added > 0
+            ? `Built "${name}" and connected ${graft.added} neuron(s) to the network.`
+            : `Tried to build "${name}" but nothing joined the network${graft.skipped ? `: ${graft.skipped}` : "."}`;
+          if (graft.added > 0) {
+            const engine = this.pipeline.ensureBrain();
+            const dims = engine.getDimensions();
+            const embedded = embedText(information, dims);
+            let norm = 0;
+            for (const v of embedded) norm += v * v;
+            norm = norm > 0 ? 1 / Math.sqrt(norm) : 0;
+            const vector = Array.from(embedded, v => v * norm * Math.sqrt(dims) * 0.4);
+            // Learning ON: the point of the round trip is that the network
+            // keeps something from having used the new capability.
+            engine.process(vector, undefined, new Set([0]), undefined, { learn: true });
+            const after = engine.capabilityGap();
+            // Straight back onto the loop, as input, so the next cycle
+            // processes what happened rather than only what was asked.
+            await this.zipIO.ingest(after.needed
+              ? `${outcome} The network still has nothing that handles this.`
+              : `${outcome} The network now has something that handles this.`);
+            // Success or failure, observed and kept.
+            //
+            // "If it fails, the failure can be used to modify the extension or
+            // the relevant skills" -- the other half of the learning cycle,
+            // and the half that had nowhere to go. A build that left the mesh
+            // exactly as unable as before was reported onto the loop and then
+            // forgotten, so the next time the same thing arrived the system
+            // would build it again the same way and learn nothing.
+            //
+            // MistakeTracker already de-duplicates identical failures and
+            // counts recurrences, and lessons() is already read when the
+            // system plans, so recording it here is what makes a second
+            // attempt able to go differently.
+            if (after.needed) {
+              this.mistakes.record({
+                task: information,
+                description: `Built "${name}" for this and the network still has nothing that handles it.`,
+                cause: "incorrect-skill",
+                failedSkill: name,
+                prevention: `Building "${name}" from this description did not give the network a capability for it -- a different shape of extension is needed, not another copy of this one.`,
+              });
+            }
+          } else {
+            await this.zipIO.ingest(outcome);
+            this.mistakes.record({
+              task: information,
+              description: outcome,
+              cause: "incorrect-skill",
+              failedSkill: name,
+              prevention: graft.skipped
+                ? `Grafting "${name}" was refused: ${graft.skipped}`
+                : `Nothing joined the network when building "${name}".`,
+            });
+          }
+        } catch { /* unparseable creation, or the mesh is full */ }
+      }
+
       // Unlike the other five entry points, `created` here is structured JSON
       // consumed both internally (above) and by callers — annotating it with
       // "[Confirm before acting: ...]" the way solve()/collaborate()/etc.
@@ -1580,15 +1935,8 @@ export class NeuroclawSystem {
         // §13: "verify reasoning rather than relying only on neural
         // predictions" -- when the task actually contains a standalone
         // arithmetic expression, compute it for real instead of guessing.
-        const candidate = prompt.match(/-?\d+(?:\.\d+)?(?:\s*[-+*/^()]\s*-?\d+(?:\.\d+)?)+/);
-        if (candidate) {
-          try {
-            const value = evaluateExpression(candidate[0]);
-            return `${candidate[0].trim()} = ${value}`;
-          } catch {
-            // Matched text wasn't actually a valid expression -- fall through.
-          }
-        }
+        const exact = tryExactArithmetic(prompt);
+        if (exact) return exact;
         return this.runner.generate(prompt);
       },
     });
@@ -1949,7 +2297,7 @@ export class NeuroclawSystem {
   /**
    * ASI §9/§12: "which skills it has" / "use learning to create skills, use
    * skills to solve problems" — every skill `learn()` creates via the real
-   * skill-maker plugin is written to `~/.neuroclaw/skills/*.neuri` and then
+   * skill-maker plugin is written to `generated/skills/*.neuri` and then
    * never read back by anything: there was no live inventory of what the
    * system has actually taught itself. This gives the self-model that
    * inventory (name + description parsed from each file's own header),
@@ -1960,7 +2308,14 @@ export class NeuroclawSystem {
    * does not attempt to solve in one step.
    */
   async selfAuthoredSkills(): Promise<Array<{ name: string; description: string; path: string }>> {
-    const skillDir = join(homedir(), ".neuroclaw", "skills");
+    // Matching SkillMakerExtension's generatedDir('skills') (plugins/
+    // extensions/index.ts), NEUROCLAW_GENERATED_DIR override included --
+    // this used to point at homedir()/.neuroclaw/skills, a stale path from
+    // before self-authored skills moved into the repo (generated/) so
+    // they're genuinely public/committable instead of living only in an
+    // ephemeral local sandbox; left unfixed, selfAuthoredSkills() would
+    // silently see nothing a real skill-maker run had just created.
+    const skillDir = join(process.env.NEUROCLAW_GENERATED_DIR || join(process.cwd(), "generated"), "skills");
     let entries: string[];
     try {
       entries = await readdir(skillDir);

@@ -1,4 +1,4 @@
-import { NeuronMesh } from '../models && skills/core/mesh.js';
+import { NeuronMesh } from '../models && skills/core/onebrain.js';
 
 function benchmark() {
   const nodeCount = 200;

@@ -1,7 +1,105 @@
 import { SkillPlugin } from "../../plugin_manager/sdk.js";
+import { createContext, Script } from "node:vm";
+import { iterateOnCode, verifyCode, } from "../../models && skills/core/code-iteration.js";
+/** Parses an expected value, falling back to the literal text when it is not JSON. */
+function safeJson(text) {
+    try {
+        return JSON.parse(text);
+    }
+    catch {
+        return text;
+    }
+}
+/** Hard ceiling on a single sandboxed run -- this is meant for quick calculation/data-shaping, not a general job runner. */
+const SANDBOX_TIMEOUT_MS = 1000;
 export class CodingExtension extends SkillPlugin {
     constructor(definition, skillDefinition) {
         super(definition, skillDefinition);
+    }
+    /**
+     * onMessage was never overridden here, so BasePlugin's default (echo the
+     * input back) is what dispatch() actually called -- execute()'s real
+     * static-analysis logic below had no live call site anywhere in the
+     * system despite being fully implemented. This connects it, and adds the
+     * one real capability that was still missing entirely: actually running
+     * a snippet (not just analyzing it) via runSandboxed() below, for a
+     * caller that says "run:"/"execute:"/"calculate:"/"eval:" up front.
+     * Anything else still goes through the existing analysis path.
+     */
+    describeCapabilities() {
+        return {
+            commands: ["run:", "execute:", "eval:", "calculate:", "verify:", "check:"],
+            verbs: ["code", "program", "implement", "debug", "refactor", "compile", "verify", "test"],
+            nouns: ["code", "function", "script", "snippet", "bug", "syntax", "algorithm"],
+        };
+    }
+    async onMessage(message) {
+        const input = typeof message === "string" ? message : String(message ?? "");
+        // verify: <code> ||| <expression> === <expected>
+        // Checking is what makes writing code work, so it gets a way in that does
+        // not require a caller to already hold a reference to this class.
+        const verify = input.match(/^(?:verify|check)\s*:\s*([\s\S]+?)\s*\|\|\|\s*([\s\S]+)$/i);
+        if (verify) {
+            const checks = verify[2]
+                .split("\n")
+                .map(line => line.trim())
+                .filter(Boolean)
+                .map((line, i) => {
+                const parts = line.split("===");
+                return {
+                    name: `check ${i + 1}`,
+                    expression: (parts[0] ?? "").trim(),
+                    expected: safeJson((parts[1] ?? "").trim()),
+                };
+            });
+            return this.verify(verify[1], checks);
+        }
+        const m = input.match(/^(run|execute|calculate|eval)\s*:\s*([\s\S]+)$/i);
+        if (m)
+            return this.runSandboxed(m[2]);
+        return this.execute(input);
+    }
+    /**
+     * Run code against real checks and say precisely what failed.
+     *
+     * Separate from runSandboxed() because "did it run" and "is it right" are
+     * different questions, and only the second one supports fixing anything.
+     */
+    verify(code, checks) {
+        return verifyCode(code, checks);
+    }
+    /**
+     * Write, run, read the failure, revise, repeat -- the loop that actually
+     * makes coding work. The proposing intelligence is the caller's; this owns
+     * the checking and the stopping conditions.
+     */
+    iterate(input) {
+        return iterateOnCode(input);
+    }
+    /**
+     * Runs a JS snippet in a genuinely isolated vm context: no `require`, no
+     * `process`, no filesystem, no network, no access to this process's own
+     * globals -- `createContext({})` starts from nothing, and `Script.
+     * runInContext`'s `timeout` kills a snippet that hangs or loops forever
+     * rather than blocking the caller indefinitely. This is deliberately
+     * scoped to quick, pure computation (arithmetic, string/array/JSON
+     * manipulation) -- the "calculate things" a math-engine.ts fixed
+     * function set can't cover, not a general job runner. Consistent with
+     * the project's NO EXTERNAL APIS constraint: nothing network-capable is
+     * ever exposed inside the sandbox, so it cannot reach out even if asked to.
+     */
+    runSandboxed(code) {
+        const start = Date.now();
+        try {
+            const sandbox = createContext({}); // fresh, empty global object -- no ambient access to this process
+            const script = new Script(code, { filename: "sandboxed-snippet.js" });
+            const result = script.runInContext(sandbox, { timeout: SANDBOX_TIMEOUT_MS });
+            return { result, error: null, ms: Date.now() - start };
+        }
+        catch (err) {
+            const msg = err instanceof Error ? err.message : String(err);
+            return { result: undefined, error: msg, ms: Date.now() - start };
+        }
     }
     async execute(input) {
         const code = input;

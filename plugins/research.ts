@@ -11,7 +11,7 @@
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { join, resolve, relative } from "node:path";
 
 export interface SearchResult {
   source: "memory" | "drive" | "web";
@@ -65,6 +65,21 @@ export class ResearchPlugin extends BasePlugin {
   }
 
   /**
+   * How someone would ASK for this, not what the plugin calls itself.
+   *
+   * Added after the agent exam measured routing and found this plugin
+   * unreachable for the obvious phrasing: the only terms available were its id
+   * and its manifest capabilities, so a request had to contain the plugin's
+   * own name to find it.
+   */
+  describeCapabilities() {
+    return {
+      verbs: ["research", "investigate", "study", "learn"],
+      nouns: ["topic", "subject", "source", "reference", "background", "information"],
+    };
+  }
+
+  /**
    * "search its own chats" -- the real LongTermMemory.retrieve() (the
    * same store /api/extension/register's remember() calls already
    * write into, and every trained network loaded at boot lands in),
@@ -94,7 +109,13 @@ export class ResearchPlugin extends BasePlugin {
     query: string,
     opts: { root?: string; maxResults?: number; maxFiles?: number } = {},
   ): Promise<SearchResult[]> {
+    const absoluteRoot = resolve(process.cwd());
     const root = resolve(opts.root ?? process.cwd());
+    const checkRelative = relative(absoluteRoot, root);
+    if (checkRelative.startsWith("..") || (opts.root !== undefined && !root.startsWith(absoluteRoot))) {
+      throw new Error(`Security Error: Path traversal detected for path: ${opts.root}`);
+    }
+
     const maxResults = opts.maxResults ?? 20;
     const maxFiles = opts.maxFiles ?? 5000;
     const needle = query.toLowerCase();

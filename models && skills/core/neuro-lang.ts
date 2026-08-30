@@ -5,12 +5,26 @@
  *   name="example"                             — create neuron named "example"
  *   "name"@value="1.0"                         — set neuron's value
  *   "name"@vale="0.9"                          — set neuron's vale (elasticity/resistance to change)
+ *   "name"@wave="0.3,1.57"                     — set neuron's wave: frequency, then phase in radians
  *   "name"@connections=".other*0.5+.third*0.3"  — set connections (alias: @conections=)
  *   "name"@definition="text"                   — set definition (alias: @definishon=)
  *   "name"@code="code"                         — attach code
+ *   "name"@role="input"                        — tag as this skill's input layer (alias: "output")
  *   code@name="calc"                           — create code-to-net neuron
- *   "netsearch"@net="location"                 — create netsearch neuron
+ *   "netsearch"@name="idx"                     — create/select a netsearch neuron
+ *   "netsearch"@corpus="text..."               — attach its training corpus
+ *   "netsearch"@query="find x"                 — attach its search query text
+ *   "netsearch"@net="location"                 — attach its search location
  *   print "name"                               — print neuron info
+ *
+ * @role tags a neuron as belonging to a skill's dedicated input or output
+ * layer. It changes nothing about wiring — a tagged neuron is still an
+ * ordinary neuron with ordinary default all-to-all connections into the
+ * rest of the map (and, once installed, the rest of the shared mesh) — it
+ * is purely a role label, the same pattern MoE experts already use
+ * (models && skills/core/onebrain.ts's Expert.neuronIds). SkillLibrary.getIOLayers()
+ * reads it back after install() to hand a skill's caller its input/output
+ * neurons without needing to know their names in advance.
  *
  * @conections= and @definishon= are the DSL's canonical (deliberately
  * non-standard) spellings from the original neurolang.py; @connections=/
@@ -21,9 +35,9 @@
  * connection is specified.
  */
 
-import type { HyperDimensionalEngine } from './hyperdimensional.js';
+import type { HyperDimensionalEngine } from './onebrain.js';
 import type { ValueRangeAllocator } from './value-range.js';
-import type { ElasticCoreBlock, DefinitionCheckResult } from './elastic-core.js';
+import type { DefinitionCheckResult } from './elastic-core.js';
 import { CodeToNetCompiler, CodeNet } from './code-to-net.js';
 import type { CompileOptions, TestReport } from './code-to-net.js';
 import { NetSearchEngine } from './net-search.js';
@@ -39,7 +53,24 @@ export interface NeuriNeuron {
   code: string | null;
   isNetSearch: boolean;
   netLocation: string | null;
+  /** netsearch-only: the raw text corpus and query bound via `"netsearch"@corpus="..."`/`"netsearch"@query="..."` -- mirrors extension-builder/builder.js's NeuronData.corpus/.query so a project round-trips through parseNeuroLang()/exportToNeuroLang() without losing its net-search training data. */
+  corpus: string;
+  query: string;
   isCodeNet: boolean;
+  /** Skill I/O layer tag, set via `"name"@role="input"`/`"output"`. Undefined = untagged (an ordinary interior neuron). */
+  role?: 'input' | 'output';
+  /**
+   * The wave this neuron carries, set via `"name"@wave="frequency,phase"`.
+   *
+   * Every neuron in the mesh has one -- it is how it is heard in the shared
+   * pool, and neurons on the same frequency add while opposite phases cancel.
+   * Left unset, the graft gives a neuron the wave its DEFINITION asks for, so
+   * neurons meaning the same thing reinforce without anyone choosing
+   * frequencies by hand. Set it when two neurons must be exact opposites --
+   * the same frequency half a cycle apart -- which is a thing meaning alone
+   * cannot express and the Zip Loop's two bit neurons depend on.
+   */
+  wave?: { frequency: number; phase: number };
 }
 
 export interface ParseResult {
@@ -58,7 +89,10 @@ interface SerializedNeuron {
   code: string | null;
   isNetSearch: boolean;
   netLocation: string | null;
+  corpus: string;
+  query: string;
   isCodeNet: boolean;
+  role?: 'input' | 'output';
 }
 
 /**
@@ -126,6 +160,19 @@ export class NeuroLangInterpreter {
 
     for (let lineNo = 0; lineNo < lines.length; lineNo++) {
       const raw = lines[lineNo];
+      // Full-line '#' comments -- the convention exportToNeuroLang() (and
+      // both the Python tracks, asi_core/neural_dsl.py and
+      // model && skills manager/neurolang.py) actually write, unlike this
+      // parser's own inline `-- ...` style. Without this, EVERY export
+      // round-tripped back through parse() failed on line 1 (its own
+      // `# NeuroLang export for ...` header), before a single real
+      // statement was ever reached.
+      if (raw.trim().startsWith('#')) continue;
+      // A bare `dims = N` line (also emitted by exportToNeuroLang() as a
+      // header) is metadata about the project's dimensionality, not a
+      // neuron statement -- recognised and skipped rather than thrown as
+      // "unrecognised syntax".
+      if (/^dims\s*=\s*\d+$/i.test(raw.trim())) continue;
       // Strip inline comments (-- ...) and trim whitespace
       const line = raw.replace(/--.*$/, '').trim();
       if (!line) continue;
@@ -260,6 +307,25 @@ export class NeuroLangInterpreter {
   }
 
   /**
+   * A skill's dedicated input/output neuron layers -- every neuron tagged
+   * `@role="input"`/`"output"` in the given map, split accordingly. The
+   * neurons themselves are unremarkable: still wired all-to-all into the
+   * rest of the map by evaluate() like everything else, so this is a
+   * read-back of role labels, not a separate wiring boundary -- the same
+   * "grouping is a label, not a wiring restriction" pattern MoE experts
+   * use (models && skills/core/onebrain.ts).
+   */
+  getIOLayers(neurons: Map<string, NeuriNeuron>): { inputs: NeuriNeuron[]; outputs: NeuriNeuron[] } {
+    const inputs: NeuriNeuron[] = [];
+    const outputs: NeuriNeuron[] = [];
+    for (const n of neurons.values()) {
+      if (n.role === 'input') inputs.push(n);
+      else if (n.role === 'output') outputs.push(n);
+    }
+    return { inputs, outputs };
+  }
+
+  /**
    * Serialise a neuron map to JSON.
    */
   toJSON(neurons: Map<string, NeuriNeuron>): string {
@@ -273,7 +339,10 @@ export class NeuroLangInterpreter {
         code: n.code,
         isNetSearch: n.isNetSearch,
         netLocation: n.netLocation,
+        corpus: n.corpus,
+        query: n.query,
         isCodeNet: n.isCodeNet,
+        role: n.role,
       });
     }
     return JSON.stringify(serialized, null, 2);
@@ -314,7 +383,10 @@ export class NeuroLangInterpreter {
         code: typeof sn.code === 'string' ? sn.code : null,
         isNetSearch: Boolean(sn.isNetSearch),
         netLocation: typeof sn.netLocation === 'string' ? sn.netLocation : null,
+        corpus: typeof sn.corpus === 'string' ? sn.corpus : '',
+        query: typeof sn.query === 'string' ? sn.query : '',
         isCodeNet: Boolean(sn.isCodeNet),
+        role: sn.role === 'input' || sn.role === 'output' ? sn.role : undefined,
       };
       neurons.set(neuron.name, neuron);
     }
@@ -384,7 +456,32 @@ export class NeuroLangInterpreter {
           neurons.set(target.name, target);
         }
         target.netLocation = location;
+        // `@net=` is always the LAST of the netsearch statements a producer
+        // emits (see extension-builder/builder.js's exportToNeuroLang:
+        // name, corpus, query, net, in that order) -- clearing the pending
+        // pointer here, not on @corpus=/@query=, is what lets all three
+        // bind to the same declaration.
         this.pendingNetSearch = null;
+        return;
+      }
+    }
+
+    // ── "netsearch"@corpus="X" — attach a net-search training corpus ───────
+    {
+      const m = line.match(/^"netsearch"\s*@\s*corpus\s*=\s*"([^"]*)"$/);
+      if (m) {
+        const target = this.resolvePendingNetSearch(neurons);
+        target.corpus = m[1];
+        return;
+      }
+    }
+
+    // ── "netsearch"@query="X" — attach the search query text ───────────────
+    {
+      const m = line.match(/^"netsearch"\s*@\s*query\s*=\s*"([^"]*)"$/);
+      if (m) {
+        const target = this.resolvePendingNetSearch(neurons);
+        target.query = m[1];
         return;
       }
     }
@@ -412,6 +509,35 @@ export class NeuroLangInterpreter {
         if (isNaN(val)) throw new Error(`Invalid vale "${m[2]}" for neuron "${name}"`);
         const neuron = neurons.get(name) ?? this.defaultNeuron(name);
         neuron.vale = Math.max(0, Math.min(1, val));
+        neurons.set(name, neuron);
+        return;
+      }
+    }
+
+    // ── "X"@wave="0.3,1.57" — the wave this neuron carries ────────────────
+    {
+      const m = line.match(/^"([^"]+)"\s*@\s*wave\s*=\s*"?\s*(-?[0-9.]+)\s*,\s*(-?[0-9.]+)\s*"?$/);
+      if (m) {
+        const name = m[1];
+        const frequency = parseFloat(m[2]);
+        const phase = parseFloat(m[3]);
+        if (isNaN(frequency) || isNaN(phase)) {
+          throw new Error(`Invalid wave "${m[2]},${m[3]}" for neuron "${name}" -- expected frequency,phase`);
+        }
+        const neuron = neurons.get(name) ?? this.defaultNeuron(name);
+        neuron.wave = { frequency, phase };
+        neurons.set(name, neuron);
+        return;
+      }
+    }
+
+    // ── "X"@role="input"|"output" — tag as a skill I/O layer neuron ────────
+    {
+      const m = line.match(/^"([^"]+)"\s*@\s*role\s*=\s*"(input|output)"$/);
+      if (m) {
+        const name = m[1];
+        const neuron = neurons.get(name) ?? this.defaultNeuron(name);
+        neuron.role = m[2] as 'input' | 'output';
         neurons.set(name, neuron);
         return;
       }
@@ -481,6 +607,30 @@ export class NeuroLangInterpreter {
     throw new Error(`Unrecognised NeuriLang statement: "${line}"`);
   }
 
+  /**
+   * Resolve the netsearch declaration that a following `@corpus=`/`@query=`
+   * statement (no line-order guarantee relative to each other, but both
+   * always following their `@name=`) should attach to -- the same
+   * "bind to the pending named netsearch definition, in parse order"
+   * resolution `@net=` above uses, factored out so all three attributes
+   * agree on which neuron they're describing.
+   */
+  private resolvePendingNetSearch(neurons: Map<string, NeuriNeuron>): NeuriNeuron {
+    const pending = this.pendingNetSearch;
+    let target = pending ? neurons.get(pending) : undefined;
+    if (!target) {
+      // No `"netsearch"@name=` seen yet this parse -- fall back to a
+      // synthetic holder rather than silently discarding the statement, so
+      // out-of-order NeuroLang (@corpus= before @name=) still round-trips.
+      const name = 'netsearch:pending';
+      target = neurons.get(name) ?? this.defaultNeuron(name);
+      target.isNetSearch = true;
+      neurons.set(target.name, target);
+      this.pendingNetSearch = target.name;
+    }
+    return target;
+  }
+
   // ── Parse connection string: .name*weight+.name*weight ... ─────────────────
   private parseConnections(spec: string, sourceName: string): Map<string, number> {
     const connections = new Map<string, number>();
@@ -548,6 +698,8 @@ export class NeuroLangInterpreter {
       code: null,
       isNetSearch: false,
       netLocation: null,
+      corpus: '',
+      query: '',
       isCodeNet: false,
     };
   }
@@ -560,6 +712,7 @@ export class NeuroLangInterpreter {
     const flags: string[] = [];
     if (n.isCodeNet) flags.push('code-net');
     if (n.isNetSearch) flags.push(`netsearch:${n.netLocation}`);
+    if (n.role) flags.push(`role:${n.role}`);
 
     return (
       `[Neuron "${n.name}"] ` +
@@ -600,28 +753,198 @@ export interface ElasticMaterializeResult {
 }
 
 /**
- * Deterministic text -> unit vector, so the same definition text always
- * produces the same training target (and different text a different one)
- * without needing an external embedding model. Each dimension gets its own
- * running hash seeded by its index and folded over every character (not
- * just one or two fixed character positions), so short or low-diversity
- * strings (e.g. a single repeated character) still disperse across
- * dimensions instead of collapsing every dimension to the same value —
- * and, in turn, so two different definitions reliably land on genuinely
- * different targets rather than risking an accidental collision.
+ * Deterministic text -> vector, so the same text always produces the same
+ * training target without needing an external embedding model.
+ *
+ * This hashes overlapping character n-grams (n = 3..5, with start/end
+ * markers) into dimensions with signed accumulation, rather than hashing the
+ * whole string once per dimension. The distinction matters: a whole-string
+ * hash is a content-addressed *random point*, so the vector carries no
+ * geometry at all -- measured on the previous implementation, cos("cat",
+ * "cats") was 0.02 and cos("king", "queen") was -0.13, i.e. related text
+ * landed no closer than unrelated text and only exact identity scored. Every
+ * consumer that compares or trains on these vectors (interface/runner.ts
+ * feeds one straight into the brain as the live input representation) was
+ * therefore working in a space where distance meant nothing.
+ *
+ * Sharing n-grams now genuinely places text closer together, so distance is
+ * a real signal about relatedness. This is surface/morphological geometry,
+ * not learned semantic geometry -- "king" and "queen" share no n-grams and
+ * stay far apart. Meaning-level structure has to come from the mesh's own
+ * training on top of this; the point here is that the input space has usable
+ * structure for that training to build on instead of being noise.
+ *
+ * Two properties of the old implementation are deliberately preserved:
+ * short or low-diversity strings still disperse across dimensions rather
+ * than collapsing, and distinct text still lands on distinct targets. The
+ * output is scaled so per-component RMS matches the old uniform-[-1,1)
+ * distribution (1/sqrt(3)), keeping magnitudes in the range existing
+ * definition-training tolerances were tuned against; scaling cannot affect
+ * cosine similarity, so the geometry above is unchanged by it.
  */
+/** Who said it. The two sides of a conversation, kept apart. */
+export type Speaker = "ai" | "user";
+
+/**
+ * How a turn is written down, and how it is shown. Not exported: callers want
+ * formatTurn(), and an exported constant nothing outside calls is how dead
+ * code starts looking finished.
+ */
+const SPEAKER_LABELS: Record<Speaker, string> = { ai: "AI", user: "User" };
+
+/**
+ * One turn, written the way the conversation reads: "AI: ..." / "User: ...".
+ *
+ * The label is part of the text on purpose. Continuous learning trains on real
+ * exchanges, and a transcript that does not say who spoke is a transcript of
+ * nobody -- the network sees the words and has no way to learn that answering
+ * and being asked are different things.
+ */
+export function formatTurn(speaker: Speaker, text: string): string {
+  return `${SPEAKER_LABELS[speaker]}: ${text}`;
+}
+
+/**
+ * A turn as the network sees it: the words, plus who said them.
+ *
+ * Dimension 0 is the speaker and nothing else -- +1 for the AI, -1 for the
+ * user -- and the words occupy the rest. The engine already reserves state[0]
+ * as an input flag, so a reserved coordinate is the shape this architecture
+ * already thinks in.
+ *
+ * A label in the text is not enough on its own, and that is measured rather
+ * than assumed: at 16 dimensions "AI: <long message>" and "User: <same long
+ * message>" embed at cosine 0.96, because the prefix is three character
+ * n-grams out of hundreds. Mixing in a hashed speaker marker only reached
+ * 0.93 -- at this few dimensions two hashed vectors are not far enough apart
+ * to separate anything. A dedicated coordinate is: the same words from
+ * different speakers come out orthogonal, whatever the message length, so the
+ * network can always tell a question from an answer.
+ *
+ * The label stays in the text as well, because the transcript is also read by
+ * people, and "AI: ..." / "User: ..." is how a conversation reads.
+ */
+export function embedTurn(speaker: Speaker, text: string, dims: number): number[] {
+  if (dims <= 0) return [];
+  if (dims === 1) return [speaker === "ai" ? 1 : -1];
+
+  const content = embedText(formatTurn(speaker, text), dims - 1);
+
+  // The speaker gets the same energy as everything that was said, which is what
+  // makes the two orthogonal rather than merely distinguishable. Weaker and a
+  // long message drowns it out again -- the exact failure this replaces.
+  let contentNorm = 0;
+  for (const v of content) contentNorm += v * v;
+  const speakerAmplitude = contentNorm > 0 ? Math.sqrt(contentNorm) : 1;
+
+  const out = new Array(dims);
+  out[0] = (speaker === "ai" ? 1 : -1) * speakerAmplitude;
+  for (let d = 1; d < dims; d++) out[d] = content[d - 1];
+
+  // Readout neurons are tanh-bounded, so a target outside [-1, 1] is
+  // unreachable and training against it can never converge. Scaling is
+  // uniform, so it cannot disturb the orthogonality above.
+  let peak = 0;
+  for (const v of out) peak = Math.max(peak, Math.abs(v));
+  if (peak > 1) for (let d = 0; d < dims; d++) out[d] /= peak;
+  return out;
+}
+
+/**
+ * A stretch of conversation as the network sees it, speakers included.
+ *
+ * The continuous loop drains everything queued since its last tick and embeds
+ * it as one thing. It used to join those with a space and embed the result,
+ * which threw away the boundary AND who said each part -- so the mind that
+ * "never stops" was thinking about an anonymous run-on sentence.
+ *
+ * Dimension 0 carries who has been talking: +1 if it is all the AI, -1 if it
+ * is all the user, and in between when the batch is a genuine exchange. That
+ * makes a back-and-forth distinguishable from a monologue, which is most of
+ * what a conversation is.
+ */
+export function embedTranscript(turns: Array<{ speaker: Speaker; text: string }>, dims: number): number[] {
+  if (dims <= 0) return [];
+  if (turns.length === 0) return new Array(dims).fill(0);
+  if (turns.length === 1) return embedTurn(turns[0].speaker, turns[0].text, dims);
+
+  // Newline-joined, not space-joined: where one turn ends and the next begins
+  // is part of what happened.
+  const text = turns.map(t => formatTurn(t.speaker, t.text)).join("\n");
+  if (dims === 1) {
+    let sum = 0;
+    for (const t of turns) sum += t.speaker === "ai" ? 1 : -1;
+    return [sum / turns.length];
+  }
+
+  const content = embedText(text, dims - 1);
+  let contentNorm = 0;
+  for (const v of content) contentNorm += v * v;
+  const amplitude = contentNorm > 0 ? Math.sqrt(contentNorm) : 1;
+
+  let sum = 0;
+  for (const t of turns) sum += t.speaker === "ai" ? 1 : -1;
+
+  const out = new Array(dims);
+  out[0] = (sum / turns.length) * amplitude;
+  for (let d = 1; d < dims; d++) out[d] = content[d - 1];
+
+  let peak = 0;
+  for (const v of out) peak = Math.max(peak, Math.abs(v));
+  if (peak > 1) for (let d = 0; d < dims; d++) out[d] /= peak;
+  return out;
+}
+
 export function embedText(text: string, dims: number): number[] {
   const vec = new Array(dims).fill(0);
-  if (text.length === 0) return vec;
-  for (let d = 0; d < dims; d++) {
-    let h = 2166136261 ^ (d * 2654435761); // FNV-1a offset basis, salted per dimension
-    for (let i = 0; i < text.length; i++) {
-      h ^= text.charCodeAt(i);
-      h = Math.imul(h, 16777619);
+  if (text.length === 0 || dims === 0) return vec;
+  // Boundary markers so a prefix/suffix is distinguishable from an interior
+  // match ("cat" at the start of a word is not the same feature as "cat" in
+  // the middle of "concatenate").
+  const marked = `\u0002${text}\u0003`;
+  for (let n = 3; n <= 5; n++) {
+    if (n > marked.length) break;
+    for (let i = 0; i + n <= marked.length; i++) {
+      let h = 2166136261;
+      for (let k = i; k < i + n; k++) {
+        h ^= marked.charCodeAt(k);
+        h = Math.imul(h, 16777619);
+      }
+      const u = h >>> 0;
+      // Signed accumulation (the standard hashing-trick sign bit) keeps
+      // collisions from systematically inflating a dimension.
+      vec[u % dims] += (u & 0x80000000) !== 0 ? -1 : 1;
     }
-    // Unsigned 32-bit -> [-1, 1)
-    vec[d] = ((h >>> 0) / 0xffffffff) * 2 - 1;
   }
+  let norm = 0;
+  for (let d = 0; d < dims; d++) norm += vec[d] * vec[d];
+  if (norm === 0) {
+    // Every n-gram cancelled out, or the text was shorter than the smallest
+    // n-gram. Fall back to a whole-string hash so distinct text still gets a
+    // distinct, non-zero vector -- the one property the old version did have.
+    for (let d = 0; d < dims; d++) {
+      let h = 2166136261 ^ Math.imul(d, 2654435761);
+      for (let i = 0; i < text.length; i++) {
+        h ^= text.charCodeAt(i);
+        h = Math.imul(h, 16777619);
+      }
+      vec[d] = ((h >>> 0) / 0xffffffff) * 2 - 1;
+    }
+    return vec;
+  }
+  // Unit-normalize, then scale back up toward the old per-component RMS of
+  // 1/sqrt(3) -- but never past the point where any component would exceed 1.
+  // Readout neurons are tanh-bounded to [-1, 1], so a target outside that
+  // range is unreachable and training against it can never converge. Short
+  // text concentrates its few n-grams into few dimensions, and scaling that
+  // for RMS parity alone pushed peak components to 4.6 for a 2-character
+  // string. The cap only ever shrinks the vector uniformly, so the cosine
+  // geometry above is unaffected.
+  const invNorm = 1 / Math.sqrt(norm);
+  let maxAbsUnit = 0;
+  for (let d = 0; d < dims; d++) maxAbsUnit = Math.max(maxAbsUnit, Math.abs(vec[d]) * invNorm);
+  const scale = Math.min(Math.sqrt(dims / 3), 1 / maxAbsUnit) * invNorm;
+  for (let d = 0; d < dims; d++) vec[d] *= scale;
   return vec;
 }
 
@@ -786,20 +1109,28 @@ export class NeuroLangRuntime {
 }
 
 /**
- * Materializes parsed NeuriLang directly into an ElasticCoreBlock. The runtime
- * keeps name→id bindings stable across calls, grows the block with addNeuron()
+ * Materializes parsed NeuriLang directly into THE network.
+ *
+ * The runtime keeps name→id bindings stable across calls, grows the network
  * whenever a new parsed neuron needs capacity, installs explicit connection
- * scalars as diagonal Elastic Core connection blocks, maps @vale through the
- * shared ValueRangeAllocator, and turns @definition into a deterministic
- * readout target that callers can smoke-test with checkDefinition().
+ * scalars as real connections, maps @vale through the shared
+ * ValueRangeAllocator, and turns @definition into a readout target callers can
+ * check with checkDefinition().
+ *
+ * It built into an ElasticCoreBlock before -- a second network, with its own
+ * equation, beside the one everything else runs. So a NeuroLang program (which
+ * is how the Extension Builder describes a net skill) produced neurons that
+ * carried none of the hyperdimensional term and none of the wave, and were
+ * connected to nothing the agent actually thinks with. Same DSL, same
+ * materialisation, one network.
  */
 export class ElasticNeuroLangRuntime {
-  private core: ElasticCoreBlock;
+  private core: HyperDimensionalEngine;
   private valeAllocator?: ValueRangeAllocator;
   private nameToId: Map<string, number> = new Map();
   private nextId = 0;
 
-  constructor(core: ElasticCoreBlock, valeAllocator?: ValueRangeAllocator) {
+  constructor(core: HyperDimensionalEngine, valeAllocator?: ValueRangeAllocator) {
     this.core = core;
     this.valeAllocator = valeAllocator;
   }
@@ -818,7 +1149,7 @@ export class ElasticNeuroLangRuntime {
 
       for (const [otherName, weight] of neuron.connections) {
         const sourceId = this.assignId(otherName);
-        this.core.setConnectionScalar(targetId, sourceId, weight);
+        this.core.setConnection(targetId, sourceId, weight);
       }
 
       if (neuron.vale !== undefined && this.valeAllocator) {
@@ -828,7 +1159,18 @@ export class ElasticNeuroLangRuntime {
       }
 
       if (neuron.definition.length > 0) {
-        this.core.setDefinitionTarget(targetId, embedText(neuron.definition, this.core.getStateDim()));
+        const meaning = embedText(neuron.definition, this.core.getDimensions());
+        // Where the neuron starts AND what it is held to: a definition is both
+        // the place in the space this neuron is about and the contract it has
+        // to keep saying.
+        this.core.setNeuronState(targetId, meaning);
+        this.core.setDefinitionTarget(targetId, meaning);
+      }
+      // The wave it carries, from the same meaning -- so two neurons defined
+      // the same way land on the same frequency and reinforce each other in
+      // the shared pool. See net-skill-graft.ts's waveForMeaning().
+      if (neuron.wave) {
+        this.core.setWaveSignature(targetId, neuron.wave.frequency, neuron.wave.phase);
       }
     }
 
@@ -839,6 +1181,7 @@ export class ElasticNeuroLangRuntime {
       const id = this.nameToId.get(name);
       if (id === undefined) continue;
       const check = this.core.checkDefinition(id, opts.definitionTolerance);
+      if (!check) continue;
       definitionChecks.set(name, check);
       if (check.satisfied) satisfied.push(name);
     }
@@ -849,7 +1192,7 @@ export class ElasticNeuroLangRuntime {
   private assignId(name: string): number {
     const existing = this.nameToId.get(name);
     if (existing !== undefined) return existing;
-    while (this.nextId >= this.core.getNeuronCount()) this.core.addNeuron();
+    while (this.nextId >= this.core.getNeuronCount()) this.core.addNeurons(1);
     const id = this.nextId++;
     this.nameToId.set(name, id);
     return id;

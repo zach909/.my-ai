@@ -1,0 +1,11 @@
+{
+  "id": "to-convert-a-heic-photo-first-read-the-container-header-then-extract-the-hevc-payload-next-decode-each-tile-finally-write-the-rgb-rows-out-as-png",
+  "name": "To convert a .heic photo: first, read the container header. Then extract the HEVC payload. Next, decode each tile. Finally, write the RGB rows out as PNG.",
+  "version": "1.0.0",
+  "description": "Auto-generated: To convert a .heic photo: first, read the container header. Then extract the HEVC payload. Next, decode each tile. Finally, write the RGB rows out as PNG.",
+  "permissions": [
+    "convert"
+  ],
+  "author": "neuroclaw-auto",
+  "entrypoint": "./plugins/to-convert-a-heic-photo-first-read-the-container-header-then-extract-the-hevc-payload-next-decode-each-tile-finally-write-the-rgb-rows-out-as-png.js"
+}

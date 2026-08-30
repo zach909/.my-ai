@@ -100,7 +100,7 @@ const mainPath = path.join(__dirname, '..', 'src', 'main', 'main.js');
 delete require.cache[require.resolve(mainPath)];
 require(mainPath);
 
-const { resolveStaticFile } = require(path.join(__dirname, '..', 'src', 'main', 'app-server.js'));
+const { resolveStaticFile, startAppServer, DESKTOP_TOKEN_HEADER } = require(path.join(__dirname, '..', 'src', 'main', 'app-server.js'));
 
 const FAKE_EVENT = { sender: {} }; // stands in for Electron's IpcMainInvokeEvent
 
@@ -163,6 +163,26 @@ async function main() {
   check(shellCalls.openExternal[shellCalls.openExternal.length - 1] === 'https://example.com/real-url',
     'open-external opens the real url argument, not the event object');
 
+  const blockedFileUrl = await handlers.get('open-external')(FAKE_EVENT, 'file:///etc/passwd');
+  check(blockedFileUrl.success === false && /Blocked/.test(blockedFileUrl.error),
+    'open-external blocks unsafe file:// protocol scheme');
+
+  const blockedMailtoUrl = await handlers.get('open-external')(FAKE_EVENT, 'mailto:test@example.com');
+  check(blockedMailtoUrl.success === false && /Blocked/.test(blockedMailtoUrl.error),
+    'open-external blocks mailto: protocol scheme');
+
+  const blockedJsUrl = await handlers.get('open-external')(FAKE_EVENT, 'javascript:alert(1)');
+  check(blockedJsUrl.success === false && /Blocked/.test(blockedJsUrl.error),
+    'open-external blocks javascript: protocol scheme');
+
+  const invalidUrl = await handlers.get('open-external')(FAKE_EVENT, 'not-a-valid-url');
+  check(invalidUrl.success === false && /Blocked/.test(invalidUrl.error),
+    'open-external blocks invalid URL formats');
+
+  const invalidTypeUrl = await handlers.get('open-external')(FAKE_EVENT, 12345);
+  check(invalidTypeUrl.success === false && /Blocked/.test(invalidTypeUrl.error),
+    'open-external blocks invalid URL types (non-strings)');
+
   // --- show-in-folder ---
   await handlers.get('show-in-folder')(FAKE_EVENT, '/some/real/path');
   check(shellCalls.showItemInFolder[shellCalls.showItemInFolder.length - 1] === '/some/real/path',
@@ -192,6 +212,120 @@ async function main() {
   const traversalResult = resolveStaticFile(traversalDistDir, traversalUrl.pathname);
   check(traversalResult === null,
     'resolveStaticFile refuses to serve a file from a sibling directory that merely shares a name prefix with distDir');
+
+  // ── The app runs in its own window, not in a browser ────────────────────
+  // Both servers bind 127.0.0.1, so nothing was ever reachable off the
+  // machine -- but any browser ON the machine could open the app-server port
+  // and drive the whole agent, backend API included, with no credential.
+  const http = require('http');
+  const tokenDist = fs.mkdtempSync(path.join(os.tmpdir(), 'app-server-token-dist-'));
+  fs.writeFileSync(path.join(tokenDist, 'index.html'), '<html>app</html>');
+  const TOKEN = 'test-token-abc123';
+  const guarded = await startAppServer({ distDir: tokenDist, backendPort: 1, port: 0, authToken: TOKEN });
+  const guardedPort = guarded.address().port;
+
+  const get = (headers) => new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port: guardedPort, path: '/', headers }, (res) => {
+      let body = '';
+      res.on('data', (c) => { body += c; });
+      res.on('end', () => resolve({ status: res.statusCode, body }));
+    });
+  });
+
+  const noToken = await get({});
+  check(noToken.status === 403,
+    'a request with no desktop token is refused (a browser cannot open the app)');
+  check(/NeuroClaw runs in its own window/.test(noToken.body),
+    'the refusal tells the user where to actually open the app');
+
+  const wrongToken = await get({ [DESKTOP_TOKEN_HEADER]: 'not-the-token' });
+  check(wrongToken.status === 403, 'a request with the wrong token is refused');
+
+  const rightToken = await get({ [DESKTOP_TOKEN_HEADER]: TOKEN });
+  check(rightToken.status === 200 && rightToken.body.includes('<html>app</html>'),
+    'the app window, which stamps the real token, is served normally');
+
+  // The gate must cover the proxied backend API too, not just static files --
+  // /api/* is the half that can actually drive the agent.
+  const apiNoToken = await new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port: guardedPort, path: '/api/status', headers: {} }, (res) => {
+      res.resume();
+      resolve(res.statusCode);
+    });
+  });
+  check(apiNoToken === 403, 'the /api proxy is behind the same gate, not just the static files');
+
+  guarded.close();
+
+  // Opting out (no authToken) must still work: that is how the suite above
+  // and any non-Electron embedding use this server.
+  const openSrv = await startAppServer({ distDir: tokenDist, backendPort: 1, port: 0 });
+  const openPort = openSrv.address().port;
+  const openRes = await new Promise((resolve) => {
+    http.get({ host: '127.0.0.1', port: openPort, path: '/' }, (res) => { res.resume(); resolve(res.statusCode); });
+  });
+  check(openRes === 200, 'omitting authToken leaves the server open, as documented');
+  openSrv.close();
+
+  // ── The window's connection is TLS, with a pinned certificate ───────────
+  const https = require('https');
+  const selfsigned = require('selfsigned');
+  const { X509Certificate } = require('crypto');
+
+  const pems = await selfsigned.generate(
+    [{ name: 'commonName', value: '127.0.0.1' }],
+    {
+      days: 1, keySize: 2048, algorithm: 'sha256',
+      extensions: [{ name: 'subjectAltName', altNames: [{ type: 7, ip: '127.0.0.1' }] }],
+    }
+  );
+  const x509 = new X509Certificate(pems.cert);
+  // Chromium matches on SAN and ignores commonName outright, so a cert without
+  // an IP SAN for 127.0.0.1 would be rejected and the window would never load.
+  check(/IP Address:127\.0\.0\.1/.test(x509.subjectAltName || ''),
+    'the generated certificate carries an IP SAN for 127.0.0.1, which is what TLS clients actually match on');
+
+  const tlsSrv = await startAppServer({
+    distDir: tokenDist, backendPort: 1, port: 0,
+    authToken: TOKEN, tls: { key: pems.private, cert: pems.cert },
+  });
+  const tlsPort = tlsSrv.address().port;
+
+  const tlsGet = (opts) => new Promise((resolve) => {
+    const req = https.get(
+      { host: '127.0.0.1', port: tlsPort, path: '/', headers: { [DESKTOP_TOKEN_HEADER]: TOKEN }, ...opts },
+      (res) => {
+        // Grab the peer certificate while the socket is still attached: it is
+        // detached by the time 'end' fires.
+        const cert = res.socket && typeof res.socket.getPeerCertificate === 'function'
+          ? res.socket.getPeerCertificate()
+          : null;
+        let b = '';
+        res.on('data', (c) => { b += c; });
+        res.on('end', () => resolve({ status: res.statusCode, body: b, cert }));
+      }
+    );
+    req.on('error', (e) => resolve({ error: e }));
+  });
+
+  const overTls = await tlsGet({ rejectUnauthorized: false });
+  check(overTls.status === 200 && overTls.body.includes('<html>app</html>'),
+    'the app is served over a real TLS connection, not plaintext');
+
+  // Pinning: the presented certificate must be exactly the one we generated.
+  const presented = overTls.cert && overTls.cert.fingerprint256;
+  const norm = (f) => String(f || '').replace(/:/g, '').toLowerCase();
+  check(norm(presented) === norm(x509.fingerprint256),
+    'the server presents exactly the certificate this launch generated (this is what main.js pins on)');
+
+  // A plaintext request to a TLS port must fail rather than silently downgrade.
+  const plaintext = await new Promise((resolve) => {
+    const req = http.get({ host: '127.0.0.1', port: tlsPort, path: '/' }, (res) => { res.resume(); resolve({ status: res.statusCode }); });
+    req.on('error', () => resolve({ error: true }));
+  });
+  check(plaintext.error === true, 'a plaintext http request to the TLS port fails instead of downgrading');
+
+  tlsSrv.close();
 
   console.log(`\n${_passed} passed, ${_failed} failed`);
   process.exit(_failed === 0 ? 0 : 1);

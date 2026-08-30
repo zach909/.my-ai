@@ -1,13 +1,35 @@
 import { execSync } from 'node:child_process';
 import { existsSync, writeFileSync, mkdirSync, readFileSync } from 'node:fs';
-import { tmpdir, homedir } from 'node:os';
+import { tmpdir } from 'node:os';
 import { join, dirname } from 'node:path';
 import { randomBytes } from 'node:crypto';
 import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/types.js";
 import { BasePlugin } from "../../plugin_manager/sdk.js";
 import { CodingExtension } from "./coding.js";
 import { ExtensionBuilder } from "../../extension-builder/builder.js";
-import { MixtureOfExperts } from "../../models && skills/moe.js";
+import { MixtureOfExperts } from "../../models && skills/core/onebrain.js";
+import type { NeuronMesh } from "../../models && skills/core/onebrain.js";
+
+/**
+ * Self-authored, meant-to-be-public content (skills/plugins the AI or a
+ * user generates, plus their wiki reports) used to live under
+ * homedir()/.neuroclaw/... -- outside the git repository entirely, so it
+ * was never actually "public" (visible on GitHub, backed up by a commit)
+ * and would vanish the moment an ephemeral sandbox/container was torn
+ * down. "public" here means "committed to the repo": generated/ is a
+ * repo-relative directory, deliberately separate from plugins/'s own
+ * hand-reviewed source files, so self-authored output can be committed
+ * and pushed the same way every other change in this repo is, and never
+ * gets confused with (or silently overwrites) reviewed plugin source.
+ */
+function generatedDir(...segments: string[]): string {
+  // NEUROCLAW_GENERATED_DIR lets a test suite (or any short-lived process
+  // that shouldn't leave real files behind) redirect this to a scratch
+  // directory instead of the live repo tree -- unset in normal operation,
+  // where "generated" really does mean this repo's generated/ folder.
+  const base = process.env.NEUROCLAW_GENERATED_DIR || join(process.cwd(), 'generated');
+  return join(base, ...segments);
+}
 
 // Helper functions for parameter validation and sanitization
 function isSafePath(path: string): boolean {
@@ -350,13 +372,27 @@ interface GuessGame extends GameState { type: 'guess'; target: number }
 interface MazeGame extends GameState { type: 'maze'; pos: { x: number; y: number }; exit: { x: number; y: number }; grid: number }
 
 export class SelfHealExtension extends BasePlugin {
+  /**
+   * Registry.dispatch()'s 'command' intent bucket lists candidates in a
+   * fixed order (['self-heal', 'terminal', 'file-system']) and stops at
+   * the first non-null onMessage() result. Returning a generic "heal or
+   * status" message for literally any unrecognized input -- the previous
+   * behavior -- meant self-heal, being first, silently swallowed every
+   * "command"-intent message (including a real "run: <shell command>",
+   * THORNS classifies both "run" and "self-heal"'s own verbs the same
+   * way): 'terminal'/'file-system' could never actually be reached. Same
+   * disease as the skill-maker-always-succeeds bug documented on
+   * registry.ts's dispatch() -- returning null for anything that isn't
+   * genuinely a heal/status request lets dispatch() fall through to the
+   * next real candidate instead.
+   */
   async onMessage(message: unknown): Promise<unknown> {
     const input = String(message ?? '').trim().toLowerCase();
     if (input === 'heal' || input === 'self-heal' || input === 'self heal')
       return this.heal();
     if (input === 'status' || input === 'health')
       return this.getHealthStatus();
-    return { type: 'self-heal', message: 'heal or status' };
+    return null;
   }
 
   async heal(): Promise<{ healed: boolean; actions: string[] }> {
@@ -413,7 +449,7 @@ export class SkillMakerExtension extends BasePlugin {
       : [];
 
     const name = description.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    const skillDir = join(homedir(), '.neuroclaw', 'skills');
+    const skillDir = generatedDir('skills');
     if (!existsSync(skillDir)) mkdirSync(skillDir, { recursive: true });
 
     const words = description.toLowerCase().split(/\s+/);
@@ -424,7 +460,7 @@ export class SkillMakerExtension extends BasePlugin {
     // Every self-authored skill gets a wiki entry alongside it recording what
     // it does AND what informed it -- a provenance trail, not just the
     // generated neuron code itself.
-    const wikiDir = join(homedir(), '.neuroclaw', 'skills-wiki');
+    const wikiDir = generatedDir('skills-wiki');
     if (!existsSync(wikiDir)) mkdirSync(wikiDir, { recursive: true });
     const neuronNames = this.extractNeuronNames(skillContent);
     const wikiContent = this.generateWikiDoc(name, description, sources, neuronNames);
@@ -489,6 +525,14 @@ export class SkillMakerExtension extends BasePlugin {
     lines.push(`"${name}_perceive"@definition="Perception neuron for ${description}"`);
     lines.push(`"${name}_analyze"@definition="Analysis neuron for ${description}"`);
     lines.push(`"${name}_respond"@definition="Response neuron for ${description}"`);
+    // Tag this skill's dedicated input/output layer (SkillLibrary.
+    // installWithIOLayers() reads these back) -- perceive is where a
+    // caller feeds the skill data, respond is what they read back. They're
+    // still wired all-to-all into the rest of the skill's own neurons
+    // below, and into the shared mesh once installed -- @role is a label,
+    // not a separate subnetwork.
+    lines.push(`"${name}_perceive"@role="input"`);
+    lines.push(`"${name}_respond"@role="output"`);
 
     const relevant = words.filter(w => w.length > 3).slice(0, 5);
     for (let i = 0; i < relevant.length; i++) {
@@ -516,7 +560,7 @@ export class PluginMakerExtension extends BasePlugin {
     if (!input) return { type: 'plugin-maker', message: 'Provide plugin description to generate a plugin file' };
 
     const name = input.replace(/\s+/g, '-').toLowerCase().replace(/[^a-z0-9_-]/g, '');
-    const pluginDir = join(homedir(), '.neuroclaw', 'plugins');
+    const pluginDir = generatedDir('plugins');
     if (!existsSync(pluginDir)) mkdirSync(pluginDir, { recursive: true });
 
     const capabilities = this.extractCapabilities(input);
@@ -529,11 +573,11 @@ export class PluginMakerExtension extends BasePlugin {
 
     // Every self-authored plugin gets a wiki entry alongside it, the same
     // shared-library pattern SkillMakerExtension already uses for skills
-    // (~/.neuroclaw/skills-wiki) -- PluginLibrary (models && skills/core/
+    // (generated/skills-wiki) -- PluginLibrary (models && skills/core/
     // plugin-library.ts) is the read side, so a plugin one instance builds
     // is discoverable and reusable by another instead of being silently
     // stuck as an unshared file only this instance knows about.
-    const wikiDir = join(homedir(), '.neuroclaw', 'plugins-wiki');
+    const wikiDir = generatedDir('plugins-wiki');
     if (!existsSync(wikiDir)) mkdirSync(wikiDir, { recursive: true });
     const wikiContent = this.generateWikiDoc(name, input, capabilities);
     const wikiPath = join(wikiDir, `${name}.md`);
@@ -625,10 +669,19 @@ export class UniversalLanguageSkill extends BasePlugin {
   private languageNeurons: Map<string, number[]> = new Map();
   private activeLanguages: Set<string> = new Set();
 
-  constructor(definition: PluginDefinition) {
+  /**
+   * `sharedMesh` is the agent's one NeuronMesh. Without it this plugin builds
+   * its own mesh, and the all-to-all wiring the comment in
+   * initializeLanguageSkills() describes is real only *among the language
+   * neurons* -- a walled-off second network inside a single agent. Passing the
+   * shared mesh in (see createPluginInstance) puts every language op-neuron in
+   * the same mesh as the language brain and every other plugin. The parameter
+   * stays optional so a standalone construction still works.
+   */
+  constructor(definition: PluginDefinition, sharedMesh?: NeuronMesh) {
     super(definition);
     this.builder = new ExtensionBuilder();
-    this.moe = new MixtureOfExperts(4);
+    this.moe = new MixtureOfExperts(4, sharedMesh);
     this.initializeLanguageSkills();
   }
 
@@ -719,7 +772,7 @@ export class UniversalLanguageSkill extends BasePlugin {
     for (const op of ops) this.builder.addNeuron(project.id, `${name}_${op}`, 0.7);
     if (code) this.builder.addCodeNet(project.id, `${name}_runner`, code);
     const neuroLang = this.builder.exportToNeuroLang(project.id);
-    const skillDir = join(homedir(), '.neuroclaw', 'skills');
+    const skillDir = generatedDir('skills');
     if (!existsSync(skillDir)) mkdirSync(skillDir, { recursive: true });
     writeFileSync(join(skillDir, `${name}.neuri`), neuroLang, 'utf-8');
     return { type: 'language-skill', created: name, path: join(skillDir, `${name}.neuri`), neurons: ops.length };

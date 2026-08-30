@@ -1,3 +1,4 @@
+import type { NeuronMesh } from "../models && skills/core/onebrain.js";
 import type { PluginDefinition, ExtensionManifest, SkillDefinition } from "../plugin_manager/types.js";
 import { LocationPlugin } from "./location.js";
 import { CameraPlugin } from "./camera.js";
@@ -24,6 +25,11 @@ import { RoboticsPlugin } from "./robotics.js";
 import { CodingExtension } from "./extensions/coding.js";
 import { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
 import { ResearchPlugin } from "./research.js";
+import { WikiPlugin } from "./wiki.js";
+import { TerminalPlugin } from "./terminal.js";
+import { ToolsPlugin } from "./tools.js";
+import { StorePlugin } from "./store.js";
+import { ComputerAccessPlugin } from "./computer-access.js";
 import type { BasePlugin } from "../plugin_manager/sdk.js";
 
 export { LocationPlugin } from "./location.js";
@@ -51,11 +57,18 @@ export { MultiInputPlugin } from "./multi-input.js";
 export { CodingExtension } from "./extensions/coding.js";
 export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, SkillMakerExtension, PluginMakerExtension, UniversalLanguageSkill } from "./extensions/index.js";
 export { ResearchPlugin } from "./research.js";
+export { WikiPlugin } from "./wiki.js";
+export { TerminalPlugin } from "./terminal.js";
+export { ToolsPlugin } from "./tools.js";
+export { StorePlugin } from "./store.js";
+export { ComputerAccessPlugin } from "./computer-access.js";
 
 export function createPluginInstance(
   name: string,
   definition: PluginDefinition,
   skillDefinition?: SkillDefinition,
+  /** The agent's one shared NeuronMesh, for plugins that allocate their own neurons. */
+  sharedMesh?: NeuronMesh,
 ): BasePlugin {
   const lower = name.toLowerCase();
   if (lower === "location") return new LocationPlugin(definition);
@@ -87,8 +100,13 @@ export function createPluginInstance(
   if (lower.includes("skill maker") || lower.includes("skill-maker")) return new SkillMakerExtension(definition);
   if (lower.includes("plugin maker") || lower.includes("plugin-maker")) return new PluginMakerExtension(definition);
   if (lower === "multi-input" || lower === "multi input" || lower === "multiinput" || lower.includes("desktop")) return new MultiInputPlugin(definition);
-  if (lower.includes("language") || lower.includes("universal-language")) return new UniversalLanguageSkill(definition);
+  if (lower.includes("language") || lower.includes("universal-language")) return new UniversalLanguageSkill(definition, sharedMesh);
   if (lower === "research") return new ResearchPlugin(definition);
+  if (lower === "wiki") return new WikiPlugin(definition);
+  if (lower === "terminal") return new TerminalPlugin(definition);
+  if (lower === "tools") return new ToolsPlugin(definition);
+  if (lower === "store") return new StorePlugin(definition);
+  if (lower === "computer access" || lower === "computer-access") return new ComputerAccessPlugin(definition);
   throw new Error(`Unknown plugin: ${name}`);
 }
 
@@ -124,6 +142,22 @@ const pluginExtensions: Record<string, PluginDefinition> = {
   "plugin-maker": { id: "plugin-maker", name: "Plugin Maker", type: "api-connection", capabilities: ["plugin-maker"] },
   "universal-language-skill": { id: "universal-language-skill", name: "Universal Language Skill", type: "skill-expert", capabilities: ["language-support", "code-detection", "neuron-clusters"] },
   research: { id: "research", name: "Research", type: "api-connection", capabilities: ["memory-search", "drive-search", "web-search"] },
+  wiki: { id: "wiki", name: "Wiki", type: "api-connection", capabilities: ["wiki"] },
+  // Already referenced as a dispatch candidate in plugin_manager/registry.ts's
+  // intentToPlugins `command` bucket (['self-heal', 'terminal', 'file-system'])
+  // but never actually implemented/registered on the TS side -- 'terminal'
+  // could never be reached even though the routing already named it.
+  terminal: { id: "terminal", name: "Terminal", type: "api-connection", capabilities: ["terminal", "shell"] },
+  // The GNOME graphical layer and the terminal/file layer, behind one set
+  // of switches. Both modules existed before this entry; neither was reachable.
+  "computer-access": {
+    id: "computer-access",
+    name: "Computer Access",
+    type: "api-connection",
+    capabilities: ["desktop-control", "terminal", "file-system", "screen-observe"],
+  },
+  store: { id: "store", name: "Store", type: "api-connection", capabilities: ["store", "publish", "share"] },
+  tools: { id: "tools", name: "Tools", type: "api-connection", capabilities: ["tools", "calculator", "hashing", "encoding", "units"] },
 };
 
 const allExtensions: ExtensionManifest[] = Object.entries(pluginExtensions).map(([key, def]) => ({

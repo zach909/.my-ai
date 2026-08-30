@@ -24,10 +24,10 @@
  */
 
 import { ValueRangeAllocator, type ValueRangeConfig } from './value-range.js';
-import { MoERouter, type MoEConfig } from './moe-router.js';
-import { NeuronMesh, type MeshConfig, type MeshTopology } from './mesh.js';
-import { HyperDimensionalEngine, type HyperConfig, type HyperNeuron } from './hyperdimensional.js';
-import { QuantumNeuralNet, type QuantumState } from './quantum-net.js';
+import { MoERouter, type MoEConfig } from './onebrain.js';
+import { NeuronMesh, type MeshConfig, type MeshTopology } from './onebrain.js';
+import { HyperDimensionalEngine, type HyperConfig, type HyperNeuron } from './onebrain.js';
+import { QuantumNeuralNet, type QuantumState } from './onebrain.js';
 import { ZipIOSystem } from './zip-io.js';
 import { pluginExtensions } from '../../plugins/index.js';
 import { PROGRAMMING_SKILLS } from '../programming-skills.js';
@@ -132,6 +132,16 @@ export class UnifiedBrain {
       neuronCount: this.config.hyperNeurons ?? Math.max(8, Math.floor(this.config.meshNodes / 2)),
       dimensions: this.config.hyperDimensions,
       ballStates: this.config.ballStates ?? 4,
+      // The same full equation pipeline.ts runs -- see the comment there for
+      // why these are set explicitly rather than left at the engine's inert
+      // defaults. Both real construction sites, or the structure is still only
+      // half reachable.
+      hyperGain: 1,
+      hyperAdd: 1,
+      hyperWaveGain: 1,
+      hyperWaveAdd: 1,
+      waveGain: 0.1,
+      connectionBias: true,
     } as Partial<HyperConfig>);
 
     this.quantum = new QuantumNeuralNet();

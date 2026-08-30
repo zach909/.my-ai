@@ -1,0 +1,4 @@
+
+# Staged copy of dist/ with the Blink editor runtime stripped out
+# (scripts/stage-desktop-dist.mjs). Regenerated on every desktop build.
+.staged-dist/

@@ -56,6 +56,12 @@ export class FileSystemPlugin extends BasePlugin {
         fs.mkdirSync(fullPath, { recursive });
     }
     resolvePath(relativePath) {
+        if (typeof relativePath !== "string") {
+            throw new Error("Security Error: Path must be a string");
+        }
+        if (relativePath.includes("\0")) {
+            throw new Error(`Security Error: Null byte injection detected in path: ${relativePath}`);
+        }
         const absoluteRoot = path.resolve(this.rootDir);
         const fullPath = path.resolve(absoluteRoot, relativePath);
         const relative = path.relative(absoluteRoot, fullPath);
@@ -63,6 +69,20 @@ export class FileSystemPlugin extends BasePlugin {
             throw new Error(`Security Error: Path traversal detected for path: ${relativePath}`);
         }
         return fullPath;
+    }
+    /**
+     * How someone would ASK for this, not what the plugin calls itself.
+     *
+     * Added after the agent exam measured routing and found this plugin
+     * unreachable for the obvious phrasing: the only terms available were its id
+     * and its manifest capabilities, so a request had to contain the plugin's
+     * own name to find it.
+     */
+    describeCapabilities() {
+        return {
+            verbs: ["open", "save"],
+            nouns: ["file", "folder", "directory", "disk", "document", "path"],
+        };
     }
     async onMessage(message) {
         // Case-insensitive on the command keyword only -- lowercasing the whole

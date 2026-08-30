@@ -10,7 +10,7 @@ After training or building, a behaviour is quantized for deployment — the desi
 
 ## Quantization-aware training (Python mesh)
 
-`tinygpt/mesh.py`'s mesh doesn't quantize only at export time; it trains *with* quantization already in the loop:
+The Python mesh did not quantize only at export time; it trained *with* quantization already in the loop (this track has been removed — see [[Platforms]]):
 
 ```python
 def _fake_quant(self, w):

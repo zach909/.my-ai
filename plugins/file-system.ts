@@ -75,6 +75,14 @@ export class FileSystemPlugin extends BasePlugin {
   }
 
   private resolvePath(relativePath: string): string {
+    if (typeof relativePath !== "string") {
+      throw new Error("Security Error: Path must be a string");
+    }
+    if (relativePath.includes("\0")) {
+      throw new Error(
+        `Security Error: Null byte injection detected in path: ${relativePath}`
+      );
+    }
     const absoluteRoot = path.resolve(this.rootDir);
     const fullPath = path.resolve(absoluteRoot, relativePath);
 
@@ -85,6 +93,21 @@ export class FileSystemPlugin extends BasePlugin {
       );
     }
     return fullPath;
+  }
+
+  /**
+   * How someone would ASK for this, not what the plugin calls itself.
+   *
+   * Added after the agent exam measured routing and found this plugin
+   * unreachable for the obvious phrasing: the only terms available were its id
+   * and its manifest capabilities, so a request had to contain the plugin's
+   * own name to find it.
+   */
+  describeCapabilities() {
+    return {
+      verbs: ["open", "save"],
+      nouns: ["file", "folder", "directory", "disk", "document", "path"],
+    };
   }
 
   override async onMessage(message: unknown): Promise<unknown> {

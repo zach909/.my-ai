@@ -13,6 +13,7 @@
 'use strict';
 
 const http = require('http');
+const https = require('https');
 const fs = require('fs');
 const path = require('path');
 
@@ -70,10 +71,28 @@ function resolveStaticFile(distDir, pathname) {
  * Start the combined static+proxy server.
  * @returns {Promise<http.Server>}
  */
-function startAppServer({ distDir, backendPort, port }) {
+/** Header the desktop window stamps on every request; see `authToken` below. */
+const DESKTOP_TOKEN_HEADER = 'x-neuroclaw-desktop';
+
+/**
+ * @param authToken Per-launch secret. The server binds to 127.0.0.1, so it was
+ *   never reachable off the machine -- but any browser ON the machine could
+ *   open http://127.0.0.1:<port> and drive the whole agent, backend API
+ *   included, with no credential at all. The Electron window stamps this token
+ *   on every request it makes (main.js, onBeforeSendHeaders); a browser cannot
+ *   know it, because it is random per launch and never written down. Omit to
+ *   leave the server open, which is what the tests do.
+ */
+function startAppServer({ distDir, backendPort, port, authToken, tls }) {
   return new Promise((resolve, reject) => {
-    const server = http.createServer((req, res) => {
+    const handler = (req, res) => {
       const url = new URL(req.url || '/', 'http://internal');
+
+      if (authToken && req.headers[DESKTOP_TOKEN_HEADER] !== authToken) {
+        res.writeHead(403, { 'Content-Type': 'text/plain' });
+        res.end('Corona runs in its own window. Open the Corona app.');
+        return;
+      }
 
       if (url.pathname.startsWith('/api/')) {
         const proxyReq = http.request(
@@ -111,11 +130,22 @@ function startAppServer({ distDir, backendPort, port }) {
       const ext = path.extname(file);
       res.writeHead(200, { 'Content-Type': MIME_TYPES[ext] || 'application/octet-stream' });
       fs.createReadStream(file).pipe(res);
-    });
+    };
+
+    // TLS when the caller supplies a key/cert (the desktop app always does;
+    // see main.js). The socket never leaves the loopback interface either way,
+    // so this is not about a network eavesdropper -- it is so nothing on the
+    // machine can read or tamper with the window's traffic by attaching to the
+    // port, and so the window can verify it is talking to the server this
+    // launch actually started rather than something else that grabbed the port
+    // first (main.js pins the certificate fingerprint).
+    const server = tls
+      ? https.createServer({ key: tls.key, cert: tls.cert }, handler)
+      : http.createServer(handler);
 
     server.on('error', reject);
     server.listen(port, '127.0.0.1', () => resolve(server));
   });
 }
 
-module.exports = { startAppServer, resolveStaticFile };
+module.exports = { startAppServer, resolveStaticFile, DESKTOP_TOKEN_HEADER };

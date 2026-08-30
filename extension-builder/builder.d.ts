@@ -18,6 +18,8 @@ export interface NeuronData {
     x: number;
     y: number;
     vale: number;
+    /** The wave this neuron carries in the shared pool; null = derived from its definition when grafted. */
+    wave: { frequency: number; phase: number } | null;
     endpoint: string;
     method: string;
     external: string[];

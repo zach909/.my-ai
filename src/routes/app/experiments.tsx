@@ -8,7 +8,7 @@ import { toast } from 'sonner'
 export const Route = createFileRoute("/app/experiments")({
   head: () => ({
     meta: [
-      { title: "Experiments · ASI Architect" },
+      { title: "Experiments · Corona" },
       {
         name: "description",
         content:
@@ -19,11 +19,37 @@ export const Route = createFileRoute("/app/experiments")({
   component: ExperimentsPage,
 });
 
+const PRESETS = [
+  {
+    label: "Alignment Verification",
+    protocol: "alignment-verification",
+    description: "Select Alignment Verification protocol check on primary reasoning engine",
+  },
+  {
+    label: "Safety Boundary Check",
+    protocol: "safety-boundary",
+    description: "Select Safety Boundary Check stress test across active modules",
+  },
+  {
+    label: "Neuron Stress Test",
+    protocol: "neuron-stress",
+    description: "Select Neuron Stress Test high-throughput activation on neural mesh",
+  },
+]
+
 function ExperimentsPage() {
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState(0)
   const [completed, setCompleted] = useState(false)
+  const [selectedProtocol, setSelectedProtocol] = useState("alignment-verification")
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  const applyPreset = (protocol: string, label: string) => {
+    if (running) return
+    setSelectedProtocol(protocol)
+    setCompleted(false)
+    toast.success(`Selected protocol: ${label}`)
+  }
 
   const runSimulation = () => {
     if (intervalRef.current) {
@@ -61,9 +87,10 @@ function ExperimentsPage() {
   }, [])
 
   return (
-    <div className="space-y-6 p-4">
+    <div className="space-y-6 p-4 max-w-4xl mx-auto">
       <div>
-        <h1 className="text-2xl font-semibold tracking-tight text-foreground">
+        <h1 className="text-2xl font-semibold tracking-tight text-foreground flex items-center gap-2 animate-fade-in">
+          <FlaskConical className="h-6 w-6 text-primary" />
           Experiments
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
@@ -72,37 +99,44 @@ function ExperimentsPage() {
         </p>
       </div>
 
-      <div className="flex flex-col items-center justify-center min-h-[350px] p-8 border-2 border-dashed border-muted rounded-xl bg-muted/20 text-center animate-fade-in">
-        <div className="flex h-12 w-12 items-center justify-center rounded-full bg-primary/10 text-primary mb-4 transition-transform hover:scale-110 duration-200">
-          <FlaskConical className="h-6 w-6" />
-        </div>
-        <h3 className="text-lg font-semibold text-foreground">
-          No active experiments
-        </h3>
-        <p className="mt-2 text-sm text-muted-foreground max-w-sm mb-6">
-          To run structured protocols and run safety-critical benchmarks, you
-          first need to construct and install an extension.
-        </p>
-        <Button asChild className="active:scale-95 transition-all duration-150">
-          <Link to="/builder" className="flex items-center gap-2">
-            <Plus className="h-4 w-4" />
-            Go to Extension Builder
-          </Link>
-        </Button>
-      </div>
-      <Card className="flex flex-col items-center justify-center border-2 border-dashed border-muted-foreground/20 rounded-xl p-12 text-center max-w-2xl mx-auto mt-8 bg-card/50 backdrop-blur-xs">
-        <div className="rounded-full bg-primary/10 p-4 mb-4">
+      <Card className="flex flex-col items-center justify-center border-2 border-dashed border-muted-foreground/20 rounded-xl p-12 text-center bg-card/40 backdrop-blur-xs animate-fade-in">
+        <div className="rounded-full bg-primary/10 p-4 mb-4 transition-transform hover:scale-110 duration-200">
           <FlaskConical className={`h-8 w-8 text-primary ${running ? 'animate-bounce' : ''}`} />
         </div>
-        <h2 className="text-lg font-semibold tracking-tight">No Active Experiments</h2>
-        <p className="text-sm text-muted-foreground max-w-sm mt-2 mb-6">
-          You haven't run any ASI prototype evaluations yet. Launch a simulated alignment check to verify environment calibration.
+        <h2 className="text-lg font-semibold tracking-tight text-foreground">No Active Experiments</h2>
+        <p className="text-sm text-muted-foreground max-w-md mt-2 mb-4">
+          To run structured protocols and run safety-critical benchmarks, you first need to construct and install an extension. Alternatively, launch a simulated alignment check to verify environment calibration.
         </p>
+
+        <div className="space-y-1.5 mb-6 w-full max-w-md">
+          <p className="text-[11px] font-medium text-muted-foreground italic">
+            Quick Protocol Presets:
+          </p>
+          <div className="flex flex-wrap justify-center gap-1.5">
+            {PRESETS.map((p) => (
+              <button
+                key={p.label}
+                type="button"
+                disabled={running}
+                onClick={() => applyPreset(p.protocol, p.label)}
+                className={`rounded-md border px-2.5 py-1 text-xs font-medium transition-all focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed active:scale-95 ${
+                  selectedProtocol === p.protocol
+                    ? "border-primary/50 bg-primary/10 text-primary"
+                    : "border-border bg-muted/50 text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground"
+                }`}
+                aria-label={`Apply ${p.label} preset`}
+                title={p.description}
+              >
+                +{p.label}
+              </button>
+            ))}
+          </div>
+        </div>
 
         {running ? (
           <div className="w-full max-w-xs space-y-2" role="progressbar" aria-valuenow={progress} aria-valuemin={0} aria-valuemax={100}>
-            <div className="flex justify-between text-xs text-muted-foreground font-medium">
-              <span>Running Alignment Check...</span>
+            <div className="flex justify-between text-xs text-muted-foreground font-medium" role="status" aria-live="polite">
+              <span>Running {PRESETS.find((p) => p.protocol === selectedProtocol)?.label || 'Alignment Check'}...</span>
               <span>{progress}%</span>
             </div>
             <div className="h-2 w-full bg-muted rounded-full overflow-hidden">
@@ -110,29 +144,45 @@ function ExperimentsPage() {
             </div>
           </div>
         ) : completed ? (
-          <div className="flex flex-col items-center space-y-3">
+          <div className="flex flex-col items-center space-y-4">
             <div className="flex items-center gap-2 text-sm font-medium text-emerald-500" role="status">
-              <CheckCircle2 className="h-4 w-4" />
+              <CheckCircle2 className="h-4 w-4 animate-pulse" />
               <span>Calibration Successful</span>
             </div>
+            <div className="flex flex-wrap gap-3 justify-center">
+              <Button asChild variant="outline" className="active:scale-95 transition-all duration-150">
+                <Link to="/builder" className="flex items-center gap-1.5">
+                  <Plus className="h-4 w-4" />
+                  Go to Extension Builder
+                </Link>
+              </Button>
+              <Button
+                onClick={runSimulation}
+                className="gap-2 active:scale-95 transition-all duration-150"
+                aria-label="Run simulated alignment experiment again"
+              >
+                <Play className="h-4 w-4" />
+                Run Again
+              </Button>
+            </div>
+          </div>
+        ) : (
+          <div className="flex flex-wrap gap-3 justify-center">
+            <Button asChild variant="outline" className="active:scale-95 transition-all duration-150">
+              <Link to="/builder" className="flex items-center gap-1.5">
+                <Plus className="h-4 w-4" />
+                Go to Extension Builder
+              </Link>
+            </Button>
             <Button
               onClick={runSimulation}
               className="gap-2 active:scale-95 transition-all duration-150"
-              aria-label="Run simulated alignment experiment again"
+              aria-label="Run simulated alignment experiment"
             >
-              <Play className="h-4 w-4" />
-              Run Again
+              <Sparkles className="h-4 w-4" />
+              Run Calibrator Demo
             </Button>
           </div>
-        ) : (
-          <Button
-            onClick={runSimulation}
-            className="gap-2 active:scale-95 transition-all duration-150"
-            aria-label="Run simulated alignment experiment"
-          >
-            <Sparkles className="h-4 w-4" />
-            Run Calibrator Demo
-          </Button>
         )}
       </Card>
     </div>

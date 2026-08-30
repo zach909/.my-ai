@@ -1,0 +1,22 @@
+{
+  "test-leftovers": {
+    "value": 0,
+    "at": "2026-08-30T07:45:29.447Z"
+  },
+  "unexplained-gitlinks": {
+    "value": 0,
+    "at": "2026-08-30T07:45:30.689Z"
+  },
+  "tested-but-unreachable": {
+    "value": 22,
+    "at": "2026-08-26T12:47:20.255Z"
+  },
+  "memory-accepts-new": {
+    "value": 1,
+    "at": "2026-08-30T07:45:30.689Z"
+  },
+  "non-atomic-state-writes": {
+    "value": 0,
+    "at": "2026-08-30T07:45:30.689Z"
+  }
+}

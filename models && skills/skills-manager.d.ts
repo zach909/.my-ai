@@ -1,5 +1,5 @@
 import { ProgrammingSkill } from './programming-skills.js';
-import { MoERouter } from './core/moe-router.js';
+import { MoERouter } from './core/onebrain.js';
 import { ExpertNetwork } from './core/expert.js';
 export interface SkillActivation {
     skillId: string;

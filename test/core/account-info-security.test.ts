@@ -68,4 +68,54 @@ describe('AccountInfoPlugin security restrictions', () => {
       expect(SENSITIVE_PATTERN.test(key)).toBe(false);
     }
   });
+
+  it('rejects non-string environment variable keys with a Security Error', async () => {
+    const plugin = new AccountInfoPlugin({
+      id: 'account-info',
+      name: 'Account Info',
+      type: 'api-connection',
+      capabilities: [],
+    } as any);
+
+    await expect(plugin.getEnv(123 as any)).rejects.toThrow(/Security Error: Environment key must be a string/);
+    await expect(plugin.getEnv(null as any)).rejects.toThrow(/Security Error: Environment key must be a string/);
+    await expect(plugin.getEnv({} as any)).rejects.toThrow(/Security Error: Environment key must be a string/);
+  });
+
+  it('rejects empty or whitespace-only environment variable keys with a Security Error', async () => {
+    const plugin = new AccountInfoPlugin({
+      id: 'account-info',
+      name: 'Account Info',
+      type: 'api-connection',
+      capabilities: [],
+    } as any);
+
+    await expect(plugin.getEnv('')).rejects.toThrow(/Security Error: Environment key cannot be empty/);
+    await expect(plugin.getEnv('   ')).rejects.toThrow(/Security Error: Environment key cannot be empty/);
+  });
+
+  it('rejects oversized environment variable keys with a Security Error', async () => {
+    const plugin = new AccountInfoPlugin({
+      id: 'account-info',
+      name: 'Account Info',
+      type: 'api-connection',
+      capabilities: [],
+    } as any);
+
+    const longKey = 'A'.repeat(201);
+    await expect(plugin.getEnv(longKey)).rejects.toThrow(/Security Error: Environment key exceeds maximum length/);
+  });
+
+  it('executes whoami safely and returns current username', async () => {
+    const plugin = new AccountInfoPlugin({
+      id: 'account-info',
+      name: 'Account Info',
+      type: 'api-connection',
+      capabilities: [],
+    } as any);
+
+    const username = await plugin.whoami();
+    expect(typeof username).toBe('string');
+    expect(username.length).toBeGreaterThan(0);
+  });
 });

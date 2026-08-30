@@ -1,5 +1,5 @@
 /**
- * NeuroClaw — 3D Mesh Visualization
+ * Corona — 3D Mesh Visualization
  *
  * Renders the all-to-all neural mesh in 3D using React Three Fiber.
  * Neurons are spheres color-mapped by vale and activation.

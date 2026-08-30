@@ -13,6 +13,27 @@ import { useBuilder, BuilderCanvas } from '@/features/builder'
  * neuron's output, add an API-capable output layer, import/export NeuroLang,
  * and Save (un-quantized, editable) vs Install (quantized for deployment).
  */
+/** What POST /api/extension/plan-requirements answers with. */
+interface RequirementPlanResult {
+  plan: {
+    requirements: Array<{
+      requirement: string
+      route: 'already-satisfied' | 'net-skill' | 'train'
+      reason: string
+      satisfiedBy?: string
+      betterWithTraining: boolean
+    }>
+    recommended: 'net-skill' | 'train'
+    alternative: { route: 'train'; requirements: string[]; reason: string }
+    rationale: string
+    alreadySatisfied: number
+    neurons: Array<{ name: string; definition: string }>
+  }
+  neuroLang: string
+  frozen: { neuronCount: number; digest: string; frozenAt: string }
+  mainModelUnchanged: boolean
+}
+
 export const Route = createFileRoute('/builder')({
   ssr: false,
   head: () => ({
@@ -56,6 +77,9 @@ function BuilderPage() {
   const [merging, setMerging] = useState(false)
   const [mergeTarget, setMergeTarget] = useState('')
   const [savedExtensions, setSavedExtensions] = useState<Array<{ file: string; name: string; neurons: number }>>([])
+  const [requirements, setRequirements] = useState('')
+  const [planning, setPlanning] = useState(false)
+  const [plan, setPlan] = useState<RequirementPlanResult | null>(null)
 
   const selected = b.neurons.find((n) => n.id === selectedId) ?? null
 
@@ -272,6 +296,102 @@ function BuilderPage() {
     )
   }
 
+  /**
+   * "Here is what I need. Make all of it true."
+   *
+   * The default is a net skill, and that is the point: the requirements are
+   * stated as neurons and wired into the main model's mesh, which costs a
+   * click rather than a training run. Training a new network is the other
+   * button, offered when the plan finds requirements describing something the
+   * network has to get GOOD at -- examples teach those, definitions do not.
+   *
+   * The plan is made with the main model FROZEN. It can see every neuron the
+   * main model already has, which is what lets it say "you already have this"
+   * instead of rebuilding it, and the freeze is verified rather than promised:
+   * the server digests the main model before and after and refuses to call the
+   * plan frozen if anything moved.
+   */
+  const handlePlanRequirements = async () => {
+    const lines = requirements.split('\n').map((r) => r.trim()).filter(Boolean)
+    if (lines.length === 0) {
+      setStatusMsg('Write what you need, one requirement per line')
+      return
+    }
+    setPlanning(true)
+    setStatusMsg('Working out the quickest way to make all of that true…')
+    try {
+      const res = await fetch('/api/extension/plan-requirements', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ requirements: lines }),
+      })
+      const body = await res.json()
+      if (!res.ok) {
+        setStatusMsg(`Could not plan: ${body.error}`)
+        return
+      }
+      setPlan(body)
+      // The plan lands in the builder's own editor rather than in a format
+      // only the planner understands: it can be read, changed, and built.
+      if (body.neuroLang) setNeuroLang(body.neuroLang)
+      const built = body.plan.requirements.filter((r: { route: string }) => r.route !== 'already-satisfied').length
+      setStatusMsg(
+        built === 0
+          ? 'Nothing to build — every requirement is already true on this machine.'
+          : `Net skill planned: ${body.plan.neurons.length} neuron(s) for ${built} requirement(s)`
+            + (body.plan.alreadySatisfied > 0 ? `, ${body.plan.alreadySatisfied} already true` : '')
+            + `. Main model frozen at ${body.frozen.neuronCount} neurons and unchanged.`,
+      )
+    } catch (err) {
+      setStatusMsg(`Could not plan: ${err instanceof Error ? err.message : String(err)}`)
+    } finally {
+      setPlanning(false)
+    }
+  }
+
+  /**
+   * Publish what was built to the store, so other people can install it.
+   *
+   * Until now the builder's output stopped at this machine: it saved into
+   * extension-builder/extensions/ and went no further. So the chain this whole
+   * system is built around -- build a net skill, publish it, someone installs
+   * it, its neurons join their shared all-to-all mesh -- was broken at the very
+   * first link, and anything built here was invisible to everyone else.
+   *
+   * Publishing is not installing. The person on the other machine still
+   * chooses, and their install is what wires the neurons into their network.
+   */
+  const handlePublish = async () => {
+    const name = (b.projectName ?? '').trim()
+    if (!name) {
+      setStatusMsg('Give the project a name before publishing it')
+      return
+    }
+    setStatusMsg('Publishing to the store…')
+    try {
+      const res = await fetch('/api/extension/publish', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, description: '', code: neuroLang }),
+      })
+      const body = await res.json()
+      if (!res.ok) {
+        setStatusMsg(body.errors ? `Could not publish: ${body.errors.join('; ')}` : `Could not publish: ${body.error}`)
+        return
+      }
+      // Said honestly: "saved" and "everyone can get it" are different
+      // outcomes, and only one of them is publishing.
+      setStatusMsg(
+        `Published "${body.item.name}" with ${body.neurons} neuron(s) — `
+        + (body.sync?.pushed
+          ? `pushed${body.sync.branch ? ` to ${body.sync.branch}` : ''}, anyone who pulls can install it`
+          : `saved on this device only (${body.sync?.reason ?? 'it has not reached anyone else yet'})`),
+      )
+    } catch (err) {
+      setStatusMsg(`Could not publish: ${err instanceof Error ? err.message : String(err)}`)
+    }
+  }
+
   const handleParse = async () => {
     const res = await b.parseNeuroLang(neuroLang)
     if (res.success) spreadUnplaced()
@@ -436,14 +556,40 @@ function BuilderPage() {
                 placeholder="label text"
                 className="h-8 text-xs"
               />
-              {labelText.trim() && (
-                <span
-                  draggable
-                  onDragStart={(e) => e.dataTransfer.setData('text/neuroclaw-label', labelText.trim())}
-                  className="inline-block cursor-grab rounded bg-primary/15 px-2 py-1 text-xs text-primary active:cursor-grabbing"
-                >
-                  ⠿ {labelText.trim()}
-                </span>
+              {labelText.trim() ? (
+                <div className="space-y-1.5">
+                  <span
+                    draggable
+                    onDragStart={(e) => e.dataTransfer.setData('text/neuroclaw-label', labelText.trim())}
+                    className="inline-block cursor-grab rounded bg-primary/15 px-2 py-1 text-xs text-primary active:cursor-grabbing border border-primary/20 hover:bg-primary/20 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                    tabIndex={0}
+                    aria-label={`Draggable label: ${labelText.trim()}`}
+                  >
+                    ⠿ {labelText.trim()}
+                  </span>
+                  <p className="text-[10px] text-muted-foreground italic">
+                    Drag this chip onto a neuron node on the canvas.
+                  </p>
+                </div>
+              ) : (
+                <div className="space-y-1.5">
+                  <p className="text-[11px] text-muted-foreground italic">
+                    Type a label, or select a preset below:
+                  </p>
+                  <div className="flex flex-wrap gap-1.5 pt-0.5">
+                    {['sensor', 'actuator', 'hidden', 'output'].map((preset) => (
+                      <button
+                        key={preset}
+                        type="button"
+                        onClick={() => setLabelText(preset)}
+                        className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer"
+                        aria-label={`Select preset label: ${preset}`}
+                      >
+                        +{preset}
+                      </button>
+                    ))}
+                  </div>
+                </div>
               )}
             </CardContent>
           </Card>
@@ -634,11 +780,73 @@ function BuilderPage() {
                   {merging ? 'Merging…' : 'Merge'}
                 </Button>
               </div>
+              {/* "Here is what I need. Make all of it true."
+                  Net skill is the default route, deliberately: it costs a
+                  click instead of a training run, and the neurons become part
+                  of the main model's mesh rather than something it consults.
+                  Training a new network is offered as the other button, for
+                  the requirements that genuinely need examples. */}
+              <div className="space-y-1.5 rounded-md border border-border p-2">
+                <Label htmlFor="requirements" className="text-xs font-medium">
+                  Requirements → net skill
+                </Label>
+                <textarea
+                  id="requirements"
+                  className="h-20 w-full resize-y rounded-md border border-input bg-background p-1.5 font-mono text-[11px]"
+                  placeholder={'One requirement per line, e.g.\nremember which files I edited today\nrank search results by how recent they are'}
+                  value={requirements}
+                  onChange={(e) => setRequirements(e.target.value)}
+                />
+                <Button
+                  size="sm"
+                  className="h-7 w-full text-xs"
+                  onClick={handlePlanRequirements}
+                  disabled={planning || training}
+                  title="Plan a net skill that makes every requirement true, with the main model frozen so building cannot change it"
+                >
+                  {planning ? 'Planning…' : 'Make all of these true'}
+                </Button>
+                {plan && (
+                  <div className="space-y-1 text-[11px] text-muted-foreground">
+                    <p>{plan.plan.rationale}</p>
+                    <p>
+                      Main model frozen at {plan.frozen.neuronCount} neuron(s) —{' '}
+                      {plan.mainModelUnchanged ? 'unchanged by this plan' : 'CHANGED, which it should not have been'}
+                    </p>
+                    <ul className="space-y-0.5">
+                      {plan.plan.requirements.map((r) => (
+                        <li key={r.requirement}>
+                          {r.route === 'already-satisfied' ? '✓ already true' : '+ neuron'}: {r.requirement}
+                          {r.satisfiedBy ? ` (${r.satisfiedBy})` : ''}
+                        </li>
+                      ))}
+                    </ul>
+                    {plan.plan.alternative.requirements.length > 0 && (
+                      <p title={plan.plan.alternative.reason}>
+                        Would be sharper trained: {plan.plan.alternative.requirements.join('; ')} — train the
+                        network below if the skill is not good enough.
+                      </p>
+                    )}
+                  </div>
+                )}
+              </div>
               <Button size="sm" variant="secondary" className="h-7 w-full text-xs" onClick={handleSave} disabled={training}>
                 Save (no quantization)
               </Button>
               <Button size="sm" className="h-7 w-full text-xs" onClick={handleInstall} disabled={training}>
                 Install (quantize 8-bit)
+              </Button>
+              {/* Publishing is what makes a built net skill reach anyone else.
+                  Save and Install both stop at this machine. */}
+              <Button
+                size="sm"
+                variant="outline"
+                className="h-7 w-full text-xs"
+                onClick={handlePublish}
+                disabled={training}
+                title="Publish this net skill to the store so other people can install it"
+              >
+                Publish to the store
               </Button>
             </CardContent>
           </Card>

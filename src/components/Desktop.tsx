@@ -1,4 +1,5 @@
-import { useState, useCallback } from "react";
+import { Suspense, lazy, useState, useCallback, useEffect } from "react";
+import { RingSpinner } from "@/components/RingSpinner";
 import {
   Folder,
   Terminal,
@@ -13,7 +14,11 @@ import {
   Cpu,
   Code,
 } from "lucide-react";
-import { TwistedStripLogo } from "@/components/TwistedStripLogo";
+// Code-split for the same reason as the loading spinner: this is a decorative
+// mark on one route, and three.js has no business in the entry chunk for it.
+const TwistedStripLogo = lazy(() =>
+  import("@/components/TwistedStripLogo").then(m => ({ default: m.TwistedStripLogo }))
+);
 
 /**
  * AppItem - Represents a launchable application
@@ -342,6 +347,17 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
   // going through launchApp()/POST /api/apps/launch like the rest.
   const [logoViewerOpen, setLogoViewerOpen] = useState(false);
 
+  useEffect(() => {
+    if (!logoViewerOpen) return;
+    const handleKeyDown = (e: KeyboardEvent) => {
+      if (e.key === "Escape") {
+        setLogoViewerOpen(false);
+      }
+    };
+    window.addEventListener("keydown", handleKeyDown);
+    return () => window.removeEventListener("keydown", handleKeyDown);
+  }, [logoViewerOpen]);
+
   const handleAppClick = async (app: AppItem) => {
     try {
       await launchApp(app);
@@ -432,7 +448,9 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
               >
                 <div className="relative flex items-center justify-center w-14 h-14 rounded-xl bg-gradient-to-br from-white/20 to-white/5 backdrop-blur-sm border border-white/10 shadow-lg group-hover:shadow-xl group-hover:scale-105 transition-all duration-200 overflow-hidden">
                   <div className="pointer-events-none">
-                    <TwistedStripLogo size={56} />
+                    <Suspense fallback={<RingSpinner size={56} />}>
+                      <TwistedStripLogo size={56} />
+                    </Suspense>
                   </div>
                 </div>
                 <span className="mt-2 text-xs font-medium text-white text-center drop-shadow-md line-clamp-2">
@@ -484,6 +502,9 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
       {/* Twisted Strip viewer -- opened by clicking its desktop icon */}
       {logoViewerOpen && (
         <div
+          role="dialog"
+          aria-modal="true"
+          aria-label="Twisted Strip 3D viewer"
           className="absolute inset-0 z-50 flex items-center justify-center bg-black/70 backdrop-blur-sm"
           onClick={() => setLogoViewerOpen(false)}
         >
@@ -499,7 +520,9 @@ export function Desktop({ apps = DEFAULT_APPS, onAppLaunch }: DesktopProps) {
             >
               ×
             </button>
-            <TwistedStripLogo size={420} />
+            <Suspense fallback={<RingSpinner size={420} />}>
+              <TwistedStripLogo size={420} />
+            </Suspense>
             <p className="mt-2 text-center text-xs text-white/50">
               Drag to rotate · scroll to zoom
             </p>

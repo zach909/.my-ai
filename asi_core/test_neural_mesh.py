@@ -289,6 +289,110 @@ class TestLearningWithValeGating(unittest.TestCase):
         # Opposite rewards should produce opposite changes
         self.assertGreater(delta_positive, delta_negative)
 
+    def test_hebbian_learning_rate_not_collapsed(self):
+        """Regression: the per-step weight delta must match the three-factor
+        Hebbian rule exactly, with no extra spurious scaling.
+
+        Previously an extra `* 0.01` was applied inside the weight-update
+        loop, collapsing the effective delta to ~1e-7 and making learning
+        effectively dead (~10^7 steps to move a weight by 1.0). This test
+        pins the rule: delta == effective_lr * pre * post * reward * dt.
+        """
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=4, n_input=4, seed=2)
+        pre_act = {i: 1.0 for i in range(8)}
+        post_act = {i: 1.0 for i in range(8)}
+        conn_key = (0, 4)
+        w_before = mesh.connections[conn_key].weight_matrix[1][1]
+        mesh.apply_hebbian_learning(pre_act, post_act, reward_signal=1.0, dt=0.001)
+        w_after = mesh.connections[conn_key].weight_matrix[1][1]
+        delta = w_after - w_before
+        target_vale = mesh.neurons[4].vale
+        effective_lr = 0.01 * (1.0 - target_vale)
+        expected = effective_lr * 1.0 * 1.0 * 1.0 * 0.001
+        self.assertAlmostEqual(delta, expected, places=12)
+        # Sanity: the delta must be materially larger than the old dead
+        # value of ~1e-7.
+        self.assertGreater(abs(delta), 1e-6)
+
+
+class TestInputClampingRegression(unittest.TestCase):
+    """Regression tests for clamp_input_neurons correctness."""
+
+    def test_short_input_zeros_uncovered_content_dims(self):
+        """Regression: a short input must zero (not leave stale random-init
+        values in) content dimensions beyond the input length."""
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=6, n_input=4, settle_ticks=1, seed=1)
+        mesh.clamp_input_neurons([0.9])  # only 1 value, 5 content dims
+        sv = mesh.neurons[0].state_vector
+        # dim 0 is the input flag; dim 1 gets 0.9; dims 2..5 must be 0.0
+        self.assertAlmostEqual(sv[1], 0.9)
+        for d in range(2, len(sv)):
+            self.assertAlmostEqual(sv[d], 0.0,
+                                   msg=f"dim {d} retained stale value {sv[d]}")
+
+    def test_full_input_clamps_all_content_dims(self):
+        """A full-length input still clamps every content dim correctly."""
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=4, n_input=4, settle_ticks=1, seed=7)
+        mesh.clamp_input_neurons([0.1, 0.2, 0.3])
+        sv = mesh.neurons[0].state_vector
+        self.assertAlmostEqual(sv[1], 0.1)
+        self.assertAlmostEqual(sv[2], 0.2)
+        self.assertAlmostEqual(sv[3], 0.3)
+
+
+class TestComputeNeuronInputOptimizations(unittest.TestCase):
+    """Tests for the optimized compute_neuron_input (incoming-index + dim-0 bias)."""
+
+    def test_bias_only_applied_to_content_dims(self):
+        """Dimension 0 (input flag) must not receive bias -- it is overwritten
+        in _settle, so biasing it was wasted work. Content dims get bias."""
+        mesh = NeuralMesh(n_neurons=8, n_dimensions=4, n_input=4, n_groups=2, seed=3)
+        target = 5
+        before = mesh.compute_neuron_input(target)
+        mesh.add_dsl_bias(target, 1.0)
+        after = mesh.compute_neuron_input(target)
+        self.assertAlmostEqual(after[0] - before[0], 0.0)   # dim 0 unchanged
+        for d in range(1, 4):
+            self.assertAlmostEqual(after[d] - before[d], 1.0)
+
+    def test_incoming_index_matches_all_to_all(self):
+        """The _incoming_by_target index must list every other neuron as a
+        source for each target (all-to-all, no self-connection)."""
+        mesh = NeuralMesh(n_neurons=10, n_dimensions=3, n_input=4, n_groups=2)
+        for target in range(10):
+            sources = set(mesh._incoming_by_target[target])
+            self.assertNotIn(target, sources)
+            self.assertEqual(sources, set(range(10)) - {target})
+
+    def test_compute_input_unchanged_by_optimization(self):
+        """compute_neuron_input must produce the same numerical result as the
+        direct all-to-all definition (regression guard for the rewrite)."""
+        mesh = NeuralMesh(n_neurons=12, n_dimensions=4, n_input=4, seed=11)
+        # Drive some state into the mesh so sources are non-trivial.
+        mesh.activate([0.3, -0.2, 0.5, 0.1])
+        nd = mesh.n_dimensions
+        for target in range(mesh.n_neurons):
+            expected = [0.0] * nd
+            for source_id in range(mesh.n_neurons):
+                if source_id == target:
+                    continue
+                src = mesh.neurons[source_id]
+                conn = mesh.connections[(source_id, target)]
+                sv = src.state_vector
+                for td in range(nd):
+                    acc = 0.0
+                    for sd in range(min(nd, len(sv))):
+                        acc += conn.weight_matrix[td][sd] * sv[sd]
+                    expected[td] += acc
+            neuron = mesh.neurons[target]
+            bias = 0.01 + neuron.dsl_bias
+            for d in range(1, nd):
+                expected[d] += bias
+            got = mesh.compute_neuron_input(target)
+            for d in range(nd):
+                self.assertAlmostEqual(got[d], expected[d], places=12,
+                                       msg=f"target {target} dim {d}")
+
 
 class TestContinuousOperation(unittest.TestCase):
     """Test continuous operation with state carry-over."""
@@ -501,8 +605,14 @@ class TestDSLConnectionOverride(unittest.TestCase):
         mesh.add_dsl_bias(target, 0.5)
         self.assertAlmostEqual(mesh.neurons[target].dsl_bias, 1.5)
         after = mesh.compute_neuron_input(target)
-        for b, a in zip(before, after):
-            self.assertAlmostEqual(a - b, 1.5)
+        # Bias is applied to content dimensions (index >= 1) only. Dimension 0
+        # is the input flag, which _settle overwrites unconditionally, so
+        # placing bias there was wasted work and is intentionally excluded.
+        for d, (b, a) in enumerate(zip(before, after)):
+            if d == 0:
+                self.assertAlmostEqual(a - b, 0.0)
+            else:
+                self.assertAlmostEqual(a - b, 1.5)
 
 
 class TestStatePersistence(unittest.TestCase):
