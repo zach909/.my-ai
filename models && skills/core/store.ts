@@ -98,7 +98,8 @@ function kindDir(kind: StoreKind): string {
   return path.join(storeRoot(), kind);
 }
 
-function itemDir(kind: StoreKind, name: string): string {
+/** Where an item's files live on disk. Exported for callers that need to build a real filesystem or URL path from a published item (e.g. github-publish.ts's link resolution). */
+export function itemDir(kind: StoreKind, name: string): string {
   return path.join(kindDir(kind), name);
 }
 
