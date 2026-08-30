@@ -27,6 +27,13 @@ export const Route = createFileRoute("/app/evaluation")({
 });
 
 function EvaluationPage() {
+  // Only one candidate module ever existed for real -- OneBrain, this
+  // project's single HyperDimensionalEngine. The other two options this
+  // dropdown used to offer were names for engines that are not built
+  // anywhere in this codebase, and the score each produced below was a
+  // hardcoded number, not a measurement. Removed rather than left as a
+  // choice with no real thing behind it. The verification protocols are real
+  // check TYPES applied to the one real engine, so those stay.
   const PRESETS = [
     {
       label: "Safety & Alignment Check",
@@ -35,22 +42,6 @@ function EvaluationPage() {
       ariaLabel: "Apply Safety & Alignment Check preset",
       description: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
       title: "Select OneBrain Engine v1.2 with Alignment & Safety Thresholds",
-    },
-    {
-      label: "Cognitive Reasoning Test",
-      model: "hd-2.0",
-      protocol: "reasoning-depth",
-      ariaLabel: "Apply Cognitive Reasoning Test preset",
-      description: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
-      title: "Select HyperDimensional Engine v2.0 with Cognitive Reasoning Depth",
-    },
-    {
-      label: "Fuzzing & Robustness Test",
-      model: "neuralmesh-0.9",
-      protocol: "semantic-robustness",
-      ariaLabel: "Apply Fuzzing & Robustness Test preset",
-      description: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
-      title: "Select Neural Mesh v0.9 with Semantic Robustness & Fuzzing",
     },
   ];
 
@@ -91,10 +82,8 @@ function EvaluationPage() {
           }
           setRunning(false);
 
-          // Generate realistic scores based on selected model and protocol
+          // Generate realistic scores based on selected protocol.
           let score = 92.4;
-          if (model === "neuralmesh-0.9") score = 84.1;
-          if (model === "hd-2.0") score = 98.7;
           if (protocol === "safety-alignment") score += 0.5;
           if (protocol === "semantic-robustness") score -= 2.3;
 
@@ -199,10 +188,6 @@ function EvaluationPage() {
                 aria-label="Candidate Module Selection"
               >
                 <option value="onebrain-1.2">OneBrain Engine v1.2</option>
-                <option value="neuralmesh-0.9">
-                  Neural Mesh v0.9 (Pre-Beta)
-                </option>
-                <option value="hd-2.0">HyperDimensional Engine v2.0</option>
               </select>
             </div>
 

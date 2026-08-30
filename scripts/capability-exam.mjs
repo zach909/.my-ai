@@ -24,6 +24,12 @@ import { generateAstrophysicsBatch } from './exam-generators/astrophysics.mjs'
 import { generateOpticsBatch } from './exam-generators/optics.mjs'
 import { generateQuantumComputingBatch } from './exam-generators/quantum-computing.mjs'
 import { generateDigitalLogicBatch } from './exam-generators/digital-logic.mjs'
+import { generateCodingBatch } from './drill-generators/coding.mjs'
+import { generateLogicBatch } from './drill-generators/logic.mjs'
+import { generateBuildingAiBatch } from './drill-generators/building-ai.mjs'
+import { generateClassicalComputersBatch } from './drill-generators/classical-computers.mjs'
+import { generateOperatingSystemsBatch } from './drill-generators/operating-systems.mjs'
+import { generateBuildingAppsBatch } from './drill-generators/building-apps.mjs'
 
 /** Every domain the exam can draw from, keyed by a stable slug used in
  *  history/UI. Each generator is `(count, rand) => [{ problem, answer }]`. */
@@ -34,6 +40,18 @@ export const EXAM_DOMAINS = {
   optics: { label: 'Optics (light & computation)', generate: generateOpticsBatch },
   'quantum-computing': { label: 'Quantum computing', generate: generateQuantumComputingBatch },
   'digital-logic': { label: 'Digital logic (chip design)', generate: generateDigitalLogicBatch },
+  // The domains the agent is now actually DRILLED on, so the exam covers
+  // what training covers. An exam that tests six domains while training
+  // covers nine measures the wrong thing in both directions: improvement in
+  // the three it cannot see is invisible, and the exam score stops being a
+  // read on the training loop. Same generators, fresh problems every run --
+  // there is no shared question bank to leak between the two.
+  coding: { label: 'Coding', generate: generateCodingBatch },
+  logic: { label: 'Logic', generate: generateLogicBatch },
+  'building-ai': { label: 'Building AI', generate: generateBuildingAiBatch },
+  'classical-computers': { label: 'Building classical computers', generate: generateClassicalComputersBatch },
+  'operating-systems': { label: 'Building operating systems', generate: generateOperatingSystemsBatch },
+  'building-apps': { label: 'Building apps', generate: generateBuildingAppsBatch },
 }
 
 /** Fisher-Yates shuffle driven by the same rand() source as everything

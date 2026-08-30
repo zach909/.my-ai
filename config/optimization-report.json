@@ -1,4 +1,5 @@
 {
+  "at": "2026-08-30T14:22:41.992Z",
   "at": "2026-08-30T14:35:19.121Z",
   "checks": [
     {
@@ -18,6 +19,9 @@
     },
     {
       "name": "tested-but-unreachable",
+      "value": 41,
+      "lowerIsBetter": true,
+      "detail": "41 exports"
       "value": 40,
       "lowerIsBetter": true,
       "detail": "40 exports"
@@ -27,7 +31,7 @@
       "value": 0,
       "lowerIsBetter": true,
       "detail": "none in the watched files"
-    },
+    }
     {
       "name": "memory-accepts-new",
       "value": 1,
