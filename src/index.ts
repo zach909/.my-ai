@@ -10,7 +10,9 @@ import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";
 import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
-import { ZipIOSystem } from "../models && skills/core/zip-io.js";
+import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
+import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
+import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
 import { HiveMind, SharedBlackboard } from "../models && skills/core/hive-mind.js";
 import { ChatGroup } from "../models && skills/core/chat-group.js";
@@ -73,6 +75,31 @@ import { embedText } from "../models && skills/core/neuro-lang.js";
  * on it is room the conversation does not get. Three is enough for one skill
  * per step of a perceive-think-act cycle, which is what the categories are.
  */
+/**
+ * The Zip Loop claims neurons 0-3: the 1 and 0 it speaks through, and the 1
+ * and 0 it listens on. A mesh no bigger than that has nothing left to think
+ * with, so there is nothing to feed.
+ */
+/** What one turn used, as it used it. */
+export interface TurnDetails {
+  /** Prompting skills zipped in with this prompt, highest priority first. */
+  skills: string[];
+  /** Prior turns retrieved as context, with how close each matched. */
+  recalled: Array<{ text: string; similarity: number }>;
+  /** Which capability the router picked, and how sure it was. */
+  route: { capability: string; confidence: number } | null;
+  /** How the message read emotionally -- this sets the turn's importance. */
+  emotion: { valence: number; arousal: number } | null;
+  /** The mesh at the time of answering. */
+  mesh: { neurons: number; dimensions: number } | null;
+  /** Archive bytes of this prompt that went through the real Zip Loop. */
+  zipBytes: number;
+  /** Milliseconds from message in to answer out. */
+  ms: number;
+}
+
+const ZIP_BIT_NEURONS = 4;
+
 const PROMPTING_SKILLS_PER_TURN = 3;
 const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
 
@@ -130,6 +157,16 @@ export class NeuroclawSystem {
   pluginRegistry: PluginRegistry;
   veto: AlignmentVeto;
   zipIO: ZipIOSystem;
+  /** Everything said, through the real Zip Loop, as a file. */
+  promptFeed: PromptMeshFeed;
+  /**
+   * What the last turn actually used, for the three-dots panel in the chat.
+   *
+   * Everything here is recorded where it happens rather than reconstructed
+   * afterwards. A details panel assembled from guesses about what probably
+   * ran is worse than none: it looks like evidence and is not.
+   */
+  lastTurnDetails: TurnDetails | null = null;
   empathy: EmpathyEngine;
   runner: NeuroclawRunner;
   hive: HiveMind;
@@ -220,6 +257,15 @@ export class NeuroclawSystem {
     this.pluginRegistry = new PluginRegistry(new MixtureOfExperts(2, this.llm.mesh));
     this.veto = new AlignmentVeto();
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
+    // A doorway is made per feed rather than held: the pipeline builds its
+    // engine lazily, and addNeurons() can grow the mesh underneath us, so a
+    // doorway cached at construction would point at an engine that no longer
+    // exists.
+    this.promptFeed = new PromptMeshFeed(() => {
+      const engine = this.pipeline.getHyperEngine();
+      if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
+      return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    });
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.pluginRegistry);
     // Hive Mind (Section 13): each agent's mind is the real neural runner, so
@@ -625,9 +671,98 @@ export class NeuroclawSystem {
   /**
    * Process a user query through the complete pipeline
    */
+  /**
+   * The user rewrote something the AI said.
+   *
+   * A correction is the most valuable signal this system gets, and it was
+   * being thrown away: the chat UI could copy a reply but not fix one, so a
+   * wrong answer stayed wrong in the transcript, in memory, and in whatever
+   * the next turn was grounded on.
+   *
+   * Four things happen with it, and each is a different kind of memory:
+   *
+   *   The corrected text replaces the original in long-term memory, under
+   *   the same "chat-turn"/"assistant" tags the original was stored with, at
+   *   a higher importance -- what the AI should have said is worth more than
+   *   what it did say. The original is forgotten rather than left beside it,
+   *   because leaving both means retrieval can still surface the wrong one.
+   *
+   *   The mistake is recorded, with the correction as its prevention. That
+   *   is what feeds §5's "which skills are missing" -- a correction names a
+   *   reasoning failure that nothing else in this system can detect, because
+   *   nothing else knows the answer was wrong.
+   *
+   *   Both versions go on the working context, so the rest of the
+   *   conversation is grounded on the fix rather than the error.
+   *
+   *   And the correction goes through the real Zip Loop as a file, like
+   *   anything else said. Editing a reply IS saying something.
+   *
+   * Returns what it managed to do rather than throwing: a correction that
+   * cannot be filed is still a correction the user should see applied to
+   * their transcript.
+   */
+  async recordCorrection(input: {
+    original: string;
+    corrected: string;
+    prompt?: string;
+  }): Promise<{ applied: boolean; forgot: number; reason?: string }> {
+    const original = (input.original ?? "").trim();
+    const corrected = (input.corrected ?? "").trim();
+    if (!corrected) return { applied: false, forgot: 0, reason: "the correction is empty" };
+    if (original === corrected) return { applied: false, forgot: 0, reason: "nothing changed" };
+
+    // Out with the wrong one. findExact rather than a similarity search: this
+    // is the exact string that was stored, and a fuzzy match here would
+    // forget a neighbouring turn that merely resembled it.
+    let forgot = 0;
+    // Exact equality, NOT memory.findExact(), whose name is a trap: it is a
+    // SUBSTRING match. Correcting "the cat sat on the mat" through it also
+    // forgot "the cat sat on the mat yesterday" -- a neighbouring turn the
+    // user never touched, deleted silently. Caught by a test written to check
+    // exactly that.
+    const stored = `AI: ${original}`;
+    for (const item of this.memory.all()) {
+      if (item.content === stored && this.memory.forget(item.id)) forgot++;
+    }
+
+    this.memory.remember(`AI: ${corrected}`, {
+      tags: ["chat-turn", "assistant", "corrected"],
+      importance: 0.9,
+    });
+
+    this.mistakes.record({
+      task: input.prompt?.trim() || original.slice(0, 200),
+      description: `The answer was corrected by hand. Said: ${original.slice(0, 300)}`,
+      cause: "reasoning",
+      prevention: corrected.slice(0, 500),
+    });
+
+    await this.zipIO.emit(corrected);
+    this.promptFeed.feed(corrected, "correction.txt");
+
+    return { applied: true, forgot };
+  }
+
   async processQuery(input: string): Promise<string> {
     if (!this.initialized) await this.initialize();
-    return this.trackCall("process-query", async () => this.processQueryImpl(input));
+    const started = Date.now();
+    try {
+      return await this.trackCall("process-query", async () => this.processQueryImpl(input));
+    } finally {
+      // Closed out here rather than at the end of processQueryImpl, which
+      // returns from a dozen places. In a finally, so a turn that threw still
+      // reports what it had got through -- that is the turn whose details are
+      // worth reading.
+      const d = this.lastTurnDetails;
+      if (d) {
+        d.ms = Date.now() - started;
+        const engine = this.pipeline.getHyperEngine();
+        d.mesh = engine
+          ? { neurons: engine.getNeuronCount(), dimensions: engine.getDimensions() }
+          : null;
+      }
+    }
   }
 
   private async processQueryImpl(input: string): Promise<string> {
@@ -635,6 +770,13 @@ export class NeuroclawSystem {
     //    stay aligned (Empathy).
     this.empathy.updateUserContext(input);
     const emotion = this.empathy.analyzeEmotion(input);
+    const turnStarted = Date.now();
+    const details: TurnDetails = {
+      skills: [], recalled: [], route: null,
+      emotion: { valence: emotion.valence, arousal: emotion.arousal },
+      mesh: null, zipBytes: 0, ms: 0,
+    };
+    this.lastTurnDetails = details;
 
     // 2. Store the (compressed) input in the circular ZIP-IO context buffer
     //    (working context) and commit it to long-term memory (Section 7). The
@@ -642,6 +784,28 @@ export class NeuroclawSystem {
     //    emotionally-charged messages are retained more strongly and evicted
     //    last under capacity pressure.
     await this.zipIO.ingest(input);
+
+    // And through the REAL Zip Loop, as a file.
+    //
+    // The line above is the compressed ring buffer -- the working context.
+    // It is what "zip loop" has meant in this file, and it never touched a
+    // neuron. The doorway into the mesh is ZipLoopInterface: two input
+    // neurons meaning 1 and 0, one settle per bit. Until now a prompt reached
+    // the buffer beside the network and not the network.
+    //
+    // So the prompt is packed into an archive -- an actual gzipped file, the
+    // same form /api/zip-loop/run streams -- and the bytes go through the
+    // doorway. Everything said now reaches the mesh as something it hears bit
+    // by bit.
+    //
+    // Not awaited, and that is not laziness. Measured on the live mesh at 336
+    // neurons x 64 dimensions: 1192 ms per input byte, and "hi" packs to 51
+    // bytes. Awaiting it would put a minute between a message and its reply,
+    // and the settle loop is synchronous, so it would take every other
+    // request with it -- which has already happened here once. See
+    // PromptMeshFeed for why the queue is one deep.
+    this.promptFeed.feed(input);
+    details.zipBytes = packZip({ files: { "prompt.txt": input } }).length;
 
     // Prompting Skills enter here, as information.
     //
@@ -673,6 +837,7 @@ export class NeuroclawSystem {
         .slice(0, PROMPTING_SKILLS_PER_TURN);
       for (const skill of chosen) {
         await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
+        details.skills.push(skill.title);
       }
     } catch {
       // No registry on disk, or an unreadable one. A missing instruction is
@@ -686,6 +851,10 @@ export class NeuroclawSystem {
     const priorHistory = this.memory
       .retrieve(input, { topK: 3, tag: "chat-turn" })
       .filter(h => h.similarity >= 0.1);
+    details.recalled = priorHistory.map(h => ({
+      text: h.item.content.slice(0, 200),
+      similarity: Number(h.similarity.toFixed(3)),
+    }));
     // Taught facts are tagged "knowledge", NOT "chat-turn", so the
     // conversation-history retrieve above can never surface them -- asking
     // about something the system was explicitly taught searched only the
@@ -743,6 +912,10 @@ export class NeuroclawSystem {
     //    routed capability that has nothing to act on — falls through to
     //    generation.
     const route = this.router.route(input);
+    details.route = {
+      capability: route.capability,
+      confidence: Number((route.confidence ?? 0).toFixed(3)),
+    };
     if (route.capability === "summarize") {
       const summary = this.compressContext(600);
       if (summary) return this.respondDirect(`Summary of our conversation:\n${summary}`, turnImportance);
