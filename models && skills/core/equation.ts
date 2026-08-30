@@ -238,6 +238,13 @@ export interface EquationResult {
   poolIm: Float32Array;
   /** What each neuron heard from the waves, as it entered its tanh. */
   waveTerm: Float32Array;
+  /**
+   * The states the equation READ, not the ones it produced: the caller's
+   * array with the input flag wiped and the driven neurons seeded with this
+   * tick's input. Every term above is a function of these, so anything
+   * recomputing one term by hand has to start from the same numbers.
+   */
+  readStates: Float32Array;
 }
 
 function binFor(frequency: number, s: EquationSettings): number {
@@ -592,9 +599,116 @@ export function applyEquation(
     poolRe: nextPoolRe,
     poolIm: nextPoolIm,
     waveTerm,
+    readStates: working,
     correction: nextCorrection,
     liveCorrections,
   };
+}
+
+/**
+ * The hyperdimensional connection written out one connection at a time.
+ *
+ * `applyEquation` above -- and the engine -- compute this term factored: the
+ * network's say is worked out once per receiving neuron and then folded into
+ * the whole row of connections at once. That is fast and it is right, but it
+ * does not look anything like the rule it implements, so this function writes
+ * the rule the way it was specified: walk the connections into one neuron,
+ * and for each one build its combined weight and combined bias from scratch.
+ *
+ * For the connection from neuron `a` into neuron `b`, with `e` standing for
+ * every neuron in the network:
+ *
+ *     a * ( (sum over e of e*wA) + wB )  +  ( bias + (sum over e of e*wC) )
+ *
+ * The sender's value multiplies the weight -- BOTH halves of it, its own and
+ * the network's -- and the bias sits outside, unmultiplied, with its own
+ * network half built from a different set of variables. wA, wB, wC and bias
+ * are different variables; wA and wC are whole rows, one number per neuron in
+ * the network.
+ *
+ * Two divisions that are not in the rule as stated, and why:
+ *
+ *   - The network's halves are MEANS over e, not sums, and they land on all N
+ *     connections into this neuron. Summed back up that is N copies of one
+ *     number, so each connection carries a 1/N share of it. Without that the
+ *     term grows with neuron count until it alone saturates tanh.
+ *   - The connection's own weights carry 1/sqrt(N), the variance-preserving
+ *     scale for a sum of N terms. Same reason, different exponent: see the
+ *     note in `applyEquation`.
+ *
+ * Nothing else differs. `equation.test.ts` runs this against `applyEquation`
+ * on random networks and requires them equal to Float32.
+ *
+ * Returns what goes inside tanh for neuron `i` at dimension `d`, minus the
+ * wave term (which is not a connection and is added by the caller).
+ */
+export function connectionwiseInput(
+  state: EquationState,
+  settings: EquationSettings,
+  i: number,
+  d: number,
+  /**
+   * The states to read. Defaults to the ones on `state`, but a caller
+   * comparing against `applyEquation` must pass that call's `readStates`:
+   * the equation seeds the driven neurons with the arriving input before
+   * anything reads them, so the raw array is one tick stale at exactly the
+   * neurons the input came in on.
+   */
+  states: Float32Array = state.states,
+): number {
+  const N = state.neurons;
+  const D = state.dimensions;
+  const at = (dim: number, n: number) => states[dim * N + n];
+  const invSqrtN = 1 / Math.sqrt(Math.max(1, N));
+  const shiftDim = (d - 1 + D) % D;
+
+  // The receiver's two readings of the network: every neuron's value through
+  // a variable of its own, all added together, then averaged. One set of
+  // variables makes a WEIGHT, a different set makes a BIAS.
+  let sayWeight = 0;
+  let sayBias = 0;
+  for (let e = 0; e < N; e++) {
+    sayWeight += at(d, e) * state.modWeight[i * N + e];
+    sayBias += at(d, e) * state.addWeight[i * N + e];
+  }
+  sayWeight /= N;
+  sayBias /= N;
+
+  // The network's say can also SCALE what the connections produced, rather
+  // than being added to their weights. Off (0) in the shipped configuration,
+  // and 1 is the identity for multiplying, so off is untouched.
+  const scale = settings.hyperScale === 0 ? 1 : settings.hyperScale * sayWeight;
+
+  let total = 0;
+  for (let j = 0; j < N; j++) {
+    const a = at(d, j);
+
+    // ── this connection's combined WEIGHT ──────────────────────────────
+    // its own, plus the network's, scaled by which neuron is sending.
+    const ownWeight = state.connDiag[(i * D + d) * N + j];
+    const netWeight = settings.hyperGain * sayWeight * state.senderGain[j] / N;
+
+    // ── this connection's combined BIAS ────────────────────────────────
+    const ownBias = settings.connectionBias
+      ? state.connBias[(i * D + d) * N + j]
+      : 0;
+    const netBias = settings.hyperAdd * sayBias;
+
+    // ── sender * combined weight + combined bias ───────────────────────
+    total += a * netWeight;
+    total += (a * ownWeight * invSqrtN + ownBias / N) * scale;
+    total += netBias / N;
+
+    // The second band: the same connection reaching the neighbouring
+    // dimension. Part of the connection's own weight, so it is scaled with it.
+    total += at(shiftDim, j)
+      * state.connShift[(i * D + d) * N + j]
+      * settings.crossInfluenceStrength
+      * invSqrtN
+      * scale;
+  }
+
+  return state.bias[i * D + d] + total;
 }
 
 function clamp(v: number): number {
