@@ -322,3 +322,166 @@ export class ZipIOSystem {
     yield* this.outputLoop.iterateContext();
   }
 }
+
+// ─────────────────────────────────────────────────────────────────────────
+// Everything said, through the real Zip Loop, as a file
+// ─────────────────────────────────────────────────────────────────────────
+
+/**
+ * The bit-level doorway, as much of it as this file needs.
+ *
+ * Structural rather than an import of ZipLoopInterface, so zip-io.ts does not
+ * take a dependency on the whole engine to feed one.
+ */
+export interface BitDoorway {
+  sendByte(byte: number): void;
+  learnFromEvent(): void;
+}
+
+/** What one feed did, or why it did not happen. */
+export interface PromptFeedReport {
+  /** Bytes of the packed archive that actually went in. */
+  bytes: number;
+  /** True when a newer prompt replaced this one before it started. */
+  superseded: boolean;
+  /** Milliseconds spent streaming. */
+  ms: number;
+}
+
+/**
+ * Put everything said through the REAL Zip Loop, packed as a file.
+ *
+ * ZipIOSystem above is a compressed ring buffer of text -- it is the working
+ * context, and it is what "zip loop" means everywhere in this file up to this
+ * point. It is NOT the doorway into the mesh. The doorway is
+ * ZipLoopInterface: two input neurons meaning 1 and 0, one settle per bit.
+ * Text going into the ring buffer never touched a neuron.
+ *
+ * This closes that. A prompt is packed into an archive -- an actual file,
+ * gzipped, exactly the form /api/zip-loop/run streams -- and the bytes go
+ * through the doorway, so what the network is asked is something it hears
+ * bit by bit rather than a string appended to a buffer beside it.
+ *
+ * ── Why this never blocks the caller ────────────────────────────────────
+ *
+ * Measured on the live mesh at 336 neurons x 64 dimensions: 1192 ms per
+ * input byte. The two-character prompt "hi" packs to 51 bytes, so feeding it
+ * synchronously would take about a minute, and the settle loop is
+ * synchronous -- it would take the whole server with it. That exact failure
+ * has already happened once here: learning on every bit put 522 seconds
+ * between a question arriving and the network finishing hearing it, and
+ * health checks got nothing while it ran.
+ *
+ * So feed() returns immediately and the streaming happens between
+ * macrotasks, one byte at a time, with a yield after each. The answer the
+ * user gets does not wait for the mesh; the mesh hears the prompt regardless.
+ *
+ * ── Why the queue is one deep ───────────────────────────────────────────
+ *
+ * Prompts arrive faster than 1192 ms/byte can absorb them, so an unbounded
+ * queue is a memory leak with extra steps -- it would fall further behind
+ * forever and eventually be feeding the network questions from an hour ago.
+ * One slot, newest wins: whatever was waiting is dropped for whatever just
+ * arrived, and dropped() counts it so falling behind is visible rather than
+ * silent.
+ */
+export class PromptMeshFeed {
+  private running = false;
+  private pending: { text: string; label: string } | null = null;
+  private fedCount = 0;
+  private droppedCount = 0;
+  private bytesFed = 0;
+  private lastError: string | null = null;
+
+  /**
+   * @param doorway  How to get a doorway into the current mesh, or null when
+   *                 there is no engine yet. Called per feed rather than held,
+   *                 because the engine is built lazily and can grow neurons.
+   * @param yieldTo  How to give the event loop a turn between bytes.
+   *                 Injectable so a test can run it to completion without
+   *                 waiting in real time.
+   */
+  constructor(
+    private readonly doorway: () => BitDoorway | null,
+    private readonly yieldTo: () => Promise<void> = () => new Promise(r => setImmediate(r)),
+  ) {}
+
+  /** Prompts streamed into the mesh in full. */
+  fed(): number { return this.fedCount; }
+  /** Prompts dropped because a newer one arrived while the feed was busy. */
+  dropped(): number { return this.droppedCount; }
+  /** Total archive bytes that have gone through the doorway. */
+  bytes(): number { return this.bytesFed; }
+  /** Whatever went wrong last, or null. A feed that fails must not be silent. */
+  error(): string | null { return this.lastError; }
+  /** Whether a feed is in flight right now. */
+  busy(): boolean { return this.running; }
+
+  /**
+   * Pack `text` as a file and stream it into the mesh. Returns at once.
+   *
+   * Never throws: a prompt failing to reach the mesh is not a reason to fail
+   * the message it came from. It is recorded in error() instead.
+   */
+  feed(text: string, label = "prompt.txt"): void {
+    void this.feedNow(text, label).catch(() => undefined);
+  }
+
+  /**
+   * The same, awaitable, so a test can assert on what actually went in
+   * rather than on a timer.
+   */
+  async feedNow(text: string, label = "prompt.txt"): Promise<PromptFeedReport> {
+    const started = Date.now();
+    if (this.running) {
+      // Newest wins. Whatever was waiting never happened.
+      if (this.pending) this.droppedCount++;
+      this.pending = { text, label };
+      return { bytes: 0, superseded: true, ms: Date.now() - started };
+    }
+
+    this.running = true;
+    let bytes = 0;
+    try {
+      let job: { text: string; label: string } | null = { text, label };
+      while (job) {
+        bytes += await this.streamOne(job.text, job.label);
+        job = this.pending;
+        this.pending = null;
+      }
+    } finally {
+      this.running = false;
+    }
+    return { bytes, superseded: false, ms: Date.now() - started };
+  }
+
+  private async streamOne(text: string, label: string): Promise<number> {
+    const door = this.doorway();
+    if (!door) {
+      // No engine yet. Not an error -- the network is built lazily and a
+      // prompt arriving before it exists is ordinary.
+      return 0;
+    }
+    const { packZip } = await import("./zip-halt.js");
+    const packed = packZip({ files: { [label]: text } });
+    try {
+      for (const byte of packed) {
+        door.sendByte(byte);
+        // One byte is eight settles. Yielding per byte rather than per bit
+        // keeps the cost of yielding off the hot path while still giving the
+        // server a turn roughly every ten seconds of mesh work.
+        await this.yieldTo();
+      }
+      // The whole message has arrived: THIS is the event the elastic core
+      // learns from, which is why it is one call here and not one per byte.
+      door.learnFromEvent();
+      this.fedCount++;
+      this.bytesFed += packed.length;
+      this.lastError = null;
+      return packed.length;
+    } catch (err) {
+      this.lastError = err instanceof Error ? err.message : String(err);
+      return 0;
+    }
+  }
+}
