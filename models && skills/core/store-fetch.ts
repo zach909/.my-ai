@@ -8,9 +8,10 @@
  * a file, and not before.
  *
  * The source is the repository the store already lives in: the `origin` remote
- * and the current branch, turned into a raw file URL. Nothing new to configure
- * and no third-party service -- the same GitHub the publish just pushed to is
- * where the download comes from.
+ * and the store branch (see store-sync.ts -- store content lives on its own
+ * branch now, not whatever a device happens to have checked out), turned into
+ * a raw file URL. Nothing new to configure and no third-party service -- the
+ * same GitHub the publish just pushed to is where the download comes from.
  *
  * Two properties matter more than the transport:
  *
@@ -31,6 +32,7 @@ import { existsSync, mkdirSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { readItem, storeRoot, assertKind, assertSafeName, assertSafeFilename, StoreError } from "./store.js";
+import { DEFAULT_STORE_BRANCH } from "./store-sync.js";
 
 /** Bounded so a stalled download cannot wedge a request forever. */
 const FETCH_TIMEOUT_MS = 30_000;
@@ -83,28 +85,30 @@ export async function resolveRawUrlBase(): Promise<{ base: string; refs: string[
   const parsed = parseGitHubRemote(remote);
   if (!parsed) return { problem: "not-github" };
 
-  // symbolic-ref works on a branch with no commits yet, which rev-parse does
-  // not -- and a fresh clone that has only fetched the index is exactly that
-  // situation.
-  const branch =
-    (await git(["symbolic-ref", "--short", "HEAD"], start)) ??
-    (await git(["rev-parse", "--abbrev-ref", "HEAD"], start)) ??
-    "";
-  if (!branch || branch === "HEAD") return { problem: "no-branch" };
+  // Published files live on the store branch (store-sync.ts), not on
+  // whatever branch this device happens to have checked out for app
+  // development -- so that is the primary ref to fetch from.
+  const branch = DEFAULT_STORE_BRANCH;
 
-  // Candidate refs, most specific first. The branch name is NOT URL-encoded:
+  // Candidate refs, most specific first. Branch names are NOT URL-encoded:
   // this project's branches contain '/', and raw.githubusercontent needs those
   // slashes intact -- encoding them turns a real ref into a 404.
   //
-  // The default branch is a fallback rather than a nicety. A working branch
-  // gets merged and deleted, and after that its published files live only on
-  // the default branch; without this, every device still on that branch loses
-  // the ability to download anything, which is precisely when someone would
-  // be trying to.
+  // The currently checked-out branch and the default branch are fallbacks,
+  // not the primary source: a fresh clone that has not yet fetched the store
+  // branch, or a private instance that has never renamed NEUROCLAW_STORE_BRANCH
+  // away from a branch that happens to not exist there, should still be able
+  // to find a file that an older publish committed straight onto a regular
+  // branch before this module existed.
   const refs = [branch];
+  const checkedOut =
+    (await git(["symbolic-ref", "--short", "HEAD"], start)) ??
+    (await git(["rev-parse", "--abbrev-ref", "HEAD"], start)) ??
+    "";
+  if (checkedOut && checkedOut !== "HEAD" && !refs.includes(checkedOut)) refs.push(checkedOut);
   const head = await git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], start);
   const defaultBranch = head?.replace(/^origin\//, "");
-  if (defaultBranch && defaultBranch !== branch) refs.push(defaultBranch);
+  if (defaultBranch && !refs.includes(defaultBranch)) refs.push(defaultBranch);
   else if (!refs.includes("main")) refs.push("main");
 
   return {
