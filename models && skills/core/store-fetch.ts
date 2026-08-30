@@ -28,7 +28,8 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { readItem, storeRoot, assertKind, assertSafeName, assertSafeFilename, StoreError } from "./store.js";
@@ -37,6 +38,8 @@ import { DEFAULT_STORE_BRANCH } from "./store-sync.js";
 /** Bounded so a stalled download cannot wedge a request forever. */
 const FETCH_TIMEOUT_MS = 30_000;
 const GIT_TIMEOUT_MS = 10_000;
+/** `git archive` of the whole catalogue is still a small, text-only tree. */
+const ARCHIVE_TIMEOUT_MS = 30_000;
 
 /** Refuses a payload larger than the store's own per-file cap, even if the index claims otherwise. */
 const MAX_FETCH_BYTES = 8 * 1024 * 1024;
@@ -49,6 +52,89 @@ function git(args: string[], cwd: string): Promise<string | null> {
       resolve(err ? null : String(stdout ?? "").trim());
     });
   });
+}
+
+/**
+ * The repository root, or null when `startDir` is not inside a git repo.
+ * Mirrors store-sync.ts's own repoRoot() -- kept separate rather than
+ * imported, the same call github-link.ts's doc comment makes for its copy.
+ */
+async function repoRoot(startDir: string): Promise<string | null> {
+  const start = existsSync(startDir) ? startDir : path.dirname(startDir);
+  return git(["rev-parse", "--show-toplevel"], start);
+}
+
+export interface StoreCatalogPullResult {
+  pulled: boolean;
+  reason?: string;
+}
+
+/**
+ * Populates (or refreshes) this device's local `store/` directory from the
+ * store branch, so the catalogue is visible without anyone having to
+ * publish something first.
+ *
+ * Store content no longer travels with `main` (see store-sync.ts) -- a
+ * plain `git clone`/`git pull` of the app itself does not bring it along
+ * anymore, so something has to. This is that something: it should be called
+ * once at boot, before anything reads the catalogue.
+ *
+ * Uses `git archive`, which reads straight out of the store branch's
+ * remote-tracking ref and writes plain files to a plain tar file -- it
+ * never touches this repo's HEAD, branch, or index, the same guarantee
+ * syncStorePaths() makes for the write side.
+ *
+ * This overlays rather than mirrors: it extracts files, it does not delete
+ * ones already on disk that the store branch no longer has -- a plain
+ * `tar -x` cannot express "and remove everything else". A device that only
+ * ever calls this, and never `git pull`s a branch that used to carry
+ * `store/` the old way, can keep a stale local copy of an item someone else
+ * removed. That does not undo the removal -- readItem()/listCatalog() still
+ * only ever show what actually got published, and a fresh clone of the
+ * store branch has none of the stale file -- it is purely a property of one
+ * long-lived device's disk, not of the store.
+ */
+export async function pullStoreCatalog(
+  opts: { storeDir?: string; remote?: string; branch?: string } = {},
+): Promise<StoreCatalogPullResult> {
+  const storeDir = opts.storeDir ?? storeRoot();
+  const remote = opts.remote ?? "origin";
+  const branch = opts.branch ?? DEFAULT_STORE_BRANCH;
+
+  const root = await repoRoot(storeDir);
+  if (!root) return { pulled: false, reason: "Not a git repository." };
+
+  // Best-effort: an unreachable remote just leaves whatever remote-tracking
+  // ref already exists from an earlier fetch, which rev-parse below reports
+  // honestly either way.
+  await git(["fetch", remote, `${branch}:refs/remotes/${remote}/${branch}`], root);
+  const rev = await git(["rev-parse", `${remote}/${branch}`], root);
+  if (rev === null) {
+    return { pulled: false, reason: `No "${branch}" branch on "${remote}" yet -- nothing has been published there so far.` };
+  }
+
+  const tmpFile = path.join(tmpdir(), `neuroclaw-store-archive-${process.pid}-${Date.now()}.tar`);
+  try {
+    const archived = await new Promise<boolean>(resolve => {
+      execFile("git", ["archive", "--output", tmpFile, rev], { cwd: root, timeout: ARCHIVE_TIMEOUT_MS }, err => {
+        resolve(!err);
+      });
+    });
+    if (!archived) return { pulled: false, reason: "Could not read the store branch's contents." };
+
+    const extracted = await new Promise<boolean>(resolve => {
+      execFile("tar", ["-xf", tmpFile, "-C", root], { timeout: ARCHIVE_TIMEOUT_MS }, err => resolve(!err));
+    });
+    if (!extracted) return { pulled: false, reason: "Could not extract the store branch's contents." };
+  } finally {
+    try {
+      rmSync(tmpFile, { force: true });
+    } catch {
+      // Best-effort cleanup of a temp file; leaving it behind is harmless.
+    }
+  }
+
+  return { pulled: true };
 }
 
 /**

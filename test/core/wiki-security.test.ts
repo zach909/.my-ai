@@ -144,6 +144,7 @@ describe('WikiPlugin publishes through the real sync path, not just to disk', ()
 
     const other = join(tmp, 'other-clone');
     git(['clone', '-q', remote, other], tmp);
+    git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
     expect(existsSync(join(other, 'wiki', 'bot', 'lands-elsewhere.md'))).toBe(true);
   });
 
@@ -155,6 +156,7 @@ describe('WikiPlugin publishes through the real sync path, not just to disk', ()
 
     const other = join(tmp, 'other-clone-2');
     git(['clone', '-q', remote, other], tmp);
+    git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
     const content = readFileSync(join(other, 'wiki', 'bot', 'gets-edited.md'), 'utf8');
     expect(content).toContain('v2, corrected');
   });
@@ -167,13 +169,14 @@ describe('WikiPlugin publishes through the real sync path, not just to disk', ()
 
     const other = join(tmp, 'other-clone-3');
     git(['clone', '-q', remote, other], tmp);
+    git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
     expect(existsSync(join(other, 'wiki', 'bot', 'gets-deleted.md'))).toBe(false);
   });
 
   it('the chat command reports the push honestly, not just "Published"', async () => {
     const reply = await plugin().onMessage('wiki publish "chat-published" "Chat Published": some content') as string;
     expect(reply).toContain('Published');
-    expect(reply).toMatch(/Pushed to main/);
+    expect(reply).toMatch(/Pushed to store/);
   });
 });
 

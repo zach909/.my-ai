@@ -9,6 +9,7 @@ import { installFromStore, installPromptingSkill, listInstalled, loadRegistry, p
 import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
+import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills } from '../models && skills/core/net-skill-graft.js';
 import { STORE_KINDS, STORE_KIND_LABELS, StoreError, listCatalog, publishAndSync, readItem, deleteAndSync, } from '../models && skills/core/store.js';
@@ -827,6 +828,13 @@ export class WebServer {
         // start() itself (every short-lived NeuroclawRunner instance calls
         // start() too, and most never call stop()).
         this.runner.startContinuous();
+        // Store content lives on its own branch now (store-sync.ts), not with
+        // the app's own code -- a plain checkout of this branch does not bring
+        // the catalogue along anymore, so this pulls it before anything below
+        // could try to read it. Best-effort: a fresh repo with no store branch
+        // yet, or no network at boot, just means an empty catalogue until the
+        // next successful pull, not a failed boot.
+        await pullStoreCatalog().catch(() => { });
         // Same reasoning, same placement: loading every saved extension is
         // real work (parsing N files, remembering M neurons) that only makes
         // sense to pay once per actual live server process, not once per

@@ -82,6 +82,7 @@ describe('a grafted Net Skill reaches the store, not just the mesh', () => {
 
     const other = path.join(tmp, 'other-clone');
     git(['clone', '-q', remote, other], tmp);
+    git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
     const listingDir = path.join(other, 'store', 'skills', 'optics');
     expect(existsSync(listingDir)).toBe(true);
     const files = readdirSync(listingDir);
@@ -137,6 +138,7 @@ describe('a grafted Net Skill reaches the store, not just the mesh', () => {
 
     const other = path.join(tmp, 'other-clone-2');
     git(['clone', '-q', remote, other], tmp);
+    git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
     expect(existsSync(path.join(other, 'store', 'skills', 'acoustics'))).toBe(true);
     expect(existsSync(path.join(other, 'store', 'skills', 'optics'))).toBe(true);
   });
