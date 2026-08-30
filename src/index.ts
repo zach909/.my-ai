@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { join } from "node:path";
 import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
+import { publishGraftedNetSkills } from "../models && skills/core/net-skill-store.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
 import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
 import { NeuroclawRunner } from "../interface/runner.js";
@@ -1226,6 +1227,13 @@ export class NeuroclawSystem {
             : `Tried to build "${name}" but nothing joined the network${graft.skipped ? `: ${graft.skipped}` : "."}`;
           if (graft.added > 0) {
             const engine = this.pipeline.ensureBrain();
+            // A region just joined the mesh; the store's "skills" catalog
+            // should say so. Not awaited -- this reaches git over the
+            // network, and the round trip below (running the new region,
+            // recording what happened) must not wait on it. A sync failure
+            // is reported through the store's own honest reason field to
+            // whoever browses the catalog, not lost here.
+            void publishGraftedNetSkills(engine).catch(() => {});
             const dims = engine.getDimensions();
             const embedded = embedText(information, dims);
             let norm = 0;

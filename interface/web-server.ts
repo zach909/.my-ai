@@ -1365,6 +1365,14 @@ export class WebServer {
           neuronCount: result.neuronCount,
           skipped: result.skipped,
         };
+        // The install just changed what's actually in the mesh; the store's
+        // "skills" catalog should reflect it. Fire-and-forget, same reason
+        // as everywhere else this is called: a git round trip must not hold
+        // up the response to an install request.
+        if (result.added > 0) {
+          const { publishGraftedNetSkills } = await import('../models && skills/core/net-skill-store.js');
+          void publishGraftedNetSkills(engine).catch(() => {});
+        }
       }
     } catch (err) {
       grafted.skipped = err instanceof Error ? err.message : String(err);
@@ -1502,6 +1510,18 @@ export class WebServer {
             this.rememberSkillScript(system, userSays, response, extName);
             remembered++;
           }
+        }
+      }
+      // Once, after the whole reload -- not per file. publishGraftedNetSkills
+      // already publishes every skill currently in the mesh in one pass, so
+      // calling it inside the loop above would mean one git round trip per
+      // installed skill on every single boot for no benefit; called once here
+      // it covers everything this boot just re-grafted.
+      if (graftedNeurons > 0) {
+        const engine = system.pipeline.getHyperEngine();
+        if (engine) {
+          const { publishGraftedNetSkills } = await import('../models && skills/core/net-skill-store.js');
+          void publishGraftedNetSkills(engine).catch(() => {});
         }
       }
       return { files: filesLoaded, remembered, graftedNeurons };
