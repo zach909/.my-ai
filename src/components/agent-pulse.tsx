@@ -124,9 +124,12 @@ export function AgentPulse({ activity, size = 20, className, label }: AgentPulse
     const draw = (now: number) => {
       if (!running) return
       const t = (now - start) / 1000
-      // Without a caller-supplied measure, breathe: a slow swell between calm
-      // and busy so the ring is visibly alive rather than a static outline.
-      const drive = activityRef.current ?? (Math.sin(t * 0.9) * 0.5 + 0.5)
+      // Without a caller-supplied measure, breathe: a swell between calm and
+      // busy so the ring is visibly alive rather than a static outline. Pure
+      // amplitude, still -- the points only reach further out and pull back
+      // in, never sideways or around, which is what makes this a pulse and
+      // not a spinner. 9, not 0.9: ten times the original rate.
+      const drive = activityRef.current ?? (Math.sin(t * 9) * 0.5 + 0.5)
       const eased = Math.max(0, Math.min(1, drive))
       // One shape, stretched: the points go from barely there to pulled well
       // out, and sharpen as they go. The count never changes.

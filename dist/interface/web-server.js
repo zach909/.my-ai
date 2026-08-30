@@ -142,6 +142,22 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   .message { position: relative; max-width: 80%; padding: 10px 14px; border-radius: 4px; line-height: 1.5; font-size: 13px; animation: fadeIn 0.3s ease-out; }
   .copy-btn { position: absolute; top: 4px; right: 4px; opacity: 0; background: #222; color: #00ff41; border: 1px solid #333; border-radius: 3px; font-size: 10px; padding: 2px 6px; cursor: pointer; transition: opacity 0.2s; }
   .message:hover .copy-btn, .copy-btn:focus { opacity: 1; }
+  .edit-btn { background: none; border: none; color: #00ff41; opacity: 0.45; font-size: 13px; line-height: 1; padding: 2px 4px; margin-right: 6px; cursor: pointer; transition: opacity 0.2s; }
+  .edit-btn:hover, .edit-btn:focus { opacity: 1; }
+  .edit-area { width: 100%; box-sizing: border-box; background: #0b0b0b; color: #00ff41; border: 1px solid #00ff41; border-radius: 3px; font: inherit; padding: 6px; resize: vertical; min-height: 4.5em; }
+  .edit-actions { display: flex; gap: 6px; margin-top: 6px; }
+  .edit-actions button { background: #222; color: #00ff41; border: 1px solid #333; border-radius: 3px; font-size: 11px; padding: 3px 10px; cursor: pointer; }
+  .edit-actions button:hover { border-color: #00ff41; }
+  .edited-tag { color: #00ff41; opacity: 0.5; font-size: 10px; margin-left: 6px; }
+  .dots-btn { background: none; border: none; color: #00ff41; opacity: 0.45; font-size: 14px; line-height: 1; padding: 2px 4px; margin-right: 6px; cursor: pointer; transition: opacity 0.2s; }
+  .dots-btn:hover, .dots-btn:focus, .dots-btn[aria-expanded="true"] { opacity: 1; }
+  .details { margin-top: 8px; border-left: 2px solid #00ff41; padding: 6px 10px; background: #0b0b0b; font-size: 11px; color: #8f8; }
+  .details h4 { margin: 0 0 4px; font-size: 11px; color: #00ff41; text-transform: uppercase; letter-spacing: 0.05em; }
+  .details dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0 0 6px; }
+  .details dt { opacity: 0.6; }
+  .details dd { margin: 0; word-break: break-word; }
+  .details ul { margin: 0 0 6px; padding-left: 16px; }
+  .details .none { opacity: 0.5; font-style: italic; }
   .message.user { align-self: flex-end; background: #003300; border: 1px solid #00ff4144; }
   .message.ai { align-self: flex-start; background: #111; border: 1px solid #333; }
   .message.system { align-self: center; background: #111; border: 1px solid #333; color: #888; font-style: italic; font-size: 11px; }
@@ -187,16 +203,177 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   const statusText = document.getElementById('status-text');
   let chatHistory = JSON.parse(localStorage.getItem('nc_hist') || '[]');
   const save = () => localStorage.setItem('nc_hist', JSON.stringify(chatHistory));
-  function addMessage(type, text, time) {
+  /** One "label: value" row, skipped entirely when there is no value. */
+  function row(dl, label, value) {
+    if (value === null || value === undefined || value === '') return;
+    const dt = document.createElement('dt');
+    dt.textContent = label;
+    const dd = document.createElement('dd');
+    dd.textContent = String(value);
+    dl.appendChild(dt);
+    dl.appendChild(dd);
+  }
+
+  /**
+   * What the answer was built from.
+   *
+   * Renders only what the turn actually recorded. A section with nothing in
+   * it says so rather than being hidden -- "no prompting skills applied" is a
+   * real and useful answer, and hiding it would make an empty panel look like
+   * a broken one.
+   */
+  function detailsPanel(d) {
+    const box = document.createElement('div');
+    box.className = 'details';
+    const head = document.createElement('h4');
+    head.textContent = 'How this answer was built';
+    box.appendChild(head);
+    if (!d) {
+      const p = document.createElement('div');
+      p.className = 'none';
+      p.textContent = 'No details recorded for this response.';
+      box.appendChild(p);
+      return box;
+    }
+
+    const dl = document.createElement('dl');
+    if (d.route) row(dl, 'routed to', d.route.capability + ' (confidence ' + d.route.confidence + ')');
+    if (d.emotion) row(dl, 'read as', 'valence ' + d.emotion.valence + ', arousal ' + d.emotion.arousal);
+    if (d.mesh) row(dl, 'mesh', d.mesh.neurons + ' neurons x ' + d.mesh.dimensions + ' dimensions');
+    if (d.zipBytes) row(dl, 'zip loop', d.zipBytes + ' archive bytes through the bit neurons');
+    if (d.ms !== undefined) row(dl, 'took', d.ms + ' ms');
+    if (dl.children.length) box.appendChild(dl);
+
+    const skills = document.createElement('div');
+    const sh = document.createElement('h4');
+    sh.textContent = 'Prompting skills zipped in';
+    skills.appendChild(sh);
+    if (d.skills && d.skills.length) {
+      const ul = document.createElement('ul');
+      d.skills.forEach(t => { const li = document.createElement('li'); li.textContent = t; ul.appendChild(li); });
+      skills.appendChild(ul);
+    } else {
+      const p = document.createElement('div');
+      p.className = 'none';
+      p.textContent = 'none applied';
+      skills.appendChild(p);
+    }
+    box.appendChild(skills);
+
+    const recall = document.createElement('div');
+    const rh = document.createElement('h4');
+    rh.textContent = 'Recalled from memory';
+    recall.appendChild(rh);
+    if (d.recalled && d.recalled.length) {
+      const ul = document.createElement('ul');
+      d.recalled.forEach(r => {
+        const li = document.createElement('li');
+        li.textContent = '[' + r.similarity + '] ' + r.text;
+        ul.appendChild(li);
+      });
+      recall.appendChild(ul);
+    } else {
+      const p = document.createElement('div');
+      p.className = 'none';
+      p.textContent = 'nothing recalled';
+      recall.appendChild(p);
+    }
+    box.appendChild(recall);
+    return box;
+  }
+
+  function editedTag() {
+    const tag = document.createElement('span');
+    tag.className = 'edited-tag';
+    tag.textContent = '(edited)';
+    return tag;
+  }
+
+  /**
+   * Swap the reply for a textarea, and put it back on save or cancel.
+   *
+   * The edit is applied to the transcript immediately and reported to the
+   * server afterwards. That order is deliberate: the user's own transcript
+   * must not depend on the network, and a correction that fails to file is
+   * still a correction they made.
+   */
+  function openEditor(div, content, ts, pen, entry, onSaved) {
+    if (div.querySelector('.edit-area')) return;
+    const before = content.textContent;
+    const area = document.createElement('textarea');
+    area.className = 'edit-area';
+    area.value = before;
+    area.setAttribute('aria-label', 'Edit the AI response');
+    const actions = document.createElement('div');
+    actions.className = 'edit-actions';
+    // saveBtn, not save: the outer scope already has a save() that persists
+    // the transcript to localStorage, and shadowing it here means the edit
+    // renders and is never stored.
+    const saveBtn = document.createElement('button');
+    saveBtn.textContent = 'Save';
+    const cancel = document.createElement('button');
+    cancel.textContent = 'Cancel';
+    actions.appendChild(saveBtn);
+    actions.appendChild(cancel);
+
+    content.style.display = 'none';
+    pen.disabled = true;
+    div.insertBefore(area, ts);
+    div.insertBefore(actions, ts);
+    area.focus();
+
+    const close = () => {
+      area.remove();
+      actions.remove();
+      content.style.display = '';
+      pen.disabled = false;
+    };
+    cancel.onclick = close;
+    area.addEventListener('keydown', (e) => { if (e.key === 'Escape') close(); });
+
+    saveBtn.onclick = async () => {
+      const next = area.value;
+      if (next.trim() === '' || next === before) { close(); return; }
+      content.textContent = next;
+      onSaved(next);
+      // The prompt that produced this reply, for the mistake record: the last
+      // user turn before it.
+      let prompt = '';
+      if (entry) {
+        const at = chatHistory.indexOf(entry);
+        for (let i = at - 1; i >= 0; i--) {
+          if (chatHistory[i].role === 'user') { prompt = chatHistory[i].content; break; }
+        }
+        entry.content = next;
+        entry.edited = true;
+        save();
+      }
+      if (!ts.querySelector('.edited-tag')) ts.appendChild(editedTag());
+      close();
+      try {
+        await fetch('/api/chat/correct', {
+          method: 'POST',
+          headers: {'Content-Type': 'application/json'},
+          body: JSON.stringify({ original: before, corrected: next, prompt })
+        });
+      } catch { /* the transcript is already fixed; filing it can wait */ }
+    };
+  }
+
+  function addMessage(type, text, time, entry) {
     const div = document.createElement('div');
     div.className = 'message ' + type;
+    // current is what this message says NOW -- an edit changes it, and Copy
+    // and the next edit both have to pick up the change rather than the text
+    // this message was first rendered with.
+    let current = text;
     if (type === 'ai') {
       const btn = document.createElement('button');
       btn.className = 'copy-btn';
       btn.textContent = 'Copy';
       btn.setAttribute('aria-label', 'Copy AI response');
       btn.onclick = () => {
-        navigator.clipboard.writeText(text);
+        navigator.clipboard.writeText(current);
         btn.textContent = 'Copied!';
         setTimeout(() => btn.textContent = 'Copy', 2000);
       };
@@ -207,7 +384,46 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     div.appendChild(content);
     const ts = document.createElement('div');
     ts.className = 'timestamp';
-    ts.textContent = time || new Date().toLocaleTimeString();
+    if (type === 'ai') {
+      // The pen, underneath the reply. Editing what the AI said is the most
+      // valuable signal this thing gets and there was no way to give it: the
+      // UI could copy a wrong answer but not fix one, so it stayed wrong in
+      // the transcript, in memory, and in whatever the next turn was grounded
+      // on.
+      const pen = document.createElement('button');
+      pen.className = 'edit-btn';
+      pen.textContent = '\uD83D\uDD8A\uFE0F';
+      pen.title = 'Edit what the AI said';
+      pen.setAttribute('aria-label', 'Edit what the AI said');
+      pen.onclick = () => openEditor(div, content, ts, pen, entry, (next) => { current = next; });
+      ts.appendChild(pen);
+
+      // Three dots, next to the pen: what the answer was built from. Closed
+      // by default -- it is reference, not part of reading the reply.
+      const dots = document.createElement('button');
+      dots.className = 'dots-btn';
+      dots.textContent = '\u22EF';
+      dots.title = 'How this answer was built';
+      dots.setAttribute('aria-label', 'How this answer was built');
+      dots.setAttribute('aria-expanded', 'false');
+      let panel = null;
+      dots.onclick = () => {
+        if (panel) {
+          panel.remove();
+          panel = null;
+          dots.setAttribute('aria-expanded', 'false');
+          return;
+        }
+        panel = detailsPanel(entry && entry.details);
+        div.appendChild(panel);
+        dots.setAttribute('aria-expanded', 'true');
+      };
+      ts.appendChild(dots);
+    }
+    const stamp = document.createElement('span');
+    stamp.textContent = time || new Date().toLocaleTimeString();
+    ts.appendChild(stamp);
+    if (entry && entry.edited) ts.appendChild(editedTag());
     div.appendChild(ts);
     chat.appendChild(div);
     chat.scrollTop = chat.scrollHeight;
@@ -274,8 +490,12 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
       removeThinking();
       if (data.response) {
         const aiTime = new Date().toLocaleTimeString();
-        addMessage('ai', data.response, aiTime);
-        chatHistory.push({role: 'assistant', content: data.response, time: aiTime});
+        // The entry is pushed BEFORE the message is rendered, and handed to
+        // it: the pen edits this object in place, so it has to be the same
+        // object the transcript is saved from.
+        const entry = {role: 'assistant', content: data.response, time: aiTime, details: data.details};
+        chatHistory.push(entry);
+        addMessage('ai', data.response, aiTime, entry);
         save();
       } else if (data.error) { addMessage('error', 'Error: ' + data.error); }
     } catch { removeThinking(); addMessage('error', 'Error: Unable to reach server'); }
@@ -305,7 +525,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
     }
   })();
   if (chatHistory.length) {
-    chatHistory.forEach(m => addMessage(m.role === 'user' ? 'user' : 'ai', m.content, m.time));
+    chatHistory.forEach(m => addMessage(m.role === 'user' ? 'user' : 'ai', m.content, m.time, m));
   } else {
     addMessage('system', 'Neuroclaw ready. Type a message.');
   }
@@ -384,7 +604,13 @@ export function isStorePublicRoute(pathname, method) {
         // Installing one is deliberately NOT here: publishing shares a document,
         // installing changes how this machine's agent actually behaves, and those
         // are not the same permission.
-        return pathname === '/api/store' || pathname === '/api/prompting-skills/publish';
+        //
+        // /api/github/publish is open for the same reason and for the reason it
+        // exists at all: pushing something public to GitHub without signing up
+        // or signing in only means something if reaching it does not require
+        // signing in to THIS app either. The GitHub credential is this
+        // deployment's own, never the caller's -- see plugins/github-publish.ts.
+        return pathname === '/api/store' || pathname === '/api/prompting-skills/publish' || pathname === '/api/github/publish';
     }
     return false;
 }
@@ -1805,6 +2031,43 @@ export class WebServer {
             }
             return;
         }
+        // POST /api/github/publish — push something public to GitHub with no
+        // sign-up and no sign-in. The GitHub credential belongs to this
+        // deployment, never to the caller; see plugins/github-publish.ts for why
+        // that is what makes "no sign-in" real rather than a promise. Public like
+        // every other publish route here, for the same reason: a publish gated
+        // behind logging into THIS app would still be "sign in somewhere first".
+        if (pathname === '/api/github/publish' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                if (!body || typeof body.name !== 'string' || !Array.isArray(body.files)) {
+                    this.sendJson(res, { error: 'Expected "name" (string) and "files" (array).' }, 400);
+                    return;
+                }
+                const { GithubPublishPlugin } = await import('../plugins/github-publish.js');
+                const plugin = new GithubPublishPlugin({
+                    id: 'github-publish', name: 'GitHub Publish', type: 'api-connection', capabilities: [],
+                });
+                const result = await plugin.push({
+                    name: body.name,
+                    title: typeof body.title === 'string' ? body.title : undefined,
+                    description: typeof body.description === 'string' ? body.description : undefined,
+                    author: typeof body.author === 'string' ? body.author : undefined,
+                    files: body.files,
+                });
+                this.sendJson(res, result, result.pushed ? 201 : 202);
+            }
+            catch (err) {
+                // Every throw from push() -- its own (empty payload, a weight file)
+                // or publishAndSync()'s (bad name, too many files, over the size cap)
+                // -- is a StoreError, the same distinction /api/store already makes.
+                // A failure that is genuinely this server's (git unavailable, no
+                // network, a rejected push) never throws: it comes back as
+                // { pushed: false, reason } above.
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, err instanceof StoreError ? 400 : 500);
+            }
+            return;
+        }
         // Install: from the store by name, or straight from a document the user or
         // the agent just wrote. Same endpoint, because both mean "the loop should
         // use this from now on" -- and re-installing under an existing name is how
@@ -2021,7 +2284,49 @@ export class WebServer {
                         .map(h => `${h.role}: ${h.content}`)
                     : undefined;
                 const response = await this.runner.generate(message, history);
-                this.sendJson(res, { response, timestamp: Date.now() });
+                // What the turn actually used, for the three-dots panel. Read off the
+                // system rather than rebuilt here: a details panel assembled from
+                // guesses about what probably ran looks like evidence and is not.
+                // Undefined when nothing recorded any, which the UI shows as "no
+                // details recorded" rather than an empty panel.
+                let details;
+                try {
+                    const { getNeuroclawSystem } = await import('../src/index.js');
+                    details = (await getNeuroclawSystem()).lastTurnDetails ?? undefined;
+                }
+                catch { /* the details are not the answer; never fail the reply for them */ }
+                this.sendJson(res, { response, details, timestamp: Date.now() });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        // POST /api/chat/correct — the user rewrote something the AI said.
+        //
+        // The chat UI could copy a reply but not fix one, so a wrong answer
+        // stayed wrong in the transcript, in memory, and in whatever the next
+        // turn was grounded on. This is the pen button underneath an AI message.
+        //
+        // Behind the auth gate like everything else that writes: publishing is
+        // open in this project, editing what the agent believes is not.
+        if (pathname === '/api/chat/correct' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const original = typeof body?.original === 'string' ? body.original : '';
+                const corrected = typeof body?.corrected === 'string' ? body.corrected : '';
+                if (!corrected.trim()) {
+                    this.sendJson(res, { error: 'Missing corrected field' }, 400);
+                    return;
+                }
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const result = await system.recordCorrection({
+                    original,
+                    corrected,
+                    prompt: typeof body?.prompt === 'string' ? body.prompt : undefined,
+                });
+                this.sendJson(res, result);
             }
             catch (err) {
                 this.sendError(res, err);

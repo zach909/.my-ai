@@ -15,15 +15,25 @@
  *      least-recently-drilled first -- same rotation shape as
  *      skill-agent.mjs's own pickTopic());
  *   2. classifies it into a drill category (classifyDrillCategory()) --
- *      right now exactly one concrete generator exists,
- *      drill-generators/arithmetic.mjs, matching the user's own math
- *      example. Anything that doesn't match a known category falls
- *      back to "generic": a regression drill that just re-checks the
- *      skill still reproduces its own trained content, since there's no
- *      way to generate genuinely novel held-out material for an
- *      arbitrary research topic without calling out to an external
- *      LLM -- which this project deliberately never does (see
- *      "NO EXTERNAL APIS" throughout wiki/Self-Improvement.md);
+ *      nine concrete generators now exist under drill-generators/:
+ *      arithmetic, coding, logic, building AI, classical computers,
+ *      quantum computers, operating systems, building apps, and
+ *      science. Each produces genuinely novel problems whose answers
+ *      this runtime COMPUTES -- by running the loop, walking the page
+ *      table, enumerating the truth table -- so a held-out batch is
+ *      really held out. No external LLM is called to invent a question
+ *      or an answer, which this project deliberately never does (see
+ *      "NO EXTERNAL APIS" throughout wiki/Self-Improvement.md); doing
+ *      so would also make the agent's measured improvement a
+ *      measurement of that LLM rather than of itself.
+ *
+ *      Anything that still matches nothing falls back to "generic": a
+ *      regression drill that re-checks the skill reproduces its own
+ *      trained content. That check is honest about what it is but it
+ *      cannot TEACH -- there is no held-out material in it, so
+ *      "accuracy improved" only ever meant "it memorised its own page
+ *      harder". A generically drilled skill was being rehearsed, not
+ *      trained;
  *   3. measures REAL held-out accuracy before drilling (pytorch_trainer
  *      "op":"eval" -- a pure forward pass, no weight update, against a
  *      fresh batch the current weights were never trained on);
@@ -75,7 +85,8 @@ import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync } from
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { ROOT, publishFilesToBranch } from './git-worktree-utils.mjs'
-import { generateArithmeticBatch } from './drill-generators/arithmetic.mjs'
+import { classifyDrillCategory, generateForCategory } from './drill-generators/index.mjs'
+export { classifyDrillCategory }
 
 const REGISTRY_PATH = path.join(ROOT, 'extension-builder', 'skill-agent-registry.json')
 const WEIGHTS_DIR = path.join(ROOT, 'extension-builder', 'drill-weights')
@@ -95,11 +106,7 @@ function log(...args) {
  *  generalization test) rather than pretending to generate held-out
  *  material for topics this project has no honest way to quiz. Pure,
  *  directly testable. */
-export function classifyDrillCategory(topic) {
-  return /\b(arithmetic|math(?:s|ematics)?|algebra|calculus|number\s*theory|numerical)\b/i.test(topic)
-    ? 'arithmetic'
-    : 'generic'
-}
+
 
 /** Picks the published skill drilled least recently -- never-drilled
  *  skills first, then oldest-drilled-first. Pure function of the
@@ -196,8 +203,14 @@ async function buildBatch(category, wikiContent, embedText, rand, count = DRILL_
   // (readoutIdx, input, target) contract (see that file's own doc
   // comment). This agent only ever trains one readout per skill
   // (numReadouts: 1 throughout), so every sample is readout 0.
-  if (category === 'arithmetic') {
-    return generateArithmeticBatch(count, rand).map(({ problem, answer }) => ({
+  // Nine categories now have real generators -- coding, logic, building AI,
+  // classical computers, quantum computers, operating systems, building apps,
+  // science, and the original arithmetic. Each produces genuinely novel
+  // problems whose answers this runtime COMPUTES, which is what makes the
+  // held-out batch actually held out. See drill-generators/index.mjs.
+  const generated = generateForCategory(category, count, rand)
+  if (generated) {
+    return generated.map(({ problem, answer }) => ({
       readout: 0,
       input: embedText(problem, DIMS),
       target: embedText(answer, DIMS),

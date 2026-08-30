@@ -27,6 +27,7 @@ import { WikiPlugin } from "./wiki.js";
 import { TerminalPlugin } from "./terminal.js";
 import { ToolsPlugin } from "./tools.js";
 import { StorePlugin } from "./store.js";
+import { GithubPublishPlugin } from "./github-publish.js";
 import { ComputerAccessPlugin } from "./computer-access.js";
 export { LocationPlugin } from "./location.js";
 export { CameraPlugin } from "./camera.js";
@@ -57,6 +58,7 @@ export { WikiPlugin } from "./wiki.js";
 export { TerminalPlugin } from "./terminal.js";
 export { ToolsPlugin } from "./tools.js";
 export { StorePlugin } from "./store.js";
+export { GithubPublishPlugin } from "./github-publish.js";
 export { ComputerAccessPlugin } from "./computer-access.js";
 export function createPluginInstance(name, definition, skillDefinition, 
 /** The agent's one shared NeuronMesh, for plugins that allocate their own neurons. */
@@ -132,6 +134,8 @@ sharedMesh) {
         return new ToolsPlugin(definition);
     if (lower === "store")
         return new StorePlugin(definition);
+    if (lower === "github" || lower === "github-publish" || lower === "github publish")
+        return new GithubPublishPlugin(definition);
     if (lower === "computer access" || lower === "computer-access")
         return new ComputerAccessPlugin(definition);
     throw new Error(`Unknown plugin: ${name}`);
@@ -183,6 +187,7 @@ const pluginExtensions = {
         capabilities: ["desktop-control", "terminal", "file-system", "screen-observe"],
     },
     store: { id: "store", name: "Store", type: "api-connection", capabilities: ["store", "publish", "share"] },
+    "github-publish": { id: "github-publish", name: "GitHub Publish", type: "api-connection", capabilities: ["github", "push", "publish", "share"] },
     tools: { id: "tools", name: "Tools", type: "api-connection", capabilities: ["tools", "calculator", "hashing", "encoding", "units"] },
 };
 const allExtensions = Object.entries(pluginExtensions).map(([key, def]) => ({
