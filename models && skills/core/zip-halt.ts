@@ -335,18 +335,22 @@ class HaltWatcher {
       return { halted: true, reason: "stopped-itself", ticks: this.ticks, sawStop: true, complete: true };
     }
 
-    // Silence alone, held longer, also counts as stopping.
-    //
-    // Longer, because a network that has not said it is finished gets more
-    // benefit of the doubt than one that has: a pause in the middle of an
-    // answer must not be mistaken for the end of it. Not "complete" either,
-    // for the same reason the ceiling is not -- it stopped, but it never told
-    // us it was done.
-    if (this.settledRun >= SETTLED_BYTES) {
+    // Silence alone, held longer, also counts as stopping -- but only once
+    // the network has actually said something. Neither "settled" nor
+    // "went-quiet" may end a run that has produced zero output bytes: a
+    // mesh that reaches a stable state, or goes quiet, before emitting
+    // anything has not answered and gone silent -- it has simply not
+    // started, and ending the run there reports silence as a reply instead
+    // of what it actually is, nothing yet. Only the ceiling, below, may cut
+    // off a run that never said anything -- it is a guarantee of
+    // termination, not a verdict that the network is done.
+    const hasSpoken = this.bytes.length > 0;
+
+    if (hasSpoken && this.settledRun >= SETTLED_BYTES) {
       return { halted: true, reason: "settled", ticks: this.ticks, sawStop: this.sawStop, complete: true };
     }
 
-    if (!this.sawStop && this.quiet >= this.config.quietTicks * SILENT_STOP_MULTIPLIER) {
+    if (hasSpoken && !this.sawStop && this.quiet >= this.config.quietTicks * SILENT_STOP_MULTIPLIER) {
       return { halted: true, reason: "went-quiet", ticks: this.ticks, sawStop: false, complete: false };
     }
 
