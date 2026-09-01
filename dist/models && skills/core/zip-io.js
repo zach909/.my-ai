@@ -16,6 +16,7 @@ import { mkdir, writeFile, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { DoorwayLock } from './doorway-lock.js';
 export class InfiniteZipLoop {
     constructor(capacity = 10000, useDiskSpill = true, checkpointInterval = 500, diskSpillPath) {
         this.head = 0; // Next write position
@@ -296,8 +297,12 @@ export class PromptMeshFeed {
      * @param yieldTo  How to give the event loop a turn between bytes.
      *                 Injectable so a test can run it to completion without
      *                 waiting in real time.
+     * @param lock     Shared with any other caller of the same engine's
+     *                 doorway. Defaults to a fresh, private lock so existing
+     *                 callers that only ever touch one engine through this one
+     *                 feed keep working unchanged.
      */
-    constructor(doorway, yieldTo = () => new Promise(r => setImmediate(r))) {
+    constructor(doorway, yieldTo = () => new Promise(r => setImmediate(r)), lock = new DoorwayLock()) {
         this.doorway = doorway;
         this.yieldTo = yieldTo;
         this.running = false;
@@ -306,6 +311,11 @@ export class PromptMeshFeed {
         this.droppedCount = 0;
         this.bytesFed = 0;
         this.lastError = null;
+        this.doorwayLock = lock;
+    }
+    /** The lock guarding this feed's doorway, to share with another caller of the same engine. */
+    lock() {
+        return this.doorwayLock;
     }
     /** Prompts streamed into the mesh in full. */
     fed() { return this.fedCount; }
@@ -363,25 +373,31 @@ export class PromptMeshFeed {
         }
         const { packZip } = await import("./zip-halt.js");
         const packed = packZip({ files: { [label]: text } });
-        try {
-            for (const byte of packed) {
-                door.sendByte(byte);
-                // One byte is eight settles. Yielding per byte rather than per bit
-                // keeps the cost of yielding off the hot path while still giving the
-                // server a turn roughly every ten seconds of mesh work.
-                await this.yieldTo();
+        // Held for the whole stream, not just the final learnFromEvent(): a
+        // predict/learn call landing mid-stream would settle() the same engine
+        // this loop is still driving, which is exactly the interleaving the lock
+        // exists to rule out.
+        return this.doorwayLock.run(async () => {
+            try {
+                for (const byte of packed) {
+                    door.sendByte(byte);
+                    // One byte is eight settles. Yielding per byte rather than per bit
+                    // keeps the cost of yielding off the hot path while still giving the
+                    // server a turn roughly every ten seconds of mesh work.
+                    await this.yieldTo();
+                }
+                // The whole message has arrived: THIS is the event the elastic core
+                // learns from, which is why it is one call here and not one per byte.
+                door.learnFromEvent();
+                this.fedCount++;
+                this.bytesFed += packed.length;
+                this.lastError = null;
+                return packed.length;
             }
-            // The whole message has arrived: THIS is the event the elastic core
-            // learns from, which is why it is one call here and not one per byte.
-            door.learnFromEvent();
-            this.fedCount++;
-            this.bytesFed += packed.length;
-            this.lastError = null;
-            return packed.length;
-        }
-        catch (err) {
-            this.lastError = err instanceof Error ? err.message : String(err);
-            return 0;
-        }
+            catch (err) {
+                this.lastError = err instanceof Error ? err.message : String(err);
+                return 0;
+            }
+        });
     }
 }

@@ -17,6 +17,7 @@ import { mkdir, writeFile, readFile } from 'fs/promises';
 import { tmpdir } from 'os';
 import { join } from 'path';
 import { randomUUID } from 'crypto';
+import { DoorwayLock } from './doorway-lock.js';
 
 export interface ZipChunk {
   id: string;
@@ -394,17 +395,40 @@ export class PromptMeshFeed {
   private lastError: string | null = null;
 
   /**
+   * Held while a feed is actually driving the doorway (not while it is only
+   * waiting in `pending`), and shared with anything else that touches the
+   * SAME engine's doorway -- continuous-learning.ts's predict/learn calls are
+   * the real one. See doorway-lock.ts: two callers mid-settle() on one engine
+   * at once corrupts both, and this is what stops that from ever happening.
+   * Exposed via lock() rather than duplicated, so both callers hold the exact
+   * same lock rather than two locks that each think they are the only one.
+   */
+  private readonly doorwayLock: DoorwayLock;
+
+  /**
    * @param doorway  How to get a doorway into the current mesh, or null when
    *                 there is no engine yet. Called per feed rather than held,
    *                 because the engine is built lazily and can grow neurons.
    * @param yieldTo  How to give the event loop a turn between bytes.
    *                 Injectable so a test can run it to completion without
    *                 waiting in real time.
+   * @param lock     Shared with any other caller of the same engine's
+   *                 doorway. Defaults to a fresh, private lock so existing
+   *                 callers that only ever touch one engine through this one
+   *                 feed keep working unchanged.
    */
   constructor(
     private readonly doorway: () => BitDoorway | null,
     private readonly yieldTo: () => Promise<void> = () => new Promise(r => setImmediate(r)),
-  ) {}
+    lock: DoorwayLock = new DoorwayLock(),
+  ) {
+    this.doorwayLock = lock;
+  }
+
+  /** The lock guarding this feed's doorway, to share with another caller of the same engine. */
+  lock(): DoorwayLock {
+    return this.doorwayLock;
+  }
 
   /** Prompts streamed into the mesh in full. */
   fed(): number { return this.fedCount; }
@@ -464,24 +488,30 @@ export class PromptMeshFeed {
     }
     const { packZip } = await import("./zip-halt.js");
     const packed = packZip({ files: { [label]: text } });
-    try {
-      for (const byte of packed) {
-        door.sendByte(byte);
-        // One byte is eight settles. Yielding per byte rather than per bit
-        // keeps the cost of yielding off the hot path while still giving the
-        // server a turn roughly every ten seconds of mesh work.
-        await this.yieldTo();
+    // Held for the whole stream, not just the final learnFromEvent(): a
+    // predict/learn call landing mid-stream would settle() the same engine
+    // this loop is still driving, which is exactly the interleaving the lock
+    // exists to rule out.
+    return this.doorwayLock.run(async () => {
+      try {
+        for (const byte of packed) {
+          door.sendByte(byte);
+          // One byte is eight settles. Yielding per byte rather than per bit
+          // keeps the cost of yielding off the hot path while still giving the
+          // server a turn roughly every ten seconds of mesh work.
+          await this.yieldTo();
+        }
+        // The whole message has arrived: THIS is the event the elastic core
+        // learns from, which is why it is one call here and not one per byte.
+        door.learnFromEvent();
+        this.fedCount++;
+        this.bytesFed += packed.length;
+        this.lastError = null;
+        return packed.length;
+      } catch (err) {
+        this.lastError = err instanceof Error ? err.message : String(err);
+        return 0;
       }
-      // The whole message has arrived: THIS is the event the elastic core
-      // learns from, which is why it is one call here and not one per byte.
-      door.learnFromEvent();
-      this.fedCount++;
-      this.bytesFed += packed.length;
-      this.lastError = null;
-      return packed.length;
-    } catch (err) {
-      this.lastError = err instanceof Error ? err.message : String(err);
-      return 0;
-    }
+    });
   }
 }

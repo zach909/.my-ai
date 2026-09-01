@@ -12,6 +12,7 @@ import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";
 import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
 import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
+import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
 import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
@@ -161,6 +162,13 @@ export class NeuroclawSystem {
   /** Everything said, through the real Zip Loop, as a file. */
   promptFeed: PromptMeshFeed;
   /**
+   * Continuous learning: predicts what the user will say next, and trains
+   * the mesh on the gap once they actually do. Shares promptFeed's own
+   * DoorwayLock (see continuous-learning.ts's doc comment) so its own
+   * zip-loop calls can never interleave with promptFeed's.
+   */
+  continuousLearner: ContinuousLearner;
+  /**
    * What the last turn actually used, for the three-dots panel in the chat.
    *
    * Everything here is recorded where it happens rather than reconstructed
@@ -267,6 +275,11 @@ export class NeuroclawSystem {
       if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
       return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
     });
+    // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
+    // promptFeed are the two callers that drive the SAME engine's doorway,
+    // and a lock only each one holds separately would not stop them from
+    // running at the same time as each other.
+    this.continuousLearner = new ContinuousLearner(this.promptFeed.lock());
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.pluginRegistry);
     // Hive Mind (Section 13): each agent's mind is the real neural runner, so
@@ -807,6 +820,18 @@ export class NeuroclawSystem {
     // PromptMeshFeed for why the queue is one deep.
     this.promptFeed.feed(input);
     details.zipBytes = packZip({ files: { "prompt.txt": input } }).length;
+
+    // Continuous learning: compares whatever the mesh predicted the user
+    // would say against what they actually just said, trains on the gap,
+    // then predicts the next one. Same reasoning as promptFeed.feed() just
+    // above -- fire-and-forget, never awaited, for the same measured cost.
+    // Shares promptFeed's own doorway lock (see continuousLearner's
+    // construction above) so the two can never drive the engine's settle()
+    // loop at the same time.
+    const engineForLearning = this.pipeline.getHyperEngine();
+    if (engineForLearning) {
+      void this.continuousLearner.onUserMessage(engineForLearning, "", input).catch(() => {});
+    }
 
     // Prompting Skills enter here, as information.
     //

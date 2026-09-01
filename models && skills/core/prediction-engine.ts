@@ -112,7 +112,14 @@ function inferAssumptions(action: string): string[] {
   return assumptions;
 }
 
-function tokenSimilarity(a: string, b: string): number {
+/**
+ * Exported for continuous-learning.ts, which needs the exact same "how much
+ * did the guess and the reality actually overlap" measure for a different
+ * pair of texts (a predicted next message vs. the real one) and should not
+ * carry its own, slightly different copy that could silently drift from
+ * this one.
+ */
+export function tokenSimilarity(a: string, b: string): number {
   const ta = tokenize(a);
   const tb = new Set(tokenize(b));
   if (ta.length === 0 || tb.size === 0) return 0;
