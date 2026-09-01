@@ -1,5 +1,5 @@
 /**
- * Making a live Net Skill show up in the store's "skills" catalog, for real.
+ * Making a live Net Skill show up in the store's "net-skills" catalog, for real.
  *
  * "Skills don't exist [in that filter] -- there's only net skills and
  * prompting skills." True before this: the "skills" store kind was
@@ -83,7 +83,7 @@ describe('a grafted Net Skill reaches the store, not just the mesh', () => {
     const other = path.join(tmp, 'other-clone');
     git(['clone', '-q', remote, other], tmp);
     git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
-    const listingDir = path.join(other, 'store', 'skills', 'optics');
+    const listingDir = path.join(other, 'store', 'net-skills', 'optics');
     expect(existsSync(listingDir)).toBe(true);
     const files = readdirSync(listingDir);
     const descriptorFile = files.find((f: string) => f.endsWith('.net-skill.json'));
@@ -139,7 +139,7 @@ describe('a grafted Net Skill reaches the store, not just the mesh', () => {
     const other = path.join(tmp, 'other-clone-2');
     git(['clone', '-q', remote, other], tmp);
     git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
-    expect(existsSync(path.join(other, 'store', 'skills', 'acoustics'))).toBe(true);
-    expect(existsSync(path.join(other, 'store', 'skills', 'optics'))).toBe(true);
+    expect(existsSync(path.join(other, 'store', 'net-skills', 'acoustics'))).toBe(true);
+    expect(existsSync(path.join(other, 'store', 'net-skills', 'optics'))).toBe(true);
   });
 });

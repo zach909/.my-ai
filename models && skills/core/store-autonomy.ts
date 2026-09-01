@@ -83,7 +83,7 @@ export async function publishSkillToStore(input: {
   artifacts: SkillArtifact[];
   kind?: string;
 }): Promise<AutonomousPublish | { skipped: "unchanged"; item: StoreItem }> {
-  const kind = input.kind ?? "skills";
+  const kind = input.kind ?? "net-skills";
   const existing = readItem(kind, input.name);
   const changed = changedAgainstStore(kind, input.name, input.artifacts);
 

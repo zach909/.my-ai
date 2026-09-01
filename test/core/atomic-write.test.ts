@@ -119,21 +119,21 @@ describe('the store survives a half-written manifest', () => {
     // Rewrite the same item repeatedly; at every point in between, the
     // manifest on disk must parse. Atomic rename is what guarantees a reader
     // sees the whole old file or the whole new one, never a mixture.
-    const manifest = path.join(dir, 'store', 'skills', 'churn', 'manifest.json')
+    const manifest = path.join(dir, 'store', 'net-skills', 'churn', 'manifest.json')
     for (let i = 0; i < 25; i++) {
       publishItem({
-        kind: 'skills', name: 'churn', title: `v${i}`,
+        kind: 'net-skills', name: 'churn', title: `v${i}`,
         description: 'x'.repeat(200 + i),
         files: [{ filename: 'p.txt', content: `body ${i}`.repeat(50) }],
       })
       expect(() => JSON.parse(readFileSync(manifest, 'utf8'))).not.toThrow()
-      expect(readItem('skills', 'churn')).not.toBeNull()
-      expect(listCatalog().skills).toHaveLength(1)
+      expect(readItem('net-skills', 'churn')).not.toBeNull()
+      expect(listCatalog()['net-skills']).toHaveLength(1)
     }
   })
 
   it('keeps the item visible in the catalogue throughout', () => {
-    publishItem({ kind: 'skills', name: 'visible', title: 'V', files: [{ filename: 'a.txt', content: 'x' }] })
-    expect(listCatalog().skills.map(i => i.name)).toContain('visible')
+    publishItem({ kind: 'net-skills', name: 'visible', title: 'V', files: [{ filename: 'a.txt', content: 'x' }] })
+    expect(listCatalog()['net-skills'].map(i => i.name)).toContain('visible')
   })
 })

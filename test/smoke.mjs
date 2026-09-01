@@ -4874,7 +4874,7 @@ async function testPublicStore() {
 
     // --- Publishing and reading back -------------------------------------
     const pub = store.publishItem({
-      kind: 'skills', name: 'greet', title: 'Greeter',
+      kind: 'net-skills', name: 'greet', title: 'Greeter',
       description: 'says hello', author: 'someone',
       files: [{ filename: 'skill.json', content: '{"greet":true}' }],
     });
@@ -4892,26 +4892,26 @@ async function testPublicStore() {
       'binary files round-trip through base64 without corruption');
 
     // An update must not silently drop the files it did not mention.
-    store.publishItem({ kind: 'skills', name: 'greet', files: [{ filename: 'README.md', content: '# hi' }] });
-    const updated = store.readItem('skills', 'greet');
+    store.publishItem({ kind: 'net-skills', name: 'greet', files: [{ filename: 'README.md', content: '# hi' }] });
+    const updated = store.readItem('net-skills', 'greet');
     check(updated.files.length === 2, 'updating adds a file without discarding the existing ones');
     check(updated.publishedAt !== '' && updated.updatedAt >= updated.publishedAt,
       'first-published and last-updated are both tracked');
 
     const cat = store.listCatalog();
-    check(cat.skills.length === 1 && cat.binaries.length === 1, 'the catalogue is derived from the files on disk');
+    check(cat['net-skills'].length === 1 && cat.binaries.length === 1, 'the catalogue is derived from the files on disk');
 
     // --- Names are attacker-controlled -----------------------------------
     // Anyone can publish, so a name that escapes its folder would let one
     // publish overwrite files in every clone of the repository.
     for (const bad of ['../escape', 'a/b', '..', '', 'x'.repeat(80)]) {
       let rejected = false;
-      try { store.publishItem({ kind: 'skills', name: bad, files: [{ filename: 'x', content: 'y' }] }); }
+      try { store.publishItem({ kind: 'net-skills', name: bad, files: [{ filename: 'x', content: 'y' }] }); }
       catch { rejected = true; }
       check(rejected, `a publish named ${JSON.stringify(bad.slice(0, 12))} is rejected`);
     }
     let badFile = false;
-    try { store.publishItem({ kind: 'skills', name: 'ok', files: [{ filename: '../../etc/passwd', content: 'x' }] }); }
+    try { store.publishItem({ kind: 'net-skills', name: 'ok', files: [{ filename: '../../etc/passwd', content: 'x' }] }); }
     catch { badFile = true; }
     check(badFile, 'a filename containing a path traversal is rejected');
     let badKind = false;
@@ -4924,16 +4924,16 @@ async function testPublicStore() {
     // store shared. Deletion is not, for the same reason the wiki gates it.
     check(isStorePublicRoute('/api/store', 'GET'), 'browsing the catalogue needs no credential');
     check(isStorePublicRoute('/api/store', 'POST'), 'publishing needs no credential');
-    check(isStorePublicRoute('/api/store/skills/greet', 'GET'), 'viewing an item needs no credential');
-    check(isStorePublicRoute('/api/store/skills/greet/file/skill.json', 'GET'),
+    check(isStorePublicRoute('/api/store/net-skills/greet', 'GET'), 'viewing an item needs no credential');
+    check(isStorePublicRoute('/api/store/net-skills/greet/file/skill.json', 'GET'),
       'downloading a file needs no credential');
-    check(!isStorePublicRoute('/api/store/skills/greet', 'DELETE'),
+    check(!isStorePublicRoute('/api/store/net-skills/greet', 'DELETE'),
       'DELETE is NOT public -- anyone may add to the store, only an authorised caller may destroy');
     check(!isStorePublicRoute('/api/store/../../etc/passwd', 'GET'),
       'a traversal path is not treated as a public store route');
 
-    check(store.deleteItem('skills', 'greet') === true, 'an item can be removed');
-    check(store.readItem('skills', 'greet') === null, 'a removed item is gone');
+    check(store.deleteItem('net-skills', 'greet') === true, 'an item can be removed');
+    check(store.readItem('net-skills', 'greet') === null, 'a removed item is gone');
   } finally {
     if (prev === undefined) delete process.env.NEUROCLAW_STORE_DIR;
     else process.env.NEUROCLAW_STORE_DIR = prev;
