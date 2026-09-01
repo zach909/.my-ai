@@ -23,15 +23,19 @@ import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 import { writeFileAtomic, writeJsonAtomic } from "./atomic-write.js";
 
 /** What kinds of thing the store holds. Each is a folder under `store/`. */
-export const STORE_KINDS = ["skills", "prompting", "plugins", "binaries", "source", "files", "wiki"] as const;
+export const STORE_KINDS = ["net-skills", "prompting", "plugins", "binaries", "source", "files", "wiki"] as const;
 export type StoreKind = (typeof STORE_KINDS)[number];
 
 /** Human labels, used by the UI so the names live in one place. */
 export const STORE_KIND_LABELS: Record<StoreKind, string> = {
-  skills: "Skills",
+  // There is no standalone "skill" -- only these two real things. This kind
+  // holds neurons grafted directly into the mesh (see net-skill-store.ts),
+  // never confused with a Prompting Skill, which is a function the agent
+  // calls from its own perceive-think-act loop and never touches a neuron.
+  "net-skills": "Net Skills",
   // The modular functions the agent calls from inside its own perceive-think-
-  // act loop (see prompting-skills.ts). Listed right after Skills because they
-  // are the ones that change how the agent works rather than what it knows.
+  // act loop (see prompting-skills.ts). Listed right after Net Skills because
+  // they are the ones that change how the agent works rather than what it knows.
   prompting: "Prompting Skills",
   plugins: "Plugins & Tools",
   binaries: "Binary Skills",

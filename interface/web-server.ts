@@ -1374,7 +1374,7 @@ export class WebServer {
           skipped: result.skipped,
         };
         // The install just changed what's actually in the mesh; the store's
-        // "skills" catalog should reflect it. Fire-and-forget, same reason
+        // "net-skills" catalog should reflect it. Fire-and-forget, same reason
         // as everywhere else this is called: a git round trip must not hold
         // up the response to an install request.
         if (result.added > 0) {

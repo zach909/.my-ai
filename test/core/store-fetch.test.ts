@@ -40,14 +40,14 @@ describe('the catalogue without the payloads', () => {
 
   it('records every file in the manifest at publish time', () => {
     publishItem({
-      kind: 'skills',
+      kind: 'net-skills',
       name: 'indexed',
       files: [
         { filename: 'SKILL.md', content: '# hi\n' },
         { filename: 'scripts/run.py', content: 'print(1)\n' },
       ],
     })
-    const manifest = JSON.parse(readFileSync(path.join(dir, 'skills', 'indexed', 'manifest.json'), 'utf8'))
+    const manifest = JSON.parse(readFileSync(path.join(dir, 'net-skills', 'indexed', 'manifest.json'), 'utf8'))
     expect(manifest.files.map((f: { filename: string }) => f.filename).sort()).toEqual([
       'SKILL.md',
       'scripts/run.py',
@@ -59,7 +59,7 @@ describe('the catalogue without the payloads', () => {
 
   it('lists an item in full when not one payload byte is present', () => {
     publishItem({
-      kind: 'skills',
+      kind: 'net-skills',
       name: 'remote-only',
       title: 'Visible without being downloaded',
       files: [
@@ -68,29 +68,29 @@ describe('the catalogue without the payloads', () => {
         { filename: 'scripts/b.py', content: 'b\n' },
       ],
     })
-    stripPayloads('skills', 'remote-only')
+    stripPayloads('net-skills', 'remote-only')
 
-    const item = readItem('skills', 'remote-only')!
+    const item = readItem('net-skills', 'remote-only')!
     expect(item.title).toBe('Visible without being downloaded')
     expect(item.files).toHaveLength(3)
     expect(item.totalBytes).toBeGreaterThan(0)
     // Everything listed, nothing here.
     expect(item.files.every(f => f.local === false)).toBe(true)
-    expect(listCatalog().skills.map(i => i.name)).toContain('remote-only')
+    expect(listCatalog()['net-skills'].map(i => i.name)).toContain('remote-only')
   })
 
   it('marks exactly the files that are on this device', () => {
     publishItem({
-      kind: 'skills',
+      kind: 'net-skills',
       name: 'partial',
       files: [
         { filename: 'here.txt', content: 'x' },
         { filename: 'not-here.txt', content: 'y' },
       ],
     })
-    rmSync(path.join(dir, 'skills', 'partial', 'not-here.txt'))
+    rmSync(path.join(dir, 'net-skills', 'partial', 'not-here.txt'))
 
-    const files = readItem('skills', 'partial')!.files
+    const files = readItem('net-skills', 'partial')!.files
     expect(files.find(f => f.filename === 'here.txt')?.local).toBe(true)
     expect(files.find(f => f.filename === 'not-here.txt')?.local).toBe(false)
     // The absent one is still fully described -- that is what makes it
@@ -99,22 +99,22 @@ describe('the catalogue without the payloads', () => {
   })
 
   it('keeps the entries for files an update did not touch', () => {
-    publishItem({ kind: 'skills', name: 'grow', files: [{ filename: 'one.txt', content: '1' }] })
-    publishItem({ kind: 'skills', name: 'grow', files: [{ filename: 'two.txt', content: '2' }] })
-    expect(readItem('skills', 'grow')!.files.map(f => f.filename).sort()).toEqual(['one.txt', 'two.txt'])
+    publishItem({ kind: 'net-skills', name: 'grow', files: [{ filename: 'one.txt', content: '1' }] })
+    publishItem({ kind: 'net-skills', name: 'grow', files: [{ filename: 'two.txt', content: '2' }] })
+    expect(readItem('net-skills', 'grow')!.files.map(f => f.filename).sort()).toEqual(['one.txt', 'two.txt'])
   })
 
   it('still reads an item published before the index existed', () => {
     // A manifest with no `files` key, plus files on disk: the old shape.
-    const legacy = path.join(dir, 'skills', 'legacy')
+    const legacy = path.join(dir, 'net-skills', 'legacy')
     mkdirSync(legacy, { recursive: true })
     writeFileSync(
       path.join(legacy, 'manifest.json'),
-      JSON.stringify({ kind: 'skills', name: 'legacy', title: 'Old', author: 'x' }),
+      JSON.stringify({ kind: 'net-skills', name: 'legacy', title: 'Old', author: 'x' }),
     )
     writeFileSync(path.join(legacy, 'SKILL.md'), '# old\n')
 
-    const item = readItem('skills', 'legacy')!
+    const item = readItem('net-skills', 'legacy')!
     expect(item.files.map(f => f.filename)).toEqual(['SKILL.md'])
     // Scanned from disk, so of course it is local -- which is exactly the
     // limitation the index removes.
@@ -122,8 +122,8 @@ describe('the catalogue without the payloads', () => {
   })
 
   it("does not bake one device's answer into the shared manifest", () => {
-    publishItem({ kind: 'skills', name: 'shared', files: [{ filename: 'f.txt', content: 'z' }] })
-    const manifest = JSON.parse(readFileSync(path.join(dir, 'skills', 'shared', 'manifest.json'), 'utf8'))
+    publishItem({ kind: 'net-skills', name: 'shared', files: [{ filename: 'f.txt', content: 'z' }] })
+    const manifest = JSON.parse(readFileSync(path.join(dir, 'net-skills', 'shared', 'manifest.json'), 'utf8'))
     // Whether a file is present is a fact about a device, not about the
     // published item; every other clone would read the wrong answer.
     expect(manifest.files[0]).not.toHaveProperty('local')
