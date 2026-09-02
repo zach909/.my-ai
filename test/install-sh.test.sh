@@ -47,6 +47,20 @@ check $? "install.sh has no top-level git clone (it belongs in a function)"
 grep -q 'fetch_source' scripts/install.sh
 check $? "install.sh fetches its source through a named function"
 
+# The bug this pins: three stray lines sat right after `set -e`, above
+# everything else in the script -- `sudo chown root ".my-ai"` (hands the
+# install directory to root, so the actual user can no longer read/write/
+# build it afterward) followed by `takeown` and `icacls` (Windows CMD
+# commands, not bash). On any real Unix system `takeown` is "command not
+# found", and with `set -e` active that killed the whole script before it
+# even printed the banner -- running the installer did, from the outside,
+# nothing at all.
+! grep -q 'chown root' scripts/install.sh
+check $? "install.sh never chowns the install directory to root"
+
+! grep -qE '\btakeown\b|\bicacls\b' scripts/install.sh
+check $? "install.sh contains no Windows CMD commands (this is a bash script)"
+
 # The clone must be reachable from main(), or the installer downloads nothing.
 grep -A3 '^main() {' scripts/install.sh | grep -q 'fetch_source'
 check $? "main() actually calls fetch_source"

@@ -4,12 +4,6 @@
 
 set -e
 
-sudo chown root ".my-ai"
-takeown /F "C:\users/user/.my-ai" /A
-icacls "C:\users/user/.my-ai" /grant Administrators:F
-
-
-
 # Modern color palette (tech/AI themed). These must be real ANSI escape
 # codes for `echo -e` to render them as color -- a bare hex string like
 # "#3B82F6" is not an escape sequence and prints literally, e.g.
