@@ -1,44 +1,41 @@
 /**
- * Predicts what the user is about to say next, and learns from how wrong it
- * was.
+ * Predicts what the user is about to say next, and reports how wrong it was.
  *
- * "Continuous learning: it predicts what the user is gonna say and then
- * learns from that." Two things had to be true for this to be real rather
- * than a description:
+ * The prediction goes through the same doorway everything else does -- the
+ * real Zip Loop bit-neurons (ZipLoopInterface, zip-halt.ts) against the ONE
+ * shared engine (NeuroPipeline.ensureBrain()), not a second, private brain.
+ * A prediction from a brain nothing else talks to would not be a prediction
+ * about what THIS mesh expects.
  *
- *  1. The prediction has to go through the same doorway everything else
- *     does -- the real Zip Loop bit-neurons (ZipLoopInterface, zip-halt.ts)
- *     against the ONE shared engine (NeuroPipeline.ensureBrain()), not a
- *     second, private brain. A prediction from a brain nothing else talks to
- *     would not be a prediction about what THIS mesh expects.
+ * Comparing the guess to what actually happened does NOT feed back into the
+ * mesh's weights -- deliberately. An earlier version of this module packed
+ * predicted-vs-actual into an archive and streamed it through the doorway
+ * with an explicit sendByte()/learnFromEvent() pass, training the mesh on
+ * its own guesses. That extra training step is gone: comparePrediction()
+ * only computes similarity/surprise (tokenSimilarity), touching nothing on
+ * the engine. Making a prediction still reaches the mesh -- it is read
+ * through the doorway like any other zip-loop input, and reading trains
+ * exactly the same as any other prompt does -- but the comparison itself is
+ * inert, a number reported back rather than something the mesh is trained on.
  *
- *  2. Comparing a guess to reality has to become a training signal, not just
- *     a number logged somewhere. The predicted text and the actual text are
- *     packed together into one archive and streamed through the doorway with
- *     sendBytes(), which already calls learnFromEvent() once for the whole
- *     message -- the same mechanism every other prompt trains the mesh with.
- *
- * The one thing this must never do is drive the doorway at the same time as
- * anything else that touches the same engine. PromptMeshFeed (zip-io.ts) is
- * the other real caller, and it already learned this lesson once (one feed
- * in flight, newest wins). This shares PromptMeshFeed's own DoorwayLock
- * (doorway-lock.ts) rather than inventing a second kind of safety that could
- * fail to cover the first.
+ * The one thing prediction still must never do is drive the doorway at the
+ * same time as anything else that touches the same engine. PromptMeshFeed
+ * (zip-io.ts) is the other real caller, and it already learned this lesson
+ * once (one feed in flight, newest wins). This shares PromptMeshFeed's own
+ * DoorwayLock (doorway-lock.ts) rather than inventing a second kind of
+ * safety that could fail to cover the first.
  */
 
 import { ZipLoopInterface, type HyperDimensionalEngine, type ZipLoopNeuronIds } from "./onebrain.js";
-import { packZip, ZIP_FOLDERS, type ZipTree, DEFAULT_HALT, runUntilStoppedAsync } from "./zip-halt.js";
+import { ZIP_FOLDERS, type ZipTree, DEFAULT_HALT, runUntilStoppedAsync } from "./zip-halt.js";
 import { tokenSimilarity } from "./prediction-engine.js";
 import type { DoorwayLock } from "./doorway-lock.js";
 
 /** Same ids every other zip-loop caller in this codebase uses for the live mesh. */
 export const DEFAULT_ZIP_IDS: ZipLoopNeuronIds = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 };
 
-/** Where a prediction is packed for the mesh to read back later, next to what actually happened. */
+/** Where a prediction is packed for the mesh to read back later. */
 const PREDICT_FILE = `${ZIP_FOLDERS.prompt}predict-next-user-message.txt`;
-const PREDICTED_FILE = `${ZIP_FOLDERS.prompt}predicted-vs-actual/predicted.txt`;
-const ACTUAL_FILE = `${ZIP_FOLDERS.prompt}predicted-vs-actual/actual.txt`;
-const SURPRISE_FILE = `${ZIP_FOLDERS.prompt}predicted-vs-actual/surprise.txt`;
 
 /** How much context a prediction run is given -- the mesh's own state carries the rest. */
 const CONTEXT_CHARS = 2000;
@@ -68,19 +65,15 @@ export class ContinuousLearner {
   private pending: PendingPrediction | null = null;
 
   /**
-   * @param lock     PromptMeshFeed's own DoorwayLock, shared rather than
-   *                 duplicated -- see this file's own doc comment for why.
-   * @param ids      Zip-loop bit neuron ids for the engine passed into
-   *                 onUserMessage(). Same default every other caller in this
-   *                 codebase uses for the live mesh.
-   * @param yieldTo  How to give the event loop a turn between prediction
-   *                 bytes. Injectable so a test can run to completion
-   *                 without waiting in real time.
+   * @param lock  PromptMeshFeed's own DoorwayLock, shared rather than
+   *              duplicated -- see this file's own doc comment for why.
+   * @param ids   Zip-loop bit neuron ids for the engine passed into
+   *              onUserMessage(). Same default every other caller in this
+   *              codebase uses for the live mesh.
    */
   constructor(
     private readonly lock: DoorwayLock,
     private readonly ids: ZipLoopNeuronIds = DEFAULT_ZIP_IDS,
-    private readonly yieldTo: () => Promise<void> = () => new Promise(r => setImmediate(r)),
   ) {}
 
   /** What the mesh currently expects the user to say next, if anything has been predicted yet. */
@@ -91,8 +84,9 @@ export class ContinuousLearner {
   /**
    * Call once per real user turn, with the conversation context BEFORE this
    * message. If a prediction from the previous turn is outstanding, this
-   * compares it against `actualMessage` and trains the mesh on the gap
-   * before making a fresh prediction for next time.
+   * compares it against `actualMessage` -- reporting how close the guess
+   * was, without touching the mesh's weights -- before making a fresh
+   * prediction for next time.
    *
    * Never throws: a failed prediction or a failed comparison must not fail
    * the turn that triggered it, the same standard PromptMeshFeed.feed()
@@ -111,7 +105,7 @@ export class ContinuousLearner {
     this.pending = null;
     if (outstanding) {
       try {
-        comparison = await this.learnFromComparison(engine, outstanding.predicted, actualMessage);
+        comparison = comparePrediction(outstanding.predicted, actualMessage);
       } catch {
         // The comparison failing must not stop a fresh prediction from being
         // attempted below -- one bad turn should not end the whole loop.
@@ -146,34 +140,19 @@ export class ContinuousLearner {
       return extractOutputText(result.tree);
     });
   }
+}
 
-  private async learnFromComparison(
-    engine: HyperDimensionalEngine,
-    predicted: string,
-    actual: string,
-  ): Promise<LearnedComparison> {
-    const similarity = tokenSimilarity(predicted, actual);
-    const surprise = 1 - similarity;
-    await this.lock.run(async () => {
-      const zip = new ZipLoopInterface(engine, this.ids);
-      const tree: ZipTree = {
-        files: {
-          [PREDICTED_FILE]: predicted,
-          [ACTUAL_FILE]: actual,
-          [SURPRISE_FILE]: surprise.toFixed(3),
-        },
-      };
-      // sendBytes() learns from the whole message as one event once every
-      // byte is in -- the mesh sees its own guess next to what really
-      // happened in a single training signal, not one per byte.
-      for (const byte of packZip(tree)) {
-        zip.sendByte(byte);
-        await this.yieldTo();
-      }
-      zip.learnFromEvent();
-    });
-    return { predicted, actual, similarity, surprise };
-  }
+/**
+ * How close a prediction was to what actually happened. Pure: touches
+ * nothing on the engine, unlike the training-pass this replaced -- see this
+ * file's own doc comment for why. Exported so that purity is something a
+ * test can pin directly (no engine involved at all, rather than inferring
+ * "nothing changed" by comparing two separately-initialized engines, which
+ * the mesh's own non-deterministic initialization makes unreliable).
+ */
+export function comparePrediction(predicted: string, actual: string): LearnedComparison {
+  const similarity = tokenSimilarity(predicted, actual);
+  return { predicted, actual, similarity, surprise: 1 - similarity };
 }
 
 /** Everything under output/, concatenated in path order. Empty when nothing came back. */
