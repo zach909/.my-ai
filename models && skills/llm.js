@@ -7,7 +7,6 @@ import { BackgroundQuantizer } from "./core/quantizer.js";
 import { UnifiedBrain } from "./core/unified-brain.js";
 import { RLMTrainer } from "./core/rlm.js";
 import { ThornsEngine } from "./core/thorns.js";
-import { NeuroPipeline } from "./core/pipeline.js";
 import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
 const DEFAULT_LLM_CONFIG = {
@@ -33,9 +32,21 @@ export class NeuroclawLLM {
     selfExtensions = new Map();
     selfExtensionsDir;
     generationCount = 0;
-    pipeline = null;
     autonomousStopRequested = false;
-    constructor(config = {}) {
+    /**
+     * "onebrain delete backup llm" -- `hyperEngine`, when passed, is the ONE
+     * real HyperDimensionalEngine this instance's UnifiedBrain computes
+     * through, instead of building a private second one. NeuroclawSystem
+     * (src/index.ts) passes its own NeuroPipeline's engine here so that a
+     * chat reply (this class) and everything else that touches the live
+     * mesh (the Zip Loop doorway, continuous learning, every net skill
+     * graft -- all of which go through that same NeuroPipeline) are the
+     * same running brain, not two that happen to sit in the same process.
+     * Omitted, this class builds its own engine (every other caller --
+     * interface/main.ts's CLI/legacy web boot, tests, model-manager.js --
+     * still gets a real, working, standalone LLM unchanged).
+     */
+    constructor(config = {}, hyperEngine = null) {
         this.config = { ...DEFAULT_LLM_CONFIG, ...config };
         this.builder = new ExtensionBuilder();
         this.tokenizer = new Tokenizer();
@@ -78,6 +89,7 @@ export class NeuroclawLLM {
             valuePoints: this.config.valuePoints,
             quantumEnabled: this.config.quantumEnabled ?? false,
             persistDir: this.config.selfExtensionsDir ? join(this.config.selfExtensionsDir, "brain") : undefined,
+            hyperEngine: hyperEngine ?? undefined,
         });
         this.thornsEngine = new ThornsEngine();
         this.rlmTrainer = new RLMTrainer({
@@ -87,12 +99,6 @@ export class NeuroclawLLM {
             thinkSteps: this.config.thinkSteps
         });
         this.thornsEngine.connectCore(this.valueAllocator, this.mesh, this.hyperEngine, this.rlmTrainer, this.moeRouter);
-        this.pipeline = new NeuroPipeline({
-            embeddingDim: this.config.embeddingDim,
-            hiddenDim: this.config.hiddenDim,
-            meshNodes: this.config.meshNodes,
-            hyperDimensions: this.config.hyperDimensions,
-        });
     }
     /** Zero-sum elastic value budget -- delegates to UnifiedBrain, the single source of truth. */
     get valueAllocator() { return this.brain.getVale(); }
@@ -495,7 +501,6 @@ export class NeuroclawLLM {
     getTrainer() { return this.trainer; }
     getMoERouter() { return this.moeRouter; }
     isBuilt() { return this.built; }
-    getPipeline() { return this.pipeline; }
     sampleFromProbs(probs, temperature) {
         const logits = new Float32Array(probs.length);
         for (let i = 0; i < probs.length; i++) {
