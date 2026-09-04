@@ -245,7 +245,6 @@ export class NeuroclawSystem {
   private readonly zipPersistDir: string | null;
 
   constructor(config?: { maxContextGB?: number; persistDir?: string }) {
-    this.llm = new NeuroclawLLM({});
     this.contextCapacityGB = config?.maxContextGB || 200000;
     this.zipPersistDir = config?.persistDir ?? null;
     // Section 1.10/§7: NeuroPipeline owns a second, independent ZipIOSystem
@@ -256,6 +255,19 @@ export class NeuroclawSystem {
     this.pipeline = new NeuroPipeline({
       zipPersistDir: this.zipPersistDir ? join(this.zipPersistDir, "pipeline") : undefined,
     });
+    // "onebrain delete backup llm": built (and thus forced to construct its
+    // real HyperDimensionalEngine) BEFORE this.llm, and that same engine is
+    // handed straight into NeuroclawLLM below -- see UnifiedBrainConfig's
+    // hyperEngine doc comment. Before this, this.llm built its own private
+    // engine and this.pipeline built a second, unrelated one: the engine
+    // that actually answers a chat reply (processQuery -> runner.generate ->
+    // this.llm) was never the one the Zip Loop doorway, continuous learning,
+    // and every net skill graft below (all of which reach the mesh only
+    // through this.pipeline) were reading and training. ensureBrain(), not
+    // the lazy default: the whole point is that this.llm's engine must be
+    // real and already built, not a stand-in constructed only on first run().
+    const sharedEngine = this.pipeline.ensureBrain();
+    this.llm = new NeuroclawLLM({}, sharedEngine);
     // ONE brain, not one per subsystem. PluginRegistry defaults to building
     // its own MixtureOfExperts (and therefore its own NeuronMesh), which left
     // every plugin's neurons wired all-to-all among *themselves* but severed

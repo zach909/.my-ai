@@ -47,6 +47,22 @@ export interface UnifiedBrainConfig {
   quantumEnabled: boolean;
   /** Where InfiniteZipLoop spills its ring buffer / checkpoints to disk. */
   persistDir?: string;
+  /**
+   * "onebrain delete backup llm" -- share ONE HyperDimensionalEngine instead
+   * of this class quietly building a second, private one. Before this,
+   * NeuroclawLLM (which answers every real chat reply) and NeuroPipeline
+   * (which backs the Zip Loop doorway, continuous learning, and every net
+   * skill graft) each ran their OWN separate hyperdimensional engine --
+   * genuinely two brains, only one of which the user ever actually talked
+   * to, while everything else (net skills installed mid-conversation,
+   * continuous-learning predictions, the raw Zip Loop) silently trained and
+   * read a different one. Passing the live engine in here (see
+   * NeuroclawSystem's constructor) makes both halves of the same running
+   * agent share one real, stateful, continuously-learning substrate.
+   * Omitted, this class falls back to building its own (unit tests /
+   * standalone NeuroclawLLM usage elsewhere still work unchanged).
+   */
+  hyperEngine?: HyperDimensionalEngine;
 }
 
 const DEFAULT_CONFIG: UnifiedBrainConfig = {
@@ -128,7 +144,12 @@ export class UnifiedBrain {
       activationFn: 'swish',
     } as Partial<MeshConfig>);
 
-    this.hyper = new HyperDimensionalEngine({
+    // Shared, not owned: when the caller hands in the live NeuroPipeline's
+    // own engine (see hyperEngine's doc comment above), this class never
+    // constructs a second one -- see this.think()'s own note about reading
+    // dimensions from the engine itself rather than this.config, so an
+    // injected engine of a different size is never silently mismatched.
+    this.hyper = config.hyperEngine ?? new HyperDimensionalEngine({
       neuronCount: this.config.hyperNeurons ?? Math.max(8, Math.floor(this.config.meshNodes / 2)),
       dimensions: this.config.hyperDimensions,
       ballStates: this.config.ballStates ?? 4,
@@ -238,11 +259,17 @@ export class UnifiedBrain {
     }
     const meshResult = this.mesh.propagate(meshInputs, valeFractions);
 
+    // this.hyper.getDimensions(), not this.config.hyperDimensions: when the
+    // engine was injected (see hyperEngine's doc comment above) it may have
+    // been built with a different size than this instance's own config --
+    // sizing off the config in that case would silently feed process() a
+    // vector of the wrong length for the actual shared engine.
+    const hyperDims = this.hyper.getDimensions();
     const meshArray: number[] = [];
     for (const [, v] of meshResult.finalStates) {
-      if (meshArray.length < this.config.hyperDimensions) meshArray.push(v);
+      if (meshArray.length < hyperDims) meshArray.push(v);
     }
-    while (meshArray.length < this.config.hyperDimensions) meshArray.push(0);
+    while (meshArray.length < hyperDims) meshArray.push(0);
     const hyperOutput = this.hyper.process(meshArray);
 
     let quantumActive = false;

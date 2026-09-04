@@ -5,7 +5,6 @@ import { NeuronMesh } from "./core/onebrain.js";
 import { HyperDimensionalEngine } from "./core/onebrain.js";
 import { ValueRangeAllocator } from "./core/value-range.js";
 import { UnifiedBrain, type BrainSnapshot } from "./core/unified-brain.js";
-import { NeuroPipeline } from "./core/pipeline.js";
 import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
 export interface LLMConfig {
@@ -50,9 +49,13 @@ export declare class NeuroclawLLM {
     private selfExtensionsDir;
     private extensionManager;
     private generationCount;
-    private pipeline;
     private autonomousStopRequested;
-    constructor(config?: Partial<LLMConfig>);
+    /**
+     * `hyperEngine`, when passed, is the ONE real HyperDimensionalEngine
+     * this instance computes through instead of building a private second
+     * one -- see unified-brain.ts's UnifiedBrainConfig.hyperEngine.
+     */
+    constructor(config?: Partial<LLMConfig>, hyperEngine?: HyperDimensionalEngine | null);
     get valueAllocator(): ValueRangeAllocator;
     get moeRouter(): MoERouter;
     get mesh(): NeuronMesh;
@@ -141,6 +144,5 @@ export declare class NeuroclawLLM {
     getTrainer(): NeuroclawTrainer;
     getMoERouter(): MoERouter;
     isBuilt(): boolean;
-    getPipeline(): NeuroPipeline | null;
     private sampleFromProbs;
 }

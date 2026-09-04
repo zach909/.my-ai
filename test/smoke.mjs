@@ -3291,6 +3291,53 @@ async function testSolveIntegration() {
   }
 }
 
+async function testOneBrainNoBackupLLM() {
+  // "onebrain delete backup llm" -- before this, NeuroclawLLM (which answers
+  // every real chat reply via processQuery() -> runner.generate()) built its
+  // own private HyperDimensionalEngine, and NeuroPipeline (which backs the
+  // Zip Loop doorway, continuous learning, and every net skill graft) built
+  // a second, unrelated one. A net skill installed mid-conversation, a
+  // prediction ContinuousLearner made, or a byte sent through the raw Zip
+  // Loop all trained/read a mesh the chat-facing brain never saw, and vice
+  // versa. This pins the fix: exactly one HyperDimensionalEngine backs both.
+  const { NeuroclawSystem } = await load('src/index.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    const sys = new NeuroclawSystem();
+    await sys.initialize();
+
+    check(sys.llm.hyperEngine === sys.pipeline.getHyperEngine(),
+      "NeuroclawLLM's own engine (what answers every chat reply) is the exact same object as NeuroPipeline's engine (what backs the Zip Loop / continuous learning / net skill grafts), not two separate ones");
+
+    // Not just the same reference at boot -- genuinely one shared, mutable
+    // object: growing the pipeline's engine (what installing a net skill
+    // does, see net-skill-graft.ts) must be immediately visible to the
+    // chat-facing llm too.
+    const before = sys.llm.hyperEngine.getNeuronCount();
+    sys.pipeline.getHyperEngine().addNeurons(3);
+    check(sys.llm.hyperEngine.getNeuronCount() === before + 3,
+      "growing the pipeline's engine (a net skill graft) is immediately visible through llm.hyperEngine too -- proof of shared identity, not a snapshot");
+
+    // And the reverse direction: something that changes the engine's actual
+    // neuron STATE through the chat-facing side (a real UnifiedBrain.think()
+    // call, via generate()) must be visible to a reader going through
+    // pipeline.getHyperEngine() too.
+    const targetId = 0;
+    sys.llm.hyperEngine.setNeuronState(targetId, new Float32Array(sys.llm.hyperEngine.getDimensions()).fill(0.42));
+    const readBackViaPipeline = sys.pipeline.getHyperEngine().getNeuronStates()[targetId];
+    // state[0] is the reserved input-flag dimension (not writable via
+    // setNeuronState -- see its own doc comment); state[1] is where the
+    // content this call wrote actually lands. Float32-rounded (the state
+    // array is a Float32Array), so compared with tolerance rather than
+    // strict equality against the float64 literal.
+    check(Math.abs(readBackViaPipeline.state[1] - 0.42) < 1e-5,
+      'a state write made through llm.hyperEngine is readable through pipeline.getHyperEngine() too -- the same object, not a copy');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testNeuroclawSystemLifecycle() {
   // End-to-end test: exercise all four primary entry points (processQuery,
   // solve, autonomousTask, executePlan) in sequence and verify cross-subsystem
@@ -4624,14 +4671,26 @@ async function testPipelineZipIOPersistence() {
     for await (const chunk of sys2.pipeline.getZipIO().getFullContext()) restored.push(chunk);
     check(restored.some(c => c.includes('a marker only this pipeline run should produce')), "a fresh instance configured with the same persistDir restores NeuroPipeline's own working context too, not just NeuroclawSystem's top-level one");
 
-    // getZipIO() returns null until the pipeline's subsystems are lazily
-    // initialized by a first run() -- persistContext()'s optional chaining
-    // on it must not throw for this ordinary, no-persistDir, never-run case.
+    // getZipIO() (and the rest of ensureSubsystems()) used to stay null
+    // until the pipeline's subsystems were lazily initialized by a first
+    // run(). "onebrain delete backup llm" (NeuroclawSystem's constructor)
+    // now calls pipeline.ensureBrain() up front so this.llm shares the
+    // SAME HyperDimensionalEngine as the pipeline from the moment the
+    // system exists, instead of building its own private one -- that
+    // forces the whole subsystem bundle (including zipIO) into existence
+    // at construction time as a side effect, not just the engine alone.
+    // persistContext()'s optional chaining on getZipIO() must still not
+    // throw either way, so the real thing worth pinning here is that a
+    // never-run instance's zipIO is genuinely empty (no context yet),
+    // not that it is literally null.
     const sysDefault = new NeuroclawSystem();
     await sysDefault.initialize();
-    check(sysDefault.pipeline.getZipIO() === null, "an instance that never ran the pipeline has no internal zipIO yet (lazy init)");
+    check(sysDefault.pipeline.getZipIO() !== null, "NeuroclawSystem's constructor now builds the pipeline's real engine (and the rest of ensureSubsystems()) up front, so every instance's zipIO exists from construction");
+    const neverRunContext = [];
+    for await (const chunk of sysDefault.pipeline.getZipIO().getFullContext()) neverRunContext.push(chunk);
+    check(neverRunContext.length === 0, "a never-run instance's zipIO exists but is genuinely empty -- construction alone writes no context");
     await sysDefault.persistContext();
-    check(true, 'persistContext() does not throw when the pipeline zipIO is still null');
+    check(true, 'persistContext() does not throw for a never-run instance');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
     rmSync(dir, { recursive: true, force: true });
@@ -5276,6 +5335,7 @@ async function main() {
     ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
     ['Reasoning trace history (Section 2)', testReasoningHistory],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
+    ['One brain, no backup LLM: llm and pipeline share one HyperDimensionalEngine', testOneBrainNoBackupLLM],
     ['NeuroclawSystem lifecycle across all entry points (regression guard)', testNeuroclawSystemLifecycle],
     ['solve() AlignmentVeto gating (Section 3/10/13/23)', testSolveAlignmentVeto],
     ['autonomousTask() AlignmentVeto gating (Section 3/10/13/23)', testAutonomousTaskAlignmentVeto],
