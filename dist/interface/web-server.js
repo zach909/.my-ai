@@ -8,6 +8,7 @@ import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js
 import { installFromStore, installPromptingSkill, listInstalled, loadRegistry, publishPromptingSkill, readPublishedPromptingSkill, uninstallPromptingSkill, isBuiltIn, } from '../models && skills/core/prompting-skill-store.js';
 import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
+import { listRemoteOnlyBotPages, readRemoteBotPage } from '../models && skills/core/wiki-remote.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
@@ -2803,7 +2804,23 @@ export class WebServer {
         // edited on disk (by a human, or by WikiPlugin.publish() below) shows
         // up on next load.
         if (pathname === '/api/wiki' && method === 'GET') {
-            const pages = listWikiPages();
+            const local = listWikiPages();
+            // Bot-published pages reach the store branch (publishWikiPageAndSync)
+            // regardless of which device published them, but only ever reach THIS
+            // device's disk if it republishes them itself -- so a page from
+            // another device stayed invisible here even though it plainly existed.
+            // Merged in read straight from the store branch, never written under
+            // wiki/ -- see wiki-remote.ts's own doc comment for why not.
+            // Best-effort: no repo/remote/store-branch just means nothing to add.
+            let remoteOnly = [];
+            try {
+                remoteOnly = await listRemoteOnlyBotPages(new Set(local.map(p => p.name)));
+            }
+            catch { /* the local list is still a complete, honest answer on its own */ }
+            const pages = [
+                ...local.map(p => ({ ...p, location: 'device' })),
+                ...remoteOnly.map(p => ({ ...p, location: 'store-branch' })),
+            ];
             this.sendJson(res, { pages, total: pages.length });
             return;
         }
@@ -2849,12 +2866,24 @@ export class WebServer {
         // which rules out both `..` traversal and an absolute-path override.
         const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)$/);
         if (wikiMatch && method === 'GET') {
-            const page = readWikiPage(wikiMatch[1]);
-            if (!page) {
-                this.sendJson(res, { error: `No wiki page named "${wikiMatch[1]}"` }, 404);
+            const local = readWikiPage(wikiMatch[1]);
+            if (local) {
+                this.sendJson(res, { ...local, location: 'device' });
                 return;
             }
-            this.sendJson(res, page);
+            // Not on this device -- try the store branch before giving up. Same
+            // reasoning as the list route just above: a page published elsewhere
+            // is still real and still readable, without landing on this disk.
+            let remote = null;
+            try {
+                remote = await readRemoteBotPage(wikiMatch[1]);
+            }
+            catch { /* falls through to the 404 below, same as a real miss */ }
+            if (remote) {
+                this.sendJson(res, { ...remote, location: 'store-branch' });
+                return;
+            }
+            this.sendJson(res, { error: `No wiki page named "${wikiMatch[1]}"` }, 404);
             return;
         }
         // DELETE /api/wiki/:name — remove a bot-published page. Same name rule
