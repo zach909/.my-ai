@@ -1,0 +1,45 @@
+{
+  "neurons": [
+    {
+      "name": "scratch-pad",
+      "value": 0,
+      "definition": "the workspace where a draft is written before anything is sent; edits happen here first, and nothing here has gone out yet"
+    },
+    {
+      "name": "draft",
+      "value": 0,
+      "definition": "the content currently being written or revised in the scratch pad, not yet sent through the zip loop"
+    },
+    {
+      "name": "edit",
+      "value": 0,
+      "definition": "option one: revise the draft in place without sending it; writing or editing a tool-comment counts as this, not as sending"
+    },
+    {
+      "name": "tool-comment",
+      "value": 0,
+      "definition": "a note left in the draft while editing, such as a numbered marker for one step of a repeated task; part of editing, and it does not survive into what is finally sent"
+    },
+    {
+      "name": "repeat-counter",
+      "value": 0,
+      "definition": "tracking progress across a repeated task, one tool-comment per repetition, e.g. 1, 2, 3, and so on up to however many times the task was asked for"
+    },
+    {
+      "name": "verify",
+      "value": 0,
+      "definition": "option two, part one: check the draft is actually correct and complete before it may leave the scratch pad"
+    },
+    {
+      "name": "send-to-zip-loop",
+      "value": 0,
+      "definition": "option two, part two: once verified, commit the draft as real output through the zip loop doorway, the only path out of the scratch pad. Tool-comments do not travel with it: they were never part of verify's own connection out of the scratch pad"
+    },
+    {
+      "name": "not-sent",
+      "value": 0,
+      "definition": "still inside the scratch pad: everything edited or commented on that has not gone through send-to-zip-loop"
+    }
+  ],
+  "code": "name=\"scratch-pad\"\n\"scratch-pad\"@definishon=\"the workspace where a draft is written before anything is sent; edits happen here first, and nothing here has gone out yet\"\nname=\"draft\"\n\"draft\"@definishon=\"the content currently being written or revised in the scratch pad, not yet sent through the zip loop\"\nname=\"edit\"\n\"edit\"@definishon=\"option one: revise the draft in place without sending it; writing or editing a tool-comment counts as this, not as sending\"\nname=\"tool-comment\"\n\"tool-comment\"@definishon=\"a note left in the draft while editing, such as a numbered marker for one step of a repeated task; part of editing, and it does not survive into what is finally sent\"\nname=\"repeat-counter\"\n\"repeat-counter\"@definishon=\"tracking progress across a repeated task, one tool-comment per repetition, e.g. 1, 2, 3, and so on up to however many times the task was asked for\"\nname=\"verify\"\n\"verify\"@definishon=\"option two, part one: check the draft is actually correct and complete before it may leave the scratch pad\"\nname=\"send-to-zip-loop\"\n\"send-to-zip-loop\"@definishon=\"option two, part two: once verified, commit the draft as real output through the zip loop doorway, the only path out of the scratch pad. Tool-comments do not travel with it: they were never part of verify's own connection out of the scratch pad\"\nname=\"not-sent\"\n\"not-sent\"@definishon=\"still inside the scratch pad: everything edited or commented on that has not gone through send-to-zip-loop\"\n\"scratch-pad\"@connections=\".draft*0.5+.edit*0.5+.verify*0.3+.send-to-zip-loop*0.1\"\n\"draft\"@connections=\".edit*0.6+.verify*0.3\"\n\"edit\"@connections=\".draft*0.4+.tool-comment*0.5+.not-sent*0.6+.verify*0.2\"\n\"tool-comment\"@connections=\".repeat-counter*0.6+.edit*0.3\"\n\"repeat-counter\"@connections=\".tool-comment*0.5+.edit*0.3\"\n\"verify\"@connections=\".draft*0.3+.send-to-zip-loop*0.7\"\n\"send-to-zip-loop\"@connections=\".scratch-pad*0.1\"\n\"not-sent\"@connections=\".draft*0.4+.edit*0.4\""
+}

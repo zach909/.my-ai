@@ -1,0 +1,21 @@
+{
+  "kind": "net-skills",
+  "name": "scratch-pad",
+  "title": "Scratch Pad",
+  "description": "A conceptual net-skill: 8 neurons grafted all-to-all into the live mesh, modeling a two-option draft loop wired toward the zip loop's send path. Option one is edit -- revise the draft in place, including writing or editing a numbered tool-comment to track progress through a repeated task (e.g. step 1, 2, 3 of 400); neither counts as sending. Option two is verify then send -- check the draft, then commit it as real output through send-to-zip-loop, the only path out of the scratch pad. Tool-comments never connect to send-to-zip-loop, so they never travel with what actually gets sent. Like every net-skill in this architecture, this is a real, hand-built connectionist scaffold (not executable code): install it and its neurons compute alongside the rest of the mesh from the first tick, the same all-to-all equation as everything already there, and continue learning with it. See scratch-pad.source.json for the NeuroLang source this compiles from, and net-skill-graft.ts for how a mesh grows one.",
+  "author": "neuroclaw-agent",
+  "publishedAt": "2026-09-04T18:39:21.406Z",
+  "updatedAt": "2026-09-04T18:39:21.406Z",
+  "files": [
+    {
+      "filename": "scratch-pad.skill.json",
+      "bytes": 2303,
+      "sha256": "306f634831e7014ebab3fd007972c684a52847e1984c52f8a5c6c7c26b5d7e1b"
+    },
+    {
+      "filename": "scratch-pad.source.json",
+      "bytes": 3837,
+      "sha256": "c81ea20dfa6791da84739f9da3002ea5968eb1ef91b34120c0822e8724c42f68"
+    }
+  ]
+}
