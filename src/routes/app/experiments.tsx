@@ -1,8 +1,8 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useState, useEffect, useRef } from 'react'
+import { useState, useEffect, useRef, useCallback } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { FlaskConical, Plus, Play, Sparkles, CheckCircle2 } from 'lucide-react'
+import { FlaskConical, Plus, Play, Sparkles, CheckCircle2, Rocket, Square } from 'lucide-react'
 import { toast } from 'sonner'
 
 export const Route = createFileRoute("/app/experiments")({
@@ -37,12 +37,78 @@ const PRESETS = [
   },
 ]
 
+interface RsiServerStatus {
+  running: boolean
+  pid: number | null
+  startedAt: string | null
+  lastExit: { code: number | null; signal: string | null; at: string } | null
+}
+
 function ExperimentsPage() {
   const [running, setRunning] = useState(false)
   const [progress, setProgress] = useState(0)
   const [completed, setCompleted] = useState(false)
   const [selectedProtocol, setSelectedProtocol] = useState("alignment-verification")
   const intervalRef = useRef<NodeJS.Timeout | null>(null)
+
+  // The RSI server (scripts/self-improve.mjs) -- "npm run server" starts it
+  // automatically, but the desktop app and any other launch path outside
+  // that script never do. This is the manual switch for those cases.
+  const [rsiStatus, setRsiStatus] = useState<RsiServerStatus | null>(null)
+  const [rsiBusy, setRsiBusy] = useState(false)
+
+  const refreshRsiStatus = useCallback(async () => {
+    try {
+      const res = await fetch('/api/self-improvement/server-status')
+      const data = await res.json()
+      setRsiStatus(data)
+    } catch {
+      // Best-effort -- the button below still works from a stale/unknown
+      // status, it just won't be able to tell running from stopped yet.
+    }
+  }, [])
+
+  useEffect(() => {
+    refreshRsiStatus()
+    const poll = setInterval(refreshRsiStatus, 5000)
+    return () => clearInterval(poll)
+  }, [refreshRsiStatus])
+
+  const startRsiServer = async () => {
+    setRsiBusy(true)
+    try {
+      const res = await fetch('/api/self-improvement/server/start', { method: 'POST' })
+      const data = await res.json()
+      if (data.ok) {
+        toast.success('RSI server started -- it will now propose, score, and reward or discard its own improvements in the background.')
+      } else {
+        toast.error(`Could not start RSI server: ${data.error ?? 'unknown error'}`)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRsiBusy(false)
+      refreshRsiStatus()
+    }
+  }
+
+  const stopRsiServer = async () => {
+    setRsiBusy(true)
+    try {
+      const res = await fetch('/api/self-improvement/server/stop', { method: 'POST' })
+      const data = await res.json()
+      if (data.ok) {
+        toast.success('RSI server stopped.')
+      } else {
+        toast.error(`Could not stop RSI server: ${data.error ?? 'unknown error'}`)
+      }
+    } catch (err) {
+      toast.error(err instanceof Error ? err.message : String(err))
+    } finally {
+      setRsiBusy(false)
+      refreshRsiStatus()
+    }
+  }
 
   const applyPreset = (protocol: string, label: string) => {
     if (running) return
@@ -98,6 +164,75 @@ function ExperimentsPage() {
           modules.
         </p>
       </div>
+
+      <Card className="flex flex-col gap-3 p-6 animate-fade-in">
+        <div className="flex items-start justify-between gap-4">
+          <div className="flex items-start gap-3">
+            <div className="rounded-full bg-primary/10 p-2.5 shrink-0">
+              <Rocket className="h-5 w-5 text-primary" />
+            </div>
+            <div>
+              <h2 className="text-sm font-semibold tracking-tight text-foreground">RSI Server</h2>
+              <p className="text-xs text-muted-foreground mt-0.5 max-w-md">
+                The autonomous self-improvement loop (scripts/self-improve.mjs):
+                proposes hyperparameter candidates, scores each against the
+                current best, rewards it (keeps it, pushes it) only if it
+                measurably wins, otherwise discards it. <code>npm run server</code> starts
+                this on its own; use this to start it manually here instead
+                (e.g. when running the desktop app).
+              </p>
+            </div>
+          </div>
+          <span
+            className={`shrink-0 rounded-full px-2 py-0.5 text-[11px] font-medium ${
+              rsiStatus?.running
+                ? 'bg-emerald-500/10 text-emerald-500'
+                : 'bg-muted text-muted-foreground'
+            }`}
+            role="status"
+          >
+            {rsiStatus?.running ? `Running (pid ${rsiStatus.pid})` : 'Stopped'}
+          </span>
+        </div>
+
+        <div className="flex flex-wrap items-center gap-3">
+          {rsiStatus?.running ? (
+            <Button
+              onClick={stopRsiServer}
+              disabled={rsiBusy}
+              variant="outline"
+              size="sm"
+              className="gap-1.5 active:scale-95 transition-all duration-150"
+              aria-label="Stop RSI server"
+            >
+              <Square className="h-3.5 w-3.5" />
+              Stop RSI Server
+            </Button>
+          ) : (
+            <Button
+              onClick={startRsiServer}
+              disabled={rsiBusy}
+              size="sm"
+              className="gap-1.5 active:scale-95 transition-all duration-150"
+              aria-label="Start RSI server"
+            >
+              <Rocket className="h-3.5 w-3.5" />
+              Start RSI Server
+            </Button>
+          )}
+          <Button asChild variant="ghost" size="sm" className="text-muted-foreground">
+            <Link to="/app/self-improvement">View progress &rarr;</Link>
+          </Button>
+        </div>
+
+        {rsiStatus?.lastExit && !rsiStatus.running && (
+          <p className="text-[11px] text-muted-foreground">
+            Last run stopped {new Date(rsiStatus.lastExit.at).toLocaleString()}
+            {rsiStatus.lastExit.code !== null ? ` (exit code ${rsiStatus.lastExit.code})` : ''}
+            {rsiStatus.lastExit.signal ? ` (signal ${rsiStatus.lastExit.signal})` : ''}.
+          </p>
+        )}
+      </Card>
 
       <Card className="flex flex-col items-center justify-center border-2 border-dashed border-muted-foreground/20 rounded-xl p-12 text-center bg-card/40 backdrop-blur-xs animate-fade-in">
         <div className="rounded-full bg-primary/10 p-4 mb-4 transition-transform hover:scale-110 duration-200">
