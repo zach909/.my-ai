@@ -16,7 +16,7 @@ import { ContinuousLearner } from "../models && skills/core/continuous-learning.
 import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
-import { HiveMind, SharedBlackboard } from "../models && skills/core/hive-mind.js";
+import { HiveMind, SharedBlackboard, type HiveAgent } from "../models && skills/core/hive-mind.js";
 import { ChatGroup } from "../models && skills/core/chat-group.js";
 import { LongTermMemory } from "../models && skills/core/long-term-memory.js";
 import { PlanTracker } from "../models && skills/core/plan-tracker.js";
@@ -456,8 +456,8 @@ export class NeuroclawSystem {
     register("learner", "Autonomous Learner", "learning", ["knowledge"], ["information"], ["learn decision"]);
     register("reasoner", "Reasoning Engine", "reasoning", ["memory", "mistakes", "hive", "knowledge", "selfModel", "discovery", "predictor"], ["problem"], ["reasoning result"]);
     register("critic", "Critic", "safety", ["knowledge", "math", "mistakes"], ["claim/candidate answers"], ["verification report"]);
-    // The six public action-taking entry points (`trackCall()`'s component ids)
-    // sit on top of the subsystems above — real dependency edges, not a
+    // The nine public action-taking entry points (`trackCall()`'s component
+    // ids) sit on top of the subsystems above — real dependency edges, not a
     // fabricated grouping.
     register("process-query", "processQuery()", "core", ["memory", "predictor", "veto"], ["user input"], ["response"]);
     register("solve", "solve()", "reasoning", ["predictor", "veto", "transfer", "reasoner", "selfModel", "mistakes", "hive"], ["problem"], ["solution"]);
@@ -465,7 +465,13 @@ export class NeuroclawSystem {
     register("collaborate", "collaborate()", "communication", ["hive", "predictor", "veto"], ["task"], ["group decision"]);
     register("execute-plan", "executePlan()", "planning", ["plan", "runner", "predictor", "veto"], ["objective", "steps"], ["per-step results"]);
     register("learn", "learn()", "learning", ["learner", "pluginRegistry", "predictor", "veto", "improvement"], ["information"], ["learn decision"]);
-    for (const from of ["process-query", "solve", "autonomous-task", "collaborate", "execute-plan", "learn"]) {
+    // "in any chat an ai can summon a hive teammate or a sub ai or sub team"
+    // -- a direct line to one specific existing agent, a brand-new one, or a
+    // whole new sub-hive, distinct from collaborate()'s whole-team discussion.
+    register("ask-hive-agent", "askHiveAgent()", "communication", ["hive", "predictor", "veto"], ["role", "task"], ["agent output"]);
+    register("summon-hive-agent", "summonHiveAgent()", "communication", ["hive", "predictor", "veto"], ["role", "specialization", "task"], ["agent output"]);
+    register("summon-hive-subteam", "summonHiveSubTeam()", "communication", ["hive", "predictor", "veto"], ["name", "task"], ["coordinator output"]);
+    for (const from of ["process-query", "solve", "autonomous-task", "collaborate", "execute-plan", "learn", "ask-hive-agent", "summon-hive-agent", "summon-hive-subteam"]) {
       const comp = this.architecture.getComponent(from);
       if (!comp) continue;
       for (const to of comp.dependencies) {
@@ -1411,6 +1417,132 @@ export class NeuroclawSystem {
    */
   collaborationHistory(): string[] {
     return this.chatGroup?.getHistory().map(m => `${m.from}: ${m.content}`) ?? [];
+  }
+
+  /**
+   * The current hive roster, spawning the default planner/coder/reviewer/
+   * mathematician/scientist/creative/researcher/verifier team first if the
+   * hive is still empty -- so "what's the team right now" always has a real
+   * answer instead of an empty list before anything else has touched the hive.
+   */
+  hiveTeamSnapshot(): Array<{ id: string; role: string; specialization: string; trust: number }> {
+    this.ensureDefaultTeam();
+    return this.hive.list().map(a => a.snapshot());
+  }
+
+  /** Case-insensitive lookup by agent id or role -- "coder", "the coder", "Coder" all find the same agent. */
+  private findHiveAgent(role: string): HiveAgent | undefined {
+    const needle = role.trim().toLowerCase();
+    if (!needle) return undefined;
+    return this.hive.list().find(a => a.id.toLowerCase() === needle || a.role.toLowerCase() === needle);
+  }
+
+  /**
+   * "in any chat an ai can summon a hive teammate" -- talk to one specific
+   * existing hive agent directly, distinct from collaborate()'s whole-team
+   * discussion and solve()'s own internal, auto-picked delegation. Gated
+   * through the same AlignmentVeto check every other action-taking entry
+   * point uses.
+   */
+  async askHiveAgent(role: string, task: string): Promise<{ agent: string; role: string; output: string } | { error: string }> {
+    if (!this.initialized) await this.initialize();
+    return this.trackCall("ask-hive-agent", async () => this.askHiveAgentImpl(role, task));
+  }
+
+  private async askHiveAgentImpl(role: string, task: string): Promise<{ agent: string; role: string; output: string } | { error: string }> {
+    this.ensureDefaultTeam();
+    const agent = this.findHiveAgent(role);
+    if (!agent) {
+      const known = this.hive.list().map(a => `${a.id} (${a.role})`).join(", ");
+      return { error: `No hive agent matches "${role}". Current team: ${known}.` };
+    }
+    const prediction = this.predictor.predict(`ask hive agent ${agent.id}: ${task}`);
+    const dangerous = prediction.outcomes.some(o => o.dangerous);
+    const decision = this.veto.evaluate({
+      id: `hive-ask:${Date.now()}`,
+      name: `ask hive agent (${agent.id})`,
+      capabilities: ["text-generate"],
+      reversible: !dangerous,
+      externalEffect: dangerous,
+    });
+    if (!decision.allowed) return { error: `[Withheld] ${decision.reasons.join("; ")}` };
+    const output = await agent.process(task);
+    // Same combine-and-reward pattern as solve()'s and autonomousTask()'s
+    // own delegation: publish to the shared blackboard, reward the agent
+    // that did real, completed work, and record it in long-term memory.
+    agent.share(task, output);
+    this.hive.reward(agent.id, 3);
+    this.memory.remember(`Hive ${agent.role} (${agent.id}): ${task} -> ${output}`, { tags: ["hive", "chat-turn"], importance: 0.6 });
+    const finalOutput = decision.requiresConfirmation
+      ? `${output}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`
+      : output;
+    return { agent: agent.id, role: agent.role, output: finalOutput };
+  }
+
+  /**
+   * "or summon a sub ai" -- create a brand-new hive agent on demand (real
+   * admin-privileged agent, via HiveMind.summon()) and have it act on a task
+   * immediately, rather than only ever picking among the fixed default team.
+   */
+  async summonHiveAgent(role: string, specialization: string, task: string): Promise<{ agent: string; role: string; output: string } | { error: string }> {
+    if (!this.initialized) await this.initialize();
+    return this.trackCall("summon-hive-agent", async () => this.summonHiveAgentImpl(role, specialization, task));
+  }
+
+  private async summonHiveAgentImpl(role: string, specialization: string, task: string): Promise<{ agent: string; role: string; output: string } | { error: string }> {
+    this.ensureDefaultTeam();
+    const prediction = this.predictor.predict(`summon hive agent ${role} (${specialization}): ${task}`);
+    const dangerous = prediction.outcomes.some(o => o.dangerous);
+    const decision = this.veto.evaluate({
+      id: `hive-summon:${Date.now()}`,
+      name: `summon hive agent (${role})`,
+      capabilities: ["text-generate"],
+      reversible: !dangerous,
+      externalEffect: dangerous,
+    });
+    if (!decision.allowed) return { error: `[Withheld] ${decision.reasons.join("; ")}` };
+    const agent = this.hive.summon("chat", { role, specialization });
+    const output = await agent.process(task);
+    agent.share(task, output);
+    this.memory.remember(`Hive summoned ${agent.role} (${agent.id}): ${task} -> ${output}`, { tags: ["hive", "chat-turn"], importance: 0.6 });
+    const finalOutput = decision.requiresConfirmation
+      ? `${output}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`
+      : output;
+    return { agent: agent.id, role: agent.role, output: finalOutput };
+  }
+
+  /**
+   * "or sub team" -- summon an entire nested sub-hive (HiveMind.summonSubHive())
+   * with its own admin-privileged coordinator, and have that coordinator act
+   * on a task immediately. The sub-team persists (accessible via
+   * hive.listSubHives()) for further summon()/summonSubHive() calls of its own.
+   */
+  async summonHiveSubTeam(name: string, task: string): Promise<{ coordinator: string; output: string } | { error: string }> {
+    if (!this.initialized) await this.initialize();
+    return this.trackCall("summon-hive-subteam", async () => this.summonHiveSubTeamImpl(name, task));
+  }
+
+  private async summonHiveSubTeamImpl(name: string, task: string): Promise<{ coordinator: string; output: string } | { error: string }> {
+    this.ensureDefaultTeam();
+    const prediction = this.predictor.predict(`summon hive sub-team ${name}: ${task}`);
+    const dangerous = prediction.outcomes.some(o => o.dangerous);
+    const decision = this.veto.evaluate({
+      id: `hive-summon-team:${Date.now()}`,
+      name: `summon hive sub-team (${name})`,
+      capabilities: ["text-generate"],
+      reversible: !dangerous,
+      externalEffect: dangerous,
+    });
+    if (!decision.allowed) return { error: `[Withheld] ${decision.reasons.join("; ")}` };
+    const sub = this.hive.summonSubHive("chat", name);
+    const coordinator = sub.list()[0];
+    const output = await coordinator.process(task);
+    coordinator.share(task, output);
+    this.memory.remember(`Hive summoned sub-team "${name}" (coordinator ${coordinator.id}): ${task} -> ${output}`, { tags: ["hive", "chat-turn"], importance: 0.6 });
+    const finalOutput = decision.requiresConfirmation
+      ? `${output}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`
+      : output;
+    return { coordinator: coordinator.id, output: finalOutput };
   }
 
   /**
