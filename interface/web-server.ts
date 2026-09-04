@@ -163,6 +163,84 @@ class PyTorchTrainerWorker {
   }
 }
 
+/**
+ * Manual on/off switch for scripts/self-improve.mjs (the RSI loop) from the
+ * UI. "add start RSI server button in experiments": `npm run server`
+ * (scripts/server.mjs) already launches this loop automatically, but that
+ * is only one way this backend gets started -- the desktop app spawns
+ * `dist/interface/main.js web <port>` directly (see desktop-app/src/main/
+ * main.js) and never touches server.mjs at all, so on the desktop app (or
+ * any other launch path outside `npm run server`) the RSI loop never runs
+ * unless something starts it explicitly. This is that explicit start.
+ *
+ * One process at a time: self-improve.mjs owns a single on-disk scoreboard
+ * (extension-builder/self-improvement-scoreboard.json) it isn't written to
+ * expect two writers racing on, so start() is a no-op while one is already
+ * running rather than spawning a second.
+ */
+export class SelfImprovementServerManager {
+  private child: ChildProcessWithoutNullStreams | null = null;
+  private startedAt: string | null = null;
+  private lastExit: { code: number | null; signal: string | null; at: string } | null = null;
+
+  /** @param scriptPath Injectable for tests -- defaults to the real RSI loop. */
+  constructor(private readonly scriptPath: string = path.join(process.cwd(), 'scripts', 'self-improve.mjs')) {}
+
+  status(): { running: boolean; pid: number | null; startedAt: string | null; lastExit: { code: number | null; signal: string | null; at: string } | null } {
+    return {
+      running: this.child !== null,
+      pid: this.child?.pid ?? null,
+      startedAt: this.startedAt,
+      lastExit: this.lastExit,
+    };
+  }
+
+  async start(): Promise<{ ok: true; pid: number } | { ok: false; error: string }> {
+    if (this.child) return { ok: false, error: 'already running' };
+    let child: ChildProcessWithoutNullStreams;
+    try {
+      // Deferred import, matching PyTorchTrainerWorker above -- keeps
+      // node:child_process out of any code path that never starts this loop.
+      const { spawn } = await import('node:child_process');
+      // process.execPath, not a bare 'node': the same reasoning main.js
+      // uses for its own backend spawn -- works even on a machine where
+      // 'node' isn't on PATH but this process itself is clearly running.
+      child = spawn(process.execPath, [this.scriptPath], { cwd: process.cwd(), stdio: 'ignore', env: process.env }) as ChildProcessWithoutNullStreams;
+    } catch (err) {
+      return { ok: false, error: err instanceof Error ? err.message : String(err) };
+    }
+    if (!child.pid) {
+      return { ok: false, error: 'spawn did not return a pid' };
+    }
+    child.on('exit', (code, signal) => {
+      this.lastExit = { code, signal, at: new Date().toISOString() };
+      this.child = null;
+    });
+    child.on('error', (err) => {
+      this.lastExit = { code: null, signal: null, at: new Date().toISOString() };
+      this.child = null;
+      // Surfaced only via status()'s lastExit -- there is no request still
+      // waiting on this the way PyTorchTrainerWorker's pending queue has one.
+      void err;
+    });
+    this.child = child;
+    this.startedAt = new Date().toISOString();
+    return { ok: true, pid: child.pid };
+  }
+
+  stop(): { ok: true } | { ok: false; error: string } {
+    if (!this.child) return { ok: false, error: 'not running' };
+    this.child.kill('SIGTERM');
+    return { ok: true };
+  }
+
+  /** Called from WebServer.stop() so a stopped server doesn't leave an orphaned self-improve.mjs behind. */
+  shutdown(): void {
+    this.child?.kill();
+    this.child = null;
+  }
+}
+
 const HTML_TEMPLATE = `<!DOCTYPE html>
 <html lang="en">
 <head>
@@ -828,6 +906,10 @@ export class WebServer {
   // reused for the life of this server -- see PyTorchTrainerWorker's own
   // doc comment for why (torch import cost dominates a per-request spawn).
   private readonly pytorchWorker = new PyTorchTrainerWorker();
+  // Off by default -- see SelfImprovementServerManager's doc comment.
+  // Started only by an explicit POST /api/self-improvement/server/start
+  // (the Experiments page's "Start RSI Server" button).
+  private readonly selfImprovementServer = new SelfImprovementServerManager();
   // Set once by loadSavedExtensions() during start() -- surfaced via
   // GET /api/status so "did the runner actually pick up my trained
   // network on this boot" is observable, not just assumed.
@@ -1137,6 +1219,7 @@ export class WebServer {
   async stop(): Promise<void> {
     if (!this.server) throw new Error('Server not running');
     this.pytorchWorker.shutdown();
+    this.selfImprovementServer.shutdown();
     return new Promise<void>((resolve) => {
       this.server?.close(() => { this.server = null; resolve(); });
     });
@@ -2412,6 +2495,25 @@ export class WebServer {
         skillDrills: drillHistory.skills ?? {},
         skillMeshAttempts: readRecentSkillMeshAttempts(),
       });
+      return;
+    }
+
+    // GET /api/self-improvement/server-status, POST .../server/start,
+    // POST .../server/stop -- the "Start RSI Server" button in
+    // src/routes/app/experiments.tsx. See SelfImprovementServerManager's
+    // doc comment for why a manual start is needed at all.
+    if (pathname === '/api/self-improvement/server-status' && method === 'GET') {
+      this.sendJson(res, this.selfImprovementServer.status());
+      return;
+    }
+    if (pathname === '/api/self-improvement/server/start' && method === 'POST') {
+      const result = await this.selfImprovementServer.start();
+      this.sendJson(res, result, result.ok ? 200 : 409);
+      return;
+    }
+    if (pathname === '/api/self-improvement/server/stop' && method === 'POST') {
+      const result = this.selfImprovementServer.stop();
+      this.sendJson(res, result, result.ok ? 200 : 409);
       return;
     }
 
