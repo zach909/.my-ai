@@ -39,10 +39,12 @@ export const APP_ROUTES: AppRoute[] = [
   { path: '/app/self-improvement', title: 'Evaluation', description: 'Measure and benchmark ASI module performance against defined criteria -- the Evaluation tab of Self-Improvement.' },
   { path: '/app/self-improvement', title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols -- the Experiments tab of Self-Improvement.' },
   { path: '/app/self-improvement', title: 'Self-Improvement', description: 'Real progress from the autonomous self-improvement, skill-creation, and skill-drilling agents.' },
-  // Chat Groups, Chat History and Memory are all tabs of /app/chat-groups now.
-  { path: '/app/chat-groups', title: 'Chat Groups', description: 'Hive-mind agents collaborating on a task through a shared chat group.' },
-  { path: '/app/chat-groups', title: 'Chat History', description: 'Every saved AI Chat / Chat Groups thread, automatically organized into topic groups -- the Chat History tab of Chat Groups.' },
-  { path: '/app/chat-groups', title: 'Memory', description: 'View and manage what the agent remembers -- the Memory tab of Chat Groups.' },
+  // Chat History and Memory are tabs of /app/chat-groups (route name kept for
+  // old links; there is no "Chat Groups" hive-discussion page any more -- one
+  // AI directing another is the "hive" chat plugin now, not a page).
+  { path: '/app/chat-groups', title: 'Chat History', description: 'Every saved AI Chat thread, automatically organized into topic groups.' },
+  { path: '/app/chat-groups', title: 'Memory', description: 'View and manage what the agent remembers -- the Memory tab of Chat History.' },
+  { path: '/app/chat', title: 'Hive Mind', description: 'One AI directing another: "hive ask <role>: <task>" or "hive summon <role> <specialization>: <task>" in any chat (plugins/hive.ts).' },
   { path: '/app/store', title: 'Store', description: 'Browse, download and publish skills, plugins, binaries, source and files, write wiki pages, and discuss any of it.' },
 ]
 
