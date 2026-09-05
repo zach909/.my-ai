@@ -18,7 +18,7 @@ import {
   PanelLeft,
   HelpCircle,
   MessageSquare,
-  Users,
+  Folder,
   Blocks,
   TrendingUp,
   Store,
@@ -38,9 +38,12 @@ interface NavItemDef {
 const NAV_ITEMS: NavItemDef[] = [
   { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
   { href: '/app/chat', icon: <MessageSquare className="h-4 w-4" />, label: 'AI Chat' },
-  // Chat Groups, Chat History and Memory are tabs of this one entry now --
-  // all three are views over what has been said, discussed or remembered.
-  { href: '/app/chat-groups', icon: <Users className="h-4 w-4" />, label: 'Chat Groups' },
+  // Chat History and Memory are tabs of this one entry -- both are views
+  // over what has been said or remembered. The route is still
+  // /app/chat-groups (unchanged, so old links/bookmarks keep working), but
+  // there's no "Chat Groups" hive-discussion tab here any more -- one AI
+  // directing another is a chat plugin now (plugins/hive.ts), not a page.
+  { href: '/app/chat-groups', icon: <Folder className="h-4 w-4" />, label: 'Chat History' },
   // Builder and Knowledge & Reasoning are tabs of this one entry -- both are
   // ways of shaping what the mesh knows and how it reasons.
   { href: '/builder', icon: <Blocks className="h-4 w-4" />, label: 'Extension Builder' },
