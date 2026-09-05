@@ -56,15 +56,6 @@ const STEPS: TourStep[] = [
     linkLabel: 'Open Extension Builder',
   },
   {
-    title: 'Architecture',
-    body:
-      'Inspect the live structure — how many neurons exist, how they are grouped into experts, and how the subsystems compose.',
-    mesh:
-      'This reads the running mesh rather than a diagram of one, so what you see is the network as it is right now.',
-    href: '/app/architecture',
-    linkLabel: 'Open Architecture',
-  },
-  {
     title: 'Self-Improvement, Evaluation & Experiments',
     body:
       'The agent proposes changes to itself, and its Evaluation and Experiments tabs run structured checks and experiments against it and score the results, so a change can be judged rather than guessed at.',

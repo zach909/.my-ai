@@ -19,7 +19,6 @@ import { Route as AppSettingsRouteImport } from './routes/app/settings'
 import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
 import { Route as AppChatGroupsRouteImport } from './routes/app/chat-groups'
 import { Route as AppChatRouteImport } from './routes/app/chat'
-import { Route as AppArchitectureRouteImport } from './routes/app/architecture'
 import { Route as AppAccessRouteImport } from './routes/app/access'
 
 const DesktopRoute = DesktopRouteImport.update({
@@ -72,11 +71,6 @@ const AppChatRoute = AppChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => AppRoute,
 } as any)
-const AppArchitectureRoute = AppArchitectureRouteImport.update({
-  id: '/architecture',
-  path: '/architecture',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppAccessRoute = AppAccessRouteImport.update({
   id: '/access',
   path: '/access',
@@ -89,7 +83,6 @@ export interface FileRoutesByFullPath {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/access': typeof AppAccessRoute
-  '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
@@ -102,7 +95,6 @@ export interface FileRoutesByTo {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/access': typeof AppAccessRoute
-  '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
@@ -117,7 +109,6 @@ export interface FileRoutesById {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/access': typeof AppAccessRoute
-  '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
@@ -133,7 +124,6 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/access'
-    | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
     | '/app/self-improvement'
@@ -146,7 +136,6 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/access'
-    | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
     | '/app/self-improvement'
@@ -160,7 +149,6 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/access'
-    | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
     | '/app/self-improvement'
@@ -248,13 +236,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppChatRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/architecture': {
-      id: '/app/architecture'
-      path: '/architecture'
-      fullPath: '/app/architecture'
-      preLoaderRoute: typeof AppArchitectureRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/app/access': {
       id: '/app/access'
       path: '/access'
@@ -267,7 +248,6 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccessRoute: typeof AppAccessRoute
-  AppArchitectureRoute: typeof AppArchitectureRoute
   AppChatRoute: typeof AppChatRoute
   AppChatGroupsRoute: typeof AppChatGroupsRoute
   AppSelfImprovementRoute: typeof AppSelfImprovementRoute
@@ -278,7 +258,6 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccessRoute: AppAccessRoute,
-  AppArchitectureRoute: AppArchitectureRoute,
   AppChatRoute: AppChatRoute,
   AppChatGroupsRoute: AppChatGroupsRoute,
   AppSelfImprovementRoute: AppSelfImprovementRoute,
