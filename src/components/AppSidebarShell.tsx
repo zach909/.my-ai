@@ -28,6 +28,7 @@ import {
   TrendingUp,
   Store,
   ShieldOff,
+  Settings,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -58,10 +59,16 @@ const NAV_ITEMS: NavItemDef[] = [
   // Its own entry rather than a Store tab: what the agent remembers is not
   // something anyone published, and it is not shared with anyone.
   { href: '/app/memory', icon: <Brain className="h-4 w-4" />, label: 'Memory' },
-  // Last, and deliberately its own entry: the switches that decide what the
-  // agent may do to this computer. Somewhere findable in a hurry, not buried
-  // as a tab under something else.
+  // Deliberately its own entry, not folded away: the switches that decide
+  // what the agent may do to this computer. Somewhere findable in a hurry,
+  // not buried as a tab under something else -- Settings (below) also shows
+  // this same panel for anyone browsing settings generally, but this
+  // shortcut stays for the moment someone specifically wants it off, now.
   { href: '/app/access', icon: <ShieldOff className="h-4 w-4" />, label: 'Access' },
+  // Last: remote-access password, brain behavior (quantum/predictor mode),
+  // and Computer Access all in one place -- see settings.tsx's own doc
+  // comment for what used to have no UI at all.
+  { href: '/app/settings', icon: <Settings className="h-4 w-4" />, label: 'Settings' },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {

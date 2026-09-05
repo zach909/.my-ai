@@ -15,6 +15,7 @@ import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppStoreRouteImport } from './routes/app/store'
+import { Route as AppSettingsRouteImport } from './routes/app/settings'
 import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
 import { Route as AppPlanningRouteImport } from './routes/app/planning'
 import { Route as AppMemoryRouteImport } from './routes/app/memory'
@@ -55,6 +56,11 @@ const AppIndexRoute = AppIndexRouteImport.update({
 const AppStoreRoute = AppStoreRouteImport.update({
   id: '/store',
   path: '/store',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppSettingsRoute = AppSettingsRouteImport.update({
+  id: '/settings',
+  path: '/settings',
   getParentRoute: () => AppRoute,
 } as any)
 const AppSelfImprovementRoute = AppSelfImprovementRouteImport.update({
@@ -129,6 +135,7 @@ export interface FileRoutesByFullPath {
   '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
+  '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
   '/app/': typeof AppIndexRoute
 }
@@ -147,6 +154,7 @@ export interface FileRoutesByTo {
   '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
+  '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
   '/app': typeof AppIndexRoute
 }
@@ -167,6 +175,7 @@ export interface FileRoutesById {
   '/app/memory': typeof AppMemoryRoute
   '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
+  '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
   '/app/': typeof AppIndexRoute
 }
@@ -188,6 +197,7 @@ export interface FileRouteTypes {
     | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
+    | '/app/settings'
     | '/app/store'
     | '/app/'
   fileRoutesByTo: FileRoutesByTo
@@ -206,6 +216,7 @@ export interface FileRouteTypes {
     | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
+    | '/app/settings'
     | '/app/store'
     | '/app'
   id:
@@ -225,6 +236,7 @@ export interface FileRouteTypes {
     | '/app/memory'
     | '/app/planning'
     | '/app/self-improvement'
+    | '/app/settings'
     | '/app/store'
     | '/app/'
   fileRoutesById: FileRoutesById
@@ -278,6 +290,13 @@ declare module '@tanstack/react-router' {
       path: '/store'
       fullPath: '/app/store'
       preLoaderRoute: typeof AppStoreRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/settings': {
+      id: '/app/settings'
+      path: '/settings'
+      fullPath: '/app/settings'
+      preLoaderRoute: typeof AppSettingsRouteImport
       parentRoute: typeof AppRoute
     }
     '/app/self-improvement': {
@@ -372,6 +391,7 @@ interface AppRouteChildren {
   AppMemoryRoute: typeof AppMemoryRoute
   AppPlanningRoute: typeof AppPlanningRoute
   AppSelfImprovementRoute: typeof AppSelfImprovementRoute
+  AppSettingsRoute: typeof AppSettingsRoute
   AppStoreRoute: typeof AppStoreRoute
   AppIndexRoute: typeof AppIndexRoute
 }
@@ -388,6 +408,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppMemoryRoute: AppMemoryRoute,
   AppPlanningRoute: AppPlanningRoute,
   AppSelfImprovementRoute: AppSelfImprovementRoute,
+  AppSettingsRoute: AppSettingsRoute,
   AppStoreRoute: AppStoreRoute,
   AppIndexRoute: AppIndexRoute,
 }

@@ -20,6 +20,13 @@ import { Card } from '@/components/ui/card'
 import { Loader2, MonitorCog, Power, RefreshCw, ShieldOff, TerminalSquare } from 'lucide-react'
 import { toast } from 'sonner'
 
+/**
+ * "put the other things into the settings page" -- this page's content now
+ * also renders as the Settings page's "Computer Access" section
+ * (AccessPanel, below). The standalone route stays alive (existing links/
+ * bookmarks keep working, and the sidebar no longer lists it separately --
+ * see AppSidebarShell.tsx), just as a thin wrapper around the same panel.
+ */
 export const Route = createFileRoute('/app/access')({
   head: () => ({
     meta: [
@@ -29,6 +36,10 @@ export const Route = createFileRoute('/app/access')({
   }),
   component: AccessPage,
 })
+
+function AccessPage() {
+  return <AccessPanel />
+}
 
 type SwitchName = 'all' | 'desktop' | 'workspace'
 
@@ -68,7 +79,7 @@ const SWITCH_ICON: Record<SwitchName, React.ReactNode> = {
   workspace: <TerminalSquare className="h-5 w-5" />,
 }
 
-function AccessPage() {
+export function AccessPanel() {
   const [view, setView] = useState<AccessView | null>(null)
   const [probe, setProbe] = useState<ProbeView | null>(null)
   const [loading, setLoading] = useState(true)
