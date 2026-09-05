@@ -1805,6 +1805,11 @@ export class WebServer {
     // Routed through getNeuroclawSystem()'s singleton, the one real system
     // this.llm now shares its engine with (see the one-brain fix) -- not a
     // second, disconnected LLM instance.
+    //
+    // "add quantum interference always on" -- quantumEnabled is now
+    // vestigial: isQuantumEnabled() always returns true and
+    // setQuantumEnabled() is a no-op (see unified-brain.ts), so POSTing
+    // either value here has no effect and GET always reports true.
     if (pathname === '/api/settings/brain' && method === 'GET') {
       try {
         const { getNeuroclawSystem } = await import('../src/index.js');

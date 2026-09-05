@@ -1592,20 +1592,24 @@ async function testWebBackend() {
     // section. Before this, setQuantumEnabled()/setPredictorMode()
     // (NeuroclawLLM) were real and tested but reachable only from
     // TypeScript, with no endpoint to flip either one at all.
+    //
+    // "add quantum interference always on" -- quantumEnabled is now
+    // vestigial: it always reports true, and posting false to it has no
+    // effect. predictorMode is still real and still toggleable.
     const brainBefore = await get('/api/settings/brain');
     const brainBeforeJson = JSON.parse(brainBefore.body);
-    check(brainBefore.status === 200 && brainBeforeJson.quantumEnabled === false && brainBeforeJson.predictorMode === 'word',
-      'GET /api/settings/brain reports the real, off-by-default starting state');
+    check(brainBefore.status === 200 && brainBeforeJson.quantumEnabled === true && brainBeforeJson.predictorMode === 'word',
+      'GET /api/settings/brain reports quantum interference always on, and the real starting predictor mode');
 
-    const brainAfter = await post('/api/settings/brain', { quantumEnabled: true, predictorMode: 'code' });
+    const brainAfter = await post('/api/settings/brain', { quantumEnabled: false, predictorMode: 'code' });
     const brainAfterJson = JSON.parse(brainAfter.body);
     check(brainAfter.status === 200 && brainAfterJson.quantumEnabled === true && brainAfterJson.predictorMode === 'code',
-      'POST /api/settings/brain actually flips both settings and reports the new state');
+      'POST /api/settings/brain flips predictorMode but ignores an attempt to turn quantum interference off');
 
     const brainConfirmed = await get('/api/settings/brain');
     const brainConfirmedJson = JSON.parse(brainConfirmed.body);
     check(brainConfirmedJson.quantumEnabled === true && brainConfirmedJson.predictorMode === 'code',
-      'GET /api/settings/brain reflects the change on a later, independent request -- not just echoed back once');
+      'GET /api/settings/brain reflects the predictorMode change on a later, independent request -- not just echoed back once -- and still reports quantum interference on');
 
     // Malformed/partial input should not clobber the other field, and an
     // unrecognized predictorMode string should be ignored rather than

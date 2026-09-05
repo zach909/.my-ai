@@ -11,6 +11,10 @@
  * already had its own page (/app/access) -- kept alive as a route (existing
  * links/bookmarks still work) but no longer a separate sidebar entry, folded
  * in here as a section instead (AccessPanel, exported from access.tsx).
+ *
+ * "add quantum interference always on" -- the quantum interference toggle
+ * below is gone; UnifiedBrain now runs that stage unconditionally (see
+ * unified-brain.ts), so there is nothing left to turn on or off.
  */
 import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useState } from 'react'
@@ -276,22 +280,16 @@ function BrainBehaviorSection() {
       ) : (
         <div className="grid gap-3 md:grid-cols-2">
           <Card className="flex items-start gap-3 p-4">
-            <Atom className={'h-5 w-5 shrink-0 ' + (settings?.quantumEnabled ? 'text-primary' : 'text-muted-foreground')} />
+            <Atom className="h-5 w-5 shrink-0 text-primary" />
             <div className="min-w-0 flex-1">
               <p className="font-medium">Quantum interference</p>
               <p className="mt-0.5 text-xs text-muted-foreground">
-                An extra, optional stage after the mesh settles: simulated quantum interference/consensus
-                can shift the collapsed value. Off by default.
+                An extra stage after the mesh settles: simulated quantum interference/consensus
+                shifts the collapsed value. Always on -- there is no off switch.
               </p>
-              <Button
-                size="sm"
-                className="mt-2"
-                variant={settings?.quantumEnabled ? 'outline' : 'default'}
-                disabled={busy}
-                onClick={() => void update({ quantumEnabled: !settings?.quantumEnabled })}
-              >
-                {settings?.quantumEnabled ? 'Turn off' : 'Turn on'}
-              </Button>
+              <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+                Always on
+              </span>
             </div>
           </Card>
           <Card className="p-4">

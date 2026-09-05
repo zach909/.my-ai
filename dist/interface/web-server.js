@@ -1722,6 +1722,11 @@ export class WebServer {
         // Routed through getNeuroclawSystem()'s singleton, the one real system
         // this.llm now shares its engine with (see the one-brain fix) -- not a
         // second, disconnected LLM instance.
+        //
+        // "add quantum interference always on" -- quantumEnabled is now
+        // vestigial: isQuantumEnabled() always returns true and
+        // setQuantumEnabled() is a no-op (see unified-brain.ts), so POSTing
+        // either value here has no effect and GET always reports true.
         if (pathname === '/api/settings/brain' && method === 'GET') {
             try {
                 const { getNeuroclawSystem } = await import('../src/index.js');
@@ -2441,9 +2446,10 @@ export class WebServer {
             return;
         }
         // GET /api/self-improvement/server-status, POST .../server/start,
-        // POST .../server/stop -- the "Start RSI Server" button in
-        // src/routes/app/experiments.tsx. See SelfImprovementServerManager's
-        // doc comment for why a manual start is needed at all.
+        // POST .../server/stop -- the "Start RSI Server" button in the
+        // Experiments tab of src/routes/app/self-improvement.tsx. See
+        // SelfImprovementServerManager's doc comment for why a manual start is
+        // needed at all.
         if (pathname === '/api/self-improvement/server-status' && method === 'GET') {
             this.sendJson(res, this.selfImprovementServer.status());
             return;
