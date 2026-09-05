@@ -193,6 +193,19 @@ Generally not required, but AppImage can be signed optionally.
 
 ## 🐛 Troubleshooting
 
+### `npm start` opens nothing, and prints nothing at all
+
+`npm start` now runs `scripts/doctor.mjs` first, which checks for the most
+common causes of this on Linux (electron's binary never finished
+downloading, no display server reachable, running as root, a missing
+shared library Chromium needs) and prints what it finds before Electron
+even launches — so a launch that used to fail completely silently now
+prints at least one diagnostic line. Read what it says; if it reports
+everything is fine and the app still doesn't appear, the failure is
+happening inside Electron itself after that point, and running
+`node_modules/.bin/electron . --enable-logging` will surface Chromium's
+own log output for whatever comes next.
+
 ### Build fails on Linux
 Ensure you have required dependencies:
 ```bash
