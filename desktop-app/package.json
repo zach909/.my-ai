@@ -5,7 +5,7 @@
   "main": "src/main/main.js",
   "scripts": {
     "start": "node scripts/doctor.mjs && electron .",
-    "test": "node test/ipc-handlers.test.js",
+    "test": "node test/run-all.mjs",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",

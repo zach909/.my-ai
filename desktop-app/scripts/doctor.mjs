@@ -16,7 +16,7 @@
  * there is nothing `electron .` could possibly do anyway, so failing fast
  * with a clear reason beats a guaranteed, silent crash).
  */
-import { existsSync, statSync } from 'node:fs';
+import { existsSync, statSync, readFileSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -81,7 +81,36 @@ if (process.platform === 'linux' && typeof process.getuid === 'function' && proc
   console.log('    launch with: electron . --no-sandbox');
 }
 
-// 4. Missing shared libraries. A distro missing one of Chromium's runtime
+// 4. The Debian version itself, if this is Debian (or a Debian derivative
+// that still carries /etc/debian_version, which Ubuntu does not -- Ubuntu
+// is covered by the shared-library check below instead). This app is
+// built and tested against Debian 12 (bookworm) or newer -- see the
+// README's System Requirements. Older releases ship a glibc/libstdc++/
+// libgtk-3/libnss3 too old for current Electron (v43 needs glibc >= 2.28,
+// and Debian 9/10 either miss that outright or meet it only marginally
+// alongside the other libraries Chromium needs), so this is named
+// specifically rather than left to the generic missing-library check
+// below to discover one dependency at a time.
+// Overridable for testing (test/doctor.test.mjs); real launches always read
+// the actual system file.
+const debianVersionFile = process.env.DOCTOR_DEBIAN_VERSION_FILE || '/etc/debian_version';
+if (process.platform === 'linux' && existsSync(debianVersionFile)) {
+  const raw = readFileSync(debianVersionFile, 'utf8').trim();
+  // Stable releases read like "12.8"; testing/unstable read like
+  // "bookworm/sid" or "trixie/sid" -- newer than any numbered stable
+  // release by definition, so only a parseable leading number is checked.
+  const major = parseInt(raw, 10);
+  if (Number.isFinite(major) && major < 12) {
+    warn(`Debian ${raw} detected -- this app is built and tested against Debian 12 (bookworm) or newer.`);
+    console.log('    Electron may fail to start at all, often silently, on Debian 10/11 or older');
+    console.log('    (an old glibc/libgtk-3/libnss3 are the usual cause -- see the shared-library');
+    console.log('    check below). Upgrading to Debian 12+ is the supported path.');
+  } else {
+    ok(`Debian version is ${raw} (12/bookworm or newer)`);
+  }
+}
+
+// 5. Missing shared libraries. A distro missing one of Chromium's runtime
 // dependencies (common on minimal/server installs, or right after an
 // interrupted apt upgrade) makes the dynamic linker kill the process
 // before any of Electron's own code -- including its own error
