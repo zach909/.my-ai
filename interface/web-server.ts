@@ -1265,7 +1265,19 @@ export class WebServer {
     this.sendJson(res, { error: msg }, status);
   }
 
-  private async parseBody(req: http.IncomingMessage): Promise<unknown> {
+  /**
+   * `maxBytes` defaults to 1MB -- right for the other 40+ callers, all
+   * small config/command payloads where a bigger body is itself a warning
+   * sign. The Zip Loop doorway is not one of those: "zip loop no file
+   * size limit" -- a recording or an already-packed archive of real files
+   * is exactly what this doorway exists to carry (see POST /api/zip-loop/
+   * run's own doc comment), base64-encoded on top of that, so the same
+   * 1MB ceiling that protects a JSON config endpoint would reject a
+   * moderately-sized real file before this fix. Callers that need more
+   * (or none) pass their own ceiling explicitly; nobody else's behavior
+   * changes.
+   */
+  private async parseBody(req: http.IncomingMessage, maxBytes: number = 1024 * 1024): Promise<unknown> {
     // CSRF: this server has no auth and setSecurityHeaders() never sends
     // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
     // response -- but that alone doesn't stop the *request* from being
@@ -1280,15 +1292,27 @@ export class WebServer {
     // and that preflight gets rejected by the browser itself, since no
     // Access-Control-Allow-Origin is ever sent back.
     assertJsonContentType(req.headers['content-type'] ?? '');
-    const LIMIT = 1024 * 1024; // 1MB limit
+    const LIMIT = maxBytes;
     let totalSize = 0;
     return new Promise((resolve, reject) => {
       const chunks: Buffer[] = [];
       req.on('data', (chunk: Buffer) => {
         totalSize += chunk.length;
         if (totalSize > LIMIT) {
-          req.destroy();
-          reject(new HttpClientError('Request body too large (limit: 1MB)', 413));
+          // Not req.destroy(): an IncomingMessage and its ServerResponse
+          // share one socket, so destroying the request killed the
+          // connection out from under the response too -- the endpoint's
+          // own catch block still tried to send this rejection's 413 back,
+          // onto a socket that was already gone. The client never saw a
+          // 413; it saw the connection reset instead (indistinguishable
+          // from a crash), confirmed directly: a body genuinely over the
+          // limit, sent in one synchronous burst the way a real client
+          // does, reliably reproduced ECONNRESET rather than a clean 413.
+          // Simply not pushing any more chunks (the rest of the body is
+          // read and discarded rather than buffered) lets the client
+          // finish writing normally and the real socket stay alive for
+          // the caller's own error response to actually reach it.
+          reject(new HttpClientError(`Request body too large (limit: ${Math.floor(LIMIT / 1024 / 1024)}MB)`, 413));
         } else {
           chunks.push(chunk);
         }
@@ -4002,30 +4026,15 @@ export class WebServer {
     // same route takes a recording, an image, or anything else without
     // needing a variant per kind of file.
     if (pathname === '/api/zip-loop/file' && method === 'POST') {
+      // "zip loop no file size limit" -- no ceiling here either. Used to
+      // match the transcription route's 25MB cap; removed so a large
+      // recording or any other real file goes through the doorway whole.
       const chunks: Buffer[] = [];
-      let total = 0;
-      // Same ceiling as the transcription route: generous for a recording,
-      // bounded so a malformed or hostile request cannot grow without limit.
-      const MAX_FILE_BYTES = 25 * 1024 * 1024;
-      let tooLarge = false;
       await new Promise<void>((resolve) => {
-        req.on('data', (chunk: Buffer) => {
-          total += chunk.length;
-          if (total > MAX_FILE_BYTES) {
-            tooLarge = true;
-            req.destroy();
-            resolve();
-            return;
-          }
-          chunks.push(chunk);
-        });
+        req.on('data', (chunk: Buffer) => { chunks.push(chunk); });
         req.on('end', () => resolve());
         req.on('error', () => resolve());
       });
-      if (tooLarge) {
-        this.sendJson(res, { error: 'That file is too large to send through the doorway in one go.' }, 413);
-        return;
-      }
       const bytes = Buffer.concat(chunks);
       if (bytes.length === 0) {
         this.sendJson(res, { error: 'The body was empty — there is no file to send in.' }, 400);
@@ -4068,7 +4077,11 @@ export class WebServer {
     // slow by construction -- a few hundred ticks, not a few hundred thousand.
     if (pathname === '/api/zip-loop/run' && method === 'POST') {
       try {
-        const body = await this.parseBody(req) as
+        // No ceiling: "zip loop no file size limit" -- a real file (already
+        // base64-encoded by POST /api/zip-loop/file, or a packed archive)
+        // is exactly what this body carries, and parseBody()'s ordinary 1MB
+        // default exists for small config/command payloads, not this.
+        const body = await this.parseBody(req, Number.POSITIVE_INFINITY) as
           {
             files?: Record<string, string>;
             binary?: Record<string, string>;
