@@ -1,6 +1,6 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
-import { Cpu, FlaskConical, Network, Brain, MessageSquare, Blocks, ArrowUpRight, Bot } from 'lucide-react'
+import { Cpu, FlaskConical, Brain, MessageSquare, Blocks, ArrowUpRight, Bot } from 'lucide-react'
 
 export const Route = createFileRoute('/app/')({
   head: () => ({
@@ -17,7 +17,6 @@ const MODULES = [
   { title: 'Extension Builder', description: 'Drag-and-connect neuron editor: build, train, and deploy extensions.', icon: Blocks, href: '/builder' },
   // Experiments is now the Experiments tab of Self-Improvement, not its own route.
   { title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols.', icon: FlaskConical, href: '/app/self-improvement' },
-  { title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.', icon: Network, href: '/app/architecture' },
   // Knowledge & Reasoning is now a tab of the Extension Builder, not its own route.
   { title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.', icon: Brain, href: '/builder' },
   { title: 'ASI Core', description: 'Monitor compute, memory, and core metrics across the platform.', icon: Cpu, href: '/app' },

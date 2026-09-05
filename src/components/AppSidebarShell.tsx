@@ -14,7 +14,6 @@ import {
 } from '@/components/ui/tooltip'
 import {
   LayoutDashboard,
-  Network,
   PanelLeft,
   HelpCircle,
   MessageSquare,
@@ -47,7 +46,6 @@ const NAV_ITEMS: NavItemDef[] = [
   // Builder and Knowledge & Reasoning are tabs of this one entry -- both are
   // ways of shaping what the mesh knows and how it reasons.
   { href: '/builder', icon: <Blocks className="h-4 w-4" />, label: 'Extension Builder' },
-  { href: '/app/architecture', icon: <Network className="h-4 w-4" />, label: 'Architecture' },
   // Overview, Evaluation and Experiments are tabs of this one entry -- all
   // three are "how well is this thing actually doing" seen from different
   // angles.

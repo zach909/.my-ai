@@ -31,7 +31,6 @@ export const APP_ROUTES: AppRoute[] = [
   // Planning is now the Planning tab of /app/store (Store's "Prompting Skills"
   // and "Planning" tabs are next to each other), not its own route.
   { path: '/app/store', title: 'Planning', description: 'Define goal hierarchies, task decomposition, and strategic planning for ASI agents -- the Planning tab of the Store.' },
-  { path: '/app/architecture', title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.' },
   // Knowledge & Reasoning is now a tab of /builder, not its own route.
   { path: '/builder', title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition -- the Knowledge & Reasoning tab of the Extension Builder.' },
   // Evaluation and Experiments are now tabs of /app/self-improvement, not
