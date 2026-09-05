@@ -1,6 +1,5 @@
 {
-  "at": "2026-08-30T14:22:41.992Z",
-  "at": "2026-08-30T14:35:19.121Z",
+  "at": "2026-09-05T20:19:23.475Z",
   "checks": [
     {
       "name": "test-leftovers",
@@ -19,19 +18,16 @@
     },
     {
       "name": "tested-but-unreachable",
-      "value": 41,
+      "value": 44,
       "lowerIsBetter": true,
-      "detail": "41 exports"
-      "value": 40,
-      "lowerIsBetter": true,
-      "detail": "40 exports"
+      "detail": "44 exports"
     },
     {
       "name": "non-atomic-state-writes",
       "value": 0,
       "lowerIsBetter": true,
       "detail": "none in the watched files"
-    }
+    },
     {
       "name": "memory-accepts-new",
       "value": 1,
@@ -40,7 +36,6 @@
     }
   ],
   "regressions": [
-    "test-leftovers",
-    "tested-but-unreachable"
+    "test-leftovers"
   ]
 }
