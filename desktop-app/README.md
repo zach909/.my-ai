@@ -1,6 +1,6 @@
 # Cross-Platform Desktop Application
 
-A native desktop application template built with Electron that runs seamlessly on macOS, Windows, and Debian Linux without virtualization or subsystems.
+A native desktop application template built with Electron that runs seamlessly on macOS, Windows, and Debian Linux (Debian 12/bookworm or newer — see System Requirements below) without virtualization or subsystems.
 
 ## 📁 Project Structure
 
@@ -18,6 +18,14 @@ desktop-app/
 ├── package.json             # Dependencies and build config
 └── README.md                # This file
 ```
+
+## 🖥️ System Requirements
+
+- **Node.js**: v18 or higher — [Download](https://nodejs.org/)
+- **Linux (Debian/Ubuntu-based)**: **Debian 12 (bookworm) or newer** is what this app is built and tested against. This isn't an arbitrary cutoff: Electron (currently v43) requires glibc ≥ 2.28 and a reasonably current libstdc++/libgtk-3/libnss3, which Debian 10 (buster) meets only marginally and Debian 9 (stretch) and older do not meet at all — expect the app to fail to launch, often silently, on anything older than Debian 11 (bullseye), and Debian 12 is the version this project actually verifies against. Ubuntu 22.04 LTS or newer (built on a comparable glibc) works the same way.
+- **Windows**: Windows 10 or newer.
+- **macOS**: a currently-supported macOS release (Electron's own minimum tracks Apple's).
+- **Disk**: ~500MB free for `node_modules` (Electron's own bundled Chromium runtime is the bulk of it) plus space for this repo's built `dist/`.
 
 ## 🚀 Quick Start
 
