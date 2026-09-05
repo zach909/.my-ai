@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 describe("Knowledge Page Micro-UX & Accessibility Enhancements", () => {
-  const filePath = path.resolve(process.cwd(), "src/routes/app/knowledge.tsx");
+  // Knowledge & Reasoning moved into the Extension Builder as a tab.
+  const filePath = path.resolve(process.cwd(), "src/routes/builder.tsx");
   const fileContent = fs.readFileSync(filePath, "utf-8");
 
   it("includes an accessible search input associated with a label", () => {

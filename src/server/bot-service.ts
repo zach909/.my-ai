@@ -28,12 +28,22 @@ export const APP_ROUTES: AppRoute[] = [
   { path: '/builder', title: 'Extension Builder', description: 'Build and manage extensions.' },
   { path: '/app', title: 'Dashboard', description: 'Corona — Prototype & Evaluate Superintelligence Modules.' },
   { path: '/app/chat', title: 'AI Chat', description: 'Talk to the AI assistant with agent-suggested follow-up prompts.' },
-  { path: '/app/planning', title: 'Planning', description: 'Define goal hierarchies, task decomposition, and strategic planning for ASI agents.' },
+  // Planning is now the Planning tab of /app/store (Store's "Prompting Skills"
+  // and "Planning" tabs are next to each other), not its own route.
+  { path: '/app/store', title: 'Planning', description: 'Define goal hierarchies, task decomposition, and strategic planning for ASI agents -- the Planning tab of the Store.' },
   { path: '/app/architecture', title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.' },
-  { path: '/app/knowledge', title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.' },
-  { path: '/app/evaluation', title: 'Evaluation', description: 'Measure and benchmark ASI module performance against defined criteria.' },
-  { path: '/app/experiments', title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols.' },
+  // Knowledge & Reasoning is now a tab of /builder, not its own route.
+  { path: '/builder', title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition -- the Knowledge & Reasoning tab of the Extension Builder.' },
+  // Evaluation and Experiments are now tabs of /app/self-improvement, not
+  // their own routes.
+  { path: '/app/self-improvement', title: 'Evaluation', description: 'Measure and benchmark ASI module performance against defined criteria -- the Evaluation tab of Self-Improvement.' },
+  { path: '/app/self-improvement', title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols -- the Experiments tab of Self-Improvement.' },
+  { path: '/app/self-improvement', title: 'Self-Improvement', description: 'Real progress from the autonomous self-improvement, skill-creation, and skill-drilling agents.' },
+  // Chat Groups, Chat History and Memory are all tabs of /app/chat-groups now.
   { path: '/app/chat-groups', title: 'Chat Groups', description: 'Hive-mind agents collaborating on a task through a shared chat group.' },
+  { path: '/app/chat-groups', title: 'Chat History', description: 'Every saved AI Chat / Chat Groups thread, automatically organized into topic groups -- the Chat History tab of Chat Groups.' },
+  { path: '/app/chat-groups', title: 'Memory', description: 'View and manage what the agent remembers -- the Memory tab of Chat Groups.' },
+  { path: '/app/store', title: 'Store', description: 'Browse, download and publish skills, plugins, binaries, source and files, write wiki pages, and discuss any of it.' },
 ]
 
 export interface BotMessage {

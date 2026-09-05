@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 describe("Experiments Page Micro-UX Enhancements", () => {
-  const filePath = path.resolve(process.cwd(), "src/routes/app/experiments.tsx");
+  // Experiments moved into Self-Improvement as a tab.
+  const filePath = path.resolve(process.cwd(), "src/routes/app/self-improvement.tsx");
   const fileContent = fs.readFileSync(filePath, "utf-8");
 
   it("includes quick protocol preset buttons with accessible attributes", () => {

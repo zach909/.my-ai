@@ -15,9 +15,11 @@ export const Route = createFileRoute('/app/')({
 const MODULES = [
   { title: 'AI Chat', description: 'Talk to the AI assistant with agent-suggested follow-up prompts.', icon: MessageSquare, href: '/app/chat' },
   { title: 'Extension Builder', description: 'Drag-and-connect neuron editor: build, train, and deploy extensions.', icon: Blocks, href: '/builder' },
-  { title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols.', icon: FlaskConical, href: '/app/experiments' },
+  // Experiments is now the Experiments tab of Self-Improvement, not its own route.
+  { title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols.', icon: FlaskConical, href: '/app/self-improvement' },
   { title: 'Architecture', description: 'Define and compose superintelligence subsystems and data flows.', icon: Network, href: '/app/architecture' },
-  { title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.', icon: Brain, href: '/app/knowledge' },
+  // Knowledge & Reasoning is now a tab of the Extension Builder, not its own route.
+  { title: 'Knowledge & Reasoning', description: 'Build knowledge graphs and inference engines for ASI cognition.', icon: Brain, href: '/builder' },
   { title: 'ASI Core', description: 'Monitor compute, memory, and core metrics across the platform.', icon: Cpu, href: '/app' },
   // Deep-links straight into the real wiki/Bots.md page (see /app/store's
   // validateSearch) instead of dropping the user on Home to go find it.

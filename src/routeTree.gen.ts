@@ -17,12 +17,6 @@ import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppStoreRouteImport } from './routes/app/store'
 import { Route as AppSettingsRouteImport } from './routes/app/settings'
 import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
-import { Route as AppPlanningRouteImport } from './routes/app/planning'
-import { Route as AppMemoryRouteImport } from './routes/app/memory'
-import { Route as AppKnowledgeRouteImport } from './routes/app/knowledge'
-import { Route as AppExperimentsRouteImport } from './routes/app/experiments'
-import { Route as AppEvaluationRouteImport } from './routes/app/evaluation'
-import { Route as AppChatHistoryRouteImport } from './routes/app/chat-history'
 import { Route as AppChatGroupsRouteImport } from './routes/app/chat-groups'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppArchitectureRouteImport } from './routes/app/architecture'
@@ -68,36 +62,6 @@ const AppSelfImprovementRoute = AppSelfImprovementRouteImport.update({
   path: '/self-improvement',
   getParentRoute: () => AppRoute,
 } as any)
-const AppPlanningRoute = AppPlanningRouteImport.update({
-  id: '/planning',
-  path: '/planning',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppMemoryRoute = AppMemoryRouteImport.update({
-  id: '/memory',
-  path: '/memory',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppKnowledgeRoute = AppKnowledgeRouteImport.update({
-  id: '/knowledge',
-  path: '/knowledge',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppExperimentsRoute = AppExperimentsRouteImport.update({
-  id: '/experiments',
-  path: '/experiments',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppEvaluationRoute = AppEvaluationRouteImport.update({
-  id: '/evaluation',
-  path: '/evaluation',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppChatHistoryRoute = AppChatHistoryRouteImport.update({
-  id: '/chat-history',
-  path: '/chat-history',
-  getParentRoute: () => AppRoute,
-} as any)
 const AppChatGroupsRoute = AppChatGroupsRouteImport.update({
   id: '/chat-groups',
   path: '/chat-groups',
@@ -128,12 +92,6 @@ export interface FileRoutesByFullPath {
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
-  '/app/chat-history': typeof AppChatHistoryRoute
-  '/app/evaluation': typeof AppEvaluationRoute
-  '/app/experiments': typeof AppExperimentsRoute
-  '/app/knowledge': typeof AppKnowledgeRoute
-  '/app/memory': typeof AppMemoryRoute
-  '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
@@ -147,12 +105,6 @@ export interface FileRoutesByTo {
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
-  '/app/chat-history': typeof AppChatHistoryRoute
-  '/app/evaluation': typeof AppEvaluationRoute
-  '/app/experiments': typeof AppExperimentsRoute
-  '/app/knowledge': typeof AppKnowledgeRoute
-  '/app/memory': typeof AppMemoryRoute
-  '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
@@ -168,12 +120,6 @@ export interface FileRoutesById {
   '/app/architecture': typeof AppArchitectureRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
-  '/app/chat-history': typeof AppChatHistoryRoute
-  '/app/evaluation': typeof AppEvaluationRoute
-  '/app/experiments': typeof AppExperimentsRoute
-  '/app/knowledge': typeof AppKnowledgeRoute
-  '/app/memory': typeof AppMemoryRoute
-  '/app/planning': typeof AppPlanningRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
@@ -190,12 +136,6 @@ export interface FileRouteTypes {
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
-    | '/app/chat-history'
-    | '/app/evaluation'
-    | '/app/experiments'
-    | '/app/knowledge'
-    | '/app/memory'
-    | '/app/planning'
     | '/app/self-improvement'
     | '/app/settings'
     | '/app/store'
@@ -209,12 +149,6 @@ export interface FileRouteTypes {
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
-    | '/app/chat-history'
-    | '/app/evaluation'
-    | '/app/experiments'
-    | '/app/knowledge'
-    | '/app/memory'
-    | '/app/planning'
     | '/app/self-improvement'
     | '/app/settings'
     | '/app/store'
@@ -229,12 +163,6 @@ export interface FileRouteTypes {
     | '/app/architecture'
     | '/app/chat'
     | '/app/chat-groups'
-    | '/app/chat-history'
-    | '/app/evaluation'
-    | '/app/experiments'
-    | '/app/knowledge'
-    | '/app/memory'
-    | '/app/planning'
     | '/app/self-improvement'
     | '/app/settings'
     | '/app/store'
@@ -306,48 +234,6 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSelfImprovementRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/planning': {
-      id: '/app/planning'
-      path: '/planning'
-      fullPath: '/app/planning'
-      preLoaderRoute: typeof AppPlanningRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/memory': {
-      id: '/app/memory'
-      path: '/memory'
-      fullPath: '/app/memory'
-      preLoaderRoute: typeof AppMemoryRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/knowledge': {
-      id: '/app/knowledge'
-      path: '/knowledge'
-      fullPath: '/app/knowledge'
-      preLoaderRoute: typeof AppKnowledgeRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/experiments': {
-      id: '/app/experiments'
-      path: '/experiments'
-      fullPath: '/app/experiments'
-      preLoaderRoute: typeof AppExperimentsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/evaluation': {
-      id: '/app/evaluation'
-      path: '/evaluation'
-      fullPath: '/app/evaluation'
-      preLoaderRoute: typeof AppEvaluationRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/chat-history': {
-      id: '/app/chat-history'
-      path: '/chat-history'
-      fullPath: '/app/chat-history'
-      preLoaderRoute: typeof AppChatHistoryRouteImport
-      parentRoute: typeof AppRoute
-    }
     '/app/chat-groups': {
       id: '/app/chat-groups'
       path: '/chat-groups'
@@ -384,12 +270,6 @@ interface AppRouteChildren {
   AppArchitectureRoute: typeof AppArchitectureRoute
   AppChatRoute: typeof AppChatRoute
   AppChatGroupsRoute: typeof AppChatGroupsRoute
-  AppChatHistoryRoute: typeof AppChatHistoryRoute
-  AppEvaluationRoute: typeof AppEvaluationRoute
-  AppExperimentsRoute: typeof AppExperimentsRoute
-  AppKnowledgeRoute: typeof AppKnowledgeRoute
-  AppMemoryRoute: typeof AppMemoryRoute
-  AppPlanningRoute: typeof AppPlanningRoute
   AppSelfImprovementRoute: typeof AppSelfImprovementRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppStoreRoute: typeof AppStoreRoute
@@ -401,12 +281,6 @@ const AppRouteChildren: AppRouteChildren = {
   AppArchitectureRoute: AppArchitectureRoute,
   AppChatRoute: AppChatRoute,
   AppChatGroupsRoute: AppChatGroupsRoute,
-  AppChatHistoryRoute: AppChatHistoryRoute,
-  AppEvaluationRoute: AppEvaluationRoute,
-  AppExperimentsRoute: AppExperimentsRoute,
-  AppKnowledgeRoute: AppKnowledgeRoute,
-  AppMemoryRoute: AppMemoryRoute,
-  AppPlanningRoute: AppPlanningRoute,
   AppSelfImprovementRoute: AppSelfImprovementRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppStoreRoute: AppStoreRoute,
