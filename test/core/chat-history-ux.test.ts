@@ -3,7 +3,8 @@ import fs from "node:fs";
 import path from "node:path";
 
 describe("Chat History Micro-UX Enhancements", () => {
-  const filePath = path.resolve(process.cwd(), "src/routes/app/chat-history.tsx");
+  // Chat History moved into Chat Groups as a tab.
+  const filePath = path.resolve(process.cwd(), "src/routes/app/chat-groups.tsx");
   const fileContent = fs.readFileSync(filePath, "utf-8");
 
   it("includes a search input associated with a label via matching id/htmlFor", () => {

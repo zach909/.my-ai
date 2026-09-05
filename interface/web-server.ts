@@ -2567,9 +2567,10 @@ export class WebServer {
     }
 
     // GET /api/self-improvement/server-status, POST .../server/start,
-    // POST .../server/stop -- the "Start RSI Server" button in
-    // src/routes/app/experiments.tsx. See SelfImprovementServerManager's
-    // doc comment for why a manual start is needed at all.
+    // POST .../server/stop -- the "Start RSI Server" button in the
+    // Experiments tab of src/routes/app/self-improvement.tsx. See
+    // SelfImprovementServerManager's doc comment for why a manual start is
+    // needed at all.
     if (pathname === '/api/self-improvement/server-status' && method === 'GET') {
       this.sendJson(res, this.selfImprovementServer.status());
       return;

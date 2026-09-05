@@ -49,9 +49,9 @@ const STEPS: TourStep[] = [
   {
     title: 'Extension Builder',
     body:
-      'Build skills by connecting neurons directly, or compile them from a description. Train, test and install them without leaving the app.',
+      'Build skills by connecting neurons directly, or compile them from a description. Train, test and install them without leaving the app. Its Knowledge & Reasoning tab teaches the agent facts and inspects what it knows — reasoning is decomposed into sub-problems, attempted, then verified.',
     mesh:
-      'A finished skill is registered as a real expert group: it gets its own neurons in the shared mesh, with dedicated input and output layers, and the router can then select it.',
+      'A finished skill is registered as a real expert group: it gets its own neurons in the shared mesh, with dedicated input and output layers, and the router can then select it. Taught facts are stored with retrieval embeddings, so a question close enough to one is answered from it directly rather than being improvised.',
     href: '/builder',
     linkLabel: 'Open Extension Builder',
   },
@@ -65,40 +65,22 @@ const STEPS: TourStep[] = [
     linkLabel: 'Open Architecture',
   },
   {
-    title: 'Knowledge & Reasoning',
+    title: 'Self-Improvement, Evaluation & Experiments',
     body:
-      'Teach the agent facts and inspect what it knows. Reasoning is decomposed into sub-problems, attempted, then verified.',
+      'The agent proposes changes to itself, and its Evaluation and Experiments tabs run structured checks and experiments against it and score the results, so a change can be judged rather than guessed at.',
     mesh:
-      'Taught facts are stored with retrieval embeddings. A question close enough to a stored fact is answered from it directly, rather than being improvised.',
-    href: '/app/knowledge',
-    linkLabel: 'Open Knowledge & Reasoning',
-  },
-  {
-    title: 'Experiments & Evaluation',
-    body:
-      'Run structured experiments against the agent and score the results, so a change can be judged rather than guessed at.',
-    mesh:
-      'Training genuinely moves weights: error falls on the training facts and, importantly, on held-out facts the agent never saw — which is the difference between learning and a lookup table.',
-    href: '/app/experiments',
-    linkLabel: 'Open Experiments',
-  },
-  {
-    title: 'Self-Improvement & Planning',
-    body:
-      'The agent proposes changes to itself, plans multi-step work, and records what it tried and what failed.',
-    mesh:
-      'Proposals are gated: they are tested before they are installed, so a bad self-edit does not silently become part of the mesh.',
+      'Proposals are gated: they are tested before they are installed, so a bad self-edit does not silently become part of the mesh. Training genuinely moves weights: error falls on the training facts and, importantly, on held-out facts the agent never saw — which is the difference between learning and a lookup table.',
     href: '/app/self-improvement',
     linkLabel: 'Open Self-Improvement',
   },
   {
-    title: 'Bot Wiki',
+    title: 'Store',
     body:
-      'The shared knowledge base. Pages can be read and created freely, and every edit or delete snapshots a backup first, so nothing is unrecoverable.',
+      'The shared knowledge base and publishing front door: the wiki (pages can be read and created freely, and every edit or delete snapshots a backup first, so nothing is unrecoverable), prompting skills, planning, uploads, and a shared chat, all as tabs of one page.',
     mesh:
-      'Deleting and restoring are privileged — public access can add knowledge but cannot destroy it.',
+      'Deleting and restoring wiki pages are privileged — public access can add knowledge but cannot destroy it.',
     href: '/app/store',
-    linkLabel: 'Open Bot Wiki',
+    linkLabel: 'Open Store',
   },
   {
     title: 'It all runs on your machine',
