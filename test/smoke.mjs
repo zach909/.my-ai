@@ -1614,6 +1614,49 @@ async function testWebBackend() {
     const brainPartialJson = JSON.parse(brainPartial.body);
     check(brainPartial.status === 200 && brainPartialJson.quantumEnabled === true && brainPartialJson.predictorMode === 'code',
       'POST /api/settings/brain ignores an invalid predictorMode value instead of corrupting state');
+
+    // "zip loop no file size limit" -- POST /api/zip-loop/file used to cap
+    // at 25MB (its own internal check) and POST /api/zip-loop/run went
+    // through parseBody()'s ordinary 1MB-per-request-body default, so even
+    // a real file well under the first cap could still be rejected by the
+    // second once base64-encoded. Neither ceiling applies to this route
+    // anymore; prove it with a body bigger than both old limits combined.
+    const bigFile = Buffer.alloc(2 * 1024 * 1024, 'x'); // 2MB: over parseBody's old 1MB default
+    const postRaw = (path, buf) => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': buf.length } }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', reject); req.write(buf); req.end();
+    });
+    const fileUpload = await postRaw('/api/zip-loop/file?path=input/big.bin', bigFile);
+    const fileUploadJson = JSON.parse(fileUpload.body);
+    check(fileUpload.status === 200 && fileUploadJson.ok === true && fileUploadJson.bytes === bigFile.length,
+      `POST /api/zip-loop/file accepts a ${bigFile.length}-byte file (old cap was 25MB, but the point is this route has none at all)`);
+
+    // POST /api/zip-loop/run went through parseBody()'s ordinary 1MB-per-
+    // request-body default, so a real file's base64 form could still be
+    // 413'd there even after clearing /file's own now-removed cap. Proven
+    // with an invalid `archive` field alongside 2MB of harmless padding in
+    // an unused field: an actual real file would reach the settle loop
+    // (genuinely slow by construction -- every bit is one settle() of the
+    // mesh, see sendBit()'s own doc comment -- and deliberately not what
+    // this check is about), but a bad archive value fails validation
+    // immediately after parsing, before the mesh is ever touched. Getting
+    // a 400 (real validation) rather than a 413 (parseBody's old cap) is
+    // exactly proof the >1MB body was parsed at all.
+    const runWithBigBody = await post('/api/zip-loop/run', {
+      archive: 'not a real base64-encoded packed archive',
+      _padding: 'x'.repeat(2 * 1024 * 1024),
+    });
+    check(runWithBigBody.status === 400,
+      `POST /api/zip-loop/run parses a request body far over the old 1MB default -- reaches real archive validation (400) instead of being rejected as too large (413), status was ${runWithBigBody.status}`);
+
+    // Regression guard the other direction: an ordinary small-body JSON
+    // endpoint must still enforce parseBody()'s 1MB default -- raising the
+    // ceiling for the zip loop specifically must not have loosened it for
+    // everyone else.
+    const oversizedTrain = await post('/api/train', { text: 'a'.repeat(2 * 1024 * 1024) });
+    check(oversizedTrain.status === 413, 'An ordinary endpoint (POST /api/train) still enforces the 1MB default -- raising the zip loop\'s own ceiling did not loosen it globally');
   } finally {
     await web.stop();
   }
