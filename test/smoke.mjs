@@ -1587,6 +1587,33 @@ async function testWebBackend() {
     // not as the package path it's supposed to be.
     const badPath = await post('/api/apps/launch-package', { path: '--allow-downgrades', type: 'deb' });
     check(badPath.status === 400, 'Web backend POST /api/apps/launch-package rejects a path that looks like a command-line flag');
+
+    // GET/POST /api/settings/brain -- the Settings page's "Brain Behavior"
+    // section. Before this, setQuantumEnabled()/setPredictorMode()
+    // (NeuroclawLLM) were real and tested but reachable only from
+    // TypeScript, with no endpoint to flip either one at all.
+    const brainBefore = await get('/api/settings/brain');
+    const brainBeforeJson = JSON.parse(brainBefore.body);
+    check(brainBefore.status === 200 && brainBeforeJson.quantumEnabled === false && brainBeforeJson.predictorMode === 'word',
+      'GET /api/settings/brain reports the real, off-by-default starting state');
+
+    const brainAfter = await post('/api/settings/brain', { quantumEnabled: true, predictorMode: 'code' });
+    const brainAfterJson = JSON.parse(brainAfter.body);
+    check(brainAfter.status === 200 && brainAfterJson.quantumEnabled === true && brainAfterJson.predictorMode === 'code',
+      'POST /api/settings/brain actually flips both settings and reports the new state');
+
+    const brainConfirmed = await get('/api/settings/brain');
+    const brainConfirmedJson = JSON.parse(brainConfirmed.body);
+    check(brainConfirmedJson.quantumEnabled === true && brainConfirmedJson.predictorMode === 'code',
+      'GET /api/settings/brain reflects the change on a later, independent request -- not just echoed back once');
+
+    // Malformed/partial input should not clobber the other field, and an
+    // unrecognized predictorMode string should be ignored rather than
+    // silently accepted as something NeuroclawLLM was never asked to support.
+    const brainPartial = await post('/api/settings/brain', { predictorMode: 'not-a-real-mode' });
+    const brainPartialJson = JSON.parse(brainPartial.body);
+    check(brainPartial.status === 200 && brainPartialJson.quantumEnabled === true && brainPartialJson.predictorMode === 'code',
+      'POST /api/settings/brain ignores an invalid predictorMode value instead of corrupting state');
   } finally {
     await web.stop();
   }

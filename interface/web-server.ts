@@ -1772,6 +1772,49 @@ export class WebServer {
       return;
     }
 
+    // GET/POST /api/settings/brain -- the Settings page's "Brain Behavior"
+    // section. Both setQuantumEnabled()/setPredictorMode() (NeuroclawLLM)
+    // were real, tested, and reachable only from TypeScript -- no endpoint
+    // existed to flip either one, so the (off-by-default) quantum
+    // interference stage and the code-vs-prose predictor choice were
+    // permanently stuck at whatever NeuroclawSystem's constructor left them.
+    // Routed through getNeuroclawSystem()'s singleton, the one real system
+    // this.llm now shares its engine with (see the one-brain fix) -- not a
+    // second, disconnected LLM instance.
+    if (pathname === '/api/settings/brain' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, {
+          quantumEnabled: system.llm.isQuantumEnabled(),
+          predictorMode: system.llm.getPredictorMode(),
+        });
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+    if (pathname === '/api/settings/brain' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { quantumEnabled?: unknown; predictorMode?: unknown } | null;
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        if (typeof body?.quantumEnabled === 'boolean') {
+          system.llm.setQuantumEnabled(body.quantumEnabled);
+        }
+        if (body?.predictorMode === 'word' || body?.predictorMode === 'code') {
+          system.llm.setPredictorMode(body.predictorMode);
+        }
+        this.sendJson(res, {
+          quantumEnabled: system.llm.isQuantumEnabled(),
+          predictorMode: system.llm.getPredictorMode(),
+        });
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+
     // Unauthenticated on purpose (a boolean, nothing sensitive) -- the
     // chat-groups page needs to know whether to show its login form
     // *before* it has a password to send.
