@@ -18,7 +18,7 @@ export interface LLMConfig {
     thinkSteps: number;
     valuePoints: number;
     contextLength: number;
-    /** Off by default -- toggle via setQuantumEnabled(). */
+    /** Unused -- quantum interference is always on now; see setQuantumEnabled()'s doc comment. */
     quantumEnabled?: boolean;
     /** Directory where self-authored extensions are persisted. */
     selfExtensionsDir?: string;
