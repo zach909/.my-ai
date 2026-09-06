@@ -314,9 +314,9 @@ async function testHyperdimensional() {
   const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const hd = new HyperDimensionalEngine({ dimensions: 8, neuronCount: 12 });
   const a = hd.process(Array.from({ length: 8 }, (_, i) => Math.sin(i)));
-  check(allFinite(a.outputVector) && a.selfModelSurprise === 0, 'Hyper first tick finite, surprise=0');
+  check(allFinite(a.outputVector) && a.noveltyScore === 1, 'Hyper first tick finite, fully novel (never-seen pattern)');
   const b = hd.process(Array.from({ length: 8 }, (_, i) => Math.cos(i)));
-  check(Number.isFinite(b.selfModelSurprise) && b.selfModelSurprise >= 0, 'Hyper self-model surprise finite and >= 0');
+  check(Number.isFinite(b.noveltyScore) && b.noveltyScore >= 0 && b.noveltyScore <= 1, 'Hyper novelty score finite and in [0,1]');
   check(b.inputTopography instanceof Map && b.inputTopography.size === 12, 'Hyper reports per-neuron input topography');
   hd.process(new Array(8).fill(0.5), undefined, new Set([0]));
   check(typeof hd.isExclusiveInput(0.9).exclusive === 'boolean', 'Hyper isExclusiveInput returns a verdict');
@@ -363,7 +363,7 @@ async function testHyperdimensionalCapacity() {
   check(allFinite(out.outputVector) && out.noveltyScore >= 0 && out.noveltyScore <= 1, 'process() still produces sane, finite output after heavy capping');
 }
 
-async function testInputFlagSelfModelLiveCorrection() {
+async function testInputFlagNoveltyLiveCorrection() {
   const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
 
   // Section 3.1: exclusive input is exactly one neuron's flag hot. Confirm
@@ -846,14 +846,6 @@ async function testAlignmentVeto() {
   check(unknownReversibility.requiresConfirmation, 'Veto escalates an action with unknown (omitted) reversibility to confirmation, same as explicit false');
   check(unknownReversibility.score === irreversible.score, 'Unknown reversibility scores identically to explicit reversible:false (fail safe), not to reversible:true');
 
-  // Severe self-model drift fails safe → blocked.
-  const drifting = veto.evaluate({ id: 'd', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.9 });
-  check(!drifting.allowed, 'Veto blocks under severe self-model drift (fails safe)');
-
-  // Mild drift → escalate to confirmation, not block.
-  const mildDrift = veto.evaluate({ id: 'e', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.4 });
-  check(mildDrift.requiresConfirmation && mildDrift.allowed, 'Veto escalates (not blocks) under mild drift');
-
   // Decisions are inspectable and score bounded [0,1].
   check(Array.isArray(deceptive.reasons) && deceptive.reasons.length > 0, 'Veto decisions carry inspectable reasons');
   check(benign.score >= 0 && benign.score <= 1, 'Veto benevolence score is bounded [0,1]');
@@ -889,17 +881,6 @@ async function testNumberSystems() {
   q.addNeuron('a', 0.5); q.addNeuron('b', 0.5);
   check(q.getComplexAmplitude('a') && typeof q.getComplexAmplitude('a').re === 'number', 'QIL exposes genuine complex amplitude');
   check(Number.isFinite(q.interfere('a', 'b')), 'QIL interfere() (complex |zA+zB|) is finite');
-
-  // Self-model derivative in one pass matches finite difference.
-  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
-  const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
-  hd.process([0.2, -0.3, 0.5, 0.1, -0.4, 0.6]);
-  const base = [0.2, -0.3, 0.5, 0.1, -0.4, 0.6];
-  const der = hd.predictSelfModelWithDerivative(base, [1, 0, 0, 0, 0, 0]).derivative[0];
-  const eps = 1e-5, bumped = [...base]; bumped[0] += eps;
-  const p0 = hd.predictSelfModelWithDerivative(base, new Array(6).fill(0)).value[0];
-  const p1 = hd.predictSelfModelWithDerivative(bumped, new Array(6).fill(0)).value[0];
-  check(near(der, (p1 - p0) / eps, 1e-3), 'Self-model dual derivative matches finite difference');
 }
 
 async function testContinuousOutputLoop() {
@@ -5366,7 +5347,7 @@ async function main() {
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
     ['Hyperdimensional history/transitions/seenPatterns capacity', testHyperdimensionalCapacity],
-    ['Input-flag / self-model / live-correction (Section 3.1-3.3)', testInputFlagSelfModelLiveCorrection],
+    ['Input-flag / novelty / live-correction (Section 3.1-3.3)', testInputFlagNoveltyLiveCorrection],
     ['Vale gating', testValeGating],
     ['Symbolic trace', testSymbolicTrace],
     ['Definishon training', testDefinitionTraining],
