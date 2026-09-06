@@ -916,7 +916,14 @@ export class WebServer {
         // could try to read it. Best-effort: a fresh repo with no store branch
         // yet, or no network at boot, just means an empty catalogue until the
         // next successful pull, not a failed boot.
-        await pullStoreCatalog().catch(() => { });
+        //
+        // manifestsOnly: "view store without downloading everything" -- browsing
+        // the catalogue only ever needs each item's manifest.json (see
+        // pullStoreCatalog()'s own doc comment); an actual payload file is
+        // fetched on demand by GET .../file/:filename (fetchItemFile below) the
+        // first time someone actually asks for it, not pulled wholesale here on
+        // every boot regardless of whether anyone browses anything.
+        await pullStoreCatalog({ manifestsOnly: true }).catch(() => { });
         // Same reasoning, same placement: loading every saved extension is
         // real work (parsing N files, remembering M neurons) that only makes
         // sense to pay once per actual live server process, not once per
