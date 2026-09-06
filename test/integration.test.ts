@@ -130,19 +130,9 @@ describe('Neuroclaw Integration Tests', () => {
       expect(decision.requiresConfirmation).toBe(true);
     });
 
-    it('should fail safe and block outright under severe self-model drift', () => {
-      const decision = veto.evaluate(
-        { id: 'action-1', name: 'act', capabilities: [], reversible: true },
-        { selfModelSurprise: 0.9 }
-      );
-      expect(decision.allowed).toBe(false);
-      expect(decision.reasons.some(r => r.includes('severe self-model drift'))).toBe(true);
-    });
-
     it('should evaluate pipeline actions and expose an inspectable score', () => {
       const decision = veto.evaluate(
         { id: 'action-1', name: 'read_file', capabilities: ['file-read'], reversible: true },
-        { selfModelSurprise: 0.3 }
       );
       expect(decision).toBeDefined();
       expect(decision.allowed).toBeDefined();
@@ -940,7 +930,6 @@ describe('Neuroclaw Integration Tests', () => {
 
       const decision = veto.evaluate(
         { id: 'end-to-end-1', name: 'analyze_data', capabilities: ['analysis'], reversible: true },
-        { selfModelSurprise: 0.4 }
       );
 
       await zipIO.emit(`Analysis complete. Allowed: ${decision.allowed}`);
@@ -963,10 +952,13 @@ describe('Neuroclaw Integration Tests', () => {
   });
 
   describe('Error Handling', () => {
-    it('should block an action with no capabilities and low benevolence score gracefully', () => {
+    it('should block an action with an objectionable capability gracefully', () => {
+      // Used to also carry a high self-model-surprise ctx to push an
+      // otherwise-benign action below the score threshold -- that signal is
+      // gone (see alignment-veto.ts), so this now blocks via Rule 1
+      // (objectionable capability) instead, which is unaffected by the removal.
       const decision = veto.evaluate(
-        { id: 'unknown-1', name: 'unknown_action_xyz', capabilities: [], reversible: false },
-        { selfModelSurprise: 0.95 }
+        { id: 'unknown-1', name: 'unknown_action_xyz', capabilities: ['deceive'], reversible: false },
       );
       expect(decision).toBeDefined();
       expect(decision.allowed).toBe(false);

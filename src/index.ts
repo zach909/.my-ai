@@ -932,18 +932,19 @@ export class NeuroclawSystem {
     const predictedDanger = prediction.outcomes.some(o => o.dangerous);
 
     // 4. Gate the "respond" action through the AlignmentVeto before running.
-    //    A negative-valence user under high arousal lowers our confidence,
-    //    surfacing as self-model surprise the veto can escalate on.
-    const decision = this.veto.evaluate(
-      {
-        id: `respond:${Date.now()}`,
-        name: "respond to user",
-        capabilities: ["text-generate"],
-        reversible: !predictedDanger,
-        externalEffect: predictedDanger,
-      },
-      { selfModelSurprise: emotion.valence < 0 ? emotion.arousal * 0.5 : 0 }
-    );
+    //    (This used to also pass a negative-valence/high-arousal-derived
+    //    "self-model surprise" here for the veto's drift rule to escalate
+    //    on -- that self-model and the drift rule are both gone now, see
+    //    onebrain.ts and alignment-veto.ts. EmpathyEngine.shouldVeto() above
+    //    already covers "does my read of this user still support trusting my
+    //    own judgement" from the same emotion signal.)
+    const decision = this.veto.evaluate({
+      id: `respond:${Date.now()}`,
+      name: "respond to user",
+      capabilities: ["text-generate"],
+      reversible: !predictedDanger,
+      externalEffect: predictedDanger,
+    });
     if (!decision.allowed) {
       const blocked = `[Withheld] ${decision.reasons.join("; ")}`;
       await this.zipIO.emit(blocked);
