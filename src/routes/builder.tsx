@@ -1,9 +1,10 @@
 import { createFileRoute, Link } from '@tanstack/react-router'
-import { useEffect, useMemo, useState } from 'react'
+import { useEffect, useMemo, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Card, CardHeader, CardTitle, CardContent } from '@/components/ui/card'
+import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
+import { Brain, Search, Sparkles, ArrowRight, Loader2, Copy, Check, X, Blocks } from 'lucide-react'
 import { useBuilder, BuilderCanvas } from '@/features/builder'
 
 /**
@@ -12,7 +13,13 @@ import { useBuilder, BuilderCanvas } from '@/features/builder'
  * add/drag/connect neurons, drag labels onto them, search, simulate a single
  * neuron's output, add an API-capable output layer, import/export NeuroLang,
  * and Save (un-quantized, editable) vs Install (quantized for deployment).
+ *
+ * Two tabs: Builder (the canvas above) and Knowledge & Reasoning (the
+ * semantic-rule query simulator that used to be the standalone /app/knowledge
+ * page) -- both are ways of shaping what the mesh knows and how it reasons,
+ * so they live on one page now.
  */
+type BuilderTab = 'builder' | 'knowledge'
 /** What POST /api/extension/plan-requirements answers with. */
 interface RequirementPlanResult {
   plan: {
@@ -51,6 +58,7 @@ export const Route = createFileRoute('/builder')({
 function BuilderPage() {
   const b = useBuilder()
 
+  const [tab, setTab] = useState<BuilderTab>('builder')
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [connectMode, setConnectMode] = useState(false)
   const [connectSource, setConnectSource] = useState<string | null>(null)
@@ -485,7 +493,38 @@ function BuilderPage() {
         </nav>
       </header>
 
-      <div className="flex flex-1 flex-col gap-3 p-3 xl:flex-row">
+      <div className="flex gap-1 border-b border-border px-4">
+        <button
+          type="button"
+          onClick={() => setTab('builder')}
+          className={`flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
+            tab === 'builder'
+              ? 'border-primary text-foreground'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          aria-current={tab === 'builder' ? 'page' : undefined}
+        >
+          <Blocks size={14} />
+          Builder
+        </button>
+        <button
+          type="button"
+          onClick={() => setTab('knowledge')}
+          className={`flex items-center gap-1.5 border-b-2 px-3 py-1.5 text-xs font-medium transition-colors cursor-pointer ${
+            tab === 'knowledge'
+              ? 'border-primary text-foreground'
+              : 'border-transparent text-muted-foreground hover:text-foreground'
+          }`}
+          aria-current={tab === 'knowledge' ? 'page' : undefined}
+        >
+          <Brain size={14} />
+          Knowledge & Reasoning
+        </button>
+      </div>
+
+      {tab === 'knowledge' && <KnowledgePanel />}
+
+      <div className={tab === 'builder' ? 'flex flex-1 flex-col gap-3 p-3 xl:flex-row' : 'hidden'}>
         {/* left: toolbar */}
         <aside className="w-full shrink-0 space-y-3 xl:w-64">
           <Card className="border-border">
@@ -1022,5 +1061,183 @@ function BuilderPage() {
         </aside>
       </div>
     </main>
+  )
+}
+
+function CopyResultButton({ text }: { text: string }) {
+  const [copied, setCopied] = useState(false)
+
+  const handleCopy = async () => {
+    try {
+      await navigator.clipboard.writeText(text)
+      setCopied(true)
+      setTimeout(() => setCopied(false), 2000)
+    } catch (err) {
+      console.error('Failed to copy text: ', err)
+    }
+  }
+
+  return (
+    <Button
+      variant="ghost"
+      size="icon"
+      className="h-7 w-7 text-muted-foreground hover:text-foreground hover:bg-muted/80 active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none shrink-0"
+      onClick={handleCopy}
+      aria-label={copied ? 'Query result copied' : 'Copy query result'}
+      title={copied ? 'Copied to clipboard' : 'Copy query result'}
+    >
+      {copied ? <Check className="h-4 w-4 text-emerald-500" /> : <Copy className="h-4 w-4" />}
+    </Button>
+  )
+}
+
+const KNOWLEDGE_SUGGESTIONS = [
+  { id: 'containment', text: 'containment', label: 'containment' },
+  { id: 'consensus', text: 'consensus', label: 'consensus' },
+  { id: 'coordination', text: 'coordination', label: 'coordination' },
+]
+
+/** Was the standalone /app/knowledge page. */
+function KnowledgePanel() {
+  const [query, setQuery] = useState('')
+  const [status, setStatus] = useState('Idle. Ready to query knowledge base.')
+  const [loading, setLoading] = useState(false)
+  const inputRef = useRef<HTMLInputElement>(null)
+
+  const handleClearQuery = () => {
+    setQuery('')
+    setStatus('Idle. Ready to query knowledge base.')
+    inputRef.current?.focus()
+  }
+
+  const executeSearch = (searchText: string) => {
+    setLoading(true)
+    setStatus(`Searching knowledge graphs for "${searchText}"...`)
+    setTimeout(() => {
+      setLoading(false)
+      const q = searchText.toLowerCase().trim()
+      if (q.includes('sandbox') || q.includes('containment') || q.includes('safety')) {
+        setStatus(`Found 1 semantic rule for "${searchText}": Containment isolation constraint is strict and fully verified.`)
+      } else if (q.includes('consensus') || q.includes('hive') || q.includes('coordination')) {
+        setStatus(`Found 1 semantic rule for "${searchText}": Multi-agent consensus protocol requires 2/3 trust majority.`)
+      } else {
+        setStatus(`Query completed. No semantic rules found for "${searchText}". Try searching "containment" or "consensus".`)
+      }
+    }, 400)
+  }
+
+  const handleQuery = (e: React.FormEvent) => {
+    e.preventDefault()
+    if (!query.trim()) return
+    executeSearch(query)
+  }
+
+  const handleSuggestionClick = (searchText: string) => {
+    setQuery(searchText)
+    executeSearch(searchText)
+  }
+
+  return (
+    <div className="space-y-6 p-4 animate-fade-in max-w-4xl mx-auto w-full">
+      <Card className="border-2 border-dashed border-muted-foreground/20 bg-card/40 backdrop-blur-xs">
+        <CardHeader>
+          <CardTitle className="text-lg">ASI Knowledge Base</CardTitle>
+          <CardDescription>
+            Query local semantic rules or navigate to the AI Chat to construct complex multi-turn inferences.
+          </CardDescription>
+        </CardHeader>
+        <CardContent className="space-y-6">
+          <form onSubmit={handleQuery} className="space-y-4">
+            <div className="space-y-2">
+              <Label htmlFor="semantic-query" className="text-sm font-medium">
+                Semantic Rule Search
+              </Label>
+              <div className="flex gap-2">
+                <div className="relative flex-1 flex items-center">
+                  <Input
+                    id="semantic-query"
+                    ref={inputRef}
+                    type="text"
+                    value={query}
+                    onChange={(e) => setQuery(e.target.value)}
+                    placeholder="e.g. containment, consensus..."
+                    disabled={loading}
+                    className="flex-1 pr-9 focus-visible:ring-2 focus-visible:ring-primary"
+                  />
+                  {query && !loading && (
+                    <Button
+                      type="button"
+                      variant="ghost"
+                      size="icon"
+                      onClick={handleClearQuery}
+                      className="absolute right-1 h-7 w-7 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none"
+                      aria-label="Clear search query"
+                      title="Clear search query"
+                    >
+                      <X className="h-3.5 w-3.5" />
+                    </Button>
+                  )}
+                </div>
+                <Button
+                  type="submit"
+                  disabled={loading || !query.trim()}
+                  className="gap-2 active:scale-95 transition-all duration-150"
+                  aria-label={loading ? "Searching semantic rules" : "Search semantic rules"}
+                  title={loading ? "Searching..." : "Search semantic rules"}
+                >
+                  {loading ? (
+                    <Loader2 className="h-4 w-4 animate-spin" />
+                  ) : (
+                    <Search className="h-4 w-4" />
+                  )}
+                  {loading ? "Querying..." : "Query"}
+                </Button>
+              </div>
+            </div>
+          </form>
+
+          <div className="space-y-1.5">
+            <p className="text-[11px] text-muted-foreground italic">
+              Suggested queries:
+            </p>
+            <div className="flex flex-wrap gap-1.5">
+              {KNOWLEDGE_SUGGESTIONS.map((suggestion) => (
+                <button
+                  key={suggestion.id}
+                  type="button"
+                  disabled={loading}
+                  onClick={() => handleSuggestionClick(suggestion.text)}
+                  className="rounded-md border border-border bg-muted/50 px-2 py-0.5 text-[10px] text-muted-foreground hover:border-primary/30 hover:bg-primary/10 hover:text-foreground active:scale-95 transition-all focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none cursor-pointer disabled:opacity-50 disabled:cursor-not-allowed"
+                  aria-label={`Search suggestion: ${suggestion.label}`}
+                >
+                  +{suggestion.label}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div
+            role="status"
+            aria-live="polite"
+            className="rounded-lg border border-border bg-muted/30 p-4 min-h-[64px] flex items-center justify-between gap-3 text-xs text-muted-foreground transition-all duration-200"
+          >
+            <span className="flex-1 text-center">{status}</span>
+            {!loading && status !== 'Idle. Ready to query knowledge base.' && (
+              <CopyResultButton text={status} />
+            )}
+          </div>
+
+          <div className="flex flex-wrap gap-3 pt-2">
+            <Button asChild className="gap-2 active:scale-95 transition-all duration-150">
+              <Link to="/app/chat">
+                <Sparkles className="h-4 w-4" />
+                Ask AI Chat
+                <ArrowRight className="h-4 w-4" />
+              </Link>
+            </Button>
+          </div>
+        </CardContent>
+      </Card>
+    </div>
   )
 }

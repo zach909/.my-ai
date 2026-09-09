@@ -14,17 +14,11 @@ import {
 } from '@/components/ui/tooltip'
 import {
   LayoutDashboard,
-  FlaskConical,
-  Network,
-  Brain,
-  Gauge,
-  Goal,
   PanelLeft,
   HelpCircle,
   MessageSquare,
-  Users,
-  Blocks,
   Folder,
+  Blocks,
   TrendingUp,
   Store,
   ShieldOff,
@@ -43,22 +37,24 @@ interface NavItemDef {
 const NAV_ITEMS: NavItemDef[] = [
   { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Dashboard' },
   { href: '/app/chat', icon: <MessageSquare className="h-4 w-4" />, label: 'AI Chat' },
-  { href: '/app/chat-groups', icon: <Users className="h-4 w-4" />, label: 'Chat Groups' },
-  { href: '/app/chat-history', icon: <Folder className="h-4 w-4" />, label: 'Chat History' },
+  // Chat History and Memory are tabs of this one entry -- both are views
+  // over what has been said or remembered. The route is still
+  // /app/chat-groups (unchanged, so old links/bookmarks keep working), but
+  // there's no "Chat Groups" hive-discussion tab here any more -- one AI
+  // directing another is a chat plugin now (plugins/hive.ts), not a page.
+  { href: '/app/chat-groups', icon: <Folder className="h-4 w-4" />, label: 'Chat History' },
+  // Builder and Knowledge & Reasoning are tabs of this one entry -- both are
+  // ways of shaping what the mesh knows and how it reasons.
   { href: '/builder', icon: <Blocks className="h-4 w-4" />, label: 'Extension Builder' },
-  { href: '/app/experiments', icon: <FlaskConical className="h-4 w-4" />, label: 'Experiments' },
-  { href: '/app/architecture', icon: <Network className="h-4 w-4" />, label: 'Architecture' },
-  { href: '/app/knowledge', icon: <Brain className="h-4 w-4" />, label: 'Knowledge & Reasoning' },
-  { href: '/app/evaluation', icon: <Gauge className="h-4 w-4" />, label: 'Evaluation' },
+  // Overview, Evaluation and Experiments are tabs of this one entry -- all
+  // three are "how well is this thing actually doing" seen from different
+  // angles.
   { href: '/app/self-improvement', icon: <TrendingUp className="h-4 w-4" />, label: 'Self-Improvement' },
-  { href: '/app/planning', icon: <Goal className="h-4 w-4" />, label: 'Planning' },
-  // One entry, not four: the catalogue, the wiki, the upload packager and the
-  // shared chat are tabs of /app/store, because they are all the same activity
-  // -- publishing things and reading what other people published.
+  // One entry, not five: the catalogue, prompting skills, planning, the
+  // wiki, the upload packager and the shared chat are tabs of /app/store,
+  // because they are all the same activity -- publishing things and reading
+  // what other people published.
   { href: '/app/store', icon: <Store className="h-4 w-4" />, label: 'Store' },
-  // Its own entry rather than a Store tab: what the agent remembers is not
-  // something anyone published, and it is not shared with anyone.
-  { href: '/app/memory', icon: <Brain className="h-4 w-4" />, label: 'Memory' },
   // Deliberately its own entry, not folded away: the switches that decide
   // what the agent may do to this computer. Somewhere findable in a hurry,
   // not buried as a tab under something else -- Settings (below) also shows

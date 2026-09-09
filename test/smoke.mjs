@@ -314,9 +314,9 @@ async function testHyperdimensional() {
   const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const hd = new HyperDimensionalEngine({ dimensions: 8, neuronCount: 12 });
   const a = hd.process(Array.from({ length: 8 }, (_, i) => Math.sin(i)));
-  check(allFinite(a.outputVector) && a.selfModelSurprise === 0, 'Hyper first tick finite, surprise=0');
+  check(allFinite(a.outputVector) && a.noveltyScore === 1, 'Hyper first tick finite, fully novel (never-seen pattern)');
   const b = hd.process(Array.from({ length: 8 }, (_, i) => Math.cos(i)));
-  check(Number.isFinite(b.selfModelSurprise) && b.selfModelSurprise >= 0, 'Hyper self-model surprise finite and >= 0');
+  check(Number.isFinite(b.noveltyScore) && b.noveltyScore >= 0 && b.noveltyScore <= 1, 'Hyper novelty score finite and in [0,1]');
   check(b.inputTopography instanceof Map && b.inputTopography.size === 12, 'Hyper reports per-neuron input topography');
   hd.process(new Array(8).fill(0.5), undefined, new Set([0]));
   check(typeof hd.isExclusiveInput(0.9).exclusive === 'boolean', 'Hyper isExclusiveInput returns a verdict');
@@ -363,7 +363,7 @@ async function testHyperdimensionalCapacity() {
   check(allFinite(out.outputVector) && out.noveltyScore >= 0 && out.noveltyScore <= 1, 'process() still produces sane, finite output after heavy capping');
 }
 
-async function testInputFlagSelfModelLiveCorrection() {
+async function testInputFlagNoveltyLiveCorrection() {
   const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
 
   // Section 3.1: exclusive input is exactly one neuron's flag hot. Confirm
@@ -846,14 +846,6 @@ async function testAlignmentVeto() {
   check(unknownReversibility.requiresConfirmation, 'Veto escalates an action with unknown (omitted) reversibility to confirmation, same as explicit false');
   check(unknownReversibility.score === irreversible.score, 'Unknown reversibility scores identically to explicit reversible:false (fail safe), not to reversible:true');
 
-  // Severe self-model drift fails safe → blocked.
-  const drifting = veto.evaluate({ id: 'd', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.9 });
-  check(!drifting.allowed, 'Veto blocks under severe self-model drift (fails safe)');
-
-  // Mild drift → escalate to confirmation, not block.
-  const mildDrift = veto.evaluate({ id: 'e', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.4 });
-  check(mildDrift.requiresConfirmation && mildDrift.allowed, 'Veto escalates (not blocks) under mild drift');
-
   // Decisions are inspectable and score bounded [0,1].
   check(Array.isArray(deceptive.reasons) && deceptive.reasons.length > 0, 'Veto decisions carry inspectable reasons');
   check(benign.score >= 0 && benign.score <= 1, 'Veto benevolence score is bounded [0,1]');
@@ -889,17 +881,6 @@ async function testNumberSystems() {
   q.addNeuron('a', 0.5); q.addNeuron('b', 0.5);
   check(q.getComplexAmplitude('a') && typeof q.getComplexAmplitude('a').re === 'number', 'QIL exposes genuine complex amplitude');
   check(Number.isFinite(q.interfere('a', 'b')), 'QIL interfere() (complex |zA+zB|) is finite');
-
-  // Self-model derivative in one pass matches finite difference.
-  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
-  const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
-  hd.process([0.2, -0.3, 0.5, 0.1, -0.4, 0.6]);
-  const base = [0.2, -0.3, 0.5, 0.1, -0.4, 0.6];
-  const der = hd.predictSelfModelWithDerivative(base, [1, 0, 0, 0, 0, 0]).derivative[0];
-  const eps = 1e-5, bumped = [...base]; bumped[0] += eps;
-  const p0 = hd.predictSelfModelWithDerivative(base, new Array(6).fill(0)).value[0];
-  const p1 = hd.predictSelfModelWithDerivative(bumped, new Array(6).fill(0)).value[0];
-  check(near(der, (p1 - p0) / eps, 1e-3), 'Self-model dual derivative matches finite difference');
 }
 
 async function testContinuousOutputLoop() {
@@ -1592,20 +1573,24 @@ async function testWebBackend() {
     // section. Before this, setQuantumEnabled()/setPredictorMode()
     // (NeuroclawLLM) were real and tested but reachable only from
     // TypeScript, with no endpoint to flip either one at all.
+    //
+    // "add quantum interference always on" -- quantumEnabled is now
+    // vestigial: it always reports true, and posting false to it has no
+    // effect. predictorMode is still real and still toggleable.
     const brainBefore = await get('/api/settings/brain');
     const brainBeforeJson = JSON.parse(brainBefore.body);
-    check(brainBefore.status === 200 && brainBeforeJson.quantumEnabled === false && brainBeforeJson.predictorMode === 'word',
-      'GET /api/settings/brain reports the real, off-by-default starting state');
+    check(brainBefore.status === 200 && brainBeforeJson.quantumEnabled === true && brainBeforeJson.predictorMode === 'word',
+      'GET /api/settings/brain reports quantum interference always on, and the real starting predictor mode');
 
-    const brainAfter = await post('/api/settings/brain', { quantumEnabled: true, predictorMode: 'code' });
+    const brainAfter = await post('/api/settings/brain', { quantumEnabled: false, predictorMode: 'code' });
     const brainAfterJson = JSON.parse(brainAfter.body);
     check(brainAfter.status === 200 && brainAfterJson.quantumEnabled === true && brainAfterJson.predictorMode === 'code',
-      'POST /api/settings/brain actually flips both settings and reports the new state');
+      'POST /api/settings/brain flips predictorMode but ignores an attempt to turn quantum interference off');
 
     const brainConfirmed = await get('/api/settings/brain');
     const brainConfirmedJson = JSON.parse(brainConfirmed.body);
     check(brainConfirmedJson.quantumEnabled === true && brainConfirmedJson.predictorMode === 'code',
-      'GET /api/settings/brain reflects the change on a later, independent request -- not just echoed back once');
+      'GET /api/settings/brain reflects the predictorMode change on a later, independent request -- not just echoed back once -- and still reports quantum interference on');
 
     // Malformed/partial input should not clobber the other field, and an
     // unrecognized predictorMode string should be ignored rather than
@@ -1614,6 +1599,49 @@ async function testWebBackend() {
     const brainPartialJson = JSON.parse(brainPartial.body);
     check(brainPartial.status === 200 && brainPartialJson.quantumEnabled === true && brainPartialJson.predictorMode === 'code',
       'POST /api/settings/brain ignores an invalid predictorMode value instead of corrupting state');
+
+    // "zip loop no file size limit" -- POST /api/zip-loop/file used to cap
+    // at 25MB (its own internal check) and POST /api/zip-loop/run went
+    // through parseBody()'s ordinary 1MB-per-request-body default, so even
+    // a real file well under the first cap could still be rejected by the
+    // second once base64-encoded. Neither ceiling applies to this route
+    // anymore; prove it with a body bigger than both old limits combined.
+    const bigFile = Buffer.alloc(2 * 1024 * 1024, 'x'); // 2MB: over parseBody's old 1MB default
+    const postRaw = (path, buf) => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': buf.length } }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', reject); req.write(buf); req.end();
+    });
+    const fileUpload = await postRaw('/api/zip-loop/file?path=input/big.bin', bigFile);
+    const fileUploadJson = JSON.parse(fileUpload.body);
+    check(fileUpload.status === 200 && fileUploadJson.ok === true && fileUploadJson.bytes === bigFile.length,
+      `POST /api/zip-loop/file accepts a ${bigFile.length}-byte file (old cap was 25MB, but the point is this route has none at all)`);
+
+    // POST /api/zip-loop/run went through parseBody()'s ordinary 1MB-per-
+    // request-body default, so a real file's base64 form could still be
+    // 413'd there even after clearing /file's own now-removed cap. Proven
+    // with an invalid `archive` field alongside 2MB of harmless padding in
+    // an unused field: an actual real file would reach the settle loop
+    // (genuinely slow by construction -- every bit is one settle() of the
+    // mesh, see sendBit()'s own doc comment -- and deliberately not what
+    // this check is about), but a bad archive value fails validation
+    // immediately after parsing, before the mesh is ever touched. Getting
+    // a 400 (real validation) rather than a 413 (parseBody's old cap) is
+    // exactly proof the >1MB body was parsed at all.
+    const runWithBigBody = await post('/api/zip-loop/run', {
+      archive: 'not a real base64-encoded packed archive',
+      _padding: 'x'.repeat(2 * 1024 * 1024),
+    });
+    check(runWithBigBody.status === 400,
+      `POST /api/zip-loop/run parses a request body far over the old 1MB default -- reaches real archive validation (400) instead of being rejected as too large (413), status was ${runWithBigBody.status}`);
+
+    // Regression guard the other direction: an ordinary small-body JSON
+    // endpoint must still enforce parseBody()'s 1MB default -- raising the
+    // ceiling for the zip loop specifically must not have loosened it for
+    // everyone else.
+    const oversizedTrain = await post('/api/train', { text: 'a'.repeat(2 * 1024 * 1024) });
+    check(oversizedTrain.status === 413, 'An ordinary endpoint (POST /api/train) still enforces the 1MB default -- raising the zip loop\'s own ceiling did not loosen it globally');
   } finally {
     await web.stop();
   }
@@ -5319,7 +5347,7 @@ async function main() {
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
     ['Hyperdimensional history/transitions/seenPatterns capacity', testHyperdimensionalCapacity],
-    ['Input-flag / self-model / live-correction (Section 3.1-3.3)', testInputFlagSelfModelLiveCorrection],
+    ['Input-flag / novelty / live-correction (Section 3.1-3.3)', testInputFlagNoveltyLiveCorrection],
     ['Vale gating', testValeGating],
     ['Symbolic trace', testSymbolicTrace],
     ['Definishon training', testDefinitionTraining],

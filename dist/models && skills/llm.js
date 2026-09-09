@@ -73,7 +73,7 @@ export class NeuroclawLLM {
         });
         // UnifiedBrain is the single module that *is* the model: value
         // system, MoE, the nonlinear all-connected mesh, hyperdimensional
-        // thinking, the (toggleable) quantum net, and zip-loop binary I/O.
+        // thinking, the (always-on) quantum net, and zip-loop binary I/O.
         // Everything below that used to construct its own separate
         // ValueRangeAllocator/MoERouter/NeuronMesh/HyperDimensionalEngine now
         // reads them from this one instance via the getters below, instead
@@ -87,7 +87,8 @@ export class NeuroclawLLM {
             hyperNeurons: this.config.hyperNeurons,
             ballStates: this.config.ballStates,
             valuePoints: this.config.valuePoints,
-            quantumEnabled: this.config.quantumEnabled ?? false,
+            // Unused -- UnifiedBrain always runs quantum interference now.
+            quantumEnabled: this.config.quantumEnabled ?? true,
             persistDir: this.config.selfExtensionsDir ? join(this.config.selfExtensionsDir, "brain") : undefined,
             hyperEngine: hyperEngine ?? undefined,
         });
@@ -108,7 +109,11 @@ export class NeuroclawLLM {
     get mesh() { return this.brain.getMesh(); }
     /** Hyperdimensional thinking engine -- delegates to UnifiedBrain. */
     get hyperEngine() { return this.brain.getHyper(); }
-    /** Toggle the (off-by-default) quantum interference stage of UnifiedBrain.think(). */
+    /**
+     * "add quantum interference always on" -- UnifiedBrain.think() now runs
+     * this stage unconditionally. Kept as a no-op passthrough only so
+     * existing callers (the Settings page, /api/settings/brain) don't break.
+     */
     setQuantumEnabled(enabled) { this.brain.setQuantumEnabled(enabled); }
     isQuantumEnabled() { return this.brain.isQuantumEnabled(); }
     /** Selects which predictor generate() samples from: the prose model or the code model. */

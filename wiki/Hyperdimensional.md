@@ -31,7 +31,7 @@ The Python trainable mesh (see [[Neuron-Mesh]]) doesn't wrap this in a separate 
 
 ## Verifying it
 
-`npm test` (`test/smoke.mjs`)'s `testHyperdimensional` and `testInputFlagSelfModelLiveCorrection` cover novelty detection, the self-input flag, and live correction directly. `benchmarks/hyper_benchmark.ts` measures the engine's `process()` throughput (`npx tsx benchmarks/hyper_benchmark.ts`).
+`npm test` (`test/smoke.mjs`)'s `testHyperdimensional` and `testInputFlagNoveltyLiveCorrection` cover novelty detection, the self-input flag, and live correction directly. `benchmarks/hyper_benchmark.ts` measures the engine's `process()` throughput (`npx tsx benchmarks/hyper_benchmark.ts`).
 
 ## See Also
 

@@ -59,8 +59,6 @@ Safety layer that validates all actions before execution.
 **Capabilities:**
 - **Objectionable Capability Check:** Blocks outright if a proposed action's
   capability tags match a configured blocklist
-- **Self-Model Drift Gating:** Fails safe on unexpected internal state --
-  mild drift escalates to human confirmation, severe drift blocks outright
 - **Irreversibility Check:** Requires human confirmation for irreversible or
   external-effect actions (unknown reversibility fails safe, treated as
   irreversible)
@@ -297,7 +295,6 @@ ZIP-IO Emission
   totalDurationMs: number,          // Total time
   selectedPlugins: string[],        // MoE selections
   alignment: VetoDecision,          // Safety verdict
-  selfModelSurprise: number,        // Prediction error
   liveCorrections: number,          // Corrections applied
   elasticStateDeltas: Map<number, number>  // Neuron movement
 }
@@ -324,13 +321,12 @@ await system.zipIO.write(userInput);
 // 5. Neural pipeline processes
 const result = await system.pipeline.run(
   embedUserInput(userInput),
-  { alignment, surprise: 0.4 }
+  { alignment }
 );
 
 // 6. Alignment veto validates
 const decision = system.veto.evaluate(
-  { id: result.selectedPlugins[0], name: "analyze", capabilities: ["analysis"] },
-  { selfModelSurprise: result.selfModelSurprise }
+  { id: result.selectedPlugins[0], name: "analyze", capabilities: ["analysis"] }
 );
 
 // 7. If approved, execute through plugin
