@@ -77,6 +77,78 @@ describe('pulling the catalogue from the store branch', () => {
     expect(readFileSync(path.join(reader, 'app.ts'), 'utf8')).toBe('export const running = true\n')
   })
 
+  // "I want users to be able to view store without downloading everything" --
+  // manifestsOnly is the fix: a fresh device's catalogue refresh should bring
+  // down each item's manifest.json (what listing/browsing actually reads,
+  // per store.ts's readItem()) and nothing else -- the payload file itself
+  // stays server-side until something actually asks for it.
+  it('manifestsOnly pulls manifest.json but leaves the payload file undownloaded', async () => {
+    const publisher = path.join(tmp, 'publisher-manifest')
+    git(['clone', '-q', remote, publisher], tmp)
+    git(['config', 'user.email', 'a@example.invalid'], publisher)
+    git(['config', 'user.name', 'a'], publisher)
+    git(['checkout', '-q', '-b', 'main'], publisher)
+    mkdirSync(path.join(publisher, 'store', 'skills'), { recursive: true })
+    git(['add', '-A'], publisher)
+    git(['commit', '--allow-empty', '-qm', 'init'], publisher)
+    git(['push', '-q', '-u', 'origin', 'main'], publisher)
+
+    const itemDir = path.join(publisher, 'store', 'skills', 'heavy-item')
+    mkdirSync(itemDir, { recursive: true })
+    // A "payload" standing in for whatever a real published item's actual
+    // content is -- the thing manifestsOnly must NOT bring down.
+    writeFileSync(path.join(itemDir, 'PAYLOAD.bin'), 'x'.repeat(4096))
+    writeFileSync(path.join(itemDir, 'manifest.json'), JSON.stringify({
+      kind: 'skills', name: 'heavy-item', title: 'Heavy Item', description: 'has a big payload',
+      author: 'test', publishedAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+      files: [{ filename: 'PAYLOAD.bin', bytes: 4096, sha256: 'deadbeef' }],
+    }))
+    const sync = await syncStorePaths([itemDir], 'store: publish skills/heavy-item', {
+      storeDir: path.join(publisher, 'store'),
+    })
+    expect(sync.pushed).toBe(true)
+
+    const reader = path.join(tmp, 'reader-manifest')
+    git(['clone', '-q', remote, reader], tmp)
+
+    const result = await pullStoreCatalog({ storeDir: path.join(reader, 'store'), manifestsOnly: true })
+    expect(result.pulled).toBe(true)
+
+    const manifestFile = path.join(reader, 'store', 'skills', 'heavy-item', 'manifest.json')
+    const payloadFile = path.join(reader, 'store', 'skills', 'heavy-item', 'PAYLOAD.bin')
+    expect(existsSync(manifestFile)).toBe(true)
+    expect(JSON.parse(readFileSync(manifestFile, 'utf8')).title).toBe('Heavy Item')
+    expect(existsSync(payloadFile)).toBe(false)
+  })
+
+  // A store branch with no items published yet has no manifest.json anywhere
+  // to match -- `git archive` itself treats a pathspec matching nothing as an
+  // error ("did not match any files"), which must read as "empty catalogue",
+  // not as a failure to reach the branch at all.
+  it('manifestsOnly reports a genuinely empty catalogue as a successful pull, not an error', async () => {
+    const publisher = path.join(tmp, 'publisher-empty-manifest')
+    git(['clone', '-q', remote, publisher], tmp)
+    git(['config', 'user.email', 'a@example.invalid'], publisher)
+    git(['config', 'user.name', 'a'], publisher)
+    git(['checkout', '-q', '-b', 'main'], publisher)
+    mkdirSync(path.join(publisher, 'store', 'skills'), { recursive: true })
+    writeFileSync(path.join(publisher, 'store', 'README.md'), '# store\n')
+    git(['add', '-A'], publisher)
+    git(['commit', '-qm', 'init'], publisher)
+    git(['push', '-q', '-u', 'origin', 'main'], publisher)
+    const sync = await syncStorePaths([path.join(publisher, 'store', 'README.md')], 'store: seed', {
+      storeDir: path.join(publisher, 'store'),
+    })
+    expect(sync.pushed).toBe(true)
+
+    const reader = path.join(tmp, 'reader-empty-manifest')
+    git(['clone', '-q', remote, reader], tmp)
+
+    const result = await pullStoreCatalog({ storeDir: path.join(reader, 'store'), manifestsOnly: true })
+    expect(result.pulled).toBe(true)
+    expect(result.reason).toBeUndefined()
+  })
+
   it('says so, rather than pretending, when the store branch does not exist yet', async () => {
     const reader = path.join(tmp, 'reader-empty')
     git(['clone', '-q', remote, reader], tmp)

@@ -93,9 +93,25 @@ export interface StoreCatalogPullResult {
  * only ever show what actually got published, and a fresh clone of the
  * store branch has none of the stale file -- it is purely a property of one
  * long-lived device's disk, not of the store.
+ *
+ * `manifestsOnly`: "I want users to be able to view store without downloading
+ * everything" -- readItem()/listCatalog() (store.ts) were already built to
+ * need nothing but each item's manifest.json: a payload file that isn't on
+ * disk just reports `local: false`, and store-fetch.ts's own per-file
+ * fetchItemFile() below is what brings one down, on demand, when someone
+ * actually asks for it. This function was the one place that didn't hold up
+ * its end -- a plain `git archive` with no pathspec pulls every payload byte
+ * of every published item, every time, before anyone has browsed anything.
+ * `manifestsOnly: true` restricts the archive to `*manifest.json` (a git
+ * pathspec, not a shell glob), so a boot-time catalogue refresh brings down
+ * only what listing actually reads -- kilobytes, not whatever the total
+ * store has grown to. Payload files a device already fetched on demand stay
+ * on disk either way; this only changes what a *fresh* pull brings down.
+ * Defaults to false (the original, full-archive behavior) so an explicit,
+ * one-off full sync is still one call away for anything that wants it.
  */
 export async function pullStoreCatalog(
-  opts: { storeDir?: string; remote?: string; branch?: string } = {},
+  opts: { storeDir?: string; remote?: string; branch?: string; manifestsOnly?: boolean } = {},
 ): Promise<StoreCatalogPullResult> {
   const storeDir = opts.storeDir ?? storeRoot();
   const remote = opts.remote ?? "origin";
@@ -115,12 +131,25 @@ export async function pullStoreCatalog(
 
   const tmpFile = path.join(tmpdir(), `neuroclaw-store-archive-${process.pid}-${Date.now()}.tar`);
   try {
-    const archived = await new Promise<boolean>(resolve => {
-      execFile("git", ["archive", "--output", tmpFile, rev], { cwd: root, timeout: ARCHIVE_TIMEOUT_MS }, err => {
-        resolve(!err);
+    const archiveArgs = opts.manifestsOnly
+      ? ["archive", "--output", tmpFile, rev, "--", "*manifest.json"]
+      : ["archive", "--output", tmpFile, rev];
+    // A `manifestsOnly` pathspec matching zero files (nothing published yet
+    // anywhere) is `git archive` exiting non-zero with "did not match any
+    // files" -- a real, successful answer ("empty catalogue"), not a failure
+    // to read the branch, so it's told apart from every other archive error
+    // instead of being reported as one.
+    const archiveResult = await new Promise<{ ok: boolean; stderr: string }>(resolve => {
+      execFile("git", archiveArgs, { cwd: root, timeout: ARCHIVE_TIMEOUT_MS }, (err, _stdout, stderr) => {
+        resolve({ ok: !err, stderr: String(stderr ?? "") });
       });
     });
-    if (!archived) return { pulled: false, reason: "Could not read the store branch's contents." };
+    if (!archiveResult.ok) {
+      if (opts.manifestsOnly && /did not match any files/.test(archiveResult.stderr)) {
+        return { pulled: true };
+      }
+      return { pulled: false, reason: "Could not read the store branch's contents." };
+    }
 
     const extracted = await new Promise<boolean>(resolve => {
       execFile("tar", ["-xf", tmpFile, "-C", root], { timeout: ARCHIVE_TIMEOUT_MS }, err => resolve(!err));
