@@ -2779,15 +2779,39 @@ export class WebServer {
     }
 
     // GET /api/chat-history/threads — every thread, lightweight summaries
-    // only (id/title/source/updatedAt), for a history sidebar/page.
+    // only (id/title/source/updatedAt/pinned), for a history sidebar/page.
+    // ?pinned=true narrows to just the pinned ones, for the "Pinned Chats"
+    // nav entry -- same endpoint, not a separate one, so pinned state never
+    // has two different sources of truth to drift apart.
     if (pathname === '/api/chat-history/threads' && method === 'GET') {
       const sourceParam = parsedUrl.searchParams.get('source');
       const source: ChatSource | undefined = sourceParam === 'chat' || sourceParam === 'chat-group' ? sourceParam : undefined;
+      const pinnedOnly = parsedUrl.searchParams.get('pinned') === 'true';
       const threads = this.chatHistory.listThreads()
         .filter(t => !source || t.source === source)
+        .filter(t => !pinnedOnly || t.pinned === true)
         .sort((a, b) => b.updatedAt - a.updatedAt)
-        .map(t => ({ id: t.id, title: t.title, source: t.source, updatedAt: t.updatedAt, createdAt: t.createdAt }));
+        .map(t => ({ id: t.id, title: t.title, source: t.source, updatedAt: t.updatedAt, createdAt: t.createdAt, pinned: t.pinned === true }));
       this.sendJson(res, { threads });
+      return;
+    }
+
+    // POST /api/chat-history/threads/:id/pin — { pinned: boolean }. Toggling
+    // is idempotent and always returns the thread's current pinned state, so
+    // a client can fire this from a button without tracking prior state itself.
+    const pinMatch = pathname.match(/^\/api\/chat-history\/threads\/([^/]+)\/pin$/);
+    if (pinMatch && method === 'POST') {
+      const body = await this.parseBody(req) as { pinned?: boolean } | null;
+      if (typeof body?.pinned !== 'boolean') {
+        this.sendJson(res, { error: 'Expected { pinned: boolean }' }, 400);
+        return;
+      }
+      const thread = this.chatHistory.setPinned(decodeURIComponent(pinMatch[1]), body.pinned);
+      if (!thread) {
+        this.sendJson(res, { error: 'Thread not found' }, 404);
+        return;
+      }
+      this.sendJson(res, { id: thread.id, pinned: thread.pinned === true });
       return;
     }
 

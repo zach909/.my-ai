@@ -44,6 +44,7 @@ import {
   Brain, Trash2, Pin, AlertTriangle,
 } from 'lucide-react'
 import { toast } from 'sonner'
+import { setThreadPinned } from '@/lib/chat-pins'
 
 export const Route = createFileRoute('/app/chat-groups')({
   head: () => ({
@@ -93,12 +94,13 @@ function ChatGroupsPage() {
   )
 }
 
-interface ThreadSummary {
+export interface ThreadSummary {
   id: string
   title: string
   source: 'chat' | 'chat-group'
   updatedAt: number
   createdAt?: number
+  pinned?: boolean
 }
 
 interface GroupWithThreads {
@@ -121,7 +123,7 @@ function timeAgo(ts: number): string {
   return `${days}d ago`
 }
 
-function ThreadRow({ thread }: { thread: ThreadSummary }) {
+export function ThreadRow({ thread, onTogglePin }: { thread: ThreadSummary; onTogglePin?: (thread: ThreadSummary) => void }) {
   const href = thread.source === 'chat-group' ? '/app/chat-groups' : '/app/chat'
   const sourceName = thread.source === 'chat-group' ? 'hive discussion' : 'AI chat'
   const titleText = thread.title || 'untitled'
@@ -143,6 +145,28 @@ function ThreadRow({ thread }: { thread: ThreadSummary }) {
       </div>
       <div className="flex items-center gap-1.5 shrink-0">
         <span className="text-[11px] text-muted-foreground">{timeAgo(thread.updatedAt)}</span>
+        {onTogglePin && (
+          <button
+            type="button"
+            onClick={(e) => {
+              // The row itself is the navigation link -- without stopping
+              // this, pinning/unpinning would also follow the link away
+              // from the list the button is sitting in.
+              e.preventDefault()
+              e.stopPropagation()
+              onTogglePin(thread)
+            }}
+            aria-label={thread.pinned ? `Unpin "${titleText}"` : `Pin "${titleText}"`}
+            title={thread.pinned ? 'Unpin' : 'Pin'}
+            className={`flex h-6 w-6 items-center justify-center rounded transition-all duration-150 active:scale-90 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary ${
+              thread.pinned
+                ? 'text-primary opacity-100'
+                : 'text-muted-foreground opacity-0 group-hover:opacity-100 group-focus-within:opacity-100 hover:text-foreground'
+            }`}
+          >
+            <Pin size={13} fill={thread.pinned ? 'currentColor' : 'none'} />
+          </button>
+        )}
         <ArrowRight
           size={13}
           className="text-primary opacity-0 -translate-x-1 group-hover:opacity-100 group-hover:translate-x-0 group-focus:opacity-100 group-focus:translate-x-0 transition-all duration-150"
@@ -153,7 +177,7 @@ function ThreadRow({ thread }: { thread: ThreadSummary }) {
   )
 }
 
-function GroupCard({ group }: { group: GroupWithThreads }) {
+function GroupCard({ group, onTogglePin }: { group: GroupWithThreads; onTogglePin: (thread: ThreadSummary) => void }) {
   const [open, setOpen] = useState(true)
   return (
     <Card className="space-y-2 p-4">
@@ -181,7 +205,7 @@ function GroupCard({ group }: { group: GroupWithThreads }) {
       {open && (
         <div className="space-y-1.5 pt-1">
           {group.threads.map((t) => (
-            <ThreadRow key={t.id} thread={t} />
+            <ThreadRow key={t.id} thread={t} onTogglePin={onTogglePin} />
           ))}
         </div>
       )}
@@ -222,6 +246,30 @@ function ChatHistoryPanel() {
   useEffect(() => {
     load()
   }, [])
+
+  /**
+   * Optimistic: the pin button should feel instant, not wait on a round
+   * trip. Updates both `groups` (a thread can be sitting inside one) and
+   * `ungrouped` since a given thread id is only ever in one of the two, and
+   * reverts + toasts if the request itself fails.
+   */
+  const togglePin = async (thread: ThreadSummary) => {
+    const next = !thread.pinned
+    const apply = (pinned: boolean) => {
+      setGroups((gs) => gs.map((g) => ({
+        ...g,
+        threads: g.threads.map((t) => (t.id === thread.id ? { ...t, pinned } : t)),
+      })))
+      setUngrouped((us) => us.map((t) => (t.id === thread.id ? { ...t, pinned } : t)))
+    }
+    apply(next)
+    try {
+      await setThreadPinned(thread.id, next)
+    } catch (err) {
+      apply(thread.pinned === true)
+      toast.error(err instanceof Error ? err.message : 'Could not update pin')
+    }
+  }
 
   const totalChats = groups.reduce((s, g) => s + g.threads.length, 0) + ungrouped.length
 
@@ -358,7 +406,7 @@ function ChatHistoryPanel() {
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
         {filteredData.groups.map((g) => (
-          <GroupCard key={g.id} group={g} />
+          <GroupCard key={g.id} group={g} onTogglePin={togglePin} />
         ))}
       </div>
 
@@ -370,7 +418,7 @@ function ChatHistoryPanel() {
           </div>
           <div className="space-y-1.5">
             {filteredData.ungrouped.map((t) => (
-              <ThreadRow key={t.id} thread={t} />
+              <ThreadRow key={t.id} thread={t} onTogglePin={togglePin} />
             ))}
           </div>
         </Card>

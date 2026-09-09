@@ -37,6 +37,8 @@ export interface ChatThread {
   messages: ChatMessage[];
   createdAt: number;
   updatedAt: number;
+  /** Kept out of Chat History's normal recency sort/eviction and surfaced on its own "Pinned Chats" nav entry. Absent (not `false`) on every thread written before pinning existed -- callers treat that the same as `false`. */
+  pinned?: boolean;
 }
 
 export interface ChatMatch {
@@ -135,6 +137,20 @@ export class ChatHistoryStore {
   }
 
   /**
+   * Pin or unpin a thread. Returns the updated thread, or null if it
+   * doesn't exist. Nothing else about the thread changes -- in particular
+   * `updatedAt` is left alone, so pinning something doesn't also bump it to
+   * the top of a plain recency-sorted list.
+   */
+  setPinned(id: string, pinned: boolean): ChatThread | null {
+    const thread = this.loadThread(id);
+    if (!thread) return null;
+    thread.pinned = pinned;
+    writeFileSync(this.path(thread.id), JSON.stringify(thread), "utf8");
+    return thread;
+  }
+
+  /**
    * Append a message, creating a new thread if `threadId` is omitted or
    * unknown. Returns the updated thread. Every save automatically files the
    * thread into a topic group via ChatOrganizer -- callers never have to
@@ -175,7 +191,7 @@ export class ChatHistoryStore {
    * message bodies stay behind loadThread()/threads/:id so this stays cheap
    * even with a lot of history.
    */
-  listGroupsWithThreads(): Array<ChatGroupRecord & { threads: Array<{ id: string; title: string; source: ChatSource; updatedAt: number }> }> {
+  listGroupsWithThreads(): Array<ChatGroupRecord & { threads: Array<{ id: string; title: string; source: ChatSource; updatedAt: number; pinned: boolean }> }> {
     const threadsById = new Map(this.listThreads().map((t) => [t.id, t]));
     return this.listGroups().map((group) => ({
       ...group,
@@ -183,7 +199,7 @@ export class ChatHistoryStore {
         .map((id) => threadsById.get(id))
         .filter((t): t is ChatThread => !!t)
         .sort((a, b) => b.updatedAt - a.updatedAt)
-        .map((t) => ({ id: t.id, title: t.title, source: t.source, updatedAt: t.updatedAt })),
+        .map((t) => ({ id: t.id, title: t.title, source: t.source, updatedAt: t.updatedAt, pinned: t.pinned === true })),
     }));
   }
 

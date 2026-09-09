@@ -17,6 +17,7 @@ import { Route as AppIndexRouteImport } from './routes/app/index'
 import { Route as AppStoreRouteImport } from './routes/app/store'
 import { Route as AppSettingsRouteImport } from './routes/app/settings'
 import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
+import { Route as AppPinnedChatsRouteImport } from './routes/app/pinned-chats'
 import { Route as AppChatGroupsRouteImport } from './routes/app/chat-groups'
 import { Route as AppChatRouteImport } from './routes/app/chat'
 import { Route as AppAccessRouteImport } from './routes/app/access'
@@ -61,6 +62,11 @@ const AppSelfImprovementRoute = AppSelfImprovementRouteImport.update({
   path: '/self-improvement',
   getParentRoute: () => AppRoute,
 } as any)
+const AppPinnedChatsRoute = AppPinnedChatsRouteImport.update({
+  id: '/pinned-chats',
+  path: '/pinned-chats',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppChatGroupsRoute = AppChatGroupsRouteImport.update({
   id: '/chat-groups',
   path: '/chat-groups',
@@ -85,6 +91,7 @@ export interface FileRoutesByFullPath {
   '/app/access': typeof AppAccessRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
+  '/app/pinned-chats': typeof AppPinnedChatsRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
@@ -97,6 +104,7 @@ export interface FileRoutesByTo {
   '/app/access': typeof AppAccessRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
+  '/app/pinned-chats': typeof AppPinnedChatsRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
@@ -111,6 +119,7 @@ export interface FileRoutesById {
   '/app/access': typeof AppAccessRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
+  '/app/pinned-chats': typeof AppPinnedChatsRoute
   '/app/self-improvement': typeof AppSelfImprovementRoute
   '/app/settings': typeof AppSettingsRoute
   '/app/store': typeof AppStoreRoute
@@ -126,6 +135,7 @@ export interface FileRouteTypes {
     | '/app/access'
     | '/app/chat'
     | '/app/chat-groups'
+    | '/app/pinned-chats'
     | '/app/self-improvement'
     | '/app/settings'
     | '/app/store'
@@ -138,6 +148,7 @@ export interface FileRouteTypes {
     | '/app/access'
     | '/app/chat'
     | '/app/chat-groups'
+    | '/app/pinned-chats'
     | '/app/self-improvement'
     | '/app/settings'
     | '/app/store'
@@ -151,6 +162,7 @@ export interface FileRouteTypes {
     | '/app/access'
     | '/app/chat'
     | '/app/chat-groups'
+    | '/app/pinned-chats'
     | '/app/self-improvement'
     | '/app/settings'
     | '/app/store'
@@ -222,6 +234,13 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppSelfImprovementRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/pinned-chats': {
+      id: '/app/pinned-chats'
+      path: '/pinned-chats'
+      fullPath: '/app/pinned-chats'
+      preLoaderRoute: typeof AppPinnedChatsRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/chat-groups': {
       id: '/app/chat-groups'
       path: '/chat-groups'
@@ -250,6 +269,7 @@ interface AppRouteChildren {
   AppAccessRoute: typeof AppAccessRoute
   AppChatRoute: typeof AppChatRoute
   AppChatGroupsRoute: typeof AppChatGroupsRoute
+  AppPinnedChatsRoute: typeof AppPinnedChatsRoute
   AppSelfImprovementRoute: typeof AppSelfImprovementRoute
   AppSettingsRoute: typeof AppSettingsRoute
   AppStoreRoute: typeof AppStoreRoute
@@ -260,6 +280,7 @@ const AppRouteChildren: AppRouteChildren = {
   AppAccessRoute: AppAccessRoute,
   AppChatRoute: AppChatRoute,
   AppChatGroupsRoute: AppChatGroupsRoute,
+  AppPinnedChatsRoute: AppPinnedChatsRoute,
   AppSelfImprovementRoute: AppSelfImprovementRoute,
   AppSettingsRoute: AppSettingsRoute,
   AppStoreRoute: AppStoreRoute,
