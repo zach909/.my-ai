@@ -16,15 +16,62 @@
  * below is gone; UnifiedBrain now runs that stage unconditionally (see
  * unified-brain.ts), so there is nothing left to turn on or off.
  */
-import { createFileRoute } from '@tanstack/react-router'
+import { createFileRoute, Link } from '@tanstack/react-router'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Card } from '@/components/ui/card'
+import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { Atom, KeyRound, Loader2, LogOut, ShieldOff, Settings as SettingsIcon, Sparkles } from 'lucide-react'
+import { ArrowUpRight, Atom, Blocks, KeyRound, Loader2, LogOut, ShieldOff, Settings as SettingsIcon, Sparkles, Store as StoreIcon, TrendingUp } from 'lucide-react'
 import { toast } from 'sonner'
 import { AccessPanel } from './access'
+
+/**
+ * Everything that isn't Chats or Pinned Chats lives under Settings now --
+ * "move everything that is not chat to settings." Extension Builder,
+ * Self-Improvement and Store are each substantial tools in their own right
+ * (a drag-and-connect editor, a metrics dashboard, a whole catalogue/wiki/
+ * upload workflow) -- reproducing their UI inline here would just be a
+ * second, worse copy of each. This is the same link-card pattern the old
+ * Dashboard page used, relocated rather than rebuilt: each one is still a
+ * real, fully working page at its own URL, just reached from Settings
+ * instead of its own top-level sidebar entry.
+ */
+const MODULE_LINKS = [
+  { title: 'Extension Builder', description: 'Drag-and-connect neuron editor: build, train, and deploy extensions.', icon: Blocks, href: '/builder' as const },
+  { title: 'Self-Improvement', description: 'Real progress from the autonomous self-improvement, skill-creation, and skill-drilling agents.', icon: TrendingUp, href: '/app/self-improvement' as const },
+  { title: 'Store', description: 'Browse, download and publish skills, plugins, binaries and files, write wiki pages, and discuss any of it.', icon: StoreIcon, href: '/app/store' as const },
+]
+
+function ModulesSection() {
+  return (
+    <div className="grid gap-4 p-4 sm:grid-cols-2">
+      {MODULE_LINKS.map(({ title, description, icon: Icon, href }) => (
+        <Link
+          key={title}
+          to={href}
+          aria-label={`Open ${title}: ${description}`}
+          className="group block rounded-xl focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-2 focus-visible:ring-offset-background active:scale-[0.97] transition-all duration-150"
+        >
+          <Card className="relative h-full transition-all duration-300 group-hover:-translate-y-1 group-hover:shadow-md group-hover:border-primary/50 cursor-pointer overflow-hidden">
+            <CardHeader className="flex flex-row items-center gap-3 pb-2 pr-10">
+              <div className="flex items-center justify-center h-8 w-8 rounded-md bg-primary/10 text-primary group-hover:bg-primary/20 transition-all duration-300 group-hover:scale-110">
+                <Icon className="h-4 w-4" />
+              </div>
+              <CardTitle className="text-sm font-medium group-hover:text-primary transition-colors">{title}</CardTitle>
+            </CardHeader>
+            <CardContent>
+              <p className="text-sm text-muted-foreground leading-relaxed">{description}</p>
+            </CardContent>
+            <div className="absolute top-4 right-4 text-muted-foreground/30 group-hover:text-primary/70 transition-all duration-200 transform group-hover:translate-x-0.5 group-hover:-translate-y-0.5">
+              <ArrowUpRight className="h-4 w-4" />
+            </div>
+          </Card>
+        </Link>
+      ))}
+    </div>
+  )
+}
 
 export const Route = createFileRoute('/app/settings')({
   head: () => ({
@@ -36,12 +83,13 @@ export const Route = createFileRoute('/app/settings')({
   component: SettingsPage,
 })
 
-type SettingsTab = 'remote-access' | 'brain' | 'access'
+type SettingsTab = 'remote-access' | 'brain' | 'access' | 'modules'
 
 const SETTINGS_TABS: { key: SettingsTab; label: string; icon: typeof KeyRound }[] = [
   { key: 'remote-access', label: 'Remote Access', icon: KeyRound },
   { key: 'brain', label: 'Brain Behavior', icon: Sparkles },
   { key: 'access', label: 'Computer Access', icon: ShieldOff },
+  { key: 'modules', label: 'Modules', icon: Blocks },
 ]
 
 function SettingsPage() {
@@ -82,6 +130,7 @@ function SettingsPage() {
         {tab === 'remote-access' && <RemoteAccessSection />}
         {tab === 'brain' && <BrainBehaviorSection />}
         {tab === 'access' && <AccessPanel />}
+        {tab === 'modules' && <ModulesSection />}
       </div>
     </div>
   )

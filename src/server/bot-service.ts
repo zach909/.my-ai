@@ -25,9 +25,13 @@ export interface AppRoute {
 export const APP_ROUTES: AppRoute[] = [
   { path: '/', title: 'Corona', description: 'A full-stack platform for prototyping, integrating, and evaluating the essential modules required for building an Artificial Superintelligence.' },
   { path: '/desktop', title: 'Desktop', description: 'Desktop application shell.' },
-  { path: '/builder', title: 'Extension Builder', description: 'Build and manage extensions.' },
-  { path: '/app', title: 'Dashboard', description: 'Corona — Prototype & Evaluate Superintelligence Modules.' },
-  { path: '/app/chat', title: 'AI Chat', description: 'Talk to the AI assistant with agent-suggested follow-up prompts.' },
+  // Dashboard is gone -- /app now just forwards into Chats (see
+  // app/index.tsx). Extension Builder, Self-Improvement and Store are still
+  // real routes, just reached from Settings' Modules tab now, not their own
+  // top-level nav entries -- "move everything that is not chat to settings."
+  { path: '/builder', title: 'Extension Builder', description: 'Build and manage extensions -- the Modules tab of Settings.' },
+  { path: '/app/chat', title: 'Chats', description: 'Talk to the AI assistant with agent-suggested follow-up prompts.' },
+  { path: '/app/pinned-chats', title: 'Pinned Chats', description: 'Chats pinned from Chat History, kept out of the way of everything else.' },
   // Planning is now the Planning tab of /app/store (Store's "Prompting Skills"
   // and "Planning" tabs are next to each other), not its own route.
   { path: '/app/store', title: 'Planning', description: 'Define goal hierarchies, task decomposition, and strategic planning for ASI agents -- the Planning tab of the Store.' },
@@ -37,14 +41,15 @@ export const APP_ROUTES: AppRoute[] = [
   // their own routes.
   { path: '/app/self-improvement', title: 'Evaluation', description: 'Measure and benchmark ASI module performance against defined criteria -- the Evaluation tab of Self-Improvement.' },
   { path: '/app/self-improvement', title: 'Experiments', description: 'Design and run ASI module experiments with structured protocols -- the Experiments tab of Self-Improvement.' },
-  { path: '/app/self-improvement', title: 'Self-Improvement', description: 'Real progress from the autonomous self-improvement, skill-creation, and skill-drilling agents.' },
+  { path: '/app/self-improvement', title: 'Self-Improvement', description: 'Real progress from the autonomous self-improvement, skill-creation, and skill-drilling agents -- the Modules tab of Settings.' },
   // Chat History and Memory are tabs of /app/chat-groups (route name kept for
   // old links; there is no "Chat Groups" hive-discussion page any more -- one
   // AI directing another is the "hive" chat plugin now, not a page).
   { path: '/app/chat-groups', title: 'Chat History', description: 'Every saved AI Chat thread, automatically organized into topic groups.' },
   { path: '/app/chat-groups', title: 'Memory', description: 'View and manage what the agent remembers -- the Memory tab of Chat History.' },
   { path: '/app/chat', title: 'Hive Mind', description: 'One AI directing another: "hive ask <role>: <task>" or "hive summon <role> <specialization>: <task>" in any chat (plugins/hive.ts).' },
-  { path: '/app/store', title: 'Store', description: 'Browse, download and publish skills, plugins, binaries, source and files, write wiki pages, and discuss any of it.' },
+  { path: '/app/store', title: 'Store', description: 'Browse, download and publish skills, plugins, binaries, source and files, write wiki pages, and discuss any of it -- the Modules tab of Settings.' },
+  { path: '/app/settings', title: 'Settings', description: 'Remote access, brain behavior, computer access, and the Extension Builder / Self-Improvement / Store modules, all in one place.' },
 ]
 
 export interface BotMessage {
