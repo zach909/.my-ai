@@ -1,7 +1,23 @@
 import * as fs from "fs";
 import * as path from "path";
+import { spawn } from "child_process";
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
+
+/**
+ * The command that hands a file to whatever program the OS has registered
+ * for its type -- macOS's `open`, Windows' `start` (via cmd, which is how
+ * `start` is actually invoked -- it isn't its own executable), and `xdg-open`
+ * everywhere else (every mainstream Linux desktop ships it, wired to
+ * whatever the desktop environment's own file-type associations are).
+ * Exported (not inlined into openFile) so a test can assert the right
+ * command gets picked per platform without actually spawning anything.
+ */
+export function openCommandFor(filePath: string, platform: NodeJS.Platform = process.platform): { command: string; args: string[] } {
+  if (platform === "darwin") return { command: "open", args: [filePath] };
+  if (platform === "win32") return { command: "cmd", args: ["/c", "start", '""', filePath] };
+  return { command: "xdg-open", args: [filePath] };
+}
 
 export interface FileEntry {
   name: string;
@@ -27,13 +43,21 @@ export class FileSystemPlugin extends BasePlugin {
     return fs.readFileSync(fullPath, "utf-8");
   }
 
-  async writeFile(filePath: string, content: string): Promise<void> {
+  async writeFile(filePath: string, content: string | Buffer): Promise<void> {
     const fullPath = this.resolvePath(filePath);
     const dir = path.dirname(fullPath);
     if (!fs.existsSync(dir)) {
       fs.mkdirSync(dir, { recursive: true });
     }
-    fs.writeFileSync(fullPath, content, "utf-8");
+    // Buffer content (images, PDFs, zips, any binary response file) must
+    // reach disk byte-for-byte -- passing an encoding for a Buffer is a
+    // silent no-op in Node, but being explicit here means the string path
+    // (the original, still-common case) keeps its exact prior behavior.
+    if (Buffer.isBuffer(content)) {
+      fs.writeFileSync(fullPath, content);
+    } else {
+      fs.writeFileSync(fullPath, content, "utf-8");
+    }
   }
 
   async deleteFile(filePath: string): Promise<boolean> {
@@ -72,6 +96,46 @@ export class FileSystemPlugin extends BasePlugin {
   async mkdir(dirPath: string, recursive: boolean = true): Promise<void> {
     const fullPath = this.resolvePath(dirPath);
     fs.mkdirSync(fullPath, { recursive });
+  }
+
+  /**
+   * Hands a file to the OS to open with whatever program owns its type --
+   * "you will see it by having your system open it, not the app." This is
+   * a local-first app: the backend process is already running on the
+   * user's own machine, so unlike a browser page (which can never launch a
+   * program on the user's computer) this can genuinely just shell out to
+   * the platform's own opener. Detached and unref'd so the opened program
+   * outlives this request and this process never waits on it.
+   */
+  async openFile(filePath: string): Promise<{ opened: boolean; reason?: string }> {
+    const fullPath = this.resolvePath(filePath);
+    if (!fs.existsSync(fullPath)) {
+      return { opened: false, reason: `No file at ${filePath}.` };
+    }
+    const { command, args } = openCommandFor(fullPath);
+    try {
+      const child = spawn(command, args, { detached: true, stdio: "ignore" });
+      // A missing opener (e.g. no xdg-open on a headless box) fails async,
+      // after spawn() has already returned -- without this listener that
+      // becomes an unhandled 'error' event that can crash the process.
+      child.on("error", () => {});
+      child.unref();
+      return { opened: true };
+    } catch (err) {
+      return { opened: false, reason: err instanceof Error ? err.message : String(err) };
+    }
+  }
+
+  /**
+   * Save a response file and immediately open it -- the concrete "any
+   * response file type... auto-open on arrival" path: content the AI
+   * produces lands on disk under the plugin's root and is handed straight
+   * to the system's default app for that type, rather than rendered or
+   * previewed inside NeuroClaw's own UI.
+   */
+  async writeAndOpen(filePath: string, content: string | Buffer): Promise<{ opened: boolean; reason?: string }> {
+    await this.writeFile(filePath, content);
+    return this.openFile(filePath);
   }
 
   private resolvePath(relativePath: string): string {
@@ -136,6 +200,16 @@ export class FileSystemPlugin extends BasePlugin {
     if (existsMatch?.[1]) {
       const ok = await this.exists(existsMatch[1]);
       return `[FileSystem] ${existsMatch[1]}: ${ok ? 'exists' : 'not found'}`;
+    }
+    // open <path> -- describeCapabilities() has advertised "open" as one of
+    // this plugin's verbs from the start; nothing here actually implemented
+    // it until now, so a request routed here for it fell through to `null`.
+    const openMatch = input.match(/\bopen\s+(\S+)/i);
+    if (openMatch?.[1]) {
+      const result = await this.openFile(openMatch[1]);
+      return result.opened
+        ? `[FileSystem] Opened ${openMatch[1]} with your system's default app.`
+        : `[FileSystem] Could not open ${openMatch[1]}: ${result.reason}`;
     }
     return null;
   }
