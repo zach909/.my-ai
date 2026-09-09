@@ -85,7 +85,7 @@ describe('pushing something public to GitHub, with no sign-up and no sign-in', (
 
     expect(result.pushed).toBe(true);
     expect(result.url).toBe(
-      'https://github.com/example-owner/example-repo/blob/main/store/files/my-public-thing/note.txt',
+      'https://github.com/example-owner/example-repo/blob/store/store/files/my-public-thing/note.txt',
     );
 
     // The decisive check: a clone that never saw the publisher has it. That
@@ -93,6 +93,7 @@ describe('pushing something public to GitHub, with no sign-up and no sign-in', (
     // pushed: true".
     const other = path.join(tmp, 'other-clone');
     git(['clone', '-q', remote, other], tmp);
+    git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
     const landed = path.join(other, 'store', 'files', 'my-public-thing', 'note.txt');
     expect(existsSync(landed)).toBe(true);
     expect(readFileSync(landed, 'utf8')).toBe('hello world\n');
@@ -108,7 +109,7 @@ describe('pushing something public to GitHub, with no sign-up and no sign-in', (
       ],
     });
     expect(result.pushed).toBe(true);
-    expect(result.url).toBe('https://github.com/example-owner/example-repo/tree/main/store/files/multi-file-thing');
+    expect(result.url).toBe('https://github.com/example-owner/example-repo/tree/store/store/files/multi-file-thing');
   });
 
   it('refuses model weights before anything is written or pushed', async () => {

@@ -106,7 +106,6 @@ it('should process query through safety gate', async () => {
   // Attempt action
   const decision1 = system.veto.evaluate(
     { id: 'a1', name: 'write_file', capabilities: [], reversible: false },
-    { selfModelSurprise: 0.2 }
   );
   
   // User unhappy → more cautious
@@ -116,7 +115,6 @@ it('should process query through safety gate', async () => {
   // Same action now blocked by higher veto
   const decision2 = system.veto.evaluate(
     { id: 'a2', name: 'write_file', capabilities: [], reversible: false },
-    { selfModelSurprise: 0.2 }
   );
   
   expect(alignment1).toBeGreaterThan(alignment2);
@@ -281,7 +279,6 @@ describe('End-to-End Query Processing', () => {
         capabilities: ['network'],
         reversible: true
       },
-      { selfModelSurprise: result.selfModelSurprise }
     );
     
     // Step 6: Dispatch if approved

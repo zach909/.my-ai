@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus } from 'lucide-react'
+import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus, MessageSquare, X } from 'lucide-react'
 import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from 'sonner'
 import { VoiceRecorder } from '@/components/VoiceRecorder'
@@ -40,6 +40,203 @@ export const Route = createFileRoute('/app/chat')({
   }),
   component: ChatPage,
 })
+
+/**
+ * One open, independent conversation. Multiple can be open side by side as
+ * tabs (see ChatPage below) -- each tab owns its own messages/threadId/staged
+ * files/etc, so switching tabs never loses what was mid-typed or mid-reply in
+ * another one. The tab strip itself only tracks lightweight metadata
+ * (threadId + a display title) per tab; the actual conversation state lives
+ * here, in the ChatConversation instance the tab strip keeps mounted (just
+ * hidden) while another tab is active.
+ */
+interface ChatTabMeta {
+  id: string
+  /** Undefined until the first turn is saved to history (or never, incognito). */
+  threadId?: string
+  title: string
+}
+
+const TABS_STORAGE_KEY = 'neuroclaw:chat-tabs:v1'
+
+function loadStoredTabs(): ChatTabMeta[] {
+  try {
+    const raw = localStorage.getItem(TABS_STORAGE_KEY)
+    if (!raw) return []
+    const parsed = JSON.parse(raw)
+    if (!Array.isArray(parsed)) return []
+    return parsed.filter(
+      (t): t is ChatTabMeta => t && typeof t.id === 'string' && typeof t.title === 'string',
+    )
+  } catch {
+    return []
+  }
+}
+
+function newTabId(): string {
+  return `tab_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`
+}
+
+function deriveTabTitle(text: string): string {
+  const trimmed = text.trim().replace(/\s+/g, ' ')
+  if (!trimmed) return 'New Chat'
+  return trimmed.length > 28 ? `${trimmed.slice(0, 28)}…` : trimmed
+}
+
+/**
+ * Tabs restore from localStorage on load (metadata only -- id/threadId/title,
+ * never the messages themselves, so this stays small and never goes stale
+ * the way a cached transcript would). Arriving via ?thread=<id> (from the
+ * Chat History page) either activates a tab already open on that thread or
+ * opens a new one for it, rather than always adding a duplicate.
+ */
+function computeInitialTabs(): { tabs: ChatTabMeta[]; activeId: string } {
+  const threadParam =
+    typeof window !== 'undefined' ? new URLSearchParams(window.location.search).get('thread') : null
+  let tabs = loadStoredTabs()
+  let activeId: string | undefined
+
+  if (threadParam) {
+    const existing = tabs.find((t) => t.threadId === threadParam)
+    if (existing) {
+      activeId = existing.id
+    } else {
+      const created: ChatTabMeta = { id: newTabId(), threadId: threadParam, title: 'Opened chat' }
+      tabs = [...tabs, created]
+      activeId = created.id
+    }
+  }
+
+  if (tabs.length === 0) {
+    const created: ChatTabMeta = { id: newTabId(), title: 'New Chat' }
+    tabs = [created]
+  }
+  if (!activeId) activeId = tabs[tabs.length - 1].id
+
+  return { tabs, activeId }
+}
+
+function ChatPage() {
+  const [{ tabs: initialTabs, activeId: initialActiveId }] = useState(computeInitialTabs)
+  const [tabs, setTabs] = useState<ChatTabMeta[]>(initialTabs)
+  const [activeTabId, setActiveTabId] = useState<string>(initialActiveId)
+
+  // Metadata only -- see ChatTabMeta's doc comment above for why the actual
+  // transcripts are never written here.
+  useEffect(() => {
+    try {
+      localStorage.setItem(TABS_STORAGE_KEY, JSON.stringify(tabs))
+    } catch {
+      // Storage unavailable (private mode, quota) -- tabs just won't survive
+      // a reload; the conversations themselves are unaffected.
+    }
+  }, [tabs])
+
+  // ?thread=<id> has done its job (picking which tab is active) by the time
+  // this runs -- drop it from the URL so a refresh doesn't re-trigger the
+  // same lookup against whatever tab layout is current by then.
+  useEffect(() => {
+    if (typeof window !== 'undefined' && window.location.search) {
+      window.history.replaceState({}, '', window.location.pathname)
+    }
+  }, [])
+
+  const updateTabThreadId = useCallback((tabId: string, threadId: string | undefined) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, threadId } : t)))
+  }, [])
+
+  const updateTabTitle = useCallback((tabId: string, title: string) => {
+    setTabs((prev) => prev.map((t) => (t.id === tabId ? { ...t, title } : t)))
+  }, [])
+
+  const openNewTab = useCallback(() => {
+    const created: ChatTabMeta = { id: newTabId(), title: 'New Chat' }
+    setTabs((prev) => [...prev, created])
+    setActiveTabId(created.id)
+  }, [])
+
+  const closeTab = useCallback((tabId: string) => {
+    setTabs((prev) => {
+      if (prev.length <= 1) return prev // always at least one tab open
+      const idx = prev.findIndex((t) => t.id === tabId)
+      const next = prev.filter((t) => t.id !== tabId)
+      setActiveTabId((current) => {
+        if (current !== tabId) return current
+        return (next[idx] ?? next[idx - 1] ?? next[0]).id
+      })
+      return next
+    })
+  }, [])
+
+  return (
+    <div className="flex h-[calc(100vh-120px)] flex-col">
+      <div
+        role="tablist"
+        aria-label="Chat tabs"
+        className="flex items-center gap-1 overflow-x-auto border-b border-border px-2 pt-2"
+      >
+        {tabs.map((tab) => (
+          <div
+            key={tab.id}
+            role="tab"
+            aria-selected={tab.id === activeTabId}
+            tabIndex={0}
+            onClick={() => setActiveTabId(tab.id)}
+            onKeyDown={(e) => {
+              if (e.key === 'Enter' || e.key === ' ') {
+                e.preventDefault()
+                setActiveTabId(tab.id)
+              }
+            }}
+            className={`group flex shrink-0 cursor-pointer items-center gap-1.5 rounded-t-md border border-b-0 px-3 py-1.5 text-xs transition-colors focus-visible:ring-2 focus-visible:ring-primary focus-visible:outline-none ${
+              tab.id === activeTabId
+                ? 'border-border bg-card text-foreground'
+                : 'border-transparent text-muted-foreground hover:bg-muted/50 hover:text-foreground'
+            }`}
+          >
+            <MessageSquare size={11} className="shrink-0" />
+            <span className="max-w-[10rem] truncate">{tab.title}</span>
+            {tabs.length > 1 && (
+              <button
+                type="button"
+                aria-label={`Close chat tab "${tab.title}"`}
+                title="Close tab"
+                className="ml-1 rounded p-0.5 text-muted-foreground/70 opacity-0 transition-opacity focus-visible:opacity-100 group-hover:opacity-100 hover:bg-muted hover:text-foreground"
+                onClick={(e) => {
+                  e.stopPropagation()
+                  closeTab(tab.id)
+                }}
+              >
+                <X size={11} />
+              </button>
+            )}
+          </div>
+        ))}
+        <button
+          type="button"
+          onClick={openNewTab}
+          aria-label="Open a new chat tab"
+          title="Open a new chat tab"
+          className="ml-1 flex shrink-0 items-center justify-center rounded p-1.5 text-muted-foreground transition-all duration-150 hover:bg-muted hover:text-foreground active:scale-95"
+        >
+          <Plus size={13} />
+        </button>
+      </div>
+
+      <div className="min-h-0 flex-1">
+        {tabs.map((tab) => (
+          <div key={tab.id} className={tab.id === activeTabId ? 'h-full' : 'hidden'}>
+            <ChatConversation
+              initialThreadId={tab.threadId}
+              onThreadChange={(threadId) => updateTabThreadId(tab.id, threadId)}
+              onTitleChange={(title) => updateTabTitle(tab.id, title)}
+            />
+          </div>
+        ))}
+      </div>
+    </div>
+  )
+}
 
 interface Message {
   id: string
@@ -100,7 +297,15 @@ function CopyButton({ text }: { text: string }) {
   )
 }
 
-function ChatPage() {
+function ChatConversation({
+  initialThreadId,
+  onThreadChange,
+  onTitleChange,
+}: {
+  initialThreadId?: string
+  onThreadChange?: (threadId: string | undefined) => void
+  onTitleChange?: (title: string) => void
+}) {
   const [messages, setMessages] = useState<Message[]>([
     {
       id: 'init_0',
@@ -114,7 +319,17 @@ function ChatPage() {
   const [input, setInput] = useState('')
   const [loading, setLoading] = useState(false)
   const [incognito, setIncognito] = useState(false)
-  const [threadId, setThreadId] = useState<string | undefined>(undefined)
+  const [threadId, setThreadIdState] = useState<string | undefined>(undefined)
+  // Notifies the tab strip (ChatPage) so it can persist which thread this
+  // tab represents, and so ?thread=<id> from Chat History can resolve back
+  // to the right tab on a later visit.
+  const setThreadId = useCallback(
+    (id: string | undefined) => {
+      setThreadIdState(id)
+      onThreadChange?.(id)
+    },
+    [onThreadChange],
+  )
   // Set once, the first time a would-be-new conversation matches an earlier
   // one; cleared as soon as the user picks continue-there or start-new.
   const [pendingMatch, setPendingMatch] = useState<{ match: ChatMatch; text: string } | null>(null)
@@ -168,13 +383,15 @@ function ChatPage() {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' })
   }, [messages])
 
-  // Arriving from the Chat History page (?thread=<id>) hydrates that thread
-  // immediately instead of starting a fresh conversation.
+  // This tab was opened already pointed at a saved thread (either restored
+  // from localStorage, or arriving from the Chat History page's ?thread=<id>
+  // -- ChatPage resolves both into initialThreadId before this ever mounts)
+  // -- hydrate it immediately instead of starting a fresh conversation.
   useEffect(() => {
-    const threadParam = new URLSearchParams(window.location.search).get('thread')
-    if (threadParam) {
-      continueThread({ threadId: threadParam, title: '', score: 1, snippet: '', updatedAt: Date.now() })
+    if (initialThreadId) {
+      continueThread({ threadId: initialThreadId, title: '', score: 1, snippet: '', updatedAt: Date.now() })
     }
+    // eslint-disable-next-line react-hooks/exhaustive-deps -- run once per tab, not on every prop identity change
   }, [])
 
   // Keyboard shortcut (Alt+I) to toggle Incognito mode
@@ -258,7 +475,11 @@ function ChatPage() {
             timestamp: m.timestamp,
           })
         )
-        if (hydrated.length > 0) setMessages(hydrated)
+        if (hydrated.length > 0) {
+          setMessages(hydrated)
+          const firstUser = hydrated.find((m) => m.role === 'user')
+          if (firstUser) onTitleChange?.(deriveTabTitle(firstUser.content))
+        }
         setThreadId(match.threadId)
       }
     } catch {
@@ -278,11 +499,9 @@ function ChatPage() {
       },
     ])
     setThreadId(undefined)
+    onTitleChange?.('New Chat')
     setPendingMatch(null)
     setInput('')
-    if (typeof window !== 'undefined' && window.location.search) {
-      window.history.replaceState({}, '', window.location.pathname)
-    }
     toast.success('Started a new chat session')
     inputRef.current?.focus()
   }
@@ -351,6 +570,11 @@ function ChatPage() {
         ? messageText
         : `📎 ${filesToSend.map((f) => f.path).join(', ') || 'file'}`,
       timestamp: Date.now(),
+    }
+    // This tab's first real turn -- name it after what was actually asked,
+    // instead of every fresh tab staying "New Chat" forever.
+    if (!messages.some((m) => m.role === 'user')) {
+      onTitleChange?.(deriveTabTitle(userMsg.content))
     }
     setMessages((prev) => [...prev, userMsg])
     setInput('')
@@ -578,7 +802,7 @@ function ChatPage() {
   }
 
   return (
-    <div className="flex h-[calc(100vh-120px)] flex-col">
+    <div className="flex h-full flex-col">
       <div className="flex items-center justify-end gap-2 px-4 pt-2">
         {(messages.length > 1 || threadId !== undefined) && (
           <Button

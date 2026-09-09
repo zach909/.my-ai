@@ -1,7 +1,7 @@
 /**
  * Making a live Net Skill visible in the store, for real.
  *
- * The store's catalog already has a "skills" section, and it was never
+ * The store's catalog already has a "net-skills" section, and it was never
  * empty by design -- two narrow paths populate it: the Extension Builder's
  * own net-skill export, and the manual Skill Uploads page. Neither is what a
  * Net Skill actually is in this architecture: neurons grafted directly into
@@ -9,11 +9,12 @@
  * there. A region that exists, is trained, and answers to real input had no
  * representation in the one place a person browsing the store would look for
  * it -- "there's only net skills and prompting skills" was the accurate
- * complaint, because the "Skills" filter showed neither.
+ * complaint, because there is no standalone "skill", and the old "Skills"
+ * filter showed neither of the two real things.
  *
  * This closes that gap the direct way: read what graftedSkills() says is
  * actually IN the mesh right now, and publish one document per region under
- * the store's "skills" kind. Not the neurons themselves -- weights are not
+ * the store's "net-skills" kind. Not the neurons themselves -- weights are not
  * portable between meshes with different sizes and different histories, and
  * shipping them would misrepresent installing a Net Skill as something as
  * simple as copying a file. What is published is a real, honest description
@@ -80,7 +81,7 @@ export async function publishGraftedNetSkills(engine, opts = {}) {
             { filename: `${slug}.net-skill.json`, content: JSON.stringify(descriptor, null, 2) },
         ];
         const { sync } = await publishAndSync({
-            kind: "skills",
+            kind: "net-skills",
             name: slug,
             title: skill,
             description: `A Net Skill grafted into the live mesh: ${neuronNames.length} neuron` +

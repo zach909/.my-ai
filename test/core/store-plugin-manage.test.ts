@@ -40,7 +40,7 @@ afterEach(() => {
 
 function seed(name = 'demo') {
   return publishItem({
-    kind: 'skills',
+    kind: 'net-skills',
     name,
     title: 'Demo',
     description: 'first draft',
@@ -52,68 +52,68 @@ function seed(name = 'demo') {
 describe('uploading', () => {
   it('publishes a new item through the plug-in', async () => {
     const { item } = await plugin.publish({
-      kind: 'skills',
+      kind: 'net-skills',
       name: 'fresh',
       title: 'Fresh',
       files: [{ filename: 'a.txt', content: 'hello' }],
     })
     expect(item.name).toBe('fresh')
-    expect(readItemFile('skills', 'fresh', 'a.txt')?.toString()).toBe('hello')
+    expect(readItemFile('net-skills', 'fresh', 'a.txt')?.toString()).toBe('hello')
   })
 
   it('adds a file to an existing item without dropping the others', async () => {
     seed()
-    await plugin.addFile('skills', 'demo', 'extra.txt', 'more')
-    const item = readItem('skills', 'demo')!
+    await plugin.addFile('net-skills', 'demo', 'extra.txt', 'more')
+    const item = readItem('net-skills', 'demo')!
     expect(item.files.map(f => f.filename).sort()).toEqual(['extra.txt', 'main.py'])
-    expect(readItemFile('skills', 'demo', 'main.py')?.toString()).toBe('print("v1")')
+    expect(readItemFile('net-skills', 'demo', 'main.py')?.toString()).toBe('print("v1")')
   })
 })
 
 describe('changing and editing', () => {
   it('replaces a file’s contents', async () => {
     seed()
-    await plugin.editFile('skills', 'demo', 'main.py', 'print("v2")')
-    expect(readItemFile('skills', 'demo', 'main.py')?.toString()).toBe('print("v2")')
+    await plugin.editFile('net-skills', 'demo', 'main.py', 'print("v2")')
+    expect(readItemFile('net-skills', 'demo', 'main.py')?.toString()).toBe('print("v2")')
   })
 
   it('refuses to edit something that does not exist, rather than creating it under a typo', async () => {
     seed()
-    await expect(plugin.editFile('skills', 'dmeo', 'main.py', 'x')).rejects.toThrow(/Publish it first/)
-    expect(readItem('skills', 'dmeo')).toBeNull()
+    await expect(plugin.editFile('net-skills', 'dmeo', 'main.py', 'x')).rejects.toThrow(/Publish it first/)
+    expect(readItem('net-skills', 'dmeo')).toBeNull()
   })
 
   it('changes the description without touching the files', async () => {
     seed()
-    await plugin.describe('skills', 'demo', { description: 'second draft' })
-    const item = readItem('skills', 'demo')!
+    await plugin.describe('net-skills', 'demo', { description: 'second draft' })
+    const item = readItem('net-skills', 'demo')!
     expect(item.description).toBe('second draft')
     expect(item.title).toBe('Demo')
-    expect(readItemFile('skills', 'demo', 'main.py')?.toString()).toBe('print("v1")')
+    expect(readItemFile('net-skills', 'demo', 'main.py')?.toString()).toBe('print("v1")')
   })
 
   it('refuses to describe something that was never published', async () => {
-    await expect(plugin.describe('skills', 'ghost', { description: 'x' })).rejects.toThrow(/No "ghost"/)
+    await expect(plugin.describe('net-skills', 'ghost', { description: 'x' })).rejects.toThrow(/No "ghost"/)
   })
 })
 
 describe('installing', () => {
   it('installs and uninstalls through the plug-in', async () => {
     seed()
-    const result = await plugin.install('skills', 'demo')
+    const result = await plugin.install('net-skills', 'demo')
     expect(result.record.files).toHaveLength(1)
-    expect(isInstalled('skills', 'demo')).toBe(true)
+    expect(isInstalled('net-skills', 'demo')).toBe(true)
     expect(plugin.installed().map(r => r.name)).toEqual(['demo'])
 
-    expect(plugin.uninstall('skills', 'demo')).toBe(true)
+    expect(plugin.uninstall('net-skills', 'demo')).toBe(true)
     expect(plugin.installed()).toEqual([])
   })
 
   it('reports what changed since installing', async () => {
     seed()
-    await plugin.install('skills', 'demo')
+    await plugin.install('net-skills', 'demo')
     expect(plugin.outdated()).toEqual([])
-    await plugin.editFile('skills', 'demo', 'main.py', 'print("v3")')
+    await plugin.editFile('net-skills', 'demo', 'main.py', 'print("v3")')
     expect(plugin.outdated().map(o => o.record.name)).toEqual(['demo'])
     const { updated } = await plugin.update()
     expect(updated.map(r => r.name)).toEqual(['demo'])
@@ -126,83 +126,83 @@ describe('the commands you would actually type', () => {
 
   it('installs from one sentence naming the item', async () => {
     seed()
-    expect(await say('store install skills demo')).toMatch(/Installed skills\/demo/)
-    expect(isInstalled('skills', 'demo')).toBe(true)
+    expect(await say('store install net-skills demo')).toMatch(/Installed net-skills\/demo/)
+    expect(isInstalled('net-skills', 'demo')).toBe(true)
   })
 
   it('says an item is not installed, and how to install it', async () => {
     seed()
-    const shown = await say('store show skills demo')
+    const shown = await say('store show net-skills demo')
     expect(shown).toMatch(/not installed/)
-    expect(shown).toMatch(/store install skills demo/)
+    expect(shown).toMatch(/store install net-skills demo/)
   })
 
   it('says an item IS installed once it is', async () => {
     seed()
-    await plugin.install('skills', 'demo')
-    expect(await say('store show skills demo')).toMatch(/installed on this device/)
+    await plugin.install('net-skills', 'demo')
+    expect(await say('store show net-skills demo')).toMatch(/installed on this device/)
   })
 
   it('uninstalls, and says the published copy survives', async () => {
     seed()
-    await plugin.install('skills', 'demo')
-    expect(await say('store uninstall skills demo')).toMatch(/still published for everyone else/)
-    expect(readItem('skills', 'demo')).not.toBeNull()
+    await plugin.install('net-skills', 'demo')
+    expect(await say('store uninstall net-skills demo')).toMatch(/still published for everyone else/)
+    expect(readItem('net-skills', 'demo')).not.toBeNull()
   })
 
   it('lists what is installed', async () => {
     seed()
     expect(await say('store installed')).toMatch(/Nothing from the store is installed/)
-    await plugin.install('skills', 'demo')
-    expect(await say('store installed')).toMatch(/skills\/demo/)
+    await plugin.install('net-skills', 'demo')
+    expect(await say('store installed')).toMatch(/net-skills\/demo/)
   })
 
   it('reports updates rather than applying them when only asked what is outdated', async () => {
     seed()
-    await plugin.install('skills', 'demo')
-    await plugin.editFile('skills', 'demo', 'main.py', 'print("v4")')
-    expect(await say('store outdated')).toMatch(/skills\/demo/)
+    await plugin.install('net-skills', 'demo')
+    await plugin.editFile('net-skills', 'demo', 'main.py', 'print("v4")')
+    expect(await say('store outdated')).toMatch(/net-skills\/demo/)
     // Asking what changed must not change anything.
     expect(plugin.outdated()).toHaveLength(1)
   })
 
   it('publishes a file straight from a message', async () => {
-    const out = await say('store publish skills typed-up notes.md\n# Hello\n\nSome content.')
-    expect(out).toMatch(/Published skills\/typed-up/)
-    expect(readItemFile('skills', 'typed-up', 'notes.md')?.toString()).toBe('# Hello\n\nSome content.')
+    const out = await say('store publish net-skills typed-up notes.md\n# Hello\n\nSome content.')
+    expect(out).toMatch(/Published net-skills\/typed-up/)
+    expect(readItemFile('net-skills', 'typed-up', 'notes.md')?.toString()).toBe('# Hello\n\nSome content.')
   })
 
   it('says whether a publish actually left the device, rather than implying it did', async () => {
     // Sync is disabled in these tests, so the honest answer is "this device only".
-    expect(await say('store publish skills local-only a.txt\nhi')).toMatch(/on this device only/)
+    expect(await say('store publish net-skills local-only a.txt\nhi')).toMatch(/on this device only/)
   })
 
   it('adds a second file to an item without dropping the first', async () => {
-    await say('store publish skills two-files one.txt\nfirst')
-    await say('store publish skills two-files two.txt\nsecond')
-    expect(readItem('skills', 'two-files')!.files.map(f => f.filename).sort()).toEqual(['one.txt', 'two.txt'])
+    await say('store publish net-skills two-files one.txt\nfirst')
+    await say('store publish net-skills two-files two.txt\nsecond')
+    expect(readItem('net-skills', 'two-files')!.files.map(f => f.filename).sort()).toEqual(['one.txt', 'two.txt'])
   })
 
   it('explains the shape instead of going silent when the command is nearly right', async () => {
-    const out = await say('store publish skills forgot-the-filename')
+    const out = await say('store publish net-skills forgot-the-filename')
     expect(out).toMatch(/store publish <kind> <name> <filename>/)
     // The near-miss must not have created anything.
-    expect(readItem('skills', 'forgot-the-filename')).toBeNull()
+    expect(readItem('net-skills', 'forgot-the-filename')).toBeNull()
   })
 
   it('changes a description from a message', async () => {
     seed()
-    expect(await say('store describe skills demo a much better explanation')).toMatch(/Updated the description/)
-    expect(readItem('skills', 'demo')!.description).toBe('a much better explanation')
+    expect(await say('store describe net-skills demo a much better explanation')).toMatch(/Updated the description/)
+    expect(readItem('net-skills', 'demo')!.description).toBe('a much better explanation')
   })
 
   it('reads a file back', async () => {
     seed()
-    expect(await say('store read skills demo main.py')).toBe('print("v1")')
+    expect(await say('store read net-skills demo main.py')).toBe('print("v1")')
   })
 
   it('refuses an install it cannot do, in words rather than by throwing', async () => {
-    expect(await say('store install skills imaginary')).toMatch(/no published/i)
+    expect(await say('store install net-skills imaginary')).toMatch(/no published/i)
   })
 
   it('stays out of the way of anything that is not a store command', async () => {

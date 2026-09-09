@@ -11,7 +11,9 @@
  *   - Quantum net (QuantumNeuralNet): simulated quantum interference --
  *     connections between neurons are the "entanglement", input magnitude is
  *     wave height, and interference/consensus can shift the collapsed value.
- *     Toggleable; off by default.
+ *     Always on -- "add quantum interference always on" -- every think()
+ *     runs this stage; there is no off switch any more (see
+ *     setQuantumEnabled()'s own doc comment).
  *   - Zip I/O (ZipIOSystem/InfiniteZipLoop): binary in, binary out, as a loop
  *     that wraps back to the start once its window fills.
  *   - An autonomous run loop that keeps going instead of stopping after one
@@ -43,10 +45,30 @@ export interface UnifiedBrainConfig {
   hyperNeurons?: number;
   ballStates?: number;
   valuePoints: number;
-  /** Off by default -- toggle with setQuantumEnabled()/quantumEnabled config. */
-  quantumEnabled: boolean;
+  /**
+   * Unused -- kept only so existing callers that still pass this field
+   * don't break. Quantum interference is always on now (see
+   * UnifiedBrain.think()); there is nothing left to configure here.
+   */
+  quantumEnabled?: boolean;
   /** Where InfiniteZipLoop spills its ring buffer / checkpoints to disk. */
   persistDir?: string;
+  /**
+   * "onebrain delete backup llm" -- share ONE HyperDimensionalEngine instead
+   * of this class quietly building a second, private one. Before this,
+   * NeuroclawLLM (which answers every real chat reply) and NeuroPipeline
+   * (which backs the Zip Loop doorway, continuous learning, and every net
+   * skill graft) each ran their OWN separate hyperdimensional engine --
+   * genuinely two brains, only one of which the user ever actually talked
+   * to, while everything else (net skills installed mid-conversation,
+   * continuous-learning predictions, the raw Zip Loop) silently trained and
+   * read a different one. Passing the live engine in here (see
+   * NeuroclawSystem's constructor) makes both halves of the same running
+   * agent share one real, stateful, continuously-learning substrate.
+   * Omitted, this class falls back to building its own (unit tests /
+   * standalone NeuroclawLLM usage elsewhere still work unchanged).
+   */
+  hyperEngine?: HyperDimensionalEngine;
 }
 
 const DEFAULT_CONFIG: UnifiedBrainConfig = {
@@ -56,7 +78,7 @@ const DEFAULT_CONFIG: UnifiedBrainConfig = {
   meshNodes: 32,
   hyperDimensions: 64,
   valuePoints: 10000,
-  quantumEnabled: false,
+  quantumEnabled: true, // vestigial -- see the field's own doc comment
 };
 
 export interface ThinkResult {
@@ -128,7 +150,12 @@ export class UnifiedBrain {
       activationFn: 'swish',
     } as Partial<MeshConfig>);
 
-    this.hyper = new HyperDimensionalEngine({
+    // Shared, not owned: when the caller hands in the live NeuroPipeline's
+    // own engine (see hyperEngine's doc comment above), this class never
+    // constructs a second one -- see this.think()'s own note about reading
+    // dimensions from the engine itself rather than this.config, so an
+    // injected engine of a different size is never silently mismatched.
+    this.hyper = config.hyperEngine ?? new HyperDimensionalEngine({
       neuronCount: this.config.hyperNeurons ?? Math.max(8, Math.floor(this.config.meshNodes / 2)),
       dimensions: this.config.hyperDimensions,
       ballStates: this.config.ballStates ?? 4,
@@ -187,12 +214,18 @@ export class UnifiedBrain {
     return new Map(this.expertPluginMap);
   }
 
-  setQuantumEnabled(enabled: boolean): void {
-    this.config.quantumEnabled = enabled;
+  /**
+   * "add quantum interference always on" -- quantum interference now runs on
+   * every think(), unconditionally. This is kept, as a no-op, only so
+   * existing callers (the Settings page's toggle, /api/settings/brain,
+   * llm.js) don't break; it no longer turns anything off.
+   */
+  setQuantumEnabled(_enabled: boolean): void {
+    // Deliberately does nothing -- see this method's own doc comment.
   }
 
   isQuantumEnabled(): boolean {
-    return this.config.quantumEnabled;
+    return true;
   }
 
   getVale(): ValueRangeAllocator { return this.vale; }
@@ -238,17 +271,27 @@ export class UnifiedBrain {
     }
     const meshResult = this.mesh.propagate(meshInputs, valeFractions);
 
+    // this.hyper.getDimensions(), not this.config.hyperDimensions: when the
+    // engine was injected (see hyperEngine's doc comment above) it may have
+    // been built with a different size than this instance's own config --
+    // sizing off the config in that case would silently feed process() a
+    // vector of the wrong length for the actual shared engine.
+    const hyperDims = this.hyper.getDimensions();
     const meshArray: number[] = [];
     for (const [, v] of meshResult.finalStates) {
-      if (meshArray.length < this.config.hyperDimensions) meshArray.push(v);
+      if (meshArray.length < hyperDims) meshArray.push(v);
     }
-    while (meshArray.length < this.config.hyperDimensions) meshArray.push(0);
+    while (meshArray.length < hyperDims) meshArray.push(0);
     const hyperOutput = this.hyper.process(meshArray);
 
+    // "add quantum interference always on" -- this stage always runs now,
+    // unconditionally (there used to be an `if (this.config.quantumEnabled)`
+    // gate here; see UnifiedBrainConfig.quantumEnabled's own doc comment for
+    // why that field is now vestigial).
     let quantumActive = false;
     let quantumConsensus = 0;
     let hiddenSource = meshArray;
-    if (this.config.quantumEnabled) {
+    {
       const quantumNeurons: string[] = [];
       for (let i = 0; i < Math.min(meshArray.length, 16); i++) {
         const neuronId = `q_${i}`;
@@ -354,12 +397,12 @@ export class UnifiedBrain {
       savedAt: Date.now(),
       mesh: this.mesh.getTopology(),
       hyperNeurons: this.hyper.getNeuronStates(),
-      quantum: this.config.quantumEnabled
-        ? this.mesh.getTopology().nodes
-            .map((_, i) => `q_${i}`)
-            .map((id) => ({ id, state: this.quantum.getState(id) }))
-            .filter((q): q is { id: string; state: QuantumState } => q.state !== null)
-        : [],
+      // Always on now (see UnifiedBrainConfig.quantumEnabled's doc comment),
+      // so this is no longer conditional.
+      quantum: this.mesh.getTopology().nodes
+        .map((_, i) => `q_${i}`)
+        .map((id) => ({ id, state: this.quantum.getState(id) }))
+        .filter((q): q is { id: string; state: QuantumState } => q.state !== null),
       valeDistribution: {
         totalPoints: dist.totalPoints,
         neuronAllocations: dist.neuronAllocations.map((a) => ({ id: a.id, valuePoints: a.valuePoints, learningRate: a.learningRate })),

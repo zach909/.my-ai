@@ -8,7 +8,9 @@ import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js
 import { installFromStore, installPromptingSkill, listInstalled, loadRegistry, publishPromptingSkill, readPublishedPromptingSkill, uninstallPromptingSkill, isBuiltIn, } from '../models && skills/core/prompting-skill-store.js';
 import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
+import { listRemoteOnlyBotPages, readRemoteBotPage } from '../models && skills/core/wiki-remote.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
+import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills } from '../models && skills/core/net-skill-graft.js';
 import { STORE_KINDS, STORE_KIND_LABELS, StoreError, listCatalog, publishAndSync, readItem, deleteAndSync, } from '../models && skills/core/store.js';
@@ -122,6 +124,83 @@ class PyTorchTrainerWorker {
         for (const p of this.pending)
             p.resolve(err);
         this.pending = [];
+    }
+}
+/**
+ * Manual on/off switch for scripts/self-improve.mjs (the RSI loop) from the
+ * UI. "add start RSI server button in experiments": `npm run server`
+ * (scripts/server.mjs) already launches this loop automatically, but that
+ * is only one way this backend gets started -- the desktop app spawns
+ * `dist/interface/main.js web <port>` directly (see desktop-app/src/main/
+ * main.js) and never touches server.mjs at all, so on the desktop app (or
+ * any other launch path outside `npm run server`) the RSI loop never runs
+ * unless something starts it explicitly. This is that explicit start.
+ *
+ * One process at a time: self-improve.mjs owns a single on-disk scoreboard
+ * (extension-builder/self-improvement-scoreboard.json) it isn't written to
+ * expect two writers racing on, so start() is a no-op while one is already
+ * running rather than spawning a second.
+ */
+export class SelfImprovementServerManager {
+    /** @param scriptPath Injectable for tests -- defaults to the real RSI loop. */
+    constructor(scriptPath = path.join(process.cwd(), 'scripts', 'self-improve.mjs')) {
+        this.scriptPath = scriptPath;
+        this.child = null;
+        this.startedAt = null;
+        this.lastExit = null;
+    }
+    status() {
+        return {
+            running: this.child !== null,
+            pid: this.child?.pid ?? null,
+            startedAt: this.startedAt,
+            lastExit: this.lastExit,
+        };
+    }
+    async start() {
+        if (this.child)
+            return { ok: false, error: 'already running' };
+        let child;
+        try {
+            // Deferred import, matching PyTorchTrainerWorker above -- keeps
+            // node:child_process out of any code path that never starts this loop.
+            const { spawn } = await import('node:child_process');
+            // process.execPath, not a bare 'node': the same reasoning main.js
+            // uses for its own backend spawn -- works even on a machine where
+            // 'node' isn't on PATH but this process itself is clearly running.
+            child = spawn(process.execPath, [this.scriptPath], { cwd: process.cwd(), stdio: 'ignore', env: process.env });
+        }
+        catch (err) {
+            return { ok: false, error: err instanceof Error ? err.message : String(err) };
+        }
+        if (!child.pid) {
+            return { ok: false, error: 'spawn did not return a pid' };
+        }
+        child.on('exit', (code, signal) => {
+            this.lastExit = { code, signal, at: new Date().toISOString() };
+            this.child = null;
+        });
+        child.on('error', (err) => {
+            this.lastExit = { code: null, signal: null, at: new Date().toISOString() };
+            this.child = null;
+            // Surfaced only via status()'s lastExit -- there is no request still
+            // waiting on this the way PyTorchTrainerWorker's pending queue has one.
+            void err;
+        });
+        this.child = child;
+        this.startedAt = new Date().toISOString();
+        return { ok: true, pid: child.pid };
+    }
+    stop() {
+        if (!this.child)
+            return { ok: false, error: 'not running' };
+        this.child.kill('SIGTERM');
+        return { ok: true };
+    }
+    /** Called from WebServer.stop() so a stopped server doesn't leave an orphaned self-improve.mjs behind. */
+    shutdown() {
+        this.child?.kill();
+        this.child = null;
     }
 }
 const HTML_TEMPLATE = `<!DOCTYPE html>
@@ -596,8 +675,8 @@ export function isStorePublicRoute(pathname, method) {
     if (method === 'GET') {
         // /api/store, /api/store/:kind/:name, /api/store/:kind/:name/file/:filename
         return (pathname === '/api/store' ||
-            /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+$/.test(pathname) ||
-            /^\/api\/store\/[a-z]+\/[A-Za-z0-9._-]+\/file\/.+$/.test(pathname));
+            /^\/api\/store\/[a-z-]+\/[A-Za-z0-9._-]+$/.test(pathname) ||
+            /^\/api\/store\/[a-z-]+\/[A-Za-z0-9._-]+\/file\/.+$/.test(pathname));
     }
     if (method === 'POST') {
         // Publishing a prompting skill is a publish like any other, so it is open.
@@ -776,6 +855,10 @@ export class WebServer {
         // reused for the life of this server -- see PyTorchTrainerWorker's own
         // doc comment for why (torch import cost dominates a per-request spawn).
         this.pytorchWorker = new PyTorchTrainerWorker();
+        // Off by default -- see SelfImprovementServerManager's doc comment.
+        // Started only by an explicit POST /api/self-improvement/server/start
+        // (the Experiments page's "Start RSI Server" button).
+        this.selfImprovementServer = new SelfImprovementServerManager();
         // Set once by loadSavedExtensions() during start() -- surfaced via
         // GET /api/status so "did the runner actually pick up my trained
         // network on this boot" is observable, not just assumed.
@@ -827,6 +910,20 @@ export class WebServer {
         // start() itself (every short-lived NeuroclawRunner instance calls
         // start() too, and most never call stop()).
         this.runner.startContinuous();
+        // Store content lives on its own branch now (store-sync.ts), not with
+        // the app's own code -- a plain checkout of this branch does not bring
+        // the catalogue along anymore, so this pulls it before anything below
+        // could try to read it. Best-effort: a fresh repo with no store branch
+        // yet, or no network at boot, just means an empty catalogue until the
+        // next successful pull, not a failed boot.
+        //
+        // manifestsOnly: "view store without downloading everything" -- browsing
+        // the catalogue only ever needs each item's manifest.json (see
+        // pullStoreCatalog()'s own doc comment); an actual payload file is
+        // fetched on demand by GET .../file/:filename (fetchItemFile below) the
+        // first time someone actually asks for it, not pulled wholesale here on
+        // every boot regardless of whether anyone browses anything.
+        await pullStoreCatalog({ manifestsOnly: true }).catch(() => { });
         // Same reasoning, same placement: loading every saved extension is
         // real work (parsing N files, remembering M neurons) that only makes
         // sense to pay once per actual live server process, not once per
@@ -1077,6 +1174,7 @@ export class WebServer {
         if (!this.server)
             throw new Error('Server not running');
         this.pytorchWorker.shutdown();
+        this.selfImprovementServer.shutdown();
         return new Promise((resolve) => {
             this.server?.close(() => { this.server = null; resolve(); });
         });
@@ -1115,7 +1213,19 @@ export class WebServer {
         const status = statusForError(err);
         this.sendJson(res, { error: msg }, status);
     }
-    async parseBody(req) {
+    /**
+     * `maxBytes` defaults to 1MB -- right for the other 40+ callers, all
+     * small config/command payloads where a bigger body is itself a warning
+     * sign. The Zip Loop doorway is not one of those: "zip loop no file
+     * size limit" -- a recording or an already-packed archive of real files
+     * is exactly what this doorway exists to carry (see POST /api/zip-loop/
+     * run's own doc comment), base64-encoded on top of that, so the same
+     * 1MB ceiling that protects a JSON config endpoint would reject a
+     * moderately-sized real file before this fix. Callers that need more
+     * (or none) pass their own ceiling explicitly; nobody else's behavior
+     * changes.
+     */
+    async parseBody(req, maxBytes = 1024 * 1024) {
         // CSRF: this server has no auth and setSecurityHeaders() never sends
         // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
         // response -- but that alone doesn't stop the *request* from being
@@ -1130,15 +1240,27 @@ export class WebServer {
         // and that preflight gets rejected by the browser itself, since no
         // Access-Control-Allow-Origin is ever sent back.
         assertJsonContentType(req.headers['content-type'] ?? '');
-        const LIMIT = 1024 * 1024; // 1MB limit
+        const LIMIT = maxBytes;
         let totalSize = 0;
         return new Promise((resolve, reject) => {
             const chunks = [];
             req.on('data', (chunk) => {
                 totalSize += chunk.length;
                 if (totalSize > LIMIT) {
-                    req.destroy();
-                    reject(new HttpClientError('Request body too large (limit: 1MB)', 413));
+                    // Not req.destroy(): an IncomingMessage and its ServerResponse
+                    // share one socket, so destroying the request killed the
+                    // connection out from under the response too -- the endpoint's
+                    // own catch block still tried to send this rejection's 413 back,
+                    // onto a socket that was already gone. The client never saw a
+                    // 413; it saw the connection reset instead (indistinguishable
+                    // from a crash), confirmed directly: a body genuinely over the
+                    // limit, sent in one synchronous burst the way a real client
+                    // does, reliably reproduced ECONNRESET rather than a clean 413.
+                    // Simply not pushing any more chunks (the rest of the body is
+                    // read and discarded rather than buffered) lets the client
+                    // finish writing normally and the real socket stay alive for
+                    // the caller's own error response to actually reach it.
+                    reject(new HttpClientError(`Request body too large (limit: ${Math.floor(LIMIT / 1024 / 1024)}MB)`, 413));
                 }
                 else {
                     chunks.push(chunk);
@@ -1296,6 +1418,14 @@ export class WebServer {
                     neuronCount: result.neuronCount,
                     skipped: result.skipped,
                 };
+                // The install just changed what's actually in the mesh; the store's
+                // "net-skills" catalog should reflect it. Fire-and-forget, same reason
+                // as everywhere else this is called: a git round trip must not hold
+                // up the response to an install request.
+                if (result.added > 0) {
+                    const { publishGraftedNetSkills } = await import('../models && skills/core/net-skill-store.js');
+                    void publishGraftedNetSkills(engine).catch(() => { });
+                }
             }
         }
         catch (err) {
@@ -1432,6 +1562,18 @@ export class WebServer {
                         this.rememberSkillScript(system, userSays, response, extName);
                         remembered++;
                     }
+                }
+            }
+            // Once, after the whole reload -- not per file. publishGraftedNetSkills
+            // already publishes every skill currently in the mesh in one pass, so
+            // calling it inside the loop above would mean one git round trip per
+            // installed skill on every single boot for no benefit; called once here
+            // it covers everything this boot just re-grafted.
+            if (graftedNeurons > 0) {
+                const engine = system.pipeline.getHyperEngine();
+                if (engine) {
+                    const { publishGraftedNetSkills } = await import('../models && skills/core/net-skill-store.js');
+                    void publishGraftedNetSkills(engine).catch(() => { });
                 }
             }
             return { files: filesLoaded, remembered, graftedNeurons };
@@ -1576,6 +1718,55 @@ export class WebServer {
             res.setHeader('Set-Cookie', `${SESSION_COOKIE}=${token}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${Math.floor(SESSION_TTL_MS / 1000)}`);
             res.writeHead(200, { 'Content-Type': 'application/json' });
             res.end(JSON.stringify({ passwordSet: true, loggedIn: true }));
+            return;
+        }
+        // GET/POST /api/settings/brain -- the Settings page's "Brain Behavior"
+        // section. Both setQuantumEnabled()/setPredictorMode() (NeuroclawLLM)
+        // were real, tested, and reachable only from TypeScript -- no endpoint
+        // existed to flip either one, so the (off-by-default) quantum
+        // interference stage and the code-vs-prose predictor choice were
+        // permanently stuck at whatever NeuroclawSystem's constructor left them.
+        // Routed through getNeuroclawSystem()'s singleton, the one real system
+        // this.llm now shares its engine with (see the one-brain fix) -- not a
+        // second, disconnected LLM instance.
+        //
+        // "add quantum interference always on" -- quantumEnabled is now
+        // vestigial: isQuantumEnabled() always returns true and
+        // setQuantumEnabled() is a no-op (see unified-brain.ts), so POSTing
+        // either value here has no effect and GET always reports true.
+        if (pathname === '/api/settings/brain' && method === 'GET') {
+            try {
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                this.sendJson(res, {
+                    quantumEnabled: system.llm.isQuantumEnabled(),
+                    predictorMode: system.llm.getPredictorMode(),
+                });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        if (pathname === '/api/settings/brain' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                if (typeof body?.quantumEnabled === 'boolean') {
+                    system.llm.setQuantumEnabled(body.quantumEnabled);
+                }
+                if (body?.predictorMode === 'word' || body?.predictorMode === 'code') {
+                    system.llm.setPredictorMode(body.predictorMode);
+                }
+                this.sendJson(res, {
+                    quantumEnabled: system.llm.isQuantumEnabled(),
+                    predictorMode: system.llm.getPredictorMode(),
+                });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
             return;
         }
         // Unauthenticated on purpose (a boolean, nothing sensitive) -- the
@@ -1736,7 +1927,7 @@ export class WebServer {
         // The filename part accepts '/' so a nested file (scripts/run.py) is
         // reachable. It is NOT trusted for being in the URL: assertSafeFilename
         // and readItemFile's containment check are what actually guard it.
-        const fileMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)\/file\/(.+)$/);
+        const fileMatch = pathname.match(/^\/api\/store\/([a-z-]+)\/([A-Za-z0-9._-]+)\/file\/(.+)$/);
         if (fileMatch && method === 'GET') {
             try {
                 // Downloads on click. The catalogue lists everything published; the
@@ -1771,7 +1962,7 @@ export class WebServer {
             }
             return;
         }
-        const itemMatch = pathname.match(/^\/api\/store\/([a-z]+)\/([A-Za-z0-9._-]+)$/);
+        const itemMatch = pathname.match(/^\/api\/store\/([a-z-]+)\/([A-Za-z0-9._-]+)$/);
         if (itemMatch && method === 'GET') {
             try {
                 const item = readItem(itemMatch[1], itemMatch[2]);
@@ -2261,6 +2452,25 @@ export class WebServer {
             });
             return;
         }
+        // GET /api/self-improvement/server-status, POST .../server/start,
+        // POST .../server/stop -- the "Start RSI Server" button in the
+        // Experiments tab of src/routes/app/self-improvement.tsx. See
+        // SelfImprovementServerManager's doc comment for why a manual start is
+        // needed at all.
+        if (pathname === '/api/self-improvement/server-status' && method === 'GET') {
+            this.sendJson(res, this.selfImprovementServer.status());
+            return;
+        }
+        if (pathname === '/api/self-improvement/server/start' && method === 'POST') {
+            const result = await this.selfImprovementServer.start();
+            this.sendJson(res, result, result.ok ? 200 : 409);
+            return;
+        }
+        if (pathname === '/api/self-improvement/server/stop' && method === 'POST') {
+            const result = this.selfImprovementServer.stop();
+            this.sendJson(res, result, result.ok ? 200 : 409);
+            return;
+        }
         if (pathname === '/api/chat' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
@@ -2675,7 +2885,23 @@ export class WebServer {
         // edited on disk (by a human, or by WikiPlugin.publish() below) shows
         // up on next load.
         if (pathname === '/api/wiki' && method === 'GET') {
-            const pages = listWikiPages();
+            const local = listWikiPages();
+            // Bot-published pages reach the store branch (publishWikiPageAndSync)
+            // regardless of which device published them, but only ever reach THIS
+            // device's disk if it republishes them itself -- so a page from
+            // another device stayed invisible here even though it plainly existed.
+            // Merged in read straight from the store branch, never written under
+            // wiki/ -- see wiki-remote.ts's own doc comment for why not.
+            // Best-effort: no repo/remote/store-branch just means nothing to add.
+            let remoteOnly = [];
+            try {
+                remoteOnly = await listRemoteOnlyBotPages(new Set(local.map(p => p.name)));
+            }
+            catch { /* the local list is still a complete, honest answer on its own */ }
+            const pages = [
+                ...local.map(p => ({ ...p, location: 'device' })),
+                ...remoteOnly.map(p => ({ ...p, location: 'store-branch' })),
+            ];
             this.sendJson(res, { pages, total: pages.length });
             return;
         }
@@ -2721,12 +2947,24 @@ export class WebServer {
         // which rules out both `..` traversal and an absolute-path override.
         const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)$/);
         if (wikiMatch && method === 'GET') {
-            const page = readWikiPage(wikiMatch[1]);
-            if (!page) {
-                this.sendJson(res, { error: `No wiki page named "${wikiMatch[1]}"` }, 404);
+            const local = readWikiPage(wikiMatch[1]);
+            if (local) {
+                this.sendJson(res, { ...local, location: 'device' });
                 return;
             }
-            this.sendJson(res, page);
+            // Not on this device -- try the store branch before giving up. Same
+            // reasoning as the list route just above: a page published elsewhere
+            // is still real and still readable, without landing on this disk.
+            let remote = null;
+            try {
+                remote = await readRemoteBotPage(wikiMatch[1]);
+            }
+            catch { /* falls through to the 404 below, same as a real miss */ }
+            if (remote) {
+                this.sendJson(res, { ...remote, location: 'store-branch' });
+                return;
+            }
+            this.sendJson(res, { error: `No wiki page named "${wikiMatch[1]}"` }, 404);
             return;
         }
         // DELETE /api/wiki/:name — remove a bot-published page. Same name rule
@@ -3624,30 +3862,15 @@ export class WebServer {
         // same route takes a recording, an image, or anything else without
         // needing a variant per kind of file.
         if (pathname === '/api/zip-loop/file' && method === 'POST') {
+            // "zip loop no file size limit" -- no ceiling here either. Used to
+            // match the transcription route's 25MB cap; removed so a large
+            // recording or any other real file goes through the doorway whole.
             const chunks = [];
-            let total = 0;
-            // Same ceiling as the transcription route: generous for a recording,
-            // bounded so a malformed or hostile request cannot grow without limit.
-            const MAX_FILE_BYTES = 25 * 1024 * 1024;
-            let tooLarge = false;
             await new Promise((resolve) => {
-                req.on('data', (chunk) => {
-                    total += chunk.length;
-                    if (total > MAX_FILE_BYTES) {
-                        tooLarge = true;
-                        req.destroy();
-                        resolve();
-                        return;
-                    }
-                    chunks.push(chunk);
-                });
+                req.on('data', (chunk) => { chunks.push(chunk); });
                 req.on('end', () => resolve());
                 req.on('error', () => resolve());
             });
-            if (tooLarge) {
-                this.sendJson(res, { error: 'That file is too large to send through the doorway in one go.' }, 413);
-                return;
-            }
             const bytes = Buffer.concat(chunks);
             if (bytes.length === 0) {
                 this.sendJson(res, { error: 'The body was empty — there is no file to send in.' }, 400);
@@ -3687,7 +3910,11 @@ export class WebServer {
         // slow by construction -- a few hundred ticks, not a few hundred thousand.
         if (pathname === '/api/zip-loop/run' && method === 'POST') {
             try {
-                const body = await this.parseBody(req);
+                // No ceiling: "zip loop no file size limit" -- a real file (already
+                // base64-encoded by POST /api/zip-loop/file, or a packed archive)
+                // is exactly what this body carries, and parseBody()'s ordinary 1MB
+                // default exists for small config/command payloads, not this.
+                const body = await this.parseBody(req, Number.POSITIVE_INFINITY);
                 const { packZip, unpackZip, ZIP_FOLDERS, STOP_CALL, NETWORK_STATE_FILE, STOP_REPORT_FILE } = await import('../models && skills/core/zip-halt.js');
                 // Three ways to say what goes in, because the whole point of an
                 // archive doorway is that complicated things fit through it: a plain

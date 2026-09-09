@@ -8,9 +8,10 @@
  * a file, and not before.
  *
  * The source is the repository the store already lives in: the `origin` remote
- * and the current branch, turned into a raw file URL. Nothing new to configure
- * and no third-party service -- the same GitHub the publish just pushed to is
- * where the download comes from.
+ * and the store branch (see store-sync.ts -- store content lives on its own
+ * branch now, not whatever a device happens to have checked out), turned into
+ * a raw file URL. Nothing new to configure and no third-party service -- the
+ * same GitHub the publish just pushed to is where the download comes from.
  *
  * Two properties matter more than the transport:
  *
@@ -27,14 +28,18 @@
  */
 
 import { execFile } from "node:child_process";
-import { existsSync, mkdirSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, rmSync, writeFileSync } from "node:fs";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { createHash } from "node:crypto";
 import { readItem, storeRoot, assertKind, assertSafeName, assertSafeFilename, StoreError } from "./store.js";
+import { DEFAULT_STORE_BRANCH } from "./store-sync.js";
 
 /** Bounded so a stalled download cannot wedge a request forever. */
 const FETCH_TIMEOUT_MS = 30_000;
 const GIT_TIMEOUT_MS = 10_000;
+/** `git archive` of the whole catalogue is still a small, text-only tree. */
+const ARCHIVE_TIMEOUT_MS = 30_000;
 
 /** Refuses a payload larger than the store's own per-file cap, even if the index claims otherwise. */
 const MAX_FETCH_BYTES = 8 * 1024 * 1024;
@@ -47,6 +52,118 @@ function git(args: string[], cwd: string): Promise<string | null> {
       resolve(err ? null : String(stdout ?? "").trim());
     });
   });
+}
+
+/**
+ * The repository root, or null when `startDir` is not inside a git repo.
+ * Mirrors store-sync.ts's own repoRoot() -- kept separate rather than
+ * imported, the same call github-link.ts's doc comment makes for its copy.
+ */
+async function repoRoot(startDir: string): Promise<string | null> {
+  const start = existsSync(startDir) ? startDir : path.dirname(startDir);
+  return git(["rev-parse", "--show-toplevel"], start);
+}
+
+export interface StoreCatalogPullResult {
+  pulled: boolean;
+  reason?: string;
+}
+
+/**
+ * Populates (or refreshes) this device's local `store/` directory from the
+ * store branch, so the catalogue is visible without anyone having to
+ * publish something first.
+ *
+ * Store content no longer travels with `main` (see store-sync.ts) -- a
+ * plain `git clone`/`git pull` of the app itself does not bring it along
+ * anymore, so something has to. This is that something: it should be called
+ * once at boot, before anything reads the catalogue.
+ *
+ * Uses `git archive`, which reads straight out of the store branch's
+ * remote-tracking ref and writes plain files to a plain tar file -- it
+ * never touches this repo's HEAD, branch, or index, the same guarantee
+ * syncStorePaths() makes for the write side.
+ *
+ * This overlays rather than mirrors: it extracts files, it does not delete
+ * ones already on disk that the store branch no longer has -- a plain
+ * `tar -x` cannot express "and remove everything else". A device that only
+ * ever calls this, and never `git pull`s a branch that used to carry
+ * `store/` the old way, can keep a stale local copy of an item someone else
+ * removed. That does not undo the removal -- readItem()/listCatalog() still
+ * only ever show what actually got published, and a fresh clone of the
+ * store branch has none of the stale file -- it is purely a property of one
+ * long-lived device's disk, not of the store.
+ *
+ * `manifestsOnly`: "I want users to be able to view store without downloading
+ * everything" -- readItem()/listCatalog() (store.ts) were already built to
+ * need nothing but each item's manifest.json: a payload file that isn't on
+ * disk just reports `local: false`, and store-fetch.ts's own per-file
+ * fetchItemFile() below is what brings one down, on demand, when someone
+ * actually asks for it. This function was the one place that didn't hold up
+ * its end -- a plain `git archive` with no pathspec pulls every payload byte
+ * of every published item, every time, before anyone has browsed anything.
+ * `manifestsOnly: true` restricts the archive to `*manifest.json` (a git
+ * pathspec, not a shell glob), so a boot-time catalogue refresh brings down
+ * only what listing actually reads -- kilobytes, not whatever the total
+ * store has grown to. Payload files a device already fetched on demand stay
+ * on disk either way; this only changes what a *fresh* pull brings down.
+ * Defaults to false (the original, full-archive behavior) so an explicit,
+ * one-off full sync is still one call away for anything that wants it.
+ */
+export async function pullStoreCatalog(
+  opts: { storeDir?: string; remote?: string; branch?: string; manifestsOnly?: boolean } = {},
+): Promise<StoreCatalogPullResult> {
+  const storeDir = opts.storeDir ?? storeRoot();
+  const remote = opts.remote ?? "origin";
+  const branch = opts.branch ?? DEFAULT_STORE_BRANCH;
+
+  const root = await repoRoot(storeDir);
+  if (!root) return { pulled: false, reason: "Not a git repository." };
+
+  // Best-effort: an unreachable remote just leaves whatever remote-tracking
+  // ref already exists from an earlier fetch, which rev-parse below reports
+  // honestly either way.
+  await git(["fetch", remote, `${branch}:refs/remotes/${remote}/${branch}`], root);
+  const rev = await git(["rev-parse", `${remote}/${branch}`], root);
+  if (rev === null) {
+    return { pulled: false, reason: `No "${branch}" branch on "${remote}" yet -- nothing has been published there so far.` };
+  }
+
+  const tmpFile = path.join(tmpdir(), `neuroclaw-store-archive-${process.pid}-${Date.now()}.tar`);
+  try {
+    const archiveArgs = opts.manifestsOnly
+      ? ["archive", "--output", tmpFile, rev, "--", "*manifest.json"]
+      : ["archive", "--output", tmpFile, rev];
+    // A `manifestsOnly` pathspec matching zero files (nothing published yet
+    // anywhere) is `git archive` exiting non-zero with "did not match any
+    // files" -- a real, successful answer ("empty catalogue"), not a failure
+    // to read the branch, so it's told apart from every other archive error
+    // instead of being reported as one.
+    const archiveResult = await new Promise<{ ok: boolean; stderr: string }>(resolve => {
+      execFile("git", archiveArgs, { cwd: root, timeout: ARCHIVE_TIMEOUT_MS }, (err, _stdout, stderr) => {
+        resolve({ ok: !err, stderr: String(stderr ?? "") });
+      });
+    });
+    if (!archiveResult.ok) {
+      if (opts.manifestsOnly && /did not match any files/.test(archiveResult.stderr)) {
+        return { pulled: true };
+      }
+      return { pulled: false, reason: "Could not read the store branch's contents." };
+    }
+
+    const extracted = await new Promise<boolean>(resolve => {
+      execFile("tar", ["-xf", tmpFile, "-C", root], { timeout: ARCHIVE_TIMEOUT_MS }, err => resolve(!err));
+    });
+    if (!extracted) return { pulled: false, reason: "Could not extract the store branch's contents." };
+  } finally {
+    try {
+      rmSync(tmpFile, { force: true });
+    } catch {
+      // Best-effort cleanup of a temp file; leaving it behind is harmless.
+    }
+  }
+
+  return { pulled: true };
 }
 
 /**
@@ -83,28 +200,30 @@ export async function resolveRawUrlBase(): Promise<{ base: string; refs: string[
   const parsed = parseGitHubRemote(remote);
   if (!parsed) return { problem: "not-github" };
 
-  // symbolic-ref works on a branch with no commits yet, which rev-parse does
-  // not -- and a fresh clone that has only fetched the index is exactly that
-  // situation.
-  const branch =
-    (await git(["symbolic-ref", "--short", "HEAD"], start)) ??
-    (await git(["rev-parse", "--abbrev-ref", "HEAD"], start)) ??
-    "";
-  if (!branch || branch === "HEAD") return { problem: "no-branch" };
+  // Published files live on the store branch (store-sync.ts), not on
+  // whatever branch this device happens to have checked out for app
+  // development -- so that is the primary ref to fetch from.
+  const branch = DEFAULT_STORE_BRANCH;
 
-  // Candidate refs, most specific first. The branch name is NOT URL-encoded:
+  // Candidate refs, most specific first. Branch names are NOT URL-encoded:
   // this project's branches contain '/', and raw.githubusercontent needs those
   // slashes intact -- encoding them turns a real ref into a 404.
   //
-  // The default branch is a fallback rather than a nicety. A working branch
-  // gets merged and deleted, and after that its published files live only on
-  // the default branch; without this, every device still on that branch loses
-  // the ability to download anything, which is precisely when someone would
-  // be trying to.
+  // The currently checked-out branch and the default branch are fallbacks,
+  // not the primary source: a fresh clone that has not yet fetched the store
+  // branch, or a private instance that has never renamed NEUROCLAW_STORE_BRANCH
+  // away from a branch that happens to not exist there, should still be able
+  // to find a file that an older publish committed straight onto a regular
+  // branch before this module existed.
   const refs = [branch];
+  const checkedOut =
+    (await git(["symbolic-ref", "--short", "HEAD"], start)) ??
+    (await git(["rev-parse", "--abbrev-ref", "HEAD"], start)) ??
+    "";
+  if (checkedOut && checkedOut !== "HEAD" && !refs.includes(checkedOut)) refs.push(checkedOut);
   const head = await git(["symbolic-ref", "--short", "refs/remotes/origin/HEAD"], start);
   const defaultBranch = head?.replace(/^origin\//, "");
-  if (defaultBranch && defaultBranch !== branch) refs.push(defaultBranch);
+  if (defaultBranch && !refs.includes(defaultBranch)) refs.push(defaultBranch);
   else if (!refs.includes("main")) refs.push("main");
 
   return {

@@ -4,8 +4,8 @@
   "description": "NeuroClaw \u2014 local-first AI agent, powered by the OneBrain neural mesh",
   "main": "src/main/main.js",
   "scripts": {
-    "start": "electron .",
-    "test": "node test/ipc-handlers.test.js",
+    "start": "node scripts/doctor.mjs && electron .",
+    "test": "node test/run-all.mjs",
     "build": "electron-builder",
     "build:win": "electron-builder --win",
     "build:mac": "electron-builder --mac",

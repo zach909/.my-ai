@@ -45,15 +45,15 @@ afterEach(() => {
 })
 
 function publish(name: string, files: Array<{ filename: string; content: string }>, title = 'A thing') {
-  return publishItem({ kind: 'skills', name, title, description: 'test item', author: 'tester', files })
+  return publishItem({ kind: 'net-skills', name, title, description: 'test item', author: 'tester', files })
 }
 
 describe('installing', () => {
   it('puts the real files on this device, not just a flag', async () => {
     publish('greeter', [{ filename: 'skill.json', content: '{"neurons":[]}' }])
-    const { record } = await installItem('skills', 'greeter')
+    const { record } = await installItem('net-skills', 'greeter')
 
-    const onDisk = path.join(installedRoot(), 'skills', 'greeter', 'skill.json')
+    const onDisk = path.join(installedRoot(), 'net-skills', 'greeter', 'skill.json')
     expect(existsSync(onDisk)).toBe(true)
     expect(readFileSync(onDisk, 'utf8')).toBe('{"neurons":[]}')
     expect(record.files[0].sha256).toHaveLength(64)
@@ -64,28 +64,28 @@ describe('installing', () => {
       { filename: 'main.py', content: 'print(1)' },
       { filename: 'lib/helper.py', content: 'x = 2' },
     ])
-    const { record } = await installItem('skills', 'multi')
+    const { record } = await installItem('net-skills', 'multi')
     expect(record.files.map(f => f.filename).sort()).toEqual(['lib/helper.py', 'main.py'])
-    expect(readInstalledFile('skills', 'multi', 'lib/helper.py')?.toString()).toBe('x = 2')
+    expect(readInstalledFile('net-skills', 'multi', 'lib/helper.py')?.toString()).toBe('x = 2')
   })
 
   it('records where it came from, so an install is inspectable later', async () => {
     publish('traced', [{ filename: 'a.txt', content: 'hi' }], 'Traced thing')
-    await installItem('skills', 'traced')
-    const record = readInstalled('skills', 'traced')!
+    await installItem('net-skills', 'traced')
+    const record = readInstalled('net-skills', 'traced')!
     expect(record.title).toBe('Traced thing')
     expect(record.author).toBe('tester')
-    expect(record.installedVersion).toBe(readItem('skills', 'traced')!.updatedAt)
+    expect(record.installedVersion).toBe(readItem('net-skills', 'traced')!.updatedAt)
   })
 
   it('refuses an item that was never published, rather than creating an empty one', async () => {
-    await expect(installItem('skills', 'imaginary')).rejects.toThrow(StoreInstallError)
-    expect(existsSync(path.join(installedRoot(), 'skills', 'imaginary'))).toBe(false)
+    await expect(installItem('net-skills', 'imaginary')).rejects.toThrow(StoreInstallError)
+    expect(existsSync(path.join(installedRoot(), 'net-skills', 'imaginary'))).toBe(false)
   })
 
   it('does not install anything as a side effect of publishing', () => {
     publish('published-only', [{ filename: 'a.txt', content: 'hi' }])
-    expect(isInstalled('skills', 'published-only')).toBe(false)
+    expect(isInstalled('net-skills', 'published-only')).toBe(false)
     expect(listInstalledItems()).toEqual([])
   })
 })
@@ -93,23 +93,23 @@ describe('installing', () => {
 describe('uninstalling', () => {
   it('removes this device’s copy and leaves the published item alone', async () => {
     publish('temp', [{ filename: 'a.txt', content: 'hi' }])
-    await installItem('skills', 'temp')
-    expect(uninstallItem('skills', 'temp')).toBe(true)
-    expect(isInstalled('skills', 'temp')).toBe(false)
+    await installItem('net-skills', 'temp')
+    expect(uninstallItem('net-skills', 'temp')).toBe(true)
+    expect(isInstalled('net-skills', 'temp')).toBe(false)
     // The published item is untouched — uninstalling destroys nobody else's work.
-    expect(readItem('skills', 'temp')).not.toBeNull()
+    expect(readItem('net-skills', 'temp')).not.toBeNull()
   })
 
   it('says so rather than throwing when it was not installed', () => {
     publish('never', [{ filename: 'a.txt', content: 'hi' }])
-    expect(uninstallItem('skills', 'never')).toBe(false)
+    expect(uninstallItem('net-skills', 'never')).toBe(false)
   })
 })
 
 describe('knowing what has moved on', () => {
   it('notices when the published version changed after installing', async () => {
     publish('drifts', [{ filename: 'a.txt', content: 'v1' }])
-    await installItem('skills', 'drifts')
+    await installItem('net-skills', 'drifts')
     expect(outdatedInstalls()).toEqual([])
 
     publish('drifts', [{ filename: 'a.txt', content: 'v2' }])
@@ -120,13 +120,13 @@ describe('knowing what has moved on', () => {
 
   it('updating actually rewrites the installed file', async () => {
     publish('drifts', [{ filename: 'a.txt', content: 'v1' }])
-    await installItem('skills', 'drifts')
+    await installItem('net-skills', 'drifts')
     publish('drifts', [{ filename: 'a.txt', content: 'v2' }])
 
     const { updated, failed } = await updateInstalls()
     expect(failed).toEqual([])
     expect(updated.map(r => r.name)).toEqual(['drifts'])
-    expect(readInstalledFile('skills', 'drifts', 'a.txt')?.toString()).toBe('v2')
+    expect(readInstalledFile('net-skills', 'drifts', 'a.txt')?.toString()).toBe('v2')
   })
 
   it('notices an edit made in the same millisecond, which a timestamp comparison misses', async () => {
@@ -134,10 +134,10 @@ describe('knowing what has moved on', () => {
     // publishes that fast carry the same stamp. Comparing digests is what
     // makes the answer independent of how quick the machine is.
     publish('fast', [{ filename: 'a.txt', content: 'v1' }])
-    await installItem('skills', 'fast')
-    const before = readItem('skills', 'fast')!.updatedAt
+    await installItem('net-skills', 'fast')
+    const before = readItem('net-skills', 'fast')!.updatedAt
     publish('fast', [{ filename: 'a.txt', content: 'v2' }])
-    const after = readItem('skills', 'fast')!.updatedAt
+    const after = readItem('net-skills', 'fast')!.updatedAt
     if (before === after) {
       // Only meaningful when the two publishes really did land in the same
       // millisecond; otherwise this is just the ordinary case again.
@@ -148,18 +148,18 @@ describe('knowing what has moved on', () => {
 
   it('counts a file the published item no longer has as a change', async () => {
     publish('shrinks', [{ filename: 'a.txt', content: '1' }, { filename: 'b.txt', content: '2' }])
-    await installItem('skills', 'shrinks')
+    await installItem('net-skills', 'shrinks')
     // Republishing cannot drop a file (publishes merge), so the install is
     // compared against an item that legitimately never had b.txt.
-    const record = readInstalled('skills', 'shrinks')!
-    const published = readItem('skills', 'shrinks')!
+    const record = readInstalled('net-skills', 'shrinks')!
+    const published = readItem('net-skills', 'shrinks')!
     expect(changedFiles({ ...record, files: [...record.files, { filename: 'gone.txt', bytes: 1, sha256: 'x' }] }, published))
       .toContain('gone.txt')
   })
 
   it('leaves an up-to-date install alone', async () => {
     publish('stable', [{ filename: 'a.txt', content: 'v1' }])
-    await installItem('skills', 'stable')
+    await installItem('net-skills', 'stable')
     expect((await updateInstalls()).updated).toEqual([])
   })
 })
@@ -168,42 +168,42 @@ describe('reading back what is installed', () => {
   it('lists installs newest first', async () => {
     publish('one', [{ filename: 'a.txt', content: '1' }])
     publish('two', [{ filename: 'a.txt', content: '2' }])
-    await installItem('skills', 'one')
+    await installItem('net-skills', 'one')
     await new Promise(r => setTimeout(r, 5))
-    await installItem('skills', 'two')
+    await installItem('net-skills', 'two')
     expect(listInstalledItems().map(r => r.name)).toEqual(['two', 'one'])
   })
 
   it('reports a record it cannot parse as not installed, rather than as a broken install', async () => {
     publish('corrupt', [{ filename: 'a.txt', content: 'hi' }])
-    await installItem('skills', 'corrupt')
-    writeFileSync(path.join(installedRoot(), 'skills', 'corrupt', 'installed.json'), '{ not json')
-    expect(isInstalled('skills', 'corrupt')).toBe(false)
+    await installItem('net-skills', 'corrupt')
+    writeFileSync(path.join(installedRoot(), 'net-skills', 'corrupt', 'installed.json'), '{ not json')
+    expect(isInstalled('net-skills', 'corrupt')).toBe(false)
     expect(listInstalledItems()).toEqual([])
   })
 
   it('refuses a name that resolves to the installed root itself', async () => {
-    // The bug: uninstallItem did no validation, so ("skills", "..") resolved
+    // The bug: uninstallItem did no validation, so ("net-skills", "..") resolved
     // to the installed ROOT, passed a containment check that permitted
     // dir === root, and rm -rf'd every installed item on the machine. It was
-    // reachable from the uninstall route and from "store uninstall skills .."
+    // reachable from the uninstall route and from "store uninstall net-skills .."
     // in chat, whose name pattern allows dots.
     publish('survivor', [{ filename: 'a.txt', content: 'keep me' }])
-    await installItem('skills', 'survivor')
+    await installItem('net-skills', 'survivor')
 
-    expect(() => uninstallItem('skills', '..')).toThrow()
-    expect(isInstalled('skills', 'survivor')).toBe(true)
+    expect(() => uninstallItem('net-skills', '..')).toThrow()
+    expect(isInstalled('net-skills', 'survivor')).toBe(true)
     expect(existsSync(installedRoot())).toBe(true)
   })
 
   it('refuses every shape of traversal on both install and uninstall', async () => {
     const probes: Array<[string, string]> = [
       ['../../etc', 'passwd'],
-      ['skills', '../../../etc'],
-      ['skills', '..'],
-      ['skills', 'a/../../b'],
+      ['net-skills', '../../../etc'],
+      ['net-skills', '..'],
+      ['net-skills', 'a/../../b'],
       ['/etc', 'passwd'],
-      ['skills', '.git'],
+      ['net-skills', '.git'],
     ]
     for (const [kind, name] of probes) {
       await expect(installItem(kind, name)).rejects.toThrow()
@@ -213,10 +213,10 @@ describe('reading back what is installed', () => {
 
   it('refuses to read a file outside the item’s own directory', async () => {
     publish('confined', [{ filename: 'a.txt', content: 'hi' }])
-    await installItem('skills', 'confined')
-    mkdirSync(path.join(installedRoot(), 'skills'), { recursive: true })
-    writeFileSync(path.join(installedRoot(), 'skills', 'secret.txt'), 'not yours')
-    expect(readInstalledFile('skills', 'confined', '../secret.txt')).toBeNull()
+    await installItem('net-skills', 'confined')
+    mkdirSync(path.join(installedRoot(), 'net-skills'), { recursive: true })
+    writeFileSync(path.join(installedRoot(), 'net-skills', 'secret.txt'), 'not yours')
+    expect(readInstalledFile('net-skills', 'confined', '../secret.txt')).toBeNull()
   })
 })
 
@@ -232,9 +232,9 @@ describe('an installed item is actually loadable', () => {
         }),
       },
     ])
-    await installItem('skills', 'greeter')
+    await installItem('net-skills', 'greeter')
 
-    const plan = planActivation('skills', 'greeter')
+    const plan = planActivation('net-skills', 'greeter')
     expect(plan.from).toEqual(['greeter.skill.json'])
     expect(plan.memories).toHaveLength(2)
     expect(plan.memories[0].content).toBe('greeting: how to greet someone warmly')
@@ -248,8 +248,8 @@ describe('an installed item is actually loadable', () => {
     for (const filename of ['thing.source.json', 'skill.json', 'thing.ext.json']) {
       const name = `carrier-${filename.replace(/\W/g, '')}`
       publish(name, [{ filename, content: JSON.stringify({ neurons: [{ name: 'n', definition: 'd' }] }) }])
-      await installItem('skills', name)
-      expect(planActivation('skills', name).memories, filename).toHaveLength(1)
+      await installItem('net-skills', name)
+      expect(planActivation('net-skills', name).memories, filename).toHaveLength(1)
     }
   })
 
@@ -260,8 +260,8 @@ describe('an installed item is actually loadable', () => {
       { filename: 'SKILL.md', content: '# How to use this' },
       { filename: 'bridge.py', content: 'print("hi")' },
     ])
-    await installItem('skills', 'bridge')
-    const plan = planActivation('skills', 'bridge')
+    await installItem('net-skills', 'bridge')
+    const plan = planActivation('net-skills', 'bridge')
     expect(plan.memories).toEqual([])
     expect(plan.nothingLoadable).toMatch(/nothing this system knows how to load/)
   })
@@ -271,14 +271,14 @@ describe('an installed item is actually loadable', () => {
       { filename: 'broken.skill.json', content: '{ not json at all' },
       { filename: 'good.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'works' }] }) },
     ])
-    await installItem('skills', 'mixed')
-    const plan = planActivation('skills', 'mixed')
+    await installItem('net-skills', 'mixed')
+    const plan = planActivation('net-skills', 'mixed')
     expect(plan.from).toEqual(['good.skill.json'])
     expect(plan.memories).toHaveLength(1)
   })
 
   it('reports an item that was never installed as not installed', () => {
-    expect(planActivation('skills', 'never-installed').nothingLoadable).toMatch(/is not installed/)
+    expect(planActivation('net-skills', 'never-installed').nothingLoadable).toMatch(/is not installed/)
   })
 
   it('does not activate anything merely by publishing', async () => {
@@ -287,7 +287,7 @@ describe('an installed item is actually loadable', () => {
     ])
     // Publishing shares; installing is the deliberate act. Nothing loads until
     // someone asks for it.
-    expect(planActivation('skills', 'published-only-2').nothingLoadable).toMatch(/is not installed/)
+    expect(planActivation('net-skills', 'published-only-2').nothingLoadable).toMatch(/is not installed/)
   })
 })
 
@@ -307,8 +307,8 @@ describe('a published item cannot flood the machine that installs it', () => {
 
   it('caps how many memories one item may contribute', async () => {
     publish('flood', [{ filename: 'f.skill.json', content: hostile(5000, 10) }])
-    await installItem('skills', 'flood')
-    const plan = planActivation('skills', 'flood')
+    await installItem('net-skills', 'flood')
+    const plan = planActivation('net-skills', 'flood')
     expect(plan.memories.length).toBeLessThanOrEqual(500)
     // Reported, never silent: hitting the cap says something about the item.
     expect(plan.truncated).toMatch(/declares more than/)
@@ -316,8 +316,8 @@ describe('a published item cannot flood the machine that installs it', () => {
 
   it('caps the size of any single memory', async () => {
     publish('giant', [{ filename: 'g.skill.json', content: hostile(1, 5_000_000) }])
-    await installItem('skills', 'giant')
-    const plan = planActivation('skills', 'giant')
+    await installItem('net-skills', 'giant')
+    const plan = planActivation('net-skills', 'giant')
     for (const m of plan.memories) expect(m.content.length).toBeLessThan(8_100)
     expect(plan.memories.some(m => m.content.endsWith('(truncated)'))).toBe(true)
   })
@@ -326,8 +326,8 @@ describe('a published item cannot flood the machine that installs it', () => {
     publish('ordinary', [
       { filename: 'o.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'a short one' }] }) },
     ])
-    await installItem('skills', 'ordinary')
-    expect(planActivation('skills', 'ordinary').truncated).toBeUndefined()
+    await installItem('net-skills', 'ordinary')
+    expect(planActivation('net-skills', 'ordinary').truncated).toBeUndefined()
   })
 
   it('cannot pollute Object.prototype through neuron names', async () => {
@@ -337,8 +337,8 @@ describe('a published item cannot flood the machine that installs it', () => {
         content: JSON.stringify({ neurons: [{ name: '__proto__', definition: 'x' }, { name: 'constructor', definition: 'y' }] }),
       },
     ])
-    await installItem('skills', 'polluter')
-    planActivation('skills', 'polluter')
+    await installItem('net-skills', 'polluter')
+    planActivation('net-skills', 'polluter')
     expect(({} as Record<string, unknown>).x).toBeUndefined()
     expect(Object.prototype).not.toHaveProperty('polluted')
   })
@@ -361,8 +361,8 @@ Search the wiki, then answer from what you find.
 
   it('loads a SKILL.md as a trigger and its instructions', async () => {
     publish('wiki-first', [{ filename: 'SKILL.md', content: SKILL_MD }])
-    await installItem('skills', 'wiki-first')
-    const plan = planActivation('skills', 'wiki-first')
+    await installItem('net-skills', 'wiki-first')
+    const plan = planActivation('net-skills', 'wiki-first')
 
     expect(plan.from).toEqual(['SKILL.md'])
     expect(plan.nothingLoadable).toBeUndefined()
@@ -378,8 +378,8 @@ Search the wiki, then answer from what you find.
       { filename: 'scripts/run.py', content: 'print("hi")' },
       { filename: 'references/schemas.md', content: '# Schemas' },
     ])
-    await installItem('skills', 'with-extras')
-    const plan = planActivation('skills', 'with-extras')
+    await installItem('net-skills', 'with-extras')
+    const plan = planActivation('net-skills', 'with-extras')
     // Only the SKILL.md is instructions; the rest are files it can refer to.
     expect(plan.from).toEqual(['SKILL.md'])
     expect(plan.memories).toHaveLength(1)
@@ -390,8 +390,8 @@ Search the wiki, then answer from what you find.
       { filename: 'SKILL.md', content: SKILL_MD },
       { filename: 'both.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'd' }] }) },
     ])
-    await installItem('skills', 'both')
-    const plan = planActivation('skills', 'both')
+    await installItem('net-skills', 'both')
+    const plan = planActivation('net-skills', 'both')
     expect(plan.from.sort()).toEqual(['SKILL.md', 'both.skill.json'])
     expect(plan.memories).toHaveLength(2)
   })
@@ -401,8 +401,8 @@ Search the wiki, then answer from what you find.
       { filename: 'SKILL.md', content: '---\nname: x\ndescription: d\n---\n\n' },
       { filename: 'good.skill.json', content: JSON.stringify({ neurons: [{ name: 'n', definition: 'works' }] }) },
     ])
-    await installItem('skills', 'half-broken')
-    expect(planActivation('skills', 'half-broken').from).toEqual(['good.skill.json'])
+    await installItem('net-skills', 'half-broken')
+    expect(planActivation('net-skills', 'half-broken').from).toEqual(['good.skill.json'])
   })
 })
 
@@ -426,8 +426,8 @@ describe('a net skill becomes part of the network', () => {
 
   it('reports the neurons it contributes, not just memories', async () => {
     publish('joins', [{ filename: 'j.skill.json', content: netSkill }])
-    await installItem('skills', 'joins')
-    const plan = planActivation('skills', 'joins')
+    await installItem('net-skills', 'joins')
+    const plan = planActivation('net-skills', 'joins')
     expect(plan.neurons.map(n => n.name)).toEqual(['alpha', 'beta'])
     expect(plan.neurons[0].definition).toBe('the first neuron')
   })
@@ -437,8 +437,8 @@ describe('a net skill becomes part of the network', () => {
     // pushed into the array being iterated, so a skill reported zero neurons
     // and the mesh join fell back to a default count of one.
     publish('shadowed', [{ filename: 's.skill.json', content: netSkill }])
-    await installItem('skills', 'shadowed')
-    const plan = planActivation('skills', 'shadowed')
+    await installItem('net-skills', 'shadowed')
+    const plan = planActivation('net-skills', 'shadowed')
     expect(plan.neurons).toHaveLength(2)
     expect(plan.memories).toHaveLength(2)
   })
@@ -450,8 +450,8 @@ describe('a net skill becomes part of the network', () => {
         content: '---\nname: x\ndescription: Use when asked about x.\n---\n\n# X\n\nDo the thing.',
       },
     ])
-    await installItem('skills', 'instructions-only')
-    const plan = planActivation('skills', 'instructions-only')
+    await installItem('net-skills', 'instructions-only')
+    const plan = planActivation('net-skills', 'instructions-only')
     expect(plan.neurons).toEqual([])
     // It is still fully loadable -- as instructions.
     expect(plan.memories).toHaveLength(1)
@@ -462,8 +462,8 @@ describe('a net skill becomes part of the network', () => {
       neurons: Array.from({ length: 2000 }, (_, i) => ({ name: `n${i}`, definition: `d${i}` })),
     })
     publish('neuron-flood', [{ filename: 'f.skill.json', content: flood }])
-    await installItem('skills', 'neuron-flood')
-    expect(planActivation('skills', 'neuron-flood').neurons.length).toBeLessThanOrEqual(500)
+    await installItem('net-skills', 'neuron-flood')
+    expect(planActivation('net-skills', 'neuron-flood').neurons.length).toBeLessThanOrEqual(500)
   })
 })
 
@@ -481,8 +481,8 @@ describe('what the Extension Builder actually produces', () => {
 
   it('joins the mesh even with no definitions on any neuron', async () => {
     publish('from-builder', [{ filename: 'from-builder.skill.json', content: builtByBuilder }])
-    await installItem('skills', 'from-builder')
-    const plan = planActivation('skills', 'from-builder')
+    await installItem('net-skills', 'from-builder')
+    const plan = planActivation('net-skills', 'from-builder')
     expect(plan.neurons.map(n => n.name)).toEqual(['alpha', 'beta'])
     // Nothing to remember is correct: there is no text.
     expect(plan.memories).toEqual([])
@@ -496,8 +496,8 @@ describe('what the Extension Builder actually produces', () => {
       { filename: 'x.skill.json', content: builtByBuilder },
       { filename: 'x.source.json', content: builtByBuilder },
     ])
-    await installItem('skills', 'two-artifacts')
-    expect(planActivation('skills', 'two-artifacts').neurons).toHaveLength(2)
+    await installItem('net-skills', 'two-artifacts')
+    expect(planActivation('net-skills', 'two-artifacts').neurons).toHaveLength(2)
   })
 
   it('still remembers a definition when one is present', async () => {
@@ -505,8 +505,8 @@ describe('what the Extension Builder actually produces', () => {
       filename: 'p.skill.json',
       content: JSON.stringify({ neurons: [{ name: 'n', definition: 'what it means' }] }),
     }])
-    await installItem('skills', 'with-prose')
-    const plan = planActivation('skills', 'with-prose')
+    await installItem('net-skills', 'with-prose')
+    const plan = planActivation('net-skills', 'with-prose')
     expect(plan.memories).toHaveLength(1)
     expect(plan.neurons).toHaveLength(1)
   })

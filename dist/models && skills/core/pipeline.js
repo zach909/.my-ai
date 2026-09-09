@@ -387,7 +387,6 @@ export class NeuroPipeline {
         // network still computes, still all-to-all, still carrying its own weight
         // and bias plus the whole network's, in numbers and in waves.
         let hyperOutput;
-        let selfModelSurprise = 0;
         let liveCorrections = 0;
         let networkStateDeltas = new Map();
         {
@@ -397,7 +396,6 @@ export class NeuroPipeline {
             const driven = this.neuronIdsForExperts(selectedPlugins);
             const hyperResult = this.hyperEngine.process(networkInput, this.getValueLearningRates(), driven.size > 0 ? driven : new Set([0]), this.getValeFractions(), { activeGroups });
             hyperOutput = hyperResult.outputVector;
-            selfModelSurprise = hyperResult.selfModelSurprise;
             liveCorrections = hyperResult.liveCorrections;
             networkStateDeltas = new Map(hyperResult.stateDeltas);
             this.feedbackToValueBudget(hyperResult.stateDeltas);
@@ -481,9 +479,7 @@ export class NeuroPipeline {
         }
         // ── Step 5b: Alignment veto ─────────────────────────────────────────────
         // Gate the chosen action rather than optimizing toward an alignment score.
-        // Capabilities come from whichever plugin experts the MoE actually picked,
-        // and drift is the self-model surprise from the hyperdimensional stage, so
-        // a run that diverged from what the network expected fails safe.
+        // Capabilities come from whichever plugin experts the MoE actually picked.
         let alignment;
         {
             const t0 = Date.now();
@@ -493,7 +489,7 @@ export class NeuroPipeline {
                 if (def?.capabilities)
                     capabilities.push(...def.capabilities);
             }
-            alignment = this.alignmentVeto.evaluate({ id: `rlm-action-${rlmAction}`, name: `action ${rlmAction}`, capabilities, reversible: true }, { selfModelSurprise });
+            alignment = this.alignmentVeto.evaluate({ id: `rlm-action-${rlmAction}`, name: `action ${rlmAction}`, capabilities, reversible: true });
             steps.push({
                 name: 'alignment-veto',
                 inputShape: [capabilities.length],
@@ -534,7 +530,6 @@ export class NeuroPipeline {
             totalDurationMs,
             selectedPlugins,
             alignment,
-            selfModelSurprise,
             liveCorrections,
             networkStateDeltas,
         };

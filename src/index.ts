@@ -12,10 +12,11 @@ import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";
 import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
 import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
+import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
 import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
-import { HiveMind, SharedBlackboard } from "../models && skills/core/hive-mind.js";
+import { HiveMind, SharedBlackboard, type HiveAgent } from "../models && skills/core/hive-mind.js";
 import { ChatGroup } from "../models && skills/core/chat-group.js";
 import { LongTermMemory } from "../models && skills/core/long-term-memory.js";
 import { PlanTracker } from "../models && skills/core/plan-tracker.js";
@@ -161,6 +162,13 @@ export class NeuroclawSystem {
   /** Everything said, through the real Zip Loop, as a file. */
   promptFeed: PromptMeshFeed;
   /**
+   * Continuous learning: predicts what the user will say next, and trains
+   * the mesh on the gap once they actually do. Shares promptFeed's own
+   * DoorwayLock (see continuous-learning.ts's doc comment) so its own
+   * zip-loop calls can never interleave with promptFeed's.
+   */
+  continuousLearner: ContinuousLearner;
+  /**
    * What the last turn actually used, for the three-dots panel in the chat.
    *
    * Everything here is recorded where it happens rather than reconstructed
@@ -237,7 +245,6 @@ export class NeuroclawSystem {
   private readonly zipPersistDir: string | null;
 
   constructor(config?: { maxContextGB?: number; persistDir?: string }) {
-    this.llm = new NeuroclawLLM({});
     this.contextCapacityGB = config?.maxContextGB || 200000;
     this.zipPersistDir = config?.persistDir ?? null;
     // Section 1.10/§7: NeuroPipeline owns a second, independent ZipIOSystem
@@ -248,6 +255,19 @@ export class NeuroclawSystem {
     this.pipeline = new NeuroPipeline({
       zipPersistDir: this.zipPersistDir ? join(this.zipPersistDir, "pipeline") : undefined,
     });
+    // "onebrain delete backup llm": built (and thus forced to construct its
+    // real HyperDimensionalEngine) BEFORE this.llm, and that same engine is
+    // handed straight into NeuroclawLLM below -- see UnifiedBrainConfig's
+    // hyperEngine doc comment. Before this, this.llm built its own private
+    // engine and this.pipeline built a second, unrelated one: the engine
+    // that actually answers a chat reply (processQuery -> runner.generate ->
+    // this.llm) was never the one the Zip Loop doorway, continuous learning,
+    // and every net skill graft below (all of which reach the mesh only
+    // through this.pipeline) were reading and training. ensureBrain(), not
+    // the lazy default: the whole point is that this.llm's engine must be
+    // real and already built, not a stand-in constructed only on first run().
+    const sharedEngine = this.pipeline.ensureBrain();
+    this.llm = new NeuroclawLLM({}, sharedEngine);
     // ONE brain, not one per subsystem. PluginRegistry defaults to building
     // its own MixtureOfExperts (and therefore its own NeuronMesh), which left
     // every plugin's neurons wired all-to-all among *themselves* but severed
@@ -267,6 +287,11 @@ export class NeuroclawSystem {
       if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
       return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
     });
+    // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
+    // promptFeed are the two callers that drive the SAME engine's doorway,
+    // and a lock only each one holds separately would not stop them from
+    // running at the same time as each other.
+    this.continuousLearner = new ContinuousLearner(this.promptFeed.lock());
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.pluginRegistry);
     // Hive Mind (Section 13): each agent's mind is the real neural runner, so
@@ -443,8 +468,8 @@ export class NeuroclawSystem {
     register("learner", "Autonomous Learner", "learning", ["knowledge"], ["information"], ["learn decision"]);
     register("reasoner", "Reasoning Engine", "reasoning", ["memory", "mistakes", "hive", "knowledge", "selfModel", "discovery", "predictor"], ["problem"], ["reasoning result"]);
     register("critic", "Critic", "safety", ["knowledge", "math", "mistakes"], ["claim/candidate answers"], ["verification report"]);
-    // The six public action-taking entry points (`trackCall()`'s component ids)
-    // sit on top of the subsystems above — real dependency edges, not a
+    // The nine public action-taking entry points (`trackCall()`'s component
+    // ids) sit on top of the subsystems above — real dependency edges, not a
     // fabricated grouping.
     register("process-query", "processQuery()", "core", ["memory", "predictor", "veto"], ["user input"], ["response"]);
     register("solve", "solve()", "reasoning", ["predictor", "veto", "transfer", "reasoner", "selfModel", "mistakes", "hive"], ["problem"], ["solution"]);
@@ -452,7 +477,13 @@ export class NeuroclawSystem {
     register("collaborate", "collaborate()", "communication", ["hive", "predictor", "veto"], ["task"], ["group decision"]);
     register("execute-plan", "executePlan()", "planning", ["plan", "runner", "predictor", "veto"], ["objective", "steps"], ["per-step results"]);
     register("learn", "learn()", "learning", ["learner", "pluginRegistry", "predictor", "veto", "improvement"], ["information"], ["learn decision"]);
-    for (const from of ["process-query", "solve", "autonomous-task", "collaborate", "execute-plan", "learn"]) {
+    // "in any chat an ai can summon a hive teammate or a sub ai or sub team"
+    // -- a direct line to one specific existing agent, a brand-new one, or a
+    // whole new sub-hive, distinct from collaborate()'s whole-team discussion.
+    register("ask-hive-agent", "askHiveAgent()", "communication", ["hive", "predictor", "veto"], ["role", "task"], ["agent output"]);
+    register("summon-hive-agent", "summonHiveAgent()", "communication", ["hive", "predictor", "veto"], ["role", "specialization", "task"], ["agent output"]);
+    register("summon-hive-subteam", "summonHiveSubTeam()", "communication", ["hive", "predictor", "veto"], ["name", "task"], ["coordinator output"]);
+    for (const from of ["process-query", "solve", "autonomous-task", "collaborate", "execute-plan", "learn", "ask-hive-agent", "summon-hive-agent", "summon-hive-subteam"]) {
       const comp = this.architecture.getComponent(from);
       if (!comp) continue;
       for (const to of comp.dependencies) {
@@ -808,6 +839,18 @@ export class NeuroclawSystem {
     this.promptFeed.feed(input);
     details.zipBytes = packZip({ files: { "prompt.txt": input } }).length;
 
+    // Continuous learning: compares whatever the mesh predicted the user
+    // would say against what they actually just said, trains on the gap,
+    // then predicts the next one. Same reasoning as promptFeed.feed() just
+    // above -- fire-and-forget, never awaited, for the same measured cost.
+    // Shares promptFeed's own doorway lock (see continuousLearner's
+    // construction above) so the two can never drive the engine's settle()
+    // loop at the same time.
+    const engineForLearning = this.pipeline.getHyperEngine();
+    if (engineForLearning) {
+      void this.continuousLearner.onUserMessage(engineForLearning, "", input).catch(() => {});
+    }
+
     // Prompting Skills enter here, as information.
     //
     //   Prompting Skill -> Skill Folder -> Prompt -> INPUT -> ZIP LOOP
@@ -889,18 +932,19 @@ export class NeuroclawSystem {
     const predictedDanger = prediction.outcomes.some(o => o.dangerous);
 
     // 4. Gate the "respond" action through the AlignmentVeto before running.
-    //    A negative-valence user under high arousal lowers our confidence,
-    //    surfacing as self-model surprise the veto can escalate on.
-    const decision = this.veto.evaluate(
-      {
-        id: `respond:${Date.now()}`,
-        name: "respond to user",
-        capabilities: ["text-generate"],
-        reversible: !predictedDanger,
-        externalEffect: predictedDanger,
-      },
-      { selfModelSurprise: emotion.valence < 0 ? emotion.arousal * 0.5 : 0 }
-    );
+    //    (This used to also pass a negative-valence/high-arousal-derived
+    //    "self-model surprise" here for the veto's drift rule to escalate
+    //    on -- that self-model and the drift rule are both gone now, see
+    //    onebrain.ts and alignment-veto.ts. EmpathyEngine.shouldVeto() above
+    //    already covers "does my read of this user still support trusting my
+    //    own judgement" from the same emotion signal.)
+    const decision = this.veto.evaluate({
+      id: `respond:${Date.now()}`,
+      name: "respond to user",
+      capabilities: ["text-generate"],
+      reversible: !predictedDanger,
+      externalEffect: predictedDanger,
+    });
     if (!decision.allowed) {
       const blocked = `[Withheld] ${decision.reasons.join("; ")}`;
       await this.zipIO.emit(blocked);
@@ -1386,6 +1430,132 @@ export class NeuroclawSystem {
    */
   collaborationHistory(): string[] {
     return this.chatGroup?.getHistory().map(m => `${m.from}: ${m.content}`) ?? [];
+  }
+
+  /**
+   * The current hive roster, spawning the default planner/coder/reviewer/
+   * mathematician/scientist/creative/researcher/verifier team first if the
+   * hive is still empty -- so "what's the team right now" always has a real
+   * answer instead of an empty list before anything else has touched the hive.
+   */
+  hiveTeamSnapshot(): Array<{ id: string; role: string; specialization: string; trust: number }> {
+    this.ensureDefaultTeam();
+    return this.hive.list().map(a => a.snapshot());
+  }
+
+  /** Case-insensitive lookup by agent id or role -- "coder", "the coder", "Coder" all find the same agent. */
+  private findHiveAgent(role: string): HiveAgent | undefined {
+    const needle = role.trim().toLowerCase();
+    if (!needle) return undefined;
+    return this.hive.list().find(a => a.id.toLowerCase() === needle || a.role.toLowerCase() === needle);
+  }
+
+  /**
+   * "in any chat an ai can summon a hive teammate" -- talk to one specific
+   * existing hive agent directly, distinct from collaborate()'s whole-team
+   * discussion and solve()'s own internal, auto-picked delegation. Gated
+   * through the same AlignmentVeto check every other action-taking entry
+   * point uses.
+   */
+  async askHiveAgent(role: string, task: string): Promise<{ agent: string; role: string; output: string } | { error: string }> {
+    if (!this.initialized) await this.initialize();
+    return this.trackCall("ask-hive-agent", async () => this.askHiveAgentImpl(role, task));
+  }
+
+  private async askHiveAgentImpl(role: string, task: string): Promise<{ agent: string; role: string; output: string } | { error: string }> {
+    this.ensureDefaultTeam();
+    const agent = this.findHiveAgent(role);
+    if (!agent) {
+      const known = this.hive.list().map(a => `${a.id} (${a.role})`).join(", ");
+      return { error: `No hive agent matches "${role}". Current team: ${known}.` };
+    }
+    const prediction = this.predictor.predict(`ask hive agent ${agent.id}: ${task}`);
+    const dangerous = prediction.outcomes.some(o => o.dangerous);
+    const decision = this.veto.evaluate({
+      id: `hive-ask:${Date.now()}`,
+      name: `ask hive agent (${agent.id})`,
+      capabilities: ["text-generate"],
+      reversible: !dangerous,
+      externalEffect: dangerous,
+    });
+    if (!decision.allowed) return { error: `[Withheld] ${decision.reasons.join("; ")}` };
+    const output = await agent.process(task);
+    // Same combine-and-reward pattern as solve()'s and autonomousTask()'s
+    // own delegation: publish to the shared blackboard, reward the agent
+    // that did real, completed work, and record it in long-term memory.
+    agent.share(task, output);
+    this.hive.reward(agent.id, 3);
+    this.memory.remember(`Hive ${agent.role} (${agent.id}): ${task} -> ${output}`, { tags: ["hive", "chat-turn"], importance: 0.6 });
+    const finalOutput = decision.requiresConfirmation
+      ? `${output}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`
+      : output;
+    return { agent: agent.id, role: agent.role, output: finalOutput };
+  }
+
+  /**
+   * "or summon a sub ai" -- create a brand-new hive agent on demand (real
+   * admin-privileged agent, via HiveMind.summon()) and have it act on a task
+   * immediately, rather than only ever picking among the fixed default team.
+   */
+  async summonHiveAgent(role: string, specialization: string, task: string): Promise<{ agent: string; role: string; output: string } | { error: string }> {
+    if (!this.initialized) await this.initialize();
+    return this.trackCall("summon-hive-agent", async () => this.summonHiveAgentImpl(role, specialization, task));
+  }
+
+  private async summonHiveAgentImpl(role: string, specialization: string, task: string): Promise<{ agent: string; role: string; output: string } | { error: string }> {
+    this.ensureDefaultTeam();
+    const prediction = this.predictor.predict(`summon hive agent ${role} (${specialization}): ${task}`);
+    const dangerous = prediction.outcomes.some(o => o.dangerous);
+    const decision = this.veto.evaluate({
+      id: `hive-summon:${Date.now()}`,
+      name: `summon hive agent (${role})`,
+      capabilities: ["text-generate"],
+      reversible: !dangerous,
+      externalEffect: dangerous,
+    });
+    if (!decision.allowed) return { error: `[Withheld] ${decision.reasons.join("; ")}` };
+    const agent = this.hive.summon("chat", { role, specialization });
+    const output = await agent.process(task);
+    agent.share(task, output);
+    this.memory.remember(`Hive summoned ${agent.role} (${agent.id}): ${task} -> ${output}`, { tags: ["hive", "chat-turn"], importance: 0.6 });
+    const finalOutput = decision.requiresConfirmation
+      ? `${output}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`
+      : output;
+    return { agent: agent.id, role: agent.role, output: finalOutput };
+  }
+
+  /**
+   * "or sub team" -- summon an entire nested sub-hive (HiveMind.summonSubHive())
+   * with its own admin-privileged coordinator, and have that coordinator act
+   * on a task immediately. The sub-team persists (accessible via
+   * hive.listSubHives()) for further summon()/summonSubHive() calls of its own.
+   */
+  async summonHiveSubTeam(name: string, task: string): Promise<{ coordinator: string; output: string } | { error: string }> {
+    if (!this.initialized) await this.initialize();
+    return this.trackCall("summon-hive-subteam", async () => this.summonHiveSubTeamImpl(name, task));
+  }
+
+  private async summonHiveSubTeamImpl(name: string, task: string): Promise<{ coordinator: string; output: string } | { error: string }> {
+    this.ensureDefaultTeam();
+    const prediction = this.predictor.predict(`summon hive sub-team ${name}: ${task}`);
+    const dangerous = prediction.outcomes.some(o => o.dangerous);
+    const decision = this.veto.evaluate({
+      id: `hive-summon-team:${Date.now()}`,
+      name: `summon hive sub-team (${name})`,
+      capabilities: ["text-generate"],
+      reversible: !dangerous,
+      externalEffect: dangerous,
+    });
+    if (!decision.allowed) return { error: `[Withheld] ${decision.reasons.join("; ")}` };
+    const sub = this.hive.summonSubHive("chat", name);
+    const coordinator = sub.list()[0];
+    const output = await coordinator.process(task);
+    coordinator.share(task, output);
+    this.memory.remember(`Hive summoned sub-team "${name}" (coordinator ${coordinator.id}): ${task} -> ${output}`, { tags: ["hive", "chat-turn"], importance: 0.6 });
+    const finalOutput = decision.requiresConfirmation
+      ? `${output}\n  [Confirm before acting: ${decision.reasons.join("; ")}]`
+      : output;
+    return { coordinator: coordinator.id, output: finalOutput };
   }
 
   /**

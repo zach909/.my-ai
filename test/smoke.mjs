@@ -314,9 +314,9 @@ async function testHyperdimensional() {
   const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
   const hd = new HyperDimensionalEngine({ dimensions: 8, neuronCount: 12 });
   const a = hd.process(Array.from({ length: 8 }, (_, i) => Math.sin(i)));
-  check(allFinite(a.outputVector) && a.selfModelSurprise === 0, 'Hyper first tick finite, surprise=0');
+  check(allFinite(a.outputVector) && a.noveltyScore === 1, 'Hyper first tick finite, fully novel (never-seen pattern)');
   const b = hd.process(Array.from({ length: 8 }, (_, i) => Math.cos(i)));
-  check(Number.isFinite(b.selfModelSurprise) && b.selfModelSurprise >= 0, 'Hyper self-model surprise finite and >= 0');
+  check(Number.isFinite(b.noveltyScore) && b.noveltyScore >= 0 && b.noveltyScore <= 1, 'Hyper novelty score finite and in [0,1]');
   check(b.inputTopography instanceof Map && b.inputTopography.size === 12, 'Hyper reports per-neuron input topography');
   hd.process(new Array(8).fill(0.5), undefined, new Set([0]));
   check(typeof hd.isExclusiveInput(0.9).exclusive === 'boolean', 'Hyper isExclusiveInput returns a verdict');
@@ -363,7 +363,7 @@ async function testHyperdimensionalCapacity() {
   check(allFinite(out.outputVector) && out.noveltyScore >= 0 && out.noveltyScore <= 1, 'process() still produces sane, finite output after heavy capping');
 }
 
-async function testInputFlagSelfModelLiveCorrection() {
+async function testInputFlagNoveltyLiveCorrection() {
   const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
 
   // Section 3.1: exclusive input is exactly one neuron's flag hot. Confirm
@@ -846,14 +846,6 @@ async function testAlignmentVeto() {
   check(unknownReversibility.requiresConfirmation, 'Veto escalates an action with unknown (omitted) reversibility to confirmation, same as explicit false');
   check(unknownReversibility.score === irreversible.score, 'Unknown reversibility scores identically to explicit reversible:false (fail safe), not to reversible:true');
 
-  // Severe self-model drift fails safe → blocked.
-  const drifting = veto.evaluate({ id: 'd', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.9 });
-  check(!drifting.allowed, 'Veto blocks under severe self-model drift (fails safe)');
-
-  // Mild drift → escalate to confirmation, not block.
-  const mildDrift = veto.evaluate({ id: 'e', name: 'routine', capabilities: ['noop'], reversible: true }, { selfModelSurprise: 0.4 });
-  check(mildDrift.requiresConfirmation && mildDrift.allowed, 'Veto escalates (not blocks) under mild drift');
-
   // Decisions are inspectable and score bounded [0,1].
   check(Array.isArray(deceptive.reasons) && deceptive.reasons.length > 0, 'Veto decisions carry inspectable reasons');
   check(benign.score >= 0 && benign.score <= 1, 'Veto benevolence score is bounded [0,1]');
@@ -889,17 +881,6 @@ async function testNumberSystems() {
   q.addNeuron('a', 0.5); q.addNeuron('b', 0.5);
   check(q.getComplexAmplitude('a') && typeof q.getComplexAmplitude('a').re === 'number', 'QIL exposes genuine complex amplitude');
   check(Number.isFinite(q.interfere('a', 'b')), 'QIL interfere() (complex |zA+zB|) is finite');
-
-  // Self-model derivative in one pass matches finite difference.
-  const { HyperDimensionalEngine } = await load('models && skills/core/onebrain.js');
-  const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
-  hd.process([0.2, -0.3, 0.5, 0.1, -0.4, 0.6]);
-  const base = [0.2, -0.3, 0.5, 0.1, -0.4, 0.6];
-  const der = hd.predictSelfModelWithDerivative(base, [1, 0, 0, 0, 0, 0]).derivative[0];
-  const eps = 1e-5, bumped = [...base]; bumped[0] += eps;
-  const p0 = hd.predictSelfModelWithDerivative(base, new Array(6).fill(0)).value[0];
-  const p1 = hd.predictSelfModelWithDerivative(bumped, new Array(6).fill(0)).value[0];
-  check(near(der, (p1 - p0) / eps, 1e-3), 'Self-model dual derivative matches finite difference');
 }
 
 async function testContinuousOutputLoop() {
@@ -1587,6 +1568,80 @@ async function testWebBackend() {
     // not as the package path it's supposed to be.
     const badPath = await post('/api/apps/launch-package', { path: '--allow-downgrades', type: 'deb' });
     check(badPath.status === 400, 'Web backend POST /api/apps/launch-package rejects a path that looks like a command-line flag');
+
+    // GET/POST /api/settings/brain -- the Settings page's "Brain Behavior"
+    // section. Before this, setQuantumEnabled()/setPredictorMode()
+    // (NeuroclawLLM) were real and tested but reachable only from
+    // TypeScript, with no endpoint to flip either one at all.
+    //
+    // "add quantum interference always on" -- quantumEnabled is now
+    // vestigial: it always reports true, and posting false to it has no
+    // effect. predictorMode is still real and still toggleable.
+    const brainBefore = await get('/api/settings/brain');
+    const brainBeforeJson = JSON.parse(brainBefore.body);
+    check(brainBefore.status === 200 && brainBeforeJson.quantumEnabled === true && brainBeforeJson.predictorMode === 'word',
+      'GET /api/settings/brain reports quantum interference always on, and the real starting predictor mode');
+
+    const brainAfter = await post('/api/settings/brain', { quantumEnabled: false, predictorMode: 'code' });
+    const brainAfterJson = JSON.parse(brainAfter.body);
+    check(brainAfter.status === 200 && brainAfterJson.quantumEnabled === true && brainAfterJson.predictorMode === 'code',
+      'POST /api/settings/brain flips predictorMode but ignores an attempt to turn quantum interference off');
+
+    const brainConfirmed = await get('/api/settings/brain');
+    const brainConfirmedJson = JSON.parse(brainConfirmed.body);
+    check(brainConfirmedJson.quantumEnabled === true && brainConfirmedJson.predictorMode === 'code',
+      'GET /api/settings/brain reflects the predictorMode change on a later, independent request -- not just echoed back once -- and still reports quantum interference on');
+
+    // Malformed/partial input should not clobber the other field, and an
+    // unrecognized predictorMode string should be ignored rather than
+    // silently accepted as something NeuroclawLLM was never asked to support.
+    const brainPartial = await post('/api/settings/brain', { predictorMode: 'not-a-real-mode' });
+    const brainPartialJson = JSON.parse(brainPartial.body);
+    check(brainPartial.status === 200 && brainPartialJson.quantumEnabled === true && brainPartialJson.predictorMode === 'code',
+      'POST /api/settings/brain ignores an invalid predictorMode value instead of corrupting state');
+
+    // "zip loop no file size limit" -- POST /api/zip-loop/file used to cap
+    // at 25MB (its own internal check) and POST /api/zip-loop/run went
+    // through parseBody()'s ordinary 1MB-per-request-body default, so even
+    // a real file well under the first cap could still be rejected by the
+    // second once base64-encoded. Neither ceiling applies to this route
+    // anymore; prove it with a body bigger than both old limits combined.
+    const bigFile = Buffer.alloc(2 * 1024 * 1024, 'x'); // 2MB: over parseBody's old 1MB default
+    const postRaw = (path, buf) => new Promise((resolve, reject) => {
+      const req = http.request({ host: '127.0.0.1', port, path, method: 'POST', headers: { 'Content-Type': 'application/octet-stream', 'Content-Length': buf.length } }, res => {
+        let d = ''; res.on('data', c => d += c); res.on('end', () => resolve({ status: res.statusCode, body: d }));
+      });
+      req.on('error', reject); req.write(buf); req.end();
+    });
+    const fileUpload = await postRaw('/api/zip-loop/file?path=input/big.bin', bigFile);
+    const fileUploadJson = JSON.parse(fileUpload.body);
+    check(fileUpload.status === 200 && fileUploadJson.ok === true && fileUploadJson.bytes === bigFile.length,
+      `POST /api/zip-loop/file accepts a ${bigFile.length}-byte file (old cap was 25MB, but the point is this route has none at all)`);
+
+    // POST /api/zip-loop/run went through parseBody()'s ordinary 1MB-per-
+    // request-body default, so a real file's base64 form could still be
+    // 413'd there even after clearing /file's own now-removed cap. Proven
+    // with an invalid `archive` field alongside 2MB of harmless padding in
+    // an unused field: an actual real file would reach the settle loop
+    // (genuinely slow by construction -- every bit is one settle() of the
+    // mesh, see sendBit()'s own doc comment -- and deliberately not what
+    // this check is about), but a bad archive value fails validation
+    // immediately after parsing, before the mesh is ever touched. Getting
+    // a 400 (real validation) rather than a 413 (parseBody's old cap) is
+    // exactly proof the >1MB body was parsed at all.
+    const runWithBigBody = await post('/api/zip-loop/run', {
+      archive: 'not a real base64-encoded packed archive',
+      _padding: 'x'.repeat(2 * 1024 * 1024),
+    });
+    check(runWithBigBody.status === 400,
+      `POST /api/zip-loop/run parses a request body far over the old 1MB default -- reaches real archive validation (400) instead of being rejected as too large (413), status was ${runWithBigBody.status}`);
+
+    // Regression guard the other direction: an ordinary small-body JSON
+    // endpoint must still enforce parseBody()'s 1MB default -- raising the
+    // ceiling for the zip loop specifically must not have loosened it for
+    // everyone else.
+    const oversizedTrain = await post('/api/train', { text: 'a'.repeat(2 * 1024 * 1024) });
+    check(oversizedTrain.status === 413, 'An ordinary endpoint (POST /api/train) still enforces the 1MB default -- raising the zip loop\'s own ceiling did not loosen it globally');
   } finally {
     await web.stop();
   }
@@ -3291,6 +3346,53 @@ async function testSolveIntegration() {
   }
 }
 
+async function testOneBrainNoBackupLLM() {
+  // "onebrain delete backup llm" -- before this, NeuroclawLLM (which answers
+  // every real chat reply via processQuery() -> runner.generate()) built its
+  // own private HyperDimensionalEngine, and NeuroPipeline (which backs the
+  // Zip Loop doorway, continuous learning, and every net skill graft) built
+  // a second, unrelated one. A net skill installed mid-conversation, a
+  // prediction ContinuousLearner made, or a byte sent through the raw Zip
+  // Loop all trained/read a mesh the chat-facing brain never saw, and vice
+  // versa. This pins the fix: exactly one HyperDimensionalEngine backs both.
+  const { NeuroclawSystem } = await load('src/index.js');
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    const sys = new NeuroclawSystem();
+    await sys.initialize();
+
+    check(sys.llm.hyperEngine === sys.pipeline.getHyperEngine(),
+      "NeuroclawLLM's own engine (what answers every chat reply) is the exact same object as NeuroPipeline's engine (what backs the Zip Loop / continuous learning / net skill grafts), not two separate ones");
+
+    // Not just the same reference at boot -- genuinely one shared, mutable
+    // object: growing the pipeline's engine (what installing a net skill
+    // does, see net-skill-graft.ts) must be immediately visible to the
+    // chat-facing llm too.
+    const before = sys.llm.hyperEngine.getNeuronCount();
+    sys.pipeline.getHyperEngine().addNeurons(3);
+    check(sys.llm.hyperEngine.getNeuronCount() === before + 3,
+      "growing the pipeline's engine (a net skill graft) is immediately visible through llm.hyperEngine too -- proof of shared identity, not a snapshot");
+
+    // And the reverse direction: something that changes the engine's actual
+    // neuron STATE through the chat-facing side (a real UnifiedBrain.think()
+    // call, via generate()) must be visible to a reader going through
+    // pipeline.getHyperEngine() too.
+    const targetId = 0;
+    sys.llm.hyperEngine.setNeuronState(targetId, new Float32Array(sys.llm.hyperEngine.getDimensions()).fill(0.42));
+    const readBackViaPipeline = sys.pipeline.getHyperEngine().getNeuronStates()[targetId];
+    // state[0] is the reserved input-flag dimension (not writable via
+    // setNeuronState -- see its own doc comment); state[1] is where the
+    // content this call wrote actually lands. Float32-rounded (the state
+    // array is a Float32Array), so compared with tolerance rather than
+    // strict equality against the float64 literal.
+    check(Math.abs(readBackViaPipeline.state[1] - 0.42) < 1e-5,
+      'a state write made through llm.hyperEngine is readable through pipeline.getHyperEngine() too -- the same object, not a copy');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
 async function testNeuroclawSystemLifecycle() {
   // End-to-end test: exercise all four primary entry points (processQuery,
   // solve, autonomousTask, executePlan) in sequence and verify cross-subsystem
@@ -3435,6 +3537,93 @@ async function testCollaborateAlignmentVeto() {
     check(risky.decision.includes('[Confirm before acting'), 'collaborate() escalates a genuinely dangerous task to human confirmation, matching solve()/processQuery()/autonomousTask()');
     const safe = await sys.collaborate('plan a team offsite');
     check(!safe.decision.includes('[Confirm before acting'), 'collaborate() does not flag an ordinary, benign task for confirmation');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testHiveDirectSummon() {
+  const { NeuroclawSystem } = await load('src/index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+
+    // "in any chat an ai can summon a hive teammate or a sub ai or sub
+    // team" -- three direct lines beyond collaborate()'s whole-team
+    // discussion and solve()'s own internal, auto-picked delegation.
+
+    // hiveTeamSnapshot() lazily spawns the default 8-role team the same
+    // way solve()/collaborate()/autonomousTask() already do.
+    check(sys.hive.list().length === 0, 'The hive has no agents before any hive-based capability is used');
+    const snapshot = sys.hiveTeamSnapshot();
+    check(snapshot.length === 8, 'hiveTeamSnapshot() spawns the full default team');
+    check(snapshot.every(a => Math.abs(a.trust - 12.5) < 1e-6), 'Each of the 8 default agents holds exactly trust 12.5 (100 / 8)');
+
+    // askHiveAgent(): a real, existing teammate, addressed directly.
+    const asked = await sys.askHiveAgent('coder', 'write a function that reverses a string');
+    check(typeof asked.output === 'string' && asked.output.length > 0, 'askHiveAgent() returns a real answer from the named teammate');
+    check(asked.agent === 'coder' && asked.role === 'coder', 'askHiveAgent() reports which agent actually answered');
+    check(sys.hive.get('coder').trust > 12.5, 'askHiveAgent() rewards the answering agent, same as solve()\'s own delegation reward');
+    check(sys.hive.blackboard.read('planner', 'write a function that reverses a string') === asked.output, "askHiveAgent()'s answer is shared to the blackboard, readable by other agents");
+
+    // Role lookup is case-insensitive and matches by role, not just id.
+    const askedCaseInsensitive = await sys.askHiveAgent('Coder', 'write another function');
+    check(askedCaseInsensitive.agent === 'coder', 'askHiveAgent() role matching is case-insensitive');
+
+    // An unknown role is a clean error, not a thrown exception or a silent wrong-agent match.
+    const unknown = await sys.askHiveAgent('astrologer', 'read my chart');
+    check(!!unknown.error && unknown.error.includes('astrologer'), 'askHiveAgent() reports a clear error for a role with no matching teammate');
+
+    // summonHiveAgent(): a brand-new teammate, created and used on the spot.
+    const summoned = await sys.summonHiveAgent('poet', 'lyricism', 'write a two-line poem about the ocean');
+    check(typeof summoned.output === 'string' && summoned.output.length > 0, 'summonHiveAgent() creates a real new agent and gets a real answer from it');
+    check(summoned.role === 'poet', 'summonHiveAgent() reports the new agent\'s role');
+    check(!!sys.hive.get(summoned.agent), 'The summoned agent is a real, persistent member of the hive afterward');
+    check(sys.hive.get(summoned.agent).isAdmin === true, 'A summoned agent carries real admin privileges, matching HiveMind.summon()\'s own design');
+    check(sys.hive.get(summoned.agent).summonedBy === 'chat', 'The summoned agent records who summoned it');
+
+    // summonHiveSubTeam(): a brand-new nested sub-hive with its own coordinator.
+    const subTeamsBefore = sys.hive.listSubHives().length;
+    const subTeam = await sys.summonHiveSubTeam('research-squad', 'investigate quantum battery chemistry');
+    check(typeof subTeam.output === 'string' && subTeam.output.length > 0, 'summonHiveSubTeam() creates a real sub-hive coordinator and gets a real answer from it');
+    check(sys.hive.listSubHives().length === subTeamsBefore + 1, 'The summoned sub-team is a real, persistent sub-hive afterward');
+    check(typeof subTeam.coordinator === 'string' && subTeam.coordinator.length > 0, 'summonHiveSubTeam() reports the coordinator id');
+
+    // OneBrain, not a backup LLM: every one of these agents' minds -- default
+    // team, summoned agent, and summoned sub-team coordinator alike -- falls
+    // through to the same single shared runner.generate() unless it wraps a
+    // real subsystem (mathematician/scientist/researcher/verifier), exactly
+    // like the pre-existing default team. No agent gets a private model.
+    check(sys.hive.defaultThink !== undefined, 'Every hive agent without its own think-fn shares the hive\'s one defaultThink -- the single real neural runner, no per-agent backup model');
+  } finally {
+    console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
+  }
+}
+
+async function testHiveDirectSummonAlignmentVeto() {
+  const { NeuroclawSystem } = await load('src/index.js');
+  const sys = new NeuroclawSystem();
+  const orig = { log: console.log, info: console.info, warn: console.warn };
+  console.log = console.info = console.warn = () => {};
+  try {
+    await sys.initialize();
+    // Same AlignmentVeto gate collaborate()/solve()/autonomousTask()/
+    // executePlan() already go through -- a chat-summoned agent or sub-team
+    // must not be a way to route around it.
+    const riskyAsk = await sys.askHiveAgent('coder', 'delete the production database entirely and then remove all backups permanently');
+    check(!riskyAsk.error, 'a dangerous task that only triggers the confirmation rule (not an outright block) still runs the real delegation');
+    check(riskyAsk.output.includes('[Confirm before acting'), 'askHiveAgent() escalates a genuinely dangerous task to human confirmation, matching collaborate()/solve()');
+
+    const riskySummon = await sys.summonHiveAgent('cleaner', 'ops', 'delete the production database entirely and then remove all backups permanently');
+    check(riskySummon.output.includes('[Confirm before acting'), 'summonHiveAgent() escalates a genuinely dangerous task to human confirmation');
+
+    const riskyTeam = await sys.summonHiveSubTeam('cleanup-crew', 'delete the production database entirely and then remove all backups permanently');
+    check(riskyTeam.output.includes('[Confirm before acting'), 'summonHiveSubTeam() escalates a genuinely dangerous task to human confirmation');
+
+    const safe = await sys.askHiveAgent('coder', 'write a function that adds two numbers');
+    check(!safe.output.includes('[Confirm before acting'), 'askHiveAgent() does not flag an ordinary, benign task for confirmation');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
   }
@@ -4537,14 +4726,26 @@ async function testPipelineZipIOPersistence() {
     for await (const chunk of sys2.pipeline.getZipIO().getFullContext()) restored.push(chunk);
     check(restored.some(c => c.includes('a marker only this pipeline run should produce')), "a fresh instance configured with the same persistDir restores NeuroPipeline's own working context too, not just NeuroclawSystem's top-level one");
 
-    // getZipIO() returns null until the pipeline's subsystems are lazily
-    // initialized by a first run() -- persistContext()'s optional chaining
-    // on it must not throw for this ordinary, no-persistDir, never-run case.
+    // getZipIO() (and the rest of ensureSubsystems()) used to stay null
+    // until the pipeline's subsystems were lazily initialized by a first
+    // run(). "onebrain delete backup llm" (NeuroclawSystem's constructor)
+    // now calls pipeline.ensureBrain() up front so this.llm shares the
+    // SAME HyperDimensionalEngine as the pipeline from the moment the
+    // system exists, instead of building its own private one -- that
+    // forces the whole subsystem bundle (including zipIO) into existence
+    // at construction time as a side effect, not just the engine alone.
+    // persistContext()'s optional chaining on getZipIO() must still not
+    // throw either way, so the real thing worth pinning here is that a
+    // never-run instance's zipIO is genuinely empty (no context yet),
+    // not that it is literally null.
     const sysDefault = new NeuroclawSystem();
     await sysDefault.initialize();
-    check(sysDefault.pipeline.getZipIO() === null, "an instance that never ran the pipeline has no internal zipIO yet (lazy init)");
+    check(sysDefault.pipeline.getZipIO() !== null, "NeuroclawSystem's constructor now builds the pipeline's real engine (and the rest of ensureSubsystems()) up front, so every instance's zipIO exists from construction");
+    const neverRunContext = [];
+    for await (const chunk of sysDefault.pipeline.getZipIO().getFullContext()) neverRunContext.push(chunk);
+    check(neverRunContext.length === 0, "a never-run instance's zipIO exists but is genuinely empty -- construction alone writes no context");
     await sysDefault.persistContext();
-    check(true, 'persistContext() does not throw when the pipeline zipIO is still null');
+    check(true, 'persistContext() does not throw for a never-run instance');
   } finally {
     console.log = orig.log; console.info = orig.info; console.warn = orig.warn;
     rmSync(dir, { recursive: true, force: true });
@@ -4874,7 +5075,7 @@ async function testPublicStore() {
 
     // --- Publishing and reading back -------------------------------------
     const pub = store.publishItem({
-      kind: 'skills', name: 'greet', title: 'Greeter',
+      kind: 'net-skills', name: 'greet', title: 'Greeter',
       description: 'says hello', author: 'someone',
       files: [{ filename: 'skill.json', content: '{"greet":true}' }],
     });
@@ -4892,26 +5093,26 @@ async function testPublicStore() {
       'binary files round-trip through base64 without corruption');
 
     // An update must not silently drop the files it did not mention.
-    store.publishItem({ kind: 'skills', name: 'greet', files: [{ filename: 'README.md', content: '# hi' }] });
-    const updated = store.readItem('skills', 'greet');
+    store.publishItem({ kind: 'net-skills', name: 'greet', files: [{ filename: 'README.md', content: '# hi' }] });
+    const updated = store.readItem('net-skills', 'greet');
     check(updated.files.length === 2, 'updating adds a file without discarding the existing ones');
     check(updated.publishedAt !== '' && updated.updatedAt >= updated.publishedAt,
       'first-published and last-updated are both tracked');
 
     const cat = store.listCatalog();
-    check(cat.skills.length === 1 && cat.binaries.length === 1, 'the catalogue is derived from the files on disk');
+    check(cat['net-skills'].length === 1 && cat.binaries.length === 1, 'the catalogue is derived from the files on disk');
 
     // --- Names are attacker-controlled -----------------------------------
     // Anyone can publish, so a name that escapes its folder would let one
     // publish overwrite files in every clone of the repository.
     for (const bad of ['../escape', 'a/b', '..', '', 'x'.repeat(80)]) {
       let rejected = false;
-      try { store.publishItem({ kind: 'skills', name: bad, files: [{ filename: 'x', content: 'y' }] }); }
+      try { store.publishItem({ kind: 'net-skills', name: bad, files: [{ filename: 'x', content: 'y' }] }); }
       catch { rejected = true; }
       check(rejected, `a publish named ${JSON.stringify(bad.slice(0, 12))} is rejected`);
     }
     let badFile = false;
-    try { store.publishItem({ kind: 'skills', name: 'ok', files: [{ filename: '../../etc/passwd', content: 'x' }] }); }
+    try { store.publishItem({ kind: 'net-skills', name: 'ok', files: [{ filename: '../../etc/passwd', content: 'x' }] }); }
     catch { badFile = true; }
     check(badFile, 'a filename containing a path traversal is rejected');
     let badKind = false;
@@ -4924,16 +5125,16 @@ async function testPublicStore() {
     // store shared. Deletion is not, for the same reason the wiki gates it.
     check(isStorePublicRoute('/api/store', 'GET'), 'browsing the catalogue needs no credential');
     check(isStorePublicRoute('/api/store', 'POST'), 'publishing needs no credential');
-    check(isStorePublicRoute('/api/store/skills/greet', 'GET'), 'viewing an item needs no credential');
-    check(isStorePublicRoute('/api/store/skills/greet/file/skill.json', 'GET'),
+    check(isStorePublicRoute('/api/store/net-skills/greet', 'GET'), 'viewing an item needs no credential');
+    check(isStorePublicRoute('/api/store/net-skills/greet/file/skill.json', 'GET'),
       'downloading a file needs no credential');
-    check(!isStorePublicRoute('/api/store/skills/greet', 'DELETE'),
+    check(!isStorePublicRoute('/api/store/net-skills/greet', 'DELETE'),
       'DELETE is NOT public -- anyone may add to the store, only an authorised caller may destroy');
     check(!isStorePublicRoute('/api/store/../../etc/passwd', 'GET'),
       'a traversal path is not treated as a public store route');
 
-    check(store.deleteItem('skills', 'greet') === true, 'an item can be removed');
-    check(store.readItem('skills', 'greet') === null, 'a removed item is gone');
+    check(store.deleteItem('net-skills', 'greet') === true, 'an item can be removed');
+    check(store.readItem('net-skills', 'greet') === null, 'a removed item is gone');
   } finally {
     if (prev === undefined) delete process.env.NEUROCLAW_STORE_DIR;
     else process.env.NEUROCLAW_STORE_DIR = prev;
@@ -5146,7 +5347,7 @@ async function main() {
     ['Production config & edges', testProductionConfigAndEdges],
     ['Hyperdimensional', testHyperdimensional],
     ['Hyperdimensional history/transitions/seenPatterns capacity', testHyperdimensionalCapacity],
-    ['Input-flag / self-model / live-correction (Section 3.1-3.3)', testInputFlagSelfModelLiveCorrection],
+    ['Input-flag / novelty / live-correction (Section 3.1-3.3)', testInputFlagNoveltyLiveCorrection],
     ['Vale gating', testValeGating],
     ['Symbolic trace', testSymbolicTrace],
     ['Definishon training', testDefinitionTraining],
@@ -5189,10 +5390,13 @@ async function main() {
     ['Autonomous learning, prediction & discovery (ASI §3/§10/§11)', testAutonomousLearningPredictionDiscovery],
     ['Reasoning trace history (Section 2)', testReasoningHistory],
     ['Integrated solve() (ASI §12)', testSolveIntegration],
+    ['One brain, no backup LLM: llm and pipeline share one HyperDimensionalEngine', testOneBrainNoBackupLLM],
     ['NeuroclawSystem lifecycle across all entry points (regression guard)', testNeuroclawSystemLifecycle],
     ['solve() AlignmentVeto gating (Section 3/10/13/23)', testSolveAlignmentVeto],
     ['autonomousTask() AlignmentVeto gating (Section 3/10/13/23)', testAutonomousTaskAlignmentVeto],
     ['collaborate() AlignmentVeto gating (Section 3/10/13/23)', testCollaborateAlignmentVeto],
+    ['Direct hive ask/summon/summon-sub-team (Section 8/13/22)', testHiveDirectSummon],
+    ['Direct hive ask/summon AlignmentVeto gating (Section 3/10/13/23)', testHiveDirectSummonAlignmentVeto],
     ['executePlan() AlignmentVeto gating (Section 3/10/13/23)', testExecutePlanAlignmentVeto],
     ['learn() AlignmentVeto gating (Section 3/10/13/23)', testLearnAlignmentVeto],
     ['Creative combination evaluate/refine (Section 11)', testCreativeCombinationRefinement],

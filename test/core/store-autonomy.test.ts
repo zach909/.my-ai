@@ -45,13 +45,13 @@ describe('publishing its own work', () => {
       name: 'thing', title: 'A Thing', description: 'about a thing', artifacts: artifacts('first'),
     })
     expect('item' in res && res.item.name).toBe('thing')
-    const item = readItem('skills', 'thing')!
+    const item = readItem('net-skills', 'thing')!
     expect(item.files.map(f => f.filename).sort()).toEqual(['SKILL.md', 'thing.skill.json'])
   })
 
   it('labels it as machine-written, so nobody has to infer that', async () => {
     await publishSkillToStore({ name: 'thing', title: 'A Thing', description: 'x', artifacts: artifacts('a') })
-    expect(readItem('skills', 'thing')!.author).toBe(AGENT_AUTHOR)
+    expect(readItem('net-skills', 'thing')!.author).toBe(AGENT_AUTHOR)
   })
 
   it('says in the description that no person reviewed it', () => {
@@ -83,12 +83,12 @@ describe('not republishing what has not changed', () => {
   it('keeps the files it did not resend', async () => {
     await publishSkillToStore({ name: 'thing', title: 'A Thing', description: 'x', artifacts: artifacts('v1') })
     await publishSkillToStore({ name: 'thing', title: 'A Thing', description: 'x', artifacts: artifacts('v2') })
-    expect(readItem('skills', 'thing')!.files.map(f => f.filename).sort())
+    expect(readItem('net-skills', 'thing')!.files.map(f => f.filename).sort())
       .toEqual(['SKILL.md', 'thing.skill.json'])
   })
 
   it('reports everything as changed when nothing is published yet', () => {
-    expect(changedAgainstStore('skills', 'absent', artifacts('x'))).toEqual(['SKILL.md', 'thing.skill.json'])
+    expect(changedAgainstStore('net-skills', 'absent', artifacts('x'))).toEqual(['SKILL.md', 'thing.skill.json'])
   })
 })
 

@@ -4,7 +4,7 @@ Get up and running with NeuroClaw / NeuroLang AI in minutes.
 
 ## System Requirements
 
-- **Operating System**: Mac, Windows, or Linux
+- **Operating System**: Mac, Windows, or Linux (the CLI/backend itself has no particular distro-version requirement; the desktop app is stricter — see `desktop-app/README.md`'s own System Requirements, Debian 12/bookworm or newer)
 - **Node.js**: Required for building TypeScript components
 - **Python**: Required for plugin management (Python 3.x)
 - **Storage**: Sufficient space for models and extensions

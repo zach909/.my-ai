@@ -1,9 +1,11 @@
 /**
- * The store's whole promise is that a published item is NOT device-local.
- * These tests use two real clones of a real bare repository, because the only
- * convincing evidence that a publish leaves the machine is another machine
- * having it -- and the only convincing evidence that it survives a reset is
- * wiping the publisher and cloning again.
+ * The store's whole promise is that a published item is NOT device-local --
+ * and, separately, that it lands on the store branch, not whatever a
+ * developer happens to have checked out. These tests use two real clones of
+ * a real bare repository, because the only convincing evidence that a
+ * publish leaves the machine is another machine having it, and the only
+ * convincing evidence it landed on the right branch is inspecting the
+ * branches themselves.
  */
 
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
@@ -39,6 +41,21 @@ describe('store sync', () => {
   let remote: string
   let deviceA: string
 
+  /** Reads a path off the bare remote's `store` branch directly -- no clone needed. */
+  function readAtStoreBranch(relPath: string): string {
+    return git(['show', `store:${relPath}`], remote)
+  }
+
+  /** Whether a path exists on the bare remote's `store` branch. */
+  function existsAtStoreBranch(relPath: string): boolean {
+    try {
+      git(['cat-file', '-e', `store:${relPath}`], remote)
+      return true
+    } catch {
+      return false
+    }
+  }
+
   beforeEach(() => {
     tmp = mkdtempSync(path.join(tmpdir(), 'store-sync-'))
     remote = path.join(tmp, 'remote.git')
@@ -49,6 +66,10 @@ describe('store sync', () => {
     git(['clone', '-q', remote, deviceA], tmp)
     configure(deviceA, 'a')
     git(['checkout', '-q', '-b', 'main'], deviceA)
+    // A file that stands in for the running app itself, committed on `main`
+    // right alongside `store/` -- so a test can tell whether the store
+    // branch pulled it in by mistake.
+    writeFileSync(path.join(deviceA, 'app.ts'), 'export const running = true\n')
     mkdirSync(path.join(deviceA, 'store', 'skills'), { recursive: true })
     writeFileSync(path.join(deviceA, 'store', 'README.md'), '# store\n')
     git(['add', '-A'], deviceA)
@@ -67,10 +88,33 @@ describe('store sync', () => {
     })
     expect(res.committed).toBe(true)
     expect(res.pushed).toBe(true)
+    expect(res.branch).toBe('store')
+    expect(readAtStoreBranch('store/skills/travels/SKILL.md')).toContain('travels')
 
     const deviceB = path.join(tmp, 'deviceB')
     git(['clone', '-q', remote, deviceB], tmp)
+    git(['checkout', '-q', '-b', 'store', 'origin/store'], deviceB)
     expect(existsSync(path.join(deviceB, 'store', 'skills', 'travels', 'SKILL.md'))).toBe(true)
+  })
+
+  it('lands on the store branch, never on whatever the publisher had checked out', async () => {
+    const before = git(['rev-parse', 'HEAD'], deviceA).trim()
+    const dir = writeItem(deviceA, 'branch-check')
+    await syncStorePaths([dir], 'store: publish skills/branch-check', {
+      storeDir: path.join(deviceA, 'store'),
+    })
+
+    // The publisher's own checkout, HEAD, and index are exactly as they were
+    // -- nothing here ever ran `git checkout`, `git commit` on `main`, or
+    // touched the real index.
+    expect(git(['rev-parse', 'HEAD'], deviceA).trim()).toBe(before)
+    expect(git(['rev-parse', '--abbrev-ref', 'HEAD'], deviceA).trim()).toBe('main')
+    expect(git(['log', '--oneline'], deviceA).trim().split('\n')).toHaveLength(1)
+
+    // The item is on `store`, and `store` does not carry the app's own files
+    // in with it -- only what was ever published.
+    expect(existsAtStoreBranch('store/skills/branch-check/SKILL.md')).toBe(true)
+    expect(existsAtStoreBranch('app.ts')).toBe(false)
   })
 
   it('survives wiping the publishing device entirely and cloning again', async () => {
@@ -83,6 +127,7 @@ describe('store sync', () => {
     rmSync(deviceA, { recursive: true, force: true })
     const reborn = path.join(tmp, 'deviceA-again')
     git(['clone', '-q', remote, reborn], tmp)
+    git(['checkout', '-q', '-b', 'store', 'origin/store'], reborn)
 
     const file = path.join(reborn, 'store', 'skills', 'survives-reset', 'SKILL.md')
     expect(existsSync(file)).toBe(true)
@@ -102,12 +147,17 @@ describe('store sync', () => {
     })
     expect(res.pushed).toBe(true)
 
-    const committed = git(['show', '--name-only', '--format=', 'HEAD'], deviceA).trim().split('\n')
-    expect(committed.sort()).toEqual([
-      'store/skills/scoped/SKILL.md',
-    ])
+    // Exactly the one file landed on the store branch -- README.md's local
+    // edit and the unrelated file were never even candidates, since the
+    // commit was built from a throwaway index rooted on the store branch's
+    // own tree (which, before this publish, had no README.md at all -- that
+    // file only ever existed on `main`), not from anything staged there.
+    expect(existsAtStoreBranch('store/skills/scoped/SKILL.md')).toBe(true)
+    expect(existsAtStoreBranch('unrelated-wip.txt')).toBe(false)
+    expect(existsAtStoreBranch('store/README.md')).toBe(false)
 
-    // Still pending, exactly as the publisher left them.
+    // Still pending, exactly as the publisher left them -- nothing here was
+    // ever staged or committed on their behalf.
     const status = git(['status', '--short'], deviceA)
     expect(status).toContain('unrelated-wip.txt')
     expect(status).toContain('store/README.md')
@@ -131,17 +181,15 @@ describe('store sync', () => {
     })
     expect(resA.pushed).toBe(true)
 
-    // A third device must see both -- neither publish was dropped.
-    const deviceC = path.join(tmp, 'deviceC')
-    git(['clone', '-q', remote, deviceC], tmp)
-    expect(existsSync(path.join(deviceC, 'store', 'skills', 'from-a', 'SKILL.md'))).toBe(true)
-    expect(existsSync(path.join(deviceC, 'store', 'skills', 'from-b', 'SKILL.md'))).toBe(true)
+    // Neither publish was dropped.
+    expect(existsAtStoreBranch('store/skills/from-a/SKILL.md')).toBe(true)
+    expect(existsAtStoreBranch('store/skills/from-b/SKILL.md')).toBe(true)
   })
 
   it('pushes even when the publisher has uncommitted edits', async () => {
-    // Without --autostash the rebase refuses and the publish silently never
-    // reaches anyone -- and a dirty working tree is the normal state of
-    // someone who is in the middle of something.
+    // The publish never touches the developer's real index or working tree
+    // at all, so a dirty working tree -- the normal state of someone in the
+    // middle of something -- was never a hazard to begin with.
     const deviceB = path.join(tmp, 'deviceB')
     git(['clone', '-q', remote, deviceB], tmp)
     configure(deviceB, 'b')
@@ -168,10 +216,18 @@ describe('store sync', () => {
       storeDir: path.join(deviceA, 'store'),
     })
     expect(res.pushed).toBe(true)
+    expect(existsAtStoreBranch('store/skills/temporary')).toBe(false)
+  })
 
-    const deviceB = path.join(tmp, 'deviceB')
-    git(['clone', '-q', remote, deviceB], tmp)
-    expect(existsSync(path.join(deviceB, 'store', 'skills', 'temporary'))).toBe(false)
+  it('republishing identical content is a success with nothing new to push', async () => {
+    const dir = writeItem(deviceA, 'stable')
+    await syncStorePaths([dir], 'store: publish skills/stable', { storeDir: path.join(deviceA, 'store') })
+    const before = git(['rev-parse', 'store'], remote).trim()
+
+    const res = await syncStorePaths([dir], 'store: publish skills/stable', { storeDir: path.join(deviceA, 'store') })
+    expect(res.pushed).toBe(true)
+    expect(res.reason).toMatch(/already had exactly this/)
+    expect(git(['rev-parse', 'store'], remote).trim()).toBe(before)
   })
 
   it('says so plainly when there is no remote, rather than implying it was shared', async () => {
@@ -187,7 +243,7 @@ describe('store sync', () => {
     const res = await syncStorePaths([writeItem(lonely, 'stranded')], 'store: publish skills/stranded', {
       storeDir: path.join(lonely, 'store'),
     })
-    expect(res.committed).toBe(true)
+    expect(res.committed).toBe(false)
     expect(res.pushed).toBe(false)
     expect(res.reason).toMatch(/no "origin" remote/)
   })
@@ -220,5 +276,18 @@ describe('store sync', () => {
       if (prev === undefined) delete process.env.NEUROCLAW_STORE_NO_SYNC
       else process.env.NEUROCLAW_STORE_NO_SYNC = prev
     }
+  })
+
+  it('can be pointed at a different branch name, for a private instance with its own convention', async () => {
+    const dir = writeItem(deviceA, 'custom-branch')
+    const res = await syncStorePaths([dir], 'store: publish skills/custom-branch', {
+      storeDir: path.join(deviceA, 'store'),
+      branch: 'published',
+    })
+    expect(res.pushed).toBe(true)
+    expect(res.branch).toBe('published')
+    expect(git(['show', 'published:store/skills/custom-branch/SKILL.md'], remote)).toContain('custom-branch')
+    // The default `store` branch was never touched.
+    expect(existsAtStoreBranch('store/skills/custom-branch')).toBe(false)
   })
 })

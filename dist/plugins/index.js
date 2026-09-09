@@ -29,6 +29,7 @@ import { ToolsPlugin } from "./tools.js";
 import { StorePlugin } from "./store.js";
 import { GithubPublishPlugin } from "./github-publish.js";
 import { ComputerAccessPlugin } from "./computer-access.js";
+import { HivePlugin } from "./hive.js";
 export { LocationPlugin } from "./location.js";
 export { CameraPlugin } from "./camera.js";
 export { MicrophonePlugin } from "./microphone.js";
@@ -60,6 +61,7 @@ export { ToolsPlugin } from "./tools.js";
 export { StorePlugin } from "./store.js";
 export { GithubPublishPlugin } from "./github-publish.js";
 export { ComputerAccessPlugin } from "./computer-access.js";
+export { HivePlugin } from "./hive.js";
 export function createPluginInstance(name, definition, skillDefinition, 
 /** The agent's one shared NeuronMesh, for plugins that allocate their own neurons. */
 sharedMesh) {
@@ -138,6 +140,8 @@ sharedMesh) {
         return new GithubPublishPlugin(definition);
     if (lower === "computer access" || lower === "computer-access")
         return new ComputerAccessPlugin(definition);
+    if (lower === "hive")
+        return new HivePlugin(definition);
     throw new Error(`Unknown plugin: ${name}`);
 }
 const pluginExtensions = {
@@ -189,6 +193,11 @@ const pluginExtensions = {
     store: { id: "store", name: "Store", type: "api-connection", capabilities: ["store", "publish", "share"] },
     "github-publish": { id: "github-publish", name: "GitHub Publish", type: "api-connection", capabilities: ["github", "push", "publish", "share"] },
     tools: { id: "tools", name: "Tools", type: "api-connection", capabilities: ["tools", "calculator", "hashing", "encoding", "units"] },
+    // "in any chat an ai can summon a hive teammate or a sub ai or sub team" --
+    // the chat-command front door to HiveMind (models && skills/core/hive-mind.ts),
+    // already wired into NeuroclawSystem via collaborate()/solve()/
+    // autonomousTask() but previously unreachable by name from a plain message.
+    hive: { id: "hive", name: "Hive", type: "api-connection", capabilities: ["hive", "delegate", "summon"] },
 };
 const allExtensions = Object.entries(pluginExtensions).map(([key, def]) => ({
     id: def.id,

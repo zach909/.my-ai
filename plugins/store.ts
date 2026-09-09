@@ -228,7 +228,7 @@ export class StorePlugin extends BasePlugin {
       return { tool: "store", result: lines.join("\n") };
     }
 
-    const show = input.match(/^store\s+show\s+([a-z]+)\s+([A-Za-z0-9._-]+)$/i);
+    const show = input.match(/^store\s+show\s+([a-z-]+)\s+([A-Za-z0-9._-]+)$/i);
     if (show) {
       const kind = show[1].toLowerCase();
       const item = this.get(kind, show[2]);
@@ -248,7 +248,7 @@ export class StorePlugin extends BasePlugin {
     // everything after it is the file -- a store command language that cannot
     // express file contents can only ever manage things somebody else
     // uploaded, which is half a store.
-    const publishHead = input.match(/^store\s+publish\s+([a-z]+)\s+([A-Za-z0-9._-]+)\s+(\S+)\s*\n([\s\S]*)$/i);
+    const publishHead = input.match(/^store\s+publish\s+([a-z-]+)\s+([A-Za-z0-9._-]+)\s+(\S+)\s*\n([\s\S]*)$/i);
     if (publishHead) {
       const [, kind, name, filename, content] = publishHead;
       try {
@@ -285,7 +285,7 @@ export class StorePlugin extends BasePlugin {
       };
     }
 
-    const describe = input.match(/^store\s+describe\s+([a-z]+)\s+([A-Za-z0-9._-]+)\s+([\s\S]+)$/i);
+    const describe = input.match(/^store\s+describe\s+([a-z-]+)\s+([A-Za-z0-9._-]+)\s+([\s\S]+)$/i);
     if (describe) {
       try {
         const { item } = await this.describe(describe[1].toLowerCase(), describe[2], {
@@ -299,7 +299,7 @@ export class StorePlugin extends BasePlugin {
 
     // Installing is a real change to this machine, so it needs an explicit
     // sentence naming the item. Nothing here installs on a vague request.
-    const install = input.match(/^store\s+install\s+([a-z]+)\s+([A-Za-z0-9._-]+)$/i);
+    const install = input.match(/^store\s+install\s+([a-z-]+)\s+([A-Za-z0-9._-]+)$/i);
     if (install) {
       try {
         const { record, downloaded, missing } = await this.install(install[1].toLowerCase(), install[2]);
@@ -317,7 +317,7 @@ export class StorePlugin extends BasePlugin {
       }
     }
 
-    const uninstall = input.match(/^store\s+uninstall\s+([a-z]+)\s+([A-Za-z0-9._-]+)$/i);
+    const uninstall = input.match(/^store\s+uninstall\s+([a-z-]+)\s+([A-Za-z0-9._-]+)$/i);
     if (uninstall) {
       const kind = uninstall[1].toLowerCase();
       const gone = this.uninstall(kind, uninstall[2]);
@@ -366,7 +366,7 @@ export class StorePlugin extends BasePlugin {
     // Reading a file downloads it first when this device does not have it,
     // which is what makes editing anything in the catalogue possible rather
     // than only the handful already here.
-    const read = input.match(/^store\s+(?:read|get)\s+([a-z]+)\s+([A-Za-z0-9._-]+)\s+(\S+)$/i);
+    const read = input.match(/^store\s+(?:read|get)\s+([a-z-]+)\s+([A-Za-z0-9._-]+)\s+(\S+)$/i);
     if (read) {
       const text = await this.readFile(read[1].toLowerCase(), read[2], read[3]);
       return {

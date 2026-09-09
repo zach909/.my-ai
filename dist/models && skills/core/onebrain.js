@@ -2140,11 +2140,6 @@ export class ElasticCoreBlock {
             throw new Error(`neuron id out of range: ${id}`);
     }
 }
-// ============================================================================
-// hyperdimensional.ts
-// ============================================================================
-const dAdd = dualAdd;
-const dScale = dualScale;
 /** Float array -> base64, exactly, without a decimal round trip. */
 function encodeFloats(values) {
     return Buffer.from(values.buffer, values.byteOffset, values.byteLength).toString("base64");
@@ -2333,7 +2328,6 @@ export class HyperDimensionalEngine {
          * plain-cap approach already used for SharedBlackboard's log.
          */
         this.seenPatternsCapacity = 5000;
-        this.lastOutputVector = null;
         // Section 12: fast intra-settle self-model (EMA over mean content energy)
         this.emaEnergy = 0;
         this.hasEma = false;
@@ -2365,7 +2359,6 @@ export class HyperDimensionalEngine {
             crossInfluenceStrength: config.crossInfluenceStrength ?? 0.3,
             propagationSteps: config.propagationSteps ?? 8,
             convergenceThreshold: config.convergenceThreshold ?? 0.05,
-            selfModelRank: config.selfModelRank ?? 4,
             divergenceTolerance: config.divergenceTolerance ?? 0.05,
             sustainedDivergenceTicks: config.sustainedDivergenceTicks ?? 3,
             // Defaults to 0 (fully inert, byte-for-byte the same settle() math as
@@ -2474,20 +2467,7 @@ export class HyperDimensionalEngine {
             const p = c / N;
             this.entropyLookup[c] = p * Math.log2(p);
         }
-        const rank = this.config.selfModelRank;
-        const dims = this.config.dimensions;
-        this.selfModelA = new Float32Array(dims * rank);
-        this.selfModelB = new Float32Array(rank * dims);
-        this.selfModelHScratch = new Float32Array(rank);
-        this.selfModelOutScratch = new Float32Array(dims);
-        this.selfModelErrorScratch = new Float32Array(dims);
-        this.selfModelDHScratch = new Float32Array(rank);
-        this.outputVectorScratch = new Float32Array(dims);
-        const scale = Math.sqrt(1 / Math.max(1, dims));
-        for (let i = 0; i < this.selfModelA.length; i++)
-            this.selfModelA[i] = (Math.random() * 2 - 1) * scale;
-        for (let i = 0; i < this.selfModelB.length; i++)
-            this.selfModelB[i] = (Math.random() * 2 - 1) * scale;
+        this.outputVectorScratch = new Float32Array(this.config.dimensions);
         this.stateViews = new Array(D);
         for (let d = 0; d < D; d++) {
             this.stateViews[d] = this.allStates.subarray(d * N, (d + 1) * N);
@@ -2629,34 +2609,12 @@ export class HyperDimensionalEngine {
         // again, and a novelty signal that says "new" to everything is not a
         // signal.
         //
-        // So the two halves of surprise are kept separate, which is what the 0.6 /
-        // 0.4 blend below was always for: patternNovelty is about the QUESTION and
-        // whether it has been asked before, selfModelSurprise is about the ANSWER
-        // and whether the network predicted its own.
+        // This used to also blend in selfModelSurprise (a compressed self-model's
+        // prediction error about its own output) 0.4-weighted alongside this.
+        // That self-model is gone; noveltyScore is patternNovelty alone now.
         const patternHash = this.hashVector(resolvedInput);
         const patternNovelty = this.computeNoveltyScore(patternHash);
-        let selfModelSurprise = 0;
-        if (this.lastOutputVector) {
-            const predicted = this.selfModelPredict(this.lastOutputVector);
-            selfModelSurprise = this.meanAbsDiff(predicted, outputVector);
-            // Reading is not learning -- here too.
-            //
-            // The self-model trained on every tick, including ticks the caller had
-            // explicitly asked not to learn. So `learn: false` did not mean the
-            // network was left alone: pulling an answer out of it still changed the
-            // part that predicts its own answers, and reading the same thing twice
-            // gave two different networks. That is the exact defect already fixed
-            // for the connections, in the same method, one field over.
-            //
-            // The surprise is still MEASURED on a read-only tick, because novelty
-            // is something a caller reads and it costs a prediction either way.
-            // Only the training step is skipped.
-            if (options?.learn !== false) {
-                this.selfModelTrainStep(this.lastOutputVector, predicted, outputVector);
-            }
-        }
-        this.lastOutputVector = outputVector;
-        const noveltyScore = clamp(0.6 * patternNovelty + 0.4 * selfModelSurprise, 0, 1);
+        const noveltyScore = clamp(patternNovelty, 0, 1);
         this.recordPattern(patternHash, noveltyScore);
         this.iteration++;
         const inputTopography = new Map();
@@ -2671,7 +2629,6 @@ export class HyperDimensionalEngine {
             noveltyScore,
             transitionCount,
             stateDeltas,
-            selfModelSurprise,
             liveCorrections,
             inputTopography,
             waveEnergy: this.lastWaveEnergy,
@@ -5582,165 +5539,6 @@ export class HyperDimensionalEngine {
         return sum / (N * dims);
     }
     /**
-     * Section 13 → §12: evaluate the compressed self-model AND its instantaneous
-     * rate of change in a single forward pass using dual numbers. `velocity` is
-     * the per-dimension rate of change of the input (e.g. current minus previous
-     * output). Each input dimension enters as a dual (value, velocity) and is
-     * propagated through the linear self-model, so the ε-component of the output
-     * is the predicted derivative. Live correction can then react to the trend
-     * (is divergence growing?) rather than only the current level.
-     */
-    predictSelfModelWithDerivative(vec, velocity) {
-        const dims = this.config.dimensions;
-        const rank = this.config.selfModelRank;
-        const h = Array.from({ length: rank }, () => dual(0, 0));
-        for (let d = 0; d < dims; d++) {
-            const x = dual(vec[d] ?? 0, velocity[d] ?? 0);
-            for (let r = 0; r < rank; r++) {
-                h[r] = dAdd(h[r], dScale(x, this.selfModelA[d * rank + r]));
-            }
-        }
-        const value = new Array(dims).fill(0);
-        const derivative = new Array(dims).fill(0);
-        for (let r = 0; r < rank; r++) {
-            for (let d = 0; d < dims; d++) {
-                const term = dScale(h[r], this.selfModelB[r * dims + d]);
-                value[d] += term.val;
-                derivative[d] += term.der;
-            }
-        }
-        return { value, derivative };
-    }
-    /** Rank-r compressed self-model: predict(x) = B^T (A^T x). */
-    selfModelPredict(vec) {
-        const dims = this.config.dimensions;
-        const rank = this.config.selfModelRank;
-        const h = this.selfModelHScratch;
-        h.fill(0);
-        for (let d = 0; d < dims; d++) {
-            const v = vec[d] ?? 0;
-            const offset = d * rank;
-            let r = 0;
-            const limit = rank - 3;
-            for (; r < limit; r += 4) {
-                h[r] += v * this.selfModelA[offset + r];
-                h[r + 1] += v * this.selfModelA[offset + r + 1];
-                h[r + 2] += v * this.selfModelA[offset + r + 2];
-                h[r + 3] += v * this.selfModelA[offset + r + 3];
-            }
-            for (; r < rank; r++) {
-                h[r] += v * this.selfModelA[offset + r];
-            }
-        }
-        // BOLT OPTIMIZATION: Reuse pre-allocated selfModelOutScratch Float32Array to achieve zero-allocation predictions.
-        const out = this.selfModelOutScratch;
-        out.fill(0);
-        for (let r = 0; r < rank; r++) {
-            const hr = h[r];
-            const bOffset = r * dims;
-            let d = 0;
-            const limit = dims - 3;
-            for (; d < limit; d += 4) {
-                out[d] += hr * this.selfModelB[bOffset + d];
-                out[d + 1] += hr * this.selfModelB[bOffset + d + 1];
-                out[d + 2] += hr * this.selfModelB[bOffset + d + 2];
-                out[d + 3] += hr * this.selfModelB[bOffset + d + 3];
-            }
-            for (; d < dims; d++) {
-                out[d] += hr * this.selfModelB[bOffset + d];
-            }
-        }
-        return out;
-    }
-    selfModelTrainStep(prevVec, predicted, actual) {
-        const dims = this.config.dimensions;
-        const rank = this.config.selfModelRank;
-        const lr = 0.01;
-        // OPTIMIZATION: Reuse pre-computed h projection from selfModelPredict to avoid
-        // O(dimensions * rank) redundant recalculations and Float32Array allocations.
-        const h = this.selfModelHScratch;
-        const error = this.selfModelErrorScratch;
-        error.fill(0);
-        for (let d = 0; d < dims; d++)
-            error[d] = (actual[d] ?? 0) - (predicted[d] ?? 0);
-        const dh = this.selfModelDHScratch;
-        dh.fill(0);
-        for (let r = 0; r < rank; r++) {
-            let acc = 0;
-            const bOffset = r * dims;
-            let d = 0;
-            const limit = dims - 3;
-            // OPTIMIZATION: 4x loop unrolling to reduce branch overhead.
-            for (; d < limit; d += 4) {
-                acc += error[d] * this.selfModelB[bOffset + d]
-                    + error[d + 1] * this.selfModelB[bOffset + d + 1]
-                    + error[d + 2] * this.selfModelB[bOffset + d + 2]
-                    + error[d + 3] * this.selfModelB[bOffset + d + 3];
-            }
-            for (; d < dims; d++) {
-                acc += error[d] * this.selfModelB[bOffset + d];
-            }
-            dh[r] = acc;
-        }
-        for (let r = 0; r < rank; r++) {
-            const hr = h[r];
-            const lrHr = lr * hr;
-            const bOffset = r * dims;
-            let d = 0;
-            const limit = dims - 3;
-            // OPTIMIZATION: 4x loop unrolling and factored multiplier out of inner loop.
-            for (; d < limit; d += 4) {
-                this.selfModelB[bOffset + d] += lrHr * error[d];
-                this.selfModelB[bOffset + d + 1] += lrHr * error[d + 1];
-                this.selfModelB[bOffset + d + 2] += lrHr * error[d + 2];
-                this.selfModelB[bOffset + d + 3] += lrHr * error[d + 3];
-            }
-            for (; d < dims; d++) {
-                this.selfModelB[bOffset + d] += lrHr * error[d];
-            }
-        }
-        for (let d = 0; d < dims; d++) {
-            const v = prevVec[d] ?? 0;
-            const lrV = lr * v;
-            const offset = d * rank;
-            let r = 0;
-            const limit = rank - 3;
-            // OPTIMIZATION: 4x loop unrolling and factored multiplier out of inner loop.
-            for (; r < limit; r += 4) {
-                this.selfModelA[offset + r] += lrV * dh[r];
-                this.selfModelA[offset + r + 1] += lrV * dh[r + 1];
-                this.selfModelA[offset + r + 2] += lrV * dh[r + 2];
-                this.selfModelA[offset + r + 3] += lrV * dh[r + 3];
-            }
-            for (; r < rank; r++) {
-                this.selfModelA[offset + r] += lrV * dh[r];
-            }
-        }
-    }
-    meanAbsDiff(a, b) {
-        const n = Math.min(a.length, b.length);
-        if (n === 0)
-            return 0;
-        let sum = 0;
-        let i = 0;
-        const limit = n - 3;
-        for (; i < limit; i += 4) {
-            const d0 = a[i] - b[i];
-            const d1 = a[i + 1] - b[i + 1];
-            const d2 = a[i + 2] - b[i + 2];
-            const d3 = a[i + 3] - b[i + 3];
-            sum += (d0 < 0 ? -d0 : d0)
-                + (d1 < 0 ? -d1 : d1)
-                + (d2 < 0 ? -d2 : d2)
-                + (d3 < 0 ? -d3 : d3);
-        }
-        for (; i < n; i++) {
-            const diff = a[i] - b[i];
-            sum += diff < 0 ? -diff : diff;
-        }
-        return sum / n;
-    }
-    /**
      * Record each active neuron's move from where it was to where it now is,
      * and report how many made one.
      *
@@ -6203,8 +6001,8 @@ export class HyperDimensionalEngine {
      * Falls back to every neuron when none clear energyThreshold, rather than
      * an empty set: computeOutputVector() treats "no active states" as "all
      * zero", so a hard cutoff with no fallback made the output vector (and
-     * everything downstream of it — selfModelSurprise, noveltyScore,
-     * patternHash) silently, permanently zero whenever the whole mesh's
+     * everything downstream of it — noveltyScore, patternHash) silently,
+     * permanently zero whenever the whole mesh's
      * energy happened to sit under the threshold — which, at the default
      * threshold and typical settled-state magnitudes, was most of the time,
      * including in the live pipeline's own default configuration.

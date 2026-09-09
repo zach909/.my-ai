@@ -38,7 +38,7 @@ describe('nested files in a published item', () => {
 
   it('publishes a skill with its folder structure intact', () => {
     const item = publishItem({
-      kind: 'skills',
+      kind: 'net-skills',
       name: 'folder-skill',
       title: 'A skill with subfolders',
       files: [
@@ -61,24 +61,24 @@ describe('nested files in a published item', () => {
 
   it('reads a nested file back byte-for-byte', () => {
     publishItem({
-      kind: 'skills',
+      kind: 'net-skills',
       name: 'readable',
       files: [{ filename: 'scripts/utils.py', content: 'def f():\n    return 42\n' }],
     })
-    expect(readItemFile('skills', 'readable', 'scripts/utils.py')?.toString('utf8'))
+    expect(readItemFile('net-skills', 'readable', 'scripts/utils.py')?.toString('utf8'))
       .toBe('def f():\n    return 42\n')
   })
 
   it('lists nested files in the catalogue, so a folder skill is not reported as one file', () => {
     publishItem({
-      kind: 'skills',
+      kind: 'net-skills',
       name: 'deep',
       files: [
         { filename: 'SKILL.md', content: 'x' },
         { filename: 'a/b/c/deep.txt', content: 'y' },
       ],
     })
-    const read = readItem('skills', 'deep')
+    const read = readItem('net-skills', 'deep')
     expect(read?.files.map(f => f.filename).sort()).toEqual(['SKILL.md', 'a/b/c/deep.txt'])
   })
 
@@ -117,7 +117,7 @@ describe('nested files in a published item', () => {
   it('a publish attempting to escape writes nothing outside its own folder', () => {
     expect(() =>
       publishItem({
-        kind: 'skills',
+        kind: 'net-skills',
         name: 'attacker',
         files: [{ filename: '../../../owned.txt', content: 'pwned' }],
       }),

@@ -153,6 +153,60 @@ describe('stopping', () => {
   });
 });
 
+describe('a run that has not spoken yet cannot be read as finished', () => {
+  it('does not end as "went-quiet" while zero output bytes have arrived', () => {
+    // A doorway that is quiet from the very first tick -- no reply started,
+    // let alone paused. Not replay({ files: {} }): an empty tree still packs
+    // to real gzip bytes (a valid, if empty, archive), which is output, just
+    // uninteresting output -- the case this test needs is no bytes AT ALL.
+    // Before this fix, quiet held long enough alone was "went-quiet"
+    // regardless of whether anything had been said; a mesh that never spoke
+    // a word ended the same way as one that spoke and then fell silent, and
+    // a caller could not tell the two apart.
+    const neverSpeaks: BitDoorway = { sendBytes: () => {}, nextOutputByte: () => null };
+    const result = runUntilStopped(
+      neverSpeaks,
+      { files: { [`${ZIP_FOLDERS.prompt}ask.txt`]: 'go' } },
+      { quietTicks: 4, maxTicks: 200 },
+    );
+    // With nothing ever said, only the ceiling may end the run.
+    expect(result.reason).toBe('ceiling');
+    expect(result.complete).toBe(false);
+    expect(result.raw.length).toBe(0);
+  });
+
+  it('still ends as "went-quiet" once something real was said and then silence follows', () => {
+    // The guard is "never before the first byte", not "never" -- a run that
+    // spoke and then genuinely went quiet must still end that way.
+    const result = runUntilStopped(
+      replay({ files: { [`${ZIP_FOLDERS.output}answer.txt`]: 'hi' } }),
+      { files: {} },
+      { quietTicks: 4, maxTicks: 200 },
+    );
+    expect(result.reason).toBe('went-quiet');
+    expect(result.raw.length).toBeGreaterThan(0);
+  });
+
+  it('does not end as "settled" while zero output bytes have arrived, even with a flat settle cost', () => {
+    // A doorway that reports a perfectly flat settle cost from tick one --
+    // exactly what "settled" looks for -- but never actually emits a byte.
+    // Before this, a flat cost alone was enough to call the run "settled",
+    // which would read a mesh that has not started as one that has finished.
+    const flatCostNoOutput: BitDoorway = {
+      sendBytes: () => {},
+      nextOutputByte: () => null,
+      worstSettleIterations: () => 4,
+    };
+    const result = runUntilStopped(
+      flatCostNoOutput,
+      { files: { [`${ZIP_FOLDERS.prompt}ask.txt`]: 'go' } },
+      { quietTicks: 4, maxTicks: 200 },
+    );
+    expect(result.reason).toBe('ceiling');
+    expect(result.raw.length).toBe(0);
+  });
+});
+
 describe('the real mesh doorway', () => {
   it('reports silence as silence rather than as a stream of zeros', async () => {
     // The distinction the whole halt condition rests on. receiveBits() always
