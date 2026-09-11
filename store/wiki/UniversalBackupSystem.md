@@ -515,4 +515,8 @@ Intended objective
 
 The overall objective of the Universal Backup System is to create a unified environment in which a user can connect their supported cloud accounts and devices and have their accessible digital information continuously backed up and organized.
 
-The project's defining ideas are its cross-platform backup architecture, automatic operation, multi-cloud integration, device linki
+The project's defining ideas are its cross-platform backup architecture, automatic operation, multi-cloud integration, device linking, URL-based deduplication, security and maintenance services, and advertising-supported storage model.
+
+Rather than treating every device and cloud service as a separate backup destination, the proposed system treats them as interconnected sources within one backup environment.
+
+The result is intended to be a single system for managing a user's distributed digital information while reducing duplicate storage and minimizing the amount of manual work required to maintain backups.
