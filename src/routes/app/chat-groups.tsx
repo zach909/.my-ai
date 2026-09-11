@@ -301,6 +301,19 @@ function ChatHistoryPanel() {
     return { groups: filteredGroups, ungrouped: filteredUngrouped, totalFilteredChats }
   }, [groups, ungrouped, searchQuery, totalChats])
 
+  // A pinned chat still belongs to its topic group or Ungrouped below --
+  // this is a second, visible-first view over the same data, not a move.
+  // "the pinned chats and history and overall look" (ChatGPT's own sidebar
+  // puts pinned items in their own section right at the top, above
+  // everything else) -- same idea, without giving up the topic auto-
+  // grouping this app already has that ChatGPT doesn't.
+  const pinnedThreads = useMemo(
+    () => [...filteredData.groups.flatMap((g) => g.threads), ...filteredData.ungrouped]
+      .filter((t) => t.pinned)
+      .sort((a, b) => b.updatedAt - a.updatedAt),
+    [filteredData],
+  )
+
   return (
     <div className="h-full space-y-4 overflow-y-auto p-4">
       {/* Live ARIA status region for screen readers */}
@@ -402,6 +415,18 @@ function ChatHistoryPanel() {
             Clear Filter
           </Button>
         </div>
+      )}
+
+      {pinnedThreads.length > 0 && (
+        <Card className="space-y-1.5 border-primary/30 bg-primary/5 p-4">
+          <div className="flex items-center gap-2 text-sm font-medium text-primary">
+            <Pin size={14} fill="currentColor" />
+            Pinned
+          </div>
+          {pinnedThreads.map((t) => (
+            <ThreadRow key={t.id} thread={t} onTogglePin={togglePin} />
+          ))}
+        </Card>
       )}
 
       <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
