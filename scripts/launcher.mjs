@@ -134,6 +134,28 @@ function fallbackPageHtml(command, reason) {
 </body></html>`;
 }
 
+const LAUNCH_COOKIE = 'neuroclaw_launch_attempted';
+// Comfortably longer than LAUNCH_TIMEOUT_MS (90s) so it covers a slow build
+// plus someone re-checking a tab a little while after giving up on it --
+// but still short enough that coming back much later gets a fresh attempt
+// rather than being stuck on a stale "already tried" verdict forever.
+const LAUNCH_COOKIE_MAX_AGE_S = 300;
+
+function parseCookies(header) {
+  const out = {};
+  if (!header) return out;
+  for (const part of header.split(';')) {
+    const eq = part.indexOf('=');
+    if (eq === -1) continue;
+    out[part.slice(0, eq).trim()] = decodeURIComponent(part.slice(eq + 1).trim());
+  }
+  return out;
+}
+
+function serverCommand() {
+  return `cd ${JSON.stringify(ROOT).replace(/^"|"$/g, "'")} && npm run server`;
+}
+
 /** Resolves once something accepts a TCP connection on `host:port`. */
 function waitForPort(host, port, timeoutMs) {
   return new Promise((resolve, reject) => {
@@ -152,10 +174,9 @@ function waitForPort(host, port, timeoutMs) {
 
 /** Serves the fallback page on `port` until the process is killed. */
 function serveFallback(port, host, reason) {
-  const command = `cd ${JSON.stringify(ROOT).replace(/^"|"$/g, "'")} && npm run server`;
   const server = createServer((_req, res) => {
     res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
-    res.end(fallbackPageHtml(command, reason));
+    res.end(fallbackPageHtml(serverCommand(), reason));
   });
   server.listen(port, host, () => {
     console.log(`[launcher] could not auto-start Neuroclaw -- serving the manual-start page on http://${host}:${port}`);
@@ -165,7 +186,16 @@ function serveFallback(port, host, reason) {
 
 function launch(req, res) {
   handled = true;
-  res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+  res.writeHead(200, {
+    'Content-Type': 'text/html; charset=utf-8',
+    // Set on the very first attempt only -- a browser that comes back while
+    // this launcher is still mid-attempt (or a later, freshly restarted
+    // launcher process still finds the backend down) is recognized as a
+    // repeat visit by the top-level request handler below and skipped
+    // straight to the fallback page instead of sitting through "Starting…"
+    // and the wait again.
+    'Set-Cookie': `${LAUNCH_COOKIE}=1; Max-Age=${LAUNCH_COOKIE_MAX_AGE_S}; Path=/; SameSite=Lax`,
+  });
   res.end(startingPageHtml());
 
   const serverScript = path.join(ROOT, 'scripts', 'server.mjs');
@@ -208,6 +238,22 @@ function launch(req, res) {
 
 const server = createServer((req, res) => {
   if (handled) return; // a burst of requests while we're already launching -- only the first one triggers it
+
+  // A request carrying the cookie means this same browser already sat
+  // through "Starting…" once (this process or an earlier one) and is still
+  // hitting a dead port. Don't make them wait through it again -- go
+  // straight to the actionable fallback. Doesn't touch `handled`/spawn
+  // anything: a *different* browser (no cookie) hitting this same launcher
+  // still gets a real launch attempt.
+  if (parseCookies(req.headers.cookie)[LAUNCH_COOKIE]) {
+    res.writeHead(200, { 'Content-Type': 'text/html; charset=utf-8' });
+    res.end(fallbackPageHtml(
+      serverCommand(),
+      "Already tried auto-starting once and the backend still isn't answering -- starting it by hand is the more reliable path now.",
+    ));
+    return;
+  }
+
   launch(req, res);
 });
 
