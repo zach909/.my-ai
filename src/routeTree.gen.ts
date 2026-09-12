@@ -9,29 +9,10 @@
 // Additionally, you should also exclude this file from your linter and/or formatter to prevent it from being checked or modified.
 
 import { Route as rootRouteImport } from './routes/__root'
-import { Route as DesktopRouteImport } from './routes/desktop'
-import { Route as BuilderRouteImport } from './routes/builder'
 import { Route as AppRouteImport } from './routes/app'
 import { Route as IndexRouteImport } from './routes/index'
 import { Route as AppIndexRouteImport } from './routes/app/index'
-import { Route as AppStoreRouteImport } from './routes/app/store'
-import { Route as AppSettingsRouteImport } from './routes/app/settings'
-import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improvement'
-import { Route as AppPinnedChatsRouteImport } from './routes/app/pinned-chats'
-import { Route as AppChatGroupsRouteImport } from './routes/app/chat-groups'
-import { Route as AppChatRouteImport } from './routes/app/chat'
-import { Route as AppAccessRouteImport } from './routes/app/access'
 
-const DesktopRoute = DesktopRouteImport.update({
-  id: '/desktop',
-  path: '/desktop',
-  getParentRoute: () => rootRouteImport,
-} as any)
-const BuilderRoute = BuilderRouteImport.update({
-  id: '/builder',
-  path: '/builder',
-  getParentRoute: () => rootRouteImport,
-} as any)
 const AppRoute = AppRouteImport.update({
   id: '/app',
   path: '/app',
@@ -47,151 +28,37 @@ const AppIndexRoute = AppIndexRouteImport.update({
   path: '/',
   getParentRoute: () => AppRoute,
 } as any)
-const AppStoreRoute = AppStoreRouteImport.update({
-  id: '/store',
-  path: '/store',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppSettingsRoute = AppSettingsRouteImport.update({
-  id: '/settings',
-  path: '/settings',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppSelfImprovementRoute = AppSelfImprovementRouteImport.update({
-  id: '/self-improvement',
-  path: '/self-improvement',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppPinnedChatsRoute = AppPinnedChatsRouteImport.update({
-  id: '/pinned-chats',
-  path: '/pinned-chats',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppChatGroupsRoute = AppChatGroupsRouteImport.update({
-  id: '/chat-groups',
-  path: '/chat-groups',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppChatRoute = AppChatRouteImport.update({
-  id: '/chat',
-  path: '/chat',
-  getParentRoute: () => AppRoute,
-} as any)
-const AppAccessRoute = AppAccessRouteImport.update({
-  id: '/access',
-  path: '/access',
-  getParentRoute: () => AppRoute,
-} as any)
 
 export interface FileRoutesByFullPath {
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
-  '/builder': typeof BuilderRoute
-  '/desktop': typeof DesktopRoute
-  '/app/access': typeof AppAccessRoute
-  '/app/chat': typeof AppChatRoute
-  '/app/chat-groups': typeof AppChatGroupsRoute
-  '/app/pinned-chats': typeof AppPinnedChatsRoute
-  '/app/self-improvement': typeof AppSelfImprovementRoute
-  '/app/settings': typeof AppSettingsRoute
-  '/app/store': typeof AppStoreRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRoutesByTo {
   '/': typeof IndexRoute
-  '/builder': typeof BuilderRoute
-  '/desktop': typeof DesktopRoute
-  '/app/access': typeof AppAccessRoute
-  '/app/chat': typeof AppChatRoute
-  '/app/chat-groups': typeof AppChatGroupsRoute
-  '/app/pinned-chats': typeof AppPinnedChatsRoute
-  '/app/self-improvement': typeof AppSelfImprovementRoute
-  '/app/settings': typeof AppSettingsRoute
-  '/app/store': typeof AppStoreRoute
   '/app': typeof AppIndexRoute
 }
 export interface FileRoutesById {
   __root__: typeof rootRouteImport
   '/': typeof IndexRoute
   '/app': typeof AppRouteWithChildren
-  '/builder': typeof BuilderRoute
-  '/desktop': typeof DesktopRoute
-  '/app/access': typeof AppAccessRoute
-  '/app/chat': typeof AppChatRoute
-  '/app/chat-groups': typeof AppChatGroupsRoute
-  '/app/pinned-chats': typeof AppPinnedChatsRoute
-  '/app/self-improvement': typeof AppSelfImprovementRoute
-  '/app/settings': typeof AppSettingsRoute
-  '/app/store': typeof AppStoreRoute
   '/app/': typeof AppIndexRoute
 }
 export interface FileRouteTypes {
   fileRoutesByFullPath: FileRoutesByFullPath
-  fullPaths:
-    | '/'
-    | '/app'
-    | '/builder'
-    | '/desktop'
-    | '/app/access'
-    | '/app/chat'
-    | '/app/chat-groups'
-    | '/app/pinned-chats'
-    | '/app/self-improvement'
-    | '/app/settings'
-    | '/app/store'
-    | '/app/'
+  fullPaths: '/' | '/app' | '/app/'
   fileRoutesByTo: FileRoutesByTo
-  to:
-    | '/'
-    | '/builder'
-    | '/desktop'
-    | '/app/access'
-    | '/app/chat'
-    | '/app/chat-groups'
-    | '/app/pinned-chats'
-    | '/app/self-improvement'
-    | '/app/settings'
-    | '/app/store'
-    | '/app'
-  id:
-    | '__root__'
-    | '/'
-    | '/app'
-    | '/builder'
-    | '/desktop'
-    | '/app/access'
-    | '/app/chat'
-    | '/app/chat-groups'
-    | '/app/pinned-chats'
-    | '/app/self-improvement'
-    | '/app/settings'
-    | '/app/store'
-    | '/app/'
+  to: '/' | '/app'
+  id: '__root__' | '/' | '/app' | '/app/'
   fileRoutesById: FileRoutesById
 }
 export interface RootRouteChildren {
   IndexRoute: typeof IndexRoute
   AppRoute: typeof AppRouteWithChildren
-  BuilderRoute: typeof BuilderRoute
-  DesktopRoute: typeof DesktopRoute
 }
 
 declare module '@tanstack/react-router' {
   interface FileRoutesByPath {
-    '/desktop': {
-      id: '/desktop'
-      path: '/desktop'
-      fullPath: '/desktop'
-      preLoaderRoute: typeof DesktopRouteImport
-      parentRoute: typeof rootRouteImport
-    }
-    '/builder': {
-      id: '/builder'
-      path: '/builder'
-      fullPath: '/builder'
-      preLoaderRoute: typeof BuilderRouteImport
-      parentRoute: typeof rootRouteImport
-    }
     '/app': {
       id: '/app'
       path: '/app'
@@ -213,77 +80,14 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppIndexRouteImport
       parentRoute: typeof AppRoute
     }
-    '/app/store': {
-      id: '/app/store'
-      path: '/store'
-      fullPath: '/app/store'
-      preLoaderRoute: typeof AppStoreRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/settings': {
-      id: '/app/settings'
-      path: '/settings'
-      fullPath: '/app/settings'
-      preLoaderRoute: typeof AppSettingsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/self-improvement': {
-      id: '/app/self-improvement'
-      path: '/self-improvement'
-      fullPath: '/app/self-improvement'
-      preLoaderRoute: typeof AppSelfImprovementRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/pinned-chats': {
-      id: '/app/pinned-chats'
-      path: '/pinned-chats'
-      fullPath: '/app/pinned-chats'
-      preLoaderRoute: typeof AppPinnedChatsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/chat-groups': {
-      id: '/app/chat-groups'
-      path: '/chat-groups'
-      fullPath: '/app/chat-groups'
-      preLoaderRoute: typeof AppChatGroupsRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/chat': {
-      id: '/app/chat'
-      path: '/chat'
-      fullPath: '/app/chat'
-      preLoaderRoute: typeof AppChatRouteImport
-      parentRoute: typeof AppRoute
-    }
-    '/app/access': {
-      id: '/app/access'
-      path: '/access'
-      fullPath: '/app/access'
-      preLoaderRoute: typeof AppAccessRouteImport
-      parentRoute: typeof AppRoute
-    }
   }
 }
 
 interface AppRouteChildren {
-  AppAccessRoute: typeof AppAccessRoute
-  AppChatRoute: typeof AppChatRoute
-  AppChatGroupsRoute: typeof AppChatGroupsRoute
-  AppPinnedChatsRoute: typeof AppPinnedChatsRoute
-  AppSelfImprovementRoute: typeof AppSelfImprovementRoute
-  AppSettingsRoute: typeof AppSettingsRoute
-  AppStoreRoute: typeof AppStoreRoute
   AppIndexRoute: typeof AppIndexRoute
 }
 
 const AppRouteChildren: AppRouteChildren = {
-  AppAccessRoute: AppAccessRoute,
-  AppChatRoute: AppChatRoute,
-  AppChatGroupsRoute: AppChatGroupsRoute,
-  AppPinnedChatsRoute: AppPinnedChatsRoute,
-  AppSelfImprovementRoute: AppSelfImprovementRoute,
-  AppSettingsRoute: AppSettingsRoute,
-  AppStoreRoute: AppStoreRoute,
   AppIndexRoute: AppIndexRoute,
 }
 
@@ -292,8 +96,6 @@ const AppRouteWithChildren = AppRoute._addFileChildren(AppRouteChildren)
 const rootRouteChildren: RootRouteChildren = {
   IndexRoute: IndexRoute,
   AppRoute: AppRouteWithChildren,
-  BuilderRoute: BuilderRoute,
-  DesktopRoute: DesktopRoute,
 }
 export const routeTree = rootRouteImport
   ._addFileChildren(rootRouteChildren)

@@ -14,8 +14,12 @@ import type { ReactNode } from 'react'
  *     <AuthedDashboard />   // reads blink.auth — browser only
  *   </BlinkClientBoundary>
  *
- * If the WHOLE page needs the browser, prefer `ssr: false` on the route instead:
- * `createFileRoute('/path')({ ssr: false, component })`.
+ * If the WHOLE page needs the browser, wrap its entire tree in this boundary.
+ * Do NOT use the route's `ssr: false` option: a client-only route in this TanStack
+ * Start template hits Start's server-context `node:async_hooks` path (externalized
+ * to a throwing stub in the browser) and ships a BLANK preview ("AsyncLocalStorage
+ * is not a constructor"). This boundary (TanStack's `ClientOnly`) is the supported
+ * client-only escape hatch, and keeps the shell server-rendered (better for SEO).
  */
 export function BlinkClientBoundary({
   children,

@@ -1,10 +1,17 @@
+/**
+ * Collapsible SaaS sidebar — OPT-IN (rendered by SharedAppLayout, which the
+ * template root does NOT apply by default). Only reach for this when building a
+ * SaaS / dashboard app; landing & marketing pages stay full-bleed.
+ *
+ * Expands to 15rem, collapses to 3rem (icon-only).
+ * State is persisted to localStorage. Tooltips appear automatically when collapsed.
+ *
+ * A native flex-col implementation (shadcn Button/Avatar/Tooltip primitives) for
+ * full layout control — every line is yours to edit.
+ */
 import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
-import { Link } from '@tanstack/react-router'
-import { NeuroclawMark } from '@/components/NeuroclawMark'
-import { AppTour } from '@/components/AppTour'
-import { hasSeenTour } from '@/lib/tour-seen'
-import { useAgentRunning } from '@/hooks/useAgentRunning'
+import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { Button } from '@/components/ui/button'
 import {
   Tooltip,
@@ -13,12 +20,11 @@ import {
   TooltipTrigger,
 } from '@/components/ui/tooltip'
 import {
+  Database,
+  LayoutDashboard,
+  LogOut,
   PanelLeft,
-  HelpCircle,
-  MessageSquare,
-  Pin,
-  Folder,
-  Settings,
+  Table2,
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
@@ -28,53 +34,34 @@ interface NavItemDef {
   href: string
   icon: ReactNode
   label: string
+  active?: boolean
 }
 
-// "remove the dashboard page ... move everything that is not chat to
-// settings, under where that would go would be your chats and pinned
-// chats" -- Dashboard is gone (its route now just forwards into Chats, see
-// app/index.tsx), and Extension Builder, Self-Improvement, Store, and
-// Access are no longer top-level entries: they're all still real, fully
-// working pages, just reached from Settings' new "Modules" tab now (Access
-// was already a Settings tab too -- see settings.tsx). What's left is
-// chat-first: Chats and Pinned Chats where Dashboard used to sit, then
-// Chat History, then Settings for everything else.
+// Every href here MUST have a real route file, and every page you add under
+// `src/routes/app/` should get an entry here — a nav link with no route ships a
+// 404. Only the shipped dashboard route is listed; add yours as you create them,
+// e.g. `src/routes/app/items.tsx` → { href: '/app/items', label: 'Items' }.
 const NAV_ITEMS: NavItemDef[] = [
-  { href: '/app/chat', icon: <MessageSquare className="h-4 w-4" />, label: 'Chats' },
-  { href: '/app/pinned-chats', icon: <Pin className="h-4 w-4" />, label: 'Pinned Chats' },
-  // Chat History and Memory are tabs of this one entry -- both are views
-  // over what has been said or remembered. The route is still
-  // /app/chat-groups (unchanged, so old links/bookmarks keep working), but
-  // there's no "Chat Groups" hive-discussion tab here any more -- one AI
-  // directing another is a chat plugin now (plugins/hive.ts), not a page.
-  { href: '/app/chat-groups', icon: <Folder className="h-4 w-4" />, label: 'Chat History' },
-  // Last: remote-access password, brain behavior (quantum/predictor mode),
-  // Computer Access, and now Extension Builder / Self-Improvement / Store
-  // as link cards under the Modules tab -- see settings.tsx's own doc
-  // comment for what used to have no UI at all.
-  { href: '/app/settings', icon: <Settings className="h-4 w-4" />, label: 'Settings' },
+  { href: '/app', icon: <LayoutDashboard className="h-4 w-4" />, label: 'Overview', active: true },
+  { href: '/app', icon: <Database className="h-4 w-4" />, label: 'Databases' },
+  { href: '/app', icon: <Table2 className="h-4 w-4" />, label: 'Tables' },
 ]
 
 function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) {
   const link = (
-    <Link
-      to={item.href}
-      activeOptions={{ exact: true }}
-      activeProps={{
-        className: 'bg-accent text-foreground font-semibold shadow-xs',
-      }}
-      inactiveProps={{
-        className: 'text-muted-foreground hover:bg-accent hover:text-foreground',
-      }}
-      aria-label={item.label}
+    <a
+      href={item.href}
       className={cn(
-        'flex items-center gap-2.5 rounded-md text-sm transition-all duration-150 cursor-pointer focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary focus-visible:ring-offset-1 focus-visible:ring-offset-background active:scale-[0.97]',
-        collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full'
+        'flex items-center gap-2.5 rounded-md text-sm transition-colors cursor-pointer',
+        collapsed ? 'justify-center w-8 h-8 mx-auto' : 'px-3 py-2 w-full',
+        item.active
+          ? 'bg-accent text-foreground font-medium'
+          : 'text-muted-foreground hover:bg-accent hover:text-foreground'
       )}
     >
       <span className="shrink-0">{item.icon}</span>
       {!collapsed && <span className="truncate">{item.label}</span>}
-    </Link>
+    </a>
   )
   if (!collapsed) return link
   return (
@@ -86,19 +73,12 @@ function NavItem({ item, collapsed }: { item: NavItemDef; collapsed: boolean }) 
 }
 
 export function AppSidebarShell() {
-  const [tourOpen, setTourOpen] = useState(false)
-  // Drives the mark's wave: it breathes from circle to star while the agent works.
-  const agentRunning = useAgentRunning()
-
-  // Open the tour once on a first visit, so a new user is shown around instead
-  // of having to discover the button. Reading localStorage is deferred to an
-  // effect because it does not exist during server-side prerendering.
-  useEffect(() => {
-    if (!hasSeenTour()) setTourOpen(true)
-  }, [])
-
+  // SSR always renders expanded; the saved preference is restored after mount.
+  // Reading localStorage in the initializer makes the client's first render
+  // differ from the server markup → hydration mismatch on hard refresh.
   const [collapsed, setCollapsed] = useState(false)
   useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect -- mount-time restore of a persisted preference; reading localStorage in the useState initializer causes an SSR hydration mismatch
     if (localStorage.getItem(SIDEBAR_KEY) === 'true') setCollapsed(true)
   }, [])
 
@@ -128,8 +108,10 @@ export function AppSidebarShell() {
         >
           {!collapsed && (
             <>
-              <NeuroclawMark size={28} active={agentRunning} />
-              <span className="flex-1 font-semibold text-sm truncate">Corona</span>
+              <div className="flex items-center justify-center h-7 w-7 rounded-md bg-primary text-primary-foreground text-xs font-bold shrink-0">
+                A
+              </div>
+              <span className="flex-1 font-semibold text-sm truncate">App</span>
             </>
           )}
           <Tooltip>
@@ -137,24 +119,8 @@ export function AppSidebarShell() {
               <Button
                 variant="ghost"
                 size="sm"
-                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
-                onClick={() => setTourOpen(true)}
-                aria-label="Take the tour"
-              >
-                <HelpCircle className="h-4 w-4" />
-              </Button>
-            </TooltipTrigger>
-            <TooltipContent side="right">Take the tour</TooltipContent>
-          </Tooltip>
-
-          <Tooltip>
-            <TooltipTrigger asChild>
-              <Button
-                variant="ghost"
-                size="sm"
-                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground active:scale-95 transition-all duration-150 focus-visible:ring-2 focus-visible:ring-ring focus-visible:outline-none"
+                className="h-7 w-7 p-0 shrink-0 text-muted-foreground hover:text-foreground"
                 onClick={toggle}
-                aria-label={collapsed ? 'Expand sidebar' : 'Collapse sidebar'}
               >
                 <PanelLeft
                   className={cn(
@@ -170,11 +136,11 @@ export function AppSidebarShell() {
           </Tooltip>
         </div>
 
-        {/* ── Nav ────────────────────────────────────────── */}
+        {/* ── Nav (only this section scrolls) ───────────── */}
         <div className="flex-1 min-h-0 overflow-y-auto overflow-x-hidden px-2 py-2 space-y-0.5">
           {!collapsed && (
             <p className="px-3 pt-1 pb-1 text-[10px] font-medium text-muted-foreground uppercase tracking-wider">
-              Modules
+              Main
             </p>
           )}
           {NAV_ITEMS.map(item => (
@@ -182,9 +148,67 @@ export function AppSidebarShell() {
           ))}
         </div>
 
-      </div>
+        {/* ── Footer (always pinned to bottom) ──────────── */}
+        <div
+          className={cn(
+            'shrink-0 border-t border-border',
+            collapsed ? 'flex flex-col items-center gap-1 p-2' : 'p-3 space-y-1'
+          )}
+        >
+          {/* User row */}
+          {collapsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <button className="flex items-center justify-center h-8 w-8 rounded-md hover:bg-accent transition-colors cursor-pointer">
+                  <Avatar className="h-6 w-6 shrink-0">
+                    <AvatarFallback className="text-[10px] bg-muted">U</AvatarFallback>
+                  </Avatar>
+                </button>
+              </TooltipTrigger>
+              <TooltipContent side="right">User · user@example.com</TooltipContent>
+            </Tooltip>
+          ) : (
+            <button className="flex items-center gap-2 rounded-md hover:bg-accent transition-colors cursor-pointer w-full px-2 py-1.5">
+              <Avatar className="h-6 w-6 shrink-0">
+                <AvatarFallback className="text-[10px] bg-muted">U</AvatarFallback>
+              </Avatar>
+              <div className="flex-1 min-w-0 text-left">
+                <p className="text-xs font-medium leading-tight truncate">User</p>
+                <p className="text-[10px] text-muted-foreground leading-tight truncate">
+                  user@example.com
+                </p>
+              </div>
+            </button>
+          )}
 
-      <AppTour open={tourOpen} onClose={() => setTourOpen(false)} />
+          {/* Sign out */}
+          {collapsed ? (
+            <Tooltip>
+              <TooltipTrigger asChild>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  size="sm"
+                  className="h-8 w-8 p-0 text-muted-foreground hover:text-foreground"
+                >
+                  <LogOut className="h-4 w-4 shrink-0" />
+                </Button>
+              </TooltipTrigger>
+              <TooltipContent side="right">Sign out</TooltipContent>
+            </Tooltip>
+          ) : (
+            <Button
+              type="button"
+              variant="ghost"
+              size="sm"
+              className="w-full justify-start px-2 gap-2 text-muted-foreground hover:text-foreground"
+            >
+              <LogOut className="h-4 w-4 shrink-0" />
+              Sign out
+            </Button>
+          )}
+        </div>
+      </div>
     </TooltipProvider>
   )
 }

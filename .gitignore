@@ -1,117 +1,24 @@
-# Compiled and build artifacts
-*.pyc
-__pycache__/
-*.o
-*.obj
-*.so
-*.dll
-*.exe
-*.class
-*.out
-
-# Dependencies
-.venv/
-venv/
-node_modules/
-dist/
-build/
-.neuroclaw/
-.vite-out/
-target/
-.gradle/
-.mypy_cache/
-.pytest_cache/
-
-# Logs and temp files
+# Logs
+logs
 *.log
-*.tmp
-*.swp
-*.swo
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
 
-# Environment
-.env
-.env.local
-.env.*
+node_modules
+dist
+dist-ssr
+*.local
 
-# Editors
-.vscode/
-.idea/
-*.swp
-*.swo
-
-# System files
+# Editor directories and files
+.vscode/*
+!.vscode/extensions.json
+.idea
 .DS_Store
-Thumbs.db
-
-# Coverage
-coverage/
-htmlcov/
-.coverage
-
-# Compressed files
-*.zip
-*.gz
-*.tar
-*.tgz
-*.bz2
-*.xz
-*.7z
-*.rar
-*.zst
-*.lz4
-*.lzh
-*.cab
-*.arj
-*.rpm
-*.deb
-*.Z
-*.lz
-*.lzo
-*.tar.gz
-*.tar.bz2
-*.tar.xz
-*.tar.zst
-
-# Claude Code agent worktrees (isolated scratch checkouts for background subagents)
-.claude/worktrees/
-# Runtime clone state written by SelfReplicatePlugin (plugins/self_replicate.ts) —
-# per-run artifacts, not source.
-clones/
-
-# electron-builder output (packaged installers, ~100-130 MB each)
-desktop-app/dist/
-desktop-app/node_modules/
-
-# An accidental clone of this repository inside itself, created by the
-# `git clone` that used to sit at the top of scripts/install.sh and run on
-# every source. It was committed as a gitlink (mode 160000) with no
-# .gitmodules, so every clone got a submodule entry git could not populate.
-# Ignored so the same accident cannot be committed again.
-.my-ai/
-
-# Probe files written by test/smoke.mjs into the LIVE extensions directory
-# (it has to, since it tests the boot loader that reads from there). They are
-# deleted after each run now; ignored so an interrupted run cannot commit one.
-extension-builder/extensions/autoload_probe_*
-extension-builder/extensions/source_autoload_probe_*
-extension-builder/extensions/good_bits_test_*
-
-# Store items installed on THIS machine. Installing is a local act -- someone
-# here chose to install a published skill -- so the copy under installed/
-# belongs to this machine, not to the repository. The published original in
-# store/ is the shared thing.
-extension-builder/installed/skills/*/
-
-# What the network was holding when its last run stopped (neuron states and
-# every connection, a few megabytes). Per-machine runtime state, rewritten on
-# every stop -- the point of it is that the NEXT run on THIS machine starts in
-# the same place, which is not something to share or to version.
-config/network-state.json
-
-# Store content (published skills, plugins, wiki pages, uploads, files) lives
-# on its own `store` branch now -- see models && skills/core/store-sync.ts.
-# The directory still exists on disk in every checkout (that is where
-# storeRoot() reads and writes, and where store-fetch.ts's pullStoreCatalog()
-# populates it from the store branch at boot); it is just not part of this
-# branch's own tracked history anymore.
-/store/
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
