@@ -15,13 +15,18 @@
  *                   directly, so an AI-published page can never silently
  *                   overwrite or sit indistinguishable from a carefully
  *                   reviewed spec.
- *   wiki/bot/       pages published through publishWikiPage() -- source:
+ *   store/wiki/    pages published through publishWikiPage() -- source:
  *                   "bot". This is the concrete implementation of
  *                   docs/SKILL_ACQUISITION_LOOP.md's "push the wiki page"
  *                   step: the AI (via plugins/wiki.ts's WikiPlugin) and a
  *                   human using the /app/store "New Page" form both publish
  *                   here, through the same function -- neither one can
- *                   write into the curated collection.
+ *                   write into the curated collection. Lives under store/
+ *                   (store.ts's own storeRoot()), the same place every other
+ *                   published kind (skills, plugins, source, ...) lives --
+ *                   it used to sit at a separate top-level wiki/bot/, which
+ *                   made a wiki publish the one kind of publish that did NOT
+ *                   show up under store/ the way everything else does.
  *
  * listWikiPages()/readWikiPage() merge both collections and tag every page
  * with which one it came from, so callers (the /app/store UI) can render
@@ -32,6 +37,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
 import path from "node:path";
 import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
+import { storeRoot } from "./store.js";
 
 // Matches the same rule interface/web-server.ts's GET /api/wiki/:name
 // already enforced: a bare filename stem, no '.' or '/' at all, so this can
@@ -59,7 +65,7 @@ function wikiDir(): string {
 }
 
 function botWikiDir(): string {
-  return path.join(wikiDir(), "bot");
+  return path.join(storeRoot(), "wiki");
 }
 
 function backupsDir(name: string): string {
@@ -68,7 +74,7 @@ function backupsDir(name: string): string {
 
 /**
  * Snapshot a bot-published page's current on-disk content before it's about
- * to be overwritten or deleted. wiki/bot/ had no backup/versioning at all --
+ * to be overwritten or deleted. store/wiki/ had no backup/versioning at all --
  * publishWikiPage()'s overwrite and deleteWikiPage()'s unlink were both
  * unconditional, permanent, and unrecoverable. Now that wiki reads are
  * exempt from the server's remote-access password (interface/web-server.ts,
@@ -101,7 +107,7 @@ function backupBeforeChange(name: string): void {
   writeFileSync(path.join(dir, `${stamp}.md`), content, "utf8");
 }
 
-/** Pull a title and one-line description out of a page's raw markdown -- every page in wiki/*.md and wiki/bot/*.md follows the `# Title` + paragraph shape this extracts. */
+/** Pull a title and one-line description out of a page's raw markdown -- every page in wiki/*.md and store/wiki/*.md follows the `# Title` + paragraph shape this extracts. */
 export function extractWikiSummary(raw: string): { title: string; description: string } {
   const lines = raw.split("\n");
   let title = "";
@@ -162,7 +168,7 @@ export function readWikiPage(name: string): WikiPage | null {
 }
 
 /**
- * Create or overwrite a page in the bot-published collection (wiki/bot/) --
+ * Create or overwrite a page in the bot-published collection (store/wiki/) --
  * used by both POST /api/wiki (a human, via the /app/store "New Page" form)
  * and WikiPlugin.publish() (the AI itself, as a plugin action). Neither
  * caller can reach the curated wiki/ directory through this function; that
@@ -179,7 +185,7 @@ export function publishWikiPage(name: string, title: string, content: string): W
   if (!content.trim()) throw new WikiNameError("A wiki page needs non-empty content.");
   // Without this check, publishing under a name that collides with a
   // curated page would still succeed -- it just writes an unreachable file
-  // into wiki/bot/, since readWikiPage() always resolves that name to the
+  // into store/wiki/, since readWikiPage() always resolves that name to the
   // curated page first (see its own doc comment). That's a silent no-op
   // from the caller's point of view: a "publish"/"edit" that reports
   // success but is never actually visible anywhere. Fail loudly instead.
@@ -210,7 +216,7 @@ export function publishWikiPage(name: string, title: string, content: string): W
  * that couldn't reach the original because the name didn't match exactly,
  * back before this app locked the name field during edit) and needs
  * deleting rather than leaving an orphaned duplicate with no way to remove
- * it. Only ever touches wiki/bot/ -- deleting a curated page is refused
+ * it. Only ever touches store/wiki/ -- deleting a curated page is refused
  * with the same message publishing/editing one is, since this function
  * can't distinguish "doesn't exist" from "exists but is curated" without
  * checking, and the curated collection should never be touched by this
@@ -278,11 +284,11 @@ export function restoreWikiBackup(name: string, timestamp: string): WikiPage {
 /**
  * Publish a wiki page and actually share it.
  *
- * publishWikiPage() writes into `wiki/bot/` and stops, which leaves the page
- * exactly as device-local as not publishing it -- it dies with the machine
- * and no other clone ever sees it. This commits and pushes the page so a
- * `git pull` anywhere else picks it up, and reports honestly when it could
- * not (see store-sync.ts).
+ * publishWikiPage() writes into `store/wiki/` and stops, which leaves the
+ * page exactly as device-local as not publishing it -- it dies with the
+ * machine and no other clone ever sees it. This commits and pushes the page
+ * so a `git pull` anywhere else picks it up, and reports honestly when it
+ * could not (see store-sync.ts).
  */
 export async function publishWikiPageAndSync(
   name: string,
@@ -293,7 +299,7 @@ export async function publishWikiPageAndSync(
   const sync = await syncStorePaths(
     [path.join(botWikiDir(), `${name}.md`)],
     `wiki: publish ${name}`,
-    { storeDir: wikiDir() },
+    { storeDir: storeRoot() },
   );
   return { page, sync };
 }
@@ -302,5 +308,5 @@ export async function publishWikiPageAndSync(
 export async function deleteWikiPageAndSync(name: string): Promise<StoreSyncResult> {
   const file = path.join(botWikiDir(), `${name}.md`);
   deleteWikiPage(name);
-  return syncStorePaths([file], `wiki: remove ${name}`, { storeDir: wikiDir() });
+  return syncStorePaths([file], `wiki: remove ${name}`, { storeDir: storeRoot() });
 }

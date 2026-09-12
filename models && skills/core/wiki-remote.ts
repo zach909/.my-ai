@@ -1,7 +1,7 @@
 /**
  * Bot-published wiki pages, visible without landing on this device's disk.
  *
- * wiki-store.ts's listWikiPages()/readWikiPage() only ever see wiki/bot/
+ * wiki-store.ts's listWikiPages()/readWikiPage() only ever see store/wiki/
  * as it exists locally -- a page published from a DIFFERENT device reaches
  * the store branch (publishWikiPageAndSync -> syncStorePaths, see
  * wiki-store.ts) but this device never pulls it back down, so it stayed
@@ -13,9 +13,9 @@
  * branch, not synced to local disk first. `git show <remote>/<branch>:path`
  * reads a blob out of the remote-tracking ref directly -- it touches this
  * repo's object database (git's own cache, unavoidable) but writes nothing
- * under wiki/, and never touches this repo's HEAD, checked-out branch, or
- * working tree. A page fetched this way is not "on this device" in the
- * sense that matters here: nothing under wiki/bot/ changed, and a second
+ * under store/wiki/, and never touches this repo's HEAD, checked-out branch,
+ * or working tree. A page fetched this way is not "on this device" in the
+ * sense that matters here: nothing under store/wiki/ changed, and a second
  * read goes back to the store branch again rather than reading a local copy.
  */
 
@@ -71,7 +71,7 @@ async function remoteRef(remote: string, branch: string): Promise<{ root: string
 async function remoteBotPageNames(remote: string, branch: string): Promise<{ root: string; ref: string; names: string[] } | null> {
   const target = await remoteRef(remote, branch);
   if (!target) return null;
-  const listed = await git(["ls-tree", "--name-only", "-r", `${target.ref}:wiki/bot`], target.root);
+  const listed = await git(["ls-tree", "--name-only", "-r", `${target.ref}:store/wiki`], target.root);
   if (!listed.ok) return { ...target, names: [] };
   const names = listed.stdout
     .split("\n")
@@ -97,7 +97,7 @@ export async function listRemoteOnlyBotPages(excludeNames: ReadonlySet<string>):
   const summaries: WikiPageSummary[] = [];
   for (const name of found.names) {
     if (excludeNames.has(name)) continue;
-    const shown = await git(["show", `${found.ref}:wiki/bot/${name}.md`], found.root);
+    const shown = await git(["show", `${found.ref}:store/wiki/${name}.md`], found.root);
     if (!shown.ok) continue;
     summaries.push({ name, source: "bot", ...extractWikiSummary(shown.stdout) });
   }
@@ -115,7 +115,7 @@ export async function readRemoteBotPage(name: string): Promise<WikiPage | null> 
   const branch = DEFAULT_STORE_BRANCH;
   const target = await remoteRef(remote, branch);
   if (!target) return null;
-  const shown = await git(["show", `${target.ref}:wiki/bot/${name}.md`], target.root);
+  const shown = await git(["show", `${target.ref}:store/wiki/${name}.md`], target.root);
   if (!shown.ok) return null;
   return { name, source: "bot", content: shown.stdout, ...extractWikiSummary(shown.stdout) };
 }
