@@ -1,0 +1,1031 @@
+{
+  "skill": "Conversation Learning",
+  "neuronCount": 256,
+  "neurons": [
+    {
+      "name": "respond_0",
+      "id": 64
+    },
+    {
+      "name": "respond_1",
+      "id": 65
+    },
+    {
+      "name": "anticipate_2",
+      "id": 66
+    },
+    {
+      "name": "respond_3",
+      "id": 67
+    },
+    {
+      "name": "anticipate_4",
+      "id": 68
+    },
+    {
+      "name": "respond_5",
+      "id": 69
+    },
+    {
+      "name": "anticipate_6",
+      "id": 70
+    },
+    {
+      "name": "respond_7",
+      "id": 71
+    },
+    {
+      "name": "anticipate_8",
+      "id": 72
+    },
+    {
+      "name": "respond_9",
+      "id": 73
+    },
+    {
+      "name": "anticipate_10",
+      "id": 74
+    },
+    {
+      "name": "respond_11",
+      "id": 75
+    },
+    {
+      "name": "anticipate_12",
+      "id": 76
+    },
+    {
+      "name": "respond_13",
+      "id": 77
+    },
+    {
+      "name": "anticipate_14",
+      "id": 78
+    },
+    {
+      "name": "respond_15",
+      "id": 79
+    },
+    {
+      "name": "anticipate_16",
+      "id": 80
+    },
+    {
+      "name": "respond_17",
+      "id": 81
+    },
+    {
+      "name": "anticipate_18",
+      "id": 82
+    },
+    {
+      "name": "respond_19",
+      "id": 83
+    },
+    {
+      "name": "anticipate_20",
+      "id": 84
+    },
+    {
+      "name": "respond_21",
+      "id": 85
+    },
+    {
+      "name": "anticipate_22",
+      "id": 86
+    },
+    {
+      "name": "respond_23",
+      "id": 87
+    },
+    {
+      "name": "anticipate_24",
+      "id": 88
+    },
+    {
+      "name": "respond_25",
+      "id": 89
+    },
+    {
+      "name": "anticipate_26",
+      "id": 90
+    },
+    {
+      "name": "respond_27",
+      "id": 91
+    },
+    {
+      "name": "anticipate_28",
+      "id": 92
+    },
+    {
+      "name": "respond_29",
+      "id": 93
+    },
+    {
+      "name": "anticipate_30",
+      "id": 94
+    },
+    {
+      "name": "respond_31",
+      "id": 95
+    },
+    {
+      "name": "anticipate_32",
+      "id": 96
+    },
+    {
+      "name": "respond_33",
+      "id": 97
+    },
+    {
+      "name": "anticipate_34",
+      "id": 98
+    },
+    {
+      "name": "respond_35",
+      "id": 99
+    },
+    {
+      "name": "anticipate_36",
+      "id": 100
+    },
+    {
+      "name": "respond_37",
+      "id": 101
+    },
+    {
+      "name": "anticipate_38",
+      "id": 102
+    },
+    {
+      "name": "respond_39",
+      "id": 103
+    },
+    {
+      "name": "anticipate_40",
+      "id": 104
+    },
+    {
+      "name": "respond_41",
+      "id": 105
+    },
+    {
+      "name": "anticipate_42",
+      "id": 106
+    },
+    {
+      "name": "respond_43",
+      "id": 107
+    },
+    {
+      "name": "anticipate_44",
+      "id": 108
+    },
+    {
+      "name": "respond_45",
+      "id": 109
+    },
+    {
+      "name": "anticipate_46",
+      "id": 110
+    },
+    {
+      "name": "respond_47",
+      "id": 111
+    },
+    {
+      "name": "anticipate_48",
+      "id": 112
+    },
+    {
+      "name": "respond_49",
+      "id": 113
+    },
+    {
+      "name": "anticipate_50",
+      "id": 114
+    },
+    {
+      "name": "respond_51",
+      "id": 115
+    },
+    {
+      "name": "anticipate_52",
+      "id": 116
+    },
+    {
+      "name": "respond_53",
+      "id": 117
+    },
+    {
+      "name": "anticipate_54",
+      "id": 118
+    },
+    {
+      "name": "respond_55",
+      "id": 119
+    },
+    {
+      "name": "anticipate_56",
+      "id": 120
+    },
+    {
+      "name": "respond_57",
+      "id": 121
+    },
+    {
+      "name": "anticipate_58",
+      "id": 122
+    },
+    {
+      "name": "respond_59",
+      "id": 123
+    },
+    {
+      "name": "anticipate_60",
+      "id": 124
+    },
+    {
+      "name": "respond_61",
+      "id": 125
+    },
+    {
+      "name": "anticipate_62",
+      "id": 126
+    },
+    {
+      "name": "respond_63",
+      "id": 127
+    },
+    {
+      "name": "anticipate_64",
+      "id": 128
+    },
+    {
+      "name": "respond_65",
+      "id": 129
+    },
+    {
+      "name": "anticipate_66",
+      "id": 130
+    },
+    {
+      "name": "respond_67",
+      "id": 131
+    },
+    {
+      "name": "anticipate_68",
+      "id": 132
+    },
+    {
+      "name": "respond_69",
+      "id": 133
+    },
+    {
+      "name": "anticipate_70",
+      "id": 134
+    },
+    {
+      "name": "respond_71",
+      "id": 135
+    },
+    {
+      "name": "anticipate_72",
+      "id": 136
+    },
+    {
+      "name": "respond_73",
+      "id": 137
+    },
+    {
+      "name": "anticipate_74",
+      "id": 138
+    },
+    {
+      "name": "respond_75",
+      "id": 139
+    },
+    {
+      "name": "anticipate_76",
+      "id": 140
+    },
+    {
+      "name": "respond_77",
+      "id": 141
+    },
+    {
+      "name": "anticipate_78",
+      "id": 142
+    },
+    {
+      "name": "respond_79",
+      "id": 143
+    },
+    {
+      "name": "anticipate_80",
+      "id": 144
+    },
+    {
+      "name": "respond_81",
+      "id": 145
+    },
+    {
+      "name": "anticipate_82",
+      "id": 146
+    },
+    {
+      "name": "respond_83",
+      "id": 147
+    },
+    {
+      "name": "anticipate_84",
+      "id": 148
+    },
+    {
+      "name": "respond_85",
+      "id": 149
+    },
+    {
+      "name": "anticipate_86",
+      "id": 150
+    },
+    {
+      "name": "respond_87",
+      "id": 151
+    },
+    {
+      "name": "anticipate_88",
+      "id": 152
+    },
+    {
+      "name": "respond_89",
+      "id": 153
+    },
+    {
+      "name": "anticipate_90",
+      "id": 154
+    },
+    {
+      "name": "respond_91",
+      "id": 155
+    },
+    {
+      "name": "anticipate_92",
+      "id": 156
+    },
+    {
+      "name": "respond_93",
+      "id": 157
+    },
+    {
+      "name": "anticipate_94",
+      "id": 158
+    },
+    {
+      "name": "respond_95",
+      "id": 159
+    },
+    {
+      "name": "anticipate_96",
+      "id": 160
+    },
+    {
+      "name": "respond_97",
+      "id": 161
+    },
+    {
+      "name": "anticipate_98",
+      "id": 162
+    },
+    {
+      "name": "respond_99",
+      "id": 163
+    },
+    {
+      "name": "anticipate_100",
+      "id": 164
+    },
+    {
+      "name": "respond_101",
+      "id": 165
+    },
+    {
+      "name": "anticipate_102",
+      "id": 166
+    },
+    {
+      "name": "respond_103",
+      "id": 167
+    },
+    {
+      "name": "anticipate_104",
+      "id": 168
+    },
+    {
+      "name": "respond_105",
+      "id": 169
+    },
+    {
+      "name": "anticipate_106",
+      "id": 170
+    },
+    {
+      "name": "respond_107",
+      "id": 171
+    },
+    {
+      "name": "anticipate_108",
+      "id": 172
+    },
+    {
+      "name": "respond_109",
+      "id": 173
+    },
+    {
+      "name": "anticipate_110",
+      "id": 174
+    },
+    {
+      "name": "respond_111",
+      "id": 175
+    },
+    {
+      "name": "anticipate_112",
+      "id": 176
+    },
+    {
+      "name": "respond_113",
+      "id": 177
+    },
+    {
+      "name": "anticipate_114",
+      "id": 178
+    },
+    {
+      "name": "respond_115",
+      "id": 179
+    },
+    {
+      "name": "anticipate_116",
+      "id": 180
+    },
+    {
+      "name": "respond_117",
+      "id": 181
+    },
+    {
+      "name": "anticipate_118",
+      "id": 182
+    },
+    {
+      "name": "respond_119",
+      "id": 183
+    },
+    {
+      "name": "anticipate_120",
+      "id": 184
+    },
+    {
+      "name": "respond_121",
+      "id": 185
+    },
+    {
+      "name": "anticipate_122",
+      "id": 186
+    },
+    {
+      "name": "respond_123",
+      "id": 187
+    },
+    {
+      "name": "anticipate_124",
+      "id": 188
+    },
+    {
+      "name": "respond_125",
+      "id": 189
+    },
+    {
+      "name": "anticipate_126",
+      "id": 190
+    },
+    {
+      "name": "respond_127",
+      "id": 191
+    },
+    {
+      "name": "anticipate_128",
+      "id": 192
+    },
+    {
+      "name": "respond_129",
+      "id": 193
+    },
+    {
+      "name": "anticipate_130",
+      "id": 194
+    },
+    {
+      "name": "respond_131",
+      "id": 195
+    },
+    {
+      "name": "anticipate_132",
+      "id": 196
+    },
+    {
+      "name": "respond_133",
+      "id": 197
+    },
+    {
+      "name": "anticipate_134",
+      "id": 198
+    },
+    {
+      "name": "respond_135",
+      "id": 199
+    },
+    {
+      "name": "anticipate_136",
+      "id": 200
+    },
+    {
+      "name": "respond_137",
+      "id": 201
+    },
+    {
+      "name": "anticipate_138",
+      "id": 202
+    },
+    {
+      "name": "respond_139",
+      "id": 203
+    },
+    {
+      "name": "anticipate_140",
+      "id": 204
+    },
+    {
+      "name": "respond_141",
+      "id": 205
+    },
+    {
+      "name": "anticipate_142",
+      "id": 206
+    },
+    {
+      "name": "respond_143",
+      "id": 207
+    },
+    {
+      "name": "anticipate_144",
+      "id": 208
+    },
+    {
+      "name": "respond_145",
+      "id": 209
+    },
+    {
+      "name": "anticipate_146",
+      "id": 210
+    },
+    {
+      "name": "respond_147",
+      "id": 211
+    },
+    {
+      "name": "anticipate_148",
+      "id": 212
+    },
+    {
+      "name": "respond_149",
+      "id": 213
+    },
+    {
+      "name": "anticipate_150",
+      "id": 214
+    },
+    {
+      "name": "respond_151",
+      "id": 215
+    },
+    {
+      "name": "anticipate_152",
+      "id": 216
+    },
+    {
+      "name": "respond_153",
+      "id": 217
+    },
+    {
+      "name": "anticipate_154",
+      "id": 218
+    },
+    {
+      "name": "respond_155",
+      "id": 219
+    },
+    {
+      "name": "anticipate_156",
+      "id": 220
+    },
+    {
+      "name": "respond_157",
+      "id": 221
+    },
+    {
+      "name": "anticipate_158",
+      "id": 222
+    },
+    {
+      "name": "respond_159",
+      "id": 223
+    },
+    {
+      "name": "anticipate_160",
+      "id": 224
+    },
+    {
+      "name": "respond_161",
+      "id": 225
+    },
+    {
+      "name": "anticipate_162",
+      "id": 226
+    },
+    {
+      "name": "respond_163",
+      "id": 227
+    },
+    {
+      "name": "anticipate_164",
+      "id": 228
+    },
+    {
+      "name": "respond_165",
+      "id": 229
+    },
+    {
+      "name": "anticipate_166",
+      "id": 230
+    },
+    {
+      "name": "respond_167",
+      "id": 231
+    },
+    {
+      "name": "anticipate_168",
+      "id": 232
+    },
+    {
+      "name": "respond_169",
+      "id": 233
+    },
+    {
+      "name": "anticipate_170",
+      "id": 234
+    },
+    {
+      "name": "respond_171",
+      "id": 235
+    },
+    {
+      "name": "anticipate_172",
+      "id": 236
+    },
+    {
+      "name": "respond_173",
+      "id": 237
+    },
+    {
+      "name": "anticipate_174",
+      "id": 238
+    },
+    {
+      "name": "respond_175",
+      "id": 239
+    },
+    {
+      "name": "anticipate_176",
+      "id": 240
+    },
+    {
+      "name": "respond_177",
+      "id": 241
+    },
+    {
+      "name": "anticipate_178",
+      "id": 242
+    },
+    {
+      "name": "respond_179",
+      "id": 243
+    },
+    {
+      "name": "anticipate_180",
+      "id": 244
+    },
+    {
+      "name": "respond_181",
+      "id": 245
+    },
+    {
+      "name": "anticipate_182",
+      "id": 246
+    },
+    {
+      "name": "respond_183",
+      "id": 247
+    },
+    {
+      "name": "anticipate_184",
+      "id": 248
+    },
+    {
+      "name": "respond_185",
+      "id": 249
+    },
+    {
+      "name": "anticipate_186",
+      "id": 250
+    },
+    {
+      "name": "respond_187",
+      "id": 251
+    },
+    {
+      "name": "anticipate_188",
+      "id": 252
+    },
+    {
+      "name": "respond_189",
+      "id": 253
+    },
+    {
+      "name": "anticipate_190",
+      "id": 254
+    },
+    {
+      "name": "respond_191",
+      "id": 255
+    },
+    {
+      "name": "anticipate_192",
+      "id": 256
+    },
+    {
+      "name": "respond_193",
+      "id": 257
+    },
+    {
+      "name": "anticipate_194",
+      "id": 258
+    },
+    {
+      "name": "respond_195",
+      "id": 259
+    },
+    {
+      "name": "anticipate_196",
+      "id": 260
+    },
+    {
+      "name": "respond_197",
+      "id": 261
+    },
+    {
+      "name": "anticipate_198",
+      "id": 262
+    },
+    {
+      "name": "respond_199",
+      "id": 263
+    },
+    {
+      "name": "anticipate_200",
+      "id": 264
+    },
+    {
+      "name": "respond_201",
+      "id": 265
+    },
+    {
+      "name": "anticipate_202",
+      "id": 266
+    },
+    {
+      "name": "respond_203",
+      "id": 267
+    },
+    {
+      "name": "anticipate_204",
+      "id": 268
+    },
+    {
+      "name": "respond_205",
+      "id": 269
+    },
+    {
+      "name": "anticipate_206",
+      "id": 270
+    },
+    {
+      "name": "respond_207",
+      "id": 271
+    },
+    {
+      "name": "anticipate_208",
+      "id": 272
+    },
+    {
+      "name": "respond_209",
+      "id": 273
+    },
+    {
+      "name": "anticipate_210",
+      "id": 274
+    },
+    {
+      "name": "respond_211",
+      "id": 275
+    },
+    {
+      "name": "anticipate_212",
+      "id": 276
+    },
+    {
+      "name": "respond_213",
+      "id": 277
+    },
+    {
+      "name": "anticipate_214",
+      "id": 278
+    },
+    {
+      "name": "respond_215",
+      "id": 279
+    },
+    {
+      "name": "anticipate_216",
+      "id": 280
+    },
+    {
+      "name": "respond_217",
+      "id": 281
+    },
+    {
+      "name": "anticipate_218",
+      "id": 282
+    },
+    {
+      "name": "respond_219",
+      "id": 283
+    },
+    {
+      "name": "anticipate_220",
+      "id": 284
+    },
+    {
+      "name": "respond_221",
+      "id": 285
+    },
+    {
+      "name": "anticipate_222",
+      "id": 286
+    },
+    {
+      "name": "respond_223",
+      "id": 287
+    },
+    {
+      "name": "anticipate_224",
+      "id": 288
+    },
+    {
+      "name": "respond_225",
+      "id": 289
+    },
+    {
+      "name": "anticipate_226",
+      "id": 290
+    },
+    {
+      "name": "respond_227",
+      "id": 291
+    },
+    {
+      "name": "anticipate_228",
+      "id": 292
+    },
+    {
+      "name": "respond_229",
+      "id": 293
+    },
+    {
+      "name": "anticipate_230",
+      "id": 294
+    },
+    {
+      "name": "respond_231",
+      "id": 295
+    },
+    {
+      "name": "anticipate_232",
+      "id": 296
+    },
+    {
+      "name": "respond_233",
+      "id": 297
+    },
+    {
+      "name": "anticipate_234",
+      "id": 298
+    },
+    {
+      "name": "respond_235",
+      "id": 299
+    },
+    {
+      "name": "anticipate_236",
+      "id": 300
+    },
+    {
+      "name": "respond_237",
+      "id": 301
+    },
+    {
+      "name": "anticipate_238",
+      "id": 302
+    },
+    {
+      "name": "respond_239",
+      "id": 303
+    },
+    {
+      "name": "anticipate_240",
+      "id": 304
+    },
+    {
+      "name": "respond_241",
+      "id": 305
+    },
+    {
+      "name": "anticipate_242",
+      "id": 306
+    },
+    {
+      "name": "respond_243",
+      "id": 307
+    },
+    {
+      "name": "anticipate_244",
+      "id": 308
+    },
+    {
+      "name": "respond_245",
+      "id": 309
+    },
+    {
+      "name": "anticipate_246",
+      "id": 310
+    },
+    {
+      "name": "respond_247",
+      "id": 311
+    },
+    {
+      "name": "anticipate_248",
+      "id": 312
+    },
+    {
+      "name": "respond_249",
+      "id": 313
+    },
+    {
+      "name": "anticipate_250",
+      "id": 314
+    },
+    {
+      "name": "respond_251",
+      "id": 315
+    },
+    {
+      "name": "anticipate_252",
+      "id": 316
+    },
+    {
+      "name": "respond_253",
+      "id": 317
+    },
+    {
+      "name": "anticipate_254",
+      "id": 318
+    },
+    {
+      "name": "respond_255",
+      "id": 319
+    }
+  ],
+  "publishedAt": "2026-09-12T18:03:49.927Z"
+}
