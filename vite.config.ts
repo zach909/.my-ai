@@ -6,7 +6,7 @@ import path from 'path';
 import fs from 'node:fs';
 // Blink Visual Editor: stamps data-blnk-id on JSX + injects iframe-side picker
 // runtime. Self-contained (no external deps) so this template stays portable.
-import { blinkTaggerPlugin } from './blink-tagger.plugin.mjs';
+import { blinkTaggerPlugin } from './plugins/blink-tagger.plugin.mjs';
 
 // Blink: guarantee global CSS survives agent rewrites of src/routes/__root.tsx.
 // TanStack Start only emits a stylesheet for CSS imported by a ROUTE module, and
@@ -235,53 +235,75 @@ export default defineConfig({
     dedupe: ['react', 'react-dom'],
   },
   optimizeDeps: {
-    // Pre-bundle the CLIENT-ENTRY dependency closure at dev-server start. TanStack
-    // Start injects its hydration entry (@tanstack/react-start/dist/plugin/
-    // default-entry/client.tsx) into the page, and the browser loads it via a
-    // DYNAMIC import. If a dep in that closure is NOT already optimized, the first
-    // post-build page load DISCOVERS it and kicks off an on-demand dep re-optimize —
-    // and the entry's in-flight dynamic import can land mid-optimize and fail with
-    // "Failed to fetch dynamically imported module: …/default-entry/client.tsx", so
-    // a freshly-built site shows a BLANK preview (the dep chunk 504s while GET /
-    // still 200s → invisible to health probes). Listing the closure here optimizes
-    // it ONCE at boot. Dev-only — optimizeDeps does NOT touch the production /
-    // prerender build, so SSR + SEO are unchanged.
-    //
-    // DELIBERATELY OMITTED: `@tanstack/react-start/client`. The hydration entry
-    // imports it, but it transitively imports `node:async_hooks`, and on this
-    // raw-Vite setup (no Nitro/unenv layer) Vite externalizes that builtin to a
-    // THROWING browser stub. Force-optimizing react-start/client bakes the stub into
-    // the client bundle at boot, so the moment a client-only (`ssr: false`) route
-    // constructs Start's storage context it dies with "AsyncLocalStorage is not a
-    // constructor" — a DETERMINISTIC blank preview on every ssr:false route. Left
-    // off this list it loads lazily (as it did before the list was added) and
-    // ssr:false routes render again. Do NOT re-add it without a real browser
-    // polyfill for node:async_hooks — a client-side async_hooks shim removes the
-    // "is not a constructor" throw but still breaks Start's hydration, so it is not
-    // a viable workaround.
-    include: [
-      'react',
-      'react-dom',
-      'react-dom/client',
-      'react/jsx-runtime',
-      'framer-motion',
-      '@tanstack/react-router',
-      '@tanstack/react-query',
-    ],
+    include: ['react', 'react-dom', 'react/jsx-runtime', 'framer-motion'],
   },
   server: {
     port: 3000,
     strictPort: true,
     host: true,
     allowedHosts: true,
+    watch: {
+      // Real crash reported running `npm run dev`: "ENOSPC: System limit
+      // for number of file watchers reached" from a file under
+      // `model && skills manager/venv/.../torch/...` -- a Python venv's
+      // site-packages easily contains tens of thousands of files, and
+      // .gitignore (venv/, node_modules/, dist/, ...) has zero effect on
+      // chokidar/native fs.watch, which watches the real filesystem
+      // regardless of git's ignore rules. None of these directories
+      // contain source Vite needs HMR for, so excluding them here is a
+      // straightforward, low-risk fix (fewer watched files is strictly
+      // safer, never a source of missed-reload bugs since nothing under
+      // them is ever imported into the frontend bundle).
+      ignored: [
+        '**/venv/**',
+        '**/.venv/**',
+        '**/node_modules/**',
+        '**/.git/**',
+        '**/dist/**',
+        '**/clones/**',
+        '**/extension-builder/Moby/**',
+        '**/extension-builder/CMUDict/**',
+        '**/extension-builder/debian-installer/**',
+        '**/extension-builder/extensions/**',
+        '**/__pycache__/**',
+        '**/.mypy_cache/**',
+        '**/.pytest_cache/**',
+        '**/coverage/**',
+        '**/htmlcov/**',
+      ],
+    },
+    // src/components/Desktop.tsx (the only fetch('/api/...') caller anywhere
+    // in src/, confirmed by grep) calls the Node backend (interface/web-server.ts,
+    // default port 7861 per interface/main.ts) assuming same-origin -- with no
+    // proxy, that request 404s against this dev server, which has no /api routes
+    // of its own. This only bridges `vite`/`vite dev`; the static `vite build`
+    // output still has no route to the backend unless a hosting-layer reverse
+    // proxy provides one (see DESKTOP_LAUNCHER_IMPLEMENTATION.md and
+    // ARCHITECTURE.md for the disclosed production-deployment gap).
+    proxy: {
+      '/api': { target: 'http://127.0.0.1:7861', changeOrigin: true },
+    },
   },
   build: {
     // Build into a clean temp dir; scripts/finalize-static-build.mjs then flattens
     // .vite-out/client/* -> dist/ so Blink hosting serves dist/index.html
     // (BUILD_PATHS['vite-react'] = 'dist'). Building here instead of dist/ dodges the
     // EACCES from Start's client build emptying the platform-prepared dist/, which
-    // carried a read-only _redirects the sandbox user could not unlink (no longer injected).
+    // pre-injects a read-only _redirects the sandbox user can't unlink.
     outDir: '.vite-out',
     emptyOutDir: true,
+    rollupOptions: {
+      output: {
+        // three.js and react-three-fiber were being emitted into fifteen
+        // separate route chunks -- 15 MB, half the built site, and all of it
+        // the same library. The prerender pass builds a per-route entry, and
+        // without an explicit shared chunk each one inlines its own copy.
+        // Naming them here forces a single shared chunk that every route
+        // references instead.
+        manualChunks(id) {
+          if (/node_modules\/(three|@react-three)\//.test(id)) return 'three';
+        },
+      },
+    },
   },
 });
