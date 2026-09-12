@@ -1,0 +1,33 @@
+[Unit]
+Description=NeuroClaw (the real app -- backend + Vite frontend)
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/neuroclaw
+# `npm run dev`, not scripts/launcher.mjs or server.mjs directly. Why this
+# one specifically: interface/web-server.ts's own GET / serves a bare-bones
+# fallback terminal page, NOT the real React app (Chats, Pinned Chats,
+# Chat History, Settings, Store, ...) -- that app is served by Vite itself,
+# on :3000, which is also the port scripts/dev.mjs's own proxy config
+# forwards /api/* from to the real backend on :7861. This is the exact
+# same command this repo's own developers run day to day (see
+# scripts/dev.mjs's doc comment) -- proven, not improvised for this image.
+ExecStart=/usr/bin/npm run dev
+Restart=on-failure
+RestartSec=2
+Environment=NEUROCLAW_SELF_IMPROVE=0
+Environment=NEUROCLAW_SKILL_AGENT=0
+Environment=NEUROCLAW_CONVERSATION_LEARNING=0
+Environment=NEUROCLAW_SKILL_DRILL=0
+Environment=NEUROCLAW_OPTIMIZE_AGENT=0
+Environment=NEUROCLAW_PEER_SYNC=0
+# Set ONLY here -- this is what makes the app's own "Install NeuroClaw"
+# option (GET/POST /api/system/live-usb, /api/system/install in
+# interface/web-server.ts) appear at all. A normal install/dev machine
+# never sets this and never sees it.
+Environment=NEUROCLAW_LIVE_USB=1
+
+[Install]
+WantedBy=multi-user.target

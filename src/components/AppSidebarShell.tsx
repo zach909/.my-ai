@@ -2,6 +2,7 @@ import { useState, useEffect, useCallback } from 'react'
 import type { ReactNode } from 'react'
 import { Link } from '@tanstack/react-router'
 import { NeuroclawMark } from '@/components/NeuroclawMark'
+import { LiveUsbInstallButton } from '@/components/LiveUsbInstallButton'
 import { AppTour } from '@/components/AppTour'
 import { hasSeenTour } from '@/lib/tour-seen'
 import { useAgentRunning } from '@/hooks/useAgentRunning'
@@ -181,6 +182,10 @@ export function AppSidebarShell() {
             <NavItem key={item.href} item={item} collapsed={collapsed} />
           ))}
         </div>
+
+        {/* Renders nothing at all -- not even this wrapper -- outside a
+            live-USB boot; see the component's own doc comment. */}
+        <LiveUsbInstallButton collapsed={collapsed} />
 
       </div>
 

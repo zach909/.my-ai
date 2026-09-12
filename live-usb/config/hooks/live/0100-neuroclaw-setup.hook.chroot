@@ -1,0 +1,30 @@
+#!/bin/sh
+# Runs INSIDE the chroot during `lb build`, after packages from
+# package-lists/ are installed. build.sh has already rsync'd a pruned copy
+# of the repo to /opt/neuroclaw (via includes.chroot) before this fires --
+# this only installs its dependencies and builds the backend, the same two
+# steps `npm run server` itself would otherwise do lazily on first request.
+# Doing it here (build time) instead of leaving it to first boot means the
+# live session's systemd unit starts against an already-built dist/,
+# instead of every fresh boot re-running a build no disk write from a live
+# session can even persist to the next boot anyway.
+set -e
+cd /opt/neuroclaw
+
+# Full install, devDependencies included and KEPT -- unlike a normal
+# production deploy, what actually runs at boot here is `npm run dev`
+# (scripts/dev.mjs: builds+starts the real backend on :7861, then runs
+# Vite itself on :3000 in the foreground -- the exact same thing this
+# repo's own developers run, and the one path already proven to serve the
+# real app rather than web-server.ts's own bare-bones fallback page at :7861
+# -- see live-usb/README.md's "why :3000, not :7861" section). Vite,
+# @vitejs/plugin-react, tailwindcss, etc. are all devDependencies, so they
+# must stay installed for that to work -- there is no prune-to-production
+# step here the way there normally would be.
+echo "[neuroclaw-setup] installing dependencies..."
+npm ci --no-audit --no-fund
+
+echo "[neuroclaw-setup] building the backend once now, so first boot isn't the first compile..."
+node scripts/build-backend.mjs
+
+echo "[neuroclaw-setup] done."

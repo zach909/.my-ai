@@ -1,0 +1,67 @@
+# Packages baked into the live filesystem (chroot). live-build installs
+# these with the target's own apt sources -- Debian stable's version of
+# each name, resolved at BUILD time, so exact versions aren't pinned here.
+
+# Minimal graphical session -- just enough to run one fullscreen browser
+# window, not a full desktop environment. openbox has no panel/taskbar of
+# its own; the autostart script (includes.chroot/etc/skel/.config/openbox/
+# autostart) is the only thing it ever runs.
+xserver-xorg
+xinit
+openbox
+xterm
+
+# The kiosk browser. chromium (not chromium-browser -- Debian's package
+# name) is used because --kiosk / --app= are first-class flags there;
+# Firefox's kiosk mode needs more manual profile setup for the same result.
+chromium
+
+# Used by the openbox autostart script's own wait-for-Vite-to-come-up loop
+# before it ever launches chromium the first time.
+curl
+
+# Node.js runtime NeuroClaw itself runs on. Debian stable's nodejs package
+# is often older than this project targets -- see live-usb/README.md's
+# "Node.js version" section for the NodeSource-repo alternative if `node -v`
+# in the built image is too old for `npm ci` to succeed.
+nodejs
+npm
+git
+
+# Networking -- so a live session actually has working WiFi/ethernet to
+# reach anything NeuroClaw's own plugins need (its own model && skills
+# manager, store-sync's git push, etc.), not just a wired-only fallback.
+network-manager
+
+# The app's own "Install NeuroClaw" button (see LiveUsbInstallButton.tsx)
+# launches this. Same installer family Parrot OS itself uses (see
+# store/wiki/ParrotOSTools.md) -- well-precedented for a Debian-based
+# live/install image, and far less config than wiring up debian-installer's
+# own live-installer mode by hand. calamares-settings-debian ships a
+# working, tested module config for exactly this "install this live
+# squashfs onto a disk" scenario -- deliberately NOT overridden with a
+# hand-written partition/bootloader/unpackfs config of our own: those
+# modules can genuinely corrupt a disk if misconfigured, and there's no way
+# to boot-test that from this build environment (see live-usb/README.md).
+calamares
+calamares-settings-debian
+
+# "add a BitLocker kind of thing onto the USB" -- cryptsetup is the ONLY
+# thing gating whether Calamares's own "Encrypt system" checkbox (LUKS,
+# the Linux equivalent of BitLocker: a passphrase-protected, fully
+# encrypted install) appears on its partition page at all. Calamares
+# detects its presence and offers the checkbox automatically for the
+# normal "erase disk and install" flow -- no custom partition.conf needed,
+# which is exactly the kind of module this list's own comment above says
+# not to hand-roll.
+cryptsetup
+cryptsetup-initramfs
+
+# live-boot/live-config are what actually make a squashfs-based live image
+# boot and behave like a normal login session (auto-login, /home in tmpfs
+# unless persistence is set up, etc.) -- live-build pulls these in
+# automatically for a `--binary-images iso-hybrid` build, listed here only
+# for clarity/documentation, not because omitting them would change
+# anything live-build itself already includes.
+live-boot
+live-config

@@ -2,7 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
-import type { ChildProcessWithoutNullStreams } from 'node:child_process';
+import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
@@ -2455,6 +2455,43 @@ export class WebServer {
           rlmExploration: (status.llm.rlmExplorationRate * 100).toFixed(1) + '%',
         },
       });
+      return;
+    }
+
+    // GET /api/system/live-usb — "workable just by running the USB and
+    // also then it should also have the option to install it onto the
+    // operating system." NEUROCLAW_LIVE_USB=1 is set only by
+    // live-usb/config/includes.chroot/etc/systemd/system/neuroclaw.service,
+    // so this is false (and the install option stays hidden) on every
+    // normal install/dev machine -- there's nothing to "install" a normal
+    // checkout into.
+    if (pathname === '/api/system/live-usb' && method === 'GET') {
+      this.sendJson(res, { liveUsb: process.env.NEUROCLAW_LIVE_USB === '1' });
+      return;
+    }
+
+    // POST /api/system/install — launches Calamares, the same graphical
+    // installer Parrot OS itself ships (see store/wiki/ParrotOSTools.md).
+    // A kiosk browser has no window chrome and the live session shows no
+    // desktop under it (openbox runs nothing but this one fullscreen
+    // window) -- there is no icon to click, so the app itself is the only
+    // place "install this" can live. 404s outside a live-USB boot: this is
+    // not a general-purpose "run an arbitrary GUI program" endpoint, and
+    // must not become one just because the live-usb check moves elsewhere
+    // later.
+    if (pathname === '/api/system/install' && method === 'POST') {
+      if (process.env.NEUROCLAW_LIVE_USB !== '1') {
+        this.sendJson(res, { error: 'Not running from a live USB -- nothing to install from here.' }, 404);
+        return;
+      }
+      try {
+        const child = spawn('calamares', [], { detached: true, stdio: 'ignore' });
+        child.on('error', () => {});
+        child.unref();
+        this.sendJson(res, { launched: true });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
       return;
     }
 
