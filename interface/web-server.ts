@@ -3527,7 +3527,7 @@ export class WebServer {
 
     // POST /api/skill-uploads/:name/wiki — link a package to a bot wiki
     // page as its documentation. Body: { wikiPage: string }. Only a *bot*
-    // page (wiki/bot/*.md) can be linked -- a curated wiki/ page is
+    // page (store/wiki/*.md) can be linked -- a curated wiki/ page is
     // reviewed, general-purpose documentation, not something a skill
     // upload should be able to claim as "about" it, so this checks the
     // page's source the same way deleteWikiPage()/WikiPlugin.edit() refuse

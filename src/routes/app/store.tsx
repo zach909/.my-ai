@@ -12,7 +12,7 @@
  *    has to keep running. Downloading never runs anything, and nothing
  *    installs on its own.
  *  - Wiki: research pages the bot (or a human) publishes -- wiki/*.md and
- *    wiki/bot/*.md, see models && skills/core/wiki-store.ts. Anyone can edit a
+ *    store/wiki/*.md, see models && skills/core/wiki-store.ts. Anyone can edit a
  *    bot-published page.
  *  - Uploads: the plugin/source-skill/binary-skill/algorithm/RSI-test packages
  *    a published page can be backed by, see models && skills/core/
@@ -1610,7 +1610,7 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
 
   // Two visibly distinct groups, never interleaved: the curated wiki/*.md
   // pages (source: 'human') and pages published through POST /api/wiki
-  // (source: 'bot' -- wiki/bot/*.md, written by WikiPlugin on the AI's own
+  // (source: 'bot' -- store/wiki/*.md, written by WikiPlugin on the AI's own
   // behalf or by this page's own "New Page" form). See models && skills/
   // core/wiki-store.ts's module doc for why they're kept in separate
   // directories rather than one flat list.
@@ -1643,7 +1643,7 @@ function WikiPanel({ onOpenChat }: { onOpenChat: (topic: string) => void }) {
       if (!res.ok) throw new Error(data.error || 'Failed to publish page')
       reportSync(data.sync as SyncStatus | undefined, `Wiki page "${name}" published`)
       // Always 'bot' -- publishWikiPage() (the function this endpoint and
-      // WikiPlugin.publish() both call) only ever writes into wiki/bot/,
+      // WikiPlugin.publish() both call) only ever writes into store/wiki/,
       // never the curated wiki/ directory, regardless of who submitted it.
       const summary: WikiPageSummary = { name: data.name, title: data.title, description: data.description, source: 'bot' }
       setPages(prev => [...prev.filter(p => p.name !== summary.name), summary])
