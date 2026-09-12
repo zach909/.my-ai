@@ -63,7 +63,7 @@ function PinnedChatsPage() {
   }
 
   return (
-    <div className="h-full space-y-4 overflow-y-auto p-4">
+    <div className="animate-fade-in h-full space-y-4 overflow-y-auto p-4">
       <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-3">
         <div className="flex items-center gap-2">
           <Pin size={16} className="text-primary" />

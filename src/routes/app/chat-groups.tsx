@@ -315,7 +315,7 @@ function ChatHistoryPanel() {
   )
 
   return (
-    <div className="h-full space-y-4 overflow-y-auto p-4">
+    <div className="animate-fade-in h-full space-y-4 overflow-y-auto p-4">
       {/* Live ARIA status region for screen readers */}
       <div className="sr-only" role="status" aria-live="polite">
         {searchQuery.trim()
@@ -557,7 +557,7 @@ function MemoryPanel() {
     .slice(0, 12)
 
   return (
-    <div className="flex h-full flex-col gap-4 p-4">
+    <div className="animate-fade-in flex h-full flex-col gap-4 p-4">
       <div>
         <p className="text-sm text-muted-foreground">
           Everything this instance remembers — what it was taught, what it learned from conversations,

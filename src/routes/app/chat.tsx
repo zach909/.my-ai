@@ -874,7 +874,11 @@ function ChatConversation({
         {messages.map((msg, i) => (
           <div
             key={msg.id}
-            className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+            // React keeps this node mounted across re-renders of the same
+            // message (same key), so the entrance animation plays once when
+            // a message first appears and never replays on every keystroke
+            // re-render -- a bubble that just pops into place otherwise.
+            className={`animate-fade-in flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
           >
             <div
               className={`group relative max-w-xl rounded-lg px-4 py-3 ${
