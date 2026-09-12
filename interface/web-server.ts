@@ -2470,9 +2470,10 @@ export class WebServer {
       return;
     }
 
-    // POST /api/system/install — launches Calamares, the same graphical
-    // installer Parrot OS itself ships (see store/wiki/ParrotOSTools.md).
-    // A kiosk browser has no window chrome and the live session shows no
+    // POST /api/system/install — launches Calamares, the graphical
+    // installer used by a wide range of distros, including Parrot OS
+    // (see store/wiki/ParrotOSTools.md for the one already documented
+    // here). A kiosk browser has no window chrome and the live session shows no
     // desktop under it (openbox runs nothing but this one fullscreen
     // window) -- there is no icon to click, so the app itself is the only
     // place "install this" can live. 404s outside a live-USB boot: this is

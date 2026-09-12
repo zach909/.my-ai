@@ -22,11 +22,13 @@ to boot on. Everything below is written to be run by you.
   no login prompt to get past.
 - **"Install NeuroClaw" from inside the app.** A button appears in the
   sidebar (bottom, only when running from this live image) that launches
-  [Calamares](https://calamares.io/), a graphical installer -- the same
-  one Parrot OS itself ships (see `store/wiki/ParrotOSTools.md` in this
-  repo). Its normal "erase disk and install" flow includes an **"Encrypt
-  system"** checkbox (LUKS) once `cryptsetup` is present, which this image
-  installs specifically so that checkbox is there.
+  [Calamares](https://calamares.io/), a graphical installer used by a wide
+  range of Linux distros (Manjaro, EndeavourOS, KDE neon, MX Linux, and
+  Parrot OS among them -- see `store/wiki/ParrotOSTools.md` in this repo
+  for the one already documented here). Its normal "erase disk and
+  install" flow includes an **"Encrypt system"** checkbox (LUKS) once
+  `cryptsetup` is present, which this image installs specifically so that
+  checkbox is there.
 - Nothing here modifies the machine you boot it on unless you explicitly
   click Install and complete Calamares' own confirmation steps -- a plain
   boot-and-try is exactly as non-destructive as booting any other live

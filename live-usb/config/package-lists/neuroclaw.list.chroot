@@ -34,8 +34,10 @@ git
 network-manager
 
 # The app's own "Install NeuroClaw" button (see LiveUsbInstallButton.tsx)
-# launches this. Same installer family Parrot OS itself uses (see
-# store/wiki/ParrotOSTools.md) -- well-precedented for a Debian-based
+# launches this. Calamares is the installer used by a wide range of
+# distros (Manjaro, EndeavourOS, KDE neon, MX Linux, Parrot OS among them
+# -- see store/wiki/ParrotOSTools.md for the one already documented here)
+# -- well-precedented for a Debian-based
 # live/install image, and far less config than wiring up debian-installer's
 # own live-installer mode by hand. calamares-settings-debian ships a
 # working, tested module config for exactly this "install this live
