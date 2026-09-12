@@ -1,0 +1,11 @@
+{
+  "skill": "smoke_test_ext",
+  "neuronCount": 1,
+  "neurons": [
+    {
+      "name": "alpha",
+      "id": 332
+    }
+  ],
+  "publishedAt": "2026-09-12T18:03:55.287Z"
+}
