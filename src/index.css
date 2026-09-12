@@ -163,17 +163,43 @@
 }
 
 @layer utilities {
-  .animate-fade-in { animation: fade-in 0.3s ease-in-out; }
+  /* "smoother and more friendly" -- eased entrance instead of content just
+     popping into place. cubic-bezier(0.16, 1, 0.3, 1) is a soft
+     decelerate-only curve (fast start, gentle landing, no bounce or
+     overshoot) -- the same family of easing a calmer, more polished
+     interface (what was asked for by name) uses for its own message and
+     page transitions. */
+  .animate-fade-in { animation: fade-in 0.35s cubic-bezier(0.16, 1, 0.3, 1); }
 
   @keyframes fade-in {
     from {
       opacity: 0;
-      transform: translateY(10px);
+      transform: translateY(6px);
     }
 
     to {
       opacity: 1;
       transform: translateY(0);
     }
+  }
+}
+
+/* Smooth in-page scrolling (anchor jumps, focus-into-view) everywhere except
+   for anyone who has asked their OS not to animate things -- respecting that
+   preference is itself part of a friendlier interface, not a contradiction
+   of one. This also shortens every animation/transition below a user-visible
+   threshold rather than only disabling the ones defined in this file, so a
+   reduced-motion preference is honored consistently no matter which
+   component's own transition-* utility classes triggered it. */
+html { scroll-behavior: smooth; }
+
+@media (prefers-reduced-motion: reduce) {
+  html { scroll-behavior: auto; }
+
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
   }
 }
