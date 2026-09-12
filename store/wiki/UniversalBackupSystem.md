@@ -1,4 +1,4 @@
-Universal Backup System
+# Universal Backup System
 
 The Universal Backup System is a proposed cross-platform backup and device-management system designed to automatically consolidate a user's data from multiple cloud services and computing devices into a unified backup environment. The system is intended to provide automatic backups, cloud synchronization, device linking, storage optimization, security scanning, system maintenance, and an advertising-based funding mechanism.
 

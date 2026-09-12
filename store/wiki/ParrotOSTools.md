@@ -1,4 +1,4 @@
-Parrot OS Tools
+# Parrot OS Tools
 
 Parrot OS tools are a collection of software packages included with, or available through, ParrotOS, a Debian-based GNU/Linux distribution designed for cybersecurity operations, digital forensics, privacy, software development, penetration testing, security research and reverse engineering. The Parrot Security Edition provides a large preinstalled collection of security utilities, while the Home Edition uses the same underlying repositories but does not install the complete security-tool collection by default.
 

@@ -1,4 +1,4 @@
-Multisensory Micro-Robot Swarm
+# Multisensory Micro-Robot Swarm
 
 Multisensory Micro-Robot Swarm is a proposed robotic system consisting of large numbers of extremely small, flying micro-robots capable of coordinating with one another, magnetically attaching to one another, forming larger structures, manipulating physical objects, and generating controlled sensory experiences.
 

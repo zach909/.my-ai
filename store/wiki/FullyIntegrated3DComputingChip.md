@@ -1,4 +1,4 @@
-Fully Integrated 3D Computing Chip
+# Fully Integrated 3D Computing Chip
 
 The fully integrated 3D computing chip is a proposed computer architecture in which computation, memory, communication, and signal processing are integrated throughout a single three-dimensional physical structure. Unlike conventional integrated circuits, which are primarily organized as two-dimensional surfaces or as multiple distinct layers, the proposed architecture treats the entire volume of the chip as an active computational medium.
 
