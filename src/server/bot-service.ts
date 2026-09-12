@@ -83,6 +83,8 @@ export interface BotResponse {
   }
   /** Set when this response reports an error, so callers can look it up via getRecentErrors(). */
   errorId?: string
+  /** Files a plugin action registered for download during this turn (see models && skills/core/chat-attachments.ts) -- "download those files, not pull them as needed": the chat page downloads each one the instant this response arrives. */
+  attachments?: Array<{ id: string; filename: string; bytes: number }>
 }
 
 // ── Behavioral traits, load-bearing in every response path below — not a
@@ -414,6 +416,7 @@ export class ChatBot {
           loopIterations: run.result.iterations,
           promptingSkills: skillsUsed,
         },
+        attachments: run.attachments.length > 0 ? run.attachments : undefined,
       }
     } catch (error) {
       // Logged, not swallowed. A prompting skill can be published by anyone,
