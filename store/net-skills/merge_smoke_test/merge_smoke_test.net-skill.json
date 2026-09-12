@@ -1,0 +1,55 @@
+{
+  "skill": "merge_smoke_test",
+  "neuronCount": 12,
+  "neurons": [
+    {
+      "name": "skill_js_add_0",
+      "id": 320
+    },
+    {
+      "name": "skill_js_add_1",
+      "id": 321
+    },
+    {
+      "name": "skill_js_add_2",
+      "id": 322
+    },
+    {
+      "name": "skill_python_mul_3",
+      "id": 323
+    },
+    {
+      "name": "skill_python_mul_4",
+      "id": 324
+    },
+    {
+      "name": "skill_python_mul_5",
+      "id": 325
+    },
+    {
+      "name": "skill_shell_sub_6",
+      "id": 326
+    },
+    {
+      "name": "skill_shell_sub_7",
+      "id": 327
+    },
+    {
+      "name": "skill_shell_sub_8",
+      "id": 328
+    },
+    {
+      "name": "skill_neurolang_value_9",
+      "id": 329
+    },
+    {
+      "name": "skill_neurolang_value_10",
+      "id": 330
+    },
+    {
+      "name": "skill_neurolang_value_11",
+      "id": 331
+    }
+  ],
+  "publishedAt": "2026-09-12T18:03:52.874Z"
+}
