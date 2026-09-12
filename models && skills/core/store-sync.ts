@@ -154,7 +154,22 @@ async function attemptSync(
   // read as an option. `git add` reads the actual files on disk regardless
   // of which index is active, so this picks up exactly what the caller
   // wrote, without disturbing the developer's own staged changes.
-  const add = await git(["add", "-A", "--", ...relPaths], root, envIdx);
+  //
+  // -f is load-bearing, not optional: /store/ (and store/wiki/) is
+  // deliberately gitignored on every OTHER branch (see the .gitignore
+  // comment next to it) so that store content never pollutes a feature
+  // branch's own tracked history -- but that is precisely why, without -f,
+  // `git add` refuses every single path this function is ever asked to
+  // stage, with no exception. This was a silent, total, since-day-one
+  // failure: every publish of every kind (skills, plugins, wiki, ...)
+  // reported "saved on this device only" here, never actually reaching the
+  // store branch, and nothing surfaced it as an error because a refused
+  // `git add` is not a `git` fatal exit in every git version -- it can also
+  // just leave the index unchanged. Ignored-by-gitignore is exactly the
+  // state EVERY store path is expected to be in on this side of the
+  // operation; it says nothing about whether the store branch itself
+  // should track it.
+  const add = await git(["add", "-A", "-f", "--", ...relPaths], root, envIdx);
   if (!add.ok) {
     return { pushed: false, changed: false, error: `Could not stage the change: ${firstLine(add.stderr)}` };
   }

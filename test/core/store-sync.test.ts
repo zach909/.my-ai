@@ -81,6 +81,30 @@ describe('store sync', () => {
     rmSync(tmp, { recursive: true, force: true })
   })
 
+  // The one fixture shape every other test in this file was missing: the
+  // real repo's own .gitignore has `/store/` in it (deliberately -- store
+  // content must never pollute a feature branch's own tracked history, see
+  // that .gitignore's own comment). None of the fixtures above ever set
+  // that up, so `git add` never had anything to refuse -- which is exactly
+  // how store-sync.ts shipped without `-f` for as long as it did: every
+  // real publish of every kind (skills, plugins, wiki, ...) silently
+  // reported "saved on this device only" here, and no test ever noticed
+  // because no test's fixture repo was ignoring `store/` to begin with.
+  it('publishes even though the repo\'s own .gitignore ignores store/ -- the throwaway index is what should track it, not the working tree\'s ignore rules', async () => {
+    writeFileSync(path.join(deviceA, '.gitignore'), '/store/\n')
+    git(['add', '-A'], deviceA)
+    git(['commit', '-qm', 'gitignore store/'], deviceA)
+    git(['push', '-q', 'origin', 'main'], deviceA)
+
+    const dir = writeItem(deviceA, 'ignored-on-main')
+    const res = await syncStorePaths([dir], 'store: publish skills/ignored-on-main', {
+      storeDir: path.join(deviceA, 'store'),
+    })
+    expect(res.committed).toBe(true)
+    expect(res.pushed).toBe(true)
+    expect(existsAtStoreBranch('store/skills/ignored-on-main/SKILL.md')).toBe(true)
+  })
+
   it('a published item reaches a clone that never saw the publisher', async () => {
     const dir = writeItem(deviceA, 'travels')
     const res = await syncStorePaths([dir], 'store: publish skills/travels', {
