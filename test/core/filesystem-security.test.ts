@@ -164,3 +164,55 @@ describe("FileSystemPlugin.openFile / writeAndOpen -- \"your system opens it, no
     expect(result.opened).toBe(true); // spawn() itself didn't throw
   });
 });
+
+describe("FileSystemPlugin.sendFile / \"send <path>\" -- download without pulling it locally first", () => {
+  let plugin: FileSystemPlugin;
+  let tempDir: string;
+
+  beforeEach(() => {
+    tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "fs-plugin-send-test-"));
+    plugin = new FileSystemPlugin({
+      id: "file-system",
+      name: "File System",
+      version: "1.0.0",
+      description: "File system management",
+    });
+    plugin.setRootDir(tempDir);
+  });
+
+  afterEach(() => {
+    if (fs.existsSync(tempDir)) fs.rmSync(tempDir, { recursive: true, force: true });
+  });
+
+  it("registers an existing file and returns its attachment metadata", async () => {
+    fs.writeFileSync(path.join(tempDir, "report.txt"), "hello world");
+    const attachment = await plugin.sendFile("report.txt");
+    expect(attachment).toEqual({ id: expect.any(String), filename: "report.txt", bytes: 11 });
+  });
+
+  it("returns null for a file that does not exist", async () => {
+    expect(await plugin.sendFile("nope.txt")).toBeNull();
+  });
+
+  it("still refuses to escape the plugin's root (same guard as every other method)", async () => {
+    await expect(plugin.sendFile("../outside.txt")).rejects.toThrow("Security Error: Path traversal detected");
+  });
+
+  it("onMessage's \"send <path>\" embeds an [[ATTACH:<id>]] marker in its reply", async () => {
+    fs.writeFileSync(path.join(tempDir, "notes.txt"), "hi");
+    const reply = await plugin.onMessage("send notes.txt") as string;
+    expect(reply).toMatch(/^\[FileSystem\] Sending notes\.txt for download\. \[\[ATTACH:[0-9a-f-]+\]\]$/);
+  });
+
+  it("onMessage's \"download <path>\" works identically to \"send\"", async () => {
+    fs.writeFileSync(path.join(tempDir, "notes.txt"), "hi");
+    const reply = await plugin.onMessage("download notes.txt") as string;
+    expect(reply).toContain("[[ATTACH:");
+  });
+
+  it("onMessage reports a clear failure, not a marker, for a file that isn't there", async () => {
+    const reply = await plugin.onMessage("send missing.txt") as string;
+    expect(reply).toBe("[FileSystem] Could not find missing.txt to send.");
+    expect(reply).not.toContain("[[ATTACH:");
+  });
+});

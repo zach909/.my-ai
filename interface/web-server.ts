@@ -2470,9 +2470,10 @@ export class WebServer {
       return;
     }
 
-    // POST /api/system/install — launches Calamares, the same graphical
-    // installer Parrot OS itself ships (see store/wiki/ParrotOSTools.md).
-    // A kiosk browser has no window chrome and the live session shows no
+    // POST /api/system/install — launches Calamares, the graphical
+    // installer used by a wide range of distros, including Parrot OS
+    // (see store/wiki/ParrotOSTools.md for the one already documented
+    // here). A kiosk browser has no window chrome and the live session shows no
     // desktop under it (openbox runs nothing but this one fullscreen
     // window) -- there is no icon to click, so the app itself is the only
     // place "install this" can live. 404s outside a live-USB boot: this is
@@ -2732,8 +2733,41 @@ export class WebServer {
           reasoning: response.reasoning,
           suggestions: response.suggestions,
           metadata: response.metadata,
+          // "download those files, not pull them as needed" -- each entry's
+          // real bytes are fetched from GET /api/chat/attachments/:id below.
+          attachments: response.attachments,
           timestamp: Date.now(),
         });
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+
+    // GET /api/chat/attachments/:id — the actual bytes for a file a chat
+    // reply pointed at (see models && skills/core/chat-attachments.ts and
+    // plugins/file-system.ts's "send <path>" command). Public, like every
+    // other GET on this server that only ever reveals what this device's
+    // own agent chose to hand back in a reply it already gave -- not a
+    // general file server, since an id is a one-time, short-lived,
+    // unguessable random token naming exactly one file this agent already
+    // decided to share, never an arbitrary path a caller supplies.
+    const chatAttachmentMatch = pathname.match(/^\/api\/chat\/attachments\/([0-9a-fA-F-]+)$/);
+    if (chatAttachmentMatch && method === 'GET') {
+      const { resolveAttachment } = await import('../models && skills/core/chat-attachments.js');
+      const attachment = resolveAttachment(chatAttachmentMatch[1]);
+      if (!attachment) {
+        this.sendJson(res, { error: 'This download link has expired or no longer exists.' }, 404);
+        return;
+      }
+      try {
+        const data = readFileSync(attachment.absPath);
+        res.writeHead(200, {
+          'Content-Type': 'application/octet-stream',
+          'Content-Length': data.length,
+          'Content-Disposition': `attachment; filename="${attachment.filename.replace(/"/g, '')}"`,
+        });
+        res.end(data);
       } catch (err) {
         this.sendError(res, err);
       }

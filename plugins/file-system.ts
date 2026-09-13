@@ -3,6 +3,7 @@ import * as path from "path";
 import { spawn } from "child_process";
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
+import { registerAttachment } from "../models && skills/core/chat-attachments.js";
 
 /**
  * The command that hands a file to whatever program the OS has registered
@@ -138,6 +139,22 @@ export class FileSystemPlugin extends BasePlugin {
     return this.openFile(filePath);
   }
 
+  /**
+   * Registers a file for the CHAT UI itself to download -- "I wanted to
+   * download those files, not pull them as needed": the browser downloads
+   * it the instant this reply arrives, rather than a link someone has to
+   * separately click and fetch. openFile()/writeAndOpen() above hand a
+   * file to the OS on THIS (the backend's) machine, which only helps when
+   * the browser and the backend are the same computer; this works over a
+   * network too, since it's the browser doing the actual downloading.
+   * Returns null (never throws) for a path that doesn't exist -- see
+   * chat-attachments.ts's own doc comment.
+   */
+  async sendFile(filePath: string): Promise<{ id: string; filename: string; bytes: number } | null> {
+    const fullPath = this.resolvePath(filePath);
+    return registerAttachment(fullPath);
+  }
+
   private resolvePath(relativePath: string): string {
     if (typeof relativePath !== "string") {
       throw new Error("Security Error: Path must be a string");
@@ -169,7 +186,7 @@ export class FileSystemPlugin extends BasePlugin {
    */
   describeCapabilities() {
     return {
-      verbs: ["open", "save"],
+      verbs: ["open", "save", "send", "download"],
       nouns: ["file", "folder", "directory", "disk", "document", "path"],
     };
   }
@@ -210,6 +227,19 @@ export class FileSystemPlugin extends BasePlugin {
       return result.opened
         ? `[FileSystem] Opened ${openMatch[1]} with your system's default app.`
         : `[FileSystem] Could not open ${openMatch[1]}: ${result.reason}`;
+    }
+    // send/download <path> -- "download those files, not pull them as
+    // needed". The [[ATTACH:<id>]] marker is agent-capabilities.ts's own
+    // convention (see chat-attachments.ts's doc comment): it strips this
+    // back out of the visible text and turns it into real attachment
+    // metadata on BotResponse, so a browser downloads the actual file
+    // instead of ever seeing this marker itself.
+    const sendMatch = input.match(/\b(?:send|download)\s+(\S+)/i);
+    if (sendMatch?.[1]) {
+      const attachment = await this.sendFile(sendMatch[1]);
+      return attachment
+        ? `[FileSystem] Sending ${sendMatch[1]} for download. [[ATTACH:${attachment.id}]]`
+        : `[FileSystem] Could not find ${sendMatch[1]} to send.`;
     }
     return null;
   }
