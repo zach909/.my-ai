@@ -5,12 +5,12 @@
   "description": "A Net Skill grafted into the live mesh: 3 neurons, all-to-all with the rest of the network. Not installable as a file -- see the descriptor for what it means, and net-skill-graft.ts for how a mesh grows one.",
   "author": "neuroclaw-agent",
   "publishedAt": "2026-09-02T21:18:10.810Z",
-  "updatedAt": "2026-09-12T21:42:49.395Z",
+  "updatedAt": "2026-09-13T19:15:27.381Z",
   "files": [
     {
       "filename": "tide-reading.net-skill.json",
       "bytes": 284,
-      "sha256": "52757b66d16546dea775413f6cc2fc6a3c0fdba6ddd3737d7865657ae34af800"
+      "sha256": "e63f8fcce6e97e14146500fc8a0fe99d1adb51bcf74c122f414c10ca4bc7be54"
     }
   ]
 }
