@@ -4,52 +4,52 @@
   "neurons": [
     {
       "name": "skill_js_add_0",
-      "id": 320
+      "id": 86
     },
     {
       "name": "skill_js_add_1",
-      "id": 321
+      "id": 87
     },
     {
       "name": "skill_js_add_2",
-      "id": 322
+      "id": 88
     },
     {
       "name": "skill_python_mul_3",
-      "id": 323
+      "id": 89
     },
     {
       "name": "skill_python_mul_4",
-      "id": 324
+      "id": 90
     },
     {
       "name": "skill_python_mul_5",
-      "id": 325
+      "id": 91
     },
     {
       "name": "skill_shell_sub_6",
-      "id": 326
+      "id": 92
     },
     {
       "name": "skill_shell_sub_7",
-      "id": 327
+      "id": 93
     },
     {
       "name": "skill_shell_sub_8",
-      "id": 328
+      "id": 94
     },
     {
       "name": "skill_neurolang_value_9",
-      "id": 329
+      "id": 95
     },
     {
       "name": "skill_neurolang_value_10",
-      "id": 330
+      "id": 96
     },
     {
       "name": "skill_neurolang_value_11",
-      "id": 331
+      "id": 97
     }
   ],
-  "publishedAt": "2026-09-12T21:42:44.032Z"
+  "publishedAt": "2026-09-13T19:15:56.145Z"
 }
