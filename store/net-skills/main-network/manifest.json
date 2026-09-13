@@ -1,0 +1,16 @@
+{
+  "kind": "net-skills",
+  "name": "main-network",
+  "title": "Main Network",
+  "description": "A Net Skill grafted into the live mesh: 256 neurons, all-to-all with the rest of the network. Not installable as a file -- see the descriptor for what it means, and net-skill-graft.ts for how a mesh grows one.",
+  "author": "neuroclaw-agent",
+  "publishedAt": "2026-09-13T19:51:27.944Z",
+  "updatedAt": "2026-09-13T19:51:27.944Z",
+  "files": [
+    {
+      "filename": "main-network.net-skill.json",
+      "bytes": 14107,
+      "sha256": "f2cc8ab141a8001bb8b0e86abc56161219057bbce7a97a33ff1a5775304ac640"
+    }
+  ]
+}

@@ -1,0 +1,1031 @@
+{
+  "skill": "Main Network",
+  "neuronCount": 256,
+  "neurons": [
+    {
+      "name": "moby_README.md",
+      "id": 65
+    },
+    {
+      "name": "moby_CONTRIBUTING.md",
+      "id": 66
+    },
+    {
+      "name": "moby_go.mod",
+      "id": 67
+    },
+    {
+      "name": "moby_Dockerfile",
+      "id": 68
+    },
+    {
+      "name": "moby_cmd_dockerd_main.go",
+      "id": 69
+    },
+    {
+      "name": "moby_daemon_daemon.go",
+      "id": 70
+    },
+    {
+      "name": "moby_daemon_container.go",
+      "id": 71
+    },
+    {
+      "name": "moby_daemon_network.go",
+      "id": 72
+    },
+    {
+      "name": "moby_daemon_volumes.go",
+      "id": 73
+    },
+    {
+      "name": "moby_daemon_create.go",
+      "id": 74
+    },
+    {
+      "name": "moby_daemon_start.go",
+      "id": 75
+    },
+    {
+      "name": "moby_client_client.go",
+      "id": 76
+    },
+    {
+      "name": "a",
+      "id": 77
+    },
+    {
+      "name": "abortifacient",
+      "id": 78
+    },
+    {
+      "name": "acclaimed",
+      "id": 79
+    },
+    {
+      "name": "acquiesced",
+      "id": 80
+    },
+    {
+      "name": "adenoid",
+      "id": 81
+    },
+    {
+      "name": "advantest",
+      "id": 82
+    },
+    {
+      "name": "africans",
+      "id": 83
+    },
+    {
+      "name": "aguila",
+      "id": 84
+    },
+    {
+      "name": "ais",
+      "id": 85
+    },
+    {
+      "name": "alcoholism",
+      "id": 86
+    },
+    {
+      "name": "alix",
+      "id": 87
+    },
+    {
+      "name": "almaguer",
+      "id": 88
+    },
+    {
+      "name": "alums",
+      "id": 89
+    },
+    {
+      "name": "amendment",
+      "id": 90
+    },
+    {
+      "name": "amsterdam",
+      "id": 91
+    },
+    {
+      "name": "andriola",
+      "id": 92
+    },
+    {
+      "name": "annick",
+      "id": 93
+    },
+    {
+      "name": "antill",
+      "id": 94
+    },
+    {
+      "name": "appalls",
+      "id": 95
+    },
+    {
+      "name": "arabicon",
+      "id": 96
+    },
+    {
+      "name": "arganbright",
+      "id": 97
+    },
+    {
+      "name": "arnow",
+      "id": 98
+    },
+    {
+      "name": "asap",
+      "id": 99
+    },
+    {
+      "name": "assertiveness",
+      "id": 100
+    },
+    {
+      "name": "atmosphere",
+      "id": 101
+    },
+    {
+      "name": "augmentation",
+      "id": 102
+    },
+    {
+      "name": "ave",
+      "id": 103
+    },
+    {
+      "name": "azactam",
+      "id": 104
+    },
+    {
+      "name": "backstitches",
+      "id": 105
+    },
+    {
+      "name": "bakery",
+      "id": 106
+    },
+    {
+      "name": "balthazar",
+      "id": 107
+    },
+    {
+      "name": "bao",
+      "id": 108
+    },
+    {
+      "name": "barnaby",
+      "id": 109
+    },
+    {
+      "name": "basch",
+      "id": 110
+    },
+    {
+      "name": "battlefield",
+      "id": 111
+    },
+    {
+      "name": "beams",
+      "id": 112
+    },
+    {
+      "name": "bedraggle",
+      "id": 113
+    },
+    {
+      "name": "being",
+      "id": 114
+    },
+    {
+      "name": "beltsville",
+      "id": 115
+    },
+    {
+      "name": "bento",
+      "id": 116
+    },
+    {
+      "name": "berni",
+      "id": 117
+    },
+    {
+      "name": "bettering",
+      "id": 118
+    },
+    {
+      "name": "bieber",
+      "id": 119
+    },
+    {
+      "name": "bimbo",
+      "id": 120
+    },
+    {
+      "name": "birthdays",
+      "id": 121
+    },
+    {
+      "name": "blain",
+      "id": 122
+    },
+    {
+      "name": "blida",
+      "id": 123
+    },
+    {
+      "name": "blueberry",
+      "id": 124
+    },
+    {
+      "name": "bode",
+      "id": 125
+    },
+    {
+      "name": "bola",
+      "id": 126
+    },
+    {
+      "name": "bonneau",
+      "id": 127
+    },
+    {
+      "name": "borer",
+      "id": 128
+    },
+    {
+      "name": "bottles",
+      "id": 129
+    },
+    {
+      "name": "boxing",
+      "id": 130
+    },
+    {
+      "name": "bralorne",
+      "id": 131
+    },
+    {
+      "name": "brazenly",
+      "id": 132
+    },
+    {
+      "name": "brevets",
+      "id": 133
+    },
+    {
+      "name": "brislin",
+      "id": 134
+    },
+    {
+      "name": "bronzes",
+      "id": 135
+    },
+    {
+      "name": "brunett",
+      "id": 136
+    },
+    {
+      "name": "bucy",
+      "id": 137
+    },
+    {
+      "name": "bullen",
+      "id": 138
+    },
+    {
+      "name": "burell",
+      "id": 139
+    },
+    {
+      "name": "buse",
+      "id": 140
+    },
+    {
+      "name": "bybee",
+      "id": 141
+    },
+    {
+      "name": "cahall",
+      "id": 142
+    },
+    {
+      "name": "caloric",
+      "id": 143
+    },
+    {
+      "name": "candelaria",
+      "id": 144
+    },
+    {
+      "name": "capitalize",
+      "id": 145
+    },
+    {
+      "name": "cardozo",
+      "id": 146
+    },
+    {
+      "name": "carotenes",
+      "id": 147
+    },
+    {
+      "name": "casework",
+      "id": 148
+    },
+    {
+      "name": "catania",
+      "id": 149
+    },
+    {
+      "name": "cavorting",
+      "id": 150
+    },
+    {
+      "name": "centers",
+      "id": 151
+    },
+    {
+      "name": "chalabi",
+      "id": 152
+    },
+    {
+      "name": "charlottesville",
+      "id": 153
+    },
+    {
+      "name": "cheeseburgers",
+      "id": 154
+    },
+    {
+      "name": "chide",
+      "id": 155
+    },
+    {
+      "name": "chojnowski",
+      "id": 156
+    },
+    {
+      "name": "chukchi",
+      "id": 157
+    },
+    {
+      "name": "ciresi",
+      "id": 158
+    },
+    {
+      "name": "clasp",
+      "id": 159
+    },
+    {
+      "name": "clicks",
+      "id": 160
+    },
+    {
+      "name": "clum",
+      "id": 161
+    },
+    {
+      "name": "coded",
+      "id": 162
+    },
+    {
+      "name": "colestipol",
+      "id": 163
+    },
+    {
+      "name": "colt",
+      "id": 164
+    },
+    {
+      "name": "committeeman",
+      "id": 165
+    },
+    {
+      "name": "compressed",
+      "id": 166
+    },
+    {
+      "name": "condos",
+      "id": 167
+    },
+    {
+      "name": "conlon",
+      "id": 168
+    },
+    {
+      "name": "constitutionists",
+      "id": 169
+    },
+    {
+      "name": "controladora",
+      "id": 170
+    },
+    {
+      "name": "copiously",
+      "id": 171
+    },
+    {
+      "name": "cornfeld",
+      "id": 172
+    },
+    {
+      "name": "cosmonaut",
+      "id": 173
+    },
+    {
+      "name": "counterpunch",
+      "id": 174
+    },
+    {
+      "name": "coyer",
+      "id": 175
+    },
+    {
+      "name": "creams",
+      "id": 176
+    },
+    {
+      "name": "crisanti",
+      "id": 177
+    },
+    {
+      "name": "crotchety",
+      "id": 178
+    },
+    {
+      "name": "cuco",
+      "id": 179
+    },
+    {
+      "name": "curled",
+      "id": 180
+    },
+    {
+      "name": "cycolor",
+      "id": 181
+    },
+    {
+      "name": "dairies",
+      "id": 182
+    },
+    {
+      "name": "danis",
+      "id": 183
+    },
+    {
+      "name": "dataproducts",
+      "id": 184
+    },
+    {
+      "name": "deangelo",
+      "id": 185
+    },
+    {
+      "name": "dechine",
+      "id": 186
+    },
+    {
+      "name": "defaults",
+      "id": 187
+    },
+    {
+      "name": "deidre",
+      "id": 188
+    },
+    {
+      "name": "delisting",
+      "id": 189
+    },
+    {
+      "name": "demirel",
+      "id": 190
+    },
+    {
+      "name": "dent",
+      "id": 191
+    },
+    {
+      "name": "deregulate",
+      "id": 192
+    },
+    {
+      "name": "desjardin",
+      "id": 193
+    },
+    {
+      "name": "deutz",
+      "id": 194
+    },
+    {
+      "name": "diagonal",
+      "id": 195
+    },
+    {
+      "name": "dierolf",
+      "id": 196
+    },
+    {
+      "name": "dimare",
+      "id": 197
+    },
+    {
+      "name": "dirty",
+      "id": 198
+    },
+    {
+      "name": "disenfranchised",
+      "id": 199
+    },
+    {
+      "name": "disproves",
+      "id": 200
+    },
+    {
+      "name": "divergent",
+      "id": 201
+    },
+    {
+      "name": "doer",
+      "id": 202
+    },
+    {
+      "name": "donahey",
+      "id": 203
+    },
+    {
+      "name": "dorsch",
+      "id": 204
+    },
+    {
+      "name": "downturn",
+      "id": 205
+    },
+    {
+      "name": "dresser",
+      "id": 206
+    },
+    {
+      "name": "dryness",
+      "id": 207
+    },
+    {
+      "name": "dulak",
+      "id": 208
+    },
+    {
+      "name": "durden",
+      "id": 209
+    },
+    {
+      "name": "dyspnea",
+      "id": 210
+    },
+    {
+      "name": "eberhart",
+      "id": 211
+    },
+    {
+      "name": "edisto",
+      "id": 212
+    },
+    {
+      "name": "ehle",
+      "id": 213
+    },
+    {
+      "name": "elbowing",
+      "id": 214
+    },
+    {
+      "name": "ella",
+      "id": 215
+    },
+    {
+      "name": "embarks",
+      "id": 216
+    },
+    {
+      "name": "employers",
+      "id": 217
+    },
+    {
+      "name": "endurance",
+      "id": 218
+    },
+    {
+      "name": "enright",
+      "id": 219
+    },
+    {
+      "name": "eos",
+      "id": 220
+    },
+    {
+      "name": "eridania",
+      "id": 221
+    },
+    {
+      "name": "espe",
+      "id": 222
+    },
+    {
+      "name": "etzler",
+      "id": 223
+    },
+    {
+      "name": "everyplace",
+      "id": 224
+    },
+    {
+      "name": "executioner",
+      "id": 225
+    },
+    {
+      "name": "explosion",
+      "id": 226
+    },
+    {
+      "name": "eyring",
+      "id": 227
+    },
+    {
+      "name": "fait",
+      "id": 228
+    },
+    {
+      "name": "faridoun",
+      "id": 229
+    },
+    {
+      "name": "fauna",
+      "id": 230
+    },
+    {
+      "name": "feger",
+      "id": 231
+    },
+    {
+      "name": "feraluzi",
+      "id": 232
+    },
+    {
+      "name": "feuerman",
+      "id": 233
+    },
+    {
+      "name": "filers",
+      "id": 234
+    },
+    {
+      "name": "finnicum",
+      "id": 235
+    },
+    {
+      "name": "fiumara",
+      "id": 236
+    },
+    {
+      "name": "fleck",
+      "id": 237
+    },
+    {
+      "name": "florio",
+      "id": 238
+    },
+    {
+      "name": "folha",
+      "id": 239
+    },
+    {
+      "name": "forefinger",
+      "id": 240
+    },
+    {
+      "name": "forthrightly",
+      "id": 241
+    },
+    {
+      "name": "frame",
+      "id": 242
+    },
+    {
+      "name": "fredrich",
+      "id": 243
+    },
+    {
+      "name": "frieda",
+      "id": 244
+    },
+    {
+      "name": "fruitless",
+      "id": 245
+    },
+    {
+      "name": "fungible",
+      "id": 246
+    },
+    {
+      "name": "gadsden",
+      "id": 247
+    },
+    {
+      "name": "gallup",
+      "id": 248
+    },
+    {
+      "name": "gardeners",
+      "id": 249
+    },
+    {
+      "name": "gasses",
+      "id": 250
+    },
+    {
+      "name": "gears",
+      "id": 251
+    },
+    {
+      "name": "geneve",
+      "id": 252
+    },
+    {
+      "name": "gerling",
+      "id": 253
+    },
+    {
+      "name": "giannattasio",
+      "id": 254
+    },
+    {
+      "name": "gillogly",
+      "id": 255
+    },
+    {
+      "name": "glacken",
+      "id": 256
+    },
+    {
+      "name": "globex",
+      "id": 257
+    },
+    {
+      "name": "godine",
+      "id": 258
+    },
+    {
+      "name": "gollnick",
+      "id": 259
+    },
+    {
+      "name": "gorgon",
+      "id": 260
+    },
+    {
+      "name": "grabow",
+      "id": 261
+    },
+    {
+      "name": "grantham",
+      "id": 262
+    },
+    {
+      "name": "greenhalgh",
+      "id": 263
+    },
+    {
+      "name": "grillot",
+      "id": 264
+    },
+    {
+      "name": "groton",
+      "id": 265
+    },
+    {
+      "name": "guattery",
+      "id": 266
+    },
+    {
+      "name": "gum",
+      "id": 267
+    },
+    {
+      "name": "guzzle",
+      "id": 268
+    },
+    {
+      "name": "hafnia",
+      "id": 269
+    },
+    {
+      "name": "hallanan",
+      "id": 270
+    },
+    {
+      "name": "hamstrung",
+      "id": 271
+    },
+    {
+      "name": "hansel",
+      "id": 272
+    },
+    {
+      "name": "harl",
+      "id": 273
+    },
+    {
+      "name": "harvest",
+      "id": 274
+    },
+    {
+      "name": "hausler",
+      "id": 275
+    },
+    {
+      "name": "headsman",
+      "id": 276
+    },
+    {
+      "name": "hee",
+      "id": 277
+    },
+    {
+      "name": "hekker",
+      "id": 278
+    },
+    {
+      "name": "henard",
+      "id": 279
+    },
+    {
+      "name": "hering",
+      "id": 280
+    },
+    {
+      "name": "heupel",
+      "id": 281
+    },
+    {
+      "name": "hilb",
+      "id": 282
+    },
+    {
+      "name": "hipper",
+      "id": 283
+    },
+    {
+      "name": "hobson",
+      "id": 284
+    },
+    {
+      "name": "holder",
+      "id": 285
+    },
+    {
+      "name": "homebuilders",
+      "id": 286
+    },
+    {
+      "name": "hoosiers",
+      "id": 287
+    },
+    {
+      "name": "hosman",
+      "id": 288
+    },
+    {
+      "name": "howison",
+      "id": 289
+    },
+    {
+      "name": "hugs",
+      "id": 290
+    },
+    {
+      "name": "hunts",
+      "id": 291
+    },
+    {
+      "name": "hydroponic",
+      "id": 292
+    },
+    {
+      "name": "icing",
+      "id": 293
+    },
+    {
+      "name": "illuminated",
+      "id": 294
+    },
+    {
+      "name": "imperato",
+      "id": 295
+    },
+    {
+      "name": "inaudible",
+      "id": 296
+    },
+    {
+      "name": "independent",
+      "id": 297
+    },
+    {
+      "name": "inferences",
+      "id": 298
+    },
+    {
+      "name": "iniguez",
+      "id": 299
+    },
+    {
+      "name": "insouciance",
+      "id": 300
+    },
+    {
+      "name": "interchange",
+      "id": 301
+    },
+    {
+      "name": "interview",
+      "id": 302
+    },
+    {
+      "name": "inwood",
+      "id": 303
+    },
+    {
+      "name": "isgur",
+      "id": 304
+    },
+    {
+      "name": "izzard",
+      "id": 305
+    },
+    {
+      "name": "janes",
+      "id": 306
+    },
+    {
+      "name": "jeaner",
+      "id": 307
+    },
+    {
+      "name": "jetting",
+      "id": 308
+    },
+    {
+      "name": "jointness",
+      "id": 309
+    },
+    {
+      "name": "judiciously",
+      "id": 310
+    },
+    {
+      "name": "juxtapose",
+      "id": 311
+    },
+    {
+      "name": "kampa",
+      "id": 312
+    },
+    {
+      "name": "karshner",
+      "id": 313
+    },
+    {
+      "name": "kazee",
+      "id": 314
+    },
+    {
+      "name": "kelsey",
+      "id": 315
+    },
+    {
+      "name": "kervin",
+      "id": 316
+    },
+    {
+      "name": "kielar",
+      "id": 317
+    },
+    {
+      "name": "kindley",
+      "id": 318
+    },
+    {
+      "name": "kisner",
+      "id": 319
+    },
+    {
+      "name": "klinck",
+      "id": 320
+    }
+  ],
+  "publishedAt": "2026-09-13T19:51:27.943Z"
+}
