@@ -611,8 +611,8 @@ function ChatConversation({
     let savedId = threadId
 
     try {
-      if (hasText) {
-        savedId = await saveToHistory('user', messageText, threadId)
+      if (hasText || filesToSend.length > 0) {
+        savedId = await saveToHistory('user', userMsg.content, threadId)
         if (savedId !== threadId) setThreadId(savedId)
       }
 
@@ -647,12 +647,18 @@ function ChatConversation({
         })
       }
 
-      // Nothing typed means nothing to ask the bot -- an attached file's
-      // outcome above already told the user what happened to it. Asking the
-      // bot to answer "" would be a request with nothing in it.
-      if (!hasText) return
+      // A file with nothing typed still deserves an actual reply, not just
+      // the zip-loop's own internal ticks report above -- that report is
+      // telemetry about the mesh, not a response to what was sent. This is
+      // the "I attached a file and the AI never answered" bug: the archive
+      // message was the only thing that ever appeared, because this used to
+      // return here whenever there was no typed text at all. The bot is
+      // asked about the same "📎 <name>" text already shown in the user's
+      // own bubble, so it has something concrete to react to.
+      const botPrompt = hasText ? messageText : filesToSend.length > 0 ? userMsg.content : ''
+      if (!botPrompt) return
 
-      const response = await callBotAPI(messageText)
+      const response = await callBotAPI(botPrompt)
       const agentMsg: Message = {
         id: `msg_${Date.now()}_assistant`,
         role: 'assistant',
