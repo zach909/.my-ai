@@ -41,17 +41,17 @@ describe('reading a bot-published wiki page that never reached this device', () 
     git(['commit', '-q', '--allow-empty', '-m', 'init'], publisher)
     git(['push', '-q', '-u', 'origin', 'main'], publisher)
 
-    mkdirSync(path.join(publisher, 'wiki', 'bot'), { recursive: true })
+    mkdirSync(path.join(publisher, 'store', 'wiki'), { recursive: true })
     writeFileSync(
-      path.join(publisher, 'wiki', 'bot', 'seen-elsewhere.md'),
+      path.join(publisher, 'store', 'wiki', 'seen-elsewhere.md'),
       '# Seen Elsewhere\n\nPublished from a device that is not this one.\n',
     )
-    git(['add', '-A', '--', 'wiki/bot/seen-elsewhere.md'], publisher)
+    git(['add', '-A', '--', 'store/wiki/seen-elsewhere.md'], publisher)
     git(['commit', '-q', '-m', 'wiki: publish seen-elsewhere'], publisher)
     git(['push', '-q', 'origin', 'HEAD:refs/heads/store'], publisher)
 
     // A second device: clones `main` only, same as any normal clone, and
-    // has never touched the store branch or wiki/bot/ at all.
+    // has never touched the store branch or store/wiki/ at all.
     reader = path.join(tmp, 'reader')
     git(['clone', '-q', remote, reader], tmp)
 
@@ -65,7 +65,7 @@ describe('reading a bot-published wiki page that never reached this device', () 
   })
 
   it('lists the page even though it never reached this device\'s disk', async () => {
-    expect(existsSync(path.join(reader, 'wiki', 'bot', 'seen-elsewhere.md'))).toBe(false)
+    expect(existsSync(path.join(reader, 'store', 'wiki', 'seen-elsewhere.md'))).toBe(false)
 
     const pages = await listRemoteOnlyBotPages(new Set())
     expect(pages.map(p => p.name)).toContain('seen-elsewhere')
@@ -74,7 +74,7 @@ describe('reading a bot-published wiki page that never reached this device', () 
     expect(page.source).toBe('bot')
 
     // Still nothing written locally -- listing is not fetching.
-    expect(existsSync(path.join(reader, 'wiki', 'bot', 'seen-elsewhere.md'))).toBe(false)
+    expect(existsSync(path.join(reader, 'store', 'wiki', 'seen-elsewhere.md'))).toBe(false)
   })
 
   it('excludes a name already present locally, so a caller never sees the same page twice', async () => {
@@ -89,7 +89,7 @@ describe('reading a bot-published wiki page that never reached this device', () 
     expect(page!.source).toBe('bot')
 
     // Reading did not write it under wiki/ either.
-    expect(existsSync(path.join(reader, 'wiki', 'bot', 'seen-elsewhere.md'))).toBe(false)
+    expect(existsSync(path.join(reader, 'store', 'wiki', 'seen-elsewhere.md'))).toBe(false)
   })
 
   it('returns null for a name that is not on the store branch either', async () => {

@@ -27,6 +27,25 @@ import { listWikiPages } from "./wiki-store.js";
 import { listCatalog, STORE_KINDS } from "./store.js";
 import { loadRegistry } from "./prompting-skill-store.js";
 import { readRecentConversationTurns } from "../../src/lib/conversation-log.js";
+import { attachmentMetadata, type ChatAttachment } from "./chat-attachments.js";
+
+/**
+ * Strips every `[[ATTACH:<id>]]` marker (see chat-attachments.ts and
+ * plugins/file-system.ts's "send <path>" command) out of a plugin's
+ * returned text, resolving each into real attachment metadata pushed onto
+ * `sink` -- the one place that marker convention is interpreted, so a
+ * plugin author never has to know how attachments actually reach the
+ * browser, only that this string shape gets one there. An id that no
+ * longer resolves (expired, file removed) is silently dropped rather than
+ * left visible as raw marker text a user was never meant to see.
+ */
+function extractAttachmentMarkers(text: string, sink: ChatAttachment[]): string {
+  return text.replace(/\s*\[\[ATTACH:([0-9a-fA-F-]+)\]\]/g, (_match, id: string) => {
+    const meta = attachmentMetadata(id);
+    if (meta) sink.push(meta);
+    return "";
+  });
+}
 
 /** The parts of the live system the loop's capabilities are built from. */
 export interface AgentHost {
@@ -94,7 +113,7 @@ function matches(haystack: string, query: string): boolean {
  * that wanted it contributes nothing rather than crashing. That is what makes
  * a skill written on a fully-wired machine safe to install on a smaller one.
  */
-export function buildAgentCapabilities(host: AgentHost): AgentCapabilities {
+export function buildAgentCapabilities(host: AgentHost, attachmentsOut: ChatAttachment[] = []): AgentCapabilities {
   // The research plugin is looked up from the registry when the caller did not
   // pass one explicitly, so every existing call site gains web search without
   // having to know the plugin exists.
@@ -204,7 +223,7 @@ export function buildAgentCapabilities(host: AgentHost): AgentCapabilities {
         lastActionResult = null;
         return null;
       }
-      const result = textOf(await instance.onMessage(input));
+      const result = extractAttachmentMarkers(textOf(await instance.onMessage(input)), attachmentsOut);
       lastActionResult = result.trim().length > 0 ? result : null;
       return result;
     };
@@ -236,7 +255,7 @@ export function buildAgentCapabilities(host: AgentHost): AgentCapabilities {
         const instance = host.pluginRegistry!.getPluginInstance(candidate.id);
         if (!instance?.onMessage) continue;
         try {
-          const result = textOf(await instance.onMessage(task));
+          const result = extractAttachmentMarkers(textOf(await instance.onMessage(task)), attachmentsOut);
           if (result.trim().length > 0) {
             lastActionResult = result;
             return { plugin: candidate.id, result, why: candidate.reason };
@@ -269,6 +288,8 @@ export interface AgentRunSummary {
   answered: boolean;
   message: string;
   result: LoopResult;
+  /** Every file a plugin action registered for download during this run (see chat-attachments.ts), regardless of whether the run itself "answered" -- a sent file is a real outcome even on a run that otherwise fell through. */
+  attachments: ChatAttachment[];
 }
 
 /** How many iterations a chat-triggered run may take before it gives up. */
@@ -313,14 +334,15 @@ export async function runAgentLoopForMessage(
     .filter(skill => REACHES_BEYOND.has(skill.source ?? ""));
   if (actions.length === 0 && reaching.length === 0) return null;
 
-  const result = await runAgentLoop(userMessage, registry, buildAgentCapabilities(host), {
+  const attachments: ChatAttachment[] = [];
+  const result = await runAgentLoop(userMessage, registry, buildAgentCapabilities(host, attachments), {
     maxIterations: CHAT_MAX_ITERATIONS,
   });
 
   // An action that produced a result is the strongest outcome: the agent did
   // the thing, and its result is the answer.
   if (result.outcome === "goal-met") {
-    return { answered: true, message: result.observations[result.observations.length - 1] ?? "", result };
+    return { answered: true, message: result.observations[result.observations.length - 1] ?? "", result, attachments };
   }
 
   // No action, but a source that reaches beyond the pipeline found something.
@@ -332,10 +354,17 @@ export async function runAgentLoopForMessage(
       .filter(step => step.phase === "perceive" && reaching.some(r => r.name === step.skill))
       .flatMap(step => (step.detail.startsWith("found ") ? [step.detail.replace(/^found \d+: /, "")] : []));
     const text = found.join("\n").trim();
-    if (text.length > 0) return { answered: true, message: text, result };
+    if (text.length > 0) return { answered: true, message: text, result, attachments };
+  }
+
+  // Nothing worth saying to answer the question, but a file may still have
+  // gone out during the attempt -- an unanswered "and also send me the log"
+  // is a real outcome, not nothing.
+  if (attachments.length > 0) {
+    return { answered: true, message: "Sent.", result, attachments };
   }
 
   // Nothing worth saying. The caller falls back to its existing behaviour
   // rather than handing the user a shrug.
-  return { answered: false, message: "", result };
+  return { answered: false, message: "", result, attachments };
 }

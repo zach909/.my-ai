@@ -261,9 +261,19 @@ export default defineConfig({
         '**/.git/**',
         '**/dist/**',
         '**/clones/**',
+        // The actual crash this list exists to prevent, reported running on
+        // a phone (limited inotify headroom): PyTorch's vendored C++ source
+        // tree alone is 248MB and tens of thousands of files -- by far the
+        // biggest thing under extension-builder/, and it was missing here
+        // entirely.
+        '**/extension-builder/PyTorch/**',
         '**/extension-builder/Moby/**',
         '**/extension-builder/CMUDict/**',
-        '**/extension-builder/debian-installer/**',
+        // Real directory is `DebianInstaller` (PascalCase) -- this entry
+        // previously read `debian-installer`, which never matched anything
+        // on a case-sensitive filesystem (Linux, where this crash actually
+        // happens) and had silently excluded nothing since it was added.
+        '**/extension-builder/DebianInstaller/**',
         '**/extension-builder/extensions/**',
         '**/__pycache__/**',
         '**/.mypy_cache/**',

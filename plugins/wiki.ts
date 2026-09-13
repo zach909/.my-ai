@@ -32,7 +32,7 @@ function describeSync(sync: StoreSyncResult): string {
  * WikiPlugin — the AI's own hands for docs/SKILL_ACQUISITION_LOOP.md's
  * "push the wiki page" step: list()/read() let it check what's already
  * documented before researching further (the loop's step 1, covering both
- * the curated wiki/ and its own past wiki/bot/ pages), and publish() lets
+ * the curated wiki/ and its own past store/wiki/ pages), and publish() lets
  * it write a new page itself once something is learned/verified.
  *
  * publish()/edit()/remove() call the *AndSync form of every wiki-store
@@ -105,7 +105,7 @@ export class WikiPlugin extends BasePlugin {
 
   /**
    * Same underlying call as publish() -- publishWikiPageAndSync() already
-   * overwrites a same-named wiki/bot/*.md file unconditionally -- but
+   * overwrites a same-named store/wiki/*.md file unconditionally -- but
    * requires the page to already exist first, so an "edit" can't silently
    * turn into creating a brand-new page from a typo'd name, and can't
    * touch a curated wiki/ page (publishWikiPageAndSync() already refuses
@@ -130,7 +130,7 @@ export class WikiPlugin extends BasePlugin {
 
   /**
    * Deterministic, local keyword-overlap search over every page's title +
-   * description (both curated wiki/ and self-authored wiki/bot/) -- no
+   * description (both curated wiki/ and self-authored store/wiki/) -- no
    * embeddings service, the same overlapScore() pattern SkillLibrary.
    * search() (models && skills/core/skill-library.ts) already uses for
    * skills. "wiki search" had no implementation at all before this --
@@ -184,7 +184,7 @@ export class WikiPlugin extends BasePlugin {
       const [, name, title, content] = publishMatch;
       try {
         const { page, sync } = await this.publish(name, title, content);
-        return `[Wiki] Published "${page.title}" to wiki/bot/${page.name}.md. ${describeSync(sync)}`;
+        return `[Wiki] Published "${page.title}" to store/wiki/${page.name}.md. ${describeSync(sync)}`;
       } catch (err) {
         const detail = err instanceof WikiNameError ? err.message : "Failed to publish.";
         return `[Wiki] ${detail}`;
@@ -197,7 +197,7 @@ export class WikiPlugin extends BasePlugin {
       const [, name, title, content] = editMatch;
       try {
         const { page, sync } = await this.edit(name, title, content);
-        return `[Wiki] Saved changes to "${page.title}" (wiki/bot/${page.name}.md). ${describeSync(sync)}`;
+        return `[Wiki] Saved changes to "${page.title}" (store/wiki/${page.name}.md). ${describeSync(sync)}`;
       } catch (err) {
         const detail = err instanceof WikiNameError ? err.message : "Failed to save changes.";
         return `[Wiki] ${detail}`;
@@ -210,7 +210,7 @@ export class WikiPlugin extends BasePlugin {
       const name = deleteMatch[1];
       try {
         const sync = await this.remove(name);
-        return `[Wiki] Deleted wiki/bot/${name}.md. ${describeSync(sync)}`;
+        return `[Wiki] Deleted store/wiki/${name}.md. ${describeSync(sync)}`;
       } catch (err) {
         const detail = err instanceof WikiNameError ? err.message : "Failed to delete.";
         return `[Wiki] ${detail}`;

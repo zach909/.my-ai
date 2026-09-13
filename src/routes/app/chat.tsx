@@ -21,7 +21,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus, MessageSquare, X } from 'lucide-react'
+import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus, MessageSquare, X, Download } from 'lucide-react'
 import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from 'sonner'
 import { VoiceRecorder } from '@/components/VoiceRecorder'
@@ -253,6 +253,14 @@ interface Message {
    * attached FILE's does.
    */
   archiveNote?: string
+  /** Files this reply pointed at for download (see chat-attachments.ts) -- fetched eagerly the moment this message is added, not waiting for a click. */
+  attachments?: ChatAttachment[]
+}
+
+interface ChatAttachment {
+  id: string
+  filename: string
+  bytes: number
 }
 
 interface ChatMatch {
@@ -419,7 +427,7 @@ function ChatConversation({
 
   const callBotAPI = async (
     userMessage: string
-  ): Promise<{ message: string; suggestions: string[] }> => {
+  ): Promise<{ message: string; suggestions: string[]; attachments?: ChatAttachment[] }> => {
     try {
       const response = await fetch('/api/chat/messages', {
         method: 'POST',
@@ -434,6 +442,7 @@ function ChatConversation({
       return {
         message: data.message,
         suggestions: Array.isArray(data.suggestions) ? data.suggestions : [],
+        attachments: Array.isArray(data.attachments) ? data.attachments : undefined,
       }
     } catch (error) {
       console.error('Bot API error:', error)
@@ -442,6 +451,22 @@ function ChatConversation({
         suggestions: [],
       }
     }
+  }
+
+  /**
+   * "I wanted to download those files, not pull them as needed" -- fetches
+   * the real bytes and hands them straight to the browser's own save-file
+   * flow via a throwaway anchor, the instant the reply carrying it is
+   * added to the page. No visible link to click first; the click IS the
+   * download, it just clicks itself.
+   */
+  const downloadAttachment = (attachment: ChatAttachment) => {
+    const a = document.createElement('a')
+    a.href = `/api/chat/attachments/${attachment.id}`
+    a.download = attachment.filename
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
   }
 
   const saveToHistory = async (role: 'user' | 'assistant', content: string, id: string | undefined): Promise<string | undefined> => {
@@ -586,8 +611,8 @@ function ChatConversation({
     let savedId = threadId
 
     try {
-      if (hasText) {
-        savedId = await saveToHistory('user', messageText, threadId)
+      if (hasText || filesToSend.length > 0) {
+        savedId = await saveToHistory('user', userMsg.content, threadId)
         if (savedId !== threadId) setThreadId(savedId)
       }
 
@@ -622,20 +647,29 @@ function ChatConversation({
         })
       }
 
-      // Nothing typed means nothing to ask the bot -- an attached file's
-      // outcome above already told the user what happened to it. Asking the
-      // bot to answer "" would be a request with nothing in it.
-      if (!hasText) return
+      // A file with nothing typed still deserves an actual reply, not just
+      // the zip-loop's own internal ticks report above -- that report is
+      // telemetry about the mesh, not a response to what was sent. This is
+      // the "I attached a file and the AI never answered" bug: the archive
+      // message was the only thing that ever appeared, because this used to
+      // return here whenever there was no typed text at all. The bot is
+      // asked about the same "📎 <name>" text already shown in the user's
+      // own bubble, so it has something concrete to react to.
+      const botPrompt = hasText ? messageText : filesToSend.length > 0 ? userMsg.content : ''
+      if (!botPrompt) return
 
-      const response = await callBotAPI(messageText)
+      const response = await callBotAPI(botPrompt)
       const agentMsg: Message = {
         id: `msg_${Date.now()}_assistant`,
         role: 'assistant',
         content: response.message,
         timestamp: Date.now(),
         suggestions: response.suggestions,
+        attachments: response.attachments,
       }
       setMessages((prev) => [...prev, agentMsg])
+      // Eagerly, not on click -- see downloadAttachment's own doc comment.
+      response.attachments?.forEach(downloadAttachment)
       await saveToHistory('assistant', response.message, savedId)
     } catch (err) {
       // Said in the transcript rather than thrown into the console. A reply
@@ -668,7 +702,7 @@ function ChatConversation({
    */
   const [staged, setStaged] = useState<StagedFile[]>([])
 
-  const [pasteError, setPasteError] = useState<string | null>(null)
+  const [attachError, setAttachError] = useState<string | null>(null)
 
   /**
    * Anything pasted goes in as a file.
@@ -694,7 +728,7 @@ function ChatConversation({
       // Taken over entirely: half-pasting -- a file staged AND the text landing
       // in the box -- would be the worst of both.
       event.preventDefault()
-      setPasteError(null)
+      setAttachError(null)
 
       try {
         for (const file of files) {
@@ -707,7 +741,7 @@ function ChatConversation({
           setStaged((prev) => [...prev, staged])
         }
       } catch (err) {
-        setPasteError(err instanceof StageError ? err.message : 'Could not attach what was pasted.')
+        setAttachError(err instanceof StageError ? err.message : 'Could not attach what was pasted.')
       }
     },
     [],
@@ -716,6 +750,35 @@ function ChatConversation({
   const addStaged = useCallback((file: StagedFile) => {
     setStaged((prev) => [...prev.filter((f) => f.path !== file.path), file])
   }, [])
+
+  /**
+   * "I wanted to instantly upload any files" -- drag-and-drop's own
+   * arrival path (AttachFile.tsx already covers the click-a-button path;
+   * this is the other real way a file "just gets attached", no dialog to
+   * open first). Same stageFile()/addStaged() everything else funnels
+   * through, and the same one-request-per-file shape as handlePaste
+   * above: each file stages as soon as its own upload finishes, not held
+   * back until the whole drop's slowest file is done.
+   */
+  const handleDrop = useCallback(
+    async (event: React.DragEvent) => {
+      event.preventDefault()
+      setDragOver(false)
+      const files = Array.from(event.dataTransfer?.files ?? [])
+      if (files.length === 0) return
+      setAttachError(null)
+      for (const file of files) {
+        try {
+          addStaged(await stageFile(file, file.name || generatedName('dropped', 'bin')))
+        } catch (err) {
+          setAttachError(err instanceof StageError ? err.message : `Could not attach ${file.name}.`)
+        }
+      }
+    },
+    [addStaged],
+  )
+
+  const [dragOver, setDragOver] = useState(false)
 
   /**
    * Zip the message together with everything staged and send it through the
@@ -802,7 +865,19 @@ function ChatConversation({
   }
 
   return (
-    <div className="flex h-full flex-col">
+    <div
+      className="relative flex h-full flex-col"
+      onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
+      onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false) }}
+      onDrop={handleDrop}
+    >
+      {dragOver && (
+        <div className="pointer-events-none absolute inset-0 z-10 flex animate-fade-in items-center justify-center rounded-lg border-2 border-dashed border-primary bg-primary/10 backdrop-blur-[1px]">
+          <p className="rounded-md bg-background px-4 py-2 text-sm font-medium text-primary shadow-lg">
+            Drop to attach — any file type
+          </p>
+        </div>
+      )}
       <div className="flex items-center justify-end gap-2 px-4 pt-2">
         {(messages.length > 1 || threadId !== undefined) && (
           <Button
@@ -874,7 +949,11 @@ function ChatConversation({
         {messages.map((msg, i) => (
           <div
             key={msg.id}
-            className={`flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
+            // React keeps this node mounted across re-renders of the same
+            // message (same key), so the entrance animation plays once when
+            // a message first appears and never replays on every keystroke
+            // re-render -- a bubble that just pops into place otherwise.
+            className={`animate-fade-in flex flex-col gap-2 ${msg.role === 'user' ? 'items-end' : 'items-start'}`}
           >
             <div
               className={`group relative max-w-xl rounded-lg px-4 py-3 ${
@@ -913,6 +992,26 @@ function ChatConversation({
                 </>
               )}
             </div>
+
+            {/* Downloaded automatically the moment this message arrived
+                (see downloadAttachment) -- shown here as a fallback re-download
+                in case a browser's own pop-up/download policy blocked that. */}
+            {msg.role === 'assistant' && msg.attachments && msg.attachments.length > 0 && (
+              <div className="flex max-w-xl flex-wrap gap-2">
+                {msg.attachments.map((att) => (
+                  <button
+                    key={att.id}
+                    onClick={() => downloadAttachment(att)}
+                    aria-label={`Download ${att.filename}`}
+                    title={`Download ${att.filename} (${att.bytes.toLocaleString()} bytes)`}
+                    className="flex items-center gap-1.5 rounded-full border border-primary/40 bg-primary/5 px-3 py-1.5 text-xs text-primary transition-all duration-150 hover:bg-primary/10 active:scale-95 focus-visible:ring-1 focus-visible:ring-primary focus-visible:outline-none"
+                  >
+                    <Download size={11} className="shrink-0" />
+                    {att.filename}
+                  </button>
+                ))}
+              </div>
+            )}
 
             {/* Agent-suggested follow-up prompts */}
             {msg.role === 'assistant' && msg.suggestions && msg.suggestions.length > 0 && (
@@ -971,8 +1070,8 @@ function ChatConversation({
             ))}
           </ul>
         )}
-        {pasteError && (
-          <p className="text-xs text-destructive" role="alert">{pasteError}</p>
+        {attachError && (
+          <p className="text-xs text-destructive" role="alert">{attachError}</p>
         )}
         {staged.length > 0 && (
           <ul className="flex flex-wrap gap-1.5 text-xs" aria-label="Files going in with this message">

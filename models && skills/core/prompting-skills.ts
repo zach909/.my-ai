@@ -321,5 +321,18 @@ export function builtInPromptingSkills(): PromptingSkill[] {
       when: ["calculate", "convert", "hash", "encode", "decode", "how many days", "uuid"],
       priority: 100,
     }),
+    parsePromptingSkill({
+      name: "send-a-file",
+      category: "action",
+      title: "Send a file for download",
+      description:
+        "Hands a 'send <path>'/'download <path>' request to the File System plugin, which registers the file so the chat page downloads it the instant this reply arrives (see chat-attachments.ts) -- 'I wanted to download those files, not pull them as needed.' `when` matches 'send '/'download ' with a trailing space specifically because the plugin's own onMessage() parses the path as the single word immediately following the verb (`/\\b(?:send|download)\\s+(\\S+)/i`) -- a trigger phrase that put other words in between (e.g. 'send this file') would fire the skill but hand the plugin the wrong token to look for. A genuinely unrelated 'send an email' still reaches here and still gets handed to the plugin, which correctly replies 'could not find \"an\" to send' rather than doing anything -- a harmless miss, not a wrong action taken.",
+      author: "neuroclaw",
+      plugin: "file-system",
+      input: "{goal}",
+      expect: "the file registered for download, not a description of it",
+      when: ["send ", "download "],
+      priority: 100,
+    }),
   ];
 }

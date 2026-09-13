@@ -8,7 +8,9 @@ export const Route = createFileRoute('/')({
     ],
   }),
   beforeLoad: () => {
-    throw redirect({ to: '/app' })
+    // Straight to Chats, not /app -- /app/index.tsx itself only redirects
+    // here too now that Dashboard is gone; skip the extra hop.
+    throw redirect({ to: '/app/chat' })
   },
   component: () => null,
 })

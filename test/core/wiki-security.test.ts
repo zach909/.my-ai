@@ -121,7 +121,7 @@ describe('WikiPlugin publishes through the real sync path, not just to disk', ()
     git(['config', 'user.email', 'a@example.invalid'], device);
     git(['config', 'user.name', 'a'], device);
     git(['checkout', '-q', '-b', 'main'], device);
-    mkdirSync(join(device, 'wiki', 'bot'), { recursive: true });
+    mkdirSync(join(device, 'wiki'), { recursive: true });
     writeFileSync(join(device, 'wiki', 'README.md'), '# wiki\n');
     git(['add', '-A'], device);
     git(['commit', '-qm', 'init'], device);
@@ -145,7 +145,7 @@ describe('WikiPlugin publishes through the real sync path, not just to disk', ()
     const other = join(tmp, 'other-clone');
     git(['clone', '-q', remote, other], tmp);
     git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
-    expect(existsSync(join(other, 'wiki', 'bot', 'lands-elsewhere.md'))).toBe(true);
+    expect(existsSync(join(other, 'store', 'wiki', 'lands-elsewhere.md'))).toBe(true);
   });
 
   it('edit() reaches the clone with the NEW content', async () => {
@@ -157,7 +157,7 @@ describe('WikiPlugin publishes through the real sync path, not just to disk', ()
     const other = join(tmp, 'other-clone-2');
     git(['clone', '-q', remote, other], tmp);
     git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
-    const content = readFileSync(join(other, 'wiki', 'bot', 'gets-edited.md'), 'utf8');
+    const content = readFileSync(join(other, 'store', 'wiki', 'gets-edited.md'), 'utf8');
     expect(content).toContain('v2, corrected');
   });
 
@@ -170,7 +170,7 @@ describe('WikiPlugin publishes through the real sync path, not just to disk', ()
     const other = join(tmp, 'other-clone-3');
     git(['clone', '-q', remote, other], tmp);
     git(['checkout', '-q', '-b', 'store', 'origin/store'], other);
-    expect(existsSync(join(other, 'wiki', 'bot', 'gets-deleted.md'))).toBe(false);
+    expect(existsSync(join(other, 'store', 'wiki', 'gets-deleted.md'))).toBe(false);
   });
 
   it('the chat command reports the push honestly, not just "Published"', async () => {

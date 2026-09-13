@@ -426,15 +426,15 @@ describe('Neuroclaw Integration Tests', () => {
   });
 
   describe('Wiki backups: overwriting/deleting a bot page is no longer unrecoverable', () => {
-    // wiki-store.ts resolves wiki/bot/ from process.cwd() with no
-    // injectable override, and process.cwd() is genuinely process-wide
+    // wiki-store.ts resolves store/wiki/ via store.ts's storeRoot(), and
+    // process.cwd() (storeRoot()'s own default) is genuinely process-wide
     // state -- chdir'ing it for a test's duration previously leaked into
     // *other* test files running concurrently in the same worker (a real
     // failure this caused: research-security.test.ts's default-cwd test
     // started scanning whatever directory a concurrently-running chdir
     // had switched to, and hung). No chdir anywhere here: each test uses
     // a distinctively-named page written into (and precisely deleted
-    // from) this repo's own real wiki/bot/, via exact known paths only --
+    // from) this repo's own real store/wiki/, via exact known paths only --
     // never a directory-wide wipe that could touch real content.
     const testPageNames: string[] = [];
 
@@ -448,7 +448,7 @@ describe('Neuroclaw Integration Tests', () => {
       while (testPageNames.length > 0) {
         const name = testPageNames.pop()!;
         try { deleteWikiPage(name); } catch { /* already gone */ }
-        rmSync(join(process.cwd(), 'wiki', 'bot', '.backups', name), { recursive: true, force: true });
+        rmSync(join(process.cwd(), 'store', 'wiki', '.backups', name), { recursive: true, force: true });
       }
     });
 
@@ -465,7 +465,7 @@ describe('Neuroclaw Integration Tests', () => {
       const backups = listWikiBackups(name);
       expect(backups.length).toBe(1);
       const raw = readFileSync(
-        join(process.cwd(), 'wiki', 'bot', '.backups', name, `${backups[0].timestamp}.md`),
+        join(process.cwd(), 'store', 'wiki', '.backups', name, `${backups[0].timestamp}.md`),
         'utf8'
       );
       expect(raw).toContain('First version.');

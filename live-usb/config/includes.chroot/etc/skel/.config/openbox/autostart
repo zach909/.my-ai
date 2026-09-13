@@ -1,0 +1,48 @@
+#!/bin/sh
+# The entire graphical "desktop" this live session ever shows: no panel, no
+# taskbar, no icons -- one fullscreen browser window pointed at the REAL
+# NeuroClaw app on :3000 (Vite -- see neuroclaw-dev.service's own doc
+# comment for why :3000, not the backend's :7861, which serves only a
+# bare-bones fallback page). systemd starts that service independently of
+# this login session (in parallel, not before it), and unlike
+# scripts/launcher.mjs's own self-reloading "Starting..." page, a plain
+# connection-refused error page in chromium does NOT retry itself -- so
+# this waits for something to actually answer on :3000 before ever
+# launching chromium the first time, instead of leaving a dead error page
+# up that nothing here would notice or recover from.
+
+# No screensaver/blanking -- an unattended kiosk going dark mid-demo reads
+# as "it crashed", not "it's idle".
+xset s off
+xset -dpms
+xset s noblank
+
+# `npm run dev` runs a cold `tsc` build plus Vite's own dependency
+# pre-bundle on every boot (nothing under /opt/neuroclaw persists between
+# boots on a plain live session), which is genuinely tens of seconds, not
+# an instant -- see neuroclaw-dev.service's own doc comment. No fixed
+# upper bound: an old/slow machine just waits longer rather than giving up
+# and showing nothing.
+until curl -s -o /dev/null "http://127.0.0.1:3000/"; do
+  sleep 1
+done
+
+# Loop, not a single launch: if chromium itself ever exits (a crash, an
+# accidental Alt+F4 nobody meant to reach), the kiosk comes back instead of
+# leaving a bare X background with nothing on it and no way back in short
+# of a reboot.
+while true; do
+  chromium \
+    --kiosk \
+    --incognito \
+    --no-first-run \
+    --disable-infobars \
+    --noerrdialogs \
+    --disable-session-crashed-bubble \
+    --disable-translate \
+    --check-for-update-interval=31536000 \
+    --user-data-dir=/tmp/neuroclaw-kiosk-profile \
+    'http://127.0.0.1:7861/' \
+    >/tmp/neuroclaw-kiosk.log 2>&1
+  sleep 1
+done &

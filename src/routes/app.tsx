@@ -5,7 +5,9 @@ import { SharedAppLayout } from '@/layouts/shared-app-layout'
  * App shell layout — mounted at the REAL `/app` segment (not a pathless `_app`).
  *
  * Everything under `src/routes/app/` renders inside this sidebar chrome:
- *   src/routes/app/index.tsx     → /app          (the dashboard home)
+ *   src/routes/app/index.tsx     → /app          (no page of its own any more --
+ *                                                  forwards straight into /app/chat,
+ *                                                  see that file's own doc comment)
  *   src/routes/app/settings.tsx  → /app/settings (add pages like this)
  *
  * WHY A NAMED SEGMENT, NOT `_app`: a `_`-prefixed layout is PATHLESS — it adds no

@@ -30,17 +30,24 @@ export function AttachFile({
   const [error, setError] = useState<string | null>(null)
 
   const stage = useCallback(
-    async (file: File) => {
+    // Any file type: no `accept` on the input below, and this loop makes
+    // no assumption about what got picked -- stageFile() itself is the
+    // only place that ever rejects one (too large, empty), same as every
+    // other way a file arrives in this chat (paste, drag-and-drop).
+    async (files: FileList) => {
       setError(null)
       setBusy(true)
       try {
-        onStaged(await stageFile(file, file.name, folder))
+        for (const file of Array.from(files)) {
+          onStaged(await stageFile(file, file.name, folder))
+        }
       } catch (err) {
         setError(err instanceof StageError ? err.message : 'Could not attach the file.')
       } finally {
         setBusy(false)
-        // Cleared so the same file can be picked again -- without this,
-        // choosing it twice fires no change event and looks broken.
+        // Cleared so the same file(s) can be picked again -- without this,
+        // choosing the same selection twice fires no change event and
+        // looks broken.
         if (inputRef.current) inputRef.current.value = ''
       }
     },
@@ -52,12 +59,12 @@ export function AttachFile({
       <input
         ref={inputRef}
         type="file"
+        multiple
         className="sr-only"
         aria-hidden="true"
         tabIndex={-1}
         onChange={(e) => {
-          const file = e.target.files?.[0]
-          if (file) void stage(file)
+          if (e.target.files && e.target.files.length > 0) void stage(e.target.files)
         }}
       />
       <Button
@@ -66,8 +73,8 @@ export function AttachFile({
         size="sm"
         disabled={disabled || busy}
         onClick={() => inputRef.current?.click()}
-        aria-label={busy ? 'Attaching the file' : 'Attach a file'}
-        title="Attach a file — it goes into the network as a file, zipped with everything else"
+        aria-label={busy ? 'Attaching the file' : 'Attach files'}
+        title="Attach one or more files — any type — zipped with everything else into the network"
         className="gap-2 active:scale-95 transition-all duration-150"
       >
         {busy ? <AgentPulse size={16} label="Attaching the file" /> : <Paperclip size={16} />}
