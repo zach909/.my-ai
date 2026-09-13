@@ -1,0 +1,87 @@
+{
+  "skill": "Physics & Chemistry Curriculum",
+  "neuronCount": 20,
+  "neurons": [
+    {
+      "name": "quantum_mechanics",
+      "id": 65
+    },
+    {
+      "name": "wave_particle_duality",
+      "id": 66
+    },
+    {
+      "name": "heisenberg_uncertainty_principle",
+      "id": 67
+    },
+    {
+      "name": "schrodinger_equation",
+      "id": 68
+    },
+    {
+      "name": "quantum_superposition",
+      "id": 69
+    },
+    {
+      "name": "quantum_entanglement",
+      "id": 70
+    },
+    {
+      "name": "atomic_theory",
+      "id": 71
+    },
+    {
+      "name": "atomic_structure",
+      "id": 72
+    },
+    {
+      "name": "electron_configuration",
+      "id": 73
+    },
+    {
+      "name": "periodic_table",
+      "id": 74
+    },
+    {
+      "name": "chemical_bonding",
+      "id": 75
+    },
+    {
+      "name": "mole_concept",
+      "id": 76
+    },
+    {
+      "name": "avogadro_number",
+      "id": 77
+    },
+    {
+      "name": "molar_mass",
+      "id": 78
+    },
+    {
+      "name": "stoichiometry",
+      "id": 79
+    },
+    {
+      "name": "special_relativity",
+      "id": 80
+    },
+    {
+      "name": "general_relativity",
+      "id": 81
+    },
+    {
+      "name": "spacetime",
+      "id": 82
+    },
+    {
+      "name": "mass_energy_equivalence",
+      "id": 83
+    },
+    {
+      "name": "time_dilation",
+      "id": 84
+    }
+  ],
+  "publishedAt": "2026-09-13T19:15:36.544Z"
+}
