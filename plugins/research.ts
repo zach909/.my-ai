@@ -74,9 +74,53 @@ export class ResearchPlugin extends BasePlugin {
    */
   describeCapabilities() {
     return {
-      verbs: ["research", "investigate", "study", "learn"],
+      verbs: ["research", "investigate", "study", "learn", "search", "look up", "google"],
       nouns: ["topic", "subject", "source", "reference", "background", "information"],
     };
+  }
+
+  /**
+   * "Add open search plug-in, so you can search" -- until this existed,
+   * conductResearch() was only ever called by scripts/skill-agent.mjs's own
+   * autonomous cycle; nothing let a chat message reach it, and the
+   * inherited BasePlugin.onMessage() (which just echoes its input back)
+   * meant a message that DID somehow route here answered with nothing
+   * useful at all.
+   *
+   * Deliberately does NOT call system.memory.remember() or anything else
+   * that would train on what comes back -- "make sure it doesn't learn
+   * off of that." A live search answers the person asking, once, and nothing
+   * else; the only path from a search to something the network actually
+   * learns from is skill-agent.mjs's own research -> corroborate -> WIKI
+   * PAGE -> train flow (renderWikiPage(), same file), which cites its
+   * real sources by name rather than training on raw, uncorroborated
+   * search results directly.
+   */
+  override async onMessage(message: unknown): Promise<unknown> {
+    const input = String(message).trim();
+    const match = input.match(/\b(?:search(?:\s+for)?|look\s*up|google|research)\s+(.+)/i);
+    if (!match?.[1]) return null;
+    const topic = match[1].trim();
+    if (!topic) return null;
+
+    const report = await this.conductResearch(topic);
+    const verified = report.claims.filter((c) => c.verified);
+    const unverified = report.claims.filter((c) => !c.verified);
+    if (verified.length === 0 && unverified.length === 0) {
+      return `[Research] Nothing came back for "${topic}".`;
+    }
+
+    const cite = (s: SearchResult) => (s.source === "web" ? `${s.title || s.location} (${s.location})` : `${s.source}: ${s.title || s.location}`);
+    const lines = [`[Research] "${topic}" -- ${verified.length} verified, ${unverified.length} unverified finding(s):`];
+    for (const c of verified.slice(0, 5)) {
+      const sources = [...new Map(c.sources.map((s) => [s.location, s])).values()].map(cite).join("; ");
+      lines.push(`✓ ${c.claim.trim().slice(0, 200)} (as a source: ${sources})`);
+    }
+    for (const c of unverified.slice(0, 3)) {
+      const s = c.sources[0];
+      lines.push(`? ${c.claim.trim().slice(0, 200)} (as a source: ${s ? cite(s) : "unknown"}, unconfirmed elsewhere)`);
+    }
+    return lines.join("\n");
   }
 
   /**
@@ -232,7 +276,21 @@ export class ResearchPlugin extends BasePlugin {
       const hitTokens = tokenize(hit.snippet);
       let matched = false;
       for (const claim of claims) {
-        if (claim.sources.some((s) => s.source === hit.source)) continue; // one vote per source per claim
+        // One vote per ORIGIN per claim (the same URL/file/memory item
+        // cannot corroborate itself twice), not one vote per source TYPE.
+        // This used to key on `hit.source` (memory/drive/web), which meant
+        // a claim could carry at most one "web" vote ever -- eight
+        // different pages all describing the same fact still left every
+        // claim with a single web source, so `verified` (2+ INDEPENDENT
+        // sources) could never become true from web results alone. In
+        // production that is nearly the only source real signal ever
+        // comes from (memory starts empty, drive is this repo's own code,
+        // not a knowledge base), so every research cycle for every topic
+        // reported zero verified findings and skill-agent.mjs discarded
+        // every single one -- not bad luck, a structural impossibility.
+        // Two distinct web pages agreeing IS what "independent sources"
+        // means for research; this now counts that correctly.
+        if (claim.sources.some((s) => s.location === hit.location)) continue;
         const claimTokens = tokenize(claim.claim);
         const overlap = [...hitTokens].filter((t) => claimTokens.has(t)).length;
         const union = new Set([...hitTokens, ...claimTokens]).size;
@@ -245,7 +303,7 @@ export class ResearchPlugin extends BasePlugin {
       if (!matched) claims.push({ claim: hit.snippet, sources: [hit], verified: false });
     }
     for (const claim of claims) {
-      claim.verified = new Set(claim.sources.map((s) => s.source)).size >= 2;
+      claim.verified = new Set(claim.sources.map((s) => s.location)).size >= 2;
     }
 
     return {
