@@ -1,0 +1,16 @@
+{
+  "kind": "net-skills",
+  "name": "self-knowledge-network",
+  "title": "Self-Knowledge Network",
+  "description": "A Net Skill grafted into the live mesh: 41 neurons, all-to-all with the rest of the network. Not installable as a file -- see the descriptor for what it means, and net-skill-graft.ts for how a mesh grows one.",
+  "author": "neuroclaw-agent",
+  "publishedAt": "2026-09-14T22:53:33.909Z",
+  "updatedAt": "2026-09-14T22:53:33.909Z",
+  "files": [
+    {
+      "filename": "self-knowledge-network.net-skill.json",
+      "bytes": 2903,
+      "sha256": "f9899508528ad0b0ada4ef11af734190f549093d3c32b365958c3ab9c34b1c5d"
+    }
+  ]
+}

@@ -1,0 +1,171 @@
+{
+  "skill": "Self-Knowledge Network",
+  "neuronCount": 41,
+  "neurons": [
+    {
+      "name": "wiki_architecture",
+      "id": 65
+    },
+    {
+      "name": "wiki_bots",
+      "id": 66
+    },
+    {
+      "name": "wiki_builder",
+      "id": 67
+    },
+    {
+      "name": "wiki_chrome_apps",
+      "id": 68
+    },
+    {
+      "name": "wiki_code_to_net",
+      "id": 69
+    },
+    {
+      "name": "wiki_elastic_value_budget",
+      "id": 70
+    },
+    {
+      "name": "wiki_empathy_engine",
+      "id": 71
+    },
+    {
+      "name": "wiki_extensions",
+      "id": 72
+    },
+    {
+      "name": "wiki_home",
+      "id": 73
+    },
+    {
+      "name": "wiki_hyperdimensional",
+      "id": 74
+    },
+    {
+      "name": "wiki_languages",
+      "id": 75
+    },
+    {
+      "name": "wiki_moe",
+      "id": 76
+    },
+    {
+      "name": "wiki_multi_input",
+      "id": 77
+    },
+    {
+      "name": "wiki_net_search",
+      "id": 78
+    },
+    {
+      "name": "wiki_neurolang",
+      "id": 79
+    },
+    {
+      "name": "wiki_neuron_mesh",
+      "id": 80
+    },
+    {
+      "name": "wiki_pipeline",
+      "id": 81
+    },
+    {
+      "name": "wiki_platforms",
+      "id": 82
+    },
+    {
+      "name": "wiki_plugins",
+      "id": 83
+    },
+    {
+      "name": "wiki_privacy_policy",
+      "id": 84
+    },
+    {
+      "name": "wiki_privacy",
+      "id": 85
+    },
+    {
+      "name": "wiki_quantization",
+      "id": 86
+    },
+    {
+      "name": "wiki_quantum_net",
+      "id": 87
+    },
+    {
+      "name": "wiki_quick_start",
+      "id": 88
+    },
+    {
+      "name": "wiki_rlm",
+      "id": 89
+    },
+    {
+      "name": "wiki_self_improvement",
+      "id": 90
+    },
+    {
+      "name": "wiki_skills",
+      "id": 91
+    },
+    {
+      "name": "wiki_syntax",
+      "id": 92
+    },
+    {
+      "name": "wiki_system_access",
+      "id": 93
+    },
+    {
+      "name": "wiki_terms",
+      "id": 94
+    },
+    {
+      "name": "wiki_zip_io",
+      "id": 95
+    },
+    {
+      "name": "wiki__sidebar",
+      "id": 96
+    },
+    {
+      "name": "session_extension-builder_build-debian-network_mjs",
+      "id": 97
+    },
+    {
+      "name": "session_extension-builder_build-debian-iso-network_mjs",
+      "id": 98
+    },
+    {
+      "name": "session_extension-builder_build-main-network_mjs",
+      "id": 99
+    },
+    {
+      "name": "session_extension-builder_build-final-network_mjs",
+      "id": 100
+    },
+    {
+      "name": "session_extension-builder_merge-networks_mjs",
+      "id": 101
+    },
+    {
+      "name": "session_extension-builder_train-coding-skills_mjs",
+      "id": 102
+    },
+    {
+      "name": "session_extension-builder_pytorch_trainer_py",
+      "id": 103
+    },
+    {
+      "name": "session_extension-builder_build-self-knowledge-network_mjs",
+      "id": 104
+    },
+    {
+      "name": "session_plugins_research_ts",
+      "id": 105
+    }
+  ],
+  "publishedAt": "2026-09-14T22:53:33.909Z"
+}
