@@ -270,48 +270,17 @@ function RemoteAccessSection() {
   )
 }
 
-interface BrainSettings {
-  quantumEnabled: boolean
-  predictorMode: 'word' | 'code'
-}
-
+/**
+ * Both of these used to be real toggles (quantumEnabled, predictorMode)
+ * backed by GET/POST /api/settings/brain. Quantum interference became
+ * unconditional first (see unified-brain.ts's own comment); predictorMode
+ * went with it when "delete every AI that is not the OneBrain" removed
+ * NeuroclawLLM's old char-sampler fallback (and the separate codeTrainer
+ * it chose between) entirely -- there is nothing left to fetch, toggle,
+ * or POST, so this is now a plain, static description rather than a form
+ * that fetches state it never lets you change.
+ */
 function BrainBehaviorSection() {
-  const [settings, setSettings] = useState<BrainSettings | null>(null)
-  const [loading, setLoading] = useState(true)
-  const [busy, setBusy] = useState(false)
-
-  const load = useCallback(async () => {
-    setLoading(true)
-    try {
-      const res = await fetch('/api/settings/brain')
-      if (res.ok) setSettings(await res.json())
-    } catch {
-      // Non-critical -- the toggles below just start disabled until a retry.
-    } finally {
-      setLoading(false)
-    }
-  }, [])
-
-  useEffect(() => { void load() }, [load])
-
-  const update = async (patch: Partial<BrainSettings>) => {
-    setBusy(true)
-    try {
-      const res = await fetch('/api/settings/brain', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(patch),
-      })
-      const body = await res.json()
-      if (!res.ok) throw new Error(body.error || 'Could not change it.')
-      setSettings(body)
-    } catch (e) {
-      toast.error(e instanceof Error ? e.message : String(e))
-    } finally {
-      setBusy(false)
-    }
-  }
-
   return (
     <section>
       <h2 className="mb-1 flex items-center gap-2 text-lg font-semibold tracking-tight text-foreground">
@@ -321,52 +290,35 @@ function BrainBehaviorSection() {
       <p className="mb-3 text-sm text-muted-foreground">
         How the one shared neural mesh (OneBrain) processes each turn.
       </p>
-      {loading ? (
-        <div className="flex items-center gap-2 text-sm text-muted-foreground">
-          <Loader2 className="h-4 w-4 animate-spin" />
-          Reading current behavior…
-        </div>
-      ) : (
-        <div className="grid gap-3 md:grid-cols-2">
-          <Card className="flex items-start gap-3 p-4">
-            <Atom className="h-5 w-5 shrink-0 text-primary" />
-            <div className="min-w-0 flex-1">
-              <p className="font-medium">Quantum interference</p>
-              <p className="mt-0.5 text-xs text-muted-foreground">
-                An extra stage after the mesh settles: simulated quantum interference/consensus
-                shifts the collapsed value. Always on -- there is no off switch.
-              </p>
-              <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
-                Always on
-              </span>
-            </div>
-          </Card>
-          <Card className="p-4">
-            <p className="font-medium">Predictor</p>
+      <div className="grid gap-3 md:grid-cols-2">
+        <Card className="flex items-start gap-3 p-4">
+          <Atom className="h-5 w-5 shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">Quantum interference</p>
             <p className="mt-0.5 text-xs text-muted-foreground">
-              Which trained predictor generate() samples from -- prose or code.
+              An extra stage after the mesh settles: simulated quantum interference/consensus
+              shifts the collapsed value. Always on -- there is no off switch.
             </p>
-            <div className="mt-2 flex gap-2">
-              <Button
-                size="sm"
-                variant={settings?.predictorMode === 'word' ? 'default' : 'outline'}
-                disabled={busy}
-                onClick={() => void update({ predictorMode: 'word' })}
-              >
-                Word
-              </Button>
-              <Button
-                size="sm"
-                variant={settings?.predictorMode === 'code' ? 'default' : 'outline'}
-                disabled={busy}
-                onClick={() => void update({ predictorMode: 'code' })}
-              >
-                Code
-              </Button>
-            </div>
-          </Card>
-        </div>
-      )}
+            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+              Always on
+            </span>
+          </div>
+        </Card>
+        <Card className="flex items-start gap-3 p-4">
+          <Sparkles className="h-5 w-5 shrink-0 text-primary" />
+          <div className="min-w-0 flex-1">
+            <p className="font-medium">Reply source</p>
+            <p className="mt-0.5 text-xs text-muted-foreground">
+              Every reply comes from OneBrain's own output -- the same mesh
+              that just thought about your message, not a separate trained
+              predictor answering in its place.
+            </p>
+            <span className="mt-2 inline-flex items-center gap-1.5 rounded-full bg-primary/10 px-2.5 py-1 text-xs font-medium text-primary">
+              OneBrain, always
+            </span>
+          </div>
+        </Card>
+      </div>
     </section>
   )
 }

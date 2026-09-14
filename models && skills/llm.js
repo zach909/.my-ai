@@ -42,8 +42,6 @@ export class NeuroclawLLM {
     trainer;
     quantizer;
     brain;
-    codeTrainer;
-    predictorMode = "word";
     rlmTrainer;
     thornsEngine;
     projectId = "";
@@ -82,12 +80,13 @@ export class NeuroclawLLM {
         // collides with the flat model.json/index.jsonl files above.
         this.extensionManager = new ExtensionManager({ rootDir: join(this.selfExtensionsDir, "registry") });
         this.extensionManager.load();
+        // Still real, still used: NOT the "other AI" that used to answer
+        // chat (that was this.codeTrainer + generateTokens(), removed --
+        // see generate()'s own comment). This trainer backs the mesh's
+        // own INPUT representation (Step 2's embedding lookup below) and
+        // the text-learning surface (trainOnText/learnText), which is
+        // OneBrain's own perception, not a second voice competing with it.
         this.trainer = new NeuroclawTrainer(this.tokenizer.getVocabSize(), this.tokenizer.getCharToId(), this.tokenizer.getIdToChar(), { hiddenDim: this.config.hiddenDim });
-        // A second, independently-trained predictor over the same char
-        // vocabulary -- kept separate from `trainer` so training on code
-        // (trainOnCode) never dilutes the prose n-gram statistics, and vice
-        // versa. Selected at generation time via predictorMode.
-        this.codeTrainer = new NeuroclawTrainer(this.tokenizer.getVocabSize(), this.tokenizer.getCharToId(), this.tokenizer.getIdToChar(), { hiddenDim: this.config.hiddenDim });
         this.quantizer = new BackgroundQuantizer({
             enabled: true, bits: 4, method: "mixed",
             calibrationSamples: 128, excludeLayers: []
@@ -137,11 +136,6 @@ export class NeuroclawLLM {
      */
     setQuantumEnabled(enabled) { this.brain.setQuantumEnabled(enabled); }
     isQuantumEnabled() { return this.brain.isQuantumEnabled(); }
-    /** Selects which predictor generate() samples from: the prose model or the code model. */
-    setPredictorMode(mode) { this.predictorMode = mode === "code" ? "code" : "word"; }
-    getPredictorMode() { return this.predictorMode; }
-    /** Trains the separate code predictor (does not touch the prose trainer's statistics). */
-    async trainOnCode(code) { await this.codeTrainer.train(code); }
     /**
      * Builds the extension-builder project that backs this model. Its neuron
      * baseline is real, not synthetic filler:
@@ -336,22 +330,6 @@ export class NeuroclawLLM {
             finalOutput = `${finalOutput}\n\n[Grounded in ${options.memoryContext.length} related memory]\n${grounding}`;
         }
         return finalOutput;
-    }
-    /** Real autoregressive decode: samples one character at a time from `predictor`'s own distribution. */
-    generateTokens(seedContext, predictor, maxTokens, temperature) {
-        let context = seedContext;
-        let generated = '';
-        const eos = this.tokenizer.getSpecialTokens().eos;
-        for (let i = 0; i < maxTokens; i++) {
-            const probs = predictor.predict(context.slice(-8));
-            const nextId = this.sampleFromProbs(probs, temperature);
-            if (nextId === eos)
-                break;
-            const ch = this.tokenizer.tokenIdToChar(nextId);
-            generated += ch;
-            context += ch;
-        }
-        return generated;
     }
     /**
      * Keeps running -- pulls the next prompt, generates, hands the result to
@@ -562,31 +540,4 @@ export class NeuroclawLLM {
     getTrainer() { return this.trainer; }
     getMoERouter() { return this.moeRouter; }
     isBuilt() { return this.built; }
-    sampleFromProbs(probs, temperature) {
-        const logits = new Float32Array(probs.length);
-        for (let i = 0; i < probs.length; i++) {
-            logits[i] = Math.log(Math.max(probs[i] ?? 1e-10, 1e-10)) / Math.max(temperature, 0.01);
-        }
-        let maxLogit = -Infinity;
-        for (let i = 0; i < logits.length; i++)
-            if (logits[i] > maxLogit)
-                maxLogit = logits[i];
-        let sumExp = 0;
-        const scaled = new Float32Array(logits.length);
-        for (let i = 0; i < logits.length; i++) {
-            scaled[i] = Math.exp(logits[i] - maxLogit);
-            sumExp += scaled[i];
-        }
-        if (sumExp <= 0)
-            return 4;
-        for (let i = 0; i < scaled.length; i++)
-            scaled[i] = scaled[i] / sumExp;
-        let r = Math.random();
-        for (let i = 0; i < scaled.length; i++) {
-            r -= scaled[i];
-            if (r <= 0)
-                return i;
-        }
-        return scaled.length - 1;
-    }
 }
