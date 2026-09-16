@@ -1804,26 +1804,27 @@ export class WebServer {
     }
 
     // GET/POST /api/settings/brain -- the Settings page's "Brain Behavior"
-    // section. Both setQuantumEnabled()/setPredictorMode() (NeuroclawLLM)
-    // were real, tested, and reachable only from TypeScript -- no endpoint
-    // existed to flip either one, so the (off-by-default) quantum
-    // interference stage and the code-vs-prose predictor choice were
-    // permanently stuck at whatever NeuroclawSystem's constructor left them.
-    // Routed through getNeuroclawSystem()'s singleton, the one real system
-    // this.llm now shares its engine with (see the one-brain fix) -- not a
-    // second, disconnected LLM instance.
+    // section. Routed through getNeuroclawSystem()'s singleton, the one
+    // real system this.llm now shares its engine with (see the one-brain
+    // fix) -- not a second, disconnected LLM instance.
+    //
+    // predictorMode used to live here too (word-vs-code predictor choice
+    // for NeuroclawLLM's OLD char-sampler fallback). "Remember to delete
+    // every AI that is not the OneBrain" removed that fallback (and the
+    // separate codeTrainer it toggled between) entirely -- there is no
+    // second predictor left to choose between, so the setting is gone
+    // rather than left pointing at nothing.
     //
     // "add quantum interference always on" -- quantumEnabled is now
     // vestigial: isQuantumEnabled() always returns true and
     // setQuantumEnabled() is a no-op (see unified-brain.ts), so POSTing
-    // either value here has no effect and GET always reports true.
+    // it has no effect and GET always reports true.
     if (pathname === '/api/settings/brain' && method === 'GET') {
       try {
         const { getNeuroclawSystem } = await import('../src/index.js');
         const system = await getNeuroclawSystem();
         this.sendJson(res, {
           quantumEnabled: system.llm.isQuantumEnabled(),
-          predictorMode: system.llm.getPredictorMode(),
         });
       } catch (err) {
         this.sendError(res, err);
@@ -1832,18 +1833,14 @@ export class WebServer {
     }
     if (pathname === '/api/settings/brain' && method === 'POST') {
       try {
-        const body = await this.parseBody(req) as { quantumEnabled?: unknown; predictorMode?: unknown } | null;
+        const body = await this.parseBody(req) as { quantumEnabled?: unknown } | null;
         const { getNeuroclawSystem } = await import('../src/index.js');
         const system = await getNeuroclawSystem();
         if (typeof body?.quantumEnabled === 'boolean') {
           system.llm.setQuantumEnabled(body.quantumEnabled);
         }
-        if (body?.predictorMode === 'word' || body?.predictorMode === 'code') {
-          system.llm.setPredictorMode(body.predictorMode);
-        }
         this.sendJson(res, {
           quantumEnabled: system.llm.isQuantumEnabled(),
-          predictorMode: system.llm.getPredictorMode(),
         });
       } catch (err) {
         this.sendError(res, err);

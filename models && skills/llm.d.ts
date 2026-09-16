@@ -29,14 +29,11 @@ export interface GenerateOptions {
     /** Relevant prior conversation turns to ground the response in (Section 7). */
     memoryContext: string[];
 }
-export type PredictorMode = "word" | "code";
 export declare class NeuroclawLLM {
     private config;
     private builder;
     private tokenizer;
     private trainer;
-    private codeTrainer;
-    private predictorMode;
     private quantizer;
     private brain;
     private rlmTrainer;
@@ -62,9 +59,6 @@ export declare class NeuroclawLLM {
     get hyperEngine(): HyperDimensionalEngine;
     setQuantumEnabled(enabled: boolean): void;
     isQuantumEnabled(): boolean;
-    setPredictorMode(mode: PredictorMode): void;
-    getPredictorMode(): PredictorMode;
-    trainOnCode(code: string): Promise<void>;
     build(code?: string): Promise<void>;
     buildFromCode(code: string): Promise<void>;
     trainOnText(text: string): Promise<void>;
@@ -73,7 +67,6 @@ export declare class NeuroclawLLM {
     /** Characters of accumulated teaching material behind the prose predictor. */
     getLearnedCorpusSize(): number;
     generate(prompt: string, options?: Partial<GenerateOptions>): Promise<string>;
-    private generateTokens;
     runAutonomous(
         nextPrompt: () => Promise<string | null | undefined>,
         onOutput: (output: string) => void | Promise<void>,
@@ -144,5 +137,4 @@ export declare class NeuroclawLLM {
     getTrainer(): NeuroclawTrainer;
     getMoERouter(): MoERouter;
     isBuilt(): boolean;
-    private sampleFromProbs;
 }

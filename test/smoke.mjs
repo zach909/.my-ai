@@ -1570,35 +1570,24 @@ async function testWebBackend() {
     check(badPath.status === 400, 'Web backend POST /api/apps/launch-package rejects a path that looks like a command-line flag');
 
     // GET/POST /api/settings/brain -- the Settings page's "Brain Behavior"
-    // section. Before this, setQuantumEnabled()/setPredictorMode()
-    // (NeuroclawLLM) were real and tested but reachable only from
-    // TypeScript, with no endpoint to flip either one at all.
+    // section. predictorMode (NeuroclawLLM's word-vs-code char-sampler
+    // choice) lived here too until "delete every AI that is not the
+    // OneBrain" removed that whole fallback, and the separate codeTrainer
+    // it chose between, entirely -- there is nothing left to toggle, so
+    // the assertions below only cover what the endpoint still does.
     //
     // "add quantum interference always on" -- quantumEnabled is now
     // vestigial: it always reports true, and posting false to it has no
-    // effect. predictorMode is still real and still toggleable.
+    // effect.
     const brainBefore = await get('/api/settings/brain');
     const brainBeforeJson = JSON.parse(brainBefore.body);
-    check(brainBefore.status === 200 && brainBeforeJson.quantumEnabled === true && brainBeforeJson.predictorMode === 'word',
-      'GET /api/settings/brain reports quantum interference always on, and the real starting predictor mode');
+    check(brainBefore.status === 200 && brainBeforeJson.quantumEnabled === true,
+      'GET /api/settings/brain reports quantum interference always on');
 
-    const brainAfter = await post('/api/settings/brain', { quantumEnabled: false, predictorMode: 'code' });
+    const brainAfter = await post('/api/settings/brain', { quantumEnabled: false });
     const brainAfterJson = JSON.parse(brainAfter.body);
-    check(brainAfter.status === 200 && brainAfterJson.quantumEnabled === true && brainAfterJson.predictorMode === 'code',
-      'POST /api/settings/brain flips predictorMode but ignores an attempt to turn quantum interference off');
-
-    const brainConfirmed = await get('/api/settings/brain');
-    const brainConfirmedJson = JSON.parse(brainConfirmed.body);
-    check(brainConfirmedJson.quantumEnabled === true && brainConfirmedJson.predictorMode === 'code',
-      'GET /api/settings/brain reflects the predictorMode change on a later, independent request -- not just echoed back once -- and still reports quantum interference on');
-
-    // Malformed/partial input should not clobber the other field, and an
-    // unrecognized predictorMode string should be ignored rather than
-    // silently accepted as something NeuroclawLLM was never asked to support.
-    const brainPartial = await post('/api/settings/brain', { predictorMode: 'not-a-real-mode' });
-    const brainPartialJson = JSON.parse(brainPartial.body);
-    check(brainPartial.status === 200 && brainPartialJson.quantumEnabled === true && brainPartialJson.predictorMode === 'code',
-      'POST /api/settings/brain ignores an invalid predictorMode value instead of corrupting state');
+    check(brainAfter.status === 200 && brainAfterJson.quantumEnabled === true,
+      'POST /api/settings/brain ignores an attempt to turn quantum interference off');
 
     // "zip loop no file size limit" -- POST /api/zip-loop/file used to cap
     // at 25MB (its own internal check) and POST /api/zip-loop/run went
