@@ -52,6 +52,11 @@ const KIND_HUE: Record<string, number> = {
   // Prompting skills sit between skills and plugins visually because that is
   // what they are: a skill that changes how the agent works, not what it knows.
   prompting: 235,
+  // Mods sit apart from everything else, hue-wise, because they are the one
+  // kind that changes a real file on this device rather than something the
+  // agent reads -- a warm red-orange reads as "careful" next to the cooler
+  // blues and purples the rest of the store uses.
+  mods: 5,
   plugins: 265,
   binaries: 25,
   source: 150,

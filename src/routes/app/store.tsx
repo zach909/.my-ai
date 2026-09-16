@@ -79,6 +79,7 @@ import {
   Trash2,
   Upload,
   Users,
+  Wrench,
   X,
   Zap,
 } from 'lucide-react'
@@ -115,7 +116,7 @@ function reportSync(sync: SyncStatus | undefined, what: string): void {
   })
 }
 
-type StoreTab = 'store' | 'prompting' | 'planning' | 'wiki' | 'skills' | 'chat'
+type StoreTab = 'store' | 'prompting' | 'planning' | 'mods' | 'wiki' | 'skills' | 'chat'
 
 interface StoreSearch {
   page?: string
@@ -131,7 +132,8 @@ export const Route = createFileRoute('/app/store')({
     page: typeof search.page === 'string' ? search.page : undefined,
     tab:
       search.tab === 'wiki' || search.tab === 'skills' || search.tab === 'chat' ||
-      search.tab === 'store' || search.tab === 'prompting' || search.tab === 'planning'
+      search.tab === 'store' || search.tab === 'prompting' || search.tab === 'planning' ||
+      search.tab === 'mods'
         ? search.tab
         : undefined,
   }),
@@ -141,7 +143,7 @@ export const Route = createFileRoute('/app/store')({
       {
         name: 'description',
         content:
-          'Browse, download and publish skills, plugins, binaries, source and files, write wiki pages, and discuss any of it — all shared through the repository itself.',
+          'Browse, download and publish skills, plugins, binaries, mods, source and files, write wiki pages, and discuss any of it — all shared through the repository itself.',
       },
     ],
   }),
@@ -152,6 +154,7 @@ const STORE_TABS: { key: StoreTab; label: string; icon: typeof Package }[] = [
   { key: 'store', label: 'Store', icon: Package },
   { key: 'prompting', label: 'Prompting Skills', icon: Sparkles },
   { key: 'planning', label: 'Planning', icon: Goal },
+  { key: 'mods', label: 'Mods', icon: Wrench },
   { key: 'wiki', label: 'Wiki', icon: BookOpen },
   { key: 'skills', label: 'Uploads', icon: Upload },
   { key: 'chat', label: 'Chat', icon: Users },
@@ -198,9 +201,10 @@ function StorePage() {
           Store
         </h1>
         <p className="mt-1 text-sm text-muted-foreground">
-          Skills, plugins and tools, binary skills, source and files, the wiki pages documenting
-          them, and a shared chat to discuss any of it — published into the repository itself, so
-          anyone who clones or pulls gets the whole catalogue. Nothing installs on its own.
+          Skills, plugins and tools, binary skills, mods, source and files, the wiki pages
+          documenting them, and a shared chat to discuss any of it — published into the repository
+          itself, so anyone who clones or pulls gets the whole catalogue. Nothing installs, and no
+          mod is applied, on its own.
         </p>
         <div className="mt-3 flex gap-1 border-b border-border">
           {STORE_TABS.map(({ key, label, icon: Icon }) => (
@@ -226,6 +230,7 @@ function StorePage() {
         {tab === 'store' && <StoreCatalogPanel onOpenUploads={() => setTab('skills')} />}
         {tab === 'prompting' && <PromptingSkillsPanel />}
         {tab === 'planning' && <PlanningPanel />}
+        {tab === 'mods' && <ModsPanel />}
         {tab === 'wiki' && <WikiPanel onOpenChat={openChatAbout} />}
         {tab === 'skills' && <SkillUploadsPanel />}
         {tab === 'chat' && <ChatPanel topic={chatTopic} onTopicConsumed={() => setChatTopic(null)} />}
@@ -1050,7 +1055,7 @@ function ItemDetail({
         </div>
       </div>
 
-      <InstallControl item={item} />
+      {item.kind === 'mods' ? <ModApplyControl item={item} /> : <InstallControl item={item} />}
 
       {item.description && (
         <Card className="p-4">
@@ -1215,6 +1220,413 @@ function InstallControl({ item }: { item: StoreItem }) {
       >
         {busy ? 'Working…' : state?.installed ? 'Uninstall' : 'Install'}
       </Button>
+    </Card>
+  )
+}
+
+interface ModApplyState {
+  applied: boolean
+  outdated: boolean
+}
+
+/**
+ * Apply or revert a mod -- the store's one kind that writes straight onto a
+ * real file in this device's working copy instead of into an isolated
+ * installed/ folder (see mod-apply.ts's own comment for why).
+ *
+ * That is a materially different promise than InstallControl's "downloads
+ * onto this machine, never runs anything", so it gets its own control rather
+ * than reusing that one: a person clicking "Install" on everything else in
+ * the store has never had a file in their own checkout change underneath
+ * them, and a mod is exactly that. The confirm() dialog on Apply and Revert
+ * matches the same gate this app already puts in front of Install Plugin and
+ * Run Algorithm, for the same reason -- real, hard-to-undo effects earn a
+ * pause, not a silent click.
+ */
+function ModApplyControl({ item }: { item: StoreItem }) {
+  const [state, setState] = useState<ModApplyState | null>(null)
+  const [busy, setBusy] = useState(false)
+
+  const refresh = useCallback(async () => {
+    try {
+      const res = await fetch('/api/store/mods/applied')
+      if (!res.ok) return
+      const body = await res.json()
+      setState({
+        applied: (body.applied ?? []).some((r: { name: string }) => r.name === item.name),
+        outdated: (body.outdated ?? []).some((r: { name: string }) => r.name === item.name),
+      })
+    } catch { /* leave the control in its unknown state rather than lying */ }
+  }, [item.name])
+
+  useEffect(() => { void refresh() }, [refresh])
+
+  const apply = async () => {
+    if (
+      !window.confirm(
+        `Apply "${item.title}"? This overwrites ${item.files.length} file${item.files.length === 1 ? '' : 's'} in your ` +
+          'own working copy of the repository, at the same path each one was published under. ' +
+          'Whatever is there now is backed up first, so Revert can put it back.',
+      )
+    ) {
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/store/mods/${encodeURIComponent(item.name)}/apply`, { method: 'POST' })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || 'Could not apply it')
+      const created: string[] = body.created ?? []
+      const changed: string[] = body.changed ?? []
+      const missing: Array<{ filename: string }> = body.missing ?? []
+      toast.success(`Applied "${item.title}"`, {
+        description:
+          `${created.length} file(s) created, ${changed.length} overwritten. ` +
+          (missing.length ? `Could not get: ${missing.map(m => m.filename).join(', ')}.` : ''),
+      })
+      await refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  const revert = async () => {
+    if (!window.confirm(`Revert "${item.title}"? This restores what was in each file before it was applied.`)) return
+    setBusy(true)
+    try {
+      const res = await fetch(`/api/store/mods/${encodeURIComponent(item.name)}/revert`, { method: 'POST' })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || 'Could not revert it')
+      const restored: string[] = body.restored ?? []
+      const removed: string[] = body.removed ?? []
+      const skipped: Array<{ filename: string; reason: string }> = body.skipped ?? []
+      toast.success(`Reverted "${item.title}"`, {
+        description:
+          `${restored.length} file(s) restored, ${removed.length} removed. ` +
+          (skipped.length
+            ? `Left as is (changed since applying): ${skipped.map(s => s.filename).join(', ')}.`
+            : ''),
+      })
+      await refresh()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <Card className="flex flex-wrap items-center gap-3 border-destructive/30 p-3">
+      <Package className="h-4 w-4 shrink-0 text-muted-foreground" />
+      <div className="min-w-0 flex-1">
+        <p className="text-sm font-medium">
+          {state?.applied ? 'Applied to this working copy' : 'Not applied'}
+        </p>
+        <p className="text-xs text-muted-foreground">
+          {state?.applied
+            ? state.outdated
+              ? 'The published mod has changed since you applied it.'
+              : 'Its files were written to their real paths in your checkout. Revert restores what was there before.'
+            : 'Applying overwrites real files in your working copy, at the exact path each one was published under.'}
+        </p>
+      </div>
+      {state?.applied && state.outdated && (
+        <Button size="sm" disabled={busy} onClick={() => void apply()}>
+          Update
+        </Button>
+      )}
+      <Button
+        size="sm"
+        variant={state?.applied ? 'outline' : 'default'}
+        disabled={busy}
+        onClick={() => void (state?.applied ? revert() : apply())}
+      >
+        {busy ? 'Working…' : state?.applied ? 'Revert' : 'Apply'}
+      </Button>
+    </Card>
+  )
+}
+
+/**
+ * The Mods tab: every published mod, each appliable/revertible on this
+ * device via ModApplyControl (reached through the same ItemDetail the
+ * generic Store tab uses, so Apply/Revert, file listing and editing all work
+ * identically whichever tab a mod was found from) -- and a form to write and
+ * publish a new one.
+ *
+ * A mod does not need PromptingSkillsPanel's category/target/trigger fields:
+ * its whole shape is "one or more files, each at the repo-relative path it
+ * is meant to occupy once applied" (see mod-apply.ts), which is exactly what
+ * the store's own publish already takes.
+ */
+function ModsPanel() {
+  const [items, setItems] = useState<StoreItem[]>([])
+  const [loading, setLoading] = useState(true)
+  const [error, setError] = useState<string | null>(null)
+  const [selected, setSelected] = useState<StoreItem | null>(null)
+
+  // Returns what it fetched, so re-selecting the item just edited does not
+  // require a second round trip for the same data.
+  const load = useCallback(async (): Promise<StoreItem[]> => {
+    setLoading(true)
+    setError(null)
+    try {
+      const res = await fetch('/api/store')
+      if (!res.ok) throw new Error(`HTTP ${res.status}`)
+      const data = (await res.json()) as Catalog
+      const mods = data.catalog?.mods ?? []
+      setItems(mods)
+      return mods
+    } catch (e) {
+      setError(e instanceof Error ? e.message : String(e))
+      return []
+    } finally {
+      setLoading(false)
+    }
+  }, [])
+
+  useEffect(() => { void load() }, [load])
+
+  if (selected) {
+    return (
+      <ItemDetail
+        item={selected}
+        onBack={() => setSelected(null)}
+        onChanged={async () => {
+          const fresh = await load()
+          const updated = fresh.find(i => i.name === selected.name)
+          if (updated) setSelected(updated)
+        }}
+      />
+    )
+  }
+
+  return (
+    <div className="h-full space-y-6 overflow-y-auto pb-6">
+      <div className="flex flex-wrap items-start justify-between gap-3">
+        <p className="text-sm text-muted-foreground max-w-3xl">
+          A mod is published under the exact repo-relative path it is meant to occupy. Publishing
+          shares it with everyone who pulls; applying it is a separate, deliberate step that
+          overwrites that path in this device's own working copy, and can always be reverted.
+        </p>
+        <Button variant="outline" size="sm" onClick={() => void load()} className="gap-2 shrink-0">
+          <RefreshCw className="h-4 w-4" />
+          Refresh
+        </Button>
+      </div>
+
+      {loading && (
+        <div className="flex items-center gap-2 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin" />
+          Reading published mods…
+        </div>
+      )}
+      {error && (
+        <Card className="p-4 border-destructive/40">
+          <p className="text-sm text-destructive">Could not read the mods: {error}</p>
+        </Card>
+      )}
+
+      {!loading && !error && items.length === 0 && (
+        <Card className="p-8 text-center">
+          <p className="text-sm text-muted-foreground">Nothing published yet. Write one below.</p>
+        </Card>
+      )}
+
+      {items.length > 0 && (
+        <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+          {items.map(item => (
+            <button key={item.name} type="button" onClick={() => setSelected(item)} className="text-left">
+              <Card className="p-4 h-full flex gap-3 hover:border-primary/60 transition-colors active:scale-[0.99]">
+                <div className="shrink-0">
+                  <StoreItemMark name={item.name} kind="mods" size={56} />
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="font-medium text-sm leading-tight truncate">{item.title}</p>
+                  <p className="text-[11px] text-muted-foreground mt-0.5 truncate">by {item.author}</p>
+                  <p className="text-xs text-muted-foreground mt-1.5 line-clamp-2">
+                    {item.description || 'No description.'}
+                  </p>
+                  <p className="text-[11px] text-muted-foreground mt-2">
+                    {item.files.length} file{item.files.length === 1 ? '' : 's'}
+                  </p>
+                </div>
+              </Card>
+            </button>
+          ))}
+        </div>
+      )}
+
+      <PublishMod onPublished={() => void load()} />
+    </div>
+  )
+}
+
+interface ModFileRow {
+  filename: string
+  content: string
+}
+
+function emptyModRow(): ModFileRow {
+  return { filename: '', content: '' }
+}
+
+/**
+ * The upload half: write a mod's files and publish it.
+ *
+ * Every row's "path" is not a filename inside some package -- it is the
+ * literal path, relative to the repository root, that the file will be
+ * written to when someone applies this mod. Store filenames already refuse
+ * any path segment starting with a dot (assertSafeFilename in store.ts), so
+ * this form cannot be used to target .git/, .github/, .claude/ or a dotfile
+ * no matter what is typed -- the server rejects the publish outright.
+ */
+function PublishMod({ onPublished }: { onPublished: () => void }) {
+  const [open, setOpen] = useState(false)
+  const [name, setName] = useState('')
+  const [title, setTitle] = useState('')
+  const [description, setDescription] = useState('')
+  const [author, setAuthor] = useState('')
+  const [files, setFiles] = useState<ModFileRow[]>([emptyModRow()])
+  const [busy, setBusy] = useState(false)
+
+  const updateFile = (i: number, patch: Partial<ModFileRow>) => {
+    setFiles(rows => rows.map((r, idx) => (idx === i ? { ...r, ...patch } : r)))
+  }
+  const addFile = () => setFiles(rows => [...rows, emptyModRow()])
+  const removeFile = (i: number) => setFiles(rows => (rows.length === 1 ? rows : rows.filter((_, idx) => idx !== i)))
+
+  const publish = async () => {
+    const validFiles = files
+      .map(f => ({ filename: f.filename.trim(), content: f.content }))
+      .filter(f => f.filename)
+    if (validFiles.length === 0) {
+      toast.error('Give at least one file a path.')
+      return
+    }
+    setBusy(true)
+    try {
+      const res = await fetch('/api/store', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          kind: 'mods',
+          name: name.trim(),
+          title: title.trim() || name.trim(),
+          description: description.trim(),
+          author: author.trim() || 'anonymous',
+          files: validFiles,
+        }),
+      })
+      const body = await res.json()
+      if (!res.ok) throw new Error(body.error || 'Could not publish it')
+      reportSync(body.sync as SyncStatus | undefined, `Mod "${name.trim()}" published`)
+      setName('')
+      setTitle('')
+      setDescription('')
+      setAuthor('')
+      setFiles([emptyModRow()])
+      setOpen(false)
+      onPublished()
+    } catch (e) {
+      toast.error(e instanceof Error ? e.message : String(e))
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  if (!open) {
+    return (
+      <Button variant="outline" size="sm" className="gap-2" onClick={() => setOpen(true)}>
+        <Plus className="h-4 w-4" />
+        Write and publish a mod
+      </Button>
+    )
+  }
+
+  return (
+    <Card className="p-4 space-y-3">
+      <div className="flex items-center justify-between">
+        <p className="text-sm font-medium">New mod</p>
+        <Button variant="ghost" size="sm" onClick={() => setOpen(false)}>
+          <X className="h-4 w-4" />
+        </Button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        Each file&apos;s path is exactly where it lands in whoever applies this mod&apos;s own
+        working copy of the repository — e.g.{' '}
+        <code className="text-[10px]">src/routes/app/store.tsx</code>. A path starting with a dot
+        (like <code className="text-[10px]">.git/…</code> or{' '}
+        <code className="text-[10px]">.env</code>) is refused.
+      </p>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        <div>
+          <Label className="text-xs">Name</Label>
+          <Input value={name} onChange={e => setName(e.target.value)} placeholder="fix-store-typo" />
+        </div>
+        <div>
+          <Label className="text-xs">Author</Label>
+          <Input value={author} onChange={e => setAuthor(e.target.value)} placeholder="you" />
+        </div>
+      </div>
+      <div>
+        <Label className="text-xs">Title</Label>
+        <Input value={title} onChange={e => setTitle(e.target.value)} placeholder="Fix a typo in the store page" />
+      </div>
+      <div>
+        <Label className="text-xs">What it does</Label>
+        <Input
+          value={description}
+          onChange={e => setDescription(e.target.value)}
+          placeholder="Why someone would apply this"
+        />
+      </div>
+
+      <div className="space-y-3">
+        <Label className="text-xs">Files</Label>
+        {files.map((f, i) => (
+          <Card key={i} className="space-y-2 bg-muted/20 p-3">
+            <div className="flex items-center gap-2">
+              <Input
+                value={f.filename}
+                onChange={e => updateFile(i, { filename: e.target.value })}
+                placeholder="path/relative/to/the/repo/root.ts"
+                className="font-mono text-xs"
+              />
+              {files.length > 1 && (
+                <Button variant="ghost" size="sm" onClick={() => removeFile(i)}>
+                  <X className="h-3.5 w-3.5" />
+                </Button>
+              )}
+            </div>
+            <textarea
+              value={f.content}
+              onChange={e => updateFile(i, { content: e.target.value })}
+              placeholder="The full contents this file should have"
+              rows={8}
+              className="w-full resize-y rounded-md border border-input bg-background px-3 py-2 font-mono text-xs outline-none focus-visible:ring-2 focus-visible:ring-primary"
+            />
+          </Card>
+        ))}
+        <Button variant="outline" size="sm" className="gap-2" onClick={addFile}>
+          <Plus className="h-3.5 w-3.5" />
+          Add another file
+        </Button>
+      </div>
+
+      <div className="flex flex-wrap gap-2">
+        <Button size="sm" disabled={busy || !name.trim()} onClick={() => void publish()} className="gap-2">
+          <Upload className="h-4 w-4" />
+          {busy ? 'Publishing…' : 'Publish'}
+        </Button>
+      </div>
+      <p className="text-[11px] text-muted-foreground">
+        Publishing shares it with everyone who pulls the repository. It does not change anyone's
+        files until they choose to apply it.
+      </p>
     </Card>
   )
 }

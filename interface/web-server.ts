@@ -2023,6 +2023,64 @@ export class WebServer {
       return;
     }
 
+    // ── Mods: the one store kind that writes onto this device's real files ──
+    // Every other kind's "Install" copies into an isolated, harmless folder
+    // (see the block above). A mod's whole point is to overwrite an actual
+    // file in this machine's own working copy, so it gets its own apply/
+    // revert verbs rather than sharing install/uninstall -- the generic pair
+    // never touches anything outside extension-builder/installed/, and
+    // reusing that language for a mod would say something false about what
+    // is about to happen. See mod-apply.ts for the safety properties this
+    // rests on (dotfile targets are refused at publish time, and every
+    // apply is backed up so revert can undo it).
+
+    if (pathname === '/api/store/mods/applied' && method === 'GET') {
+      try {
+        const { listAppliedMods, outdatedAppliedMods } = await import('../models && skills/core/mod-apply.js');
+        this.sendJson(res, {
+          applied: listAppliedMods(),
+          outdated: outdatedAppliedMods().map(o => ({
+            name: o.record.name,
+            appliedVersion: o.record.appliedVersion,
+            publishedVersion: o.published.updatedAt,
+          })),
+        });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    const modApplyMatch = pathname.match(/^\/api\/store\/mods\/([A-Za-z0-9._-]+)\/apply$/);
+    if (modApplyMatch && method === 'POST') {
+      const { applyMod, ModApplyError } = await import('../models && skills/core/mod-apply.js');
+      try {
+        this.sendJson(res, await applyMod(modApplyMatch[1]), 201);
+      } catch (err) {
+        this.sendJson(
+          res,
+          { error: err instanceof Error ? err.message : String(err) },
+          err instanceof ModApplyError ? 400 : 500,
+        );
+      }
+      return;
+    }
+
+    const modRevertMatch = pathname.match(/^\/api\/store\/mods\/([A-Za-z0-9._-]+)\/revert$/);
+    if (modRevertMatch && method === 'POST') {
+      const { revertMod, ModApplyError } = await import('../models && skills/core/mod-apply.js');
+      try {
+        this.sendJson(res, revertMod(modRevertMatch[1]));
+      } catch (err) {
+        this.sendJson(
+          res,
+          { error: err instanceof Error ? err.message : String(err) },
+          err instanceof ModApplyError ? 400 : 500,
+        );
+      }
+      return;
+    }
+
     // Download one published file. Served as an attachment so a click saves it
     // rather than rendering a binary into the page.
     // The filename part accepts '/' so a nested file (scripts/run.py) is
