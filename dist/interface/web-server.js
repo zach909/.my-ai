@@ -2,6 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { spawn } from 'node:child_process';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
@@ -2337,6 +2338,43 @@ export class WebServer {
             });
             return;
         }
+        // GET /api/system/live-usb — "workable just by running the USB and
+        // also then it should also have the option to install it onto the
+        // operating system." NEUROCLAW_LIVE_USB=1 is set only by
+        // live-usb/config/includes.chroot/etc/systemd/system/neuroclaw.service,
+        // so this is false (and the install option stays hidden) on every
+        // normal install/dev machine -- there's nothing to "install" a normal
+        // checkout into.
+        if (pathname === '/api/system/live-usb' && method === 'GET') {
+            this.sendJson(res, { liveUsb: process.env.NEUROCLAW_LIVE_USB === '1' });
+            return;
+        }
+        // POST /api/system/install — launches Calamares, the graphical
+        // installer used by a wide range of distros, including Parrot OS
+        // (see store/wiki/ParrotOSTools.md for the one already documented
+        // here). A kiosk browser has no window chrome and the live session shows no
+        // desktop under it (openbox runs nothing but this one fullscreen
+        // window) -- there is no icon to click, so the app itself is the only
+        // place "install this" can live. 404s outside a live-USB boot: this is
+        // not a general-purpose "run an arbitrary GUI program" endpoint, and
+        // must not become one just because the live-usb check moves elsewhere
+        // later.
+        if (pathname === '/api/system/install' && method === 'POST') {
+            if (process.env.NEUROCLAW_LIVE_USB !== '1') {
+                this.sendJson(res, { error: 'Not running from a live USB -- nothing to install from here.' }, 404);
+                return;
+            }
+            try {
+                const child = spawn('calamares', [], { detached: true, stdio: 'ignore' });
+                child.on('error', () => { });
+                child.unref();
+                this.sendJson(res, { launched: true });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         // GET /api/continuous/status — Section 4.1's continuous output loop
         // (startContinuous()/injectInput(), now actually running -- see
         // runner.ts's start()) genuinely never terminates; this reports its
@@ -2566,8 +2604,41 @@ export class WebServer {
                     reasoning: response.reasoning,
                     suggestions: response.suggestions,
                     metadata: response.metadata,
+                    // "download those files, not pull them as needed" -- each entry's
+                    // real bytes are fetched from GET /api/chat/attachments/:id below.
+                    attachments: response.attachments,
                     timestamp: Date.now(),
                 });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        // GET /api/chat/attachments/:id — the actual bytes for a file a chat
+        // reply pointed at (see models && skills/core/chat-attachments.ts and
+        // plugins/file-system.ts's "send <path>" command). Public, like every
+        // other GET on this server that only ever reveals what this device's
+        // own agent chose to hand back in a reply it already gave -- not a
+        // general file server, since an id is a one-time, short-lived,
+        // unguessable random token naming exactly one file this agent already
+        // decided to share, never an arbitrary path a caller supplies.
+        const chatAttachmentMatch = pathname.match(/^\/api\/chat\/attachments\/([0-9a-fA-F-]+)$/);
+        if (chatAttachmentMatch && method === 'GET') {
+            const { resolveAttachment } = await import('../models && skills/core/chat-attachments.js');
+            const attachment = resolveAttachment(chatAttachmentMatch[1]);
+            if (!attachment) {
+                this.sendJson(res, { error: 'This download link has expired or no longer exists.' }, 404);
+                return;
+            }
+            try {
+                const data = readFileSync(attachment.absPath);
+                res.writeHead(200, {
+                    'Content-Type': 'application/octet-stream',
+                    'Content-Length': data.length,
+                    'Content-Disposition': `attachment; filename="${attachment.filename.replace(/"/g, '')}"`,
+                });
+                res.end(data);
             }
             catch (err) {
                 this.sendError(res, err);
@@ -2649,15 +2720,38 @@ export class WebServer {
             return;
         }
         // GET /api/chat-history/threads — every thread, lightweight summaries
-        // only (id/title/source/updatedAt), for a history sidebar/page.
+        // only (id/title/source/updatedAt/pinned), for a history sidebar/page.
+        // ?pinned=true narrows to just the pinned ones, for the "Pinned Chats"
+        // nav entry -- same endpoint, not a separate one, so pinned state never
+        // has two different sources of truth to drift apart.
         if (pathname === '/api/chat-history/threads' && method === 'GET') {
             const sourceParam = parsedUrl.searchParams.get('source');
             const source = sourceParam === 'chat' || sourceParam === 'chat-group' ? sourceParam : undefined;
+            const pinnedOnly = parsedUrl.searchParams.get('pinned') === 'true';
             const threads = this.chatHistory.listThreads()
                 .filter(t => !source || t.source === source)
+                .filter(t => !pinnedOnly || t.pinned === true)
                 .sort((a, b) => b.updatedAt - a.updatedAt)
-                .map(t => ({ id: t.id, title: t.title, source: t.source, updatedAt: t.updatedAt, createdAt: t.createdAt }));
+                .map(t => ({ id: t.id, title: t.title, source: t.source, updatedAt: t.updatedAt, createdAt: t.createdAt, pinned: t.pinned === true }));
             this.sendJson(res, { threads });
+            return;
+        }
+        // POST /api/chat-history/threads/:id/pin — { pinned: boolean }. Toggling
+        // is idempotent and always returns the thread's current pinned state, so
+        // a client can fire this from a button without tracking prior state itself.
+        const pinMatch = pathname.match(/^\/api\/chat-history\/threads\/([^/]+)\/pin$/);
+        if (pinMatch && method === 'POST') {
+            const body = await this.parseBody(req);
+            if (typeof body?.pinned !== 'boolean') {
+                this.sendJson(res, { error: 'Expected { pinned: boolean }' }, 400);
+                return;
+            }
+            const thread = this.chatHistory.setPinned(decodeURIComponent(pinMatch[1]), body.pinned);
+            if (!thread) {
+                this.sendJson(res, { error: 'Thread not found' }, 404);
+                return;
+            }
+            this.sendJson(res, { id: thread.id, pinned: thread.pinned === true });
             return;
         }
         // GET /api/chat-history/groups — every auto-organized chat group with its
@@ -3359,7 +3453,7 @@ export class WebServer {
         }
         // POST /api/skill-uploads/:name/wiki — link a package to a bot wiki
         // page as its documentation. Body: { wikiPage: string }. Only a *bot*
-        // page (wiki/bot/*.md) can be linked -- a curated wiki/ page is
+        // page (store/wiki/*.md) can be linked -- a curated wiki/ page is
         // reviewed, general-purpose documentation, not something a skill
         // upload should be able to claim as "about" it, so this checks the
         // page's source the same way deleteWikiPage()/WikiPlugin.edit() refuse

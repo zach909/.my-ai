@@ -9,11 +9,32 @@ import { RLMTrainer } from "./core/rlm.js";
 import { ThornsEngine } from "./core/thorns.js";
 import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
+import { ZipLoopInterface } from "./core/onebrain.js";
+import { runUntilStoppedAsync, ZIP_FOLDERS } from "./core/zip-halt.js";
 const DEFAULT_LLM_CONFIG = {
     embeddingDim: 64, hiddenDim: 128, numExperts: 4, meshNodes: 32,
     hyperNeurons: 16, hyperDimensions: 64, ballStates: 4,
     thinkSteps: 3, valuePoints: 10000, contextLength: 512,
 };
+// "You have two AIs, and one is one brain. And then you have a normal
+// LLM. I do not want the LLM. I want one brain." -- the same two
+// input/two output neuron ids /api/zip-loop/run wires up, reused here so
+// a chat reply and a manual zip-loop run drive the identical doorway
+// into the identical mesh, not two different conventions for the same
+// four neurons.
+const ONE_BRAIN_NEURON_IDS = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 };
+// Bounds a chat turn's one-brain run to something an interactive reply
+// can wait on. Every OUTPUT byte read is a full settle() of the mesh --
+// real work, not padding (see zip-halt.ts/onebrain.ts's own comments on
+// why that is expensive) -- so this is a latency knob, not a quality
+// one: raising it buys the mesh more room to speak, at the cost of a
+// slower reply.
+const GENERATE_MAX_TICKS = 256;
+// The INPUT side of a zip-loop run has no ceiling of its own (see the
+// comment where this is used) -- every character sent through the
+// doorway costs 8 real sendBit() calls, so this is what actually keeps
+// a long prompt from turning one chat turn into a multi-minute run.
+const ONE_BRAIN_PROMPT_CHAR_CAP = 200;
 export class NeuroclawLLM {
     config;
     builder;
@@ -218,22 +239,57 @@ export class NeuroclawLLM {
             stateVec[i] = thinkResult.hiddenState[i] ?? 0;
         }
         const rlmDecision = this.rlmTrainer.selectAction(stateVec);
-        // Step 7: real generation -- autoregressively sample from the
-        // predictor's own probability distribution (previously computed but
-        // never called: NeuroclawTrainer.predict() + sampleFromProbs()) over
-        // the selected vocabulary (word or code, per predictorMode), instead
-        // of a hand-written template wrapped around the subsystem signals.
-        const predictor = this.predictorMode === 'code' ? this.codeTrainer : this.trainer;
-        const temperature = options.temperature ?? 0.8;
-        const maxTokens = options.maxTokens ?? 80;
-        let generated = this.generateTokens(this.context, predictor, maxTokens, temperature);
-        // A completely empty decode (e.g. the very first token sampled to
-        // end-of-sequence) gets one retry at a higher temperature -- THORNS'
-        // own templated .response never becomes the visible output, even as
-        // a fallback.
-        if (generated.trim().length === 0) {
-            generated = this.generateTokens(this.context, predictor, maxTokens, Math.min(1.5, temperature + 0.4));
-        }
+        // Step 7: real generation -- fed through OneBrain's own zip-loop
+        // doorway (the same two-input/two-output-neuron path
+        // /api/zip-loop/run drives), not a separately-trained char sampler
+        // wrapped around the mesh's thinking. "You have two AIs... I do
+        // not want the LLM. I want one brain." What comes back is
+        // whatever the SAME mesh Step 3-5 just thought with actually wrote
+        // to output/ -- real neuron output, chosen over sampling from
+        // this.trainer's own separate distribution.
+        //
+        // Expensive on purpose: every output byte read is a full settle()
+        // of the mesh (see zip-halt.ts/onebrain.ts's own comments on why
+        // that costs real time), so a one-brain reply can take noticeably
+        // longer than the old char sampler did -- GENERATE_MAX_TICKS
+        // bounds that rather than eliminating it.
+        //
+        // The INPUT side is not bounded by maxTicks at all -- runLoop()
+        // feeds the whole packed archive in before the ceiling ever
+        // applies to anything (see zip-halt.ts's own comment on exactly
+        // this). Fine for a manual /api/zip-loop/run file upload; fatal
+        // here, where `prompt` is whatever any caller of generate() hands
+        // in -- a full document, a long history-grounded turn, code being
+        // trained on. A large prompt fed in whole made this hang the
+        // smoke suite for minutes with zero test progress. What the mesh
+        // uses to THINK (Step 3-5 above, thornsEngine, the embedding) is
+        // still the untruncated prompt; only the copy sent through this
+        // doorway is capped, since the doorway's cost is per BIT of
+        // archive, not per character of meaning.
+        const oneBrainPrompt = prompt.length > ONE_BRAIN_PROMPT_CHAR_CAP ? prompt.slice(0, ONE_BRAIN_PROMPT_CHAR_CAP) : prompt;
+        const zip = new ZipLoopInterface(this.brain.getHyper(), ONE_BRAIN_NEURON_IDS);
+        const oneBrainRun = await runUntilStoppedAsync(zip, { files: { [`${ZIP_FOLDERS.prompt}prompt.txt`]: oneBrainPrompt } }, { quietTicks: 32, maxTicks: GENERATE_MAX_TICKS });
+        const oneBrainOutput = Object.entries(oneBrainRun.tree?.files ?? {})
+            .filter(([path]) => path.startsWith(ZIP_FOLDERS.output))
+            .map(([, content]) => content)
+            .join('\n')
+            .trim();
+        // "Remember to delete every AI that is not the OneBrain." The old
+        // fallback here, when one brain had nothing yet, was a SECOND,
+        // separately-trained char sampler (this.trainer/this.codeTrainer)
+        // answering in its place -- exactly the other AI this generate()
+        // exists to not be. Removed rather than gated: what stands in when
+        // one brain is silent is now a single fixed sentence, not
+        // generated by anything. It is not smarter, it is not an answer,
+        // and it does not pretend to be either -- it is what "the network
+        // has not been taught to say anything here yet" actually looks
+        // like, until real training (conversation-learning-agent.mjs,
+        // grafted back into this same mesh on every boot -- see
+        // web-server.ts's loadSavedExtensions()) gives it something to
+        // write to output/.
+        const generated = oneBrainOutput.length > 0
+            ? oneBrainOutput
+            : 'one brain has nothing trained to say here yet.';
         const output = generated.trim();
         // Zero-sum value update: higher-performing experts gain value points
         const perf = thornsOutput.crossCheck.overallConfidence;

@@ -120,6 +120,38 @@ export function saveRegistry(registry, registryPath = REGISTRY_PATH) {
   writeFileSync(registryPath, JSON.stringify(registry, null, 2) + '\n', 'utf8')
 }
 
+/**
+ * "Make sure it says as a source" -- one real, readable citation for a
+ * SearchResult, a URL for a web hit (the same thing a person would click
+ * to check it themselves), "kind: title" for memory/drive. Falls back to
+ * the source type alone only when a hit genuinely carries no title or
+ * location, rather than rendering the literal string "undefined".
+ */
+export function citeSource(s) {
+  const label = s.title || s.location || 'unknown'
+  return s.source === 'web' && s.location ? `[${label}](${s.location})` : `${s.source ?? 'unknown'}: ${label}`
+}
+
+/**
+ * One citation per distinct origin, same rule conductResearch() itself
+ * corroborates on -- the real location when there is one, so two hits
+ * from the same URL/file/memory item collapse into a single citation
+ * rather than repeating it. A hit with no location (malformed input, or
+ * a hand-built test fixture) is never collapsed against another just
+ * because both happen to lack one.
+ */
+export function dedupeSources(sources) {
+  const seen = new Set()
+  const unique = []
+  for (const s of sources) {
+    const key = s.location || `${s.source ?? 'unknown'}:${unique.length}`
+    if (seen.has(key)) continue
+    seen.add(key)
+    unique.push(s)
+  }
+  return unique
+}
+
 /** Picks the least-recently-covered topic from the pool -- real rotation,
  *  not always the same first entry. Pure function of the registry and
  *  pool, directly testable. */
@@ -160,8 +192,14 @@ export function renderWikiPage(topic, report) {
   lines.push('## Verified findings')
   lines.push('')
   for (const claim of verified) {
-    const sources = [...new Set(claim.sources.map((s) => s.source))].join(', ')
-    lines.push(`- ${claim.claim.trim()} *(corroborated by: ${sources})*`)
+    // Named as an actual source, not just its category -- "corroborated
+    // by: web, web" (what this said before ResearchPlugin.conductResearch()
+    // started keying corroboration on the real origin) told a reader
+    // nothing about WHICH two things agreed. One citation per distinct
+    // origin (deduped the same way conductResearch() now does -- see its
+    // own comment on why that, not source type, is what "independent"
+    // means here).
+    lines.push(`- ${claim.claim.trim()} *(corroborated by: ${dedupeSources(claim.sources).map(citeSource).join('; ')})*`)
   }
   if (unverified.length > 0) {
     lines.push('')
@@ -170,7 +208,7 @@ export function renderWikiPage(topic, report) {
     lines.push('*Found by the search but not corroborated elsewhere -- reported honestly rather than dropped, but not treated as established.*')
     lines.push('')
     for (const claim of unverified) {
-      lines.push(`- ${claim.claim.trim()} *(source: ${claim.sources[0]?.source ?? 'unknown'})*`)
+      lines.push(`- ${claim.claim.trim()} *(source: ${claim.sources[0] ? citeSource(claim.sources[0]) : 'unknown'})*`)
     }
   }
   lines.push('')
