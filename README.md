@@ -1,7 +1,7 @@
 # NeuroClaw - Artificial Superintelligence System
 
 
-WORNING ⚠️ THIS PROJECT IS IN BETA WE ARE NOT RESPONCIBAL FOR YOUR ACTIONS OR WHAT THE CODE DOUSE BY CONTINUING YOU AGREE WITH THIS STATMENT AND PRIVICY AND PLICY + TERMS AND CONDISONS.
+WARNING ⚠️ THIS PROJECT IS IN BETA. WE ARE NOT RESPONSIBLE FOR YOUR ACTIONS OR WHAT THE CODE DOES. BY CONTINUING YOU AGREE WITH THIS STATEMENT AND THE [PRIVACY POLICY](PRIVACY.md) AND [TERMS AND CONDITIONS](TERMS.md).
 
 NeuroClaw is a comprehensive, local-first AI agent. It's powered by **OneBrain**, the neural mesh engine underneath — the all-to-all neuron computation, quantization, and mixture-of-experts routing described throughout this repo all live there. NeuroClaw the agent is itself made of skills: each capability is trained and packaged by the Extension Builder, then registered into OneBrain as a routable MoE expert.
 
@@ -38,24 +38,37 @@ python3 -c "from asi_core import UnifiedBrain; brain = UnifiedBrain(); print(bra
 │   ├── extension_system.py # Extension lifecycle management
 │   ├── hive_mind.py       # Distributed coordination
 │   ├── circular_context.py # Infinite context loop system
-│   └── mistake_tracker.py  # Self-correction tracking
+│   ├── mistake_tracker.py  # Self-correction tracking
+│   └── endurance_training.py # Long-running UnifiedBrain training harness
 ├── benchmarks/            # Performance benchmarks
 ├── config/                # Configuration files
 ├── desktop-app/           # Desktop application
 ├── dist/                  # Distribution builds
 ├── docs/                  # Documentation
 ├── extension-builder/     # Extension building tools
+├── extension_system/      # Extension lifecycle, versioning & permissions (TS)
+├── generated/             # Auto-generated skills, plugins & their wiki pages
 ├── interface/             # User interface components
-├── models && skills/      # AI models and skills
+├── live-usb/              # Bootable/installable live USB build
+├── model && skills manager/ # Go-based model & skills manager (llama.cpp/MLX backends)
+├── models && skills/      # AI models and skills (JS/TS)
 ├── plugin_manager/        # Plugin management system
 ├── plugins/               # System plugins (camera, file system, etc.)
 ├── public/                # Public assets
 ├── scripts/               # Build and utility scripts
 ├── src/                   # Source code
-├── remote public wiki public skills public pulgins pubilk prompts/ 
-└── wiki                 # Architecture wiki
-
+├── test/                  # Core ASI tests and integration tests
+├── tests/                 # Additional test suites (security, etc.)
+├── training_data/         # Training data assets
+└── wiki/                  # Architecture wiki
 ```
+
+Key root-level files:
+- `AGENTS.md` — instructions for AI agents working in this repo
+- `STRUCTURE.md` — detailed breakdown of every directory and file
+- `PRIVACY.md` / `TERMS.md` — privacy policy and terms referenced in the warning above
+- `package.json` / `requirements.txt` — Node.js and Python dependencies
+- `vite.config.ts`, `tsconfig*.json`, `eslint.config.js`, `components.json` — build/tooling configuration
 
 ## Key Features
 

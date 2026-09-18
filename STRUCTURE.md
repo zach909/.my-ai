@@ -6,12 +6,23 @@ This document describes the organized structure of the project.
 
 ### Root Level
 - `README.md` - Project overview and quick start guide
+- `AGENTS.md` - Instructions for AI agents working in this repo
+- `STRUCTURE.md` - This document
+- `PRIVACY.md` - Privacy policy
+- `TERMS.md` - Terms and conditions
 - `package.json` - Node.js dependencies and scripts
+- `requirements.txt` - Python dependencies
+- `bun.lock` / `package-lock.json` / `pnpm-lock.yaml` - Lockfiles for the supported package managers
+- `docker-compose.base44.yml` - Base44 Docker Compose setup
 - `vite.config.ts` - Vite build configuration
-- `tsconfig*.json` - TypeScript configuration files
+- `vitest.config.ts` - Vitest test runner configuration
+- `tsconfig*.json` - TypeScript configuration files (app, backend, node)
 - `eslint.config.js` - ESLint configuration
+- `.stylelintrc.json` - Stylelint configuration
 - `components.json` - Shadcn/ui configuration
-- `.gitignore` - Git ignore rules
+- `.gitignore` / `.gitattributes` / `.gitconfig` - Git configuration
+- `.bin/` - Local binary shims (e.g. `tsc`, `tsserver`)
+- `.claude/` - Claude Code local settings
 
 ### Core Directories
 
@@ -47,8 +58,16 @@ and content-addressable storage (with compression/quantization) for
 automatically-created memory, logic, skill, and plugin extensions. See
 `docs/EXTENSION_SYSTEM.md`.
 
+#### `/generated/`
+Auto-generated output: `skills/` and `plugins/` produced by the Extension
+Builder, plus their generated `skills-wiki/` and `plugins-wiki/` pages.
+
 #### `/interface/`
 User interface components and CLI tools.
+
+#### `/live-usb/`
+Bootable/installable live USB build (`build.sh`) for trying or installing
+NeuroClaw with no setup.
 
 #### `/model && skills manager/`
 Go-based model and skills management system with extensive submodules.
@@ -88,6 +107,9 @@ Test files including core tests and integration tests.
 #### `/tests/`
 Additional test suites:
 - `security/` - Security-focused tests
+
+#### `/training_data/`
+Training data assets used to seed or fine-tune skills.
 
 #### `/wiki/`
 Wiki documentation.
