@@ -10,6 +10,9 @@ A comprehensive AI/ASI system with modular architecture implementing neural mesh
 ## Quick Start
 
 ```bash
+git clone https://github.com/zach909/.my-ai.git
+cd .my-ai
+
 # Installation
 ./scripts/install.sh
 
