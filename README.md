@@ -162,7 +162,7 @@ See [docs/](docs/) and [wiki/](wiki/) for comprehensive documentation:
 
 ## Testing
 
-All core systems are tested with 298+ unit tests:
+All core systems are tested with 349+ unit tests:
 
 ```bash
 # Run all ASI core tests

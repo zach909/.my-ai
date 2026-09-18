@@ -1,0 +1,285 @@
+/**
+ * Writing code, running it, and fixing it when it fails.
+ *
+ * The agent could already analyse code and execute a snippet in an isolated
+ * vm. What it could not do is the thing that actually makes coding work:
+ * notice its own output was wrong and revise it against the real error.
+ * Generating a better first attempt is not the mechanism -- checking is.
+ *
+ * So this is a verify-and-revise loop over the existing sandbox. It runs a
+ * candidate against real assertions, and when one fails it hands the ACTUAL
+ * failure text back to whatever is proposing revisions, rather than a generic
+ * "that didn't work". An agent told only that it failed can do no better than
+ * guess again; an agent told `expected 6, got 5` can fix the off-by-one.
+ *
+ * What this module honestly is: the loop and the checking. The intelligence
+ * that proposes a revision is supplied by the caller -- the mesh, a prompting
+ * skill, or a human. Pretending otherwise would be the whole problem with
+ * claiming an agent "writes code".
+ *
+ * On isolation, stated precisely, because the previous version of this comment
+ * was wrong and the code matched the comment rather than reality.
+ *
+ * It claimed candidates had "no require, no process, no filesystem, no
+ * network". They had all of it. `createContext({})` contextifies an object
+ * created in the HOST realm, so its prototype chain leads back to host
+ * intrinsics: `this.constructor.constructor` is the host Function constructor,
+ * and `F('return process')()` handed back the real process object -- pid, cwd,
+ * argv, and from there require('child_process'). Demonstrated, not theorised.
+ *
+ * The context is now built with `Object.create(null)`, which has no prototype
+ * and so no chain to walk back along. That specific escape is closed, verified
+ * against the exact probe that worked before.
+ *
+ * What this is NOT is a security boundary. Node's own documentation says the
+ * vm module must not be used to run untrusted code, and no amount of scrubbing
+ * the context changes that -- new escapes are found regularly. Treat this the
+ * way plugins/terminal.ts treats its command blocklist: a real guardrail
+ * against the ordinary case, not protection against code written to break out.
+ * Candidates here come from this agent's own reasoning, which is a very
+ * different threat model from arbitrary input off the network, and the
+ * distinction is the reason this is acceptable at all.
+ */
+import { createContext, Script } from "node:vm";
+/** How long any single candidate may run before it is killed. */
+export const CANDIDATE_TIMEOUT_MS = 2000;
+function sameValue(a, b) {
+    if (Object.is(a, b))
+        return true;
+    // Structural comparison, so a check expecting [1,2,3] is not defeated by
+    // the array being a different object with the same contents.
+    try {
+        return JSON.stringify(a) === JSON.stringify(b);
+    }
+    catch {
+        return false;
+    }
+}
+/**
+ * Script options shared by candidates and checks.
+ *
+ * `importModuleDynamically` exists to stop a candidate taking the whole
+ * process down. Without a handler, `import("node:fs")` inside a vm script does
+ * not fail politely -- Node throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING from
+ * its own internals, outside any try/catch here, and the host process dies.
+ * A single `import()` in generated code was enough to kill the agent.
+ *
+ * Refusing here turns that into an ordinary rejected promise the candidate can
+ * see, which is what "the sandbox said no" should look like.
+ */
+function scriptOptions(filename) {
+    return { filename };
+}
+/**
+ * Dynamic import, refused before the code runs.
+ *
+ * This is not stylistic. `import("node:fs")` inside a vm script does not fail
+ * politely: Node throws ERR_VM_DYNAMIC_IMPORT_CALLBACK_MISSING from its own
+ * internals, outside any try/catch here, and the HOST PROCESS DIES. One
+ * `import()` in generated code was enough to kill the agent.
+ *
+ * The clean fix -- an importModuleDynamically hook that refuses -- requires
+ * running Node with --experimental-vm-modules, which is not something a
+ * library should force on every process that loads it. So the syntax is
+ * refused up front instead.
+ *
+ * A regex is a guardrail, not a parser: it can be worked around by anyone
+ * trying to. That is acceptable here for the same reason the rest of this
+ * module's isolation is (see the header) -- it stops the accident, and the
+ * accident is what actually happens.
+ */
+const DYNAMIC_IMPORT = /\bimport\s*(\(|\.)/;
+/** Run a candidate against its checks. Never throws -- a crash is a result. */
+/**
+ * Rejections a candidate leaves behind, kept away from the host.
+ *
+ * Sandboxed code can start a promise nobody is holding. The clearest example
+ * is in the escape-vector suite: `(async function(){}).constructor('return
+ * process')()` builds an async function in the sandbox and calls it, which
+ * returns a promise that rejects with "process is not defined". Reading
+ * `.pid` off that promise gives `undefined`, so the candidate's own
+ * try/catch sees nothing wrong and `runInContext` returns normally -- the
+ * rejection happens on a later microtask, after verifyCode has already
+ * returned, with no one to catch it.
+ *
+ * That is not cosmetic. An unhandled rejection reaches the HOST process, and
+ * Node's default for one is to terminate. Candidate code is written by the
+ * agent, not by a person reviewing it, so "a candidate can halt the process
+ * that is evaluating it" is a live failure mode rather than a hypothetical.
+ * It also makes the test suite report a failure against a file whose own
+ * assertions all pass, which is how it was found.
+ *
+ * The promise itself is unreachable -- it is created and discarded inside an
+ * expression -- so it cannot be caught at the source. Instead a listener owns
+ * the window: armed while a candidate is running and disarmed one macrotask
+ * after it finishes, which is strictly after the microtask checkpoint where
+ * rejections are reported. Anything caught in that window is recorded and
+ * swallowed rather than allowed to reach the default handler.
+ *
+ * The window is deliberately narrow. It is not zero, so a rejection raised
+ * elsewhere in the host during those few milliseconds would be swallowed too;
+ * that is the accepted cost of not letting sandboxed code end the process.
+ * `sandboxRejections()` exists so a swallowed one is still visible rather
+ * than silently gone.
+ */
+let sandboxDepth = 0;
+/** Whether the listener is on `process` right now. */
+let trapInstalled = false;
+/** The pending disarm, so a run starting during the drain window cancels it. */
+let drainTimer = null;
+const swallowed = [];
+const SWALLOWED_LIMIT = 32;
+const onUnhandledRejection = (reason) => {
+    const text = reason instanceof Error ? `${reason.name}: ${reason.message}` : String(reason);
+    swallowed.push(text);
+    if (swallowed.length > SWALLOWED_LIMIT)
+        swallowed.shift();
+};
+/** Rejections swallowed while sandboxed code was running, newest last. */
+export function sandboxRejections() {
+    return [...swallowed];
+}
+/** Forget the recorded rejections. For tests, and for a caller that has read them. */
+export function clearSandboxRejections() {
+    swallowed.length = 0;
+}
+/**
+ * Run `fn` with sandbox rejections trapped. Re-entrant, and safe to call in a
+ * tight loop.
+ *
+ * `trapInstalled` is what makes the loop safe: the disarm is deferred by a
+ * macrotask, so a second call arrives while the first listener is still on
+ * `process`. Adding one per call instead put eleven copies on the emitter and
+ * Node warned about a listener leak -- which is the same defect class this
+ * function exists to prevent, produced by the fix for it.
+ */
+function withRejectionTrap(fn) {
+    if (drainTimer !== null) {
+        clearTimeout(drainTimer);
+        drainTimer = null;
+    }
+    if (!trapInstalled) {
+        process.on("unhandledRejection", onUnhandledRejection);
+        trapInstalled = true;
+    }
+    sandboxDepth++;
+    try {
+        return fn();
+    }
+    finally {
+        sandboxDepth--;
+        if (sandboxDepth === 0) {
+            // One macrotask later: microtasks -- where rejections are reported --
+            // all run before this fires, so the listener is still installed for
+            // them. Unref'd so an armed trap cannot hold the process open.
+            drainTimer = setTimeout(() => {
+                drainTimer = null;
+                if (sandboxDepth === 0 && trapInstalled) {
+                    process.off("unhandledRejection", onUnhandledRejection);
+                    trapInstalled = false;
+                }
+            }, 0);
+            if (typeof drainTimer === "object" && drainTimer && "unref" in drainTimer) {
+                drainTimer.unref();
+            }
+        }
+    }
+}
+export function verifyCode(code, checks) {
+    // Everything a candidate starts, including promises it drops, stays inside
+    // this window -- see withRejectionTrap.
+    return withRejectionTrap(() => verifyCodeInner(code, checks));
+}
+function verifyCodeInner(code, checks) {
+    const started = Date.now();
+    const outcomes = [];
+    if (DYNAMIC_IMPORT.test(code) || checks.some(c => DYNAMIC_IMPORT.test(c.expression))) {
+        const refusal = "Dynamic import is not available in the sandbox.";
+        return {
+            passed: false,
+            outcomes: [],
+            crashed: refusal,
+            ms: Date.now() - started,
+            report: `The code did not run: ${refusal}`,
+        };
+    }
+    let sandbox;
+    try {
+        // Object.create(null), not {}: a plain object literal is created in the
+        // host realm and keeps a prototype chain leading back to host intrinsics,
+        // which is exactly how a candidate reached the real `process`.
+        sandbox = createContext(Object.create(null));
+        new Script(code, scriptOptions("candidate.js")).runInContext(sandbox, { timeout: CANDIDATE_TIMEOUT_MS });
+    }
+    catch (err) {
+        const crashed = err instanceof Error ? err.message : String(err);
+        return {
+            passed: false,
+            outcomes: [],
+            crashed,
+            ms: Date.now() - started,
+            // Named as its own kind of failure: "it does not run" and "it runs and
+            // is wrong" call for completely different fixes.
+            report: `The code did not run: ${crashed}`,
+        };
+    }
+    for (const check of checks) {
+        try {
+            const actual = new Script(check.expression, scriptOptions("check.js")).runInContext(sandbox, {
+                timeout: CANDIDATE_TIMEOUT_MS,
+            });
+            outcomes.push({ name: check.name, passed: sameValue(actual, check.expected), expected: check.expected, actual });
+        }
+        catch (err) {
+            outcomes.push({
+                name: check.name,
+                passed: false,
+                expected: check.expected,
+                actual: undefined,
+                error: err instanceof Error ? err.message : String(err),
+            });
+        }
+    }
+    const failed = outcomes.filter(o => !o.passed);
+    return {
+        passed: failed.length === 0 && checks.length > 0,
+        outcomes,
+        ms: Date.now() - started,
+        report: failed
+            .map(o => o.error
+            ? `${o.name}: could not be checked — ${o.error}`
+            : `${o.name}: expected ${JSON.stringify(o.expected)}, got ${JSON.stringify(o.actual)}`)
+            .join("\n"),
+    };
+}
+/**
+ * Try, check, revise, repeat.
+ *
+ * `revise` receives the failing code and the real failure text and returns a
+ * new candidate, or null when it has nothing better. Stopping when a reviser
+ * returns the same code twice is deliberate: a loop that keeps re-running an
+ * identical failing candidate is not iterating, it is spinning, and it will
+ * burn the whole budget doing it.
+ */
+export async function iterateOnCode(input) {
+    const maxAttempts = Math.max(1, input.maxAttempts ?? 5);
+    const attempts = [];
+    const seen = new Set();
+    let code = input.initial;
+    for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+        const result = verifyCode(code, input.checks);
+        attempts.push({ attempt, code, result });
+        if (result.passed)
+            return { code, passed: true, attempts, stopped: "solved" };
+        seen.add(code);
+        const next = await input.revise(code, result.report, attempt);
+        if (next === null || next === undefined) {
+            return { code: null, passed: false, attempts, stopped: "no-revision" };
+        }
+        if (seen.has(next)) {
+            return { code: null, passed: false, attempts, stopped: "repeating" };
+        }
+        code = next;
+    }
+    return { code: null, passed: false, attempts, stopped: "out-of-attempts" };
+}

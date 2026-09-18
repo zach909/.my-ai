@@ -21,8 +21,11 @@ This document describes the organized structure of the project.
 - `.stylelintrc.json` - Stylelint configuration
 - `components.json` - Shadcn/ui configuration
 - `.gitignore` / `.gitattributes` / `.gitconfig` - Git configuration
+- `twisted_metal_strip.obj` / `twisted_metal_strip_3pt_profile.html` - 3D model and profile data for the twisted-strip logo (`src/components/twisted-strip-geometry.ts`, `src/components/TwistedStripLogo.tsx`)
 - `.bin/` - Local binary shims (e.g. `tsc`, `tsserver`)
 - `.claude/` - Claude Code local settings
+- `.base44/` - Base44 preview environment config (see `AGENTS.md`)
+- `.Jules/`, `.jules/` - Learning journals kept by AI coding agents (e.g. `bolt.md`, `sentinel.md`, `palette.md`)
 
 ### Core Directories
 
