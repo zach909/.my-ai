@@ -86,9 +86,8 @@ Key root-level files:
 - **Circular Context**: Infinite context window via compression to long-term memory
 - **Self-Improvement**: Patterns automatically promoted to permanent skills
 - **Mistake Tracking**: Detects and penalizes repeated mistakes
-- **Conversation Training**: OneBrain learns from real conversations automatically while
-  the server runs, but needs PyTorch installed to actually converge (kept opt-in — see
-  [Enable Conversation Training](#enable-conversation-training) below)
+- **Conversation Training**: OneBrain trains continuously on real conversations, automatically,
+  with zero extra setup — see [Conversation Training](#conversation-training) below
 
 ### Extensions & Skills
 - **Extension Builder**: Drag-and-drop neuron connection editor
@@ -156,27 +155,22 @@ python3 -m asi_core.endurance_training --cycles 20000 \
 See [docs/ENDURANCE_TRAINING.md](docs/ENDURANCE_TRAINING.md) for the full
 option reference.
 
-## Enable Conversation Training
+## Conversation Training
 
-If chat replies feel stuck on generic fallback text, this is almost always
-why: the pipeline that actually shapes what OneBrain says — logging every
-real turn locally and training on it via genuine `torch.autograd` gradient
-descent — already runs on its own every ~20 minutes the server is up, but
-silently no-ops without PyTorch installed. Nothing else you type, including
-the `train <text>` command or `POST /api/train`, changes chat replies; see
+Chat replies only ever improve one way: `scripts/conversation-learning-agent.mjs`
+logs every real turn locally and trains OneBrain's actual output neurons on
+it via `ExtensionBuilder.train()`'s JS delta rule — no PyTorch, no Python
+process, nothing to install. Nothing else you type, including the
+`train <text>` command or `POST /api/train`, changes chat replies; see
 [docs/CONVERSATION_TRAINING_LOG.md](docs/CONVERSATION_TRAINING_LOG.md) for
 the full explanation.
 
-PyTorch is a large (~2.5 GB), GPU-build-dependent download, so it's opt-in
-rather than part of the default install:
-
-```bash
-npm run enable-training
-```
-
-Re-run it any time; it's a no-op if PyTorch is already installed. Once it's
-there, the existing training loop picks it up automatically — no restart
-needed — and gets better the more you actually talk to it.
+This training loop runs automatically the moment the server is up — right
+after every real exchange, plus a catch-up pass every ~20 minutes
+(`NEUROCLAW_CONVERSATION_LEARNING_INTERVAL_MS`) — with zero setup. Disable
+it with `NEUROCLAW_CONVERSATION_LEARNING=0` if you don't want it. Replies
+only actually improve once there's enough real conversation history to
+train on; this doesn't retroactively rewrite past replies.
 
 ## Documentation
 

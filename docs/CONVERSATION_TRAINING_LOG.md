@@ -192,14 +192,80 @@ otherwise-untrained OneBrain instance in this checkout:
 | 2 — Short reasoning | `What is 2 plus 2?`, before/after teaching the fact directly | Same fixed fallback both times — confirms Finding 2, not a reasoning failure per se. |
 | 3–10 | Multi-step problems, context retention, contradiction detection, generalization, novel problems, long-context, complex multi-step tasks | Not meaningfully assessable yet. All of these require OneBrain to produce *some* content-bearing output to grade in the first place; on an instance whose only trained-on-real-conversation path (Finding 3) has never run to convergence, every prompt currently yields the same fixed non-answer regardless of level. |
 
-**What would make Levels 3–10 assessable**: either (a) a `torch`-enabled
-environment running many real `conversation-learning-agent.mjs` cycles (or
-`asi_core/endurance_training.py`'s longer curriculum) until OneBrain's own
-output neurons produce non-fallback content, or (b) self-improvement /
-extension grafting reaching the point where `generate()` routes to a grafted
-skill for a given prompt class. Neither happened in this session; this log
-should be treated as level-1/level-2 groundwork plus two concrete findings
-(one fixed, one documented), not a completed 10-level curriculum.
+**What would make Levels 3–10 assessable**: either (a) many real
+`conversation-learning-agent.mjs` cycles (or `asi_core/endurance_training.py`'s
+longer curriculum) until OneBrain's own output neurons produce non-fallback
+content, or (b) self-improvement / extension grafting reaching the point
+where `generate()` routes to a grafted skill for a given prompt class.
+Neither happened in this session; this log should be treated as
+level-1/level-2 groundwork plus concrete findings, not a completed 10-level
+curriculum.
+
+## Finding 4 (fixed): `conversation-learning-agent.mjs` required `torch` it never actually needed
+
+Finding 3 (above) framed the missing-`torch` degradation as a fact of this
+system's architecture. It wasn't -- it was a fact of one function's
+implementation. `runOneCycle()`'s `trainSamples()` helper hard-coded a
+`spawn('python3', [...pytorch_trainer.py])` call as the *only* way to train
+the readout neurons a conversation-learning cycle creates, even though this
+project already has a genuine, zero-dependency way to train exactly that
+shape of neuron: `ExtensionBuilder.train()` (`extension-builder/builder.js`),
+the same hand-rolled JS delta rule (`HyperDimensionalEngine.trainDefinitions()`
+in `models && skills/core/neuro-lang.ts`) that every `addScript()`-defined
+neuron and the Extension Builder's own "Train" button already use by
+default -- `POST /api/extension/train-pytorch` is documented in
+`interface/web-server.ts` as "an ALTERNATIVE training backend to
+ExtensionBuilder.train()'s hand-rolled JS delta rule," not the primary one.
+`conversation-learning-agent.mjs` already builds each sample as an
+`addScript()`-defined neuron (`builder.addScript(project.id, neuron.id,
+s.inputText, s.targetText)`) before ever touching PyTorch -- it just never
+called `builder.train()` on the project it built.
+
+**Verified, not assumed.** A fresh checkout of this branch, no `torch`
+installed (`python3 -c "import torch"` fails with `ModuleNotFoundError`, the
+same as Finding 3), five synthetic turns appended directly to a local
+`conversation-log.jsonl`, then a real cycle:
+
+```
+$ node scripts/conversation-learning-agent.mjs --once
+[conversation-learning] training on 5 real turn(s) (9 sample(s) across both prediction directions)...
+[conversation-learning] 9/9 sample(s) genuinely converged
+[conversation-learning] saved: extension-builder/extensions/conversation_learning.ext.json
+{
+  "ok": true,
+  "trained": true,
+  "turnCount": 5,
+  "sampleCount": 9,
+  "convergedCount": 9,
+  "converged": true
+}
+```
+
+9/9 samples genuinely converged, purely in-process JavaScript -- no Python
+process spawned, no `torch` involved. Re-running immediately after correctly
+skips (`no new turns since the last cycle`), confirming the incremental
+state tracking (`state.lastTrainedTurnAt`) still works unchanged.
+
+**Fix applied**: `trainSamples()` and its `spawn('python3', ...)` call were
+removed from `scripts/conversation-learning-agent.mjs`; `runOneCycle()` now
+calls `builder.train(project.id, { epochs: 1200 })` directly after building
+each sample's neuron, exactly like the regular Extension Builder Train
+button does. `src/lib/conversation-learning-trigger.ts`'s doc comments
+(which described this cycle as depending on "python3/torch") and
+`wiki/Self-Improvement.md`'s description of the same trigger were updated
+to match. This makes the loop already described in Finding 3 as running
+automatically every ~20 minutes (and immediately after every real turn, via
+`conversation-learning-trigger.ts`) genuinely train from the moment the
+server starts, on every install, with no setup step and no PyPI dependency
+-- closing the gap Finding 2/3 identified without asking anyone to install
+a ~2.5 GB package to get there.
+
+PyTorch (`extension-builder/pytorch_trainer.py`, `POST
+/api/extension/train-pytorch`) is untouched and still available as the
+alternative, genuine-gradient-descent backend for people who install it and
+want it for other Extension Builder use, e.g. the capability-exam / skill
+scripts `wiki/Self-Improvement.md` describes -- it's simply no longer a
+requirement for the conversation-learning pipeline specifically.
 
 ## Summary
 
@@ -207,11 +273,14 @@ should be treated as level-1/level-2 groundwork plus two concrete findings
   `NeuroclawLLM.learnText()` instead of `trainOnText()`, so successive
   lessons accumulate instead of each one erasing the last — verified via
   corpus size and live CLI output.
-- **Documented, not fixed here**: teaching text through `train`/`learnText`
-  has no effect on `generate()`'s visible chat replies on an otherwise
-  untrained instance; only the real conversation-learning pipeline or
-  self-improvement grafting can change what OneBrain actually says.
-- **Verified working**: the conversation-learning pipeline
-  (log → samples → `pytorch_trainer.py`) runs correctly end to end and
-  degrades honestly when `torch` is absent, matching this project's
-  intentional zero-PyPI-dependency default.
+- **Documented, not fixed at the time**: teaching text through
+  `train`/`learnText` has no effect on `generate()`'s visible chat replies
+  on an otherwise untrained instance; only the real conversation-learning
+  pipeline or self-improvement grafting can change what OneBrain actually
+  says.
+- **Fixed**: the conversation-learning pipeline (log → samples → training)
+  no longer needs `torch`/PyTorch at all — it trains via the same
+  zero-dependency JS delta rule (`ExtensionBuilder.train()`) every other
+  script-trained neuron in this project already uses, so it genuinely runs
+  out of the box on every install, verified via a real, torch-free cycle
+  converging 9/9 samples.
