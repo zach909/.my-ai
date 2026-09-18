@@ -1,6 +1,6 @@
 {
   "skill": "Conversation Learning",
-  "neuronCount": 173,
+  "neuronCount": 179,
   "neurons": [
     {
       "name": "respond_0",
@@ -693,7 +693,31 @@
     {
       "name": "anticipate_172",
       "id": 236
+    },
+    {
+      "name": "respond_173",
+      "id": 237
+    },
+    {
+      "name": "anticipate_174",
+      "id": 238
+    },
+    {
+      "name": "respond_175",
+      "id": 239
+    },
+    {
+      "name": "anticipate_176",
+      "id": 240
+    },
+    {
+      "name": "respond_177",
+      "id": 241
+    },
+    {
+      "name": "anticipate_178",
+      "id": 242
     }
   ],
-  "publishedAt": "2026-09-16T21:42:51.539Z"
+  "publishedAt": "2026-09-18T21:10:54.800Z"
 }
