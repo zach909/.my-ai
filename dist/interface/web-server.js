@@ -2955,7 +2955,11 @@ export class WebServer {
                     return;
                 }
                 const text = body?.text ?? '';
-                await this.runner.getLLM().trainOnText(text);
+                // learnText() (not trainOnText()): trainOnText() rebuilds the
+                // model from only this one string, erasing every fact taught
+                // by an earlier POST here. See NeuroclawTrainer.learnText()
+                // and src/index.ts's learn().
+                await this.runner.getLLM().learnText(text);
                 const stats = this.runner.getLLM().getStats();
                 this.sendJson(res, { ok: true, samplesProcessed: stats.samplesProcessed });
             }
