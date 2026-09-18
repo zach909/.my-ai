@@ -115,6 +115,28 @@ print(f"Stable neurons: {info.most_stable_neurons}")
 print(f"Flexible neurons: {info.most_flexible_neurons}")
 ```
 
+## Endurance Training
+
+`asi_core/endurance_training.py` drives one `UnifiedBrain` through a
+long-running session: a curriculum of synthetic tasks across every expert
+domain, interleaved with `self_improve()`, memory-bounding `maintain()`
+calls, and periodic checkpoints (`backup()`/`restore()`) so a session can
+be paused and resumed instead of starting over.
+
+```bash
+python3 -m asi_core.endurance_training --cycles 20000 \
+    --checkpoint /tmp/onebrain.checkpoint.json \
+    --report /tmp/onebrain.report.json
+
+# Resume a previous run and keep going:
+python3 -m asi_core.endurance_training --cycles 20000 \
+    --resume-from /tmp/onebrain.checkpoint.json \
+    --checkpoint /tmp/onebrain.checkpoint.json
+```
+
+See [docs/ENDURANCE_TRAINING.md](docs/ENDURANCE_TRAINING.md) for the full
+option reference.
+
 ## Documentation
 
 See [docs/](docs/) and [wiki/](wiki/) for comprehensive documentation:
