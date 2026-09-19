@@ -722,6 +722,116 @@ class TestStatisticsAndDiagnostics(unittest.TestCase):
         self.assertIn('divergence_events', stats['diagnostics'])
 
 
+class TestParallelSettle(unittest.TestCase):
+    """
+    Tests for the parallel_workers settle path (see _settle_shard /
+    _settle_tick_parallel in neural_mesh.py). The core guarantee under
+    test: activate() with parallel_workers>1 must produce output
+    bit-for-bit identical to parallel_workers=0 (serial), for every mesh
+    feature that interacts with settle (plain, active-group masking,
+    continuous/carried state, live-correction divergence).
+    """
+
+    def _make_pair(self, **kwargs):
+        """A (serial, parallel) mesh pair with identical config/seed, and
+        parallel_min_neurons lowered to 1 so even these small test meshes
+        actually exercise the subprocess path."""
+        defaults = dict(n_neurons=20, n_dimensions=4, n_input=4, n_groups=1, seed=7)
+        defaults.update(kwargs)
+        serial = NeuralMesh(**defaults)
+        parallel = NeuralMesh(parallel_workers=2, parallel_min_neurons=1, **defaults)
+        return serial, parallel
+
+    def test_parallel_matches_serial_single_activation(self):
+        serial, parallel = self._make_pair()
+        try:
+            input_pattern = [0.5, -0.2, 0.3, 0.1]
+            out_serial = serial.activate(input_pattern)
+            out_parallel = parallel.activate(input_pattern)
+            self.assertEqual(out_serial, out_parallel)
+        finally:
+            parallel.close()
+
+    def test_parallel_matches_serial_across_many_ticks_and_inputs(self):
+        serial, parallel = self._make_pair(n_groups=1, settle_ticks=6)
+        try:
+            rng = random.Random(99)
+            for _ in range(5):
+                input_pattern = [rng.uniform(-1, 1) for _ in range(4)]
+                out_serial = serial.activate(input_pattern)
+                out_parallel = parallel.activate(input_pattern)
+                self.assertEqual(out_serial, out_parallel)
+                # Full internal state must match too, not just the output.
+                for nid in serial.neurons:
+                    self.assertEqual(
+                        serial.neurons[nid].state_vector,
+                        parallel.neurons[nid].state_vector,
+                    )
+        finally:
+            parallel.close()
+
+    def test_parallel_matches_serial_with_expert_group_masking(self):
+        # n_groups > 1 exercises the active_mask path in both
+        # _settle_tick_serial/_settle_tick_parallel and _settle_shard.
+        serial, parallel = self._make_pair(n_groups=4)
+        serial.active_groups = {0, 2}
+        parallel.active_groups = {0, 2}
+        try:
+            input_pattern = [0.4, 0.1, -0.3, 0.2]
+            self.assertEqual(serial.activate(input_pattern), parallel.activate(input_pattern))
+        finally:
+            parallel.close()
+
+    def test_parallel_matches_serial_continuous_mode(self):
+        serial, parallel = self._make_pair(continuous=True, n_groups=2)
+        try:
+            rng = random.Random(11)
+            for _ in range(4):
+                input_pattern = [rng.uniform(-1, 1) for _ in range(4)]
+                out_serial = serial.step_continuous(input_pattern)
+                out_parallel = parallel.step_continuous(input_pattern)
+                self.assertEqual(out_serial, out_parallel)
+        finally:
+            parallel.close()
+
+    def test_parallel_disabled_by_default(self):
+        mesh = NeuralMesh(n_neurons=16, n_dimensions=4, n_input=4)
+        self.assertEqual(mesh.parallel_workers, 0)
+        self.assertIsNone(mesh._pool)
+        mesh.activate([0.1, 0.2, 0.3, 0.4])
+        # Never having crossed parallel_min_neurons's gate (or having it
+        # disabled entirely), no pool should ever get created.
+        self.assertIsNone(mesh._pool)
+        mesh.close()  # no-op, must not raise
+
+    def test_parallel_pool_created_lazily_and_reusable(self):
+        mesh = NeuralMesh(
+            n_neurons=16, n_dimensions=4, n_input=4,
+            parallel_workers=2, parallel_min_neurons=1,
+        )
+        try:
+            self.assertIsNone(mesh._pool)
+            mesh.activate([0.1, 0.2, 0.3, 0.4])
+            pool_after_first = mesh._pool
+            self.assertIsNotNone(pool_after_first)
+            mesh.activate([0.5, 0.1, 0.2, 0.3])
+            # Same pool instance reused across activate() calls, not
+            # recreated (and re-paying process-startup cost) every tick.
+            self.assertIs(mesh._pool, pool_after_first)
+        finally:
+            mesh.close()
+        self.assertIsNone(mesh._pool)
+
+    def test_close_is_idempotent(self):
+        mesh = NeuralMesh(
+            n_neurons=16, n_dimensions=4, n_input=4,
+            parallel_workers=2, parallel_min_neurons=1,
+        )
+        mesh.activate([0.1, 0.2, 0.3, 0.4])
+        mesh.close()
+        mesh.close()  # must not raise
+
+
 class TestCreateMeshFactory(unittest.TestCase):
     """Test the create_mesh factory function."""
     

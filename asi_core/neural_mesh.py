@@ -19,6 +19,7 @@ but provides a standalone Python reference implementation for the ASI system.
 import math
 import time
 import random
+from concurrent.futures import ProcessPoolExecutor
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional, Tuple, Set
 from enum import Enum
@@ -123,10 +124,150 @@ class SynapticConnection:
         return self.base_learning_rate * (1.0 - vale)
 
 
+@dataclass
+class _MeshWeightsSnapshot:
+    """
+    Immutable, worker-process-resident copy of everything a settle tick
+    needs that does *not* change tick-to-tick: topology and connection
+    weights. Sent to each worker exactly once, via ProcessPoolExecutor's
+    ``initializer``, when the pool is (re)created -- not on every settle
+    tick.
+
+    This is the difference between a parallel settle tick that's actually
+    faster and one that isn't: the weights are the O(n_neurons^2 *
+    n_dimensions^2) part of the mesh, so re-pickling a shard's slice of
+    them on every tick (the first version of this feature did exactly
+    that) makes the IPC cost dominate the compute it was supposed to
+    parallelize away. Caching them worker-side instead means a steady
+    -state tick only has to ship the O(n_neurons * n_dimensions) state
+    snapshot, which is genuinely cheaper than computing it serially once
+    n_neurons is large enough.
+
+    Whenever anything here could go stale -- learning
+    (apply_hebbian_learning), a new expert group (add_expert_group), an
+    explicit weight or DSL-bias override (set_connection_weight,
+    add_dsl_bias), or a full state load (load_state) -- NeuralMesh calls
+    _invalidate_parallel_pool(), which tears the pool down so the next
+    parallel tick lazily rebuilds it (and this snapshot) from current
+    weights/biases.
+    """
+    n_dimensions: int
+    incoming_by_target: Dict[int, List[int]]
+    weight_by_pair: Dict[Tuple[int, int], List[List[float]]]
+    dsl_bias_by_id: Dict[int, float]
+
+
+# Worker-process-local: set once by _worker_attach_snapshot (the pool's
+# ``initializer``) and read by every _settle_shard call this worker process
+# ever handles. Each worker process gets its own copy of this module-level
+# name -- there is no cross-process sharing of the *variable*, only of the
+# (picklable) snapshot value passed through the pool's initargs.
+_WORKER_SNAPSHOT: Optional["_MeshWeightsSnapshot"] = None
+
+
+def _worker_attach_snapshot(snapshot: "_MeshWeightsSnapshot") -> None:
+    """ProcessPoolExecutor ``initializer``: runs once when a worker
+    process starts, stashing the mesh's topology/weights snapshot so
+    every later `_settle_shard` call in this same worker reuses it
+    instead of receiving it again."""
+    global _WORKER_SNAPSHOT
+    _WORKER_SNAPSHOT = snapshot
+
+
+def _settle_shard(
+    payload: Tuple[
+        List[int],
+        Dict[int, List[float]],
+        Dict[int, float],
+        Dict[int, List[float]],
+        Optional[Set[int]],
+    ]
+) -> Dict[int, Tuple[List[float], float]]:
+    """
+    Picklable, process-pool-safe unit of work for parallel settle():
+    compute the settled state vector and squared-diff sum for one shard of
+    target neurons, using this worker's already-attached
+    ``_WORKER_SNAPSHOT`` (see ``_worker_attach_snapshot``) for
+    topology/weights.
+
+    This deliberately re-implements the exact same weighted-sum + bias +
+    tanh + divergence arithmetic, in the exact same iteration order, as
+    ``compute_neuron_input`` and the serial branch of ``_settle`` (rather
+    than calling those methods, which live on the mesh), so the parallel
+    path is bit-for-bit identical to the serial one, not just numerically
+    close -- verified in test_neural_mesh.py by comparing full activate()
+    outputs.
+
+    Args (all packed into one tuple -- ProcessPoolExecutor.map passes one
+    positional argument per call):
+        target_ids: neuron ids this shard is responsible for.
+        state_by_id: read-only snapshot of every active neuron's current
+            state_vector, keyed by id (shared across all shards).
+        input_flag_by_target / prev_sv_by_target: per-target scalars/
+            vectors this shard needs from the live NeuronState objects.
+        active_mask: same active-group gate `compute_neuron_input` checks
+            (or None when every neuron is active).
+
+    Returns: target_id -> (new_state_vector, sq_sum_of_content_diffs).
+    """
+    target_ids, state_by_id, input_flag_by_target, prev_sv_by_target, active_mask = payload
+
+    snapshot = _WORKER_SNAPSHOT
+    if snapshot is None:
+        raise RuntimeError(
+            "parallel settle worker has no attached mesh snapshot -- "
+            "_worker_attach_snapshot should have run as this pool's initializer"
+        )
+    nd = snapshot.n_dimensions
+    incoming_by_target = snapshot.incoming_by_target
+    weight_by_pair = snapshot.weight_by_pair
+    dsl_bias_by_id = snapshot.dsl_bias_by_id
+
+    tanh = math.tanh
+    results: Dict[int, Tuple[List[float], float]] = {}
+
+    for target_id in target_ids:
+        result = [0.0] * nd
+
+        for source_id in incoming_by_target.get(target_id, ()):
+            if active_mask is not None and source_id not in active_mask:
+                continue
+            sv = state_by_id.get(source_id)
+            wm = weight_by_pair.get((source_id, target_id))
+            if sv is None or wm is None:
+                continue
+            n_src = len(sv)
+            lim = nd if nd <= n_src else n_src
+            for target_d in range(nd):
+                wrow = wm[target_d]
+                acc = 0.0
+                for source_d in range(lim):
+                    acc += wrow[source_d] * sv[source_d]
+                result[target_d] += acc
+
+        total_bias = 0.01 + dsl_bias_by_id.get(target_id, 0.0)
+        for d in range(1, nd):
+            result[d] += total_bias
+
+        new_state = [0.0] * nd
+        new_state[0] = input_flag_by_target.get(target_id, 0.0)
+        prev_sv = prev_sv_by_target[target_id]
+        sq_sum = 0.0
+        for d in range(1, nd):
+            v = tanh(result[d])
+            new_state[d] = v
+            diff = v - prev_sv[d]
+            sq_sum += diff * diff
+
+        results[target_id] = (new_state, sq_sum)
+
+    return results
+
+
 class NeuralMesh:
     """
     A fully connected neural mesh with all-to-all connectivity.
-    
+
     This implements:
     - True all-to-all density (every neuron reads every other)
     - D×D weight blocks for cross-dimensional reasoning
@@ -135,8 +276,18 @@ class NeuralMesh:
     - Live correction for divergent settles
     - Continuous operation with state carry-over
     - Expert groups with selective activation
+
+    Settle ticks are single-threaded Python by default. Passing
+    ``parallel_workers > 1`` distributes each tick's per-neuron update
+    across that many subprocesses (sharded by target neuron id), which
+    only pays off once the O(n_neurons^2 * n_dimensions^2) weighted-sum
+    work per tick outweighs the cost of shipping each shard's slice of
+    the state/weights across the process boundary -- see
+    ``parallel_min_neurons``. Off (``parallel_workers=0``, the default)
+    is bit-for-bit and performance-identical to the mesh before this
+    option existed.
     """
-    
+
     def __init__(
         self,
         n_neurons: int = 64,
@@ -150,11 +301,14 @@ class NeuralMesh:
         continuous: bool = False,
         seed: Optional[int] = None,
         auto_route: bool = False,
-        group_score_decay: float = 0.9
+        group_score_decay: float = 0.9,
+        parallel_workers: int = 0,
+        parallel_min_neurons: int = 32,
     ):
         # Validate configuration
         assert n_dimensions >= 2, "Need dim 0 for input flag plus >=1 content dim"
         assert 1 <= n_input < n_neurons, "Input neurons must be subset of total"
+        assert parallel_workers >= 0, "parallel_workers must be >= 0 (0 disables it)"
 
         self._rng = random.Random(seed) if seed is not None else random
         self.n_neurons = n_neurons
@@ -166,6 +320,15 @@ class NeuralMesh:
         self.divergence_tolerance = divergence_tolerance
         self.sustained_divergence_ticks = sustained_divergence_ticks
         self.continuous = continuous
+
+        # Parallel settle (see class docstring). `_pool` is created lazily,
+        # on the first tick that actually qualifies for the parallel path,
+        # so constructing a mesh with parallel_workers>0 that never reaches
+        # parallel_min_neurons (e.g. every "small"/"default" preset) never
+        # spawns a process.
+        self.parallel_workers = parallel_workers
+        self.parallel_min_neurons = parallel_min_neurons
+        self._pool: Optional[ProcessPoolExecutor] = None
         
         # Initialize neurons
         self.neurons: Dict[int, NeuronState] = {}
@@ -394,11 +557,13 @@ class NeuralMesh:
         if conn is None:
             raise ValueError(f"no such connection: {source_id} -> {target_id}")
         conn.weight_matrix = [[weight for _ in range(self.n_dimensions)] for _ in range(self.n_dimensions)]
+        self._invalidate_parallel_pool()
 
     def add_dsl_bias(self, target_id: int, bias: float) -> None:
         """Accumulate an explicit DSL-declared bias onto a neuron's input term."""
         if target_id in self.neurons:
             self.neurons[target_id].dsl_bias += bias
+            self._invalidate_parallel_pool()
     
     def activate(self, input_vector: List[float]) -> List[float]:
         """
@@ -453,53 +618,33 @@ class NeuralMesh:
             
             # Determine active neurons (expert routing)
             active_mask = self._get_active_neurons()
-            
-            # Update each neuron
-            new_states: Dict[int, List[float]] = {}
-            max_divergence = 0.0
             nd = self.n_dimensions
-            tanh = math.tanh
-            
-            for neuron_id, neuron in self.neurons.items():
-                if active_mask is not None and neuron_id not in active_mask:
-                    # Dormant neurons maintain state
-                    new_states[neuron_id] = list(neuron.state_vector)
-                    continue
-                
-                # Compute input from all other neurons
-                neuron_input = self.compute_neuron_input(neuron_id, active_mask)
-                ni_len = len(neuron_input)
-                
-                # Apply nonlinearity (tanh) to each dimension. Dimension 0
-                # is the input flag and is carried through unchanged; content
-                # dimensions get tanh(total_input).
-                new_state = [0.0] * nd
-                new_state[0] = neuron.input_flag
-                prev_sv = prev_state[neuron_id]
-                sq_sum = 0.0
-                for d in range(1, nd):
-                    total_input = neuron_input[d] if d < ni_len else 0.0
-                    v = tanh(total_input)
-                    new_state[d] = v
-                    diff = v - prev_sv[d]
-                    sq_sum += diff * diff
-                
-                new_states[neuron_id] = new_state
-                
-                # Divergence (L2 norm of the state delta) -- folded into the
-                # same pass that builds new_state instead of a second loop.
-                # Dim 0 is identical (input_flag is constant within a settle),
-                # so it contributes 0 and can be skipped.
+
+            # Update each neuron: either the serial in-process loop, or --
+            # once parallel_workers>0 and enough neurons are active to be
+            # worth it -- the sharded-subprocess path. Both produce
+            # bit-for-bit identical (new_state, sq_sum) pairs per neuron;
+            # see _settle_shard's docstring for why.
+            if self._use_parallel_settle(active_mask):
+                new_states, per_neuron_sq_sum = self._settle_tick_parallel(active_mask, prev_state)
+            else:
+                new_states, per_neuron_sq_sum = self._settle_tick_serial(active_mask, prev_state)
+
+            # Divergence (L2 norm of the state delta) and live-correction
+            # bookkeeping, common to both paths.
+            max_divergence = 0.0
+            for neuron_id, sq_sum in per_neuron_sq_sum.items():
+                neuron = self.neurons[neuron_id]
                 divergence = sq_sum ** 0.5
                 if divergence > max_divergence:
                     max_divergence = divergence
-                
+
                 # Track consecutive divergence for live correction
                 if divergence > self.divergence_tolerance:
                     neuron.consecutive_divergence += 1
                 else:
                     neuron.consecutive_divergence = 0
-            
+
             # Live correction for sustained divergence
             if consecutive_high_divergence >= self.sustained_divergence_ticks:
                 self._apply_divergence_correction(prev_state, new_states)
@@ -526,9 +671,173 @@ class NeuralMesh:
         
         # Store settled state for diagnostics
         self._last_settled = dict(prev_state)
-        
+
         return prev_state
-    
+
+    def _settle_tick_serial(
+        self,
+        active_mask: Optional[Set[int]],
+        prev_state: Dict[int, List[float]],
+    ) -> Tuple[Dict[int, List[float]], Dict[int, float]]:
+        """
+        One settle tick's per-neuron update, single-threaded. Returns
+        (new_states, per_neuron_sq_sum) where the latter holds an entry
+        only for neurons that were actually recomputed (dormant/masked-out
+        neurons carry their state forward with no divergence tracking,
+        matching the pre-parallel behavior exactly).
+        """
+        nd = self.n_dimensions
+        tanh = math.tanh
+        new_states: Dict[int, List[float]] = {}
+        per_neuron_sq_sum: Dict[int, float] = {}
+
+        for neuron_id, neuron in self.neurons.items():
+            if active_mask is not None and neuron_id not in active_mask:
+                # Dormant neurons maintain state
+                new_states[neuron_id] = list(neuron.state_vector)
+                continue
+
+            # Compute input from all other neurons
+            neuron_input = self.compute_neuron_input(neuron_id, active_mask)
+            ni_len = len(neuron_input)
+
+            # Apply nonlinearity (tanh) to each dimension. Dimension 0
+            # is the input flag and is carried through unchanged; content
+            # dimensions get tanh(total_input).
+            new_state = [0.0] * nd
+            new_state[0] = neuron.input_flag
+            prev_sv = prev_state[neuron_id]
+            sq_sum = 0.0
+            for d in range(1, nd):
+                total_input = neuron_input[d] if d < ni_len else 0.0
+                v = tanh(total_input)
+                new_state[d] = v
+                diff = v - prev_sv[d]
+                sq_sum += diff * diff
+
+            new_states[neuron_id] = new_state
+            per_neuron_sq_sum[neuron_id] = sq_sum
+
+        return new_states, per_neuron_sq_sum
+
+    def _use_parallel_settle(self, active_mask: Optional[Set[int]]) -> bool:
+        """Whether this tick's neuron update should go through the
+        subprocess pool: opted in (parallel_workers>1) and enough neurons
+        are actually being recomputed this tick to outweigh the fixed
+        per-tick cost of sharding + IPC."""
+        if self.parallel_workers <= 1:
+            return False
+        n_active = len(active_mask) if active_mask is not None else self.n_neurons
+        return n_active >= self.parallel_min_neurons
+
+    def _ensure_pool(self) -> ProcessPoolExecutor:
+        """
+        Lazily create (and reuse) the subprocess pool for parallel settle
+        ticks, so a mesh that never crosses parallel_min_neurons never
+        pays process-startup cost. Every worker is started with the
+        current topology/weights (see _MeshWeightsSnapshot) attached once
+        via the pool's ``initializer`` -- not shipped again on every tick.
+        """
+        if self._pool is None:
+            snapshot = _MeshWeightsSnapshot(
+                n_dimensions=self.n_dimensions,
+                incoming_by_target=self._incoming_by_target,
+                weight_by_pair={key: conn.weight_matrix for key, conn in self.connections.items()},
+                dsl_bias_by_id={nid: n.dsl_bias for nid, n in self.neurons.items()},
+            )
+            self._pool = ProcessPoolExecutor(
+                max_workers=self.parallel_workers,
+                initializer=_worker_attach_snapshot,
+                initargs=(snapshot,),
+            )
+        return self._pool
+
+    def _invalidate_parallel_pool(self) -> None:
+        """
+        Tear down the worker pool, if one exists, so the next parallel
+        settle tick lazily recreates it (and re-snapshots current
+        topology/weights/dsl_bias). Called from every method that mutates
+        connections, weights, or dsl_bias after the pool could have been
+        created: _initialize_connections, add_expert_group,
+        set_connection_weight, apply_hebbian_learning, add_dsl_bias, and
+        load_state. Non-blocking (``wait=False``) -- correctness only
+        requires that `self._pool` stop being reused, not that the old
+        worker processes have actually exited before this call returns.
+        """
+        if self._pool is not None:
+            self._pool.shutdown(wait=False)
+            self._pool = None
+
+    def _settle_tick_parallel(
+        self,
+        active_mask: Optional[Set[int]],
+        prev_state: Dict[int, List[float]],
+    ) -> Tuple[Dict[int, List[float]], Dict[int, float]]:
+        """
+        Parallel counterpart to `_settle_tick_serial`: shards the active
+        neuron ids across `parallel_workers` subprocesses (see
+        `_settle_shard`) and merges their results. Dormant/masked-out
+        neurons are still handled directly here (cheap; no reason to ship
+        them to a worker), exactly as in the serial path. Unlike weights/
+        topology (cached worker-side, see `_ensure_pool`), the per-neuron
+        state snapshot and input_flag/prev-state are genuinely per-tick
+        and are sent fresh every call.
+        """
+        active_ids = sorted(active_mask) if active_mask is not None else sorted(self.neurons.keys())
+
+        new_states: Dict[int, List[float]] = {}
+        if active_mask is not None:
+            for neuron_id, neuron in self.neurons.items():
+                if neuron_id not in active_mask:
+                    new_states[neuron_id] = list(neuron.state_vector)
+
+        if not active_ids:
+            return new_states, {}
+
+        # Read-only snapshot every worker needs of every neuron it might
+        # read as a source (any active neuron -- inactive sources are
+        # skipped identically to compute_neuron_input). Built once per
+        # tick and shared across every shard's payload.
+        source_ids = active_mask if active_mask is not None else self.neurons.keys()
+        state_by_id = {nid: self.neurons[nid].state_vector for nid in source_ids}
+
+        n_workers = min(self.parallel_workers, len(active_ids))
+        shard_size = -(-len(active_ids) // n_workers)  # ceil division
+        shards = [active_ids[i:i + shard_size] for i in range(0, len(active_ids), shard_size)]
+
+        payloads = []
+        for shard in shards:
+            input_flag_by_target = {tid: self.neurons[tid].input_flag for tid in shard}
+            prev_sv_by_target = {tid: prev_state[tid] for tid in shard}
+            payloads.append((shard, state_by_id, input_flag_by_target, prev_sv_by_target, active_mask))
+
+        pool = self._ensure_pool()
+        per_neuron_sq_sum: Dict[int, float] = {}
+        for shard_result in pool.map(_settle_shard, payloads):
+            for neuron_id, (new_state, sq_sum) in shard_result.items():
+                new_states[neuron_id] = new_state
+                per_neuron_sq_sum[neuron_id] = sq_sum
+
+        return new_states, per_neuron_sq_sum
+
+    def close(self) -> None:
+        """Shut down the parallel worker pool, if `parallel_workers>1`
+        ever actually created one. Safe to call unconditionally (no-op
+        when there is no pool), and safe to call more than once."""
+        if self._pool is not None:
+            self._pool.shutdown(wait=True)
+            self._pool = None
+
+    def __del__(self):
+        # Interpreter shutdown can tear down module globals (including
+        # ProcessPoolExecutor's own internals) before __del__ runs on
+        # still-live objects; swallow whatever that produces rather than
+        # letting a destructor raise.
+        try:
+            self.close()
+        except Exception:
+            pass
+
     def _get_active_neurons(self) -> Optional[Set[int]]:
         """
         Get set of active neurons based on expert routing.
@@ -654,6 +963,7 @@ class NeuralMesh:
                     _wire(nid, other)
 
         self.active_groups.add(new_group_id)
+        self._invalidate_parallel_pool()
         return new_group_id, new_ids
 
     def _apply_divergence_correction(
@@ -725,7 +1035,9 @@ class NeuralMesh:
                     v = row[d2] + delta
                     # Clamp weights to [-1, 1]
                     row[d2] = -1.0 if v < -1.0 else (1.0 if v > 1.0 else v)
-    
+
+        self._invalidate_parallel_pool()
+
     def step_continuous(self, input_vector: List[float]) -> List[float]:
         """
         Step the mesh in continuous mode, carrying state forward.
@@ -858,7 +1170,9 @@ class NeuralMesh:
                     conn = self.connections[(sid, tid)]
                     conn.weight_matrix = c_data['weight_matrix']
                     conn.eligibility_trace = c_data.get('eligibility_trace', 0.0)
-        
+
+        self._invalidate_parallel_pool()
+
         # Load diagnostics
         diag = state.get('diagnostics', {})
         self._live_corrections = diag.get('live_corrections', 0)

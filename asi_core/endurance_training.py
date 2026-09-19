@@ -303,6 +303,14 @@ def _build_arg_parser() -> argparse.ArgumentParser:
     parser.add_argument("--introspect-every", type=int, default=200)
     parser.add_argument("--min-strength", type=float, default=1.5)
     parser.add_argument("--bundle-extension", default=None, help="Name to bundle learned skills into as an Extension.")
+    parser.add_argument(
+        "--parallel-workers", type=int, default=0,
+        help="Distribute each settle tick's per-neuron update across this many "
+             "subprocesses once the mesh has enough active neurons to be worth "
+             "it (see NeuralMesh's class docstring). 0 (default) is the "
+             "original single-process behavior; most useful with --config "
+             "massive or a custom UnifiedBrain built with a large n_neurons.",
+    )
     parser.add_argument("--quiet", action="store_true")
     return parser
 
@@ -312,46 +320,49 @@ def main(argv: Optional[List[str]] = None) -> EnduranceReport:
     if args.cycles is None and args.seconds is None:
         args.cycles = 5000
 
-    brain = create_brain(args.config, expert_names=DEFAULT_EXPERT_NAMES)
-    if args.resume_from:
-        with open(args.resume_from) as f:
-            brain.restore(json.load(f))
+    brain = create_brain(args.config, expert_names=DEFAULT_EXPERT_NAMES, parallel_workers=args.parallel_workers)
+    try:
+        if args.resume_from:
+            with open(args.resume_from) as f:
+                brain.restore(json.load(f))
 
-    trainer = EnduranceTrainer(brain, seed=args.seed)
+        trainer = EnduranceTrainer(brain, seed=args.seed)
 
-    def _progress(cycle: int, result: CycleResult) -> None:
-        if not args.quiet and cycle % max(1, (args.introspect_every or 200)) == 0:
-            print(f"[cycle {cycle}] avg_vale={result.average_vale:.3f} "
-                  f"skills={len(result.active_skills)} experts={result.active_experts}")
+        def _progress(cycle: int, result: CycleResult) -> None:
+            if not args.quiet and cycle % max(1, (args.introspect_every or 200)) == 0:
+                print(f"[cycle {cycle}] avg_vale={result.average_vale:.3f} "
+                      f"skills={len(result.active_skills)} experts={result.active_experts}")
 
-    report = trainer.run(
-        max_cycles=args.cycles,
-        max_seconds=args.seconds,
-        checkpoint_every=args.checkpoint_every,
-        checkpoint_path=args.checkpoint,
-        introspect_every=args.introspect_every,
-        self_improve_every=args.self_improve_every,
-        maintain_every=args.maintain_every,
-        min_strength=args.min_strength,
-        on_progress=_progress,
-    )
+        report = trainer.run(
+            max_cycles=args.cycles,
+            max_seconds=args.seconds,
+            checkpoint_every=args.checkpoint_every,
+            checkpoint_path=args.checkpoint,
+            introspect_every=args.introspect_every,
+            self_improve_every=args.self_improve_every,
+            maintain_every=args.maintain_every,
+            min_strength=args.min_strength,
+            on_progress=_progress,
+        )
 
-    if args.bundle_extension:
-        trainer.bundle_extension(args.bundle_extension, purpose="Endurance training session output")
+        if args.bundle_extension:
+            trainer.bundle_extension(args.bundle_extension, purpose="Endurance training session output")
 
-    if not args.quiet:
-        print(f"\nStopped: {report.stopped_reason}")
-        print(f"Cycles: {report.total_cycles} in {report.total_wall_seconds:.1f}s "
-              f"({report.cycles_per_second:.1f}/s)")
-        print(f"Skills learned: {len(report.skills_created)}")
-        print(f"Extensions created: {report.extensions_created}")
-        print(f"Vale invariant held throughout: {report.vale_invariant_ok}")
+        if not args.quiet:
+            print(f"\nStopped: {report.stopped_reason}")
+            print(f"Cycles: {report.total_cycles} in {report.total_wall_seconds:.1f}s "
+                  f"({report.cycles_per_second:.1f}/s)")
+            print(f"Skills learned: {len(report.skills_created)}")
+            print(f"Extensions created: {report.extensions_created}")
+            print(f"Vale invariant held throughout: {report.vale_invariant_ok}")
 
-    if args.report:
-        with open(args.report, "w") as f:
-            json.dump(report.to_dict(), f, indent=2)
+        if args.report:
+            with open(args.report, "w") as f:
+                json.dump(report.to_dict(), f, indent=2)
 
-    return report
+        return report
+    finally:
+        brain.close()
 
 
 if __name__ == "__main__":

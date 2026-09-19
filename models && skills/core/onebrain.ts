@@ -1151,14 +1151,88 @@ export interface MeshConfig {
   learningRate: number;
   dampingFactor?: number;
   seed: number;
+  /** See NeuronMesh.parallelMinNodes. Only relevant once a
+   *  ParallelMeshBackend has been attached via setParallelBackend(). */
+  parallelMinNodes?: number;
 }
 
 /** Cap on a node's retained settle trace when recordHistory is on. Bounded so
  *  a long-running mesh cannot accumulate every sample it has ever produced. */
 const MAX_ACTIVATION_HISTORY = 1000;
 
+/**
+ * Pluggable multi-core backend for NeuronMesh.propagate()'s dense,
+ * no-gates/no-vale fast path (the "Densest-common-case path" below --
+ * connectionDensity 1.0 is what the brain actually runs, per the comment
+ * on the `density` constant in the constructor).
+ *
+ * Deliberately just an interface here, not an implementation: this file
+ * is imported by browser bundles (see the file header comment above) and
+ * must stay free of Node built-ins, so the actual worker_threads-backed
+ * pool lives in the sibling, Node-only mesh-worker-pool.ts and is wired
+ * in at runtime by a caller that knows it's running in Node, via
+ * `setParallelBackend()`.
+ */
+export interface ParallelMeshBackend {
+  /**
+   * (Re)attach this backend to a mesh of `n` nodes, given its dense
+   * row-major weights and per-node biases, and the pair of activation
+   * buffers propagate() alternates between as "curr"/"next" -- all
+   * SharedArrayBuffer-backed so workers can read/write them without
+   * copying. Must be awaited (once) before `isReady`/`computeDenseRows`
+   * can be used for this generation of buffers; NeuronMesh calls this
+   * again whenever refreshCache() reallocates them (node count changed,
+   * or a parallel backend was just attached).
+   */
+  prepare(params: {
+    n: number;
+    weightsBuffer: SharedArrayBuffer;
+    biasesBuffer: SharedArrayBuffer;
+    bufferA: SharedArrayBuffer;
+    bufferB: SharedArrayBuffer;
+  }): Promise<void>;
+
+  /**
+   * Cheap, synchronous check: has `prepare()` already attached exactly
+   * this generation of buffers (compared by reference)? NeuronMesh calls
+   * this once per propagate() call, not per iteration, to decide whether
+   * the whole call can use the parallel path.
+   */
+  isReady(n: number, weightsBuffer: SharedArrayBuffer, bufferA: SharedArrayBuffer, bufferB: SharedArrayBuffer): boolean;
+
+  /**
+   * Synchronously compute, for every row i, next[i] = activate(biases[i]
+   * + dot(curr, weights row i)), using the pool `prepare()` attached.
+   * `curr`/`next` must be Float32Array views over exactly the
+   * bufferA/bufferB SharedArrayBuffers from the matching `prepare()` call
+   * (in either role -- which physical buffer is "curr" this call is
+   * resolved internally by comparing `.buffer` identity, not by a fixed
+   * curr=A/next=B convention, since propagate() swaps them every
+   * iteration by reference rather than copying).
+   *
+   * Blocks the calling thread until every worker has finished its row
+   * range (via Atomics), so this can be called from propagate()'s
+   * ordinary synchronous iteration loop without propagate() itself
+   * becoming async. Returns the L1 residual: sum(|next[i] - curr[i]|),
+   * matching what the serial loop computes.
+   */
+  computeDenseRows(
+    curr: Float32Array,
+    weights: Float32Array,
+    biases: Float32Array,
+    next: Float32Array,
+    activation: 'relu' | 'tanh' | 'sigmoid' | 'swish',
+  ): number;
+}
+
 export class NeuronMesh {
   private config: MeshConfig;
+  private parallelBackend: ParallelMeshBackend | null = null;
+  /** Below this node count, propagate() uses the serial dense loop even
+   *  with a parallel backend attached -- worker dispatch/Atomics overhead
+   *  outweighs the compute savings for small meshes. Overridable via
+   *  MeshConfig.parallelMinNodes; see setParallelBackend(). */
+  private parallelMinNodes: number = 256;
   private nodes: Map<number, NeuronNode>;
   private nextId: number = 0;
   /**
@@ -1207,7 +1281,9 @@ export class NeuronMesh {
       activationFunction: actFn as 'relu' | 'tanh' | 'sigmoid' | 'swish',
       learningRate: config.learningRate ?? 0.01,
       seed: config.seed ?? 42,
+      parallelMinNodes: config.parallelMinNodes,
     };
+    if (config.parallelMinNodes !== undefined) this.parallelMinNodes = config.parallelMinNodes;
     this.nodes = new Map();
     const tempIds: number[] = [];
     for (let i = 0; i < this.config.initialNodeCount; i++) {
@@ -1244,15 +1320,37 @@ export class NeuronMesh {
   }
 
   /**
+   * Allocate a Float32Array of length `n`, SharedArrayBuffer-backed when a
+   * parallel backend is attached (so workers can read/write it without
+   * copying) and SharedArrayBuffer is actually available in this runtime
+   * -- it isn't in a browser tab without cross-origin isolation, where
+   * the global doesn't exist at all. Plain ArrayBuffer-backed otherwise,
+   * which is every mesh's behavior before this option existed.
+   */
+  private allocFloat32(n: number): Float32Array {
+    if (this.parallelBackend && typeof SharedArrayBuffer !== 'undefined') {
+      return new Float32Array(new SharedArrayBuffer(n * Float32Array.BYTES_PER_ELEMENT));
+    }
+    return new Float32Array(n);
+  }
+
+  /**
    * Synchronize the CSR cache with the current nodes Map.
    */
   private refreshCache(): void {
     this.cachedNodes = Array.from(this.nodes.values());
     const N = this.cachedNodes.length;
     this.idToIndex = new Map(this.cachedNodes.map((n, i) => [n.id, i]));
-    this.biases = new Float32Array(this.cachedNodes.map(n => n.bias));
-    this.currActivations = new Float32Array(this.cachedNodes.map(n => n.activation));
-    this.nextActivations = new Float32Array(N);
+
+    const biases = this.allocFloat32(N);
+    const currActivations = this.allocFloat32(N);
+    for (let i = 0; i < N; i++) {
+      biases[i] = this.cachedNodes[i].bias;
+      currActivations[i] = this.cachedNodes[i].activation;
+    }
+    this.biases = biases;
+    this.currActivations = currActivations;
+    this.nextActivations = this.allocFloat32(N);
 
     let totalEdges = 0;
     for (const n of this.cachedNodes) totalEdges += n.connections.size;
@@ -1279,7 +1377,7 @@ export class NeuronMesh {
     // Dense iff every node connects to every other node (self excluded).
     this.denseLayout = N > 1 && edgePtr === N * (N - 1);
     if (this.denseLayout) {
-      this.denseWeights = new Float32Array(N * N); // diagonal stays 0: no self-edge
+      this.denseWeights = this.allocFloat32(N * N); // diagonal stays 0: no self-edge
       for (let i = 0; i < N; i++) {
         const base = i * N;
         const start = this.rowStarts[i], end = this.rowStarts[i + 1];
@@ -1289,6 +1387,62 @@ export class NeuronMesh {
       this.denseWeights = new Float32Array(0);
     }
     this.cacheValid = true;
+  }
+
+  /**
+   * Attach (or detach, with `null`) a multi-core backend for the dense
+   * fast path. Forces the CSR/dense cache to rebuild on the next
+   * propagate() (or an explicit refreshCache() via prepareParallel())
+   * so `biases`/`currActivations`/`nextActivations`/`denseWeights` become
+   * SharedArrayBuffer-backed -- required before the backend's
+   * `prepare()` can be called. Detaching (`null`) similarly forces a
+   * rebuild back onto plain ArrayBuffers.
+   *
+   * Only the buffer *allocation* changes here; the backend itself isn't
+   * told about these new buffers until `prepareParallel()` is awaited
+   * (propagate() is synchronous and can't await mid-call, so attaching a
+   * backend alone is not enough to start using it -- see
+   * `prepareParallel`).
+   */
+  setParallelBackend(backend: ParallelMeshBackend | null): void {
+    this.parallelBackend = backend;
+    this.cacheValid = false;
+  }
+
+  /**
+   * Await this mesh's attached parallel backend actually being ready to
+   * compute: rebuilds the cache if needed (allocating SharedArrayBuffer-
+   * backed dense weights/biases/activations), then awaits the backend's
+   * `prepare()` with those exact buffers. A no-op if no backend is
+   * attached, or the mesh isn't in the dense (connectionDensity 1.0)
+   * layout the parallel path covers.
+   *
+   * Call this once after `setParallelBackend()` (and again any time the
+   * node count changes) before relying on propagate() actually using the
+   * parallel path -- propagate() itself stays fully synchronous and
+   * falls back to the serial loop whenever the backend isn't ready yet.
+   */
+  async prepareParallel(): Promise<void> {
+    if (!this.parallelBackend) return;
+    if (!this.cacheValid) this.refreshCache();
+    if (!this.denseLayout) return;
+    const weightsBuffer = this.denseWeights.buffer;
+    const biasesBuffer = this.biases.buffer;
+    const bufferA = this.currActivations.buffer;
+    const bufferB = this.nextActivations.buffer;
+    if (!(weightsBuffer instanceof SharedArrayBuffer) || !(bufferA instanceof SharedArrayBuffer) || !(bufferB instanceof SharedArrayBuffer)) {
+      // SharedArrayBuffer unavailable in this runtime (e.g. a browser tab
+      // without cross-origin isolation) -- allocFloat32 already fell back
+      // to plain ArrayBuffers, so there is nothing to prepare.
+      return;
+    }
+    await this.parallelBackend.prepare({
+      n: this.cachedNodes.length,
+      weightsBuffer,
+      biasesBuffer: biasesBuffer as SharedArrayBuffer,
+      bufferA,
+      bufferB,
+    });
   }
 
   /**
@@ -1377,6 +1531,26 @@ export class NeuronMesh {
     let iteration = 0, converged = false, residual = 0;
     const convergenceThreshold = this.config.convergenceThreshold;
 
+    // Whether this whole call can use the attached multi-core backend for
+    // the dense fast path below: decided once per propagate() call (not
+    // per iteration), since curr/next only alternate between the same two
+    // buffers `isReady` already knows. recordHistory is out of scope for
+    // the parallel path (see ParallelMeshBackend's docstring) and always
+    // falls back to the serial loop.
+    const useParallel = !recordHistory
+      && !!this.parallelBackend
+      && this.denseLayout
+      && N >= this.parallelMinNodes
+      && curr.buffer instanceof SharedArrayBuffer
+      && next.buffer instanceof SharedArrayBuffer
+      && this.denseWeights.buffer instanceof SharedArrayBuffer
+      && this.parallelBackend.isReady(
+        N,
+        this.denseWeights.buffer as SharedArrayBuffer,
+        curr.buffer as SharedArrayBuffer,
+        next.buffer as SharedArrayBuffer,
+      );
+
     // Fast-path: When there are no gates and no vale gating (most common case)
     if (!activeGroups && !vale) {
       // Densest-common-case path: no index indirection at all (see denseWeights).
@@ -1384,7 +1558,21 @@ export class NeuronMesh {
       // per function: the indirect call through `activate` measured 1.04x versus
       // a hand-specialised branch, i.e. V8 already inlines this monomorphic
       // closure, so a third near-identical loop body would buy noise.
-      if (this.denseLayout) {
+      if (this.denseLayout && useParallel) {
+        // Multi-core path: each iteration's N independent row computations
+        // (next[i] depends only on curr and the weights/biases, never on
+        // another row's next[i]) are farmed out to the attached worker
+        // pool instead of computed serially here. The iterations
+        // themselves stay sequential (iteration t+1 needs the full curr
+        // from iteration t), so this can't parallelize across iterations
+        // -- only within one.
+        const denseWeights = this.denseWeights;
+        for (; iteration < maxIters; iteration++) {
+          residual = this.parallelBackend!.computeDenseRows(curr, denseWeights, biases, next, actFn);
+          const tmp = curr; curr = next; next = tmp;
+          if (residual < convergenceThreshold) { converged = true; break; }
+        }
+      } else if (this.denseLayout) {
         const denseWeights = this.denseWeights;
         for (; iteration < maxIters; iteration++) {
           residual = 0;

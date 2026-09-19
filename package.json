@@ -21,8 +21,9 @@
     "test": "npm run test:smoke && npm run test:integration && npm run test:install",
     "bench:hyper": "bun benchmarks/hyper_benchmark.ts",
     "bench:mesh": "bun benchmarks/mesh_benchmark.ts",
+    "bench:mesh-parallel": "bun benchmarks/mesh_parallel_benchmark.ts",
     "bench:moe": "bun benchmarks/moe_benchmark.ts",
-    "bench": "bun run bench:hyper && bun run bench:mesh && bun run bench:moe"
+    "bench": "bun run bench:hyper && bun run bench:mesh && bun run bench:mesh-parallel && bun run bench:moe"
   },
   "devDependencies": {
     "@types/node": "^26.1.1",
