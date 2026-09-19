@@ -10,7 +10,7 @@
 
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -1729,20 +1729,42 @@ async function testResearchPlugin() {
   const { ResearchPlugin } = await load('plugins/research.js');
   const r = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
 
-  // Real filesystem search, scoped to this repo -- must find the plugin's
-  // own source file. Regression guard for a real bug caught while
-  // building this: a naive depth-first walk exhausts its whole file
-  // budget descending into whichever subdirectory sorts first
-  // alphabetically (this repo's own extension-builder/Moby, 13,000+
-  // vendored files) before ever reaching a sibling directory like
-  // plugins/ -- silently starving every later-sorted directory. The fix
-  // is breadth-first traversal; this proves plugins/research.ts itself
-  // is actually found, not just that *some* file somewhere matched.
-  const driveHits = await r.searchDrive('class ResearchPlugin', { root: process.cwd(), maxResults: 5 });
-  check(driveHits.some(h => h.location.endsWith('plugins/research.ts')),
-    'ResearchPlugin.searchDrive() finds its own source file in a real repo with a large, alphabetically-earlier sibling directory (BFS, not DFS-starved)');
-  check(driveHits.every(h => h.source === 'drive' && h.snippet.length > 0),
-    'ResearchPlugin.searchDrive() results carry a real snippet, not just a bare filename');
+  // Regression guard for a real bug caught while building this: a naive
+  // depth-first walk exhausts its whole file budget descending into
+  // whichever subdirectory sorts first alphabetically before ever reaching
+  // a later-sorted sibling -- silently starving it. The fix is
+  // breadth-first traversal. Built synthetically here (an alphabetically-
+  // first directory stuffed with more files than maxFiles allows, plus the
+  // real target in an alphabetically-later sibling) rather than relying on
+  // this repo happening to contain a large early-sorted directory --
+  // extension-builder/Moby (a vendored moby/moby source tree, 13,000+
+  // files) used to make this true incidentally, but a regression guard
+  // shouldn't depend on unrelated repo contents that could be removed.
+  const bfsDir = mkdtempSync(join(tmpdir(), 'neuroclaw-bfs-'));
+  try {
+    const bigDir = join(bfsDir, 'aaa_big_sibling');
+    mkdirSync(bigDir);
+    for (let i = 0; i < 200; i++) {
+      writeFileSync(join(bigDir, `file_${String(i).padStart(4, '0')}.txt`), `filler content ${i}`);
+    }
+    const targetDir = join(bfsDir, 'zzz_target');
+    mkdirSync(targetDir);
+    writeFileSync(join(targetDir, 'research.ts'), 'export class ResearchPlugin {}');
+
+    const driveHits = await r.searchDrive('class ResearchPlugin', { root: bfsDir, maxResults: 5, maxFiles: 50 });
+    check(driveHits.some(h => h.location.endsWith('zzz_target/research.ts') || h.location.endsWith('zzz_target\\research.ts')),
+      'ResearchPlugin.searchDrive() finds a target in an alphabetically-later sibling despite a huge alphabetically-earlier directory and a small maxFiles budget (BFS, not DFS-starved)');
+    check(driveHits.every(h => h.source === 'drive' && h.snippet.length > 0),
+      'ResearchPlugin.searchDrive() results carry a real snippet, not just a bare filename');
+  } finally {
+    rmSync(bfsDir, { recursive: true, force: true });
+  }
+
+  // Also exercised against this real repo, unbounded, as a live sanity
+  // check that the plugin's own source is findable in practice.
+  const realHits = await r.searchDrive('class ResearchPlugin', { root: process.cwd(), maxResults: 5 });
+  check(realHits.some(h => h.location.endsWith('plugins/research.ts')),
+    'ResearchPlugin.searchDrive() finds its own source file in this real repo');
 
   // A directory that doesn't exist must degrade to zero results, not throw.
   const noHits = await r.searchDrive('anything', { root: './definitely/does/not/exist/xyz', maxResults: 5 });

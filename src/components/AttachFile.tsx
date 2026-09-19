@@ -1,6 +1,6 @@
 import { useCallback, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Paperclip } from 'lucide-react'
+import { Paperclip } from '@/components/icons'
 import { AgentPulse } from '@/components/agent-pulse'
 import { stageFile, StageError, type StagedFile } from '@/lib/stage-file'
 

@@ -114,7 +114,6 @@ const sources = new Map(files.map(f => [f, readFileSync(f, 'utf8')]))
 // Read as callers only. Kept separate from `sources` so their own exports are
 // not audited -- a build script's helper is not the kind of thing this looks for.
 const callerText = CALLER_DIRS.flatMap(d => walk(path.join(ROOT, d)))
-  .filter(f => !f.includes(`${path.sep}PyTorch${path.sep}`) && !f.includes(`${path.sep}Moby${path.sep}`))
   .map(f => { try { return readFileSync(f, 'utf8') } catch { return '' } })
   .join('\n')
 // Tests count as callers for "is this used at all", but NOT for reachability:

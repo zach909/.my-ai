@@ -2955,10 +2955,10 @@ export class WebServer {
                     return;
                 }
                 const text = body?.text ?? '';
-                // learnText() (not trainOnText()): trainOnText() rebuilds the
-                // model from only this one string, erasing every fact taught
-                // by an earlier POST here. See NeuroclawTrainer.learnText()
-                // and src/index.ts's learn().
+                // learnText() (not trainOnText()): trainOnText() rebuilds the model
+                // from only this one string, erasing every fact taught by an
+                // earlier POST here. See NeuroclawTrainer.learnText() and
+                // src/index.ts's learn().
                 await this.runner.getLLM().learnText(text);
                 const stats = this.runner.getLLM().getStats();
                 this.sendJson(res, { ok: true, samplesProcessed: stats.samplesProcessed });
@@ -3679,8 +3679,9 @@ export class WebServer {
         // (HyperDimensionalEngine.trainDefinitions() in
         // "models && skills/core/onebrain.ts"): this one does genuine
         // torch.autograd/torch.optim gradient descent via a Python subprocess
-        // (extension-builder/pytorch_trainer.py), against the PyTorch source
-        // vendored under extension-builder/PyTorch for local reference/build.
+        // (extension-builder/pytorch_trainer.py), against whatever `torch` is
+        // installed in this machine's Python environment (`pip install torch`,
+        // per the root requirements.txt) -- no PyTorch source is vendored here.
         //
         // Deliberately NOT wired into extension-builder/builder.js: that file is
         // loaded directly in the browser (see its own header comment) with no
@@ -3883,7 +3884,7 @@ export class WebServer {
         // mechanism as extension-builder/merge-networks.mjs, live instead of
         // a one-time build step -- see that file's doc comment for why this
         // only makes sense for PyTorch-trained (@definishon/scripting)
-        // neurons, never Code-to-Net's byte-chain ones (moby/Debian), which
+        // neurons, never Code-to-Net's byte-chain ones (project source/config), which
         // have no trained weights to average in the first place.
         if (pathname === '/api/extension/merge-with-saved' && method === 'POST') {
             try {

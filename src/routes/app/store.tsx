@@ -82,8 +82,8 @@ import {
   Wrench,
   X,
   Zap,
-} from 'lucide-react'
-import { toast } from 'sonner'
+} from '@/components/icons'
+import { toast } from '@/lib/toast'
 import { renderWikiMarkdown } from '@/lib/wiki-markdown'
 import { usePageVisible } from '@/hooks/usePageVisible'
 import { AgentPulse } from '@/components/agent-pulse'

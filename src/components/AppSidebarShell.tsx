@@ -20,7 +20,7 @@ import {
   Pin,
   Folder,
   Settings,
-} from 'lucide-react'
+} from '@/components/icons'
 import { cn } from '@/lib/utils'
 
 const SIDEBAR_KEY = 'sidebar_collapsed'

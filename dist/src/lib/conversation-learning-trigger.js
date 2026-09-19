@@ -15,12 +15,10 @@
  * Fire-and-forget, from the caller's point of view: the chat response
  * this session already computed is returned immediately regardless of
  * how long training takes. A module-level lock skips a trigger while a
- * cycle is already running (real gradient descent takes real time --
- * cold start alone can be several seconds, see pytorch_trainer.py's own
- * doc comment) rather than letting rapid back-and-forth messages queue
- * up overlapping training subprocesses; the background loop's next
- * scheduled pass still picks up whatever a skipped trigger missed, so
- * no turn is ever silently lost, only deferred.
+ * cycle is already running rather than letting rapid back-and-forth
+ * messages queue up overlapping training cycles; the background loop's
+ * next scheduled pass still picks up whatever a skipped trigger missed,
+ * so no turn is ever silently lost, only deferred.
  */
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
@@ -28,10 +26,8 @@ let learningInFlight = false;
 /** Dynamically imports scripts/conversation-learning-agent.mjs's real
  *  runOneCycle() and runs it once, in-process, right now -- not waiting
  *  for the separate background agent's next scheduled tick. Never
- *  throws into the caller: a failure here (python3/torch unavailable,
- *  disk issue) is logged and otherwise invisible to whoever triggered
- *  it, exactly like every other optional-dependency degradation in this
- *  project. */
+ *  throws into the caller: a failure here (e.g. a disk issue) is logged
+ *  and otherwise invisible to whoever triggered it. */
 export async function triggerConversationLearning() {
     if (learningInFlight)
         return; // a cycle is already running -- the background loop will catch this turn later
