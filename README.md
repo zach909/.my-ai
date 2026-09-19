@@ -53,7 +53,7 @@ python3 -c "from asi_core import UnifiedBrain; brain = UnifiedBrain(); print(bra
 ├── generated/             # Auto-generated skills, plugins & their wiki pages
 ├── interface/             # User interface components
 ├── live-usb/              # Bootable/installable live USB build
-├── model && skills manager/ # Go-based model & skills manager (llama.cpp/MLX backends)
+├── model && skills manager/ # Python neural-mesh stack (neurolang.py, value system, NeuroLang samples)
 ├── models && skills/      # AI models and skills (JS/TS)
 ├── plugin_manager/        # Plugin management system
 ├── plugins/               # System plugins (camera, file system, etc.)

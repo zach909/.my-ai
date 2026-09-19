@@ -6,7 +6,7 @@
 
 Every 30 minutes by default (configurable via `NEUROCLAW_SELF_IMPROVE_INTERVAL_MS`), the loop:
 
-1. **Picks a target** from a fixed whitelist of this project's own skill-training scripts — currently `build-physics-chemistry-network.mjs`, `train-coding-skills.mjs`, `build-main-network.mjs` (moby/cmudict), `build-self-knowledge-network.mjs` (the wiki + session scripts), and `build-capability-exam-network.mjs` (see the capability exam section below). This is real training, the same genuine `torch.autograd` gradient descent used everywhere else in this project — never a simulated or fabricated result.
+1. **Picks a target** from a fixed whitelist of this project's own skill-training scripts — currently `build-physics-chemistry-network.mjs`, `train-coding-skills.mjs`, `build-main-network.mjs` (project-source/pronunciations), `build-self-knowledge-network.mjs` (the wiki + session scripts), and `build-capability-exam-network.mjs` (see the capability exam section below). This is real training, the same genuine `torch.autograd` gradient descent used everywhere else in this project — never a simulated or fabricated result.
 2. **Mutates its hyperparameters** — an evolution-strategy-style perturbation of the current best-known epochs/learning-rate/tolerance, the same algorithm family as `trainDefinitionsRandomSearch()` elsewhere in this repo.
 3. **Trains the candidate in a sandbox** — a throwaway `git worktree` checked out fresh from the current commit, with its own freshly built `dist/`. The live server's own working directory is never touched.
 4. **Judges the result** three ways, all required:

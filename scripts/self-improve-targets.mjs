@@ -35,7 +35,7 @@ export const TARGETS = [
   },
   {
     script: 'extension-builder/build-main-network.mjs',
-    metric: (s) => (s.cmudictCount > 0 ? s.trainedCount / s.cmudictCount : 0),
+    metric: (s) => (s.pronunciationCount > 0 ? s.trainedCount / s.pronunciationCount : 0),
   },
   {
     script: 'extension-builder/build-self-knowledge-network.mjs',

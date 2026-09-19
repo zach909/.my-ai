@@ -1,11 +1,11 @@
-# Base44 Dev Environment
+# Docker Dev Environment
 
 ## What this is
 NeuroClaw — a local-first AI agent. Frontend is TanStack Start (React) + Vite (port 3000); backend is a Node/TypeScript HTTP server (port 7861). Both are started by a single command.
 
 ## Running it
 ```
-docker compose -f docker-compose.base44.yml up -d
+docker compose -f docker-compose.dev.yml up -d
 ```
 - Single `web` service on `node:22-slim`, repo bind-mounted at `/app`.
 - `npm run dev` (scripts/dev.mjs) does: tsc backend build → starts backend on 127.0.0.1:7861 → starts Vite on 0.0.0.0:3000.
@@ -20,7 +20,7 @@ docker compose -f docker-compose.base44.yml up -d
 - Vite config already sets `server.host: true` + `allowedHosts: true`, so the preview's external hostname is accepted.
 
 ## Secrets
-None required. The app is local-first; the Blink SDK (`@blinkdotnew/sdk`) ships hardcoded defaults. No external API keys needed to boot.
+None required. The app is local-first. No external API keys needed to boot.
 
 ## Notes / gotchas
 - Backend build uses the repo's `.bin/tsc` symlink → needs `node_modules` installed first (the dev script handles this).

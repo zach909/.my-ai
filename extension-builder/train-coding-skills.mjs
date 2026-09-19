@@ -7,7 +7,7 @@
  * then train its scripting examples the same way, until BOTH are
  * satisfied (see extension-builder/builder.js's train() doc comment).
  *
- * The difference from cmudict's static word->pronunciation targets: here
+ * The difference from the pronunciation demo's static word->pronunciation targets: here
  * the target for each training sample is not hand-written -- it's
  * whatever a real interpreter/runtime ACTUALLY produced when the code was
  * run. Each parameterized code template (JS/Python/Shell arithmetic,
@@ -19,7 +19,7 @@
  *      NeuroLangInterpreter.parse() for NeuroLang -- this app's own
  *      skill-authoring DSL) and capture the real result
  *   3. that instantiation becomes its OWN neuron/readout (same pattern
- *      build-main-network.mjs's cmudict import already uses -- one word,
+ *      build-main-network.mjs's pronunciation import already uses -- one word,
  *      one readout), trained on exactly two samples that must jointly
  *      converge: (code text -> real result) as a @definishon-style
  *      sample, and ("what does `code` output?" -> real result) as a
@@ -33,7 +33,7 @@
  *      work with this architecture. Two *consistent* samples (same
  *      target, two different phrasings of the input) per readout is
  *      exactly-determined per dimension, not overdetermined, and
- *      converges the same way cmudict's single-sample-per-readout
+ *      converges the same way the pronunciation demo's single-sample-per-readout
  *      neurons did.
  *   4. the growing set of ALL instantiated neurons (across every round
  *      so far, not just this round's) is retrained together each round
@@ -46,7 +46,7 @@
  * execute without adding new hard dependencies (Node/Python/Shell are
  * already available; NeuroLang is this app's own interpreter) -- Go/C/
  * C++/CUDA/Objective-C stay Code-to-Net-structural-only (see
- * build-main-network.mjs's moby import), never execution-verified here,
+ * build-main-network.mjs's project-source import), never execution-verified here,
  * matching the "no requirements" principle this project already commits
  * to elsewhere (no new compiler toolchains just for this).
  *
@@ -223,7 +223,7 @@ async function main() {
       // grows every round (new instantiations = new readouts), and a
       // fresh convergence run over the whole accumulated set is both
       // simpler and faster here than padding initW/initB with zero rows
-      // for the newcomers -- training all 500+ cmudict-scale neurons
+      // for the newcomers -- training all 500+ pronunciation-scale neurons
       // together already ran in ~60 epochs, so redoing it each round
       // costs nothing that matters.
     });
@@ -278,7 +278,7 @@ async function main() {
 
   // Weights saved separately from the project JSON -- this is the actual
   // trained model (W/b per readout, in allNeurons order), the real
-  // artifact a later merge (e.g. averaging with cmudict's trained
+  // artifact a later merge (e.g. averaging with the pronunciation demo's trained
   // weights) or continued fine-tuning would load, matching
   // pytorch_trainer.py's initW/initB contract above.
   const weightsPath = path.join(outDir, `coding_skills_weights_${Date.now()}.json`);

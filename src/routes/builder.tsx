@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
-import { Brain, Search, Sparkles, ArrowRight, Loader2, Copy, Check, X, Blocks } from 'lucide-react'
+import { Brain, Search, Sparkles, ArrowRight, Loader2, Copy, Check, X, Blocks } from '@/components/icons'
 import { useBuilder, BuilderCanvas } from '@/features/builder'
 
 /**
@@ -213,8 +213,8 @@ function BuilderPage() {
   // ALTERNATIVE backend to handleTrain() above: real torch.autograd/torch.optim
   // gradient descent, run server-side (see use-builder.ts's trainWithPyTorch()
   // and interface/web-server.ts's POST /api/extension/train-pytorch) against
-  // the PyTorch copy vendored under extension-builder/PyTorch. Strictly
-  // optional -- if this machine has no Python/torch, the request still comes
+  // whatever `torch` is installed in this machine's Python environment.
+  // Strictly optional -- if this machine has no Python/torch, the request still comes
   // back {ok:false, error} instead of throwing, and the regular Train button
   // above is completely unaffected either way.
   const handleTrainPyTorch = async () => {

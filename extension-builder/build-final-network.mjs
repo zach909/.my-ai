@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * build-final-network.mjs — assembles the final combined network: every
- * neuron from Main Network (moby Code-to-Net + cmudict) and Coding Skills
+ * neuron from Main Network (project-source Code-to-Net + derived pronunciations) and Coding Skills
  * Network (execution-grounded JS/Python/Shell/NeuroLang), carrying the
  * real merged+fine-tuned weights from merge-networks.mjs.
  *
@@ -35,7 +35,7 @@ async function main() {
   const builder = new ExtensionBuilder();
   const project = builder.createProject(
     'Final Network',
-    'Merged: Main Network (moby Code-to-Net + cmudict deep learning) + Coding Skills Network (execution-grounded), real weight-averaged and fine-tuned',
+    'Merged: Main Network (project-source Code-to-Net + derived-pronunciation deep learning) + Coding Skills Network (execution-grounded), real weight-averaged and fine-tuned',
   );
 
   let carried = 0;
@@ -44,7 +44,7 @@ async function main() {
       const neuron = builder.addNeuron(project.id, n.name, n.value ?? 0);
       neuron.definition = n.definition ?? '';
       neuron.scripts = Array.isArray(n.scripts) ? n.scripts : [];
-      if (n.codeTopology) neuron.codeTopology = n.codeTopology; // moby codenet neurons -- still reversible via exportCodeNet()
+      if (n.codeTopology) neuron.codeTopology = n.codeTopology; // Code-to-Net neurons -- still reversible via exportCodeNet()
       neuron.trained = trainedNames.has(n.name);
       carried++;
     }

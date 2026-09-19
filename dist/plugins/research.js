@@ -100,9 +100,8 @@ export class ResearchPlugin extends BasePlugin {
         const needle = query.toLowerCase();
         const results = [];
         let filesScanned = 0;
-        // Breadth-first, not recursive DFS: a real repo's first alphabetical
-        // subdirectory can easily hold thousands of files on its own (e.g.
-        // this one's own extension-builder/Moby, vendored moby/moby source)
+        // Breadth-first, not recursive DFS: a repo's first alphabetical
+        // subdirectory can easily hold thousands of files on its own
         // -- a depth-first walk exhausts the whole maxFiles budget descending
         // into it before ever reaching a sibling directory like plugins/,
         // silently starving every later-sorted directory. BFS explores one

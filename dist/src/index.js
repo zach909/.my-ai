@@ -680,7 +680,6 @@ export class NeuroclawSystem {
         //    stay aligned (Empathy).
         this.empathy.updateUserContext(input);
         const emotion = this.empathy.analyzeEmotion(input);
-        const turnStarted = Date.now();
         const details = {
             skills: [], recalled: [], route: null,
             emotion: { valence: emotion.valence, arousal: emotion.arousal },

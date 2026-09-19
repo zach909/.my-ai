@@ -13,7 +13,7 @@ This document describes the organized structure of the project.
 - `package.json` - Node.js dependencies and scripts
 - `requirements.txt` - Python dependencies
 - `bun.lock` / `package-lock.json` / `pnpm-lock.yaml` - Lockfiles for the supported package managers
-- `docker-compose.base44.yml` - Base44 Docker Compose setup
+- `docker-compose.dev.yml` - Docker Compose setup for a containerized dev server
 - `vite.config.ts` - Vite build configuration
 - `vitest.config.ts` - Vitest test runner configuration
 - `tsconfig*.json` - TypeScript configuration files (app, backend, node)
@@ -24,8 +24,6 @@ This document describes the organized structure of the project.
 - `twisted_metal_strip.obj` / `twisted_metal_strip_3pt_profile.html` - 3D model and profile data for the twisted-strip logo (`src/components/twisted-strip-geometry.ts`, `src/components/TwistedStripLogo.tsx`)
 - `.bin/` - Local binary shims (e.g. `tsc`, `tsserver`)
 - `.claude/` - Claude Code local settings
-- `.base44/` - Base44 preview environment config (see `AGENTS.md`)
-- `.Jules/`, `.jules/` - Learning journals kept by AI coding agents (e.g. `bolt.md`, `sentinel.md`, `palette.md`)
 
 ### Core Directories
 
@@ -73,7 +71,10 @@ Bootable/installable live USB build (`build.sh`) for trying or installing
 NeuroClaw with no setup.
 
 #### `/model && skills manager/`
-Go-based model and skills management system with extensive submodules.
+Python neural-mesh stack: `neurolang.py` (the NeuroLang DSL/runtime), the
+zero-sum value-system tests, and `example_experts.nl` sample definitions. A
+previously-vendored Ollama Go tree that lived here as a dormant, unwired copy
+of the upstream `github.com/ollama/ollama` project has been removed.
 
 #### `/models && skills/`
 JavaScript/TypeScript AI models, skills, and self-improvement modules.
@@ -149,7 +150,6 @@ The project uses multiple module systems:
 - **Node.js/CommonJS** - `.cjs`, `.mjs`
 - **TypeScript** - `.ts`, `.tsx`
 - **Python** - `.py`
-- **Go** - `.go` (in model && skills manager)
 
 ## Best Practices
 

@@ -17,8 +17,8 @@ import { createFileRoute } from '@tanstack/react-router'
 import { useCallback, useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
-import { Loader2, MonitorCog, Power, RefreshCw, ShieldOff, TerminalSquare } from 'lucide-react'
-import { toast } from 'sonner'
+import { Loader2, MonitorCog, Power, RefreshCw, ShieldOff, TerminalSquare } from '@/components/icons'
+import { toast } from '@/lib/toast'
 
 /**
  * "put the other things into the settings page" -- this page's content now

@@ -12,7 +12,7 @@
  */
 import { useState } from 'react'
 import type { ReactNode } from 'react'
-import { Menu } from 'lucide-react'
+import { Menu } from '@/components/icons'
 import { Button } from '@/components/ui/button'
 import { Sheet, SheetContent } from '@/components/ui/sheet'
 

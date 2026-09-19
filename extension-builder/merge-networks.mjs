@@ -12,8 +12,8 @@
  * to average against). This only works because both inputs are the SAME
  * architecture -- one learnable (weight, bias) row per readout, from the
  * same pytorch_trainer.py -- unlike Code-to-Net's byte-chain neurons
- * (moby/Debian), which have no trained weights at all and so cannot be
- * merged this way (see build-debian-network.mjs's exportCodeNet() for
+ * (project source/config files), which have no trained weights at all and
+ * so cannot be merged this way (see build-debian-network.mjs's exportCodeNet() for
  * what those ARE reversible into instead).
  *
  * After merging, the combined weights are NOT just averaged and left --

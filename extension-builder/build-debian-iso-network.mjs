@@ -1,9 +1,10 @@
 #!/usr/bin/env node
 /**
  * build-debian-iso-network.mjs — Code-to-Net over the actual Debian
- * installer BINARY (the bootable .iso), not its source code -- the
- * follow-up to build-debian-network.mjs, which used debian-installer's
- * source tree. "I want you to use the binary version... make it run
+ * installer BINARY (the bootable .iso), not source code -- a sibling demo
+ * to build-debian-network.mjs, which runs the same Code-to-Net converter
+ * over a sample of this project's own config/build files instead.
+ * "I want you to use the binary version... make it run
  * from the dictionaries using the coding of the neural network" (Code-
  * to-Net, not "coaching"/scripting): a representative sample of the raw
  * ISO's bytes goes through the engine's real bytecode->neuron-topology

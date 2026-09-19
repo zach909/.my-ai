@@ -1,16 +1,19 @@
 #!/usr/bin/env node
 /**
- * build-debian-network.mjs — one-time build driver for the Debian
- * Installer Code-to-Net network, forward AND reverse.
+ * build-debian-network.mjs — one-time build driver for the Config Files
+ * Code-to-Net network, forward AND reverse.
  *
- * Like build-main-network.mjs's moby import, a representative sample of
- * debian-installer source (vendored under extension-builder/DebianInstaller/,
- * github mirror of salsa.debian.org/installer-team/debian-installer) is
- * run through ExtensionBuilder.importCodeToNet() -- the engine's real
+ * Like build-main-network.mjs's project-source import, a representative
+ * sample of THIS repository's own files is run through
+ * ExtensionBuilder.importCodeToNet() -- the engine's real
  * bytecode->neuron-topology converter (CodeToNet.importCode() in
- * models && skills/core/thorns.js).
+ * models && skills/core/thorns.js). (This script used to import a sample
+ * of a vendored debian-installer source tree; that vendored copy has been
+ * removed, so this now points at our own files instead -- the
+ * forward/reverse proof below never depended on Debian specifically, only
+ * on having some real bytes to round-trip.)
  *
- * What's new here is the reverse direction: ExtensionBuilder.exportCodeNet()
+ * What matters here is the reverse direction: ExtensionBuilder.exportCodeNet()
  * walks each neuron's own stored network topology (its byte-chain of
  * code_neuron_N nodes, connected inputLayer -> ... -> outputLayer) back
  * into the exact original bytes. This is a genuine graph traversal over
@@ -38,40 +41,41 @@ function log(...args) {
   console.log('[build-debian-network]', ...args);
 }
 
-const DI_DIR = path.join(ROOT, 'extension-builder', 'DebianInstaller');
-const DI_FILES = [
-  'build/Makefile',
-  'build/README',
-  'build/daily-build',
-  'build/d-i-unpack-helper',
-  'build/util/tftpboot.sh',
-  'build/TODO',
-  'build/translation-status',
-  'debian/control',
-  'debian/rules',
-  'debian/changelog',
+// A different slice of this repository's own files than
+// build-main-network.mjs uses, so the two Code-to-Net demos exercise
+// different bytes: config/build files rather than source/prose.
+const PROJECT_FILES = [
+  'STRUCTURE.md',
+  'PRIVACY.md',
+  'TERMS.md',
+  'vite.config.ts',
+  'tsconfig.json',
+  'eslint.config.js',
+  '.stylelintrc.json',
+  'components.json',
+  'scripts/install.sh',
+  '.gitignore',
 ];
-// Same reasoning as build-main-network.mjs's moby cap: CodeToNet.importCode()
+// Same reasoning as build-main-network.mjs's cap: CodeToNet.importCode()
 // makes one internal neuron per 8 bytes, so this bounds how big each
-// file's byte-chain topology gets (debian/changelog alone is 243KB
-// uncapped -- ~30,000 internal neurons -- still cheap Map entries, but
-// capping keeps the whole run fast and the point (forward + reverse
-// works) doesn't need the entire file to prove it).
+// file's byte-chain topology gets -- cheap Map entries either way, but
+// capping keeps the whole run fast; the point (forward + reverse works)
+// doesn't need the entire file to prove it.
 const BYTES_PER_FILE = 4096;
 
 async function main() {
   const builder = new ExtensionBuilder();
   const project = builder.createProject(
-    'Debian Installer Network',
-    'debian-installer source via real Code-to-Net, forward and reverse',
+    'Config Files Network',
+    "this project's own config/build files via real Code-to-Net, forward and reverse",
   );
 
   let imported = 0;
   let reversedOk = 0;
   const results = [];
 
-  for (const rel of DI_FILES) {
-    const full = path.join(DI_DIR, rel);
+  for (const rel of PROJECT_FILES) {
+    const full = path.join(ROOT, rel);
     if (!existsSync(full)) {
       log(`skip (not found): ${rel}`);
       continue;
@@ -79,7 +83,7 @@ async function main() {
     const original = readFileSync(full).subarray(0, BYTES_PER_FILE);
 
     // Forward: code -> network.
-    const neuron = builder.importCodeToNet(project.id, `di_${rel.replace(/[\\/]/g, '_')}`, original);
+    const neuron = builder.importCodeToNet(project.id, `cfg_${rel.replace(/[\\/ &]/g, '_')}`, original);
     if (!neuron) continue;
     imported++;
 

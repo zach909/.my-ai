@@ -42,8 +42,8 @@ import {
   Users, Loader2, Sparkles,
   Folder, MessageSquare, RefreshCw, ChevronDown, ArrowRight, Search, X,
   Brain, Trash2, Pin, AlertTriangle,
-} from 'lucide-react'
-import { toast } from 'sonner'
+} from '@/components/icons'
+import { toast } from '@/lib/toast'
 import { setThreadPinned } from '@/lib/chat-pins'
 
 export const Route = createFileRoute('/app/chat-groups')({

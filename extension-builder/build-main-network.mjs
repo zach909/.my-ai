@@ -8,36 +8,42 @@
  * two real engine mechanisms the live /builder UI exposes, not through
  * hand-coded lookup logic:
  *
- *   - moby (github.com/moby/moby, vendored under extension-builder/Moby/):
- *     a representative sample of the actual Docker engine source is run
- *     through ExtensionBuilder.importCodeToNet() -- the engine's real
+ *   - project source: a representative sample of THIS repository's own
+ *     source (Python, TypeScript, JS, and prose) is run through
+ *     ExtensionBuilder.importCodeToNet() -- the engine's real
  *     bytecode->neuron-topology converter (models && skills/core/thorns.js's
  *     CodeToNet.importCode()), the same "Code-to-Net" feature the /builder
  *     UI's own Code-to-Net panel uses. One project neuron per source file,
  *     each one's underlying topology is a real chain of byte-segment
- *     neurons, not a text blob pretending to be a network.
+ *     neurons, not a text blob pretending to be a network. (This used to
+ *     import a sample of the vendored moby/moby -- i.e. Docker -- source
+ *     tree; that vendored copy has been removed, so this now points at our
+ *     own files instead. Code-to-Net only ever needed *some* real bytes to
+ *     import, never specifically Docker's.)
  *
- *   - cmudict (github.com/cmusphinx/cmudict, vendored under
- *     extension-builder/CMUDict/): a bounded, evenly-sampled subset of its
- *     ~135k word->pronunciation entries becomes real @definishon-style
- *     training samples, trained via genuine torch.autograd gradient
- *     descent (extension-builder/pytorch_trainer.py -- the exact same
- *     "deep learning" backend POST /api/extension/train-pytorch uses,
+ *   - word pronunciations: a sample of English words, harvested from this
+ *     project's own prose (README.md, docs/*.md, etc.) rather than a
+ *     vendored dictionary, becomes real @definishon-style training
+ *     samples -- each word's pronunciation target is derived at build time
+ *     by grapheme-to-phoneme.mjs's hand-written rule engine, not looked up
+ *     in a third-party dataset. Trained via genuine torch.autograd
+ *     gradient descent (extension-builder/pytorch_trainer.py -- the exact
+ *     same "deep learning" backend POST /api/extension/train-pytorch uses,
  *     invoked directly here instead of over HTTP since this runs as a
  *     one-time build step, not a live request). Nothing here hand-writes
  *     "if word == X return Y" -- every word neuron's trained state is the
- *     output of real gradient descent against its pronunciation target,
- *     same as the spec describes: "scripting is only used for training the
- *     model to behave... then the script is removed and the model can
- *     stand alone."
+ *     output of real gradient descent against its (derived) pronunciation
+ *     target, same as the spec describes: "scripting is only used for
+ *     training the model to behave... then the script is removed and the
+ *     model can stand alone."
  *
  * The full sample is capped well under the HyperDimensionalEngine's
  * all-to-all mesh limits (connDiag is O(neuronCount^2 * dims) -- see
  * onebrain.ts) on purpose: this script never instantiates that engine at
- * all for the cmudict batch (pytorch_trainer.py's model is independent
- * per-readout linear+tanh, no engine mesh involved), so the real ceiling
- * here is just "how many words are worth training in one pass", not a
- * hard technical limit.
+ * all for the pronunciation batch (pytorch_trainer.py's model is
+ * independent per-readout linear+tanh, no engine mesh involved), so the
+ * real ceiling here is just "how many words are worth training in one
+ * pass", not a hard technical limit.
  *
  * Usage: node extension-builder/build-main-network.mjs
  * (requires a fresh `node scripts/build-backend.mjs` first -- this script
@@ -49,6 +55,7 @@ import { spawn } from 'node:child_process';
 import { readFileSync, mkdirSync, writeFileSync, existsSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { pronounce } from './grapheme-to-phoneme.mjs';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const ROOT = path.resolve(__dirname, '..');
@@ -74,41 +81,45 @@ function log(...args) {
   console.log('[build-main-network]', ...args);
 }
 
-// ── 1. moby: real Code-to-Net conversion of actual Docker engine source ────
+// ── 1. project source: real Code-to-Net conversion of our own source ──────
 
-const MOBY_DIR = path.join(ROOT, 'extension-builder', 'Moby');
-const MOBY_FILES = [
+// A deliberately polyglot sample of this repository's own files -- Python,
+// TypeScript, JS, and Markdown -- standing in for the vendored moby/moby
+// sample this script used to import. Code-to-Net is content-agnostic (it
+// chunks raw bytes into a neuron chain regardless of language), so any real
+// file works; these were picked to show the project's actual range rather
+// than someone else's Go source.
+const PROJECT_SOURCE_FILES = [
   'README.md',
-  'CONTRIBUTING.md',
-  'go.mod',
-  'Dockerfile',
-  'cmd/dockerd/main.go',
-  'daemon/daemon.go',
-  'daemon/container.go',
-  'daemon/network.go',
-  'daemon/volumes.go',
-  'daemon/create.go',
-  'daemon/start.go',
-  'client/client.go',
+  'AGENTS.md',
+  'package.json',
+  'asi_core/unified_brain.py',
+  'asi_core/neural_mesh.py',
+  'asi_core/vale_system.py',
+  'models && skills/core/onebrain.ts',
+  'models && skills/core/neuro-lang.ts',
+  'models && skills/core/thorns.js',
+  'extension-builder/builder.js',
+  'interface/web-server.ts',
+  'scripts/build-backend.mjs',
 ];
 // Cap bytes per file before it hits CodeToNet.importCode(), which chunks
-// every 8 bytes into one internal neuron -- an uncapped 68KB file
-// (daemon/daemon.go) would produce ~8,500 internal codeToNet neurons on
-// its own; capping keeps the whole moby import's internal topology in the
-// low thousands total across all 12 files, cheap Map entries, not an
-// engine-mesh cost.
-const MOBY_BYTES_PER_FILE = 4096;
+// every 8 bytes into one internal neuron -- several of these files are
+// hundreds of KB uncapped (onebrain.ts alone is 300+KB); capping keeps the
+// whole import's internal topology in the low thousands total across all
+// files, cheap Map entries, not an engine-mesh cost.
+const SOURCE_BYTES_PER_FILE = 4096;
 
-function buildMobyCodeNets(builder, projectId) {
+function buildProjectCodeNets(builder, projectId) {
   let imported = 0;
-  for (const rel of MOBY_FILES) {
-    const full = path.join(MOBY_DIR, rel);
+  for (const rel of PROJECT_SOURCE_FILES) {
+    const full = path.join(ROOT, rel);
     if (!existsSync(full)) {
       log(`skip (not found): ${rel}`);
       continue;
     }
-    const buf = readFileSync(full).subarray(0, MOBY_BYTES_PER_FILE);
-    const neuron = builder.importCodeToNet(projectId, `moby_${rel.replace(/[\\/]/g, '_')}`, buf);
+    const buf = readFileSync(full).subarray(0, SOURCE_BYTES_PER_FILE);
+    const neuron = builder.importCodeToNet(projectId, `src_${rel.replace(/[\\/ &]/g, '_')}`, buf);
     if (neuron) {
       imported++;
       log(`Code-to-Net: ${rel} -> ${neuron.name} (${neuron.definition})`);
@@ -117,28 +128,43 @@ function buildMobyCodeNets(builder, projectId) {
   return imported;
 }
 
-// ── 2. cmudict: real @definishon training samples, trained via real deep learning ─
+// ── 2. pronunciations: real @definishon training samples, trained via real deep learning ─
 
-const CMUDICT_PATH = path.join(ROOT, 'extension-builder', 'CMUDict', 'cmudict.dict');
-const CMUDICT_SAMPLE_TARGET = 500;
+const PRONUNCIATION_SAMPLE_TARGET = 500;
+// Harvest distinct English words directly from this project's own prose
+// instead of reading them out of a vendored dictionary. Each word's
+// pronunciation is then *derived*, not looked up (see grapheme-to-phoneme.mjs).
+const WORD_SOURCE_FILES = [
+  'README.md', 'STRUCTURE.md', 'AGENTS.md', 'PRIVACY.md', 'TERMS.md',
+  'docs/ARCHITECTURE.md',
+];
 
-function sampleCmudict() {
-  const lines = readFileSync(CMUDICT_PATH, 'utf8').split('\n');
-  // Plain single-pronunciation entries only -- skip variants like
-  // "word(1)" and non-alphabetic entries like "'bout" so every sampled
-  // neuron name is a clean, unambiguous English word. cmudict.dict's
-  // words are lowercase; pronunciations are the uppercase ARPAbet part.
-  const plain = lines.filter(l => /^[a-z]+\s+\S/.test(l));
-  const stride = Math.max(1, Math.floor(plain.length / CMUDICT_SAMPLE_TARGET));
-  const sample = [];
-  for (let i = 0; i < plain.length && sample.length < CMUDICT_SAMPLE_TARGET; i += stride) {
-    const [word, ...phones] = plain[i].trim().split(/\s+/);
-    sample.push({ word, pronunciation: phones.join(' ') });
+function harvestWords() {
+  const seen = new Set();
+  const words = [];
+  for (const rel of WORD_SOURCE_FILES) {
+    const full = path.join(ROOT, rel);
+    if (!existsSync(full)) continue;
+    const text = readFileSync(full, 'utf8');
+    // Plain alphabetic words only, 3-10 letters -- long enough to be a real
+    // word, short enough to skip identifiers/compounds that slipped through.
+    const matches = text.toLowerCase().match(/\b[a-z]{3,10}\b/g) ?? [];
+    for (const w of matches) {
+      if (seen.has(w)) continue;
+      seen.add(w);
+      words.push(w);
+      if (words.length >= PRONUNCIATION_SAMPLE_TARGET) return words;
+    }
   }
-  return sample;
+  return words;
 }
 
-function addCmudictNeurons(builder, projectId, sample) {
+function samplePronunciations() {
+  const words = harvestWords();
+  return words.map((word) => ({ word, pronunciation: pronounce(word) })).filter((s) => s.pronunciation);
+}
+
+function addPronunciationNeurons(builder, projectId, sample) {
   const readoutNames = [];
   for (const { word, pronunciation } of sample) {
     const neuron = builder.addNeuron(projectId, word.toLowerCase(), 0);
@@ -155,7 +181,7 @@ function addCmudictNeurons(builder, projectId, sample) {
 // live server. Genuinely optional, same as the live endpoint: if
 // Python/torch isn't present, this returns ok:false and the build
 // continues with the neurons present but untrained rather than crashing.
-function trainCmudictBatch(sample) {
+function trainPronunciationBatch(sample) {
   return new Promise((resolve) => {
     const scriptPath = path.join(ROOT, 'extension-builder', 'pytorch_trainer.py');
     let child;
@@ -197,7 +223,7 @@ function trainCmudictBatch(sample) {
   }).then((result) => ({ ...result, samples: sampleToSpecSamples(sample) }));
 }
 
-// Recomputed (not captured from the closure above) so trainCmudictBatch()'s
+// Recomputed (not captured from the closure above) so trainPronunciationBatch()'s
 // returned `samples` is available even on the `ok:false` (no torch) path --
 // merge-networks.mjs needs these regardless of whether this particular
 // build run could train them itself.
@@ -215,22 +241,22 @@ async function main() {
   const builder = new ExtensionBuilder();
   const project = builder.createProject(
     'Main Network',
-    'moby/moby source via real Code-to-Net + cmudict pronunciations via real deep-learning training',
+    "this project's own source via real Code-to-Net + derived pronunciations via real deep-learning training",
   );
 
-  log('Importing moby source through the engine\'s real Code-to-Net converter...');
-  const mobyCount = buildMobyCodeNets(builder, project.id);
-  log(`Code-to-Net: ${mobyCount} source file(s) imported as real byte-chain neuron topologies`);
+  log("Importing this project's own source through the engine's real Code-to-Net converter...");
+  const sourceCount = buildProjectCodeNets(builder, project.id);
+  log(`Code-to-Net: ${sourceCount} source file(s) imported as real byte-chain neuron topologies`);
 
-  log('Sampling cmudict...');
-  const sample = sampleCmudict();
-  log(`Sampled ${sample.length} word -> pronunciation entries (stride sampling across the full ${CMUDICT_PATH})`);
+  log("Harvesting words from this project's own prose and deriving pronunciations...");
+  const sample = samplePronunciations();
+  log(`Sampled ${sample.length} word -> pronunciation entries (harvested from ${WORD_SOURCE_FILES.length} of this project's own files, pronunciations derived by grapheme-to-phoneme.mjs)`);
 
-  const readoutNames = addCmudictNeurons(builder, project.id, sample);
-  log(`Added ${readoutNames.length} cmudict neurons with real @definishon-style pronunciation targets`);
+  const readoutNames = addPronunciationNeurons(builder, project.id, sample);
+  log(`Added ${readoutNames.length} pronunciation neurons with real @definishon-style targets`);
 
-  log('Training the cmudict batch via genuine torch.autograd gradient descent...');
-  const result = await trainCmudictBatch(sample);
+  log('Training the pronunciation batch via genuine torch.autograd gradient descent...');
+  const result = await trainPronunciationBatch(sample);
 
   let trainedCount = 0;
   if (result.ok) {
@@ -241,9 +267,9 @@ async function main() {
       neuron.trained = result.sampleConverged[i] === true;
       if (neuron.trained) trainedCount++;
     }
-    log(`${trainedCount}/${readoutNames.length} cmudict neurons genuinely converged and are marked trained`);
+    log(`${trainedCount}/${readoutNames.length} pronunciation neurons genuinely converged and are marked trained`);
   } else {
-    log(`PyTorch training unavailable (${result.error}) -- cmudict neurons kept as untrained definitions.`);
+    log(`PyTorch training unavailable (${result.error}) -- pronunciation neurons kept as untrained definitions.`);
     log('This is the expected optional-dependency degradation, not a build failure: rerun with a working python3+torch to actually train them.');
   }
 
@@ -256,7 +282,7 @@ async function main() {
   let weightsPath = null;
   if (result.ok) {
     // The actual trained model, not just the project shape: W/b per
-    // cmudict readout (in readoutNames order), the same artifact
+    // pronunciation readout (in readoutNames order), the same artifact
     // train-coding-skills.mjs saves for its own network -- what a real
     // weight merge (see merge-networks.mjs) averages together.
     weightsPath = path.join(outDir, `main_network_weights_${Date.now()}.json`);
@@ -267,8 +293,8 @@ async function main() {
   }
 
   log(`Saved: ${path.relative(ROOT, outPath)}`);
-  log(`Total neurons: ${project.neurons.size} (${mobyCount} moby Code-to-Net + ${readoutNames.length} cmudict, ${trainedCount} trained)`);
-  return { outPath, weightsPath, mobyCount, cmudictCount: readoutNames.length, trainedCount, pytorchOk: result.ok };
+  log(`Total neurons: ${project.neurons.size} (${sourceCount} project-source Code-to-Net + ${readoutNames.length} pronunciation, ${trainedCount} trained)`);
+  return { outPath, weightsPath, sourceCount, pronunciationCount: readoutNames.length, trainedCount, pytorchOk: result.ok };
 }
 
 main().then((summary) => {
