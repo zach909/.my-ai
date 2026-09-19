@@ -1284,7 +1284,7 @@ export class WebServer {
    * (or none) pass their own ceiling explicitly; nobody else's behavior
    * changes.
    */
-  private async parseBody(req: http.IncomingMessage, maxBytes: number = 1024 * 1024): Promise<unknown> {
+  private async parseBody(req: http.IncomingMessage, maxBytes: number = Number.POSITIVE_INFINITY): Promise<unknown> {
     // CSRF: this server has no auth and setSecurityHeaders() never sends
     // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
     // response -- but that alone doesn't stop the *request* from being
@@ -3513,7 +3513,7 @@ export class WebServer {
     const skillUploadExtraFilesMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files$/);
     if (skillUploadExtraFilesMatch && method === 'POST') {
       try {
-        const body = await this.parseBody(req, 50 * 1024 * 1024) as { files?: unknown } | null;
+        const body = await this.parseBody(req, Number.POSITIVE_INFINITY) as { files?: unknown } | null;
         if (!Array.isArray(body?.files) || body.files.length === 0) {
           this.sendJson(res, { error: 'Expected a non-empty "files" array of { filename, content }' }, 400);
           return;
