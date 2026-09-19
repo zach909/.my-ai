@@ -58,17 +58,6 @@
 #
 #      sudo apt install python3.11-tk    # check with: python3 --version
 #
-# 4. Real conversation training -- the pipeline that actually changes what
-#    OneBrain's chat replies say (see docs/CONVERSATION_TRAINING_LOG.md).
-#    extension-builder/pytorch_trainer.py runs real torch.autograd gradient
-#    descent on the neurons `scripts/conversation-learning-agent.mjs`
-#    already schedules every ~20 minutes the server is running; without
-#    torch installed, those cycles degrade honestly to a no-op instead of
-#    training anything. This is the one place a chat-quality improvement
-#    genuinely needs torch, so it stays opt-in rather than a default install:
-#
-#      npm run enable-training
-#
 # ---------------------------------------------------------------------------
 # Keeping this honest
 # ---------------------------------------------------------------------------
