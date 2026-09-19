@@ -3513,7 +3513,7 @@ export class WebServer {
     const skillUploadExtraFilesMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files$/);
     if (skillUploadExtraFilesMatch && method === 'POST') {
       try {
-        const body = await this.parseBody(req) as { files?: unknown } | null;
+        const body = await this.parseBody(req, 50 * 1024 * 1024) as { files?: unknown } | null;
         if (!Array.isArray(body?.files) || body.files.length === 0) {
           this.sendJson(res, { error: 'Expected a non-empty "files" array of { filename, content }' }, 400);
           return;
