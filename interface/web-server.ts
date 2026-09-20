@@ -41,6 +41,8 @@ import {
   readSkillUpload,
   readSkillUploadFile,
   readSkillUploadExtraFile,
+  pullSkillUploadCatalog,
+  pullSkillUploadPackage,
   saveSkillUploadAndSync,
   saveSkillUploadExtraFilesAndSync,
   deleteSkillUploadAndSync,
@@ -979,6 +981,10 @@ export class WebServer {
     // first time someone actually asks for it, not pulled wholesale here on
     // every boot regardless of whether anyone browses anything.
     await pullStoreCatalog({ manifestsOnly: true }).catch(() => {});
+    // Skill uploads use the same shared `store` branch but live outside the
+    // generic store catalogue. Pull their manifests too so uploaded packages
+    // are visible on a fresh device; payloads remain on-demand.
+    await pullSkillUploadCatalog().catch(() => {});
     // Same reasoning, same placement: loading every saved extension is
     // real work (parsing N files, remembering M neurons) that only makes
     // sense to pay once per actual live server process, not once per
@@ -1284,7 +1290,7 @@ export class WebServer {
    * (or none) pass their own ceiling explicitly; nobody else's behavior
    * changes.
    */
-  private async parseBody(req: http.IncomingMessage, maxBytes: number = 1024 * 1024): Promise<unknown> {
+  private async parseBody(req: http.IncomingMessage, maxBytes: number = Number.POSITIVE_INFINITY): Promise<unknown> {
     // CSRF: this server has no auth and setSecurityHeaders() never sends
     // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
     // response -- but that alone doesn't stop the *request* from being
@@ -3513,7 +3519,7 @@ export class WebServer {
     const skillUploadExtraFilesMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files$/);
     if (skillUploadExtraFilesMatch && method === 'POST') {
       try {
-        const body = await this.parseBody(req) as { files?: unknown } | null;
+        const body = await this.parseBody(req, Number.POSITIVE_INFINITY) as { files?: unknown } | null;
         if (!Array.isArray(body?.files) || body.files.length === 0) {
           this.sendJson(res, { error: 'Expected a non-empty "files" array of { filename, content }' }, 400);
           return;
@@ -3540,7 +3546,15 @@ export class WebServer {
     const skillUploadExtraFileMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files\/([A-Za-z0-9_.-]+)$/);
     if (skillUploadExtraFileMatch && method === 'GET') {
       const [, name, filename] = skillUploadExtraFileMatch;
-      const file = readSkillUploadExtraFile(name, decodeURIComponent(filename));
+      // A package may have been published from another device. Pull the
+      // package from the shared store branch before reading the requested
+      // file, so large extra files are available remotely without requiring
+      // every device to download every payload at boot.
+      const requestedFilename = decodeURIComponent(filename);
+      if (!readSkillUploadExtraFile(name, requestedFilename)) {
+        await pullSkillUploadPackage(name).catch(() => {});
+      }
+      const file = readSkillUploadExtraFile(name, requestedFilename);
       if (!file) {
         this.sendJson(res, { error: `No extra file named "${filename}" in "${name}"` }, 404);
         return;
