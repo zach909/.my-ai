@@ -71,6 +71,7 @@ describe('the mesh really does run on the standard library', () => {
     const stdlib = new Set([
       'math', 'time', 'random', 'dataclasses', 'typing', 'enum', 'json', 'os', 'sys',
       'collections', 'itertools', 'functools', 're', 'abc', 'copy', '__future__',
+      'concurrent',
     ])
     const outside = [...new Set(imported)].filter(name => !stdlib.has(name))
     expect(outside, `${MESH} imports non-stdlib: ${outside.join(', ')}`).toEqual([])

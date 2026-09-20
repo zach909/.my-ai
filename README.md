@@ -80,6 +80,10 @@ Key root-level files:
 - **Mixture of Experts (MoE)**: Efficient routing to specialized neuron groups
 - **Hyperdimensional Thinking**: Multi-dimensional memory states and analogy reasoning
 - **Elastic Value System**: Zero-sum plasticity budget where high-value neurons change less
+- **Parallel Settle**: Both meshes can spread a settle tick's O(n²) weighted-sum work across
+  multiple cores — `MeshWorkerPool` (Node `worker_threads` + `SharedArrayBuffer`/`Atomics`) for
+  the TypeScript engine, `parallel_workers` (a `ProcessPoolExecutor`) for the Python reference —
+  see [Parallel Computing](#parallel-computing) below
 
 ### Learning & Memory
 - **Multi-Rule Plasticity**: Hebbian, Oja's rule, BCM theory, homeostatic learning
@@ -154,6 +158,66 @@ python3 -m asi_core.endurance_training --cycles 20000 \
 
 See [docs/ENDURANCE_TRAINING.md](docs/ENDURANCE_TRAINING.md) for the full
 option reference.
+
+## Parallel Computing
+
+Settling a mesh tick is dense: every neuron reads every other neuron's
+state through a full weight matrix, an O(n²) (times dimensions²) cost per
+tick. Both engines can spread that work across CPU cores instead of
+running it on one thread — opt-in, off by default, and bit-for-bit
+identical to the single-threaded path when it's used (verified by tests
+comparing serial vs. parallel output directly, not just checked for
+"close enough").
+
+**TypeScript (OneBrain)** — `MeshWorkerPool` (`models && skills/core/mesh-worker-pool.ts`)
+shards `NeuronMesh.propagate()`'s dense settle loop across
+`node:worker_threads`, with `SharedArrayBuffer` + `Atomics` so a call
+blocks only until every worker finishes its row range, not through
+`postMessage` round trips:
+
+```ts
+import { NeuronMesh } from './models && skills/core/onebrain.js';
+import { MeshWorkerPool } from './models && skills/core/mesh-worker-pool.js';
+
+const mesh = new NeuronMesh({ nodeCount: 2000, connectionDensity: 1.0 });
+mesh.setParallelBackend(new MeshWorkerPool()); // defaults to os.cpus().length - 1
+await mesh.prepareParallel();                  // attaches the shared buffers once
+mesh.propagate(inputs);                        // now runs across multiple cores
+```
+
+Node-only (Bun works too): `mesh-worker-pool.ts` is never imported by
+`onebrain.ts` itself, which stays free of Node built-ins so it can still
+be bundled for the browser — see that file's own header comment. Below
+`parallelMinNodes` (default 256; `MeshConfig.parallelMinNodes`) it falls
+back to the serial loop even with a backend attached, since worker
+coordination overhead outweighs the savings on a small mesh — see
+`bun run bench:mesh-parallel` (`benchmarks/mesh_parallel_benchmark.ts`)
+for real numbers at a size where it wins.
+
+**Python (asi_core reference mesh)** — `NeuralMesh(parallel_workers=N)`
+distributes each settle tick's per-neuron update across `N`
+`ProcessPoolExecutor` subprocesses, with topology/weights sent to each
+worker once (not re-pickled every tick) and torn down automatically
+whenever they'd go stale (learning, a new expert group, an explicit
+weight/DSL override, or a state load):
+
+```python
+from asi_core import create_brain
+
+brain = create_brain("massive", parallel_workers=4)  # 256 neurons
+try:
+    brain.perceive([0.1, 0.2, 0.3, 0.4])
+finally:
+    brain.close()  # shuts down the worker pool
+```
+
+Also below `parallel_min_neurons` (default 32) it stays on the serial
+path. Both are opt-in specifically because coordination overhead can
+outweigh the savings below that threshold — see each implementation's own
+doc comments (`NeuronMesh`'s `ParallelMeshBackend` in `onebrain.ts`;
+`NeuralMesh`'s class docstring and `_settle_shard` in
+`asi_core/neural_mesh.py`) for the full design and the constraints that
+shaped it.
 
 ## Conversation Training
 
