@@ -1917,6 +1917,92 @@ export class NeuronMesh {
     return Array.from(new Set(this.nodeGroups.values()));
   }
 
+  /**
+   * Absorb every node, connection, and group label from `other` into
+   * this mesh, wiring the two former-meshes' nodes to each other
+   * exactly like addNode() wires a brand-new node in (same
+   * connectionDensity-gated, symmetric random weight) -- the runtime
+   * counterpart to addNode()'s "grow with a brand-new node": this grows
+   * with nodes that already have real activation/bias/connections,
+   * because they came from an existing, already-settled mesh.
+   *
+   * Unlike addNode(), absorbed nodes keep the activation/bias/
+   * connections they already had in `other` -- they are relocated, not
+   * freshly initialized -- and `other`'s own connections *among its
+   * absorbed nodes* are copied over unchanged (remapped to new ids), so
+   * the two-way link addNode() gives every edge is preserved even where
+   * it isn't perfectly symmetric (a caller could have hand-edited one
+   * direction). Only the *cross* connections between self's original
+   * nodes and other's absorbed ones are new, since there is no history
+   * between two previously-separate meshes to preserve.
+   *
+   * `groupPrefix`, if given, is prepended ("prefix.originalGroup") to
+   * every absorbed node's group label, so two meshes that happen to use
+   * the same group name (e.g. both have a "coding" group) don't
+   * collide once merged. Omit it to keep other's group labels as-is.
+   *
+   * `other`'s own parallel backend (if it has one attached via
+   * setParallelBackend()) is untouched by this call -- whoever
+   * constructed and owns that MeshWorkerPool is still responsible for
+   * terminating it. `other` itself should not be used after merging
+   * into `self`.
+   *
+   * Returns other's old node id -> its new id in `self`, so a caller
+   * tracking identity across the merge can translate it.
+   */
+  mergeFrom(other: NeuronMesh, groupPrefix?: string): Map<number, number> {
+    const idMap = new Map<number, number>();
+    const existingIds = Array.from(this.nodes.keys());
+
+    for (const [oldId, oldNode] of other.nodes) {
+      const newId = this.nextId++;
+      idMap.set(oldId, newId);
+      const node: NeuronNode = {
+        id: newId,
+        activation: oldNode.activation,
+        bias: oldNode.bias,
+        connections: new Map(),
+        layer: oldNode.layer,
+        activationHistory: [...oldNode.activationHistory],
+      };
+      this.nodes.set(newId, node);
+      const group = other.nodeGroups.get(oldId);
+      if (group !== undefined) {
+        this.nodeGroups.set(newId, groupPrefix ? `${groupPrefix}.${group}` : group);
+      }
+    }
+
+    // Preserve other's own connections among its absorbed nodes.
+    for (const [oldId, oldNode] of other.nodes) {
+      const newNode = this.nodes.get(idMap.get(oldId)!)!;
+      for (const [oldNeighborId, weight] of oldNode.connections) {
+        const newNeighborId = idMap.get(oldNeighborId);
+        if (newNeighborId !== undefined) newNode.connections.set(newNeighborId, weight);
+      }
+    }
+
+    // New cross-connections between self's original nodes and the
+    // absorbed ones -- same connectionDensity-gated, symmetric random
+    // weight addNode() uses for a brand-new node. Only self's *original*
+    // nodes are targeted here (not other absorbed ones), so this never
+    // overwrites the internal connections just preserved above.
+    const density = this.config.connectionDensity;
+    for (const oldId of other.nodes.keys()) {
+      const newId = idMap.get(oldId)!;
+      const newNode = this.nodes.get(newId)!;
+      for (const existingId of existingIds) {
+        if (density < 1 && Math.random() >= density) continue;
+        const existingNode = this.nodes.get(existingId)!;
+        const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
+        newNode.connections.set(existingId, weight);
+        existingNode.connections.set(newId, weight);
+      }
+    }
+
+    this.cacheValid = false;
+    return idMap;
+  }
+
   updateConnection(fromId: number, toId: number, newWeight: number): void {
     const from = this.nodes.get(fromId);
     const to = this.nodes.get(toId);
