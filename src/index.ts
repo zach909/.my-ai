@@ -28,6 +28,7 @@ import { PromptLibrary } from "../models && skills/core/prompt-library.js";
 import { WorkingMemory } from "../models && skills/core/working-memory.js";
 import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
+import { ActionLog } from "../models && skills/core/action-log.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
 import { WorldModel } from "../models && skills/core/world-model.js";
 import { MathEngine, evaluateExpression } from "../models && skills/core/math-engine.js";
@@ -191,6 +192,19 @@ export class NeuroclawSystem {
   // AGI / ASI capability layer (integrated in solve()).
   monitor: SelfMonitor;
   mistakes: MistakeTracker;
+  /**
+   * Spec Part 9 sections 161-163 / Part 10 section 191 (Action History /
+   * Human Approval / Transparency): asi_core.UnifiedBrain's ActionLog
+   * (asi_core/action_log.py) had no TypeScript counterpart anywhere in
+   * the live app until this field. Nothing requires approval by default
+   * — a caller opts a structural action in via
+   * actions.requireApprovalFor(...) and gates it behind
+   * actions.request()/actions.perform(), exactly like
+   * NeuralMesh.add_expert_group/ExtensionSystem.create are gated on the
+   * Python side (see also NeuronMesh.mergeFrom, this engine's closest
+   * structural-growth analog to add_expert_group).
+   */
+  actions: ActionLog;
   knowledge: KnowledgeGraph;
   worldModel: WorldModel;
   math: MathEngine;
@@ -329,6 +343,7 @@ export class NeuroclawSystem {
     // emerges from their interaction (ASI §12), not from any one in isolation.
     this.monitor = new SelfMonitor();
     this.mistakes = new MistakeTracker();
+    this.actions = new ActionLog();
     this.knowledge = new KnowledgeGraph();
     // World model (Section 4): spec-aligned entity/causal/temporal vocabulary
     // over the same KnowledgeGraph -- not a second, duplicate graph.
