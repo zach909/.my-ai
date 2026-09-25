@@ -2453,6 +2453,17 @@ export class HyperDimensionalEngine {
         this.hasEma = false;
         this.sustainedDivergence = 0;
         /**
+         * Called once at the end of every process() tick, after energies are final.
+         *
+         * The network has more than one output. The Zip Loop's two bit neurons are
+         * one; each plugin tool's neuron (tool-neurons.ts) is another, and a tool
+         * neuron can fire on ANY tick -- one driven by the chat doorway, by
+         * continuous learning, or by a result coming back -- not only on ticks its
+         * own layer happens to run. Watching every tick is the only way to see a
+         * firing no matter who drove the network into it.
+         */
+        this.tickListeners = [];
+        /**
          * Which expert or skill each neuron belongs to, when it belongs to one.
          *
          * A label, not a wall: a grouped neuron is wired all-to-all like every
@@ -2741,6 +2752,8 @@ export class HyperDimensionalEngine {
         for (let idx = 0; idx < N; idx++) {
             inputTopography.set(this.neurons[idx].id, this.neurons[idx].state[0]);
         }
+        for (let i = 0; i < this.tickListeners.length; i++)
+            this.tickListeners[i]();
         return {
             outputVector,
             activeStates: resolvedActive,
@@ -2757,6 +2770,20 @@ export class HyperDimensionalEngine {
     }
     hasSeenPattern(patternHash) {
         return this.seenPatterns.has(patternHash);
+    }
+    /**
+     * Be called after every tick. Returns the function that stops it.
+     *
+     * A listener reads the network; it must not drive it. Calling process()
+     * from inside one would recurse into the tick that is still finishing.
+     */
+    onTick(listener) {
+        this.tickListeners.push(listener);
+        return () => {
+            const at = this.tickListeners.indexOf(listener);
+            if (at >= 0)
+                this.tickListeners.splice(at, 1);
+        };
     }
     getPatternNovelty(patternHash) {
         return this.seenPatterns.get(patternHash)?.novelty ?? 1;

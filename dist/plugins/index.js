@@ -25,6 +25,7 @@ import { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, Skill
 import { ResearchPlugin } from "./research.js";
 import { WikiPlugin } from "./wiki.js";
 import { TerminalPlugin } from "./terminal.js";
+import { DesktopPlugin } from "./desktop.js";
 import { ToolsPlugin } from "./tools.js";
 import { StorePlugin } from "./store.js";
 import { GithubPublishPlugin } from "./github-publish.js";
@@ -57,6 +58,7 @@ export { ImageExtension, VideoExtension, GameExtension, SelfHealExtension, Skill
 export { ResearchPlugin } from "./research.js";
 export { WikiPlugin } from "./wiki.js";
 export { TerminalPlugin } from "./terminal.js";
+export { DesktopPlugin } from "./desktop.js";
 export { ToolsPlugin } from "./tools.js";
 export { StorePlugin } from "./store.js";
 export { GithubPublishPlugin } from "./github-publish.js";
@@ -122,6 +124,11 @@ sharedMesh) {
         return new SkillMakerExtension(definition);
     if (lower.includes("plugin maker") || lower.includes("plugin-maker"))
         return new PluginMakerExtension(definition);
+    // Exact match, and ahead of the multi-input line below: that one claims any
+    // name merely containing "desktop", which would hand the desktop tools'
+    // plugin to multi-input instead.
+    if (lower === "desktop")
+        return new DesktopPlugin(definition);
     if (lower === "multi-input" || lower === "multi input" || lower === "multiinput" || lower.includes("desktop"))
         return new MultiInputPlugin(definition);
     if (lower.includes("language") || lower.includes("universal-language"))
@@ -182,6 +189,10 @@ const pluginExtensions = {
     // but never actually implemented/registered on the TS side -- 'terminal'
     // could never be reached even though the routing already named it.
     terminal: { id: "terminal", name: "Terminal", type: "api-connection", capabilities: ["terminal", "shell"] },
+    // The GNOME graphical layer as named tools -- the other half of the
+    // computer from the terminal above. Each tool is one output neuron (see
+    // models && skills/core/tool-neurons.ts).
+    desktop: { id: "desktop", name: "Desktop", type: "api-connection", capabilities: ["desktop-control", "screen-observe"] },
     // The GNOME graphical layer and the terminal/file layer, behind one set
     // of switches. Both modules existed before this entry; neither was reachable.
     "computer-access": {

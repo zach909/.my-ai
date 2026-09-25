@@ -3388,6 +3388,17 @@ export class HyperDimensionalEngine {
   private stateDeltasBuffer: Float32Array;
   private entropyHist: Uint32Array;
   private defaultDrivenIds: Set<number>;
+  /**
+   * Called once at the end of every process() tick, after energies are final.
+   *
+   * The network has more than one output. The Zip Loop's two bit neurons are
+   * one; each plugin tool's neuron (tool-neurons.ts) is another, and a tool
+   * neuron can fire on ANY tick -- one driven by the chat doorway, by
+   * continuous learning, or by a result coming back -- not only on ticks its
+   * own layer happens to run. Watching every tick is the only way to see a
+   * firing no matter who drove the network into it.
+   */
+  private tickListeners: Array<() => void> = [];
   private outputVectorScratch: Float32Array;
   private entropyLookup: Float64Array;
 
@@ -3836,6 +3847,8 @@ export class HyperDimensionalEngine {
       inputTopography.set(this.neurons[idx].id, this.neurons[idx].state[0]);
     }
 
+    for (let i = 0; i < this.tickListeners.length; i++) this.tickListeners[i]();
+
     return {
       outputVector,
       activeStates: resolvedActive,
@@ -3853,6 +3866,20 @@ export class HyperDimensionalEngine {
 
   hasSeenPattern(patternHash: string): boolean {
     return this.seenPatterns.has(patternHash);
+  }
+
+  /**
+   * Be called after every tick. Returns the function that stops it.
+   *
+   * A listener reads the network; it must not drive it. Calling process()
+   * from inside one would recurse into the tick that is still finishing.
+   */
+  onTick(listener: () => void): () => void {
+    this.tickListeners.push(listener);
+    return () => {
+      const at = this.tickListeners.indexOf(listener);
+      if (at >= 0) this.tickListeners.splice(at, 1);
+    };
   }
 
   getPatternNovelty(patternHash: string): number {

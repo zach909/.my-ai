@@ -4207,6 +4207,39 @@ export class WebServer {
     // ?path= chooses where in the archive it lands (default input/), so the
     // same route takes a recording, an image, or anything else without
     // needing a variant per kind of file.
+    // GET /api/tool-neurons -- the network's other outputs and inputs.
+    //
+    // Which neuron each terminal and desktop tool is, which pair of neurons
+    // each plugin's results come back in on, and what has fired and been
+    // called. Read-only: nothing here drives the network.
+    if (pathname === '/api/tool-neurons' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const layer = system.toolNeurons;
+        if (!layer) {
+          this.sendJson(res, { enabled: false, reason: process.env.NEUROCLAW_TOOL_NEURONS === '0' ? 'NEUROCLAW_TOOL_NEURONS=0' : 'not attached' });
+          return;
+        }
+        this.sendJson(res, {
+          enabled: true,
+          ...layer.layout(),
+          waiting: layer.fired(),
+          stats: layer.getStats(),
+          recent: layer.history().slice(-20).map(call => ({
+            tool: `${call.plugin}.${call.tool}`,
+            origin: call.origin,
+            ok: call.ok,
+            error: call.error,
+            at: call.endedAt,
+          })),
+        });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
     if (pathname === '/api/zip-loop/file' && method === 'POST') {
       // "zip loop no file size limit" -- no ceiling here either. Used to
       // match the transcription route's 25MB cap; removed so a large
@@ -4411,6 +4444,13 @@ export class WebServer {
 
         const result = await runUntilStoppedAsync(zip, { files, binary }, { quietTicks, maxTicks });
 
+        // The network's other outputs. Any terminal or desktop tool neuron that
+        // fired during the run is a call, and its arguments are in the run's own
+        // output archive (plugins/<plugin>/<tool>.json) -- the other side of the
+        // same Zip Loop. Results go back in on each plugin's own input neurons,
+        // queued behind the doorway lock, so this response does not wait for them.
+        const toolCalls = system.toolNeurons ? await system.toolNeurons.step(result.tree) : [];
+
         // When it stops it saves the input of every neuron -- whatever the
         // reason it stopped. A run cut off at the ceiling has MORE worth
         // keeping than one that ended tidily, since its state is the only
@@ -4443,6 +4483,11 @@ export class WebServer {
           stopReport: result.stopReport,
           stopReportFile: STOP_REPORT_FILE,
           resumed,
+          toolCalls: toolCalls.map(call => ({
+            tool: `${call.plugin}.${call.tool}`,
+            ok: call.ok,
+            error: call.error,
+          })),
         });
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);

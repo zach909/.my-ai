@@ -20,9 +20,11 @@
  * implemented or registered.
  */
 import { exec, spawn, execFileSync, type ChildProcess } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import type { PluginDefinition } from "../plugin_manager/types.js";
-import { BasePlugin } from "../plugin_manager/sdk.js";
+import { ToolPlugin } from "../plugin_manager/sdk.js";
 
 const execAsync = promisify(exec);
 
@@ -77,7 +79,21 @@ export interface TerminalSession {
   truncated: boolean;
 }
 
-export class TerminalPlugin extends BasePlugin {
+/** Past this, read_file hands back the head and says it stopped. */
+const READ_FILE_LIMIT_CHARS = 256_000;
+
+function textArg(args: Record<string, unknown>, name: string): string {
+  const value = args[name];
+  if (typeof value !== "string") throw new Error(`${name} must be text.`);
+  return value;
+}
+
+function optionalText(args: Record<string, unknown>, name: string): string | undefined {
+  const value = args[name];
+  return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+
+export class TerminalPlugin extends ToolPlugin {
   private bgProcs: ChildProcess[] = [];
   /**
    * What every background terminal has said, kept readable.
@@ -98,6 +114,104 @@ export class TerminalPlugin extends BasePlugin {
 
   constructor(definition: PluginDefinition) {
     super(definition);
+    this.defineTools();
+  }
+
+  /**
+   * The terminal's tools. Each is one output neuron in the network (see
+   * models && skills/core/tool-neurons.ts), so each is one nameable action.
+   *
+   * The file tools live here rather than only in the file-system plugin
+   * because a terminal session is where files get written in practice -- a
+   * build writes output, a script needs a config -- and "write a new file" is
+   * the action the network most needs as a single neuron of its own.
+   */
+  private defineTools(): void {
+    this.defineTool({
+      name: "run",
+      description: "Run a shell command and wait for it to finish.",
+      args: ["command"],
+      optionalArgs: ["cwd", "timeoutMs"],
+      capability: "terminal.execute",
+      run: async args => this.run(textArg(args, "command"), {
+        cwd: optionalText(args, "cwd"),
+        timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
+      }),
+    });
+    this.defineTool({
+      name: "run_background",
+      description: "Start a shell command in its own background terminal and return its process id.",
+      args: ["command"],
+      optionalArgs: ["cwd"],
+      capability: "terminal.execute",
+      run: async args => ({ pid: this.runBg(textArg(args, "command"), optionalText(args, "cwd")) }),
+    });
+    this.defineTool({
+      name: "list_terminals",
+      description: "Every background terminal and whether it is still running.",
+      args: [],
+      capability: "terminal.open",
+      run: async () => this.terminals().map(({ stdout: _out, stderr: _err, ...rest }) => rest),
+    });
+    this.defineTool({
+      name: "read_terminal",
+      description: "What one background terminal has printed so far.",
+      args: ["pid"],
+      capability: "terminal.open",
+      run: async args => {
+        const session = this.terminal(Number(args.pid));
+        if (!session) throw new Error(`No background terminal with pid ${String(args.pid)}.`);
+        return session;
+      },
+    });
+    this.defineTool({
+      name: "write_file",
+      description: "Write a new file (or replace one), creating its folder if needed.",
+      args: ["path", "content"],
+      optionalArgs: ["cwd"],
+      capability: "files.write",
+      run: async args => {
+        const full = resolve(optionalText(args, "cwd") ?? process.cwd(), textArg(args, "path"));
+        mkdirSync(dirname(full), { recursive: true });
+        const content = textArg(args, "content");
+        writeFileSync(full, content, "utf8");
+        return { path: full, bytes: Buffer.byteLength(content, "utf8") };
+      },
+    });
+    this.defineTool({
+      name: "read_file",
+      description: "Read a text file.",
+      args: ["path"],
+      optionalArgs: ["cwd"],
+      capability: "files.read",
+      run: async args => {
+        const full = resolve(optionalText(args, "cwd") ?? process.cwd(), textArg(args, "path"));
+        if (!existsSync(full) || !statSync(full).isFile()) throw new Error(`"${full}" is not a file.`);
+        const text = readFileSync(full, "utf8");
+        return text.length > READ_FILE_LIMIT_CHARS
+          ? { path: full, content: text.slice(0, READ_FILE_LIMIT_CHARS), truncated: text.length - READ_FILE_LIMIT_CHARS }
+          : { path: full, content: text };
+      },
+    });
+    this.defineTool({
+      name: "list_directory",
+      description: "What is in a folder.",
+      args: ["path"],
+      optionalArgs: ["cwd"],
+      capability: "files.read",
+      run: async args => {
+        const full = resolve(optionalText(args, "cwd") ?? process.cwd(), textArg(args, "path"));
+        if (!existsSync(full) || !statSync(full).isDirectory()) throw new Error(`"${full}" is not a directory.`);
+        return readdirSync(full).map(name => ({ name, directory: statSync(join(full, name)).isDirectory() }));
+      },
+    });
+    this.defineTool({
+      name: "which",
+      description: "Where a program is installed, or null when it is not.",
+      args: ["name"],
+      capability: "system.info",
+      run: async args => this.which(textArg(args, "name")),
+    });
   }
 
   async run(cmd: string, opts: { cwd?: string; timeoutMs?: number } = {}): Promise<RunResult> {
@@ -231,7 +345,11 @@ export class TerminalPlugin extends BasePlugin {
     const input = typeof message === "string" ? message : String(message ?? "");
     const m = input.match(/^(run|exec|execute|shell|terminal)\s*:?\s+([\s\S]+)$/i);
     if (!m) return null;
-    return this.run(m[2]);
+    // Through callTool, not run() directly: a command typed in chat is a call
+    // of the "run" tool like any other, so the network hears about it on the
+    // run neuron and gets the output back on the terminal's result channel.
+    const event = await this.callTool("run", { command: m[2] }, "message");
+    return event.ok ? event.result : { stdout: "", stderr: "", returncode: null, error: event.error };
   }
 
   async onHealthCheck(): Promise<boolean> {
