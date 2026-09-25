@@ -325,7 +325,7 @@ export class PluginRegistry {
         // buckets without absorbing everything routed here. It has to be
         // reachable from ordinary phrasing: "turn off computer access" is the
         // one sentence that must always work.
-        desktop: ['computer-access', 'multi-input'],
+        desktop: ['computer-access', 'desktop', 'multi-input'],
         input: ['computer-access', 'multi-input'],
         workspace: ['computer-access', 'multi-input'],
         access: ['computer-access'],

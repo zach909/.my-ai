@@ -52,6 +52,9 @@ import { PhoneCallsPlugin } from "../plugins/phone-calls.js";
 import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
 import type { SkillDefinition } from "../plugin_manager/types.js";
 import { embedText } from "../models && skills/core/neuro-lang.js";
+import { ToolPlugin } from "../plugin_manager/sdk.js";
+import { ToolNeuronLayer } from "../models && skills/core/tool-neurons.js";
+import { sharedAccessManager } from "../models && skills/core/access-settings.js";
 
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -168,6 +171,13 @@ export class NeuroclawSystem {
    * zip-loop calls can never interleave with promptFeed's.
    */
   continuousLearner: ContinuousLearner;
+  /**
+   * The network's other outputs and inputs: one neuron per terminal and
+   * desktop tool, and a result channel per plugin, in the same engine the
+   * Zip Loop talks through. Built in initialize(), once the plugins exist;
+   * null before then, or when NEUROCLAW_TOOL_NEURONS=0.
+   */
+  toolNeurons: ToolNeuronLayer | null = null;
   /**
    * What the last turn actually used, for the three-dots panel in the chat.
    *
@@ -561,6 +571,42 @@ export class NeuroclawSystem {
   }
 
   /**
+   * Plugins whose tools become neurons. The two halves of the computer: the
+   * terminal (commands and files) and the desktop (windows, screen, input).
+   */
+  static readonly TOOL_NEURON_PLUGINS = ["terminal", "desktop"] as const;
+
+  /**
+   * Give the terminal's and the desktop's tools their neurons in the real
+   * network -- the engine the Zip Loop streams through, not a copy.
+   *
+   * Shares the chat feed's doorway lock, because tool results and prompts
+   * drive the same engine; and the Access page's AccessManager, because a
+   * tool the network fires on its own must not reach anything a person has
+   * not allowed. Costs 20 neurons (16 tools, 2 result neurons per plugin),
+   * and every tick of an all-to-all mesh grows with the square of its size.
+   * NEUROCLAW_TOOL_NEURONS=0 leaves them out.
+   */
+  private attachToolNeurons(): void {
+    if (this.toolNeurons || process.env.NEUROCLAW_TOOL_NEURONS === "0") return;
+    try {
+      const layer = new ToolNeuronLayer(this.pipeline.ensureBrain(), {
+        lock: this.promptFeed.lock(),
+        access: sharedAccessManager(),
+      });
+      for (const id of NeuroclawSystem.TOOL_NEURON_PLUGINS) {
+        const plugin = this.pluginRegistry.getPluginInstance(id);
+        if (!(plugin instanceof ToolPlugin)) continue;
+        const attached = layer.attach(plugin);
+        if (attached.skipped) console.warn(`Tool neurons for "${id}" skipped: ${attached.skipped}`);
+      }
+      this.toolNeurons = layer;
+    } catch (e) {
+      console.warn("Tool neurons could not be attached:", e);
+    }
+  }
+
+  /**
    * Initialize all subsystems
    */
   async initialize(): Promise<void> {
@@ -592,6 +638,8 @@ export class NeuroclawSystem {
         console.warn(`Failed to instantiate extension "${key}":`, e);
       }
     }
+
+    this.attachToolNeurons();
 
     // Wire dependencies
     const callHistoryInstance = this.pluginRegistry.getPluginInstance("call-history") as CallHistoryPlugin | undefined;
