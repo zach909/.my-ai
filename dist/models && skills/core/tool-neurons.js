@@ -247,9 +247,7 @@ export class ToolNeuronLayer {
     observeTick() {
         if (this.neurons.size === 0)
             return;
-        const mean = this.engine.meanNeuronEnergy();
-        const scaled = mean * this.fireRatio;
-        const line = scaled > this.minEnergy ? scaled : this.minEnergy;
+        const line = this.firingLine();
         for (const neuron of this.neurons.values()) {
             const energy = this.engine.getNeuronEnergy(neuron.neuronId);
             if (energy <= line) {
@@ -269,6 +267,45 @@ export class ToolNeuronLayer {
                 key: neuron.key, plugin: neuron.plugin, tool: neuron.tool, neuronId: neuron.neuronId, energy, line,
             });
         }
+    }
+    /** What a tool neuron must exceed to count as firing, right now. */
+    firingLine() {
+        const scaled = this.engine.meanNeuronEnergy() * this.fireRatio;
+        return scaled > this.minEnergy ? scaled : this.minEnergy;
+    }
+    /**
+     * A typed decision over every tool, read off the network as it stands.
+     *
+     * The Jev shape: a state goes in (whatever the network was last driven
+     * with -- a prompt through the Zip Loop, a result on a channel), and what
+     * comes out is not text but an answer per option: a probability for each
+     * tool and whether it fires. Nothing is generated and nothing is ticked --
+     * reading this costs one pass over the tool neurons, not a settle.
+     *
+     * score = energy / (energy + line). It is 0.5 exactly at the firing line,
+     * so `score > 0.5` and "this neuron fires" are the same statement, and it
+     * rises toward 1 the further a neuron stands above the network's floor.
+     * Independent per tool, not a softmax: several tools can fire from one
+     * state (multi-output), and none firing is a real answer.
+     */
+    decide() {
+        const line = this.firingLine();
+        const options = [...this.neurons.values()].map(neuron => {
+            const energy = this.engine.getNeuronEnergy(neuron.neuronId);
+            const total = energy + line;
+            const score = total > 0 ? energy / total : 0;
+            return {
+                key: neuron.key,
+                plugin: neuron.plugin,
+                tool: neuron.tool,
+                neuronId: neuron.neuronId,
+                energy,
+                score,
+                fires: energy > line,
+            };
+        });
+        options.sort((a, b) => b.score - a.score);
+        return { line, options, chosen: options.filter(o => o.fires).map(o => o.key) };
     }
     /** Firings waiting to be acted on. Does not consume them. */
     fired() {
