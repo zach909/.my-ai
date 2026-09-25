@@ -1,19 +1,147 @@
 {
   "skill": "Conversation Learning",
-  "neuronCount": 3,
+  "neuronCount": 35,
   "neurons": [
     {
       "name": "respond_0",
-      "id": 66
+      "id": 87
     },
     {
       "name": "respond_1",
-      "id": 67
+      "id": 88
     },
     {
       "name": "anticipate_2",
-      "id": 68
+      "id": 89
+    },
+    {
+      "name": "respond_3",
+      "id": 90
+    },
+    {
+      "name": "anticipate_4",
+      "id": 91
+    },
+    {
+      "name": "respond_5",
+      "id": 92
+    },
+    {
+      "name": "anticipate_6",
+      "id": 93
+    },
+    {
+      "name": "respond_7",
+      "id": 94
+    },
+    {
+      "name": "anticipate_8",
+      "id": 95
+    },
+    {
+      "name": "respond_9",
+      "id": 96
+    },
+    {
+      "name": "anticipate_10",
+      "id": 97
+    },
+    {
+      "name": "respond_11",
+      "id": 98
+    },
+    {
+      "name": "anticipate_12",
+      "id": 99
+    },
+    {
+      "name": "respond_13",
+      "id": 100
+    },
+    {
+      "name": "anticipate_14",
+      "id": 101
+    },
+    {
+      "name": "respond_15",
+      "id": 102
+    },
+    {
+      "name": "anticipate_16",
+      "id": 103
+    },
+    {
+      "name": "respond_17",
+      "id": 104
+    },
+    {
+      "name": "anticipate_18",
+      "id": 105
+    },
+    {
+      "name": "respond_19",
+      "id": 106
+    },
+    {
+      "name": "anticipate_20",
+      "id": 107
+    },
+    {
+      "name": "respond_21",
+      "id": 108
+    },
+    {
+      "name": "anticipate_22",
+      "id": 109
+    },
+    {
+      "name": "respond_23",
+      "id": 110
+    },
+    {
+      "name": "anticipate_24",
+      "id": 111
+    },
+    {
+      "name": "respond_25",
+      "id": 112
+    },
+    {
+      "name": "anticipate_26",
+      "id": 113
+    },
+    {
+      "name": "respond_27",
+      "id": 114
+    },
+    {
+      "name": "anticipate_28",
+      "id": 115
+    },
+    {
+      "name": "respond_29",
+      "id": 116
+    },
+    {
+      "name": "anticipate_30",
+      "id": 117
+    },
+    {
+      "name": "respond_31",
+      "id": 118
+    },
+    {
+      "name": "anticipate_32",
+      "id": 119
+    },
+    {
+      "name": "respond_33",
+      "id": 120
+    },
+    {
+      "name": "anticipate_34",
+      "id": 121
     }
   ],
-  "publishedAt": "2026-09-25T22:04:46.832Z"
+  "publishedAt": "2026-09-25T22:04:52.352Z"
 }
