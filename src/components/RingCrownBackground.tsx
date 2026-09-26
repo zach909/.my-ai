@@ -29,12 +29,17 @@ import {
   LINK_WIDTH,
   PIN_COLORS,
   PIN_HEAD_RADIUS,
+  PIN_HEAD_THICKNESS,
   PIN_LENGTH,
   PIN_RADIUS,
+  SCALE,
 } from './ring-crown-geometry'
 
 /** Turns per second around the vertical axis. Slow enough to stay a backdrop. */
 const SPIN_RATE = 0.06
+
+/** Mid-level of the zigzag (baseHeight × SCALE), so the crown centres itself. */
+const CENTER_Y = 22 * SCALE
 
 function centerGroup(links: { position: THREE.Vector3 }[], pins: { position: THREE.Vector3 }[]) {
   const box = new THREE.Box3()
@@ -47,7 +52,9 @@ function SpinningRingCrown() {
   const groupRef = useRef<THREE.Group>(null)
   const { links, pins, center } = useMemo(() => {
     const layout = buildCrownLayout()
-    return { ...layout, center: centerGroup(layout.links, layout.pins) }
+    const c = centerGroup(layout.links, layout.pins)
+    c.y = CENTER_Y
+    return { ...layout, center: c }
   }, [])
 
   useFrame((state) => {
@@ -74,11 +81,11 @@ function SpinningRingCrown() {
             <meshStandardMaterial color={PIN_COLORS[i % 4]} {...LINK_MATERIAL} />
           </mesh>
           <mesh position={[0, PIN_LENGTH / 2, 0]}>
-            <cylinderGeometry args={[PIN_HEAD_RADIUS, PIN_HEAD_RADIUS, 0.8 * 0.023, 12]} />
+            <cylinderGeometry args={[PIN_HEAD_RADIUS, PIN_HEAD_RADIUS, PIN_HEAD_THICKNESS, 12]} />
             <meshStandardMaterial color={PIN_COLORS[i % 4]} {...LINK_MATERIAL} />
           </mesh>
           <mesh position={[0, -PIN_LENGTH / 2, 0]}>
-            <cylinderGeometry args={[PIN_HEAD_RADIUS, PIN_HEAD_RADIUS, 0.8 * 0.023, 12]} />
+            <cylinderGeometry args={[PIN_HEAD_RADIUS, PIN_HEAD_RADIUS, PIN_HEAD_THICKNESS, 12]} />
             <meshStandardMaterial color={PIN_COLORS[i % 4]} {...LINK_MATERIAL} />
           </mesh>
         </group>
