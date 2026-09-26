@@ -48,3 +48,4 @@
 {"id":"self_ext_5","name":"Memory: prompt 4","description":"Self-authored extension storing learned patterns from generation 5","createdAt":1782418083445,"prompt":"prompt 4","neuronCount":15,"connectionCount":50}
 {"id":"self_ext_5","name":"Memory: test","description":"Self-authored extension storing learned patterns from generation 5","createdAt":1782418096771,"prompt":"test","neuronCount":16,"connectionCount":60}
 {"id":"self_ext_10","name":"Memory: test","description":"Self-authored extension storing learned patterns from generation 10","createdAt":1782418096838,"prompt":"test","neuronCount":16,"connectionCount":60}
+{"id":"self_ext_combined","name":"Memory: combined","description":"Combined from 14 self-authored extensions","createdAt":1790444812412,"prompt":"combined","neuronCount":57,"connectionCount":410}
