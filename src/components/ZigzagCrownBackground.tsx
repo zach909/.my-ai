@@ -52,8 +52,8 @@ function Crown() {
   useFrame((_, delta) => {
     const g = groupRef.current
     if (!g) return
-    g.rotation.y += delta * 0.15
-    g.rotation.x = 0.45 + Math.sin(performance.now() / 4000) * 0.08
+    g.rotation.y += delta * 0.05
+    g.rotation.x = 0.45 + Math.sin(performance.now() / 12000) * 0.05
   })
 
   return (
