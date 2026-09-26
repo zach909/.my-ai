@@ -842,6 +842,41 @@ export function parseJsonBody(raw: string): unknown {
   }
 }
 
+// ─── Activity log ───────────────────────────────────────────────────────
+//
+// What the agent has been doing, for the React app's Activity page: chat
+// turns as they start, finish, or fail. Tool calls are not copied in here --
+// GET /api/activity reads them straight off the tool layer's own history()
+// so there is one record of them, not two. In memory, capped: a live view,
+// not an audit trail.
+interface ActivityEvent {
+  id: number;
+  kind: 'chat';
+  status: 'running' | 'ok' | 'error';
+  title: string;
+  detail?: string;
+  startedAt: number;
+  endedAt?: number;
+}
+const ACTIVITY_MAX = 300;
+const activityLog: ActivityEvent[] = [];
+let activitySeq = 0;
+function activityStart(title: string, detail?: string): ActivityEvent {
+  const event: ActivityEvent = { id: ++activitySeq, kind: 'chat', status: 'running', title, detail, startedAt: Date.now() };
+  activityLog.push(event);
+  if (activityLog.length > ACTIVITY_MAX) activityLog.splice(0, activityLog.length - ACTIVITY_MAX);
+  return event;
+}
+function activityEnd(event: ActivityEvent, ok: boolean, detail?: string): void {
+  event.status = ok ? 'ok' : 'error';
+  event.endedAt = Date.now();
+  if (detail !== undefined) event.detail = detail;
+}
+function clip(text: unknown, max = 400): string {
+  const s = typeof text === 'string' ? text : JSON.stringify(text) ?? '';
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
 export class WebServer {
   private runner: NeuroclawRunner;
   private launcher: AppLauncher;
@@ -2697,6 +2732,41 @@ export class WebServer {
       return;
     }
 
+    // GET /api/activity -- what the agent has been doing, newest first:
+    // chat turns (from the activity log above) and every tool call the tool
+    // layer has recorded, with its arguments and result. Read-only.
+    if (pathname === '/api/activity' && method === 'GET') {
+      try {
+        const events: Array<Record<string, unknown>> = activityLog.map(e => ({ ...e }));
+        let toolsEnabled = false;
+        try {
+          const { getNeuroclawSystem } = await import('../src/index.js');
+          const layer = (await getNeuroclawSystem()).toolNeurons;
+          if (layer) {
+            toolsEnabled = true;
+            layer.history().forEach((call, i) => {
+              events.push({
+                id: `tool-${i}-${call.startedAt}`,
+                kind: 'tool',
+                status: call.ok ? 'ok' : 'error',
+                title: `${call.plugin}.${call.tool}`,
+                origin: call.origin,
+                args: clip(call.args),
+                detail: call.ok ? clip(call.result) : call.error,
+                startedAt: call.startedAt,
+                endedAt: call.endedAt,
+              });
+            });
+          }
+        } catch { /* no tool layer is not an error; chat activity still shows */ }
+        events.sort((a, b) => Number(b.startedAt) - Number(a.startedAt));
+        this.sendJson(res, { toolsEnabled, events: events.slice(0, ACTIVITY_MAX) });
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+
     if (pathname === '/api/chat' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as
@@ -2721,7 +2791,15 @@ export class WebServer {
                 typeof h?.role === 'string' && typeof h?.content === 'string')
               .map(h => `${h.role}: ${h.content}`)
           : undefined;
-        const response = await this.runner.generate(message, history);
+        const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+        let response: string;
+        try {
+          response = await this.runner.generate(message, history);
+        } catch (err) {
+          activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+          throw err;
+        }
+        activityEnd(activity, true, clip(response));
         // What the turn actually used, for the three-dots panel. Read off the
         // system rather than rebuilt here: a details panel assembled from
         // guesses about what probably ran looks like evidence and is not.
@@ -2787,7 +2865,15 @@ export class WebServer {
         const { getBot } = await import('../src/server/bot-service.js');
         const { getNeuroclawSystem } = await import('../src/index.js');
         const bot = await getBot(await getNeuroclawSystem());
-        const response = await bot.processMessage(message);
+        const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+        let response: Awaited<ReturnType<typeof bot.processMessage>>;
+        try {
+          response = await bot.processMessage(message);
+        } catch (err) {
+          activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+          throw err;
+        }
+        activityEnd(activity, true, clip(response.message));
         this.sendJson(res, {
           message: response.message,
           confidence: response.confidence,

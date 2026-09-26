@@ -1,11 +1,11 @@
 /**
- * Chance — a "surprise me" page. Click the button, get a random idea for
- * something to have the AI do, then send it straight into Chats or roll
- * again. Your own ideas can be added and are kept in localStorage.
+ * Chance — an endless, shuffled feed of ideas for something to have the AI
+ * do. Scroll to load more, "Try it" copies one and opens Chats. Your own
+ * ideas can be posted to the feed and are kept in localStorage.
  */
 
 import { createFileRoute, useNavigate } from '@tanstack/react-router'
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Card } from '@/components/ui/card'
 import { MessageSquare, RefreshCw, Sparkles } from '@/components/icons'
@@ -17,7 +17,7 @@ export const Route = createFileRoute('/app/chance')({
   head: () => ({
     meta: [
       { title: 'Chance · Corona' },
-      { name: 'description', content: 'Click for a random idea of something to do.' },
+      { name: 'description', content: 'An endless feed of ideas for things to try.' },
     ],
   }),
   component: ChancePage,
@@ -37,21 +37,62 @@ function saveCustom(ideas: string[]) {
   try { localStorage.setItem(CUSTOM_KEY, JSON.stringify(ideas)) } catch { /* ignore */ }
 }
 
+const PAGE_SIZE = 8
+
+function shuffle<T>(arr: T[]): T[] {
+  const a = [...arr]
+  for (let i = a.length - 1; i > 0; i--) {
+    const j = Math.floor(Math.random() * (i + 1))
+    ;[a[i], a[j]] = [a[j], a[i]]
+  }
+  return a
+}
+
 function ChancePage() {
   const navigate = useNavigate()
   const [custom, setCustom] = useState<string[]>([])
-  const [idea, setIdea] = useState<string | null>(null)
+  const [feed, setFeed] = useState<{ id: number; text: string }[]>([])
   const [draft, setDraft] = useState('')
+  const [copied, setCopied] = useState<number | null>(null)
+  const sentinel = useRef<HTMLDivElement>(null)
+  const nextId = useRef(0)
+  const deck = useRef<string[]>([])
 
-  useEffect(() => { setCustom(loadCustom()) }, [])
+  const pool = () => [...(builtInIdeas as string[]), ...loadCustom()]
 
-  const all = [...(builtInIdeas as string[]), ...custom]
-
-  const roll = () => {
+  // Deal ideas from a shuffled deck; reshuffle when empty so the feed never
+  // runs out, avoiding the same idea twice in a row across reshuffles.
+  const loadMore = useCallback(() => {
+    const all = pool()
     if (all.length === 0) return
-    let next = all[Math.floor(Math.random() * all.length)]
-    if (all.length > 1) while (next === idea) next = all[Math.floor(Math.random() * all.length)]
-    setIdea(next)
+    const batch: { id: number; text: string }[] = []
+    for (let i = 0; i < PAGE_SIZE; i++) {
+      if (deck.current.length === 0) deck.current = shuffle(all)
+      const text = deck.current.pop()!
+      batch.push({ id: nextId.current++, text })
+    }
+    setFeed((f) => [...f, ...batch])
+  }, [])
+
+  useEffect(() => {
+    setCustom(loadCustom())
+    loadMore()
+  }, [loadMore])
+
+  useEffect(() => {
+    const el = sentinel.current
+    if (!el) return
+    const obs = new IntersectionObserver((entries) => {
+      if (entries[0]?.isIntersecting) loadMore()
+    }, { rootMargin: '400px' })
+    obs.observe(el)
+    return () => obs.disconnect()
+  }, [loadMore])
+
+  const refresh = () => {
+    deck.current = []
+    setFeed([])
+    loadMore()
   }
 
   const addIdea = () => {
@@ -61,6 +102,7 @@ function ChancePage() {
     setCustom(updated)
     saveCustom(updated)
     setDraft('')
+    setFeed((f) => [{ id: nextId.current++, text }, ...f])
   }
 
   const removeIdea = (i: number) => {
@@ -69,54 +111,56 @@ function ChancePage() {
     saveCustom(updated)
   }
 
-  const tryIt = async () => {
-    if (!idea) return
-    try { await navigator.clipboard.writeText(idea) } catch { /* ignore */ }
+  const dismiss = (id: number) => setFeed((f) => f.filter((x) => x.id !== id))
+
+  const tryIt = async (text: string, id: number) => {
+    try { await navigator.clipboard.writeText(text) } catch { /* ignore */ }
+    setCopied(id)
     void navigate({ to: '/app/chat' })
   }
 
   return (
     <div className="mx-auto max-w-2xl space-y-6 p-4 md:p-8">
-      <div>
-        <h1 className="flex items-center gap-2 text-2xl font-semibold">
-          <Sparkles className="h-6 w-6" /> Chance
-        </h1>
-        <p className="text-sm text-muted-foreground">Not sure what to do? Click and let chance decide.</p>
+      <div className="flex items-start justify-between gap-4">
+        <div>
+          <h1 className="flex items-center gap-2 text-2xl font-semibold">
+            <Sparkles className="h-6 w-6" /> Chance
+          </h1>
+          <p className="text-sm text-muted-foreground">A never-ending feed of things to try. Scroll, pick one, go.</p>
+        </div>
+        <Button variant="outline" onClick={refresh}>
+          <RefreshCw className="mr-2 h-4 w-4" /> Shuffle
+        </Button>
       </div>
 
-      <Card className="flex min-h-48 flex-col items-center justify-center gap-4 p-6 text-center">
-        {idea ? (
-          <p className="text-lg font-medium">{idea}</p>
-        ) : (
-          <p className="text-muted-foreground">Press the button for a random idea.</p>
-        )}
-        <div className="flex flex-wrap justify-center gap-2">
-          <Button onClick={roll} size="lg">
-            {idea ? <RefreshCw className="mr-2 h-4 w-4" /> : <Sparkles className="mr-2 h-4 w-4" />}
-            {idea ? 'Roll again' : 'Surprise me'}
-          </Button>
-          {idea && (
-            <Button variant="outline" size="lg" onClick={() => void tryIt()} title="Copies the idea and opens Chats">
-              <MessageSquare className="mr-2 h-4 w-4" /> Try it in chat
-            </Button>
-          )}
-        </div>
-      </Card>
+      <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); addIdea() }}>
+        <input
+          value={draft}
+          onChange={(e) => setDraft(e.target.value)}
+          placeholder="Post your own idea to the feed…"
+          className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
+        />
+        <Button type="submit" disabled={!draft.trim()}>Post</Button>
+      </form>
 
-      <Card className="space-y-3 p-4">
-        <h2 className="font-medium">Your own ideas</h2>
-        <form className="flex gap-2" onSubmit={(e) => { e.preventDefault(); addIdea() }}>
-          <input
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            placeholder="Add an idea to the pool…"
-            className="flex-1 rounded-md border bg-background px-3 py-2 text-sm"
-          />
-          <Button type="submit" disabled={!draft.trim()}>Add</Button>
-        </form>
-        {custom.length === 0 ? (
-          <p className="text-sm text-muted-foreground">No custom ideas yet. They get mixed into the rolls.</p>
-        ) : (
+      <div className="space-y-3">
+        {feed.map((item) => (
+          <Card key={item.id} className="space-y-3 p-4">
+            <p className="text-base">{item.text}</p>
+            <div className="flex gap-2">
+              <Button size="sm" onClick={() => void tryIt(item.text, item.id)} title="Copies the idea and opens Chats">
+                <MessageSquare className="mr-2 h-4 w-4" /> {copied === item.id ? 'Copied!' : 'Try it'}
+              </Button>
+              <Button size="sm" variant="ghost" onClick={() => dismiss(item.id)}>Not for me</Button>
+            </div>
+          </Card>
+        ))}
+        <div ref={sentinel} className="py-4 text-center text-sm text-muted-foreground">Loading more ideas…</div>
+      </div>
+
+      {custom.length > 0 && (
+        <Card className="space-y-2 p-4">
+          <h2 className="font-medium">Your ideas</h2>
           <ul className="space-y-1 text-sm">
             {custom.map((c, i) => (
               <li key={i} className="flex items-center justify-between gap-2 rounded px-2 py-1 hover:bg-muted">
@@ -125,8 +169,8 @@ function ChancePage() {
               </li>
             ))}
           </ul>
-        )}
-      </Card>
+        </Card>
+      )}
     </div>
   )
 }

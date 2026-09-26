@@ -21,6 +21,7 @@ import {
   Folder,
   Settings,
   Sparkles,
+  Activity,
 } from '@/components/icons'
 import { cn } from '@/lib/utils'
 
@@ -45,6 +46,7 @@ const NAV_ITEMS: NavItemDef[] = [
   { href: '/app/chat', icon: <MessageSquare className="h-4 w-4" />, label: 'Chats' },
   { href: '/app/pinned-chats', icon: <Pin className="h-4 w-4" />, label: 'Pinned Chats' },
   { href: '/app/chance', icon: <Sparkles className="h-4 w-4" />, label: 'Chance' },
+  { href: '/app/activity', icon: <Activity className="h-4 w-4" />, label: 'Activity' },
   // Chat History and Memory are tabs of this one entry -- both are views
   // over what has been said or remembered. The route is still
   // /app/chat-groups (unchanged, so old links/bookmarks keep working), but
