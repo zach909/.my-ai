@@ -5,12 +5,12 @@
   "description": "A Net Skill grafted into the live mesh: 1 neuron, all-to-all with the rest of the network. Not installable as a file -- see the descriptor for what it means, and net-skill-graft.ts for how a mesh grows one.",
   "author": "neuroclaw-agent",
   "publishedAt": "2026-09-26T17:51:05.754Z",
-  "updatedAt": "2026-09-26T17:51:05.754Z",
+  "updatedAt": "2026-09-26T17:51:09.238Z",
   "files": [
     {
       "filename": "autoload_probe_1790445062067_o7uw5mcjwpo.net-skill.json",
       "bytes": 227,
-      "sha256": "5971828eb4898e3b4ba0364158b6b60634c4a3ddfad48526c95f5f13452b6a93"
+      "sha256": "9861328f389ed463a12f326c190660ac7d25d351c9105c0509604c2ee810f3a0"
     }
   ]
 }
