@@ -15,7 +15,7 @@ import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills } from '../models && skills/core/net-skill-graft.js';
 import { STORE_KINDS, STORE_KIND_LABELS, StoreError, listCatalog, publishAndSync, readItem, deleteAndSync, } from '../models && skills/core/store.js';
-import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFileAndSync, linkSkillUploadWikiAndSync, unlinkSkillUploadWikiAndSync, recordSkillUploadRsiPassAndSync, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
+import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, pullSkillUploadCatalog, pullSkillUploadPackage, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFileAndSync, linkSkillUploadWikiAndSync, unlinkSkillUploadWikiAndSync, recordSkillUploadRsiPassAndSync, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
 /**
  * Keeps exactly one `extension-builder/pytorch_trainer.py` subprocess alive
  * for the life of the server instead of spawning (and re-importing torch
@@ -925,6 +925,10 @@ export class WebServer {
         // first time someone actually asks for it, not pulled wholesale here on
         // every boot regardless of whether anyone browses anything.
         await pullStoreCatalog({ manifestsOnly: true }).catch(() => { });
+        // Skill uploads use the same shared `store` branch but live outside the
+        // generic store catalogue. Pull their manifests too so uploaded packages
+        // are visible on a fresh device; payloads remain on-demand.
+        await pullSkillUploadCatalog().catch(() => { });
         // Same reasoning, same placement: loading every saved extension is
         // real work (parsing N files, remembering M neurons) that only makes
         // sense to pay once per actual live server process, not once per
@@ -1226,7 +1230,7 @@ export class WebServer {
      * (or none) pass their own ceiling explicitly; nobody else's behavior
      * changes.
      */
-    async parseBody(req, maxBytes = 1024 * 1024) {
+    async parseBody(req, maxBytes = Number.POSITIVE_INFINITY) {
         // CSRF: this server has no auth and setSecurityHeaders() never sends
         // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
         // response -- but that alone doesn't stop the *request* from being
@@ -3357,7 +3361,7 @@ export class WebServer {
         const skillUploadExtraFilesMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files$/);
         if (skillUploadExtraFilesMatch && method === 'POST') {
             try {
-                const body = await this.parseBody(req);
+                const body = await this.parseBody(req, Number.POSITIVE_INFINITY);
                 if (!Array.isArray(body?.files) || body.files.length === 0) {
                     this.sendJson(res, { error: 'Expected a non-empty "files" array of { filename, content }' }, 400);
                     return;
@@ -3384,7 +3388,15 @@ export class WebServer {
         const skillUploadExtraFileMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files\/([A-Za-z0-9_.-]+)$/);
         if (skillUploadExtraFileMatch && method === 'GET') {
             const [, name, filename] = skillUploadExtraFileMatch;
-            const file = readSkillUploadExtraFile(name, decodeURIComponent(filename));
+            // A package may have been published from another device. Pull the
+            // package from the shared store branch before reading the requested
+            // file, so large extra files are available remotely without requiring
+            // every device to download every payload at boot.
+            const requestedFilename = decodeURIComponent(filename);
+            if (!readSkillUploadExtraFile(name, requestedFilename)) {
+                await pullSkillUploadPackage(name).catch(() => { });
+            }
+            const file = readSkillUploadExtraFile(name, requestedFilename);
             if (!file) {
                 this.sendJson(res, { error: `No extra file named "${filename}" in "${name}"` }, 404);
                 return;
@@ -4006,6 +4018,41 @@ export class WebServer {
         // ?path= chooses where in the archive it lands (default input/), so the
         // same route takes a recording, an image, or anything else without
         // needing a variant per kind of file.
+        // GET /api/tool-neurons -- the network's other outputs and inputs.
+        //
+        // Which neuron each terminal and desktop tool is, which pair of neurons
+        // each plugin's results come back in on, and what has fired and been
+        // called. Read-only: nothing here drives the network.
+        if (pathname === '/api/tool-neurons' && method === 'GET') {
+            try {
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const layer = system.toolNeurons;
+                if (!layer) {
+                    this.sendJson(res, { enabled: false, reason: process.env.NEUROCLAW_TOOL_NEURONS === '0' ? 'NEUROCLAW_TOOL_NEURONS=0' : 'not attached' });
+                    return;
+                }
+                this.sendJson(res, {
+                    enabled: true,
+                    ...layer.layout(),
+                    // Every tool's score against the network as it stands -- read-only.
+                    decision: layer.decide(),
+                    waiting: layer.fired(),
+                    stats: layer.getStats(),
+                    recent: layer.history().slice(-20).map(call => ({
+                        tool: `${call.plugin}.${call.tool}`,
+                        origin: call.origin,
+                        ok: call.ok,
+                        error: call.error,
+                        at: call.endedAt,
+                    })),
+                });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         if (pathname === '/api/zip-loop/file' && method === 'POST') {
             // "zip loop no file size limit" -- no ceiling here either. Used to
             // match the transcription route's 25MB cap; removed so a large
@@ -4181,6 +4228,12 @@ export class WebServer {
                         resumed = engine.restoreNetworkState(saved);
                 }
                 const result = await runUntilStoppedAsync(zip, { files, binary }, { quietTicks, maxTicks });
+                // The network's other outputs. Any terminal or desktop tool neuron that
+                // fired during the run is a call, and its arguments are in the run's own
+                // output archive (plugins/<plugin>/<tool>.json) -- the other side of the
+                // same Zip Loop. Results go back in on each plugin's own input neurons,
+                // queued behind the doorway lock, so this response does not wait for them.
+                const toolCalls = system.toolNeurons ? await system.toolNeurons.step(result.tree) : [];
                 // When it stops it saves the input of every neuron -- whatever the
                 // reason it stopped. A run cut off at the ceiling has MORE worth
                 // keeping than one that ended tidily, since its state is the only
@@ -4213,6 +4266,11 @@ export class WebServer {
                     stopReport: result.stopReport,
                     stopReportFile: STOP_REPORT_FILE,
                     resumed,
+                    toolCalls: toolCalls.map(call => ({
+                        tool: `${call.plugin}.${call.tool}`,
+                        ok: call.ok,
+                        error: call.error,
+                    })),
                 });
             }
             catch (err) {
