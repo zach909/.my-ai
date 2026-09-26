@@ -32,6 +32,7 @@
  * the store follow.
  */
 
+import { ProfileLists } from '@/components/ProfileLists'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
@@ -564,6 +565,8 @@ function MemoryPanel() {
           and the skills installed into it. {data ? <strong>{data.total.toLocaleString()}</strong> : '—'} memories.
         </p>
       </div>
+
+      <ProfileLists onChange={() => void load()} />
 
       <div className="flex flex-wrap items-center gap-2">
         <Input
