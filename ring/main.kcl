@@ -1,0 +1,316 @@
+// Four-color articulated crown
+// Six raised and six lowered 90-degree points in 24 links.
+@settings(defaultLengthUnit = mm, kclVersion = 2.0)
+
+import "link.kcl" as chainLink
+import "descendingLink.kcl" as descendingLink
+import "pin.kcl" as hingePin
+import * from "crownParameters.kcl"
+
+firstLink = rotate(
+  clone(chainLink),
+  axis = X,
+  angle = -linkRoll,
+  global = true,
+)
+  |> rotate(axis = Y, angle = linkSlope, global = true)
+  |> rotate(axis = Z, angle = 90deg + jointAngle / 2, global = true)
+  |> translate(
+       x = crownRadius * (1 + cos(jointAngle)) / 2,
+       y = crownRadius * sin(jointAngle) / 2,
+       z = baseHeight + crownRise / 2,
+       global = true,
+     )
+secondLink = rotate(
+  chainLink,
+  axis = X,
+  angle = midRoll,
+  global = true,
+)
+  |> rotate(axis = Y, angle = linkSlope, global = true)
+  |> rotate(axis = Z, angle = 90deg + 1.5 * jointAngle, global = true)
+  |> translate(
+       x = crownRadius * (cos(jointAngle) + cos(2 * jointAngle)) / 2,
+       y = crownRadius * (sin(jointAngle) + sin(2 * jointAngle)) / 2,
+       z = baseHeight - (crownRise / 2),
+       global = true,
+     )
+thirdLink = rotate(
+  clone(descendingLink),
+  axis = X,
+  angle = linkRoll,
+  global = true,
+)
+  |> rotate(axis = Y, angle = -linkSlope, global = true)
+  |> rotate(axis = Z, angle = 90deg + 2.5 * jointAngle, global = true)
+  |> translate(
+       x = crownRadius * (cos(2 * jointAngle) + cos(3 * jointAngle)) / 2,
+       y = crownRadius * (sin(2 * jointAngle) + sin(3 * jointAngle)) / 2,
+       z = baseHeight - (crownRise / 2),
+       global = true,
+     )
+fourthLink = rotate(
+  descendingLink,
+  axis = X,
+  angle = -midRoll,
+  global = true,
+)
+  |> rotate(axis = Y, angle = -linkSlope, global = true)
+  |> rotate(axis = Z, angle = 90deg + 3.5 * jointAngle, global = true)
+  |> translate(
+       x = crownRadius * (cos(3 * jointAngle) + cos(4 * jointAngle)) / 2,
+       y = crownRadius * (sin(3 * jointAngle) + sin(4 * jointAngle)) / 2,
+       z = baseHeight + crownRise / 2,
+       global = true,
+     )
+firstSeries = patternCircular3d(
+  firstLink,
+  instances = pointCount,
+  axis = Z,
+  center = [0mm, 0mm, 0mm],
+  arcDegrees = 360deg,
+  rotateDuplicates = true,
+)
+secondSeries = patternCircular3d(
+  secondLink,
+  instances = pointCount,
+  axis = Z,
+  center = [0mm, 0mm, 0mm],
+  arcDegrees = 360deg,
+  rotateDuplicates = true,
+)
+thirdSeries = patternCircular3d(
+  thirdLink,
+  instances = pointCount,
+  axis = Z,
+  center = [0mm, 0mm, 0mm],
+  arcDegrees = 360deg,
+  rotateDuplicates = true,
+)
+fourthSeries = patternCircular3d(
+  fourthLink,
+  instances = pointCount,
+  axis = Z,
+  center = [0mm, 0mm, 0mm],
+  arcDegrees = 360deg,
+  rotateDuplicates = true,
+)
+links = [
+  firstSeries[0],
+  secondSeries[0],
+  thirdSeries[0],
+  fourthSeries[0],
+  firstSeries[1],
+  secondSeries[1],
+  thirdSeries[1],
+  fourthSeries[1],
+  firstSeries[2],
+  secondSeries[2],
+  thirdSeries[2],
+  fourthSeries[2],
+  firstSeries[3],
+  secondSeries[3],
+  thirdSeries[3],
+  fourthSeries[3],
+  firstSeries[4],
+  secondSeries[4],
+  thirdSeries[4],
+  fourthSeries[4],
+  firstSeries[5],
+  secondSeries[5],
+  thirdSeries[5],
+  fourthSeries[5]
+]
+blueLinks = appearance(
+  [
+    links[0],
+    links[1],
+    links[2],
+    links[3],
+    links[4],
+    links[5]
+  ],
+  color = "#389ED3",
+  roughness = 65,
+)
+yellowLinks = appearance(
+  [
+    links[6],
+    links[7],
+    links[8],
+    links[9],
+    links[10],
+    links[11]
+  ],
+  color = "#EEE38C",
+  roughness = 65,
+)
+greenLinks = appearance(
+  [
+    links[12],
+    links[13],
+    links[14],
+    links[15],
+    links[16],
+    links[17]
+  ],
+  color = "#6AAF65",
+  roughness = 65,
+)
+redLinks = appearance(
+  [
+    links[18],
+    links[19],
+    links[20],
+    links[21],
+    links[22],
+    links[23]
+  ],
+  color = "#E94842",
+  roughness = 65,
+)
+
+firstPin = rotate(
+  clone(hingePin),
+  axis = Y,
+  angle = -pinTilt,
+  global = true,
+)
+  |> translate(x = crownRadius, z = baseHeight + crownRise, global = true)
+secondPin = clone(hingePin)
+  |> rotate(axis = Y, angle = midTilt, global = true)
+  |> rotate(axis = Z, angle = jointAngle + 90deg, global = true)
+  |> translate(
+       x = crownRadius * cos(jointAngle),
+       y = crownRadius * sin(jointAngle),
+       z = baseHeight,
+       global = true,
+     )
+thirdPin = clone(hingePin)
+  |> rotate(axis = Y, angle = pinTilt, global = true)
+  |> rotate(axis = Z, angle = 2 * jointAngle, global = true)
+  |> translate(
+       x = crownRadius * cos(2 * jointAngle),
+       y = crownRadius * sin(2 * jointAngle),
+       z = baseHeight - crownRise,
+       global = true,
+     )
+fourthPin = rotate(
+  hingePin,
+  axis = Y,
+  angle = midTilt,
+  global = true,
+)
+  |> rotate(axis = Z, angle = 3 * jointAngle - 90deg, global = true)
+  |> translate(
+       x = crownRadius * cos(3 * jointAngle),
+       y = crownRadius * sin(3 * jointAngle),
+       z = baseHeight,
+       global = true,
+     )
+firstPinSeries = patternCircular3d(
+  firstPin,
+  instances = pointCount,
+  axis = Z,
+  center = [0mm, 0mm, 0mm],
+  arcDegrees = 360deg,
+  rotateDuplicates = true,
+)
+secondPinSeries = patternCircular3d(
+  secondPin,
+  instances = pointCount,
+  axis = Z,
+  center = [0mm, 0mm, 0mm],
+  arcDegrees = 360deg,
+  rotateDuplicates = true,
+)
+thirdPinSeries = patternCircular3d(
+  thirdPin,
+  instances = pointCount,
+  axis = Z,
+  center = [0mm, 0mm, 0mm],
+  arcDegrees = 360deg,
+  rotateDuplicates = true,
+)
+fourthPinSeries = patternCircular3d(
+  fourthPin,
+  instances = pointCount,
+  axis = Z,
+  center = [0mm, 0mm, 0mm],
+  arcDegrees = 360deg,
+  rotateDuplicates = true,
+)
+pins = [
+  firstPinSeries[0],
+  secondPinSeries[0],
+  thirdPinSeries[0],
+  fourthPinSeries[0],
+  firstPinSeries[1],
+  secondPinSeries[1],
+  thirdPinSeries[1],
+  fourthPinSeries[1],
+  firstPinSeries[2],
+  secondPinSeries[2],
+  thirdPinSeries[2],
+  fourthPinSeries[2],
+  firstPinSeries[3],
+  secondPinSeries[3],
+  thirdPinSeries[3],
+  fourthPinSeries[3],
+  firstPinSeries[4],
+  secondPinSeries[4],
+  thirdPinSeries[4],
+  fourthPinSeries[4],
+  firstPinSeries[5],
+  secondPinSeries[5],
+  thirdPinSeries[5],
+  fourthPinSeries[5]
+]
+bluePins = appearance(
+  [
+    pins[0],
+    pins[1],
+    pins[2],
+    pins[3],
+    pins[4],
+    pins[5]
+  ],
+  color = "#2C82B4",
+  roughness = 65,
+)
+yellowPins = appearance(
+  [
+    pins[6],
+    pins[7],
+    pins[8],
+    pins[9],
+    pins[10],
+    pins[11]
+  ],
+  color = "#D8C66D",
+  roughness = 65,
+)
+greenPins = appearance(
+  [
+    pins[12],
+    pins[13],
+    pins[14],
+    pins[15],
+    pins[16],
+    pins[17]
+  ],
+  color = "#4D9350",
+  roughness = 65,
+)
+redPins = appearance(
+  [
+    pins[18],
+    pins[19],
+    pins[20],
+    pins[21],
+    pins[22],
+    pins[23]
+  ],
+  color = "#CB3935",
+  roughness = 65,
+)
