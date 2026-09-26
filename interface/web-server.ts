@@ -7,6 +7,7 @@ import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore, type ChatSource } from '../models && skills/core/chat-history-store.js';
+import { UserProfileStore, type ProfileList } from '../models && skills/core/user-profile-store.js';
 import type { NetworkStateSnapshot } from '../models && skills/core/onebrain.js';
 import {
   installFromStore,
@@ -840,6 +841,21 @@ export function parseJsonBody(raw: string): unknown {
   } catch {
     throw new HttpClientError('Invalid JSON', 400);
   }
+}
+
+// The Memory tab's "About you" and "Goals" lists. Loaded into long-term
+// memory once per memory instance (loadMemory() can swap it out).
+let userProfile: UserProfileStore | null = null;
+const profileSynced = new WeakSet<object>();
+async function profileWithMemory() {
+  userProfile ??= new UserProfileStore();
+  const { getNeuroclawSystem } = await import('../src/index.js');
+  const memory = (await getNeuroclawSystem()).memory;
+  if (!profileSynced.has(memory)) {
+    userProfile.syncTo(memory);
+    profileSynced.add(memory);
+  }
+  return { store: userProfile, memory };
 }
 
 // ─── Activity log ───────────────────────────────────────────────────────
@@ -2289,8 +2305,57 @@ export class WebServer {
     // store are readable too). Forgetting is NOT -- it is destruction, and it
     // is gated for the same reason wiki and store deletion are.
 
+    // ── About you / Goals: what the user tells it directly ──────────────
+    // GET /api/profile, POST /api/profile/{about|goals} {text},
+    // PATCH /api/profile/{about|goals}/:id {text?, done?},
+    // DELETE /api/profile/{about|goals}/:id
+    if (pathname === '/api/profile' && method === 'GET') {
+      try {
+        const { store } = await profileWithMemory();
+        this.sendJson(res, store.get());
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+    const profileMatch = pathname.match(/^\/api\/profile\/(about|goals)(?:\/([A-Za-z0-9-]+))?$/);
+    if (profileMatch) {
+      const list = profileMatch[1] as ProfileList;
+      const id = profileMatch[2];
+      try {
+        const { store, memory } = await profileWithMemory();
+        if (!id && method === 'POST') {
+          const body = await this.parseBody(req) as { text?: unknown } | null;
+          if (typeof body?.text !== 'string' || !body.text.trim()) {
+            this.sendJson(res, { error: 'Missing text field' }, 400);
+            return;
+          }
+          this.sendJson(res, store.add(list, body.text, memory), 201);
+          return;
+        }
+        if (id && method === 'PATCH') {
+          const body = await this.parseBody(req) as { text?: unknown; done?: unknown } | null;
+          const updated = store.update(list, id, {
+            text: typeof body?.text === 'string' ? body.text : undefined,
+            done: typeof body?.done === 'boolean' ? body.done : undefined,
+          }, memory);
+          this.sendJson(res, updated ?? { error: 'Not found' }, updated ? 200 : 404);
+          return;
+        }
+        if (id && method === 'DELETE') {
+          const removed = store.remove(list, id, memory);
+          this.sendJson(res, { removed }, removed ? 200 : 404);
+          return;
+        }
+      } catch (err) {
+        this.sendError(res, err);
+        return;
+      }
+    }
+
     if (pathname === '/api/memory' && method === 'GET') {
       try {
+        await profileWithMemory();
         const { getNeuroclawSystem } = await import('../src/index.js');
         const system = await getNeuroclawSystem();
         const q = parsedUrl.searchParams.get('q')?.trim() ?? '';
@@ -2791,6 +2856,9 @@ export class WebServer {
                 typeof h?.role === 'string' && typeof h?.content === 'string')
               .map(h => `${h.role}: ${h.content}`)
           : undefined;
+        // What the user told it about themselves and their goals, back in
+        // memory after a restart before the first reply needs it.
+        await profileWithMemory().catch(() => undefined);
         const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
         let response: string;
         try {
@@ -2865,6 +2933,9 @@ export class WebServer {
         const { getBot } = await import('../src/server/bot-service.js');
         const { getNeuroclawSystem } = await import('../src/index.js');
         const bot = await getBot(await getNeuroclawSystem());
+        // What the user told it about themselves and their goals, back in
+        // memory after a restart before the first reply needs it.
+        await profileWithMemory().catch(() => undefined);
         const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
         let response: Awaited<ReturnType<typeof bot.processMessage>>;
         try {
