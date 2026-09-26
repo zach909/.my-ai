@@ -966,6 +966,145 @@ class NeuralMesh:
         self._invalidate_parallel_pool()
         return new_group_id, new_ids
 
+    def merge_from(
+        self,
+        other: "NeuralMesh",
+        group_prefix: Optional[str] = None,
+    ) -> Tuple[Dict[int, int], Dict[int, int]]:
+        """
+        Absorb every neuron, connection, and expert group from `other`
+        into this mesh, wiring the two former-meshes' neurons all-to-all
+        with each other (preserving the mesh's own all-to-all invariant)
+        -- the runtime counterpart to add_expert_group's "grow with
+        brand-new neurons": this grows with neurons that already have
+        real state/weights/vale, because they came from an existing,
+        already-settled mesh, not a fresh random/zero init.
+
+        `other`'s own connections *among its absorbed neurons* are
+        copied over unchanged (remapped to new ids), preserving whatever
+        it had learned. Only the *cross* connections between self's
+        original neurons and other's absorbed ones are new -- there is
+        no history between two previously-separate meshes to preserve --
+        and those get freshly initialized weights exactly like
+        add_expert_group's own cross-wiring.
+
+        `other` must have the same n_dimensions: state vectors and D×D
+        weight matrices from a different-dimensional mesh cannot be
+        combined meaningfully, and this method does not attempt to
+        project between dimensionalities. Raises ValueError if they
+        differ.
+
+        `group_prefix`, if given, is prepended ("prefix.originalname")
+        to every absorbed group's name, so two meshes that happen to use
+        the same group name don't collide once merged. Omit it to keep
+        other's group names as-is.
+
+        Caveats a caller should know about before relying on this:
+          - `self.n_input` is NOT extended: `other`'s former input
+            neurons keep NeuronRole.INPUT as a label, but
+            clamp_input_neurons() only ever writes into indices <
+            self.n_input, so they will not receive external input
+            through that path post-merge. Drive them directly
+            (state_vector writes, or add_dsl_bias) if needed.
+          - `self.vale_total` (the zero-sum budget) is NOT increased to
+            cover the absorbed neurons' vale, mirroring
+            add_expert_group's same documented caveat -- a caller that
+            also owns a ValeSystem should grow and re-sync it
+            separately.
+          - `other`'s own parallel worker pool (if any) is closed as
+            part of this call, since its neurons no longer belong to a
+            standalone mesh; `other` itself should not be used after
+            merging into `self`.
+
+        Returns (neuron_id_map, group_id_map): other's old neuron/group
+        ids -> their new ids in `self`, so a caller tracking identity
+        across the merge (e.g. "this was other's neuron 3") can
+        translate it.
+        """
+        if other.n_dimensions != self.n_dimensions:
+            raise ValueError(
+                f"cannot merge a {other.n_dimensions}-dimensional mesh into a "
+                f"{self.n_dimensions}-dimensional one"
+            )
+
+        other.close()
+
+        nd = self.n_dimensions
+        existing_ids = list(self.neurons.keys())
+
+        group_id_map: Dict[int, int] = {}
+        for old_gid in range(other.n_groups):
+            new_gid = self.n_groups
+            self.n_groups += 1
+            old_score = other.group_scores[old_gid] if old_gid < len(other.group_scores) else 0.0
+            self.group_scores.append(old_score)
+            base_name = other.get_group_name(old_gid)
+            self.group_names[new_gid] = f"{group_prefix}.{base_name}" if group_prefix else base_name
+            group_id_map[old_gid] = new_gid
+            if old_gid in other.active_groups:
+                self.active_groups.add(new_gid)
+
+        neuron_id_map: Dict[int, int] = {}
+        new_ids: List[int] = []
+        for old_id in sorted(other.neurons.keys()):
+            new_id = self.n_neurons
+            self.n_neurons += 1
+            neuron_id_map[old_id] = new_id
+            new_ids.append(new_id)
+
+        for old_id, new_id in neuron_id_map.items():
+            old_neuron = other.neurons[old_id]
+            neuron = NeuronState(
+                neuron_id=new_id,
+                role=old_neuron.role,
+                group=group_id_map[old_neuron.group],
+                state_vector=list(old_neuron.state_vector),
+                vale=old_neuron.vale,
+                input_flag=old_neuron.input_flag,
+                activation=old_neuron.activation,
+                last_spike_time=old_neuron.last_spike_time,
+                total_spikes=old_neuron.total_spikes,
+                consecutive_divergence=old_neuron.consecutive_divergence,
+                average_activation=old_neuron.average_activation,
+                update_count=old_neuron.update_count,
+                dsl_bias=old_neuron.dsl_bias,
+            )
+            self.neurons[new_id] = neuron
+            self._incoming_by_target.setdefault(new_id, [])
+
+        # Preserve other's own connections among its absorbed neurons.
+        for (old_src, old_tgt), conn in other.connections.items():
+            new_src, new_tgt = neuron_id_map[old_src], neuron_id_map[old_tgt]
+            new_conn = SynapticConnection(
+                source_id=new_src,
+                target_id=new_tgt,
+                weight_matrix=[row[:] for row in conn.weight_matrix],
+                base_learning_rate=conn.base_learning_rate,
+                eligibility_trace=conn.eligibility_trace,
+                eligibility_decay=conn.eligibility_decay,
+            )
+            self.connections[(new_src, new_tgt)] = new_conn
+            self._incoming_by_target[new_tgt].append(new_src)
+
+        # New cross-connections between self's original neurons and the
+        # absorbed ones -- fresh weights, exactly like add_expert_group's
+        # own cross-wiring, since there is no learned relationship yet.
+        scale = 1.0 / math.sqrt(self.n_neurons * nd)
+
+        def _wire(source_id: int, target_id: int) -> None:
+            conn = SynapticConnection(source_id=source_id, target_id=target_id, base_learning_rate=0.01)
+            conn.initialize_weights(nd, scale, rng=self._rng)
+            self.connections[(source_id, target_id)] = conn
+            self._incoming_by_target.setdefault(target_id, []).append(source_id)
+
+        for nid in new_ids:
+            for existing_id in existing_ids:
+                _wire(nid, existing_id)
+                _wire(existing_id, nid)
+
+        self._invalidate_parallel_pool()
+        return neuron_id_map, group_id_map
+
     def _apply_divergence_correction(
         self,
         prev_state: Dict[int, List[float]],

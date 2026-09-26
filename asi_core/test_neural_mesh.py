@@ -832,6 +832,107 @@ class TestParallelSettle(unittest.TestCase):
         mesh.close()  # must not raise
 
 
+class TestMergeFrom(unittest.TestCase):
+    """Tests for NeuralMesh.merge_from -- absorbing one live mesh's
+    neurons/connections/groups into another, growing it rather than
+    keeping the two disconnected."""
+
+    def test_neuron_and_group_counts_grow_by_exactly_others_size(self):
+        a = NeuralMesh(n_neurons=6, n_dimensions=4, n_input=2, n_groups=2, seed=1)
+        b = NeuralMesh(n_neurons=4, n_dimensions=4, n_input=2, n_groups=3, seed=2)
+
+        a_n_before, a_groups_before = a.n_neurons, a.n_groups
+        nid_map, gid_map = a.merge_from(b)
+
+        self.assertEqual(a.n_neurons, a_n_before + b.n_neurons)
+        self.assertEqual(a.n_groups, a_groups_before + b.n_groups)
+        self.assertEqual(len(nid_map), b.n_neurons)
+        self.assertEqual(len(gid_map), b.n_groups)
+        # New ids are contiguous starting where self left off.
+        self.assertEqual(sorted(nid_map.values()), list(range(a_n_before, a_n_before + b.n_neurons)))
+
+    def test_result_is_still_fully_all_to_all(self):
+        a = NeuralMesh(n_neurons=5, n_dimensions=3, n_input=2, n_groups=1, seed=3)
+        b = NeuralMesh(n_neurons=3, n_dimensions=3, n_input=2, n_groups=1, seed=4)
+        a.merge_from(b)
+
+        for i in range(a.n_neurons):
+            for j in range(a.n_neurons):
+                if i != j:
+                    self.assertIn((i, j), a.connections, f"missing connection {i}->{j} after merge")
+
+    def test_others_internal_weights_are_preserved_not_reinitialized(self):
+        a = NeuralMesh(n_neurons=4, n_dimensions=3, n_input=2, n_groups=1, seed=5)
+        b = NeuralMesh(n_neurons=3, n_dimensions=3, n_input=2, n_groups=1, seed=6)
+        b_weights_before = {
+            key: [row[:] for row in conn.weight_matrix] for key, conn in b.connections.items()
+        }
+
+        nid_map, _ = a.merge_from(b)
+
+        for (old_src, old_tgt), before in b_weights_before.items():
+            new_key = (nid_map[old_src], nid_map[old_tgt])
+            self.assertEqual(a.connections[new_key].weight_matrix, before)
+
+    def test_others_neuron_state_is_relocated_not_reset(self):
+        a = NeuralMesh(n_neurons=4, n_dimensions=3, n_input=2, n_groups=1, seed=7)
+        b = NeuralMesh(n_neurons=3, n_dimensions=3, n_input=2, n_groups=1, seed=8)
+        # Give b's neurons distinctive, non-default state to check it survives the merge.
+        for i, neuron in b.neurons.items():
+            neuron.state_vector = [float(i)] * 3
+            neuron.vale = 0.42 + i * 0.01
+            neuron.dsl_bias = 1.5 + i
+
+        nid_map, _ = a.merge_from(b)
+
+        for old_id, new_id in nid_map.items():
+            merged = a.neurons[new_id]
+            original = b.neurons[old_id]
+            self.assertEqual(merged.state_vector, original.state_vector)
+            self.assertAlmostEqual(merged.vale, original.vale)
+            self.assertAlmostEqual(merged.dsl_bias, original.dsl_bias)
+            self.assertEqual(merged.role, original.role)
+
+    def test_group_names_prefixed_to_avoid_collisions(self):
+        a = NeuralMesh(n_neurons=4, n_dimensions=3, n_input=2, n_groups=1, seed=9)
+        a.set_group_name(0, "coding")
+        b = NeuralMesh(n_neurons=3, n_dimensions=3, n_input=2, n_groups=1, seed=10)
+        b.set_group_name(0, "coding")
+
+        _, gid_map = a.merge_from(b, group_prefix="b")
+
+        self.assertEqual(a.get_group_name(0), "coding")
+        self.assertEqual(a.get_group_name(gid_map[0]), "b.coding")
+
+    def test_dimension_mismatch_raises(self):
+        a = NeuralMesh(n_neurons=4, n_dimensions=4, n_input=2, n_groups=1, seed=11)
+        b = NeuralMesh(n_neurons=3, n_dimensions=6, n_input=2, n_groups=1, seed=12)
+        with self.assertRaises(ValueError):
+            a.merge_from(b)
+
+    def test_merged_mesh_still_activates_without_error(self):
+        a = NeuralMesh(n_neurons=5, n_dimensions=4, n_input=3, n_groups=2, seed=13)
+        b = NeuralMesh(n_neurons=4, n_dimensions=4, n_input=2, n_groups=2, seed=14)
+        a.merge_from(b)
+
+        output = a.activate([0.2, -0.3, 0.1])
+        self.assertTrue(all(isinstance(v, float) for v in output))
+
+    def test_other_pool_is_closed_by_merge(self):
+        a = NeuralMesh(n_neurons=4, n_dimensions=3, n_input=2, n_groups=1, seed=15)
+        b = NeuralMesh(
+            n_neurons=4, n_dimensions=3, n_input=2, n_groups=1, seed=16,
+            parallel_workers=2, parallel_min_neurons=1,
+        )
+        b.activate([0.1, 0.2])  # creates b's pool
+        self.assertIsNotNone(b._pool)
+
+        a.merge_from(b)
+
+        self.assertIsNone(b._pool)
+        a.close()
+
+
 class TestCreateMeshFactory(unittest.TestCase):
     """Test the create_mesh factory function."""
     
