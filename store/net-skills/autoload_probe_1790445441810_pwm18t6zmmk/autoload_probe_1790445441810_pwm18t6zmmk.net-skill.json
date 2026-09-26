@@ -1,0 +1,11 @@
+{
+  "skill": "autoload_probe_1790445441810_pwm18t6zmmk",
+  "neuronCount": 1,
+  "neurons": [
+    {
+      "name": "autoload_probe_1790445441810_pwm18t6zmmk",
+      "id": 84
+    }
+  ],
+  "publishedAt": "2026-09-26T17:57:23.676Z"
+}
