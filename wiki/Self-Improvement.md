@@ -113,6 +113,22 @@ The 20-minute loop above is a catch-up fallback now, not the primary path. `src/
 
 There are no accounts and no multi-tenant separation in this project (see [[Privacy-Policy]]) — one install has exactly one conversation log. So everything this agent trains is shaped only by whoever actually talks to *this* instance, on *this* machine. That's real personalization for a single local install, not a shared/generic model: nobody else's conversations ever touch your trained state, and yours never touch anyone else's.
 
+## Shared mesh learning (`models && skills/core/shared-mesh-sync.ts`) — opt-in
+
+"When one person's agent learns, everyone's agent learns" — done with **weight changes, not conversations**.
+
+**What the mesh learns from.** Everything the agent sees except the web, through one entry point, `UnifiedBrain.learnFrom(text, source)`: your messages and the agent's replies on every chat (not only the `recall` path — previously the default `solve` path never reached the mesh at all), corrections, and the prompting skills that apply to a message. A source of `"web"` is refused outright, and a reply built from a web-sourced prompting skill or the research/browser plugins (`metadata.usedWeb`) is not learned from — only your own message is. Feeding costs the same as it always has (about a second per byte on the live mesh, one-deep queue, newest wins), so under heavy use some inputs are superseded before they are streamed.
+
+**Kept across restarts (always).** Before this, the mesh's learned weights were never saved — every restart threw its learning away. Now every install loads one committed starting network, `extension-builder/shared-mesh/base.json` (every install must start from the same weights, or neuron 5 on one machine has nothing to do with neuron 5 on another), then adds its own saved learning from the gitignored `extension-builder/shared-mesh-local/`. Saved every `NEUROCLAW_SHARED_LEARNING_INTERVAL_MS` (30 min).
+
+**Shared (only with `NEUROCLAW_SHARED_LEARNING=1`, off by default).**
+- Each sync pushes this install's own weight change — int8-quantised and gzipped, learned parameters only (no activations), for the 64-neuron block every install shares (neurons grafted by skills later stay local) — to `extension-builder/shared-mesh/deltas/<random-id>.json` on `main`. The push runs in a detached `scripts/shared-mesh-publish.mjs` process so the server never blocks on git.
+- Other installs' delta files arrive through the normal git auto-pull and are merged by federated averaging: `core = base + own + Σ others / (installs + 1)`. What an install publishes is always `core − base − what it absorbed`, so nobody re-publishes anyone else's learning.
+- Files from other installs are untrusted: wrong base, wrong shape, non-finite values, or steps bigger than `MAX_DELTA_ABS` are ignored.
+- Only installs with push access to this repository can send; everyone who opts in can receive.
+
+`NEUROCLAW_SHARED_MESH=0` turns the whole thing off (no base load, no local persistence). `node scripts/shared-mesh-base.mjs --force` regenerates the base — which invalidates every published delta, so only do it to start over.
+
 ## Peer sync (`scripts/peer-sync.mjs`)
 
 GitHub is the backbone, but it's still a single point of coordination — if you want improvements to reach another running instance directly, without going through GitHub at all, peer sync does that:

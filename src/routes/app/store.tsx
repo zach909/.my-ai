@@ -2639,15 +2639,22 @@ function WikiPageFilesPanel({ pageName }: { pageName: string }) {
         reportSync(data.sync as SyncStatus | undefined, `Package "${pageName}" published`)
       }
       if (extraFiles.length > 0) {
-        const body = { files: await Promise.all(extraFiles.map(async f => ({ filename: f.name, content: await f.text() }))) }
-        const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/files`, {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify(body),
-        })
-        const data = await res.json()
-        if (!res.ok) throw new Error(data.error || 'Failed to upload extra files')
-        reportSync(data.sync as SyncStatus | undefined, `Files added to "${pageName}"`)
+        // Upload extra files one at a time. Sending the whole selection as one
+        // JSON body made the request size grow with every selected file and
+        // could overflow the backend/proxy while the server was still trying
+        // to receive the request. Each request is independently bounded by
+        // the server's 50 MB extra-file limit.
+        for (const file of extraFiles) {
+          const body = { files: [{ filename: file.name, content: await file.text() }] }
+          const res = await fetch(`/api/skill-uploads/${encodeURIComponent(pageName)}/files`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(body),
+          })
+          const data = await res.json()
+          if (!res.ok) throw new Error(data.error || `Failed to upload extra file "${file.name}"`)
+          reportSync(data.sync as SyncStatus | undefined, `Added "${file.name}" to "${pageName}"`)
+        }
       }
       // Self-link, best-effort -- the package now exists (the calls above
       // succeeded), so this only fails if the wiki page itself vanished in

@@ -41,6 +41,8 @@ import {
   readSkillUpload,
   readSkillUploadFile,
   readSkillUploadExtraFile,
+  pullSkillUploadCatalog,
+  pullSkillUploadPackage,
   saveSkillUploadAndSync,
   saveSkillUploadExtraFilesAndSync,
   deleteSkillUploadAndSync,
@@ -840,6 +842,41 @@ export function parseJsonBody(raw: string): unknown {
   }
 }
 
+// ─── Activity log ───────────────────────────────────────────────────────
+//
+// What the agent has been doing, for the React app's Activity page: chat
+// turns as they start, finish, or fail. Tool calls are not copied in here --
+// GET /api/activity reads them straight off the tool layer's own history()
+// so there is one record of them, not two. In memory, capped: a live view,
+// not an audit trail.
+interface ActivityEvent {
+  id: number;
+  kind: 'chat';
+  status: 'running' | 'ok' | 'error';
+  title: string;
+  detail?: string;
+  startedAt: number;
+  endedAt?: number;
+}
+const ACTIVITY_MAX = 300;
+const activityLog: ActivityEvent[] = [];
+let activitySeq = 0;
+function activityStart(title: string, detail?: string): ActivityEvent {
+  const event: ActivityEvent = { id: ++activitySeq, kind: 'chat', status: 'running', title, detail, startedAt: Date.now() };
+  activityLog.push(event);
+  if (activityLog.length > ACTIVITY_MAX) activityLog.splice(0, activityLog.length - ACTIVITY_MAX);
+  return event;
+}
+function activityEnd(event: ActivityEvent, ok: boolean, detail?: string): void {
+  event.status = ok ? 'ok' : 'error';
+  event.endedAt = Date.now();
+  if (detail !== undefined) event.detail = detail;
+}
+function clip(text: unknown, max = 400): string {
+  const s = typeof text === 'string' ? text : JSON.stringify(text) ?? '';
+  return s.length > max ? `${s.slice(0, max)}…` : s;
+}
+
 export class WebServer {
   private runner: NeuroclawRunner;
   private launcher: AppLauncher;
@@ -979,6 +1016,10 @@ export class WebServer {
     // first time someone actually asks for it, not pulled wholesale here on
     // every boot regardless of whether anyone browses anything.
     await pullStoreCatalog({ manifestsOnly: true }).catch(() => {});
+    // Skill uploads use the same shared `store` branch but live outside the
+    // generic store catalogue. Pull their manifests too so uploaded packages
+    // are visible on a fresh device; payloads remain on-demand.
+    await pullSkillUploadCatalog().catch(() => {});
     // Same reasoning, same placement: loading every saved extension is
     // real work (parsing N files, remembering M neurons) that only makes
     // sense to pay once per actual live server process, not once per
@@ -1284,7 +1325,7 @@ export class WebServer {
    * (or none) pass their own ceiling explicitly; nobody else's behavior
    * changes.
    */
-  private async parseBody(req: http.IncomingMessage, maxBytes: number = 1024 * 1024): Promise<unknown> {
+  private async parseBody(req: http.IncomingMessage, maxBytes: number = Number.POSITIVE_INFINITY): Promise<unknown> {
     // CSRF: this server has no auth and setSecurityHeaders() never sends
     // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
     // response -- but that alone doesn't stop the *request* from being
@@ -2691,6 +2732,41 @@ export class WebServer {
       return;
     }
 
+    // GET /api/activity -- what the agent has been doing, newest first:
+    // chat turns (from the activity log above) and every tool call the tool
+    // layer has recorded, with its arguments and result. Read-only.
+    if (pathname === '/api/activity' && method === 'GET') {
+      try {
+        const events: Array<Record<string, unknown>> = activityLog.map(e => ({ ...e }));
+        let toolsEnabled = false;
+        try {
+          const { getNeuroclawSystem } = await import('../src/index.js');
+          const layer = (await getNeuroclawSystem()).toolNeurons;
+          if (layer) {
+            toolsEnabled = true;
+            layer.history().forEach((call, i) => {
+              events.push({
+                id: `tool-${i}-${call.startedAt}`,
+                kind: 'tool',
+                status: call.ok ? 'ok' : 'error',
+                title: `${call.plugin}.${call.tool}`,
+                origin: call.origin,
+                args: clip(call.args),
+                detail: call.ok ? clip(call.result) : call.error,
+                startedAt: call.startedAt,
+                endedAt: call.endedAt,
+              });
+            });
+          }
+        } catch { /* no tool layer is not an error; chat activity still shows */ }
+        events.sort((a, b) => Number(b.startedAt) - Number(a.startedAt));
+        this.sendJson(res, { toolsEnabled, events: events.slice(0, ACTIVITY_MAX) });
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+
     if (pathname === '/api/chat' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as
@@ -2715,7 +2791,15 @@ export class WebServer {
                 typeof h?.role === 'string' && typeof h?.content === 'string')
               .map(h => `${h.role}: ${h.content}`)
           : undefined;
-        const response = await this.runner.generate(message, history);
+        const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+        let response: string;
+        try {
+          response = await this.runner.generate(message, history);
+        } catch (err) {
+          activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+          throw err;
+        }
+        activityEnd(activity, true, clip(response));
         // What the turn actually used, for the three-dots panel. Read off the
         // system rather than rebuilt here: a details panel assembled from
         // guesses about what probably ran looks like evidence and is not.
@@ -2781,7 +2865,15 @@ export class WebServer {
         const { getBot } = await import('../src/server/bot-service.js');
         const { getNeuroclawSystem } = await import('../src/index.js');
         const bot = await getBot(await getNeuroclawSystem());
-        const response = await bot.processMessage(message);
+        const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+        let response: Awaited<ReturnType<typeof bot.processMessage>>;
+        try {
+          response = await bot.processMessage(message);
+        } catch (err) {
+          activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+          throw err;
+        }
+        activityEnd(activity, true, clip(response.message));
         this.sendJson(res, {
           message: response.message,
           confidence: response.confidence,
@@ -3513,7 +3605,7 @@ export class WebServer {
     const skillUploadExtraFilesMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files$/);
     if (skillUploadExtraFilesMatch && method === 'POST') {
       try {
-        const body = await this.parseBody(req) as { files?: unknown } | null;
+        const body = await this.parseBody(req, Number.POSITIVE_INFINITY) as { files?: unknown } | null;
         if (!Array.isArray(body?.files) || body.files.length === 0) {
           this.sendJson(res, { error: 'Expected a non-empty "files" array of { filename, content }' }, 400);
           return;
@@ -3540,7 +3632,15 @@ export class WebServer {
     const skillUploadExtraFileMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files\/([A-Za-z0-9_.-]+)$/);
     if (skillUploadExtraFileMatch && method === 'GET') {
       const [, name, filename] = skillUploadExtraFileMatch;
-      const file = readSkillUploadExtraFile(name, decodeURIComponent(filename));
+      // A package may have been published from another device. Pull the
+      // package from the shared store branch before reading the requested
+      // file, so large extra files are available remotely without requiring
+      // every device to download every payload at boot.
+      const requestedFilename = decodeURIComponent(filename);
+      if (!readSkillUploadExtraFile(name, requestedFilename)) {
+        await pullSkillUploadPackage(name).catch(() => {});
+      }
+      const file = readSkillUploadExtraFile(name, requestedFilename);
       if (!file) {
         this.sendJson(res, { error: `No extra file named "${filename}" in "${name}"` }, 404);
         return;
@@ -4193,6 +4293,41 @@ export class WebServer {
     // ?path= chooses where in the archive it lands (default input/), so the
     // same route takes a recording, an image, or anything else without
     // needing a variant per kind of file.
+    // GET /api/tool-neurons -- the network's other outputs and inputs.
+    //
+    // Which neuron each terminal and desktop tool is, which pair of neurons
+    // each plugin's results come back in on, and what has fired and been
+    // called. Read-only: nothing here drives the network.
+    if (pathname === '/api/tool-neurons' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const layer = system.toolNeurons;
+        if (!layer) {
+          this.sendJson(res, { enabled: false, reason: process.env.NEUROCLAW_TOOL_NEURONS === '0' ? 'NEUROCLAW_TOOL_NEURONS=0' : 'not attached' });
+          return;
+        }
+        this.sendJson(res, {
+          enabled: true,
+          ...layer.layout(),
+          // Every tool's score against the network as it stands -- read-only.
+          decision: layer.decide(),
+          waiting: layer.fired(),
+          stats: layer.getStats(),
+          recent: layer.history().slice(-20).map(call => ({
+            tool: `${call.plugin}.${call.tool}`,
+            origin: call.origin,
+            ok: call.ok,
+            error: call.error,
+            at: call.endedAt,
+          })),
+        });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
     if (pathname === '/api/zip-loop/file' && method === 'POST') {
       // "zip loop no file size limit" -- no ceiling here either. Used to
       // match the transcription route's 25MB cap; removed so a large
@@ -4397,6 +4532,13 @@ export class WebServer {
 
         const result = await runUntilStoppedAsync(zip, { files, binary }, { quietTicks, maxTicks });
 
+        // The network's other outputs. Any terminal or desktop tool neuron that
+        // fired during the run is a call, and its arguments are in the run's own
+        // output archive (plugins/<plugin>/<tool>.json) -- the other side of the
+        // same Zip Loop. Results go back in on each plugin's own input neurons,
+        // queued behind the doorway lock, so this response does not wait for them.
+        const toolCalls = system.toolNeurons ? await system.toolNeurons.step(result.tree) : [];
+
         // When it stops it saves the input of every neuron -- whatever the
         // reason it stopped. A run cut off at the ceiling has MORE worth
         // keeping than one that ended tidily, since its state is the only
@@ -4429,6 +4571,11 @@ export class WebServer {
           stopReport: result.stopReport,
           stopReportFile: STOP_REPORT_FILE,
           resumed,
+          toolCalls: toolCalls.map(call => ({
+            tool: `${call.plugin}.${call.tool}`,
+            ok: call.ok,
+            error: call.error,
+          })),
         });
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
