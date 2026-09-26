@@ -2065,18 +2065,25 @@ async function testSelfExtension() {
   const { NeuroclawLLM } = await load('models && skills/llm.js');
   const dir = mkdtempSync(join(tmpdir(), 'selfext-'));
   try {
-    const llm = new NeuroclawLLM({ selfExtensionsDir: dir });
-    llm.build();
-    const before = llm.getStats().selfExtensionsCount ?? 0;
+    const llm = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: null });
+    await llm.build();
     const builder = llm.getBuilder();
     const projectsBefore = builder.projects.size;
     await llm.createSelfExtension('learn to greet', 'hello, nice to meet you');
-    const { readdirSync, existsSync: exists } = await import('node:fs');
-    const entries = readdirSync(dir).filter((e) => e.startsWith('self_ext_'));
-    check(entries.length >= 1, 'Self-extension is created on disk');
-    const extDir = join(dir, entries[0]);
-    check(exists(join(extDir, 'model.json')), 'Self-extension is saved un-quantized (model.json)');
-    check(exists(join(extDir, 'model.q4.json')), 'Self-extension is quantized before install (model.q4.json)');
+    const { readdirSync, existsSync: exists, readFileSync: read } = await import('node:fs');
+    check(!readdirSync(dir).some((e) => e.startsWith('self_ext_')), 'A new self-extension is not saved as its own self_ext_N model');
+    const extDir = join(dir, 'onebrain');
+    check(exists(join(extDir, 'model.json')), 'Self-extension is folded into OneBrain, saved un-quantized (onebrain/model.json)');
+    check(exists(join(extDir, 'model.q4.json')), 'OneBrain is quantized before install (onebrain/model.q4.json)');
+    const first = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+    check(first.connections.length > 0 && first.weightCounts.length === first.weights.length, 'OneBrain holds the learned connections with per-weight sample counts');
+    await llm.createSelfExtension('learn to greet', 'hello, nice to meet you');
+    const second = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+    check(second.connections.length === first.connections.length && second.weightCounts.reduce((a, b) => a + b, 0) > first.weightCounts.reduce((a, b) => a + b, 0),
+      'Folding the same pattern again averages into existing connections instead of adding duplicates');
+    const index = read(join(dir, 'index.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+    check(index.length === 1 && index[0] === 'onebrain', 'index.jsonl lists only OneBrain');
+    check(llm.extensionManager.installedVersions('onebrain').length >= 2, 'Each fold is recorded as a new OneBrain version in the extension registry');
     // ExtensionBuilder.deleteProject() existed but had no caller: every
     // self-extension's builder-internal project (its own neurons/connections/
     // layers Maps) was persisted to disk/selfExtensions and then never
@@ -2087,9 +2094,77 @@ async function testSelfExtension() {
     for (let i = 0; i < 5; i++) {
       await llm.createSelfExtension(`learn thing ${i}`, `response ${i}`);
     }
+    check(llm.extensionManager.installedVersions('onebrain').length <= 5, 'OneBrain registry history is capped at the last 5 versions');
     check(builder.projects.size === projectsBefore, "repeated createSelfExtension() calls never accumulate leaked projects in builder.projects");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// OneBrain (models && skills/onebrain) is the single model the 14 old
+// self_ext_N memory extensions were merged into. It must get every
+// extension property the wiki promises (Extensions.md / Builder.md /
+// Quantization.md / MoE.md): saved exact + installed 4-bit, loaded back at
+// startup as a routable MoE expert, recorded in the versioned registry, and
+// its weights actually read on recall.
+async function testOneBrainExtension() {
+  const { NeuroclawLLM } = await load('models && skills/llm.js');
+  const { readFileSync: read, readdirSync } = await import('node:fs');
+  const bundled = resolve(process.cwd(), 'models && skills');
+  const extDir = join(bundled, 'onebrain');
+  const fp32 = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+  const q4 = JSON.parse(read(join(extDir, 'model.q4.json'), 'utf8'));
+  const meta = JSON.parse(read(join(extDir, 'meta.json'), 'utf8'));
+  check(meta.name === 'OneBrain' && meta.sources.length === 14 && fp32.weightFormat === 'fp32' && q4.weightFormat === 'int4' && q4.weightBits === 4,
+    'OneBrain merges all 14 self-extensions and ships exact (fp32) + installed (int4) copies');
+  const indexIds = read(join(bundled, 'index.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+  check(indexIds.length === 1 && indexIds[0] === 'onebrain' && !readdirSync(bundled).some((d) => /^self_ext_/.test(d)),
+    'OneBrain is the only bundled model: no self_ext_* folders or index entries remain');
+  const maxErr = fp32.weights.reduce((m, w, i) => (w === null ? m : Math.max(m, Math.abs(Math.max(-1, Math.min(1, w)) - (q4.weights[i] - q4.quantZeroPoint) * q4.quantScale))), 0);
+  check(maxErr <= q4.quantScale / 2 + 1e-6, `OneBrain's 4-bit copy dequantizes to within half a step of the fp32 weights (max err ${maxErr.toFixed(4)})`);
+
+  const dir = mkdtempSync(join(tmpdir(), 'selfext-onebrain-'));
+  const bareDir = mkdtempSync(join(tmpdir(), 'selfext-bare-'));
+  try {
+    const llm = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: bundled });
+    await llm.build();
+    check([...llm.selfExtensions.keys()].includes('onebrain'), 'build() reloads OneBrain (survives restarts)');
+    const bare = new NeuroclawLLM({ selfExtensionsDir: bareDir, bundledExtensionsDir: null });
+    await bare.build();
+    const expertsBefore = bare.getMoERouter().getExpertCount();
+    const added = bare.reloadSelfExtensions(bundled);
+    check(added === 1 && bare.getMoERouter().getExpertCount() === expertsBefore + 1, 'OneBrain is registered as exactly one routable MoE expert');
+    check(llm.extensionManager.store.listVersions('onebrain').length === 1, 'OneBrain is recorded once in the versioned extension registry');
+    const recall = llm.recallFromSelfExtensions('I observe that the pattern shows', 5);
+    check(recall.outputs.length > 0 && recall.extensions[0]?.id === 'onebrain', "recallFromSelfExtensions() runs OneBrain's weights and returns output tokens");
+
+    const again = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: bundled });
+    await again.build();
+    check(again.extensionManager.store.listVersions('onebrain').length === 1, 'a restart does not re-version an already-registered extension');
+
+    // Leftover standalone self_ext_N models from before automatic folding
+    // are merged into OneBrain (seeded from the bundled one) at startup.
+    const legacy = mkdtempSync(join(tmpdir(), 'selfext-legacy-'));
+    try {
+      const { mkdirSync: mk, writeFileSync: wr, existsSync: ex } = await import('node:fs');
+      const oldModel = { neurons: [['a', { id: 'a', label: 'memory_input_5' }], ['b', { id: 'b', label: 'memory_output_6' }]],
+        connections: [['c', { id: 'c', fromNeuronId: 'a', toNeuronId: 'b', weightIndex: 0 }]], weights: [0.5] };
+      mk(join(legacy, 'self_ext_5'), { recursive: true });
+      wr(join(legacy, 'self_ext_5', 'model.json'), JSON.stringify(oldModel));
+      wr(join(legacy, 'index.jsonl'), JSON.stringify({ id: 'self_ext_5', prompt: 'x' }) + '\n');
+      const migrated = new NeuroclawLLM({ selfExtensionsDir: legacy, bundledExtensionsDir: bundled });
+      await migrated.build();
+      const mb = JSON.parse(read(join(legacy, 'onebrain', 'model.json'), 'utf8'));
+      check(!ex(join(legacy, 'self_ext_5')) && [...migrated.selfExtensions.keys()].join() === 'onebrain',
+        'startup merges leftover self_ext_N models into OneBrain and deletes them');
+      check(mb.weightCounts.reduce((a, b) => a + b, 0) === fp32.weightCounts.reduce((a, b) => a + b, 0) + 1,
+        "the migrated OneBrain keeps everything in the bundled OneBrain plus the leftover model's weights");
+    } finally {
+      rmSync(legacy, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(bareDir, { recursive: true, force: true });
   }
 }
 
@@ -5389,6 +5464,7 @@ async function main() {
     ['Neural Definition directives', testNeuralDefinitionDirectives],
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
+    ['OneBrain self-extension', testOneBrainExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['NeuroLang parse() yields to event loop across many @code= lines (Section 26)', testNeuroLangParseYields],
     ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],
