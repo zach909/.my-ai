@@ -13,6 +13,10 @@ import { CLI } from "../interface/cli.js";
 import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
 import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
 import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
+import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/core/shared-mesh-sync.js";
+
+/** Where something the mesh learns from came from. "web" is always refused -- see learnFrom(). */
+export type LearnSource = "user" | "response" | "correction" | "skill" | "file" | "tool" | "web";
 import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
@@ -171,6 +175,8 @@ export class NeuroclawSystem {
    * zip-loop calls can never interleave with promptFeed's.
    */
   continuousLearner: ContinuousLearner;
+  /** Persists the mesh's learning and (opt-in) shares it as weight changes. */
+  sharedMesh: SharedMeshSync;
   /**
    * The network's other outputs and inputs: one neuron per terminal and
    * desktop tool, and a result channel per plugin, in the same engine the
@@ -302,6 +308,16 @@ export class NeuroclawSystem {
     // and a lock only each one holds separately would not stop them from
     // running at the same time as each other.
     this.continuousLearner = new ContinuousLearner(this.promptFeed.lock());
+    // The mesh's learning, kept across restarts and (opt-in,
+    // NEUROCLAW_SHARED_LEARNING=1) shared with other installs as weight
+    // changes -- see shared-mesh-sync.ts. Booted here, before anything grafts
+    // neurons in, so every install starts from the same committed base.
+    this.sharedMesh = new SharedMeshSync(() => this.pipeline.getHyperEngine(), this.promptFeed.lock(), { root: process.cwd() });
+    if (process.env.NEUROCLAW_SHARED_MESH !== "0" && !process.env.VITEST) {
+      this.sharedMesh.boot();
+      const interval = Number(process.env.NEUROCLAW_SHARED_LEARNING_INTERVAL_MS) || DEFAULT_SYNC_INTERVAL_MS;
+      setInterval(() => void this.sharedMesh.tick(), interval).unref();
+    }
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.pluginRegistry);
     // Hive Mind (Section 13): each agent's mind is the real neural runner, so
@@ -819,10 +835,34 @@ export class NeuroclawSystem {
     });
 
     await this.zipIO.emit(corrected);
-    this.promptFeed.feed(corrected, "correction.txt");
+    this.learnFrom(corrected, "correction");
 
     return { applied: true, forgot };
   }
+
+  /**
+   * The one way anything reaches the mesh to be learned from: user messages,
+   * the agent's own replies, corrections, skill instructions, local files and
+   * tool results. Web content is refused outright -- the mesh learns from
+   * what happens on this install, not from pages fetched off the internet.
+   *
+   * Same doorway and same cost as promptFeed.feed() (fire-and-forget, newest
+   * wins). The exact same text arriving twice in a row -- e.g. a message
+   * processQuery() already fed, then reported again by the chat service --
+   * is fed once.
+   */
+  learnFrom(text: string, source: LearnSource): boolean {
+    if (source === "web") return false;
+    const trimmed = typeof text === "string" ? text.trim() : "";
+    if (!trimmed) return false;
+    const key = `${source}\u0000${trimmed}`;
+    if (key === this.lastLearned) return false;
+    this.lastLearned = key;
+    this.promptFeed.feed(trimmed, `${source}.txt`);
+    return true;
+  }
+
+  private lastLearned = "";
 
   async processQuery(input: string): Promise<string> {
     if (!this.initialized) await this.initialize();
@@ -883,7 +923,7 @@ export class NeuroclawSystem {
     // and the settle loop is synchronous, so it would take every other
     // request with it -- which has already happened here once. See
     // PromptMeshFeed for why the queue is one deep.
-    this.promptFeed.feed(input);
+    this.learnFrom(input, "user");
     details.zipBytes = packZip({ files: { "prompt.txt": input } }).length;
 
     // Continuous learning: compares whatever the mesh predicted the user
@@ -928,6 +968,7 @@ export class NeuroclawSystem {
         .slice(0, PROMPTING_SKILLS_PER_TURN);
       for (const skill of chosen) {
         await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
+        if (skill.source !== "web") this.learnFrom(`Skill "${skill.title}": ${skill.description}`, "skill");
         details.skills.push(skill.title);
       }
     } catch {

@@ -80,6 +80,8 @@ export interface BotResponse {
     loopOutcome?: 'goal-met' | 'dead-end' | 'max-iterations'
     loopIterations?: number
     promptingSkills?: string[]
+    /** True when any part of this answer came from the web (a web-sourced prompting skill, or the research/browser plugins). Such answers are never learned from -- see UnifiedBrain.learnFrom(). */
+    usedWeb?: boolean
   }
   /** Set when this response reports an error, so callers can look it up via getRecentErrors(). */
   errorId?: string
@@ -260,6 +262,11 @@ export class ChatBot {
         // acquireLock()) make this safe to call on every single turn even
         // while the background loop or a previous trigger is mid-cycle.
         void triggerConversationLearning()
+        // The live mesh learns from the exchange too -- every chat, not only
+        // the 'recall' path that goes through processQuery(). An answer that
+        // came from the web is not learned from; the user's own message is.
+        this.system?.learnFrom?.(userMessage, 'user')
+        if (!response.metadata?.usedWeb) this.system?.learnFrom?.(response.message, 'response')
       }
 
       this.conversationHistory.push({
@@ -404,6 +411,7 @@ export class ChatBot {
       const run = await runAgentLoopForMessage(userMessage, this.system)
       if (!run || !run.answered) return null
       const skillsUsed = [...new Set(run.result.steps.map(s => s.skill).filter(Boolean))] as string[]
+      const usedWeb = await skillsTouchWeb(skillsUsed)
       return {
         message: run.message,
         confidence: 0.9,
@@ -415,6 +423,7 @@ export class ChatBot {
           loopOutcome: run.result.outcome,
           loopIterations: run.result.iterations,
           promptingSkills: skillsUsed,
+          usedWeb,
         },
         attachments: run.attachments.length > 0 ? run.attachments : undefined,
       }
@@ -752,4 +761,19 @@ export async function getBot(system?: NeuroclawSystem): Promise<ChatBot> {
 
 export function resetBot() {
   botInstance = null
+}
+
+/** Whether any of these prompting skills reads the web (a 'web' perception source, or the research/browser plugins). Unknown skills count as not-web. */
+async function skillsTouchWeb(names: string[]): Promise<boolean> {
+  if (names.length === 0) return false
+  try {
+    const { loadRegistry } = await import('../../models && skills/core/prompting-skill-store.js')
+    const registry = loadRegistry()
+    return names.some((name) => {
+      const skill = registry.get(name)
+      return skill?.source === 'web' || /^(research|browser)$/i.test(skill?.plugin ?? '')
+    })
+  } catch {
+    return false
+  }
 }
