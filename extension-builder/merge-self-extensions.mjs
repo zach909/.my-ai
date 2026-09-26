@@ -17,20 +17,25 @@
  * Output keeps the on-disk self-extension format, plus the matching 4-bit
  * copy (same symmetric scheme as the existing model.q4.json files:
  * scale = 2/15, zero point 7, codes clamped to [0, 14]). The result is
- * written to self_ext_combined/ and appended to index.jsonl so
- * NeuroclawLLM.reloadSelfExtensions() picks it up as an expert.
+ * written to onebrain/ ("OneBrain", the name the wiki gives the one model)
+ * and indexed in index.jsonl so NeuroclawLLM.reloadSelfExtensions() loads
+ * it as an expert. With --replace, the source self_ext_N folders are
+ * deleted and index.jsonl is rewritten to list only OneBrain, leaving one
+ * model instead of many.
  *
  * Usage:
- *   node extension-builder/merge-self-extensions.mjs [extensionsDir]
+ *   node extension-builder/merge-self-extensions.mjs [--replace] [extensionsDir]
  */
 
-import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync } from 'node:fs';
+import { readdirSync, readFileSync, writeFileSync, mkdirSync, existsSync, appendFileSync, rmSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
-const DIR = path.resolve(process.argv[2] ?? path.join(__dirname, '..', 'models && skills'));
-const OUT_ID = 'self_ext_combined';
+const args = process.argv.slice(2);
+const REPLACE = args.includes('--replace');
+const DIR = path.resolve(args.find((a) => !a.startsWith('--')) ?? path.join(__dirname, '..', 'models && skills'));
+const OUT_ID = 'onebrain';
 const Q_SCALE = Math.fround(2 / 15);
 const Q_ZP = 7;
 
@@ -102,8 +107,8 @@ for (const e of edgeAcc.values()) {
 
 const now = Date.now();
 const base = {
-  id: 'project_combined',
-  name: 'Memory Extension: combined',
+  id: 'project_onebrain',
+  name: 'OneBrain',
   description: `Label-aligned weight average of ${sources.length} self-authored extensions (${sources.join(', ')})`,
   neurons, connections, layers: [], labels: [], apiOutputConfig: null,
 };
@@ -122,9 +127,9 @@ const q4 = {
   compressionRatio: ((weights.length * 4) / packed).toFixed(2),
 };
 const meta = {
-  id: OUT_ID, name: 'Memory: combined',
-  description: `Combined from ${sources.length} self-authored extensions`,
-  createdAt: now, prompt: 'combined', sources,
+  id: OUT_ID, name: 'OneBrain',
+  description: `OneBrain: all ${sources.length} self-authored extensions merged into one model`,
+  createdAt: now, prompt: 'OneBrain', sources,
   neuronCount: neurons.length, connectionCount: connections.length,
 };
 
@@ -135,13 +140,18 @@ writeFileSync(path.join(outDir, 'model.q4.json'), JSON.stringify(q4), 'utf8');
 writeFileSync(path.join(outDir, 'meta.json'), JSON.stringify(meta, null, 2), 'utf8');
 
 const indexPath = path.join(DIR, 'index.jsonl');
-const alreadyIndexed = existsSync(indexPath) &&
-  readFileSync(indexPath, 'utf8').split('\n').some((l) => { try { return JSON.parse(l).id === OUT_ID; } catch { return false; } });
-if (!alreadyIndexed) {
-  appendFileSync(indexPath, JSON.stringify({
-    id: OUT_ID, name: meta.name, description: meta.description, createdAt: now, prompt: 'combined',
-    neuronCount: neurons.length, connectionCount: connections.length,
-  }) + '\n', 'utf8');
+const entry = JSON.stringify({
+  id: OUT_ID, name: meta.name, description: meta.description, createdAt: now, prompt: 'OneBrain',
+  neuronCount: neurons.length, connectionCount: connections.length,
+}) + '\n';
+if (REPLACE) {
+  for (const src of sources) rmSync(path.join(DIR, src), { recursive: true, force: true });
+  writeFileSync(indexPath, entry, 'utf8');
+  log(`--replace: removed ${sources.length} source models; index.jsonl now lists only ${OUT_ID}`);
+} else {
+  const alreadyIndexed = existsSync(indexPath) &&
+    readFileSync(indexPath, 'utf8').split('\n').some((l) => { try { return JSON.parse(l).id === OUT_ID; } catch { return false; } });
+  if (!alreadyIndexed) appendFileSync(indexPath, entry, 'utf8');
 }
 
 log(`merged ${sources.length} models: ${sourceConnections} source connections -> ` +

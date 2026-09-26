@@ -1,9 +1,0 @@
-{
-  "id": "self_ext_40",
-  "name": "Memory: The connection between",
-  "description": "Self-authored extension storing learned patterns from generation 40",
-  "createdAt": 1782416613939,
-  "prompt": "The connection between",
-  "neuronCount": 20,
-  "connectionCount": 100
-}

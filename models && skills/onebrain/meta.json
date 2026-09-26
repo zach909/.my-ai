@@ -1,9 +1,9 @@
 {
-  "id": "self_ext_combined",
-  "name": "Memory: combined",
-  "description": "Combined from 14 self-authored extensions",
-  "createdAt": 1790444812520,
-  "prompt": "combined",
+  "id": "onebrain",
+  "name": "OneBrain",
+  "description": "OneBrain: all 14 self-authored extensions merged into one model",
+  "createdAt": 1790445751318,
+  "prompt": "OneBrain",
   "sources": [
     "self_ext_5",
     "self_ext_10",
