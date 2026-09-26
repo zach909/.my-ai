@@ -1,6 +1,10 @@
-import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { ONEBRAIN_ID, ONEBRAIN_NAME, parseSelfExtension, emptyOneBrain, foldEdges, readOneBrain, writeOneBrain } from "./onebrain-memory.js";
+// Registry versions of OneBrain kept for rollback; older ones are removed so
+// folding every few replies cannot grow the registry without bound.
+const ONEBRAIN_REGISTRY_KEEP = 5;
 import { homedir } from "node:os";
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
@@ -43,37 +47,6 @@ function defaultBundledExtensionsDir() {
     const here = dirname(fileURLToPath(import.meta.url));
     const candidates = [here, resolve(here, "..", "..", "models && skills")];
     return candidates.find((d) => existsSync(join(d, "index.jsonl"))) ?? null;
-}
-// Both on-disk self-extension formats: the older one (neurons as
-// [id, {label}] pairs, weights[conn.weightIndex], memory_input_/
-// memory_output_ labels) and the current builder one (neuron objects with
-// `name`, conn.weight, mem_in_/mem_out_ names).
-const SELF_EXT_IN = /^(?:memory_input|mem_in)_(\d+)$/;
-const SELF_EXT_OUT = /^(?:memory_output|mem_out)_(\d+)$/;
-function parseSelfExtension(json) {
-    const m = typeof json === "string" ? JSON.parse(json) : json;
-    const neurons = new Map();
-    for (const entry of m.neurons ?? []) {
-        const n = Array.isArray(entry) ? entry[1] : entry;
-        const label = n.label ?? n.name ?? "";
-        const inMatch = SELF_EXT_IN.exec(label);
-        const outMatch = SELF_EXT_OUT.exec(label);
-        if (inMatch)
-            neurons.set(n.id, { side: "in", token: Number(inMatch[1]) });
-        else if (outMatch)
-            neurons.set(n.id, { side: "out", token: Number(outMatch[1]) });
-    }
-    const edges = [];
-    for (const entry of m.connections ?? []) {
-        const c = Array.isArray(entry) ? entry[1] : entry;
-        const from = neurons.get(c.fromNeuronId ?? c.from);
-        const to = neurons.get(c.toNeuronId ?? c.to);
-        const w = typeof c.weight === "number" ? c.weight : m.weights?.[c.weightIndex];
-        if (from?.side === "in" && to?.side === "out" && typeof w === "number" && Number.isFinite(w)) {
-            edges.push({ from: from.token, to: to.token, weight: w });
-        }
-    }
-    return edges;
 }
 export class NeuroclawLLM {
     config;
@@ -222,7 +195,10 @@ export class NeuroclawLLM {
         this.trained = true;
         this.built = true;
         // Self-extensions survive restarts: bring back everything this
-        // install created, plus the ones bundled with the repo.
+        // install created, plus the ones bundled with the repo. Any separate
+        // self_ext_N models left from before automatic folding are merged
+        // into OneBrain first, so one model is what gets loaded.
+        await this.migrateSelfExtensionsIntoOneBrain();
         this.reloadSelfExtensions();
         if (this.bundledExtensionsDir && resolve(this.bundledExtensionsDir) !== resolve(this.selfExtensionsDir)) {
             this.reloadSelfExtensions(this.bundledExtensionsDir);
@@ -437,44 +413,12 @@ export class NeuroclawLLM {
         }
         const saved = this.builder.saveWithoutQuantization(extProject.id);
         if (saved) {
-            this.selfExtensions.set(extId, saved);
-            try { this.selfExtensionEdges.set(extId, parseSelfExtension(saved)); } catch { /* recall-only index */ }
-            const extDir = join(this.selfExtensionsDir, extId);
-            if (!existsSync(extDir))
-                mkdirSync(extDir, { recursive: true });
-            writeFileSync(join(extDir, "model.json"), saved, "utf-8");
-            const quantized = await this.builder.installWithQuantization(extProject.id, { bits: 4 });
-            if (quantized)
-                writeFileSync(join(extDir, "model.q4.json"), quantized, "utf-8");
-            appendFileSync(join(this.selfExtensionsDir, "index.jsonl"), JSON.stringify({ id: extId, prompt: prompt.slice(0, 100), time: Date.now() }) + "\n", "utf-8");
-            // Register the same payload with the real extension registry so it
-            // is versioned, permission-gated, and content-hash verifiable --
-            // best-effort: a registry failure must never break self-extension
-            // creation, which the MoE routing above already depends on.
-            try {
-                const record = await this.extensionManager.autoCreate({
-                    id: extId,
-                    name: `Memory: ${prompt.slice(0, 30)}`,
-                    kind: "memory",
-                    description: `Self-authored memory extension learned from: ${prompt.slice(0, 100)}`,
-                    payload: Buffer.from(saved, "utf-8"),
-                    createdBy: "self-extension",
-                    sources: [prompt.slice(0, 100)],
-                });
-                await this.extensionManager.activate(record.manifest.id, record.manifest.version);
-            }
-            catch (err) {
-                console.error(`Failed to register self-extension ${extId} with ExtensionManager:`, err);
-            }
+            // Not a separate self_ext_N model: what was just learned is folded
+            // straight into OneBrain, the one memory model.
+            await this.foldIntoOneBrain(parseSelfExtension(saved), [extId]);
         }
-        const extProj = this.builder.getProject(extProject.id);
-        if (extProj) {
-            this.moeRouter.addExpert({
-                id: extId, name: `Memory: ${prompt.slice(0, 20)}`, specialization: "memory-recall"
-            });
-        }
-        // The extension is now fully persisted (this.selfExtensions + disk) and
-        // registered as a MoE expert -- the builder's own in-memory copy of the
+        // The extension is now folded into OneBrain (this.selfExtensions + disk),
+        // which is registered as a MoE expert -- the builder's own in-memory copy of the
         // project (neurons/connections/layers Maps) has no further purpose.
         // reloadSelfExtensions() reads only from disk/this.selfExtensions, never
         // from builder.projects, so this is inert to every other consumer.
@@ -515,6 +459,92 @@ export class NeuroclawLLM {
             return null;
         const stats = this.getStats();
         return { id: this.projectId, neurons: stats.neuronCount, experts: stats.expertCount };
+    }
+    /**
+     * Fold learned (input token -> output token) edges into OneBrain and
+     * persist it: exact + 4-bit copies in selfExtensionsDir/onebrain, the
+     * in-memory copy used by recall, one MoE expert, and a new version in
+     * the extension registry. The first fold on an install starts from the
+     * repo-bundled OneBrain, so nothing it already holds is lost.
+     */
+    async foldIntoOneBrain(edges, sourceIds = []) {
+        const dir = this.selfExtensionsDir;
+        let current = readOneBrain(dir);
+        if (!current && this.bundledExtensionsDir && resolve(this.bundledExtensionsDir) !== resolve(dir)) {
+            current = readOneBrain(this.bundledExtensionsDir);
+        }
+        const model = current?.model ?? emptyOneBrain();
+        foldEdges(model, edges);
+        const serialized = writeOneBrain(dir, model, current?.meta ?? {}, sourceIds);
+        const isNewExpert = !this.selfExtensions.has(ONEBRAIN_ID);
+        this.selfExtensions.set(ONEBRAIN_ID, serialized);
+        this.selfExtensionEdges.set(ONEBRAIN_ID, parseSelfExtension(model));
+        if (isNewExpert) {
+            this.moeRouter.addExpert({ id: ONEBRAIN_ID, name: ONEBRAIN_NAME, specialization: "memory-recall" });
+        }
+        await this.registerOneBrainVersion(serialized, sourceIds);
+        return model;
+    }
+    /**
+     * Record the current OneBrain as a new version in the versioned,
+     * content-hashed registry and activate it, keeping the last
+     * ONEBRAIN_REGISTRY_KEEP versions for rollback. Best-effort: a registry
+     * failure never breaks learning.
+     */
+    async registerOneBrainVersion(serialized, sourceIds = []) {
+        try {
+            const record = await this.extensionManager.autoCreate({
+                id: ONEBRAIN_ID, name: ONEBRAIN_NAME, kind: "memory",
+                description: "OneBrain: every self-authored memory extension merged into one model",
+                payload: Buffer.from(serialized, "utf-8"),
+                createdBy: "self-extension",
+                sources: sourceIds,
+            });
+            await this.extensionManager.activate(record.manifest.id, record.manifest.version);
+            const versions = this.extensionManager.installedVersions(ONEBRAIN_ID);
+            const byAge = [...versions].sort((a, b) => {
+                const [x, y] = [a, b].map((v) => v.split(".").map(Number));
+                return x[0] - y[0] || x[1] - y[1] || x[2] - y[2];
+            });
+            for (const v of byAge.slice(0, Math.max(0, byAge.length - ONEBRAIN_REGISTRY_KEEP))) {
+                if (v === record.manifest.version)
+                    continue;
+                try { await this.extensionManager.remove(ONEBRAIN_ID, v, { force: true }); } catch { /* keep it */ }
+            }
+        }
+        catch (err) {
+            console.error("Failed to register OneBrain with ExtensionManager:", err);
+        }
+    }
+    /**
+     * Merge any standalone self_ext_N models in selfExtensionsDir (written
+     * before automatic folding existed) into OneBrain, then delete them.
+     */
+    async migrateSelfExtensionsIntoOneBrain() {
+        const dir = this.selfExtensionsDir;
+        let entries = [];
+        try { entries = readdirSync(dir); } catch { return 0; }
+        const stale = entries
+            .filter((d) => /^self_ext_\d+$/.test(d) && existsSync(join(dir, d, "model.json")))
+            .sort((a, b) => Number(a.split("_")[2]) - Number(b.split("_")[2]));
+        if (stale.length === 0)
+            return 0;
+        const edges = [];
+        const merged = [];
+        for (const id of stale) {
+            try {
+                edges.push(...parseSelfExtension(readFileSync(join(dir, id, "model.json"), "utf-8")));
+                merged.push(id);
+            }
+            catch { /* unreadable model -- leave it on disk */ }
+        }
+        if (merged.length === 0)
+            return 0;
+        await this.foldIntoOneBrain(edges, merged);
+        for (const id of merged)
+            rmSync(join(dir, id), { recursive: true, force: true });
+        console.error(`[NeuroClaw] Merged ${merged.length} self-extension(s) into ${ONEBRAIN_NAME}`);
+        return merged.length;
     }
     /**
      * Load self-extensions listed in `dir`/index.jsonl as MoE experts.

@@ -93,6 +93,11 @@ export declare class NeuroclawLLM {
     } | null;
     reloadSelfExtensions(dir?: string): number;
     registerLoadedSelfExtensions(): Promise<void>;
+    /** Fold learned edges into OneBrain, persist it, and register a new registry version. */
+    foldIntoOneBrain(edges: { from: number; to: number; weight: number }[], sourceIds?: string[]): Promise<unknown>;
+    registerOneBrainVersion(serialized: string, sourceIds?: string[]): Promise<void>;
+    /** Merge leftover standalone self_ext_N models in selfExtensionsDir into OneBrain; returns how many. */
+    migrateSelfExtensionsIntoOneBrain(): Promise<number>;
     recallFromSelfExtensions(prompt: string, topK?: number): {
         outputs: { token: number; char: string; score: number }[];
         extensions: { id: string; activation: number }[];
