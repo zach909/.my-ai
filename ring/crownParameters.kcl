@@ -1,0 +1,22 @@
+// Raised crown dimensions
+// Shared geometry for twelve upward 90-degree tips.
+@settings(defaultLengthUnit = mm, kclVersion = 2.0)
+
+export linkCount = 24
+export linkPitch = 22mm
+export pointCount = linkCount / 4
+export jointAngle = 360deg / linkCount
+export cornerAngle = 90deg
+export crownRadius = linkPitch / (sqrt(2) * sin(jointAngle))
+export crownRise = crownRadius * sqrt(2 * cos(jointAngle) * (1 - cos(jointAngle)))
+export linkSlope = asin(crownRise / linkPitch)
+radialOffset = crownRadius * (1 - cos(jointAngle))
+tiltRatio = radialOffset / crownRise
+export pinTilt = asin(1 / sqrt(1 + tiltRatio * tiltRatio))
+export linkRoll = asin(sin(pinTilt) * cos(jointAngle / 2))
+midRatio = crownRadius * sin(jointAngle) / crownRise
+midTangent = 1 / sqrt(1 + midRatio * midRatio)
+export midTilt = asin(midTangent)
+export midRoll = asin(midTangent * sin(jointAngle / 2))
+export tongueTwist = linkRoll - midRoll
+export baseHeight = 22mm

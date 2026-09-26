@@ -1,0 +1,111 @@
+// Rounded chain link
+// Canted tongue for a rising crown link.
+@settings(defaultLengthUnit = mm, kclVersion = 2.0)
+
+import tongueTwist from "crownParameters.kcl"
+
+twistAngle = tongueTwist
+pitch = 22mm
+halfWidth = 5.5mm
+thickness = 12mm
+boreRadius = 1.6mm
+forkGap = 4.6mm
+tongueThickness = 4mm
+
+outline = sketch(on = XY) {
+  axisLine = line(start = [var -11mm, var 0mm], end = [var 3mm, var 0mm], construction = true)
+  horizontal(axisLine)
+  horizontalDistance([ORIGIN, axisLine.start]) == -pitch / 2
+  verticalDistance([ORIGIN, axisLine.start]) == 0mm
+  distance([axisLine.start, axisLine.end]) == pitch / 2 + 3mm
+  nose = line(start = [var 3mm, var -5.5mm], end = [var 3mm, var 5.5mm])
+  vertical(nose)
+  horizontalDistance([ORIGIN, nose.start]) == 3mm
+  heel = arc(start = [var -11mm, var 5.5mm], end = [var -11mm, var -5.5mm], center = [var -11mm, var 0mm])
+  coincident([heel.center, axisLine.start])
+  distance([heel.center, heel.start]) == halfWidth
+  horizontalDistance([heel.center, heel.start]) == 0mm
+  horizontalDistance([heel.center, heel.end]) == 0mm
+  lowerEdge = line(start = [var -11mm, var -5.5mm], end = [var 11mm, var -5.5mm])
+  upperEdge = line(start = [var 11mm, var 5.5mm], end = [var -11mm, var 5.5mm])
+  horizontal(lowerEdge)
+  horizontal(upperEdge)
+  coincident([lowerEdge.start, heel.end])
+  coincident([lowerEdge.end, nose.start])
+  coincident([upperEdge.start, nose.end])
+  coincident([upperEdge.end, heel.start])
+}
+forkBlank = extrude(region(segments = [outline.lowerEdge, outline.nose], intersectionIndex = -1, direction = CCW), length = thickness, symmetric = true)
+tongueBlank = clone(forkBlank)
+  |> rotate(axis = Z, angle = 180deg, global = true)
+  |> rotate(axis = X, angle = twistAngle, global = true)
+blank = union([forkBlank, tongueBlank])
+hide(outline)
+
+bores = sketch(on = XY) {
+  forkBore = circle(center = [var -11mm, var 0mm], start = [var -9.4mm, var 0mm])
+  horizontalDistance([ORIGIN, forkBore.center]) == -pitch / 2
+  verticalDistance([ORIGIN, forkBore.center]) == 0mm
+  distance([forkBore.center, forkBore.start]) == boreRadius
+  verticalDistance([forkBore.center, forkBore.start]) == 0mm
+}
+tongueBores = sketch(on = XY) {
+  tongueBore = circle(center = [var 11mm, var 0mm], start = [var 12.6mm, var 0mm])
+  horizontalDistance([ORIGIN, tongueBore.center]) == pitch / 2
+  verticalDistance([ORIGIN, tongueBore.center]) == 0mm
+  distance([tongueBore.center, tongueBore.start]) == boreRadius
+  verticalDistance([tongueBore.center, tongueBore.start]) == 0mm
+}
+forkDrill = extrude(region(segments = [bores.forkBore]), length = thickness + 2mm, symmetric = true)
+tongueDrill = extrude(region(segments = [tongueBores.tongueBore]), length = thickness + 2mm, symmetric = true)
+  |> rotate(axis = X, angle = twistAngle, global = true)
+drilledLink = subtract([blank], tools = [forkDrill, tongueDrill])
+hide(bores)
+hide(tongueBores)
+
+forkSlot = sketch(on = XZ) {
+  bottom = line(start = [var -18mm, var -2.3mm], end = [var -3mm, var -2.3mm])
+  right = line(start = [var -3mm, var -2.3mm], end = [var -3mm, var 2.3mm])
+  top = line(start = [var -3mm, var 2.3mm], end = [var -18mm, var 2.3mm])
+  left = line(start = [var -18mm, var 2.3mm], end = [var -18mm, var -2.3mm])
+  coincident([bottom.end, right.start])
+  coincident([right.end, top.start])
+  coincident([top.end, left.start])
+  coincident([left.end, bottom.start])
+  horizontal(bottom)
+  horizontal(top)
+  vertical(left)
+  vertical(right)
+  horizontalDistance([ORIGIN, bottom.start]) == -18mm
+  verticalDistance([ORIGIN, bottom.start]) == -forkGap / 2
+  distance([bottom.start, bottom.end]) == 15.1mm
+  distance([right.start, right.end]) == forkGap
+}
+slotTool = extrude(region(segments = [forkSlot.bottom, forkSlot.right], intersectionIndex = -1, direction = CCW), length = 18mm, symmetric = true)
+slottedLink = subtract([drilledLink], tools = [slotTool])
+hide(forkSlot)
+
+relief = sketch(on = XZ) {
+  bottom = line(start = [var 3mm, var 2mm], end = [var 18mm, var 2mm])
+  right = line(start = [var 18mm, var 2mm], end = [var 18mm, var 7mm])
+  top = line(start = [var 18mm, var 7mm], end = [var 3mm, var 7mm])
+  left = line(start = [var 3mm, var 7mm], end = [var 3mm, var 2mm])
+  coincident([bottom.end, right.start])
+  coincident([right.end, top.start])
+  coincident([top.end, left.start])
+  coincident([left.end, bottom.start])
+  horizontal(bottom)
+  horizontal(top)
+  vertical(left)
+  vertical(right)
+  horizontalDistance([ORIGIN, bottom.start]) == 2.9mm
+  verticalDistance([ORIGIN, bottom.start]) == tongueThickness / 2
+  distance([bottom.start, bottom.end]) == 15.1mm
+  distance([right.start, right.end]) == 7mm - (tongueThickness / 2)
+}
+upperTool = extrude(region(segments = [relief.bottom, relief.right], intersectionIndex = -1, direction = CCW), length = 18mm, symmetric = true)
+  |> rotate(axis = X, angle = twistAngle, global = true)
+lowerTool = clone(upperTool)
+  |> rotate(axis = X, angle = 180deg, global = true)
+hide(relief)
+link = subtract([slottedLink], tools = [upperTool, lowerTool])

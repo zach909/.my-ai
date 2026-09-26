@@ -1,0 +1,10 @@
+title = "ring"
+default_file = "main.kcl"
+
+[settings.app]
+[settings.meta]
+id = "a1df4801-a7ce-43d9-947b-e490d80530d5"
+
+[settings.modeling]
+[cloud."zoo.dev"]
+project_id = "ad799c3a-b973-48cf-9527-1f24748f2b19"
