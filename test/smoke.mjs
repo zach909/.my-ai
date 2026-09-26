@@ -2093,6 +2093,48 @@ async function testSelfExtension() {
   }
 }
 
+// The merged self_ext_combined model bundled in models && skills/ must get
+// every extension property the wiki promises (Extensions.md / Builder.md /
+// Quantization.md / MoE.md): saved exact + installed 4-bit, loaded back at
+// startup as a routable MoE expert, recorded in the versioned registry, and
+// its weights actually read on recall.
+async function testCombinedSelfExtension() {
+  const { NeuroclawLLM } = await load('models && skills/llm.js');
+  const { readFileSync: read } = await import('node:fs');
+  const bundled = resolve(process.cwd(), 'models && skills');
+  const extDir = join(bundled, 'self_ext_combined');
+  const fp32 = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+  const q4 = JSON.parse(read(join(extDir, 'model.q4.json'), 'utf8'));
+  const meta = JSON.parse(read(join(extDir, 'meta.json'), 'utf8'));
+  check(meta.sources.length === 14 && fp32.weightFormat === 'fp32' && q4.weightFormat === 'int4' && q4.weightBits === 4,
+    'self_ext_combined merges all 14 self-extensions and ships exact (fp32) + installed (int4) copies');
+  const maxErr = fp32.weights.reduce((m, w, i) => (w === null ? m : Math.max(m, Math.abs(Math.max(-1, Math.min(1, w)) - (q4.weights[i] - q4.quantZeroPoint) * q4.quantScale))), 0);
+  check(maxErr <= q4.quantScale / 2 + 1e-6, `self_ext_combined's 4-bit copy dequantizes to within half a step of the fp32 weights (max err ${maxErr.toFixed(4)})`);
+
+  const dir = mkdtempSync(join(tmpdir(), 'selfext-combined-'));
+  try {
+    const llm = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: bundled });
+    await llm.build();
+    const loaded = [...llm.selfExtensions.keys()];
+    check(loaded.includes('self_ext_combined'), 'build() reloads the bundled combined extension (survives restarts)');
+    check(!loaded.some((id) => meta.sources.includes(id)), 'the 14 source models are superseded by the combined one, not loaded as duplicate experts');
+    const bare = new NeuroclawLLM({ selfExtensionsDir: mkdtempSync(join(tmpdir(), 'selfext-bare-')), bundledExtensionsDir: null });
+    await bare.build();
+    const expertsBefore = bare.getMoERouter().getExpertCount();
+    const added = bare.reloadSelfExtensions(bundled);
+    check(added === 1 && bare.getMoERouter().getExpertCount() === expertsBefore + 1, 'self_ext_combined is registered as exactly one routable MoE expert');
+    check(llm.extensionManager.store.listVersions('self_ext_combined').length === 1, 'self_ext_combined is recorded once in the versioned extension registry');
+    const recall = llm.recallFromSelfExtensions('I observe that the pattern shows', 5);
+    check(recall.outputs.length > 0 && recall.extensions[0]?.id === 'self_ext_combined', "recallFromSelfExtensions() runs the combined model's weights and returns output tokens");
+
+    const again = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: bundled });
+    await again.build();
+    check(again.extensionManager.store.listVersions('self_ext_combined').length === 1, 'a restart does not re-version an already-registered extension');
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
 async function testLongTermMemory() {
   const { LongTermMemory } = await load('models && skills/core/long-term-memory.js');
   const mem = new LongTermMemory();
@@ -5389,6 +5431,7 @@ async function main() {
     ['Neural Definition directives', testNeuralDefinitionDirectives],
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
+    ['Combined self-extension', testCombinedSelfExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['NeuroLang parse() yields to event loop across many @code= lines (Section 26)', testNeuroLangParseYields],
     ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],

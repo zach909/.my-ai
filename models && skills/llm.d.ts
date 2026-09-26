@@ -22,6 +22,8 @@ export interface LLMConfig {
     quantumEnabled?: boolean;
     /** Directory where self-authored extensions are persisted. */
     selfExtensionsDir?: string;
+    /** Repo-bundled self-extensions loaded at build(); null disables. Defaults to `models && skills/`. */
+    bundledExtensionsDir?: string | null;
 }
 export interface GenerateOptions {
     maxTokens: number;
@@ -89,7 +91,12 @@ export declare class NeuroclawLLM {
         neurons: number;
         experts: number;
     } | null;
-    reloadSelfExtensions(): void;
+    reloadSelfExtensions(dir?: string): number;
+    registerLoadedSelfExtensions(): Promise<void>;
+    recallFromSelfExtensions(prompt: string, topK?: number): {
+        outputs: { token: number; char: string; score: number }[];
+        extensions: { id: string; activation: number }[];
+    };
     quantize(): Promise<string | null>;
     save(): string | null;
     searchNeurons(query: string): import("../extension-builder/builder.js").NeuronData[];

@@ -1,5 +1,6 @@
 import { existsSync, mkdirSync, writeFileSync, appendFileSync, readFileSync } from "node:fs";
-import { join } from "node:path";
+import { join, dirname, resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { homedir } from "node:os";
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
@@ -35,6 +36,45 @@ const GENERATE_MAX_TICKS = 256;
 // doorway costs 8 real sendBit() calls, so this is what actually keeps
 // a long prompt from turning one chat turn into a multi-minute run.
 const ONE_BRAIN_PROMPT_CHAR_CAP = 200;
+// Self-extensions that ship with the repo (models && skills/self_ext_*,
+// including the merged self_ext_combined). Resolved from source or from
+// the dist/ copy of this file, whichever is running.
+function defaultBundledExtensionsDir() {
+    const here = dirname(fileURLToPath(import.meta.url));
+    const candidates = [here, resolve(here, "..", "..", "models && skills")];
+    return candidates.find((d) => existsSync(join(d, "index.jsonl"))) ?? null;
+}
+// Both on-disk self-extension formats: the older one (neurons as
+// [id, {label}] pairs, weights[conn.weightIndex], memory_input_/
+// memory_output_ labels) and the current builder one (neuron objects with
+// `name`, conn.weight, mem_in_/mem_out_ names).
+const SELF_EXT_IN = /^(?:memory_input|mem_in)_(\d+)$/;
+const SELF_EXT_OUT = /^(?:memory_output|mem_out)_(\d+)$/;
+function parseSelfExtension(json) {
+    const m = typeof json === "string" ? JSON.parse(json) : json;
+    const neurons = new Map();
+    for (const entry of m.neurons ?? []) {
+        const n = Array.isArray(entry) ? entry[1] : entry;
+        const label = n.label ?? n.name ?? "";
+        const inMatch = SELF_EXT_IN.exec(label);
+        const outMatch = SELF_EXT_OUT.exec(label);
+        if (inMatch)
+            neurons.set(n.id, { side: "in", token: Number(inMatch[1]) });
+        else if (outMatch)
+            neurons.set(n.id, { side: "out", token: Number(outMatch[1]) });
+    }
+    const edges = [];
+    for (const entry of m.connections ?? []) {
+        const c = Array.isArray(entry) ? entry[1] : entry;
+        const from = neurons.get(c.fromNeuronId ?? c.from);
+        const to = neurons.get(c.toNeuronId ?? c.to);
+        const w = typeof c.weight === "number" ? c.weight : m.weights?.[c.weightIndex];
+        if (from?.side === "in" && to?.side === "out" && typeof w === "number" && Number.isFinite(w)) {
+            edges.push({ from: from.token, to: to.token, weight: w });
+        }
+    }
+    return edges;
+}
 export class NeuroclawLLM {
     config;
     builder;
@@ -49,7 +89,10 @@ export class NeuroclawLLM {
     trained = false;
     context = "";
     selfExtensions = new Map();
+    /** Parsed (inputToken -> outputToken, weight) edges per loaded self-extension, for recall. */
+    selfExtensionEdges = new Map();
     selfExtensionsDir;
+    bundledExtensionsDir;
     generationCount = 0;
     autonomousStopRequested = false;
     /**
@@ -73,6 +116,9 @@ export class NeuroclawLLM {
         if (!existsSync(this.selfExtensionsDir)) {
             mkdirSync(this.selfExtensionsDir, { recursive: true });
         }
+        this.bundledExtensionsDir = this.config.bundledExtensionsDir === undefined
+            ? defaultBundledExtensionsDir()
+            : this.config.bundledExtensionsDir;
         // The versioned, dependency-aware, permissioned extension registry
         // (extension_system/) is the durable record of record for every
         // self-created extension -- a separate rootDir from selfExtensionsDir
@@ -175,6 +221,13 @@ export class NeuroclawLLM {
         await this.trainer.train();
         this.trained = true;
         this.built = true;
+        // Self-extensions survive restarts: bring back everything this
+        // install created, plus the ones bundled with the repo.
+        this.reloadSelfExtensions();
+        if (this.bundledExtensionsDir && resolve(this.bundledExtensionsDir) !== resolve(this.selfExtensionsDir)) {
+            this.reloadSelfExtensions(this.bundledExtensionsDir);
+        }
+        await this.registerLoadedSelfExtensions();
     }
     /** Explicit foreground code-first build: the given code becomes the model's actual baseline, not background filler. */
     async buildFromCode(code) {
@@ -385,6 +438,7 @@ export class NeuroclawLLM {
         const saved = this.builder.saveWithoutQuantization(extProject.id);
         if (saved) {
             this.selfExtensions.set(extId, saved);
+            try { this.selfExtensionEdges.set(extId, parseSelfExtension(saved)); } catch { /* recall-only index */ }
             const extDir = join(this.selfExtensionsDir, extId);
             if (!existsSync(extDir))
                 mkdirSync(extDir, { recursive: true });
@@ -462,33 +516,114 @@ export class NeuroclawLLM {
         const stats = this.getStats();
         return { id: this.projectId, neurons: stats.neuronCount, experts: stats.expertCount };
     }
-    reloadSelfExtensions() {
-        const indexPath = join(this.selfExtensionsDir, "index.jsonl");
+    /**
+     * Load self-extensions listed in `dir`/index.jsonl as MoE experts.
+     * A merged extension (meta.json with `sources`) supersedes the models it
+     * was built from: those source ids are not loaded separately from the
+     * same directory, so combining never double-counts an expert.
+     */
+    reloadSelfExtensions(dir = this.selfExtensionsDir) {
+        const indexPath = join(dir, "index.jsonl");
         if (!existsSync(indexPath))
-            return;
+            return 0;
         const lines = readFileSync(indexPath, "utf-8").split("\n").filter(Boolean);
-        let loaded = 0;
+        const metas = [];
         for (const line of lines) {
+            try { metas.push(JSON.parse(line)); } catch { /* malformed line — skip */ }
+        }
+        const superseded = new Set();
+        for (const id of new Set(metas.map((m) => m.id))) {
+            const metaPath = join(dir, id, "meta.json");
+            if (!existsSync(metaPath))
+                continue;
             try {
-                const meta = JSON.parse(line);
-                if (!this.selfExtensions.has(meta.id)) {
-                    const modelPath = join(this.selfExtensionsDir, meta.id, "model.json");
-                    if (existsSync(modelPath)) {
-                        const data = readFileSync(modelPath, "utf-8");
-                        this.selfExtensions.set(meta.id, data);
-                        this.moeRouter.addExpert({
-                            id: meta.id,
-                            name: `Memory: ${meta.prompt.slice(0, 20)}`,
-                            specialization: "memory-recall",
-                        });
-                        loaded++;
-                    }
-                }
+                const sources = JSON.parse(readFileSync(metaPath, "utf-8")).sources;
+                if (Array.isArray(sources) && existsSync(join(dir, id, "model.json")))
+                    sources.forEach((s) => superseded.add(s));
             }
-            catch { /* malformed line — skip */ }
+            catch { /* unreadable meta — treat as plain extension */ }
+        }
+        let loaded = 0;
+        for (const meta of metas) {
+            if (this.selfExtensions.has(meta.id) || superseded.has(meta.id))
+                continue;
+            const modelPath = join(dir, meta.id, "model.json");
+            if (!existsSync(modelPath))
+                continue;
+            try {
+                const data = readFileSync(modelPath, "utf-8");
+                this.selfExtensionEdges.set(meta.id, parseSelfExtension(data));
+                this.selfExtensions.set(meta.id, data);
+                this.moeRouter.addExpert({
+                    id: meta.id,
+                    name: `Memory: ${String(meta.prompt ?? meta.name ?? meta.id).slice(0, 20)}`,
+                    specialization: "memory-recall",
+                });
+                loaded++;
+            }
+            catch { /* corrupt model file — skip */ }
         }
         if (loaded > 0)
-            console.error(`[NeuroClaw] Reloaded ${loaded} self-extension(s)`);
+            console.error(`[NeuroClaw] Reloaded ${loaded} self-extension(s) from ${dir}`);
+        return loaded;
+    }
+    /**
+     * Record every loaded self-extension in the versioned, content-hashed
+     * extension registry (extension_system/), once. Already-registered ids
+     * are left alone so restarts do not mint a new version each boot.
+     * Best-effort, like createSelfExtension()'s registration.
+     */
+    async registerLoadedSelfExtensions() {
+        for (const [id, data] of this.selfExtensions) {
+            try {
+                if (this.extensionManager.store.listVersions(id).length > 0)
+                    continue;
+                const record = await this.extensionManager.autoCreate({
+                    id, name: `Memory: ${id}`, kind: "memory",
+                    description: `Self-authored memory extension ${id}`,
+                    payload: Buffer.from(data, "utf-8"),
+                    createdBy: "self-extension",
+                    sources: [id],
+                });
+                await this.extensionManager.activate(record.manifest.id, record.manifest.version);
+            }
+            catch (err) {
+                console.error(`Failed to register self-extension ${id} with ExtensionManager:`, err);
+            }
+        }
+    }
+    /**
+     * Run the loaded self-extensions' weights on `prompt`: every input-token
+     * neuron whose character occurs in the prompt fires, its weighted edges
+     * feed the output-token neurons, and the strongest outputs come back.
+     * This is the "store memory" half of self-built extensions actually
+     * being read, not just registered.
+     */
+    recallFromSelfExtensions(prompt, topK = 5) {
+        const active = new Set([this.tokenizer.specialTokens?.bos ?? 1]);
+        for (const ch of String(prompt))
+            active.add(this.tokenizer.charToTokenId(ch));
+        const special = new Set(Object.values(this.tokenizer.specialTokens ?? {}));
+        const scores = new Map();
+        const byExtension = [];
+        for (const [id, edges] of this.selfExtensionEdges) {
+            let activation = 0;
+            for (const e of edges) {
+                if (!active.has(e.from))
+                    continue;
+                scores.set(e.to, (scores.get(e.to) ?? 0) + e.weight);
+                activation += Math.abs(e.weight);
+            }
+            if (activation > 0)
+                byExtension.push({ id, activation });
+        }
+        const outputs = [...scores.entries()]
+            .filter(([token]) => !special.has(token))
+            .sort((a, b) => b[1] - a[1])
+            .slice(0, topK)
+            .map(([token, score]) => ({ token, char: this.tokenizer.tokenIdToChar(token), score }));
+        byExtension.sort((a, b) => b.activation - a.activation);
+        return { outputs, extensions: byExtension };
     }
     async quantize() {
         if (!this.built)
