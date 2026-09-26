@@ -4035,6 +4035,8 @@ export class WebServer {
                 this.sendJson(res, {
                     enabled: true,
                     ...layer.layout(),
+                    // Every tool's score against the network as it stands -- read-only.
+                    decision: layer.decide(),
                     waiting: layer.fired(),
                     stats: layer.getStats(),
                     recent: layer.history().slice(-20).map(call => ({

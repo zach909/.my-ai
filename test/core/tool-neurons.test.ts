@@ -286,6 +286,29 @@ describe('tool neurons: every tool is a neuron, every plugin has its own input',
     expect(layer.fired()).toEqual([]);
   });
 
+  it('answers like Jev: a typed score per tool, and above one half means it fires', () => {
+    engine.setConnection(layer.neuronFor('terminal', 'write_file')!, CHAT.bit1In, WIRE);
+    new ZipLoopInterface(engine, CHAT).sendByte(0xff);
+
+    const decision = layer.decide();
+    expect(decision.options).toHaveLength(terminal.getTools().length + desktop.getTools().length);
+    expect(decision.options[0].key).toBe('terminal.write_file');
+    expect(decision.chosen).toEqual(['terminal.write_file']);
+    for (const option of decision.options) {
+      expect(option.score).toBeGreaterThanOrEqual(0);
+      expect(option.score).toBeLessThan(1);
+      // The score and the firing are one statement, not two that can disagree.
+      expect(option.fires).toBe(option.score > 0.5);
+    }
+    // It agrees with what the tick watcher latched from the same state.
+    expect(layer.fired().map(f => f.key)).toEqual(decision.chosen);
+  });
+
+  it('a network that was not asked anything chooses no tool', () => {
+    engine.process(new Array(D).fill(0), undefined, new Set(), undefined, { learn: false });
+    expect(layer.decide().chosen).toEqual([]);
+  });
+
   it('fires once per crossing, not once per tick it stays up', () => {
     engine.setConnection(layer.neuronFor('terminal', 'list_terminals')!, CHAT.bit1In, WIRE);
     const pulse = new Array(D).fill(1);
