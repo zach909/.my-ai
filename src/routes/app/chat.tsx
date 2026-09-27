@@ -22,7 +22,7 @@ import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus, MessageSquare, X, Download } from '@/components/icons'
-import { ZigzagCrownBackground } from '@/components/ZigzagCrownBackground'
+import { RingCrownBackground } from '@/components/RingCrownBackground'
 import { AgentPulse } from '@/components/agent-pulse'
 import { toast } from '@/lib/toast'
 import { VoiceRecorder } from '@/components/VoiceRecorder'
@@ -872,7 +872,7 @@ function ChatConversation({
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false) }}
       onDrop={handleDrop}
     >
-      <ZigzagCrownBackground />
+      <RingCrownBackground />
       {dragOver && (
         <div className="pointer-events-none absolute inset-0 z-10 flex animate-fade-in items-center justify-center rounded-lg border-2 border-dashed border-primary bg-primary/10 backdrop-blur-[1px]">
           <p className="rounded-md bg-background px-4 py-2 text-sm font-medium text-primary shadow-lg">

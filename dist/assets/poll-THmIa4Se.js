@@ -1,0 +1,1 @@
+async function e(e,t={},n=8e3){let r=AbortSignal.timeout(n),i=t.signal?AbortSignal.any([t.signal,r]):r;return await fetch(e,{...t,signal:i})}function t(e,t){let n=!1,r=null,i=async()=>{if(!n){try{await e()}catch{}n||(r=setTimeout(i,t))}};return i(),{stop:()=>{n=!0,r!==null&&clearTimeout(r),r=null}}}export{t as n,e as t};
