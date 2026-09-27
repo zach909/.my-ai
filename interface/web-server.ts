@@ -2,6 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
 import { NeuroclawRunner } from './runner.js';
 import { AppLauncher } from './app-launcher.js';
@@ -1494,6 +1495,36 @@ export class WebServer {
    * there) can query this exact tag rather than mixing skill triggers in
    * with ordinary chat-turn memories.
    */
+  private yesNo: import('../models && skills/core/yes-no.js').YesNoDoorway | null = null;
+
+  private yesNoFile(): string {
+    return process.env.NEUROCLAW_YES_NO_FILE ?? path.join(homedir(), '.neuroclaw', 'yes-no.json');
+  }
+
+  /** The yes/no doorway on the live mesh, with everything taught before restored into it. */
+  private async yesNoDoorway(): Promise<import('../models && skills/core/yes-no.js').YesNoDoorway> {
+    if (this.yesNo) return this.yesNo;
+    const { YesNoDoorway } = await import('../models && skills/core/yes-no.js');
+    const { getNeuroclawSystem } = await import('../src/index.js');
+    const system = await getNeuroclawSystem();
+    const doorway = new YesNoDoorway(system.pipeline.ensureBrain());
+    const { promises: fs } = await import('node:fs');
+    try {
+      doorway.load(JSON.parse(await fs.readFile(this.yesNoFile(), 'utf8')));
+    } catch {
+      // Nothing taught yet, or an unreadable file: start empty rather than fail.
+    }
+    this.yesNo = doorway;
+    return doorway;
+  }
+
+  private async saveYesNo(doorway: import('../models && skills/core/yes-no.js').YesNoDoorway): Promise<void> {
+    const { promises: fs } = await import('node:fs');
+    const file = this.yesNoFile();
+    await fs.mkdir(path.dirname(file), { recursive: true });
+    await fs.writeFile(file, JSON.stringify(doorway.toJSON()), 'utf8');
+  }
+
   /**
    * Make a grafted skill's region routable in both routers that gate the one
    * mesh -- the live pipeline's and chat's (UnifiedBrain via NeuroclawLLM) --
@@ -3991,6 +4022,38 @@ export class WebServer {
     // see reasoning-engine.ts) instead of the editor's Save/Install buttons
     // being a complete dead end: previously they only reported a byte count
     // and threw the built project away, wired to neither disk nor chat.
+    // Yes/no questions with a probability (models && skills/core/yes-no.ts):
+    //   GET  /api/yes-no        -- the questions taught so far
+    //   POST /api/yes-no/teach  -- { question, text, answer: boolean }
+    //   POST /api/yes-no/ask    -- { question, text } -> answer + probability
+    // Each question is a region of the one live mesh. What was taught is saved
+    // to ~/.neuroclaw/yes-no.json and restored into the mesh on first use.
+    if (pathname === '/api/yes-no' || pathname === '/api/yes-no/teach' || pathname === '/api/yes-no/ask') {
+      try {
+        const doorway = await this.yesNoDoorway();
+        if (pathname === '/api/yes-no' && method === 'GET') {
+          this.sendJson(res, { questions: doorway.questions() });
+          return;
+        }
+        if (method !== 'POST') { this.sendJson(res, { error: 'POST required' }, 405); return; }
+        const body = await this.parseBody(req) as { question?: string; text?: string; answer?: unknown } | null;
+        const question = String(body?.question ?? '').trim();
+        const text = String(body?.text ?? '');
+        if (!question || !text) { this.sendJson(res, { error: 'question and text are required' }, 400); return; }
+        if (pathname === '/api/yes-no/teach') {
+          if (typeof body?.answer !== 'boolean') { this.sendJson(res, { error: 'answer must be true or false' }, 400); return; }
+          const result = doorway.teach(question, text, body.answer);
+          await this.saveYesNo(doorway);
+          this.sendJson(res, { ok: true, ...result });
+          return;
+        }
+        this.sendJson(res, doorway.ask(question, text));
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+
     // POST /api/extension/live-sync -- the Extension Builder building
     // directly into the network. The builder sends its project after each
     // edit; this brings the skill's region of the ONE live mesh in line with

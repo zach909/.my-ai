@@ -5177,6 +5177,14 @@ export class HyperDimensionalEngine {
    * declared neurons together, rather than only ever learning weights
    * through Hebbian/delta-rule updates.
    */
+  /** One dimension of one incoming connection: what setConnectionWeight() / tuneNeuronTo() wrote. */
+  getConnectionWeight(targetId: number, sourceId: number, dim: number): number {
+    const D = this.totalDims;
+    const N = this.neurons.length;
+    if (targetId < 0 || targetId >= N || sourceId < 0 || sourceId >= N || dim < 0 || dim >= D) return 0;
+    return this.connDiag[(targetId * D + dim) * N + sourceId];
+  }
+
   setConnectionWeight(targetId: number, sourceId: number, dim: number, weight: number): void {
     const D = this.totalDims;
     if (targetId === sourceId || dim < 0 || dim >= D) return;

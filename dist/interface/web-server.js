@@ -2,6 +2,7 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
@@ -899,6 +900,48 @@ export class WebServer {
         // GET /api/status so "did the runner actually pick up my trained
         // network on this boot" is observable, not just assumed.
         this.loadedExtensions = { files: 0, remembered: 0, graftedNeurons: 0 };
+        /**
+         * "Integrate it into the runner of the model": every real Extension
+         * Builder deliverable this session (Main Network, Coding Skills
+         * Network, the merged network, ...) only ever became part of the live
+         * agent when POST /api/extension/register happened to be called during
+         * that one server process's lifetime -- system.memory.remember() has
+         * no persistence of its own, so a trained network was invisible to the
+         * agent again the moment the server restarted, with nothing to reload
+         * it. This is the fix: on every real server boot, read every
+         * previously saved extension file (extension-builder/extensions/*.ext.json
+         * -- the exact artifacts train(), trainWithPyTorch(), Save, and
+         * Install already write) and remember() each one's definitions/scripts
+         * into the live NeuroclawSystem, the same way register() does for one
+         * extension at a time. A trained network is now a permanent property
+         * of the runner, not a one-session fluke of whoever happened to click
+         * a button.
+         *
+         * Deliberately best-effort: a missing directory, an unreadable file, or
+         * malformed JSON in one saved extension must never stop the server from
+         * finishing its boot sequence -- skip that one file and keep going.
+         */
+        /**
+         * Remembers one trained skill script as a directly-matchable (trigger,
+         * response) pair -- `content` is the trigger text alone (what actually
+         * gets embedded and compared against a live query), `payload` is the
+         * literal response text to return verbatim on a confident match. This
+         * replaced an earlier version that flattened both into one sentence
+         * ("When asked X, Y responds: Z") and stored no payload at all -- that
+         * meant the trigger's own embedding was diluted by boilerplate text
+         * around it, AND there was no way to recover the exact response
+         * without re-parsing the flattened sentence. Both are fixed here.
+         *
+         * Pinned, because an installed skill is knowledge the user deliberately
+         * added: capacity eviction may drop what the system merely observed, but
+         * never what someone installed.
+         *
+         * Tagged 'skill-script' (plus the source extension's name) so
+         * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
+         * there) can query this exact tag rather than mixing skill triggers in
+         * with ordinary chat-turn memories.
+         */
+        this.yesNo = null;
         this.runner = runner;
         this.launcher = launcher ?? new AppLauncher();
     }
@@ -1376,47 +1419,33 @@ export class WebServer {
             trainedNeurons, epochsRun: result.epochsRun, converged: result.converged, torchVersion: result.torchVersion,
         };
     }
-    /**
-     * "Integrate it into the runner of the model": every real Extension
-     * Builder deliverable this session (Main Network, Coding Skills
-     * Network, the merged network, ...) only ever became part of the live
-     * agent when POST /api/extension/register happened to be called during
-     * that one server process's lifetime -- system.memory.remember() has
-     * no persistence of its own, so a trained network was invisible to the
-     * agent again the moment the server restarted, with nothing to reload
-     * it. This is the fix: on every real server boot, read every
-     * previously saved extension file (extension-builder/extensions/*.ext.json
-     * -- the exact artifacts train(), trainWithPyTorch(), Save, and
-     * Install already write) and remember() each one's definitions/scripts
-     * into the live NeuroclawSystem, the same way register() does for one
-     * extension at a time. A trained network is now a permanent property
-     * of the runner, not a one-session fluke of whoever happened to click
-     * a button.
-     *
-     * Deliberately best-effort: a missing directory, an unreadable file, or
-     * malformed JSON in one saved extension must never stop the server from
-     * finishing its boot sequence -- skip that one file and keep going.
-     */
-    /**
-     * Remembers one trained skill script as a directly-matchable (trigger,
-     * response) pair -- `content` is the trigger text alone (what actually
-     * gets embedded and compared against a live query), `payload` is the
-     * literal response text to return verbatim on a confident match. This
-     * replaced an earlier version that flattened both into one sentence
-     * ("When asked X, Y responds: Z") and stored no payload at all -- that
-     * meant the trigger's own embedding was diluted by boilerplate text
-     * around it, AND there was no way to recover the exact response
-     * without re-parsing the flattened sentence. Both are fixed here.
-     *
-     * Pinned, because an installed skill is knowledge the user deliberately
-     * added: capacity eviction may drop what the system merely observed, but
-     * never what someone installed.
-     *
-     * Tagged 'skill-script' (plus the source extension's name) so
-     * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
-     * there) can query this exact tag rather than mixing skill triggers in
-     * with ordinary chat-turn memories.
-     */
+    yesNoFile() {
+        return process.env.NEUROCLAW_YES_NO_FILE ?? path.join(homedir(), '.neuroclaw', 'yes-no.json');
+    }
+    /** The yes/no doorway on the live mesh, with everything taught before restored into it. */
+    async yesNoDoorway() {
+        if (this.yesNo)
+            return this.yesNo;
+        const { YesNoDoorway } = await import('../models && skills/core/yes-no.js');
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const doorway = new YesNoDoorway(system.pipeline.ensureBrain());
+        const { promises: fs } = await import('node:fs');
+        try {
+            doorway.load(JSON.parse(await fs.readFile(this.yesNoFile(), 'utf8')));
+        }
+        catch {
+            // Nothing taught yet, or an unreadable file: start empty rather than fail.
+        }
+        this.yesNo = doorway;
+        return doorway;
+    }
+    async saveYesNo(doorway) {
+        const { promises: fs } = await import('node:fs');
+        const file = this.yesNoFile();
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, JSON.stringify(doorway.toJSON()), 'utf8');
+    }
     /**
      * Make a grafted skill's region routable in both routers that gate the one
      * mesh -- the live pipeline's and chat's (UnifiedBrain via NeuroclawLLM) --
@@ -3819,6 +3848,47 @@ export class WebServer {
         // see reasoning-engine.ts) instead of the editor's Save/Install buttons
         // being a complete dead end: previously they only reported a byte count
         // and threw the built project away, wired to neither disk nor chat.
+        // Yes/no questions with a probability (models && skills/core/yes-no.ts):
+        //   GET  /api/yes-no        -- the questions taught so far
+        //   POST /api/yes-no/teach  -- { question, text, answer: boolean }
+        //   POST /api/yes-no/ask    -- { question, text } -> answer + probability
+        // Each question is a region of the one live mesh. What was taught is saved
+        // to ~/.neuroclaw/yes-no.json and restored into the mesh on first use.
+        if (pathname === '/api/yes-no' || pathname === '/api/yes-no/teach' || pathname === '/api/yes-no/ask') {
+            try {
+                const doorway = await this.yesNoDoorway();
+                if (pathname === '/api/yes-no' && method === 'GET') {
+                    this.sendJson(res, { questions: doorway.questions() });
+                    return;
+                }
+                if (method !== 'POST') {
+                    this.sendJson(res, { error: 'POST required' }, 405);
+                    return;
+                }
+                const body = await this.parseBody(req);
+                const question = String(body?.question ?? '').trim();
+                const text = String(body?.text ?? '');
+                if (!question || !text) {
+                    this.sendJson(res, { error: 'question and text are required' }, 400);
+                    return;
+                }
+                if (pathname === '/api/yes-no/teach') {
+                    if (typeof body?.answer !== 'boolean') {
+                        this.sendJson(res, { error: 'answer must be true or false' }, 400);
+                        return;
+                    }
+                    const result = doorway.teach(question, text, body.answer);
+                    await this.saveYesNo(doorway);
+                    this.sendJson(res, { ok: true, ...result });
+                    return;
+                }
+                this.sendJson(res, doorway.ask(question, text));
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
         // POST /api/extension/live-sync -- the Extension Builder building
         // directly into the network. The builder sends its project after each
         // edit; this brings the skill's region of the ONE live mesh in line with
