@@ -98,6 +98,9 @@ export declare class NeuroclawLLM {
     registerOneBrainVersion(serialized: string, sourceIds?: string[]): Promise<void>;
     /** Merge leftover standalone self_ext_N models in selfExtensionsDir into OneBrain; returns how many. */
     migrateSelfExtensionsIntoOneBrain(): Promise<number>;
+    /** Graft OneBrain's neurons onto the live mesh (hyperEngine) and write its weights as mesh connections. */
+    syncOneBrainToMesh(): { added: number; updated: number; skipped?: string };
+    oneBrainMeshIds: Map<string, number>;
     recallFromSelfExtensions(prompt: string, topK?: number): {
         outputs: { token: number; char: string; score: number }[];
         extensions: { id: string; activation: number }[];

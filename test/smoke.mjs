@@ -2083,6 +2083,10 @@ async function testSelfExtension() {
       'Folding the same pattern again averages into existing connections instead of adding duplicates');
     const index = read(join(dir, 'index.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
     check(index.length === 1 && index[0] === 'onebrain', 'index.jsonl lists only OneBrain');
+    await llm.createSelfExtension('zebra quiz', 'xylophone');
+    const grownModel = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+    check(llm.brain.getHyper().neuronsInGroup('OneBrain').length === grownModel.neurons.length,
+      'new tokens folded into OneBrain are grafted onto the mesh in the same OneBrain region');
     check(llm.extensionManager.installedVersions('onebrain').length >= 2, 'Each fold is recorded as a new OneBrain version in the extension registry');
     // ExtensionBuilder.deleteProject() existed but had no caller: every
     // self-extension's builder-internal project (its own neurons/connections/
@@ -2137,6 +2141,30 @@ async function testOneBrainExtension() {
     check(llm.extensionManager.store.listVersions('onebrain').length === 1, 'OneBrain is recorded once in the versioned extension registry');
     const recall = llm.recallFromSelfExtensions('I observe that the pattern shows', 5);
     check(recall.outputs.length > 0 && recall.extensions[0]?.id === 'onebrain', "recallFromSelfExtensions() runs OneBrain's weights and returns output tokens");
+
+    // OneBrain is ON the mesh: its neurons are a region of the one live
+    // HyperDimensionalEngine (the same one the Zip Loop drives), its weights
+    // are mesh connections, and a think() computes those neurons.
+    const engine = llm.brain.getHyper();
+    const region = engine.neuronsInGroup('OneBrain');
+    check(region.length === fp32.neurons.length && llm.oneBrainMeshIds.size === fp32.neurons.length,
+      `OneBrain's ${fp32.neurons.length} neurons are grafted onto the live mesh as one "OneBrain" region`);
+    const N = engine.getNeuronCount(); const D = engine.totalDims;
+    const lab = new Map(fp32.neurons.map(([id, n]) => [id, n.label]));
+    const nameFor = (label) => label.replace(/^memory_input_/, 'OneBrain in ').replace(/^memory_output_/, 'OneBrain out ');
+    const mismatched = fp32.connections.filter(([, c]) => {
+      const w = fp32.weights[c.weightIndex]; if (w === null) return false;
+      const from = llm.oneBrainMeshIds.get(nameFor(lab.get(c.fromNeuronId)));
+      const to = llm.oneBrainMeshIds.get(nameFor(lab.get(c.toNeuronId)));
+      return engine.connDiag[(to * D) * N + from] !== Math.fround(w);
+    });
+    check(mismatched.length === 0, "every OneBrain weight is a real connection in the mesh");
+    const before = region.map((id) => Array.from(engine.getNeuronStates()[id].state.slice(0, 4)).join());
+    await llm.brain.think(Buffer.from('I observe that', 'utf-8'), new Float32Array(64).fill(0.1));
+    const after = region.map((id) => Array.from(engine.getNeuronStates()[id].state.slice(0, 4)).join());
+    check(after.some((v, i) => v !== before[i]), 'a think() through the mesh computes the OneBrain neurons');
+    const grown = llm.syncOneBrainToMesh();
+    check(grown.added === 0 && engine.neuronsInGroup('OneBrain').length === region.length, 're-syncing OneBrain does not duplicate its region');
 
     const again = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: bundled });
     await again.build();
