@@ -1,0 +1,27 @@
+# XcodeGen spec: on a Mac, `brew install xcodegen && xcodegen` creates
+# NeuroClaw.xcodeproj; open it, pick your team under Signing, and run.
+name: NeuroClaw
+options:
+  bundleIdPrefix: ai.neuroclaw
+  deploymentTarget:
+    iOS: "16.0"
+targets:
+  NeuroClaw:
+    type: application
+    platform: iOS
+    sources:
+      - NeuroClaw
+    resources:
+      # OneBrain ships in the app for offline answers: the same model the PC loads.
+      - path: "../../models && skills/onebrain/model.json"
+        buildPhase: resources
+    info:
+      path: NeuroClaw/Info.plist
+      properties:
+        CFBundleDisplayName: NeuroClaw
+        UILaunchScreen: {}
+        NSCameraUsageDescription: "Take a photo only when you tap Photo; it is sent to NeuroClaw on your PC as training data."
+        NSLocalNetworkUsageDescription: "Talk to NeuroClaw running on your PC on this network."
+        NSAppTransportSecurity:
+          NSAllowsLocalNetworking: true
+          NSAllowsArbitraryLoads: true

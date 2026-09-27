@@ -20,9 +20,11 @@ Status: ✅ done · 🔨 in progress · ⏳ to do
 - ✅ **Delete the tokenizer.** `tokenizer.js` is gone, and text is its UTF-8 bytes everywhere, the same as the Zip Loop:
   - the chat embedding, OneBrain's neuron labels (`memory_input_b<byte>`), recall, the RLM action space, and the trainer's alphabet;
   - OneBrain models saved with old tokenizer ids are converted to bytes when loaded. The bundled OneBrain was converted, which dropped 3 neurons and 71 connections that sat on the old start/end/unknown markers.
+- ✅ **Android app (and iPhone).** See `mobile/README.md`.
+  - **Android** (`mobile/android`, native Kotlin; the APK builds): a floating bubble over other apps (tap to talk, drag to move) and a full-screen chat. It talks to NeuroClaw on your PC over your Wi-Fi, and a photo is captured only when you tap **Photo**, sent to the PC as training data (`~/.neuroclaw/captures/`).
+  - **Offline:** OneBrain on the phone answers from memory, and messages and photos are queued and sent when the PC is back.
+  - **iPhone** (`mobile/ios`, SwiftUI): the same minus the bubble, which iOS does not allow. It needs a Mac to build, and it has not been compiled yet.
 
 ## To do
 
-- ⏳ **Android app (and Apple).** Waiting on a few decisions before building. An installable APK that can display over other apps, so you can talk to it like any phone assistant, with camera access (Meta-glasses style) to collect training data.
-  - iOS does not allow apps to draw over other apps, so an iPhone version would have to be an ordinary app, a widget or a Siri shortcut.
-  - Camera capture should stay on the device, be visibly on, and be opt-in, because it records other people too.
+- ⏳ **Full network on the phone.** Offline mode currently runs only OneBrain's memory recall. Running the whole mesh on the phone means porting the engine to Kotlin/Swift.

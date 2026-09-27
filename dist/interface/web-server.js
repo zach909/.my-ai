@@ -3848,6 +3848,58 @@ export class WebServer {
         // see reasoning-engine.ts) instead of the editor's Save/Install buttons
         // being a complete dead end: previously they only reported a byte count
         // and threw the built project away, wired to neither disk nor chat.
+        // POST /api/captures -- a photo taken on the phone app (tap-to-capture),
+        // kept as training data. JSON (like every POST here, for CSRF) carrying
+        // the image as base64: { image, mime?, note?, capturedAt? }. Saved on
+        // this machine only, under ~/.neuroclaw/captures/ (never the repo), as
+        // <time>.<ext> plus a <time>.json sidecar with the note and when it was
+        // taken. Behind the same login as everything else that writes.
+        // GET /api/captures lists what has been saved.
+        if (pathname === '/api/captures') {
+            try {
+                const dir = process.env.NEUROCLAW_CAPTURES_DIR ?? path.join(homedir(), '.neuroclaw', 'captures');
+                const { promises: fs } = await import('node:fs');
+                if (method === 'GET') {
+                    const files = await fs.readdir(dir).catch(() => []);
+                    const items = [];
+                    for (const f of files.filter((n) => n.endsWith('.json')).sort().reverse().slice(0, 200)) {
+                        try {
+                            items.push(JSON.parse(await fs.readFile(path.join(dir, f), 'utf8')));
+                        }
+                        catch { /* skip unreadable */ }
+                    }
+                    this.sendJson(res, { dir, count: items.length, captures: items });
+                    return;
+                }
+                if (method !== 'POST') {
+                    this.sendJson(res, { error: 'GET or POST' }, 405);
+                    return;
+                }
+                const body = await this.parseBody(req, 15 * 1024 * 1024);
+                const mime = String(body?.mime ?? 'image/jpeg');
+                const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[mime];
+                if (!ext) {
+                    this.sendJson(res, { error: `unsupported image type ${mime}` }, 400);
+                    return;
+                }
+                const bytes = Buffer.from(String(body?.image ?? ''), 'base64');
+                if (bytes.length === 0) {
+                    this.sendJson(res, { error: 'image (base64) is required' }, 400);
+                    return;
+                }
+                await fs.mkdir(dir, { recursive: true });
+                const capturedAt = typeof body?.capturedAt === 'number' ? body.capturedAt : Date.now();
+                const id = `${capturedAt}-${Math.random().toString(36).slice(2, 8)}`;
+                await fs.writeFile(path.join(dir, `${id}.${ext}`), bytes);
+                const record = { id, file: `${id}.${ext}`, mime, bytes: bytes.length, note: String(body?.note ?? '').slice(0, 2000), capturedAt, receivedAt: Date.now() };
+                await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(record, null, 2));
+                this.sendJson(res, { ok: true, ...record }, 201);
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
         // Yes/no questions with a probability (models && skills/core/yes-no.ts):
         //   GET  /api/yes-no        -- the questions taught so far
         //   POST /api/yes-no/teach  -- { question, text, answer: boolean }
