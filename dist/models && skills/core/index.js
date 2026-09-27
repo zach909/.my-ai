@@ -3,7 +3,8 @@ export { detectHardwareProfile, computeSensitivity, resolveLayerBits, estimateMe
 export { BackgroundQuantizationScheduler } from './quantization-scheduler';
 export { loadQuantizationConfig, normalizeQuantizationConfig, DEFAULT_QUANTIZATION_CONFIG } from './quantization-config';
 export { ValueRangeAllocator } from './value-range';
-export { MoERouter } from './onebrain.js';
+export { NetSkillRouter } from './net-skill-router.js';
+export { NetSkillMesh } from './net-skill-mesh.js';
 export { ExpertNetwork } from './expert';
 export { NeuronMesh } from './onebrain.js';
 export { HyperDimensionalEngine } from './onebrain.js';

@@ -8,7 +8,7 @@
  * the counter so React re-reads the (mutable) project maps.
  */
 
-import { useMemo, useRef, useState, useCallback } from 'react';
+import { useMemo, useRef, useState, useCallback, useEffect } from 'react';
 import { ExtensionBuilder } from '../../../extension-builder/builder.js';
 import type {
   NeuronData,
@@ -20,7 +20,26 @@ import type {
 
 export type { NeuronData, ConnectionData, LabelData, TrainingResult };
 
+/** What the last live sync into the running network did. */
+export interface LiveSyncState {
+  /** Whether edits are sent into the live network as you build. */
+  enabled: boolean;
+  /** 'idle' before the first sync, then the outcome of the latest one. */
+  status: 'idle' | 'syncing' | 'synced' | 'error';
+  added?: number;
+  updated?: number;
+  removed?: number;
+  connections?: number;
+  error?: string;
+}
+
+/** How long the builder waits after the last edit before syncing it into the network. */
+const LIVE_SYNC_DEBOUNCE_MS = 400;
+
 export interface BuilderApi {
+  /** Building directly into the network: the state of the live sync. */
+  liveSync: LiveSyncState;
+  setLiveSyncEnabled: (enabled: boolean) => void;
   /** The live engine, for anything not wrapped below. */
   engine: ExtensionBuilder;
   projectId: string;
@@ -123,7 +142,52 @@ export function useBuilder(initialName = 'My Extension'): BuilderApi {
   }, [engine, project, projectId, version]);
   const lastTraining = useMemo(() => { void version; return project.lastTraining; }, [project, version]);
 
+  // Building directly into the network. After each edit (debounced) the
+  // project is sent to /api/extension/live-sync, which brings this skill's
+  // region of the ONE live mesh in line with it -- the network changes as
+  // you build, rather than when you press Install. Connections travel with
+  // the neuron they leave, keyed by the target's name, which is the shape
+  // the graft reads.
+  const [liveSync, setLiveSync] = useState<LiveSyncState>({ enabled: true, status: 'idle' });
+  const setLiveSyncEnabled = useCallback((enabled: boolean) => setLiveSync((s) => ({ ...s, enabled })), []);
+  useEffect(() => {
+    if (!liveSync.enabled || neurons.length === 0) return;
+    const keyOf = new Map(neurons.map((n) => [n.id, n.name || n.id]));
+    const payload = {
+      name: project.name,
+      neurons: neurons.map((n) => {
+        const outgoing: Record<string, number> = {};
+        for (const c of connections) {
+          if (c.fromId === n.id && keyOf.has(c.toId)) outgoing[keyOf.get(c.toId)!] = c.weight;
+        }
+        return { name: keyOf.get(n.id)!, definition: n.definition, connections: outgoing };
+      }),
+    };
+    const controller = new AbortController();
+    const timer = setTimeout(async () => {
+      setLiveSync((s) => ({ ...s, status: 'syncing' }));
+      try {
+        const res = await fetch('/api/extension/live-sync', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+          signal: controller.signal,
+        });
+        const data = await res.json() as { ok?: boolean; added?: number; updated?: number; removed?: number; connections?: number; error?: string };
+        setLiveSync((s) => data.ok
+          ? { ...s, status: 'synced', added: data.added, updated: data.updated, removed: data.removed, connections: data.connections, error: undefined }
+          : { ...s, status: 'error', error: data.error ?? `HTTP ${res.status}` });
+      } catch (err) {
+        if (controller.signal.aborted) return;
+        setLiveSync((s) => ({ ...s, status: 'error', error: err instanceof Error ? err.message : String(err) }));
+      }
+    }, LIVE_SYNC_DEBOUNCE_MS);
+    return () => { clearTimeout(timer); controller.abort(); };
+  }, [liveSync.enabled, neurons, connections, project.name]);
+
   return {
+    liveSync,
+    setLiveSyncEnabled,
     engine,
     projectId,
     projectName: project.name,

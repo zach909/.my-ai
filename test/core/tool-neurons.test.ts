@@ -30,7 +30,7 @@ import { DesktopPlugin } from '../../plugins/desktop.js';
 import { createPluginInstance } from '../../plugins/index.js';
 
 const D = 8;
-const CHAT = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 };
+const CHAT = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 };
 /** Strong enough to fire a tool neuron from one driven input; measured 0.47 against a floor near 0.001. */
 const WIRE = 4;
 

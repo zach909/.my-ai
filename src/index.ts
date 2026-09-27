@@ -6,7 +6,7 @@ import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { publishGraftedNetSkills } from "../models && skills/core/net-skill-store.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
-import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import { NetSkillMesh } from "../models && skills/core/net-skill-mesh.js";
 import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";
@@ -106,6 +106,11 @@ export interface TurnDetails {
   zipBytes: number;
   /** Milliseconds from message in to answer out. */
   ms: number;
+  /**
+   * Tools the network called this turn by firing their neurons -- not by
+   * spelling a call out through the Zip Loop. Empty when no tool neuron fired.
+   */
+  toolCalls?: Array<{ plugin: string; tool: string; ok: boolean; error?: string }>;
 }
 
 const ZIP_BIT_NEURONS = 4;
@@ -202,7 +207,7 @@ export class NeuroclawSystem {
   compressor: ContextCompressor;
   router: IntentRouter;
   prompting: PromptingSkill;
-  /** Saved, reusable prompt templates -- distinct from both `prompting` (goal decomposition) and MoE skills/experts. */
+  /** Saved, reusable prompt templates -- distinct from both `prompting` (goal decomposition) and net skills. */
   promptLibrary: PromptLibrary;
   workingMemory: WorkingMemory;
   // AGI / ASI capability layer (integrated in solve()).
@@ -302,10 +307,10 @@ export class NeuroclawSystem {
     // its own MixtureOfExperts (and therefore its own NeuronMesh), which left
     // every plugin's neurons wired all-to-all among *themselves* but severed
     // from the language brain's neurons -- two disconnected networks in one
-    // agent. Handing it a MoE backed by UnifiedBrain's own mesh puts plugin
+    // agent. Handing it a skill mesh backed by UnifiedBrain's own mesh puts plugin
     // neurons in the same all-to-all mesh as everything else, so a plugin
     // firing genuinely propagates into the rest of the network.
-    this.pluginRegistry = new PluginRegistry(new MixtureOfExperts(2, this.llm.mesh));
+    this.pluginRegistry = new PluginRegistry(new NetSkillMesh(2, this.llm.mesh));
     this.veto = new AlignmentVeto();
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     // A doorway is made per feed rather than held: the pipeline builds its
@@ -315,7 +320,7 @@ export class NeuroclawSystem {
     this.promptFeed = new PromptMeshFeed(() => {
       const engine = this.pipeline.getHyperEngine();
       if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
-      return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+      return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     });
     // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
     // promptFeed are the two callers that drive the SAME engine's doorway,
@@ -648,21 +653,21 @@ export class NeuroclawSystem {
 
     // Register a real implementation for every extension in the catalog.
     // Skill-type experts (coding, image, video, game, universal-language)
-    // also get a MoE SkillDefinition so they register as experts in the mesh.
+    // also get a SkillDefinition so they register as net-skill regions in the mesh.
     for (const [key, def] of Object.entries(pluginExtensions)) {
       const skillDef: SkillDefinition | undefined =
         def.type === "skill-expert"
           ? {
               id: def.id,
               name: def.name,
-              description: `${def.name} MoE expert`,
+              description: `${def.name} net skill`,
               expertIndex: this.pluginRegistry.getSkillCount(),
               specialization: def.capabilities[0] ?? def.id,
               selfAuthored: false,
             }
           : undefined;
       try {
-        const instance = createPluginInstance(def.name, def, skillDef, this.pluginRegistry.getMoE().getMesh());
+        const instance = createPluginInstance(def.name, def, skillDef, this.pluginRegistry.getSkillMesh().getMesh());
         this.pluginRegistry.register(def, instance);
         if (skillDef) this.pluginRegistry.registerSkill(skillDef, def.id);
       } catch (e) {
@@ -680,7 +685,7 @@ export class NeuroclawSystem {
     }
 
     // Activate all plugins
-    console.log("Activating registered extensions & MoE experts...");
+    console.log("Activating registered extensions & net skills...");
     for (const id of Object.keys(pluginExtensions)) {
       try {
         await this.pluginRegistry.activate(id);
@@ -968,6 +973,7 @@ export class NeuroclawSystem {
     // Only the ones that apply to what actually arrived -- a skill declares
     // when it applies, and putting every stored instruction on the loop for
     // every message would drown the input in advice about other tasks.
+    const turnSkills: Array<{ name: string; title: string; description: string }> = [];
     try {
       const { loadRegistry } = await import("../models && skills/core/prompting-skill-store.js");
       const registry = loadRegistry();
@@ -985,6 +991,7 @@ export class NeuroclawSystem {
         await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
         if (skill.source !== "web") this.learnFrom(`Skill "${skill.title}": ${skill.description}`, "skill");
         details.skills.push(skill.title);
+        turnSkills.push({ name: skill.name, title: skill.title, description: skill.description });
       }
     } catch {
       // No registry on disk, or an unreadable one. A missing instruction is
@@ -1117,12 +1124,28 @@ export class NeuroclawSystem {
     }
 
     // 6. Run the query through the real neural runner (THORNS intent →
-    //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation),
+    //    plugin/skill dispatch → mesh + hyperdimensional + net-skill generation),
     //    grounded in any relevant prior conversation turns so the response
     //    integrates previous context instead of treating the prompt as an
     //    isolated event (continuous context, Section 7).
     try {
-      let result = await this.runner.generate(input, priorHistory.map(h => h.item.content));
+      let result = await this.runner.generate(input, priorHistory.map(h => h.item.content), turnSkills);
+      // Tools by neuron. While the mesh thought about this message, any
+      // tool neuron that crossed its firing line latched; step() calls those
+      // tools now -- access-checked, with arguments from the Zip Loop's own
+      // output (plugins/<plugin>/<tool>.json), and the result fed back into
+      // the mesh on that plugin's result neurons. Firing a neuron is the
+      // call; nothing has to be spelled out letter by letter.
+      if (this.toolNeurons) {
+        try {
+          const calls = await this.toolNeurons.step(this.llm.lastZipLoopOutput ?? null);
+          if (calls.length > 0) {
+            details.toolCalls = calls.map(c => ({ plugin: c.plugin, tool: c.tool, ok: c.ok, ...(c.error ? { error: c.error } : {}) }));
+          }
+        } catch (e) {
+          console.warn("Tool neurons step failed:", e);
+        }
+      }
       // EmpathyEngine.adjustDecision() was built and tested but never called:
       // when alignment supports genuine autonomous judgement, adapt tone to
       // the user's actual emotional state (supportive/enthusiastic/direct);

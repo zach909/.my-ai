@@ -1,11 +1,10 @@
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
-import { MoERouter } from "./core/onebrain.js";
+import { NetSkillRouter } from "./core/net-skill-router.js";
 import { NeuronMesh } from "./core/onebrain.js";
 import { HyperDimensionalEngine } from "./core/onebrain.js";
 import { ValueRangeAllocator } from "./core/value-range.js";
 import { UnifiedBrain, type BrainSnapshot } from "./core/unified-brain.js";
-import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
 export interface LLMConfig {
     embeddingDim: number;
@@ -30,11 +29,15 @@ export interface GenerateOptions {
     temperature: number;
     /** Relevant prior conversation turns to ground the response in (Section 7). */
     memoryContext: string[];
+    /**
+     * Prompting skills that apply to this prompt. Each is streamed through the
+     * Zip Loop with the prompt, as prompting-skills/<name>/SKILL.txt.
+     */
+    promptingSkills: Array<{ name: string; title?: string; description?: string }>;
 }
 export declare class NeuroclawLLM {
     private config;
     private builder;
-    private tokenizer;
     private trainer;
     private quantizer;
     private brain;
@@ -56,7 +59,7 @@ export declare class NeuroclawLLM {
      */
     constructor(config?: Partial<LLMConfig>, hyperEngine?: HyperDimensionalEngine | null);
     get valueAllocator(): ValueRangeAllocator;
-    get moeRouter(): MoERouter;
+    get skillRouter(): NetSkillRouter;
     get mesh(): NeuronMesh;
     get hyperEngine(): HyperDimensionalEngine;
     setQuantumEnabled(enabled: boolean): void;
@@ -101,6 +104,10 @@ export declare class NeuroclawLLM {
     /** Graft OneBrain's neurons onto the live mesh (hyperEngine) and write its weights as mesh connections. */
     syncOneBrainToMesh(): { added: number; updated: number; skipped?: string };
     oneBrainMeshIds: Map<string, number>;
+    /** Paths of the files the last generate() streamed through the Zip Loop. */
+    lastZipLoopFiles: string[];
+    /** The Zip Loop's output archive from the last generate(), or null. */
+    lastZipLoopOutput: import("./core/zip-halt.js").ZipTree | null;
     recallFromSelfExtensions(prompt: string, topK?: number): {
         outputs: { token: number; char: string; score: number }[];
         extensions: { id: string; activation: number }[];
@@ -126,7 +133,7 @@ export declare class NeuroclawLLM {
         connectionCount: number;
         layerCount: number;
         expertCount: number;
-        moeUtilization: import("./index.js").ExpertUtilizationStats[];
+        skillUsage: import("./core/net-skill-router.js").NetSkillUsage[];
         valueDistribution: {
             totalPoints: number;
             neuronCount: number;
@@ -148,8 +155,7 @@ export declare class NeuroclawLLM {
     demoteFailingNeurons(failureId: string): void;
     getBuilder(): ExtensionBuilder;
     getExtensionManager(): ExtensionManager;
-    getTokenizer(): Tokenizer;
     getTrainer(): NeuroclawTrainer;
-    getMoERouter(): MoERouter;
+    getSkillRouter(): NetSkillRouter;
     isBuilt(): boolean;
 }

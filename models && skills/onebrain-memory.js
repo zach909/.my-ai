@@ -4,7 +4,7 @@
 // and extension-builder/merge-self-extensions.mjs (one-off merges).
 //
 // On-disk format is the self-extension one: neurons as [id, {label}] pairs
-// labelled memory_input_<token> / memory_output_<token>, connections as
+// labelled memory_input_b<byte> / memory_output_b<byte>, connections as
 // [id, {fromNeuronId, toNeuronId, weightIndex}], weights[] in fp32. OneBrain
 // adds weightCounts[]: how many samples each weight is the mean of, so a
 // fold is an exact running average rather than letting the newest model
@@ -22,8 +22,34 @@ const Q_ZP = 7;
 // kept separately so the file does not grow with every fold.
 const MAX_LISTED_SOURCES = 100;
 
-const IN_RE = /^(?:memory_input|mem_in)_(\d+)$/;
-const OUT_RE = /^(?:memory_output|mem_out)_(\d+)$/;
+// Labels carry a BYTE (UTF-8): memory_input_b<byte> / memory_output_b<byte>.
+// Labels without the "b" are the retired tokenizer's ids, read through
+// LEGACY_TOKEN_CHARS below so models saved before it was deleted still load.
+const IN_RE = /^(?:memory_input|mem_in)_(b?)(\d+)$/;
+const OUT_RE = /^(?:memory_output|mem_out)_(b?)(\d+)$/;
+/**
+ * The deleted tokenizer's alphabet, in id order from id 4 (ids 0-3 were
+ * pad/bos/eos/unk). Kept only to translate old saved labels to bytes; every
+ * character in it is ASCII, so each is exactly one byte.
+ */
+const LEGACY_TOKEN_CHARS = " abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789.,!?;:'\"()-\n\t@#$%&*+=/\\[]{}|<>~`^_";
+
+/** The byte a label names, or null for a retired special token (pad/bos/eos/unk) that has no byte. */
+function labelByte(isByte, n) {
+    if (isByte) return n >= 0 && n < 256 ? n : null;
+    if (n < 4) return null;
+    const ch = LEGACY_TOKEN_CHARS[n - 4];
+    return ch === undefined ? null : ch.charCodeAt(0);
+}
+
+/** Whether a OneBrain model still has any pre-byte (tokenizer id) labels. */
+export function hasLegacyLabels(model) {
+    return (model.neurons ?? []).some((entry) => {
+        const n = Array.isArray(entry) ? entry[1] : entry;
+        const m = IN_RE.exec(n.label ?? n.name ?? "") ?? OUT_RE.exec(n.label ?? n.name ?? "");
+        return m !== null && m[1] !== "b";
+    });
+}
 
 /**
  * (inputToken -> outputToken, weight) edges of a self-extension, in either
@@ -38,10 +64,12 @@ export function parseSelfExtension(json) {
         const label = n.label ?? n.name ?? "";
         const inMatch = IN_RE.exec(label);
         const outMatch = OUT_RE.exec(label);
-        if (inMatch)
-            neurons.set(n.id, { side: "in", token: Number(inMatch[1]), value: n.value });
-        else if (outMatch)
-            neurons.set(n.id, { side: "out", token: Number(outMatch[1]), value: n.value });
+        const match = inMatch ?? outMatch;
+        if (!match)
+            continue;
+        const byte = labelByte(match[1] === "b", Number(match[2]));
+        if (byte !== null)
+            neurons.set(n.id, { side: inMatch ? "in" : "out", token: byte, value: n.value });
     }
     const edges = [];
     for (const entry of m.connections ?? []) {
@@ -50,7 +78,11 @@ export function parseSelfExtension(json) {
         const to = neurons.get(c.toNeuronId ?? c.toId ?? c.to);
         const w = typeof c.weight === "number" ? c.weight : m.weights?.[c.weightIndex];
         if (from?.side === "in" && to?.side === "out" && typeof w === "number" && Number.isFinite(w)) {
-            edges.push({ from: from.token, to: to.token, weight: w, fromValue: from.value, toValue: to.value });
+            // A OneBrain weight already stands for several samples; carry that
+            // over so re-folding it (migration) keeps its weight in the average.
+            const count = Array.isArray(m.weightCounts) ? m.weightCounts[c.weightIndex] : undefined;
+            edges.push({ from: from.token, to: to.token, weight: w, fromValue: from.value, toValue: to.value,
+                ...(typeof count === "number" && count > 0 ? { count } : {}) });
         }
     }
     return edges;
@@ -99,16 +131,17 @@ export function foldEdges(model, edges, now = Date.now()) {
         return id;
     };
     for (const e of edges) {
-        const fromId = neuronFor(`memory_input_${e.from}`, 0, e.fromValue);
-        const toId = neuronFor(`memory_output_${e.to}`, 1, e.toValue);
+        const fromId = neuronFor(`memory_input_b${e.from}`, 0, e.fromValue);
+        const toId = neuronFor(`memory_output_b${e.to}`, 1, e.toValue);
+        const samples = typeof e.count === "number" && e.count > 0 ? e.count : 1;
         const key = `${fromId}\0${toId}`;
         const existing = connByPair.get(key);
         if (existing) {
             const i = existing.weightIndex;
             const n = model.weightCounts[i] ?? 0;
             const prev = typeof model.weights[i] === "number" ? model.weights[i] : 0;
-            model.weights[i] = (prev * n + e.weight) / (n + 1);
-            model.weightCounts[i] = n + 1;
+            model.weights[i] = (prev * n + e.weight * samples) / (n + samples);
+            model.weightCounts[i] = n + samples;
             continue;
         }
         while (connIds.has(`conn_c${nextConn}`))
@@ -118,7 +151,7 @@ export function foldEdges(model, edges, now = Date.now()) {
         const c = { id, fromNeuronId: fromId, toNeuronId: toId, weightIndex: model.weights.length };
         model.connections.push([id, c]);
         model.weights.push(e.weight);
-        model.weightCounts.push(1);
+        model.weightCounts.push(samples);
         connByPair.set(key, c);
         neuronById.get(fromId).outputs.push(toId);
         neuronById.get(toId).inputs.push(fromId);
@@ -143,12 +176,27 @@ export function quantizeOneBrain(model) {
     };
 }
 
+/**
+ * A OneBrain with byte labels only. A model saved while the tokenizer
+ * existed is rebuilt: every connection is translated to bytes and re-folded
+ * with its sample count, and connections on the retired special tokens
+ * (which have no byte) are dropped.
+ */
+export function migrateOneBrain(model, now = Date.now()) {
+    if (!hasLegacyLabels(model))
+        return model;
+    const fresh = emptyOneBrain(model.createdAt ?? now);
+    fresh.description = model.description ?? fresh.description;
+    foldEdges(fresh, parseSelfExtension(model), now);
+    return fresh;
+}
+
 /** OneBrain model + meta in `dir`, or null when there is none yet. */
 export function readOneBrain(dir) {
     const modelPath = join(dir, ONEBRAIN_ID, "model.json");
     if (!existsSync(modelPath))
         return null;
-    const model = JSON.parse(readFileSync(modelPath, "utf-8"));
+    const model = migrateOneBrain(JSON.parse(readFileSync(modelPath, "utf-8")));
     let meta = {};
     try { meta = JSON.parse(readFileSync(join(dir, ONEBRAIN_ID, "meta.json"), "utf-8")); } catch { /* no meta yet */ }
     return { model, meta };

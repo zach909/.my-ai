@@ -915,6 +915,27 @@ function BuilderPage() {
               {statusMsg}
             </p>
           )}
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={b.liveSync.enabled}
+                onChange={(e) => b.setLiveSyncEnabled(e.target.checked)}
+              />
+              Build directly into the network
+            </label>
+            <span role="status" aria-live="polite">
+              {!b.liveSync.enabled
+                ? 'Off: the network only changes when you install.'
+                : b.liveSync.status === 'syncing'
+                  ? 'Syncing into the network...'
+                  : b.liveSync.status === 'synced'
+                    ? `Live in the network: +${b.liveSync.added ?? 0} new, ${b.liveSync.updated ?? 0} updated, ${b.liveSync.removed ?? 0} removed, ${b.liveSync.connections ?? 0} connections.`
+                    : b.liveSync.status === 'error'
+                      ? `Could not sync into the network: ${b.liveSync.error}`
+                      : 'Edits go into the live network as you build.'}
+            </span>
+          </div>
         </section>
 
         {/* right: inspector + NeuroLang */}

@@ -7,7 +7,7 @@ import type { PluginDefinition, SkillDefinition } from "../../plugin_manager/typ
 import { BasePlugin } from "../../plugin_manager/sdk.js";
 import { CodingExtension } from "./coding.js";
 import { ExtensionBuilder } from "../../extension-builder/builder.js";
-import { MixtureOfExperts } from "../../models && skills/core/onebrain.js";
+import { NetSkillMesh } from "../../models && skills/core/net-skill-mesh.js";
 import type { NeuronMesh } from "../../models && skills/core/onebrain.js";
 
 /**
@@ -664,7 +664,7 @@ export class PluginMakerExtension extends BasePlugin {
  */
 export class UniversalLanguageSkill extends BasePlugin {
   private builder: ExtensionBuilder;
-  private moe: MixtureOfExperts;
+  private skillMesh: NetSkillMesh;
   /** Language -> node ids in the shared mesh (models && skills/core/mesh.ts). */
   private languageNeurons: Map<string, number[]> = new Map();
   private activeLanguages: Set<string> = new Set();
@@ -681,7 +681,7 @@ export class UniversalLanguageSkill extends BasePlugin {
   constructor(definition: PluginDefinition, sharedMesh?: NeuronMesh) {
     super(definition);
     this.builder = new ExtensionBuilder();
-    this.moe = new MixtureOfExperts(4, sharedMesh);
+    this.skillMesh = new NetSkillMesh(4, sharedMesh);
     this.initializeLanguageSkills();
   }
 
@@ -697,14 +697,14 @@ export class UniversalLanguageSkill extends BasePlugin {
 
     // Section 2.1: each language's op-neurons are ordinary mesh neurons,
     // registered under the family's expert group and wired all-to-all into
-    // the shared mesh (this.moe.getMesh()) — not a private, boundary-walled
+    // the shared mesh (this.skillMesh.getMesh()) — not a private, boundary-walled
     // sub-network. The expert label only ever gates which neurons the MoE
     // router activates on a given tick; it never restricts wiring.
     for (const [family, languages] of Object.entries(languageFamilies)) {
-      const expert = this.moe.addExpert(`expert_${family}`, `${family} Languages`, `Specialized in ${family}`, 0);
+      const expert = this.skillMesh.addSkill(`expert_${family}`, `${family} Languages`, `Specialized in ${family}`, 0);
       for (const lang of languages) {
         const ops = LANGUAGE_SKILLS[lang] || ['perceive', 'parse', 'execute'];
-        const nodeIds = this.moe.addNeuronsToExpert(expert.id, ops.length);
+        const nodeIds = this.skillMesh.addNeuronsToSkill(expert.id, ops.length);
         this.languageNeurons.set(lang, nodeIds);
       }
     }
@@ -730,7 +730,7 @@ export class UniversalLanguageSkill extends BasePlugin {
     if (!this.languageNeurons.has(name)) return { type: 'language-skill', error: `Unknown language: ${lang}` };
     this.activeLanguages.add(name);
     const nodeIds = this.languageNeurons.get(name)!;
-    const mesh = this.moe.getMesh();
+    const mesh = this.skillMesh.getMesh();
     let connections = 0;
     for (const id of nodeIds) {
       const node = mesh.getNode(id);
@@ -745,7 +745,7 @@ export class UniversalLanguageSkill extends BasePlugin {
     const name = this.normalizeLanguageName(lang);
     if (!this.activeLanguages.has(name)) return { type: 'language-skill', error: `Language not loaded: ${lang}` };
     this.activeLanguages.delete(name);
-    const mesh = this.moe.getMesh();
+    const mesh = this.skillMesh.getMesh();
     for (const id of this.languageNeurons.get(name)!) {
       const node = mesh.getNode(id);
       if (node) node.activation = 0;
@@ -797,7 +797,7 @@ export class UniversalLanguageSkill extends BasePlugin {
     // Drive the language's first neuron and let it propagate through the
     // real shared mesh (not a fake sequential chain); the last neuron's
     // settled activation is the result.
-    const mesh = this.moe.getMesh();
+    const mesh = this.skillMesh.getMesh();
     const result = mesh.propagate(new Map([[nodeIds[0], 0.5]]));
     const activation = result.finalStates.get(nodeIds[nodeIds.length - 1]) ?? 0;
     return { type: 'language-skill', language: lang, processed: true, activation, neurons: nodeIds.length };

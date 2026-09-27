@@ -18,7 +18,7 @@
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 // A small, generic stopword list -- filtering these out is what lets the
 // remaining tokens actually be distinctive per topic instead of every group
@@ -84,7 +84,7 @@ export class ChatOrganizer {
         }
     }
     persist(index) {
-        const dir = join(homedir(), ".neuroclaw");
+        const dir = dirname(this.indexPath);
         if (!existsSync(dir))
             mkdirSync(dir, { recursive: true });
         writeFileSync(this.indexPath, JSON.stringify(index), "utf8");

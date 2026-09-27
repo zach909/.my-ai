@@ -1,53 +1,44 @@
-# MoE (Mixture of Experts)
+# Net-Skill Routing (replaces the MoE)
 
-Specialized groups of neurons determine which experts execute a task, so only the relevant ones run — the design notes' "Mixture of Experts": improved efficiency, reduced computation, increased performance.
+NeuroClaw no longer has a Mixture-of-Experts router. Which parts of the network run on a tick is decided by **net-skill routing**: every skill and plugin is a named *region* of neurons inside the one mesh, and a tick switches on the regions whose meaning matches the input.
 
-## Overview
+## Why the MoE went
 
-**Purpose**: Full density (every expert stays wired), sparse per-tick compute (only the top-k selected experts actually run).
+The MoE (`MoERouter`) was a second network sitting in front of the first. It was a randomly initialised gate matrix whose top-k scores picked "experts", and each expert also carried its own weight matrix. The experts were named after skills, but nothing the skills actually *meant* went into scoring them. A net skill is already a region of the mesh, tuned to its meaning when it is grafted in (see [[Skills]]). So routing only needs to ask which regions the input is about.
 
-| Layer | File | What it is |
+## How it works
+
+| Piece | File | What it does |
 |---|---|---|
-| TypeScript runtime backend | `models && skills/core/moe-router.ts` — `MoERouter` | Top-k expert routing with load-balanced utilization tracking |
-
-## `MoERouter` (TypeScript)
+| `NetSkillRouter` | `models && skills/core/net-skill-router.ts` | Embeds each region's meaning with the same `embedText` the graft tunes neurons with. Scores the input (text or vector) against each region by cosine similarity and selects the best `topK` that are related at all. |
+| `NetSkillMesh` | `models && skills/core/net-skill-mesh.ts` | Named skill regions in a shared all-to-all `NeuronMesh`, used by the plugin registry. `tick()` routes, then propagates with only the selected regions computing. Formerly `MixtureOfExperts`. |
 
 ```typescript
-const router = new MoERouter({ /* config */ });
-const id = router.addExpert({ id: 'image-gen', name: 'Image Expert', specialization: 'images' });
-const decision = router.route(input);          // which expert(s) fire for this input
-const out = router.forward(input, layerIndex); // route + run in one call
-router.getUtilizationStats();                   // per-expert usage, for load-balance monitoring
+const router = new NetSkillRouter(2);
+router.register({ id: 'email', name: 'Email', meaning: 'send and read email messages' });
+router.select('check my inbox').ids;  // ['email']: its region is switched on this tick
+router.getUsage();                     // how often each region has been selected
 ```
 
-An expert can be added either as raw weights (`addExpert(weights, bias)`) or as a named specialization (`addExpert({ id, name, specialization })`) — the latter is how [[Skills]] register: "an image-generation expert is loaded only when image-related tasks are requested" is `route()` picking that expert's id for image-shaped input and leaving every other expert's weights untouched that tick.
+The selected ids become the tick's `activeGroups`. A neuron in a region nobody asked for holds its state and keeps every connection it had. Everything else stays as described in [[Neuron-Mesh]]: all-to-all, hyperdimensional, wave and quantum terms included.
 
-## `MoELayer` (Python)
+Used by:
+- `NeuroPipeline` (the live agent)
+- `UnifiedBrain` / `NeuroclawLLM` (chat)
+- the plugin registry
 
-This is a genuine trainable sparse layer — gradients only flow through the `top_k` experts selected per token, so unselected experts are skipped computationally, not just masked to zero afterward. `skill_usage()` is how load imbalance (one expert dominating routing) gets surfaced during training.
-
-Experts are groups of neurons inside the one network rather than models consulted beside it: `HyperDimensionalEngine.setNeuronGroup()` labels a neuron with the expert it belongs to, and a tick's `activeGroups` says which are being asked. A neuron in a group nobody asked for holds its state; it keeps every connection it had in both directions. (The Python `ExpertMoE` this section used to describe went with the TinyGPT track.)
+OneBrain is also one of these regions, with id `onebrain`.
 
 ## Verifying it
 
-- `npm test` (`test/smoke.mjs`)'s `testMoE`, `testMoESharedMesh`, and `testExpertRegistrationCompleteness` cover routing, shared-mesh expert wiring, and that every catalogued expert actually registers.
-- `python test_core.py`'s `test_skills_attach_to_mesh` confirms the Python skill registry's experts genuinely attach to and route through a real mesh.
-- `python main.py demo` (`test_integration.py`, §4) builds a brand-new skill live via the Skill Builder and confirms it registers as a routable expert on the same mesh already in use.
-
-## Foreground MoE Spec
-
-Expert creation/deletion/merging/splitting, a trainable router-gate option,
-dynamic routing knobs, capacity-based load balancing, and parallel execution
-modes are specified (implementation-ready, not yet all built) in
-[`docs/FOREGROUND_MOE_SPEC.md`](../docs/FOREGROUND_MOE_SPEC.md).
+`npm test` (`test/smoke.mjs`) covers this in three suites:
+- `testNetSkillRouter`: routing picks the region whose meaning matches, deterministically.
+- `testNetSkillMesh`: regions are fully wired, and unselected regions do not compute.
+- `testExpertRegistrationCompleteness`: every plugin and skill category is a routable region.
 
 ## See Also
 
 - [[Home]] - Main wiki page
-- [[Skills]] - How a skill becomes a routable MoE expert
-- [[Neuron-Mesh]] - What the selected experts actually run against
+- [[Skills]] - How a skill is grafted into the mesh as a region
+- [[Neuron-Mesh]] - What the selected regions actually run against
 - [[Plugins]] - The plugin/skill distinction this routing depends on
-
----
-
-*MoE is why adding a new skill doesn't slow down every other query — only the neurons that specialize in it ever run for it.*

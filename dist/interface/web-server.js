@@ -2,10 +2,12 @@ import http from 'node:http';
 import crypto from 'node:crypto';
 import { existsSync, readFileSync } from 'node:fs';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
+import { UserProfileStore } from '../models && skills/core/user-profile-store.js';
 import { installFromStore, installPromptingSkill, listInstalled, loadRegistry, publishPromptingSkill, readPublishedPromptingSkill, uninstallPromptingSkill, isBuiltIn, } from '../models && skills/core/prompting-skill-store.js';
 import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
@@ -790,6 +792,40 @@ export function parseJsonBody(raw) {
         throw new HttpClientError('Invalid JSON', 400);
     }
 }
+// The Memory tab's "About you" and "Goals" lists. Loaded into long-term
+// memory once per memory instance (loadMemory() can swap it out).
+let userProfile = null;
+const profileSynced = new WeakSet();
+async function profileWithMemory() {
+    userProfile ?? (userProfile = new UserProfileStore());
+    const { getNeuroclawSystem } = await import('../src/index.js');
+    const memory = (await getNeuroclawSystem()).memory;
+    if (!profileSynced.has(memory)) {
+        userProfile.syncTo(memory);
+        profileSynced.add(memory);
+    }
+    return { store: userProfile, memory };
+}
+const ACTIVITY_MAX = 300;
+const activityLog = [];
+let activitySeq = 0;
+function activityStart(title, detail) {
+    const event = { id: ++activitySeq, kind: 'chat', status: 'running', title, detail, startedAt: Date.now() };
+    activityLog.push(event);
+    if (activityLog.length > ACTIVITY_MAX)
+        activityLog.splice(0, activityLog.length - ACTIVITY_MAX);
+    return event;
+}
+function activityEnd(event, ok, detail) {
+    event.status = ok ? 'ok' : 'error';
+    event.endedAt = Date.now();
+    if (detail !== undefined)
+        event.detail = detail;
+}
+function clip(text, max = 400) {
+    const s = typeof text === 'string' ? text : JSON.stringify(text) ?? '';
+    return s.length > max ? `${s.slice(0, max)}…` : s;
+}
 export class WebServer {
     /**
      * Where a stopped run leaves what every neuron and every connection was.
@@ -864,6 +900,48 @@ export class WebServer {
         // GET /api/status so "did the runner actually pick up my trained
         // network on this boot" is observable, not just assumed.
         this.loadedExtensions = { files: 0, remembered: 0, graftedNeurons: 0 };
+        /**
+         * "Integrate it into the runner of the model": every real Extension
+         * Builder deliverable this session (Main Network, Coding Skills
+         * Network, the merged network, ...) only ever became part of the live
+         * agent when POST /api/extension/register happened to be called during
+         * that one server process's lifetime -- system.memory.remember() has
+         * no persistence of its own, so a trained network was invisible to the
+         * agent again the moment the server restarted, with nothing to reload
+         * it. This is the fix: on every real server boot, read every
+         * previously saved extension file (extension-builder/extensions/*.ext.json
+         * -- the exact artifacts train(), trainWithPyTorch(), Save, and
+         * Install already write) and remember() each one's definitions/scripts
+         * into the live NeuroclawSystem, the same way register() does for one
+         * extension at a time. A trained network is now a permanent property
+         * of the runner, not a one-session fluke of whoever happened to click
+         * a button.
+         *
+         * Deliberately best-effort: a missing directory, an unreadable file, or
+         * malformed JSON in one saved extension must never stop the server from
+         * finishing its boot sequence -- skip that one file and keep going.
+         */
+        /**
+         * Remembers one trained skill script as a directly-matchable (trigger,
+         * response) pair -- `content` is the trigger text alone (what actually
+         * gets embedded and compared against a live query), `payload` is the
+         * literal response text to return verbatim on a confident match. This
+         * replaced an earlier version that flattened both into one sentence
+         * ("When asked X, Y responds: Z") and stored no payload at all -- that
+         * meant the trigger's own embedding was diluted by boilerplate text
+         * around it, AND there was no way to recover the exact response
+         * without re-parsing the flattened sentence. Both are fixed here.
+         *
+         * Pinned, because an installed skill is knowledge the user deliberately
+         * added: capacity eviction may drop what the system merely observed, but
+         * never what someone installed.
+         *
+         * Tagged 'skill-script' (plus the source extension's name) so
+         * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
+         * there) can query this exact tag rather than mixing skill triggers in
+         * with ordinary chat-turn memories.
+         */
+        this.yesNo = null;
         this.runner = runner;
         this.launcher = launcher ?? new AppLauncher();
     }
@@ -1341,47 +1419,43 @@ export class WebServer {
             trainedNeurons, epochsRun: result.epochsRun, converged: result.converged, torchVersion: result.torchVersion,
         };
     }
+    yesNoFile() {
+        return process.env.NEUROCLAW_YES_NO_FILE ?? path.join(homedir(), '.neuroclaw', 'yes-no.json');
+    }
+    /** The yes/no doorway on the live mesh, with everything taught before restored into it. */
+    async yesNoDoorway() {
+        if (this.yesNo)
+            return this.yesNo;
+        const { YesNoDoorway } = await import('../models && skills/core/yes-no.js');
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const doorway = new YesNoDoorway(system.pipeline.ensureBrain());
+        const { promises: fs } = await import('node:fs');
+        try {
+            doorway.load(JSON.parse(await fs.readFile(this.yesNoFile(), 'utf8')));
+        }
+        catch {
+            // Nothing taught yet, or an unreadable file: start empty rather than fail.
+        }
+        this.yesNo = doorway;
+        return doorway;
+    }
+    async saveYesNo(doorway) {
+        const { promises: fs } = await import('node:fs');
+        const file = this.yesNoFile();
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, JSON.stringify(doorway.toJSON()), 'utf8');
+    }
     /**
-     * "Integrate it into the runner of the model": every real Extension
-     * Builder deliverable this session (Main Network, Coding Skills
-     * Network, the merged network, ...) only ever became part of the live
-     * agent when POST /api/extension/register happened to be called during
-     * that one server process's lifetime -- system.memory.remember() has
-     * no persistence of its own, so a trained network was invisible to the
-     * agent again the moment the server restarted, with nothing to reload
-     * it. This is the fix: on every real server boot, read every
-     * previously saved extension file (extension-builder/extensions/*.ext.json
-     * -- the exact artifacts train(), trainWithPyTorch(), Save, and
-     * Install already write) and remember() each one's definitions/scripts
-     * into the live NeuroclawSystem, the same way register() does for one
-     * extension at a time. A trained network is now a permanent property
-     * of the runner, not a one-session fluke of whoever happened to click
-     * a button.
-     *
-     * Deliberately best-effort: a missing directory, an unreadable file, or
-     * malformed JSON in one saved extension must never stop the server from
-     * finishing its boot sequence -- skip that one file and keep going.
+     * Make a grafted skill's region routable in both routers that gate the one
+     * mesh -- the live pipeline's and chat's (UnifiedBrain via NeuroclawLLM) --
+     * described by what its neurons mean.
      */
-    /**
-     * Remembers one trained skill script as a directly-matchable (trigger,
-     * response) pair -- `content` is the trigger text alone (what actually
-     * gets embedded and compared against a live query), `payload` is the
-     * literal response text to return verbatim on a confident match. This
-     * replaced an earlier version that flattened both into one sentence
-     * ("When asked X, Y responds: Z") and stored no payload at all -- that
-     * meant the trigger's own embedding was diluted by boilerplate text
-     * around it, AND there was no way to recover the exact response
-     * without re-parsing the flattened sentence. Both are fixed here.
-     *
-     * Pinned, because an installed skill is knowledge the user deliberately
-     * added: capacity eviction may drop what the system merely observed, but
-     * never what someone installed.
-     *
-     * Tagged 'skill-script' (plus the source extension's name) so
-     * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
-     * there) can query this exact tag rather than mixing skill triggers in
-     * with ordinary chat-turn memories.
-     */
+    registerSkillForRouting(system, name, neurons) {
+        const meaning = [name, ...neurons.map((n) => `${n.name ?? ''} ${n.definition ?? ''}`.trim())].filter(Boolean).join(' ').slice(0, 2000);
+        system.pipeline.registerSkillRegion(name, name, meaning);
+        system.llm?.skillRouter?.register({ id: name, name, meaning });
+    }
     rememberSkillScript(system, userSays, response, extName) {
         system.memory.remember(userSays, { importance: 0.7, tags: ['skill-script', extName], payload: response, pinned: true });
     }
@@ -1417,6 +1491,7 @@ export class WebServer {
             const engine = system.pipeline.ensureBrain();
             if (engine) {
                 const result = graftNetSkill(engine, name, neurons);
+                this.registerSkillForRouting(system, name, neurons);
                 grafted = {
                     added: result.added,
                     connections: result.connections,
@@ -1545,6 +1620,7 @@ export class WebServer {
                 try {
                     const engine = system.pipeline.ensureBrain();
                     const result = graftNetSkill(engine, extName, neurons);
+                    this.registerSkillForRouting(system, extName, neurons);
                     graftedNeurons += result.added;
                 }
                 catch {
@@ -2143,8 +2219,58 @@ export class WebServer {
         // Reading is open (it is this instance's own knowledge, and the wiki and
         // store are readable too). Forgetting is NOT -- it is destruction, and it
         // is gated for the same reason wiki and store deletion are.
+        // ── About you / Goals: what the user tells it directly ──────────────
+        // GET /api/profile, POST /api/profile/{about|goals} {text},
+        // PATCH /api/profile/{about|goals}/:id {text?, done?},
+        // DELETE /api/profile/{about|goals}/:id
+        if (pathname === '/api/profile' && method === 'GET') {
+            try {
+                const { store } = await profileWithMemory();
+                this.sendJson(res, store.get());
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        const profileMatch = pathname.match(/^\/api\/profile\/(about|goals)(?:\/([A-Za-z0-9-]+))?$/);
+        if (profileMatch) {
+            const list = profileMatch[1];
+            const id = profileMatch[2];
+            try {
+                const { store, memory } = await profileWithMemory();
+                if (!id && method === 'POST') {
+                    const body = await this.parseBody(req);
+                    if (typeof body?.text !== 'string' || !body.text.trim()) {
+                        this.sendJson(res, { error: 'Missing text field' }, 400);
+                        return;
+                    }
+                    this.sendJson(res, store.add(list, body.text, memory), 201);
+                    return;
+                }
+                if (id && method === 'PATCH') {
+                    const body = await this.parseBody(req);
+                    const updated = store.update(list, id, {
+                        text: typeof body?.text === 'string' ? body.text : undefined,
+                        done: typeof body?.done === 'boolean' ? body.done : undefined,
+                    }, memory);
+                    this.sendJson(res, updated ?? { error: 'Not found' }, updated ? 200 : 404);
+                    return;
+                }
+                if (id && method === 'DELETE') {
+                    const removed = store.remove(list, id, memory);
+                    this.sendJson(res, { removed }, removed ? 200 : 404);
+                    return;
+                }
+            }
+            catch (err) {
+                this.sendError(res, err);
+                return;
+            }
+        }
         if (pathname === '/api/memory' && method === 'GET') {
             try {
+                await profileWithMemory();
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const system = await getNeuroclawSystem();
                 const q = parsedUrl.searchParams.get('q')?.trim() ?? '';
@@ -2559,6 +2685,42 @@ export class WebServer {
             this.sendJson(res, result, result.ok ? 200 : 409);
             return;
         }
+        // GET /api/activity -- what the agent has been doing, newest first:
+        // chat turns (from the activity log above) and every tool call the tool
+        // layer has recorded, with its arguments and result. Read-only.
+        if (pathname === '/api/activity' && method === 'GET') {
+            try {
+                const events = activityLog.map(e => ({ ...e }));
+                let toolsEnabled = false;
+                try {
+                    const { getNeuroclawSystem } = await import('../src/index.js');
+                    const layer = (await getNeuroclawSystem()).toolNeurons;
+                    if (layer) {
+                        toolsEnabled = true;
+                        layer.history().forEach((call, i) => {
+                            events.push({
+                                id: `tool-${i}-${call.startedAt}`,
+                                kind: 'tool',
+                                status: call.ok ? 'ok' : 'error',
+                                title: `${call.plugin}.${call.tool}`,
+                                origin: call.origin,
+                                args: clip(call.args),
+                                detail: call.ok ? clip(call.result) : call.error,
+                                startedAt: call.startedAt,
+                                endedAt: call.endedAt,
+                            });
+                        });
+                    }
+                }
+                catch { /* no tool layer is not an error; chat activity still shows */ }
+                events.sort((a, b) => Number(b.startedAt) - Number(a.startedAt));
+                this.sendJson(res, { toolsEnabled, events: events.slice(0, ACTIVITY_MAX) });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
         if (pathname === '/api/chat' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
@@ -2581,7 +2743,19 @@ export class WebServer {
                         .filter((h) => typeof h?.role === 'string' && typeof h?.content === 'string')
                         .map(h => `${h.role}: ${h.content}`)
                     : undefined;
-                const response = await this.runner.generate(message, history);
+                // What the user told it about themselves and their goals, back in
+                // memory after a restart before the first reply needs it.
+                await profileWithMemory().catch(() => undefined);
+                const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+                let response;
+                try {
+                    response = await this.runner.generate(message, history);
+                }
+                catch (err) {
+                    activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+                    throw err;
+                }
+                activityEnd(activity, true, clip(response));
                 // What the turn actually used, for the three-dots panel. Read off the
                 // system rather than rebuilt here: a details panel assembled from
                 // guesses about what probably ran looks like evidence and is not.
@@ -2647,7 +2821,19 @@ export class WebServer {
                 const { getBot } = await import('../src/server/bot-service.js');
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const bot = await getBot(await getNeuroclawSystem());
-                const response = await bot.processMessage(message);
+                // What the user told it about themselves and their goals, back in
+                // memory after a restart before the first reply needs it.
+                await profileWithMemory().catch(() => undefined);
+                const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+                let response;
+                try {
+                    response = await bot.processMessage(message);
+                }
+                catch (err) {
+                    activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+                    throw err;
+                }
+                activityEnd(activity, true, clip(response.message));
                 this.sendJson(res, {
                     message: response.message,
                     confidence: response.confidence,
@@ -3662,6 +3848,128 @@ export class WebServer {
         // see reasoning-engine.ts) instead of the editor's Save/Install buttons
         // being a complete dead end: previously they only reported a byte count
         // and threw the built project away, wired to neither disk nor chat.
+        // POST /api/captures -- a photo taken on the phone app (tap-to-capture),
+        // kept as training data. JSON (like every POST here, for CSRF) carrying
+        // the image as base64: { image, mime?, note?, capturedAt? }. Saved on
+        // this machine only, under ~/.neuroclaw/captures/ (never the repo), as
+        // <time>.<ext> plus a <time>.json sidecar with the note and when it was
+        // taken. Behind the same login as everything else that writes.
+        // GET /api/captures lists what has been saved.
+        if (pathname === '/api/captures') {
+            try {
+                const dir = process.env.NEUROCLAW_CAPTURES_DIR ?? path.join(homedir(), '.neuroclaw', 'captures');
+                const { promises: fs } = await import('node:fs');
+                if (method === 'GET') {
+                    const files = await fs.readdir(dir).catch(() => []);
+                    const items = [];
+                    for (const f of files.filter((n) => n.endsWith('.json')).sort().reverse().slice(0, 200)) {
+                        try {
+                            items.push(JSON.parse(await fs.readFile(path.join(dir, f), 'utf8')));
+                        }
+                        catch { /* skip unreadable */ }
+                    }
+                    this.sendJson(res, { dir, count: items.length, captures: items });
+                    return;
+                }
+                if (method !== 'POST') {
+                    this.sendJson(res, { error: 'GET or POST' }, 405);
+                    return;
+                }
+                const body = await this.parseBody(req, 15 * 1024 * 1024);
+                const mime = String(body?.mime ?? 'image/jpeg');
+                const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[mime];
+                if (!ext) {
+                    this.sendJson(res, { error: `unsupported image type ${mime}` }, 400);
+                    return;
+                }
+                const bytes = Buffer.from(String(body?.image ?? ''), 'base64');
+                if (bytes.length === 0) {
+                    this.sendJson(res, { error: 'image (base64) is required' }, 400);
+                    return;
+                }
+                await fs.mkdir(dir, { recursive: true });
+                const capturedAt = typeof body?.capturedAt === 'number' ? body.capturedAt : Date.now();
+                const id = `${capturedAt}-${Math.random().toString(36).slice(2, 8)}`;
+                await fs.writeFile(path.join(dir, `${id}.${ext}`), bytes);
+                const record = { id, file: `${id}.${ext}`, mime, bytes: bytes.length, note: String(body?.note ?? '').slice(0, 2000), capturedAt, receivedAt: Date.now() };
+                await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(record, null, 2));
+                this.sendJson(res, { ok: true, ...record }, 201);
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        // Yes/no questions with a probability (models && skills/core/yes-no.ts):
+        //   GET  /api/yes-no        -- the questions taught so far
+        //   POST /api/yes-no/teach  -- { question, text, answer: boolean }
+        //   POST /api/yes-no/ask    -- { question, text } -> answer + probability
+        // Each question is a region of the one live mesh. What was taught is saved
+        // to ~/.neuroclaw/yes-no.json and restored into the mesh on first use.
+        if (pathname === '/api/yes-no' || pathname === '/api/yes-no/teach' || pathname === '/api/yes-no/ask') {
+            try {
+                const doorway = await this.yesNoDoorway();
+                if (pathname === '/api/yes-no' && method === 'GET') {
+                    this.sendJson(res, { questions: doorway.questions() });
+                    return;
+                }
+                if (method !== 'POST') {
+                    this.sendJson(res, { error: 'POST required' }, 405);
+                    return;
+                }
+                const body = await this.parseBody(req);
+                const question = String(body?.question ?? '').trim();
+                const text = String(body?.text ?? '');
+                if (!question || !text) {
+                    this.sendJson(res, { error: 'question and text are required' }, 400);
+                    return;
+                }
+                if (pathname === '/api/yes-no/teach') {
+                    if (typeof body?.answer !== 'boolean') {
+                        this.sendJson(res, { error: 'answer must be true or false' }, 400);
+                        return;
+                    }
+                    const result = doorway.teach(question, text, body.answer);
+                    await this.saveYesNo(doorway);
+                    this.sendJson(res, { ok: true, ...result });
+                    return;
+                }
+                this.sendJson(res, doorway.ask(question, text));
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        // POST /api/extension/live-sync -- the Extension Builder building
+        // directly into the network. The builder sends its project after each
+        // edit; this brings the skill's region of the ONE live mesh in line with
+        // it (updateNetSkill: new neurons grafted, edited ones re-placed, removed
+        // ones detached, connections rewritten) and makes it routable. Nothing is
+        // written to disk here -- Install (/api/extension/register) still saves
+        // the project; this is what makes the network change as you build.
+        if (pathname === '/api/extension/live-sync' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const name = (body?.name ?? '').trim();
+                if (!name) {
+                    this.sendJson(res, { ok: false, error: 'name is required' }, 400);
+                    return;
+                }
+                const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const engine = system.pipeline.ensureBrain();
+                const { updateNetSkill } = await import('../models && skills/core/net-skill-graft.js');
+                const result = updateNetSkill(engine, name, neurons);
+                this.registerSkillForRouting(system, name, neurons);
+                this.sendJson(res, { ok: true, ...result });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
         if (pathname === '/api/extension/register' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
@@ -4209,7 +4517,7 @@ export class WebServer {
                 }
                 const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
                 const { runUntilStoppedAsync, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
-                const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+                const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
                 // Capped hard. One settle per bit means an unbounded ceiling here
                 // would be a request that never returns.
                 const maxTicks = Math.min(Math.max(1, Number(body?.maxTicks) || 512), 4096);
@@ -4309,14 +4617,14 @@ export class WebServer {
                 }
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const system = await getNeuroclawSystem();
-                const moe = system.pluginRegistry.getMoE?.();
+                const skillMesh = system.pluginRegistry.getSkillMesh?.();
                 // One entry per neuron, so a change in neuron count changes the digest
                 // too -- a freeze that only noticed renames would miss the failure that
                 // actually matters, which is something quietly growing the main mesh.
                 const view = {
                     neuronNames: () => {
                         const names = [];
-                        for (const expert of moe?.listExperts() ?? []) {
+                        for (const expert of skillMesh?.listSkills() ?? []) {
                             for (let i = 0; i < expert.neuronIds.length; i++)
                                 names.push(expert.name);
                         }
@@ -4389,11 +4697,11 @@ export class WebServer {
                 // not merely intended.
                 const { getNeuroclawSystem: loadSystem } = await import('../src/index.js');
                 const system = await loadSystem();
-                const moe = system.pluginRegistry.getMoE?.();
+                const skillMesh = system.pluginRegistry.getSkillMesh?.();
                 const mainModel = {
                     neuronNames: () => {
                         const names = [];
-                        for (const expert of moe?.listExperts() ?? []) {
+                        for (const expert of skillMesh?.listSkills() ?? []) {
                             for (let i = 0; i < expert.neuronIds.length; i++)
                                 names.push(expert.name);
                         }

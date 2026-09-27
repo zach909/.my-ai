@@ -1606,6 +1606,89 @@ export class NeuronMesh {
     getGroups() {
         return Array.from(new Set(this.nodeGroups.values()));
     }
+    /**
+     * Absorb every node, connection, and group label from `other` into
+     * this mesh, wiring the two former-meshes' nodes to each other
+     * exactly like addNode() wires a brand-new node in (same
+     * connectionDensity-gated, symmetric random weight) -- the runtime
+     * counterpart to addNode()'s "grow with a brand-new node": this grows
+     * with nodes that already have real activation/bias/connections,
+     * because they came from an existing, already-settled mesh.
+     *
+     * Unlike addNode(), absorbed nodes keep the activation/bias/
+     * connections they already had in `other` -- they are relocated, not
+     * freshly initialized -- and `other`'s own connections *among its
+     * absorbed nodes* are copied over unchanged (remapped to new ids), so
+     * the two-way link addNode() gives every edge is preserved even where
+     * it isn't perfectly symmetric (a caller could have hand-edited one
+     * direction). Only the *cross* connections between self's original
+     * nodes and other's absorbed ones are new, since there is no history
+     * between two previously-separate meshes to preserve.
+     *
+     * `groupPrefix`, if given, is prepended ("prefix.originalGroup") to
+     * every absorbed node's group label, so two meshes that happen to use
+     * the same group name (e.g. both have a "coding" group) don't
+     * collide once merged. Omit it to keep other's group labels as-is.
+     *
+     * `other`'s own parallel backend (if it has one attached via
+     * setParallelBackend()) is untouched by this call -- whoever
+     * constructed and owns that MeshWorkerPool is still responsible for
+     * terminating it. `other` itself should not be used after merging
+     * into `self`.
+     *
+     * Returns other's old node id -> its new id in `self`, so a caller
+     * tracking identity across the merge can translate it.
+     */
+    mergeFrom(other, groupPrefix) {
+        const idMap = new Map();
+        const existingIds = Array.from(this.nodes.keys());
+        for (const [oldId, oldNode] of other.nodes) {
+            const newId = this.nextId++;
+            idMap.set(oldId, newId);
+            const node = {
+                id: newId,
+                activation: oldNode.activation,
+                bias: oldNode.bias,
+                connections: new Map(),
+                layer: oldNode.layer,
+                activationHistory: [...oldNode.activationHistory],
+            };
+            this.nodes.set(newId, node);
+            const group = other.nodeGroups.get(oldId);
+            if (group !== undefined) {
+                this.nodeGroups.set(newId, groupPrefix ? `${groupPrefix}.${group}` : group);
+            }
+        }
+        // Preserve other's own connections among its absorbed nodes.
+        for (const [oldId, oldNode] of other.nodes) {
+            const newNode = this.nodes.get(idMap.get(oldId));
+            for (const [oldNeighborId, weight] of oldNode.connections) {
+                const newNeighborId = idMap.get(oldNeighborId);
+                if (newNeighborId !== undefined)
+                    newNode.connections.set(newNeighborId, weight);
+            }
+        }
+        // New cross-connections between self's original nodes and the
+        // absorbed ones -- same connectionDensity-gated, symmetric random
+        // weight addNode() uses for a brand-new node. Only self's *original*
+        // nodes are targeted here (not other absorbed ones), so this never
+        // overwrites the internal connections just preserved above.
+        const density = this.config.connectionDensity;
+        for (const oldId of other.nodes.keys()) {
+            const newId = idMap.get(oldId);
+            const newNode = this.nodes.get(newId);
+            for (const existingId of existingIds) {
+                if (density < 1 && Math.random() >= density)
+                    continue;
+                const existingNode = this.nodes.get(existingId);
+                const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
+                newNode.connections.set(existingId, weight);
+                existingNode.connections.set(newId, weight);
+            }
+        }
+        this.cacheValid = false;
+        return idMap;
+    }
     updateConnection(fromId, toId, newWeight) {
         const from = this.nodes.get(fromId);
         const to = this.nodes.get(toId);
@@ -3985,6 +4068,14 @@ export class HyperDimensionalEngine {
      * declared neurons together, rather than only ever learning weights
      * through Hebbian/delta-rule updates.
      */
+    /** One dimension of one incoming connection: what setConnectionWeight() / tuneNeuronTo() wrote. */
+    getConnectionWeight(targetId, sourceId, dim) {
+        const D = this.totalDims;
+        const N = this.neurons.length;
+        if (targetId < 0 || targetId >= N || sourceId < 0 || sourceId >= N || dim < 0 || dim >= D)
+            return 0;
+        return this.connDiag[(targetId * D + dim) * N + sourceId];
+    }
     setConnectionWeight(targetId, sourceId, dim, weight) {
         const D = this.totalDims;
         if (targetId === sourceId || dim < 0 || dim >= D)
@@ -6267,6 +6358,10 @@ export class HyperDimensionalEngine {
         return `hd_${hash}`;
     }
 }
+/** The Zip Loop's neurons in every mesh: 0/1 in, 0/1 out, send in, send out. */
+export const ZIP_LOOP_DEFAULT_IDS = Object.freeze({
+    bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5,
+});
 /** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
 const ZIP_LOOP_PULSE = 1;
 /** Shared "nothing is externally driven this tick" set for receiveBits(). Safe to share because process()/settle() only ever read the driven set -- nothing on that path adds to or clears it. */
@@ -6291,6 +6386,18 @@ const ZIP_SETTLED_ITERATIONS = 2;
 const HYPER_DIM_TILE = 4;
 /** The wave the Zip Loop's bit neurons share. Its value does not matter; that all four share it does. */
 const ZIP_BIT_FREQUENCY = 0.25;
+/**
+ * The send neurons' wave: a different frequency from the bits, so the clock
+ * never interferes with (or cancels) the data it is clocking.
+ */
+const ZIP_SEND_FREQUENCY = 0.5;
+/**
+ * Read ticks allowed per output bit. A bit needs at least two -- send low,
+ * then send high -- and one more is slack for a network that holds send low
+ * a little longer. A bit whose send never fires within this is not a bit:
+ * the network has stopped sending.
+ */
+const ZIP_READ_TICKS_PER_BIT = 3;
 /** Shared options for every read tick: reading the network must not rewrite it. */
 const ZIP_LOOP_READ_ONLY = { learn: false };
 /**
@@ -6306,6 +6413,8 @@ export class ZipLoopInterface {
     constructor(engine, ids) {
         this.engine = engine;
         this.ids = ids;
+        /** Whether sendOut was active on the previous read tick (a bit is its rising edge). */
+        this.sendOutWasHigh = false;
         /** Reused input vectors; engine dimensions are fixed at construction, so these never need rebuilding. */
         this.pulseScratch = null;
         this.idleScratch = null;
@@ -6315,6 +6424,8 @@ export class ZipLoopInterface {
         this.lastSettleIterations = Number.MAX_SAFE_INTEGER;
         this.drivenBit0 = new Set([ids.bit0In]);
         this.drivenBit1 = new Set([ids.bit1In]);
+        this.sentBit0 = new Set([ids.bit0In, ids.sendIn]);
+        this.sentBit1 = new Set([ids.bit1In, ids.sendIn]);
         // Perfect enemies. The two input neurons carry the same wave half a cycle
         // apart, so a one and a zero arriving together annihilate exactly rather
         // than leaving a residue that means neither. Everything downstream of the
@@ -6328,6 +6439,8 @@ export class ZipLoopInterface {
         this.engine.setWaveSignature(ids.bit1In, ZIP_BIT_FREQUENCY, Math.PI);
         this.engine.setWaveSignature(ids.bit0Out, ZIP_BIT_FREQUENCY, 0);
         this.engine.setWaveSignature(ids.bit1Out, ZIP_BIT_FREQUENCY, Math.PI);
+        this.engine.setWaveSignature(ids.sendIn, ZIP_SEND_FREQUENCY, 0);
+        this.engine.setWaveSignature(ids.sendOut, ZIP_SEND_FREQUENCY, 0);
     }
     /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
     /** One byte in, MSB-first, without ending the message. */
@@ -6382,11 +6495,18 @@ export class ZipLoopInterface {
         // Settling to convergence is what you do when you want the ANSWER, and
         // that still happens: nextOutputByte() and learnFromEvent() both settle
         // fully. Streaming the question in does not need it.
+        //
+        // Two ticks per bit, with the send neuron as the clock: first the data
+        // neuron alone (send off -- the bit is being set up), then the data
+        // neuron with send fully on (the bit is committed). That is what lets
+        // "0", "00" and "000" be told apart: each zero ends with its own send.
         this.lastBit = bit;
         const ceiling = this.engine.getPropagationSteps();
         this.engine.setPropagationSteps(ZIP_INPUT_STEPS);
         try {
-            this.engine.process(this.pulseVector(), undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0, undefined, ZIP_LOOP_READ_ONLY);
+            const pulse = this.pulseVector();
+            this.engine.process(pulse, undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0, undefined, ZIP_LOOP_READ_ONLY);
+            this.engine.process(pulse, undefined, bit === 1 ? this.sentBit1 : this.sentBit0, undefined, ZIP_LOOP_READ_ONLY);
         }
         finally {
             this.engine.setPropagationSteps(ceiling);
@@ -6415,7 +6535,7 @@ export class ZipLoopInterface {
         // full settle ceiling. The states then mean "the message just arrived",
         // which is the moment the elastic core is meant to learn from, and the
         // input force each neuron felt is real rather than residual.
-        this.engine.process(this.pulseVector(), undefined, this.lastBit === 1 ? this.drivenBit1 : this.drivenBit0);
+        this.engine.process(this.pulseVector(), undefined, this.lastBit === 1 ? this.sentBit1 : this.sentBit0);
     }
     /** Lazily built idle vector, shared with nextOutputByte(). */
     idleVector() {
@@ -6431,96 +6551,78 @@ export class ZipLoopInterface {
         return this.pulseScratch;
     }
     /**
-     * Reads `count` bits back off the two output neurons, one settle() tick
-     * each, with nothing directly driven -- the network keeps evolving under
-     * its own recurrent dynamics between reads, exactly the "temporary
-     * context" the source description asks for. Whichever output neuron has
-     * higher energy after a tick is read as that tick's bit.
+     * The line an output neuron must clear to count as active: above the
+     * network's own mean energy, not a fixed constant (see nextOutputByte()).
+     */
+    activeLine() {
+        const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
+        return floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
+    }
+    /**
+     * One read tick. Returns the bit the network SENT on this tick, or null
+     * when it sent nothing: a bit exists only on the tick sendOut turns on
+     * (its rising edge), and its value is whichever data neuron is higher at
+     * that moment. Holding send on does not repeat the bit; it has to drop
+     * and fire again, exactly like the input side.
+     */
+    readTick(first) {
+        const idle = this.idleVector();
+        // learn: false -- reading is not learning. Every one of these ticks used
+        // to apply a full Hebbian update, so pulling an answer out of the
+        // network changed the network it was pulled from.
+        const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+        // How hard the mesh worked to reach a stable state. The HARDEST tick of
+        // a read is what it cost: settled only if every tick settled.
+        if (first || read.settleIterations > this.lastSettleIterations) {
+            this.lastSettleIterations = read.settleIterations;
+        }
+        const line = this.activeLine();
+        const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
+        const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
+        const sendHigh = this.engine.getNeuronEnergy(this.ids.sendOut) > line;
+        const rising = sendHigh && !this.sendOutWasHigh;
+        this.sendOutWasHigh = sendHigh;
+        return { bit: rising ? (one > zero ? 1 : 0) : null };
+    }
+    /**
+     * Reads up to `count` bits the network sends, with nothing directly
+     * driven. Only bits the network clocked out with its send neuron count;
+     * if it stops sending (no send within ZIP_READ_TICKS_PER_BIT ticks) the
+     * read ends early and returns fewer than `count` bits.
      */
     receiveBits(count) {
-        const bits = new Array(count);
-        // Idle vector and the empty driven-set are constant across every tick, and
-        // each bit only needs two scalars back -- previously this rebuilt both per
-        // iteration and called getNeuronStates(), which deep-copies every neuron
-        // (object spread + fresh Float32Array each), then linear-scanned that
-        // throwaway snapshot twice. That made reading K bits O(K*N) allocations to
-        // recover 2K numbers; getNeuronEnergy() reads each in O(1) with none.
-        if (!this.idleScratch)
-            this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
-        const idle = this.idleScratch;
-        const bit0Out = this.ids.bit0Out;
-        const bit1Out = this.ids.bit1Out;
-        for (let i = 0; i < count; i++) {
-            // learn: false -- reading is not learning. Every one of these ticks used
-            // to apply a full Hebbian update, so pulling an answer out of the
-            // network changed the network it was pulled from, and reading the same
-            // thing twice gave two different networks.
-            const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
-            // How hard the mesh had to work to reach a stable state on this tick.
-            // The smallest of the eight is what the byte cost at its easiest.
-            if (i === 0 || read.settleIterations > this.lastSettleIterations) {
-                this.lastSettleIterations = read.settleIterations;
+        const bits = [];
+        let first = true;
+        while (bits.length < count) {
+            let got = null;
+            for (let t = 0; t < ZIP_READ_TICKS_PER_BIT && got === null; t++) {
+                got = this.readTick(first).bit;
+                first = false;
             }
-            bits[i] = this.engine.getNeuronEnergy(bit1Out) > this.engine.getNeuronEnergy(bit0Out) ? 1 : 0;
+            if (got === null)
+                break; // the network stopped sending
+            bits.push(got);
         }
         return bits;
     }
     /**
-     * One tick-group of output, or null when the network emitted nothing.
+     * One byte of output, or null when the network sent nothing.
      *
      * This is what makes the mesh a BitDoorway (zip-halt.ts) and therefore what
      * lets a run end when the NETWORK decides it is over rather than when a
-     * timer says so. An all-connected mesh has no last layer to fall out of, so
-     * silence is the only evidence that it has finished emitting -- and silence
-     * has to be a value the caller receives, not a gap it fails to notice.
-     *
-     * Silence means both output neurons sat below SILENT_OUTPUT for the whole
-     * byte. receiveBits() alone cannot express that: it compares the two and
-     * always returns a bit, so a completely dormant network reads as an endless
-     * stream of zeros -- indistinguishable from a network patiently emitting
-     * zeros, which is exactly the distinction a halt condition rests on.
+     * timer says so. With the send neuron that decision is explicit: a byte is
+     * eight bits the network clocked out with send, and a network that stops
+     * firing send has stopped talking. A byte cut short (send stopped part way)
+     * is not a byte, so it reads as null too -- the end of the message.
      */
     nextOutputByte() {
-        if (!this.idleScratch)
-            this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
-        const idle = this.idleScratch;
+        const bits = this.receiveBits(8);
+        if (bits.length < 8)
+            return null;
         let byte = 0;
-        let heard = false;
-        for (let b = 0; b < 8; b++) {
-            // Reading, so not learning -- see receiveBits().
-            const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
-            // How hard the mesh worked to reach a stable state on this tick. The
-            // HARDEST of the eight is what the byte cost: a byte is settled only if
-            // the network settled on every bit of it. Taking the easiest instead
-            // called every byte settled, because at least one bit of any byte lands
-            // in one iteration.
-            if (b === 0 || read.settleIterations > this.lastSettleIterations) {
-                this.lastSettleIterations = read.settleIterations;
-            }
-            const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
-            const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
-            // Speaking means standing out from the network's own floor, not
-            // clearing a fixed constant.
-            //
-            // SILENT_OUTPUT is 1e-6, which suited a small mesh where a quiet neuron
-            // really did sit near zero. On the live network of 336 neurons every
-            // neuron carries residual activity around 1e-3 -- a thousand times the
-            // threshold -- so the output neurons NEVER read as silent and the run
-            // could never end by going quiet. Measured over five reads: bit0Out
-            // 9.98e-4 against bit1Out 9.93e-4, both far above the line and barely
-            // half a percent apart, which is noise being reported as speech.
-            //
-            // Against the network's own mean energy instead, the same way the
-            // capability gap is measured against what a region usually manages. A
-            // network whose output neurons are merely as active as everything else
-            // is not saying anything; one where they stand above the rest is.
-            const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
-            const line = floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
-            if (zero > line || one > line)
-                heard = true;
-            byte = (byte << 1) | (one > zero ? 1 : 0);
-        }
-        return heard ? byte : null;
+        for (const b of bits)
+            byte = (byte << 1) | b;
+        return byte;
     }
     /**
      * Did the network reach a stable state while producing the last byte?
@@ -6564,8 +6666,9 @@ export class ZipLoopInterface {
     /** Reads `byteCount` bytes back, packing each 8 bits MSB-first. */
     receiveBytes(byteCount) {
         const bits = this.receiveBits(byteCount * 8);
-        const out = new Uint8Array(byteCount);
-        for (let i = 0; i < byteCount; i++) {
+        const whole = Math.floor(bits.length / 8);
+        const out = new Uint8Array(whole);
+        for (let i = 0; i < whole; i++) {
             let byte = 0;
             for (let b = 0; b < 8; b++)
                 byte = (byte << 1) | bits[i * 8 + b];
@@ -6792,689 +6895,3 @@ export class QuantumNeuralNet {
 }
 // Export singleton instance for easy integration
 export const quantumNet = new QuantumNeuralNet();
-export class MoERouter {
-    constructor(config = {}) {
-        this.iteration = 0;
-        // OPTIMIZATION: Keep a pre-allocated pool of scratch Float32Arrays for expert outputs
-        // to avoid garbage collection and memory allocation overhead on every route() call.
-        this.expertOutputsScratch = [];
-        this.config = {
-            expertCount: config.numExperts ?? config.expertCount ?? 8,
-            topK: config.topK ?? 2,
-            capacityFactor: config.capacityFactor ?? 1.25,
-            loadBalanceWeight: config.loadBalancingLoss ?? config.loadBalanceWeight ?? 0.01,
-            expertHiddenDim: config.expertHiddenDim ?? 512,
-            inputDim: config.inputDim ?? 768,
-            outputDim: config.outputDim ?? 768,
-            routerHiddenDim: config.routerHiddenDim ?? 256,
-        };
-        this.experts = new Map();
-        this.utilization = new Map();
-        this.routerWeights = new Float32Array(this.config.inputDim * this.config.expertCount);
-        this.routerBias = new Float32Array(this.config.expertCount);
-        this.scoresScratch = new Array(this.config.expertCount);
-        this.selectScratch = new Int32Array(this.config.expertCount);
-        // Initialize the expert output scratch pool to topK elements of outputDim size.
-        this.expertOutputsScratch = Array.from({ length: this.config.topK }, () => new Float32Array(this.config.outputDim));
-        this.initializeExpertWeights();
-        this.initializeExperts();
-    }
-    initializeExpertWeights() {
-        const scale = Math.sqrt(2.0 / this.config.inputDim);
-        for (let i = 0; i < this.routerWeights.length; i++) {
-            this.routerWeights[i] = (Math.random() * 2 - 1) * scale;
-        }
-    }
-    initializeExperts() {
-        for (let i = 0; i < this.config.expertCount; i++) {
-            const fanIn = this.config.inputDim;
-            const fanOut = this.config.expertHiddenDim;
-            const scale = Math.sqrt(2.0 / fanIn);
-            const weights = new Float32Array(fanIn * fanOut);
-            const bias = new Float32Array(fanOut);
-            for (let j = 0; j < weights.length; j++) {
-                weights[j] = (Math.random() * 2 - 1) * scale;
-            }
-            this.experts.set(i, { weights, bias });
-            this.utilization.set(i, { calls: 0, tokens: 0, weightSum: 0 });
-        }
-    }
-    route(input) {
-        const scores = this.computeRouterScores(input);
-        const topKIndices = this.selectTopK(scores);
-        // OPTIMIZATION: Manually map scores to topScores to avoid callback overhead.
-        const numK = topKIndices.length;
-        const topScores = new Array(numK);
-        for (let i = 0; i < numK; i++) {
-            topScores[i] = scores[topKIndices[i]];
-        }
-        const routerWeights = this.softmax(topScores);
-        // Ensure our expertOutputsScratch array pool is sufficiently sized for numK (top-K)
-        while (this.expertOutputsScratch.length < numK) {
-            this.expertOutputsScratch.push(new Float32Array(this.config.outputDim));
-        }
-        const expertOutputs = [];
-        for (let i = 0; i < numK; i++) {
-            const expertIdx = topKIndices[i];
-            const expert = this.experts.get(expertIdx);
-            // Grab a pre-allocated Float32Array scratch buffer instead of allocating a new one
-            const output = this.expertOutputsScratch[i];
-            output.fill(0);
-            output.set(expert.bias);
-            const weights = expert.weights;
-            const hiddenDim = this.config.expertHiddenDim;
-            // OPTIMIZATION: 4x loop unrolling on input dimension k combined with 4x unrolling on hidden dimension j.
-            // Unrolling k allows accumulating 4 input feature products per output write, reducing array store operations by 4x.
-            const limitJ = hiddenDim - 3;
-            const limitK = input.length - 3;
-            let k = 0;
-            for (; k < limitK; k += 4) {
-                const v0 = input[k];
-                const v1 = input[k + 1];
-                const v2 = input[k + 2];
-                const v3 = input[k + 3];
-                if (v0 === 0 && v1 === 0 && v2 === 0 && v3 === 0)
-                    continue;
-                const off0 = k * hiddenDim;
-                const off1 = (k + 1) * hiddenDim;
-                const off2 = (k + 2) * hiddenDim;
-                const off3 = (k + 3) * hiddenDim;
-                let j = 0;
-                for (; j < limitJ; j += 4) {
-                    output[j] += v0 * weights[off0 + j] + v1 * weights[off1 + j] + v2 * weights[off2 + j] + v3 * weights[off3 + j];
-                    output[j + 1] += v0 * weights[off0 + j + 1] + v1 * weights[off1 + j + 1] + v2 * weights[off2 + j + 1] + v3 * weights[off3 + j + 1];
-                    output[j + 2] += v0 * weights[off0 + j + 2] + v1 * weights[off1 + j + 2] + v2 * weights[off2 + j + 2] + v3 * weights[off3 + j + 2];
-                    output[j + 3] += v0 * weights[off0 + j + 3] + v1 * weights[off1 + j + 3] + v2 * weights[off2 + j + 3] + v3 * weights[off3 + j + 3];
-                }
-                for (; j < hiddenDim; j++) {
-                    output[j] += v0 * weights[off0 + j] + v1 * weights[off1 + j] + v2 * weights[off2 + j] + v3 * weights[off3 + j];
-                }
-            }
-            for (; k < input.length; k++) {
-                const inputVal = input[k];
-                if (inputVal === 0)
-                    continue;
-                const weightOffset = k * hiddenDim;
-                for (let j = 0; j < hiddenDim; j++) {
-                    output[j] += inputVal * weights[weightOffset + j];
-                }
-            }
-            expertOutputs.push(output);
-            this.trackUtilization(expertIdx, routerWeights[i]);
-        }
-        const combinedOutput = new Float32Array(this.config.outputDim);
-        // OPTIMIZATION: Specialize combination step for typical top-K configurations
-        // to bypass nested loops, pointer indexing, and bounds checks.
-        if (numK === 1) {
-            const out0 = expertOutputs[0];
-            const w0 = routerWeights[0];
-            for (let j = 0; j < this.config.outputDim; j++) {
-                combinedOutput[j] = out0[j] * w0;
-            }
-        }
-        else if (numK === 2) {
-            const out0 = expertOutputs[0];
-            const out1 = expertOutputs[1];
-            const w0 = routerWeights[0];
-            const w1 = routerWeights[1];
-            for (let j = 0; j < this.config.outputDim; j++) {
-                combinedOutput[j] = out0[j] * w0 + out1[j] * w1;
-            }
-        }
-        else if (numK === 4) {
-            const out0 = expertOutputs[0];
-            const out1 = expertOutputs[1];
-            const out2 = expertOutputs[2];
-            const out3 = expertOutputs[3];
-            const w0 = routerWeights[0];
-            const w1 = routerWeights[1];
-            const w2 = routerWeights[2];
-            const w3 = routerWeights[3];
-            for (let j = 0; j < this.config.outputDim; j++) {
-                combinedOutput[j] = out0[j] * w0 + out1[j] * w1 + out2[j] * w2 + out3[j] * w3;
-            }
-        }
-        else {
-            // General fallback loop for non-standard top-K values
-            for (let j = 0; j < this.config.outputDim; j++) {
-                let sum = 0;
-                for (let i = 0; i < numK; i++) {
-                    sum += expertOutputs[i][j] * routerWeights[i];
-                }
-                combinedOutput[j] = sum;
-            }
-        }
-        const entropy = this.computeEntropy(scores);
-        const loadBalanceLoss = this.computeLoadBalanceLoss();
-        return {
-            expertIndices: topKIndices,
-            routerWeights,
-            expertOutputs,
-            combinedOutput,
-            entropy,
-            loadBalanceLoss,
-        };
-    }
-    forward(input, layerIndex = 0) {
-        const decision = this.route(input);
-        const expertContributions = new Map();
-        for (let i = 0; i < decision.expertIndices.length; i++) {
-            expertContributions.set(`expert_${decision.expertIndices[i]}`, decision.routerWeights[i] || 0);
-        }
-        return {
-            output: decision.combinedOutput,
-            decision,
-            layerIndex,
-            expertContributions,
-        };
-    }
-    addExpert(first, bias) {
-        const expertId = this.experts.size;
-        if (first instanceof Float32Array) {
-            this.experts.set(expertId, { weights: first, bias: bias || new Float32Array(0) });
-        }
-        else {
-            // Allocated on first use, not at registration.
-            //
-            // Measured at boot: this allocated inputDim x expertHiddenDim floats --
-            // 1.5MB -- for EVERY registered plugin, and randomly initialised all
-            // 393216 of them. With 36 plugins that is 54MB of resident typed arrays
-            // before anything has been asked a single question, which was most of
-            // the 65MB gap between this process's 21MB heap and its 178MB RSS.
-            //
-            // Most of it is never touched. api-connection plugins get one presence
-            // neuron precisely because, as registry.ts says where it calls this,
-            // their capability "genuinely can't be reduced to neuron weights" --
-            // reading a file requires real I/O, not a weighted sum. Paying 1.5MB up
-            // front for a matrix that will never be multiplied is the definition of
-            // eager work with no consumer.
-            //
-            // The getter materialises identical weights on first read, so anything
-            // that does use an expert sees exactly what it saw before; it just does
-            // not pay for the ones nobody routes to.
-            const dim = this.config.expertHiddenDim || 128;
-            const inputDim = this.config.inputDim;
-            let weights = null;
-            this.experts.set(expertId, {
-                get weights() {
-                    if (weights === null) {
-                        weights = new Float32Array(inputDim * dim);
-                        const scale = Math.sqrt(2.0 / inputDim);
-                        for (let i = 0; i < weights.length; i++) {
-                            weights[i] = (Math.random() * 2 - 1) * scale;
-                        }
-                    }
-                    return weights;
-                },
-                set weights(next) {
-                    // Training writes back through here; assigning replaces the lazy
-                    // value rather than being silently dropped.
-                    weights = next;
-                },
-                bias: new Float32Array(dim),
-            });
-        }
-        this.utilization.set(expertId, { calls: 0, tokens: 0, weightSum: 0 });
-        this.growRouterCapacity();
-        return expertId;
-    }
-    /**
-     * Grow routerWeights/routerBias to cover every expert currently registered.
-     * Both addExpert overloads must call this: the router-scoring loop indexes
-     * routerWeights as `input[i] * routerWeights[i * expertCount + e]`, so a
-     * bumped expertCount without a resized routerWeights reads past the end of
-     * the array (undefined -> NaN, which then poisons the whole pipeline).
-     * The old flat-copy grow also silently scrambled the row-major
-     * (inputDim x expertCount) layout whenever expertCount changed; this
-     * rebuild copies element-by-element in (input, expert) coordinates so
-     * existing experts keep their learned router weights.
-     */
-    growRouterCapacity() {
-        const inputDim = this.config.inputDim;
-        const oldCount = this.routerBias.length;
-        const newCount = this.experts.size;
-        if (newCount <= oldCount) {
-            this.config.expertCount = newCount;
-            return;
-        }
-        const scale = Math.sqrt(2.0 / inputDim);
-        const newWeights = new Float32Array(inputDim * newCount);
-        for (let i = 0; i < inputDim; i++) {
-            for (let e = 0; e < newCount; e++) {
-                newWeights[i * newCount + e] = e < oldCount
-                    ? this.routerWeights[i * oldCount + e]
-                    : (Math.random() * 2 - 1) * scale;
-            }
-        }
-        this.routerWeights = newWeights;
-        const newBias = new Float32Array(newCount);
-        newBias.set(this.routerBias);
-        this.routerBias = newBias;
-        this.scoresScratch = new Array(newCount);
-        this.selectScratch = new Int32Array(newCount);
-        this.config.expertCount = newCount;
-    }
-    removeExpert(expertId) {
-        if (!this.experts.has(expertId))
-            return false;
-        // The router indexes routerWeights as input[i] * routerWeights[i *
-        // expertCount + e] and selectTopK returns dense positions 0..expertCount-1,
-        // so experts must stay a contiguous 0..n-1 block. A bare delete would
-        // shrink expertCount while leaving routerWeights at the old width and the
-        // id space sparse, and the next forward() would index out of bounds.
-        // Rebuild everything densely, dropping the removed expert's router column
-        // and preserving each survivor's learned column.
-        const inputDim = this.config.inputDim;
-        const oldCount = this.routerBias.length;
-        const survivors = Array.from(this.experts.keys())
-            .filter(id => id !== expertId)
-            .sort((a, b) => a - b);
-        const newExperts = new Map();
-        const newUtil = new Map();
-        const newWeights = new Float32Array(inputDim * survivors.length);
-        const newBias = new Float32Array(survivors.length);
-        survivors.forEach((oldId, newId) => {
-            newExperts.set(newId, this.experts.get(oldId));
-            newUtil.set(newId, this.utilization.get(oldId) ?? { calls: 0, tokens: 0, weightSum: 0 });
-            newBias[newId] = this.routerBias[oldId] ?? 0;
-            for (let i = 0; i < inputDim; i++) {
-                newWeights[i * survivors.length + newId] = this.routerWeights[i * oldCount + oldId] ?? 0;
-            }
-        });
-        this.experts = newExperts;
-        this.utilization = newUtil;
-        this.routerWeights = newWeights;
-        this.routerBias = newBias;
-        this.scoresScratch = new Array(survivors.length);
-        this.selectScratch = new Int32Array(survivors.length);
-        this.config.expertCount = survivors.length;
-        return true;
-    }
-    setExpertWeights(expertId, weights, bias) {
-        if (this.experts.has(expertId)) {
-            this.experts.set(expertId, { weights, bias });
-        }
-    }
-    getUtilizationStats() {
-        const stats = [];
-        for (const [expertId, util] of this.utilization) {
-            const totalCalls = util.calls;
-            stats.push({
-                expertId,
-                utilization: totalCalls > 0 ? util.tokens / totalCalls : 0,
-                totalCalls,
-                totalTokens: util.tokens,
-                avgWeight: totalCalls > 0 ? util.weightSum / totalCalls : 0,
-            });
-        }
-        return stats;
-    }
-    getExpertCount() {
-        return this.experts.size;
-    }
-    getExpertList() {
-        return Array.from(this.experts.keys());
-    }
-    computeRouterScores(input) {
-        const expertCount = this.config.expertCount;
-        const scores = this.scoresScratch;
-        const weights = this.routerWeights;
-        const inputLen = input.length;
-        const bias = this.routerBias;
-        // OPTIMIZATION: Initialize scores with expert biases
-        for (let exp = 0; exp < expertCount; exp++) {
-            scores[exp] = bias[exp];
-        }
-        // OPTIMIZATION: Sequential cache-locality outer-input inner-expert loop.
-        // Since weights are stored in (inputDim x expertCount) layout, scanning
-        // expertCount contiguously keeps all memory accesses fully sequential (step size of 1).
-        for (let i = 0; i < inputLen; i++) {
-            const inputVal = input[i];
-            if (inputVal === 0)
-                continue; // Sparsity fast-path
-            const weightOffset = i * expertCount;
-            let exp = 0;
-            const limit = expertCount - 7;
-            for (; exp < limit; exp += 8) {
-                scores[exp] += inputVal * weights[weightOffset + exp];
-                scores[exp + 1] += inputVal * weights[weightOffset + exp + 1];
-                scores[exp + 2] += inputVal * weights[weightOffset + exp + 2];
-                scores[exp + 3] += inputVal * weights[weightOffset + exp + 3];
-                scores[exp + 4] += inputVal * weights[weightOffset + exp + 4];
-                scores[exp + 5] += inputVal * weights[weightOffset + exp + 5];
-                scores[exp + 6] += inputVal * weights[weightOffset + exp + 6];
-                scores[exp + 7] += inputVal * weights[weightOffset + exp + 7];
-            }
-            for (; exp < expertCount; exp++) {
-                scores[exp] += inputVal * weights[weightOffset + exp];
-            }
-        }
-        return scores;
-    }
-    selectTopK(scores) {
-        const k = Math.min(this.config.topK, scores.length);
-        // OPTIMIZATION: Avoid sorting and allocations for small k
-        if (k === 1) {
-            let maxIdx = 0;
-            let maxVal = scores[0];
-            for (let i = 1; i < scores.length; i++) {
-                if (scores[i] > maxVal) {
-                    maxVal = scores[i];
-                    maxIdx = i;
-                }
-            }
-            return [maxIdx];
-        }
-        else if (k === 2 && scores.length >= 2) {
-            let max0 = 0, max1 = 1;
-            if (scores[1] > scores[0]) {
-                max0 = 1;
-                max1 = 0;
-            }
-            let val0 = scores[max0];
-            let val1 = scores[max1];
-            for (let i = 2; i < scores.length; i++) {
-                const val = scores[i];
-                if (val > val0) {
-                    val1 = val0;
-                    max1 = max0;
-                    val0 = val;
-                    max0 = i;
-                }
-                else if (val > val1) {
-                    val1 = val;
-                    max1 = i;
-                }
-            }
-            return [max0, max1];
-        }
-        else if (k === 4 && scores.length >= 4) {
-            // OPTIMIZATION: 4-element specialization using inline sorting network
-            // and branchless element-shifting to completely bypass array sorting/allocations.
-            let max0 = 0, max1 = 1, max2 = 2, max3 = 3;
-            if (scores[max1] > scores[max0]) {
-                const t = max0;
-                max0 = max1;
-                max1 = t;
-            }
-            if (scores[max2] > scores[max0]) {
-                const t = max0;
-                max0 = max2;
-                max2 = t;
-            }
-            if (scores[max3] > scores[max0]) {
-                const t = max0;
-                max0 = max3;
-                max3 = t;
-            }
-            if (scores[max2] > scores[max1]) {
-                const t = max1;
-                max1 = max2;
-                max2 = t;
-            }
-            if (scores[max3] > scores[max1]) {
-                const t = max1;
-                max1 = max3;
-                max3 = t;
-            }
-            if (scores[max3] > scores[max2]) {
-                const t = max2;
-                max2 = max3;
-                max3 = t;
-            }
-            let val0 = scores[max0];
-            let val1 = scores[max1];
-            let val2 = scores[max2];
-            let val3 = scores[max3];
-            for (let i = 4; i < scores.length; i++) {
-                const val = scores[i];
-                if (val > val0) {
-                    val3 = val2;
-                    max3 = max2;
-                    val2 = val1;
-                    max2 = max1;
-                    val1 = val0;
-                    max1 = max0;
-                    val0 = val;
-                    max0 = i;
-                }
-                else if (val > val1) {
-                    val3 = val2;
-                    max3 = max2;
-                    val2 = val1;
-                    max2 = max1;
-                    val1 = val;
-                    max1 = i;
-                }
-                else if (val > val2) {
-                    val3 = val2;
-                    max3 = max2;
-                    val2 = val;
-                    max2 = i;
-                }
-                else if (val > val3) {
-                    val3 = val;
-                    max3 = i;
-                }
-            }
-            return [max0, max1, max2, max3];
-        }
-        // OPTIMIZATION: Reuse pre-allocated selectScratch buffer to avoid allocations.
-        const indices = this.selectScratch;
-        for (let i = 0; i < scores.length; i++) {
-            indices[i] = i;
-        }
-        indices.sort((a, b) => scores[b] - scores[a]);
-        const result = new Array(k);
-        for (let i = 0; i < k; i++) {
-            result[i] = indices[i];
-        }
-        return result;
-    }
-    softmax(values) {
-        const len = values.length;
-        // OPTIMIZATION: Specialize softmax for len === 1 and len === 2 to bypass allocation
-        if (len === 1) {
-            return [1.0];
-        }
-        else if (len === 2) {
-            const v0 = values[0], v1 = values[1];
-            const max = v0 > v1 ? v0 : v1;
-            const e0 = Math.exp(v0 - max);
-            const e1 = Math.exp(v1 - max);
-            const sum = e0 + e1;
-            return [e0 / sum, e1 / sum];
-        }
-        else if (len === 4) {
-            // OPTIMIZATION: Specialize softmax for len === 4 to bypass loops, array allocations, and divisions.
-            const v0 = values[0], v1 = values[1], v2 = values[2], v3 = values[3];
-            let max = v0;
-            if (v1 > max)
-                max = v1;
-            if (v2 > max)
-                max = v2;
-            if (v3 > max)
-                max = v3;
-            const e0 = Math.exp(v0 - max);
-            const e1 = Math.exp(v1 - max);
-            const e2 = Math.exp(v2 - max);
-            const e3 = Math.exp(v3 - max);
-            const sum = e0 + e1 + e2 + e3;
-            const invSum = sum === 0 ? 1 : 1.0 / sum;
-            return [e0 * invSum, e1 * invSum, e2 * invSum, e3 * invSum];
-        }
-        // OPTIMIZATION: Single-pass loops over standard arrays without spread operator
-        // or nested/higher-order functions, avoiding GC and engine optimization boundaries.
-        let max = values[0];
-        for (let i = 1; i < len; i++) {
-            if (values[i] > max) {
-                max = values[i];
-            }
-        }
-        const exps = new Float64Array(len);
-        let sum = 0;
-        for (let i = 0; i < len; i++) {
-            const e = Math.exp(values[i] - max);
-            exps[i] = e;
-            sum += e;
-        }
-        if (sum === 0)
-            sum = 1;
-        const result = new Array(len);
-        for (let i = 0; i < len; i++) {
-            result[i] = exps[i] / sum;
-        }
-        return result;
-    }
-    computeEntropy(scores) {
-        const len = scores.length;
-        if (len <= 1)
-            return 0;
-        // First, find the maximum score for numerical stability during exponentiation
-        let max = scores[0];
-        for (let i = 1; i < len; i++) {
-            if (scores[i] > max) {
-                max = scores[i];
-            }
-        }
-        // Compute sum(exp(s_i - max)) and sum((s_i - max) * exp(s_i - max))
-        // in a single pass over the scores.
-        let sumExp = 0;
-        let sumExpS = 0;
-        for (let i = 0; i < len; i++) {
-            const sShifted = scores[i] - max;
-            const expVal = Math.exp(sShifted);
-            sumExp += expVal;
-            sumExpS += sShifted * expVal;
-        }
-        if (sumExp === 0)
-            return 0;
-        // Shannon entropy of softmax: H = ln(sumExp) - (sum(sShifted * exp(sShifted)) / sumExp)
-        // This reduces the number of expensive Math.log transcendental math calls from O(E) to exactly O(1),
-        // and completely eliminates the allocation of intermediate probability arrays.
-        return Math.log(sumExp) - sumExpS / sumExp;
-    }
-    computeLoadBalanceLoss() {
-        const stats = this.getUtilizationStats();
-        if (stats.length === 0)
-            return 0;
-        const totalUtil = stats.reduce((s, x) => s + x.utilization, 0);
-        const meanUtil = totalUtil / stats.length;
-        let variance = 0;
-        for (const s of stats) {
-            // BOLT OPTIMIZATION: Replacing slow Math.pow(x, 2) with fast inline multiplication.
-            const diff = s.utilization - meanUtil;
-            variance += diff * diff;
-        }
-        return variance / stats.length;
-    }
-    trackUtilization(expertId, weight) {
-        const util = this.utilization.get(expertId);
-        if (util) {
-            util.calls++;
-            util.tokens++;
-            util.weightSum += weight;
-        }
-    }
-    hashInput(input) {
-        let hash = 0;
-        for (let i = 0; i < Math.min(input.length, 64); i++) {
-            hash = ((hash << 5) - hash) + Math.round(input[i] * 1000);
-            hash = hash & hash;
-        }
-        return `h_${hash}`;
-    }
-}
-export class MixtureOfExperts {
-    constructor(topK = 2, mesh) {
-        /** Router's numeric expert index <-> our string expert id. */
-        this.routerIndexToId = new Map();
-        this.experts = new Map();
-        this.activeExperts = new Set();
-        this.topK = topK;
-        // numExperts: 0 — every expert in the router must be a real, named
-        // skill registered via addExpert(). Pre-seeding anonymous experts here
-        // would let them win top-K selection and make tick()'s activeExperts
-        // silently drop ticks (an anonymous winner has no group/id to map back to).
-        this.router = new MoERouter({ numExperts: 0, topK, inputDim: 768, outputDim: 768, expertHiddenDim: 512 });
-        // Shared, all-to-all mesh: every expert's neurons live here alongside
-        // everyone else's, wired at connectionDensity 1.0 by addNode() below —
-        // grouping is a label, not a wiring restriction.
-        this.mesh = mesh ?? new NeuronMesh({ nodeCount: 0, connectionDensity: 1.0 });
-    }
-    /** The shared mesh every expert's neurons are registered into. */
-    getMesh() {
-        return this.mesh;
-    }
-    /**
-     * Registers `neuronCount` new mesh neurons under this expert's group label
-     * (wired all-to-all into the shared mesh, same as any other neuron) and
-     * registers the expert with the MoE router for scoring/gating.
-     */
-    addExpert(id, name, specialization, neuronCount = 4) {
-        const neuronIds = [];
-        for (let i = 0; i < neuronCount; i++) {
-            neuronIds.push(this.mesh.addNode(0, id));
-        }
-        const expert = {
-            id, name,
-            neuronIds,
-            specialization,
-            activationThreshold: 0.3,
-            lastUsed: Date.now(),
-            usageCount: 0,
-        };
-        this.experts.set(id, expert);
-        const routerIndex = this.router.addExpert({ id, name, specialization });
-        this.routerIndexToId.set(routerIndex, id);
-        return expert;
-    }
-    /**
-     * Register additional neurons under an already-registered expert's group
-     * label (e.g. a variable number of neurons per sub-skill within one
-     * expert). Wired all-to-all into the shared mesh exactly like addExpert's
-     * initial neurons. Returns the new node ids; no-op (empty array) if the
-     * expert id isn't registered.
-     */
-    addNeuronsToExpert(expertId, count, layer = 0) {
-        const expert = this.experts.get(expertId);
-        if (!expert)
-            return [];
-        const newIds = [];
-        for (let i = 0; i < count; i++) {
-            const id = this.mesh.addNode(layer, expertId);
-            newIds.push(id);
-        }
-        expert.neuronIds.push(...newIds);
-        return newIds;
-    }
-    /**
-     * Section 2.1: score all registered experts against `routingInput`, select
-     * top-K, and propagate the shared mesh with only those experts' (plus any
-     * ungrouped/core) neurons computing this tick — everyone else holds their
-     * last value but stays fully wired. `meshInputs` are the externally-driven
-     * mesh node activations for this tick (same shape `propagate()` expects).
-     */
-    tick(routingInput, meshInputs, vale) {
-        const decision = this.router.route(routingInput);
-        const activeExperts = decision.expertIndices
-            .map(i => this.routerIndexToId.get(i))
-            .filter((id) => id !== undefined);
-        this.activeExperts = new Set(activeExperts);
-        const now = Date.now();
-        for (const id of activeExperts) {
-            const expert = this.experts.get(id);
-            if (expert) {
-                expert.lastUsed = now;
-                expert.usageCount++;
-            }
-        }
-        const propagation = this.mesh.propagate(meshInputs, vale, new Set(activeExperts));
-        return { activeExperts, propagation };
-    }
-    getExpert(id) { return this.experts.get(id); }
-    listExperts() { return Array.from(this.experts.values()); }
-    getActiveExperts() { return Array.from(this.activeExperts).map(id => this.experts.get(id)).filter(Boolean); }
-    getRouter() { return this.router; }
-    getExpertCount() { return this.experts.size; }
-}

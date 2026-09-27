@@ -12,15 +12,15 @@ export class ThornsEngine {
         this.maxHistoryLength = 100;
     }
     /**
-     * Connect THORNS to core subsystems (value allocator, mesh, hyperdimensional engine, RLM, MoE)
+     * Connect THORNS to core subsystems (value allocator, mesh, hyperdimensional engine, RLM, net-skill router)
      */
-    connectCore(valueAllocator, mesh, hyperEngine, rlmTrainer, moeRouter) {
+    connectCore(valueAllocator, mesh, hyperEngine, rlmTrainer, skillRouter) {
         // Integration point for core subsystems - stores references for cross-engine reasoning
         this._valueAllocator = valueAllocator;
         this._mesh = mesh;
         this._hyperEngine = hyperEngine;
         this._rlmTrainer = rlmTrainer;
-        this._moeRouter = moeRouter;
+        this._skillRouter = skillRouter;
     }
     /**
      * Main thinking entry point — analyzes input through all THORNS dimensions

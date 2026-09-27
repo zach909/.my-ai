@@ -60,6 +60,12 @@ export const CAPABILITIES = [
     "system.services",
     "device.access",
     "network.configure",
+    /**
+     * Apply or revert a store mod: overwrite this app's own source files with
+     * a published mod's files. The most powerful thing the agent can do to
+     * itself, so it is its own capability, never granted by default.
+     */
+    "mods.apply",
 ];
 /** The lowest level at which each capability makes sense at all. */
 export const CAPABILITY_MINIMUM = {
@@ -79,6 +85,7 @@ export const CAPABILITY_MINIMUM = {
     "system.services": "system",
     "device.access": "system",
     "network.configure": "privileged",
+    "mods.apply": "system",
 };
 /**
  * The off switches.
@@ -125,6 +132,7 @@ export const CAPABILITY_SWITCH = {
     "system.services": "workspace",
     "device.access": "workspace",
     "network.configure": "workspace",
+    "mods.apply": "workspace",
 };
 export class AccessDenied extends Error {
     constructor(capability, needed, granted, 

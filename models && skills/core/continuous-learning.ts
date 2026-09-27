@@ -32,7 +32,7 @@ import { tokenSimilarity } from "./prediction-engine.js";
 import type { DoorwayLock } from "./doorway-lock.js";
 
 /** Same ids every other zip-loop caller in this codebase uses for the live mesh. */
-export const DEFAULT_ZIP_IDS: ZipLoopNeuronIds = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 };
+export const DEFAULT_ZIP_IDS: ZipLoopNeuronIds = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 };
 
 /** Where a prediction is packed for the mesh to read back later. */
 const PREDICT_FILE = `${ZIP_FOLDERS.prompt}predict-next-user-message.txt`;

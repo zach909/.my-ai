@@ -64,6 +64,12 @@ export const CAPABILITIES = [
   "system.services",
   "device.access",
   "network.configure",
+  /**
+   * Apply or revert a store mod: overwrite this app's own source files with
+   * a published mod's files. The most powerful thing the agent can do to
+   * itself, so it is its own capability, never granted by default.
+   */
+  "mods.apply",
 ] as const;
 export type Capability = (typeof CAPABILITIES)[number];
 
@@ -85,6 +91,7 @@ export const CAPABILITY_MINIMUM: Record<Capability, AccessLevel> = {
   "system.services": "system",
   "device.access": "system",
   "network.configure": "privileged",
+  "mods.apply": "system",
 };
 
 /**
@@ -136,6 +143,7 @@ export const CAPABILITY_SWITCH: Record<Capability, Exclude<AccessSwitch, "all">>
   "system.services": "workspace",
   "device.access": "workspace",
   "network.configure": "workspace",
+  "mods.apply": "workspace",
 };
 
 export class AccessDenied extends Error {

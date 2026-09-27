@@ -13,10 +13,36 @@ import { BackgroundQuantizer } from "./core/quantizer.js";
 import { UnifiedBrain } from "./core/unified-brain.js";
 import { RLMTrainer } from "./core/rlm.js";
 import { ThornsEngine } from "./core/thorns.js";
-import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
 import { ZipLoopInterface } from "./core/onebrain.js";
 import { runUntilStoppedAsync, ZIP_FOLDERS } from "./core/zip-halt.js";
+// No tokenizer: text is its UTF-8 bytes, the same thing the Zip Loop
+// streams. The trainer (character-level n-gram/embedding tables) keeps ids
+// 0-3 for pad/bos/eos/unk, so byte b is id b + BYTE_ID_OFFSET, and its text
+// is the bytes spelled as latin1 characters -- one character per byte.
+const BYTE_ID_OFFSET = 4;
+const BYTE_VOCAB_SIZE = 256 + BYTE_ID_OFFSET;
+const BYTE_CHAR_TO_ID = new Map();
+const BYTE_ID_TO_CHAR = new Map();
+for (let b = 0; b < 256; b++) {
+    BYTE_CHAR_TO_ID.set(String.fromCharCode(b), b + BYTE_ID_OFFSET);
+    BYTE_ID_TO_CHAR.set(b + BYTE_ID_OFFSET, String.fromCharCode(b));
+}
+/** Text as the trainer reads it: its UTF-8 bytes, one latin1 character each. */
+function asByteText(text) { return Buffer.from(String(text), "utf-8").toString("latin1"); }
+function bytesOf(text) { return Array.from(Buffer.from(String(text), "utf-8")); }
+/** A byte as a person reads it: the character for printable ASCII, else its value. */
+function byteLabel(b) { return b >= 32 && b < 127 ? String.fromCharCode(b) : `byte ${b}`; }
+/** Deterministic embedding for a byte id the trainer has no learned embedding for yet. */
+function byteEmbedding(id, dim) {
+    const embedding = new Float32Array(dim);
+    const seed = id * 2654435761;
+    for (let i = 0; i < dim; i++) {
+        const hash = ((seed + i * 1013904223) >>> 0) / 4294967296;
+        embedding[i] = (hash - 0.5) * 2;
+    }
+    return embedding;
+}
 const DEFAULT_LLM_CONFIG = {
     embeddingDim: 64, hiddenDim: 128, numExperts: 4, meshNodes: 32,
     hyperNeurons: 16, hyperDimensions: 64, ballStates: 4,
@@ -28,7 +54,7 @@ const DEFAULT_LLM_CONFIG = {
 // a chat reply and a manual zip-loop run drive the identical doorway
 // into the identical mesh, not two different conventions for the same
 // four neurons.
-const ONE_BRAIN_NEURON_IDS = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 };
+const ONE_BRAIN_NEURON_IDS = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 };
 // Bounds a chat turn's one-brain run to something an interactive reply
 // can wait on. Every OUTPUT byte read is a full settle() of the mesh --
 // real work, not padding (see zip-halt.ts/onebrain.ts's own comments on
@@ -41,6 +67,10 @@ const GENERATE_MAX_TICKS = 256;
 // doorway costs 8 real sendBit() calls, so this is what actually keeps
 // a long prompt from turning one chat turn into a multi-minute run.
 const ONE_BRAIN_PROMPT_CHAR_CAP = 200;
+// Prompting skills ride the same doorway as the prompt, so they pay the same
+// per-bit cost: a few, and each one short.
+const ONE_BRAIN_PROMPTING_SKILLS_MAX = 3;
+const ONE_BRAIN_PROMPTING_SKILL_CHAR_CAP = 160;
 // Self-extensions that ship with the repo (models && skills/self_ext_*,
 // including the merged self_ext_combined). Resolved from source or from
 // the dist/ copy of this file, whichever is running.
@@ -52,7 +82,6 @@ function defaultBundledExtensionsDir() {
 export class NeuroclawLLM {
     config;
     builder;
-    tokenizer;
     trainer;
     quantizer;
     brain;
@@ -68,6 +97,10 @@ export class NeuroclawLLM {
     /** OneBrain neuron name -> neuron id in the live mesh (hyperEngine), once grafted. */
     oneBrainMeshIds = new Map();
     oneBrainGraftCount = 0;
+    /** Paths of the files the last generate() streamed through the Zip Loop, for introspection. */
+    lastZipLoopFiles = [];
+    /** The Zip Loop's output archive from the last generate(), or null. */
+    lastZipLoopOutput = null;
     selfExtensionsDir;
     bundledExtensionsDir;
     generationCount = 0;
@@ -88,7 +121,6 @@ export class NeuroclawLLM {
     constructor(config = {}, hyperEngine = null) {
         this.config = { ...DEFAULT_LLM_CONFIG, ...config };
         this.builder = new ExtensionBuilder();
-        this.tokenizer = new Tokenizer();
         this.selfExtensionsDir = this.config.selfExtensionsDir ?? join(homedir(), ".neuroclaw", "extensions");
         if (!existsSync(this.selfExtensionsDir)) {
             mkdirSync(this.selfExtensionsDir, { recursive: true });
@@ -109,16 +141,16 @@ export class NeuroclawLLM {
         // own INPUT representation (Step 2's embedding lookup below) and
         // the text-learning surface (trainOnText/learnText), which is
         // OneBrain's own perception, not a second voice competing with it.
-        this.trainer = new NeuroclawTrainer(this.tokenizer.getVocabSize(), this.tokenizer.getCharToId(), this.tokenizer.getIdToChar(), { hiddenDim: this.config.hiddenDim });
+        this.trainer = new NeuroclawTrainer(BYTE_VOCAB_SIZE, BYTE_CHAR_TO_ID, BYTE_ID_TO_CHAR, { hiddenDim: this.config.hiddenDim });
         this.quantizer = new BackgroundQuantizer({
             enabled: true, bits: 4, method: "mixed",
             calibrationSamples: 128, excludeLayers: []
         });
         // UnifiedBrain is the single module that *is* the model: value
-        // system, MoE, the nonlinear all-connected mesh, hyperdimensional
+        // system, net-skill routing, the nonlinear all-connected mesh, hyperdimensional
         // thinking, the (always-on) quantum net, and zip-loop binary I/O.
         // Everything below that used to construct its own separate
-        // ValueRangeAllocator/MoERouter/NeuronMesh/HyperDimensionalEngine now
+        // ValueRangeAllocator/NeuronMesh/HyperDimensionalEngine now
         // reads them from this one instance via the getters below, instead
         // of being a fourth disconnected copy of the same subsystems.
         this.brain = new UnifiedBrain({
@@ -138,16 +170,17 @@ export class NeuroclawLLM {
         this.thornsEngine = new ThornsEngine();
         this.rlmTrainer = new RLMTrainer({
             hiddenDim: this.config.hiddenDim, stateDim: this.config.hiddenDim,
-            actionDim: this.tokenizer.getVocabSize(), explorationRate: 0.1,
+            actionDim: BYTE_VOCAB_SIZE, explorationRate: 0.1,
             discountFactor: 0.99, replayBufferSize: 10000, batchSize: 32,
             thinkSteps: this.config.thinkSteps
         });
-        this.thornsEngine.connectCore(this.valueAllocator, this.mesh, this.hyperEngine, this.rlmTrainer, this.moeRouter);
+        this.thornsEngine.connectCore(this.valueAllocator, this.mesh, this.hyperEngine, this.rlmTrainer, this.skillRouter);
     }
     /** Zero-sum elastic value budget -- delegates to UnifiedBrain, the single source of truth. */
     get valueAllocator() { return this.brain.getVale(); }
     /** Mixture of Experts router -- delegates to UnifiedBrain. */
-    get moeRouter() { return this.brain.getMoE(); }
+    /** Net-skill routing: which skill regions of the one mesh run (replaces the MoE router). */
+    get skillRouter() { return this.brain.getSkillRouter(); }
     /** Nonlinear, all-connected neuron mesh -- delegates to UnifiedBrain. */
     get mesh() { return this.brain.getMesh(); }
     /** Hyperdimensional thinking engine -- delegates to UnifiedBrain. */
@@ -216,7 +249,7 @@ export class NeuroclawLLM {
         await this.build(code);
     }
     async trainOnText(text) {
-        await this.trainer.train(text);
+        await this.trainer.train(asByteText(text));
         this.trained = true;
     }
     /**
@@ -228,7 +261,7 @@ export class NeuroclawLLM {
      * and then asking about it actually work.
      */
     async learnText(text) {
-        await this.trainer.learnText(text);
+        await this.trainer.learnText(asByteText(text));
         this.trained = true;
     }
     /** Characters of accumulated teaching material behind the prose predictor. */
@@ -242,21 +275,23 @@ export class NeuroclawLLM {
         // longer get spliced into the visible response text (see below).
         const thornsOutput = await this.thornsEngine.think(prompt);
         if (thornsOutput.intent.confidence > 0.3) {
-            this.moeRouter.addExpert({
-                id: `thorns_${thornsOutput.intent.intent}_${this.generationCount}`,
+            // One region per intent, not one per generation: re-registering the
+            // same intent redescribes it instead of growing the router forever.
+            this.skillRouter.register({
+                id: `thorns_${thornsOutput.intent.intent}`,
                 name: `Thorns:${thornsOutput.intent.intent}`,
-                specialization: 'thorns-intent',
+                meaning: `thorns intent ${thornsOutput.intent.intent}`,
             });
         }
-        // Step 2: Embedding — resize to embeddingDim for correct MoE input
-        const lastChar = prompt[prompt.length - 1] ?? ' ';
-        const lastCharId = this.tokenizer.charToTokenId(lastChar);
-        const rawEmb = this.trainer.getEmbedding(lastCharId) ??
-            this.tokenizer.tokenToEmbedding(lastCharId, this.config.hiddenDim);
+        // Step 2: Embedding — resized to embeddingDim
+        const promptBytes = bytesOf(prompt);
+        const lastByteId = (promptBytes[promptBytes.length - 1] ?? 32) + BYTE_ID_OFFSET;
+        const rawEmb = this.trainer.getEmbedding(lastByteId) ??
+            byteEmbedding(lastByteId, this.config.hiddenDim);
         const embedding = new Float32Array(this.config.embeddingDim);
         for (let i = 0; i < this.config.embeddingDim; i++)
             embedding[i] = rawEmb[i] ?? 0;
-        // Steps 3-5: one real forward pass through UnifiedBrain -- MoE routing,
+        // Steps 3-5: one real forward pass through UnifiedBrain -- net-skill routing,
         // the nonlinear all-connected mesh, hyperdimensional processing, and
         // (if enabled) quantum interference -- replacing three separately
         // constructed, disconnected copies of the same subsystems.
@@ -296,7 +331,25 @@ export class NeuroclawLLM {
         // archive, not per character of meaning.
         const oneBrainPrompt = prompt.length > ONE_BRAIN_PROMPT_CHAR_CAP ? prompt.slice(0, ONE_BRAIN_PROMPT_CHAR_CAP) : prompt;
         const zip = new ZipLoopInterface(this.brain.getHyper(), ONE_BRAIN_NEURON_IDS);
-        const oneBrainRun = await runUntilStoppedAsync(zip, { files: { [`${ZIP_FOLDERS.prompt}prompt.txt`]: oneBrainPrompt } }, { quietTicks: 32, maxTicks: GENERATE_MAX_TICKS });
+        // The applicable prompting skills go in WITH the prompt, each in its
+        // own prompting-skills/<name>/ folder -- the same shape
+        // /api/zip-loop/run uses -- so the network receives the instruction
+        // alongside the question through the one doorway, rather than it
+        // being pasted into the prompt where it would be indistinguishable
+        // from what was actually asked.
+        const zipFiles = { [`${ZIP_FOLDERS.prompt}prompt.txt`]: oneBrainPrompt };
+        for (const skill of (options.promptingSkills ?? []).slice(0, ONE_BRAIN_PROMPTING_SKILLS_MAX)) {
+            const name = String(skill?.name ?? skill?.title ?? "").replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 60);
+            if (!name)
+                continue;
+            const text = `${skill.title ?? name}: ${skill.description ?? ""}`.slice(0, ONE_BRAIN_PROMPTING_SKILL_CHAR_CAP);
+            zipFiles[`${ZIP_FOLDERS.promptingSkills}${name}/SKILL.txt`] = text;
+        }
+        this.lastZipLoopFiles = Object.keys(zipFiles);
+        const oneBrainRun = await runUntilStoppedAsync(zip, { files: zipFiles }, { quietTicks: 32, maxTicks: GENERATE_MAX_TICKS });
+        // Kept so the tool-neuron layer can read a fired tool's arguments
+        // (plugins/<plugin>/<tool>.json) from what the network actually wrote.
+        this.lastZipLoopOutput = oneBrainRun.tree ?? null;
         const oneBrainOutput = Object.entries(oneBrainRun.tree?.files ?? {})
             .filter(([path]) => path.startsWith(ZIP_FOLDERS.output))
             .map(([, content]) => content)
@@ -394,18 +447,18 @@ export class NeuroclawLLM {
     async createSelfExtension(prompt, output) {
         const extId = `self_ext_${this.generationCount}`;
         const extProject = this.builder.createProject(`Memory: ${prompt.slice(0, 30)}`, "Self-authored extension storing learned patterns");
-        const inputTokens = this.tokenizer.encode(prompt.slice(0, 20));
-        const outputTokens = this.tokenizer.encode(output.slice(0, 20));
+        const inputTokens = bytesOf(prompt).slice(0, 20);
+        const outputTokens = bytesOf(output).slice(0, 20);
         const inputIds = [];
         const outputIds = [];
         for (let i = 0; i < Math.min(inputTokens.length, 10); i++) {
-            const n = this.builder.addNeuron(extProject.id, `mem_in_${inputTokens[i]}`, 0);
+            const n = this.builder.addNeuron(extProject.id, `mem_in_b${inputTokens[i]}`, 0);
             if (n) {
                 inputIds.push(n.id);
             }
         }
         for (let i = 0; i < Math.min(outputTokens.length, 10); i++) {
-            const n = this.builder.addNeuron(extProject.id, `mem_out_${outputTokens[i]}`, 1);
+            const n = this.builder.addNeuron(extProject.id, `mem_out_b${outputTokens[i]}`, 1);
             if (n) {
                 outputIds.push(n.id);
             }
@@ -423,7 +476,7 @@ export class NeuroclawLLM {
             await this.foldIntoOneBrain(parseSelfExtension(saved), [extId]);
         }
         // The extension is now folded into OneBrain (this.selfExtensions + disk),
-        // which is registered as a MoE expert -- the builder's own in-memory copy of the
+        // which is registered as a net-skill region -- the builder's own in-memory copy of the
         // project (neurons/connections/layers Maps) has no further purpose.
         // reloadSelfExtensions() reads only from disk/this.selfExtensions, never
         // from builder.projects, so this is inert to every other consumer.
@@ -468,7 +521,7 @@ export class NeuroclawLLM {
     /**
      * Fold learned (input token -> output token) edges into OneBrain and
      * persist it: exact + 4-bit copies in selfExtensionsDir/onebrain, the
-     * in-memory copy used by recall, one MoE expert, and a new version in
+     * in-memory copy used by recall, one net-skill region, and a new version in
      * the extension registry. The first fold on an install starts from the
      * repo-bundled OneBrain, so nothing it already holds is lost.
      */
@@ -485,7 +538,7 @@ export class NeuroclawLLM {
         this.selfExtensions.set(ONEBRAIN_ID, serialized);
         this.selfExtensionEdges.set(ONEBRAIN_ID, parseSelfExtension(model));
         if (isNewExpert) {
-            this.moeRouter.addExpert({ id: ONEBRAIN_ID, name: ONEBRAIN_NAME, specialization: "memory-recall" });
+            this.skillRouter.register({ id: ONEBRAIN_ID, name: ONEBRAIN_NAME, meaning: "memory recall of learned patterns" });
         }
         await this.registerOneBrainVersion(serialized, sourceIds);
         this.syncOneBrainToMesh();
@@ -515,10 +568,9 @@ export class NeuroclawLLM {
             // would duplicate the region.
             return { added: 0, updated: 0, skipped: "OneBrain is already on this mesh" };
         }
-        const special = new Set(Object.values(this.tokenizer.specialTokens ?? {}));
-        const nameOf = (side, token) => `OneBrain ${side} ${token}`;
-        const meaningOf = (side, token) => {
-            const ch = special.has(token) ? `token ${token}` : JSON.stringify(this.tokenizer.tokenIdToChar(token));
+        const nameOf = (side, byte) => `OneBrain ${side} b${byte}`;
+        const meaningOf = (side, byte) => {
+            const ch = JSON.stringify(byteLabel(byte));
             return side === "in" ? `memory input ${ch}` : `memory output ${ch}`;
         };
         // Neurons OneBrain has that the mesh does not yet.
@@ -544,6 +596,10 @@ export class NeuroclawLLM {
                 this.oneBrainMeshIds.set(name, id);
                 // Later grafts join the same region, so OneBrain stays ONE group.
                 engine.setNeuronGroup(id, ONEBRAIN_NAME);
+                // And the group net-skill routing selects it by: the router's
+                // region id. Without it, routing picking "onebrain" would gate
+                // on a group no neuron belongs to, and OneBrain would never run.
+                engine.setNeuronGroup(id, ONEBRAIN_ID);
             }
             added = graft.added;
             if (graft.skipped)
@@ -621,7 +677,7 @@ export class NeuroclawLLM {
         return merged.length;
     }
     /**
-     * Load self-extensions listed in `dir`/index.jsonl as MoE experts.
+     * Load self-extensions listed in `dir`/index.jsonl as net-skill regions.
      * A merged extension (meta.json with `sources`) supersedes the models it
      * was built from: those source ids are not loaded separately from the
      * same directory, so combining never double-counts an expert.
@@ -658,10 +714,10 @@ export class NeuroclawLLM {
                 const data = readFileSync(modelPath, "utf-8");
                 this.selfExtensionEdges.set(meta.id, parseSelfExtension(data));
                 this.selfExtensions.set(meta.id, data);
-                this.moeRouter.addExpert({
+                this.skillRouter.register({
                     id: meta.id,
                     name: `Memory: ${String(meta.prompt ?? meta.name ?? meta.id).slice(0, 20)}`,
-                    specialization: "memory-recall",
+                    meaning: "memory recall of learned patterns",
                 });
                 loaded++;
             }
@@ -704,10 +760,7 @@ export class NeuroclawLLM {
      * being read, not just registered.
      */
     recallFromSelfExtensions(prompt, topK = 5) {
-        const active = new Set([this.tokenizer.specialTokens?.bos ?? 1]);
-        for (const ch of String(prompt))
-            active.add(this.tokenizer.charToTokenId(ch));
-        const special = new Set(Object.values(this.tokenizer.specialTokens ?? {}));
+        const active = new Set(bytesOf(prompt));
         const scores = new Map();
         const byExtension = [];
         for (const [id, edges] of this.selfExtensionEdges) {
@@ -722,10 +775,9 @@ export class NeuroclawLLM {
                 byExtension.push({ id, activation });
         }
         const outputs = [...scores.entries()]
-            .filter(([token]) => !special.has(token))
             .sort((a, b) => b[1] - a[1])
             .slice(0, topK)
-            .map(([token, score]) => ({ token, char: this.tokenizer.tokenIdToChar(token), score }));
+            .map(([byte, score]) => ({ byte, char: byteLabel(byte), score }));
         byExtension.sort((a, b) => b.activation - a.activation);
         return { outputs, extensions: byExtension };
     }
@@ -746,7 +798,7 @@ export class NeuroclawLLM {
     getStats() {
         const project = this.builder.getProject(this.projectId);
         const valueDistribution = this.valueAllocator.getDistribution();
-        const moeStats = this.moeRouter.getUtilizationStats();
+        const skillUsage = this.skillRouter.getUsage();
         return {
             built: this.built, trained: this.trained,
             trainingLoss: this.trainer.getTrainingLoss(),
@@ -754,8 +806,8 @@ export class NeuroclawLLM {
             neuronCount: project?.neurons.size ?? 0,
             connectionCount: project?.connections.size ?? 0,
             layerCount: project?.layers.size ?? 0,
-            expertCount: this.moeRouter.getExpertCount(),
-            moeUtilization: moeStats,
+            expertCount: this.skillRouter.getRegionCount(),
+            skillUsage,
             valueDistribution: {
                 totalPoints: valueDistribution.totalPoints,
                 neuronCount: valueDistribution.neuronAllocations.length
@@ -775,8 +827,7 @@ export class NeuroclawLLM {
     }
     getBuilder() { return this.builder; }
     getExtensionManager() { return this.extensionManager; }
-    getTokenizer() { return this.tokenizer; }
     getTrainer() { return this.trainer; }
-    getMoERouter() { return this.moeRouter; }
+    getSkillRouter() { return this.skillRouter; }
     isBuilt() { return this.built; }
 }

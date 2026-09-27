@@ -254,7 +254,7 @@ describe('Neuroclaw Integration Tests', () => {
       expect(notifyIds!.some(id => browserIds!.includes(id))).toBe(false);
       // Genuinely present in the shared mesh's expert roster, not just a
       // local bookkeeping map -- same MixtureOfExperts a skill-expert uses.
-      expect(plugins.getMoE().getExpert('notify-test')?.neuronIds).toEqual(notifyIds);
+      expect(plugins.getSkillMesh().getSkill('notify-test')?.neuronIds).toEqual(notifyIds);
     });
 
     it('a skill-expert plugin gets a full multi-neuron expert group; an api-connection plugin gets one presence neuron', () => {
@@ -277,7 +277,7 @@ describe('Neuroclaw Integration Tests', () => {
       plugins.setIntentMap({ 'test-intent': ['notify-fire'] });
 
       const neuronIds = plugins.getPluginNeuronIds('notify-fire')!;
-      const mesh = plugins.getMoE().getMesh();
+      const mesh = plugins.getSkillMesh().getMesh();
       const propagateSpy = vi.spyOn(mesh, 'propagate');
 
       const result = await plugins.dispatch('list my notifications', 'test-intent');
