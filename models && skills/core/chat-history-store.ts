@@ -69,7 +69,12 @@ export class ChatHistoryStore {
 
   constructor(rootDir?: string, organizer?: ChatOrganizer) {
     this.rootDir = rootDir ?? join(homedir(), ".neuroclaw", "chat-history");
-    this.organizer = organizer ?? new ChatOrganizer();
+    // A store given its own directory keeps its own group index there. The
+    // organizer's index used to be one fixed file for every store, so a store
+    // in any other directory -- every test's temp dir included -- listed, and
+    // could never delete, groups belonging to threads it had never seen.
+    // The default store keeps the default index, so existing groups stay put.
+    this.organizer = organizer ?? new ChatOrganizer(rootDir ? join(rootDir, ".chat-groups-index") : undefined);
   }
 
   private assertSafeId(id: string): void {

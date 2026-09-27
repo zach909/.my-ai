@@ -19,7 +19,7 @@
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { dirname, join } from "node:path";
 import { randomUUID } from "node:crypto";
 import type { ChatThread } from "./chat-history-store.js";
 
@@ -107,7 +107,7 @@ export class ChatOrganizer {
   }
 
   private persist(index: OrganizerIndex): void {
-    const dir = join(homedir(), ".neuroclaw");
+    const dir = dirname(this.indexPath);
     if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
     writeFileSync(this.indexPath, JSON.stringify(index), "utf8");
   }
