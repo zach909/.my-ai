@@ -1,6 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { join, dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
+import { graftNetSkill } from "./core/net-skill-graft.js";
 import { ONEBRAIN_ID, ONEBRAIN_NAME, parseSelfExtension, emptyOneBrain, foldEdges, readOneBrain, writeOneBrain } from "./onebrain-memory.js";
 // Registry versions of OneBrain kept for rollback; older ones are removed so
 // folding every few replies cannot grow the registry without bound.
@@ -64,6 +65,9 @@ export class NeuroclawLLM {
     selfExtensions = new Map();
     /** Parsed (inputToken -> outputToken, weight) edges per loaded self-extension, for recall. */
     selfExtensionEdges = new Map();
+    /** OneBrain neuron name -> neuron id in the live mesh (hyperEngine), once grafted. */
+    oneBrainMeshIds = new Map();
+    oneBrainGraftCount = 0;
     selfExtensionsDir;
     bundledExtensionsDir;
     generationCount = 0;
@@ -204,6 +208,7 @@ export class NeuroclawLLM {
             this.reloadSelfExtensions(this.bundledExtensionsDir);
         }
         await this.registerLoadedSelfExtensions();
+        this.syncOneBrainToMesh();
     }
     /** Explicit foreground code-first build: the given code becomes the model's actual baseline, not background filler. */
     async buildFromCode(code) {
@@ -483,7 +488,76 @@ export class NeuroclawLLM {
             this.moeRouter.addExpert({ id: ONEBRAIN_ID, name: ONEBRAIN_NAME, specialization: "memory-recall" });
         }
         await this.registerOneBrainVersion(serialized, sourceIds);
+        this.syncOneBrainToMesh();
         return model;
+    }
+    /**
+     * Put OneBrain ON the mesh, not beside it: its neurons join the one live
+     * HyperDimensionalEngine as the "OneBrain" region via graftNetSkill (the
+     * same path net skills take), and every OneBrain weight becomes a real
+     * mesh connection. From then on OneBrain is computed by the same
+     * non-linear all-to-all, hyperdimensional, quantum-interference mesh the
+     * Zip Loop, tool neurons and continuous learning drive -- and learns
+     * with it.
+     *
+     * Called after every load and every fold: neurons already in the mesh
+     * get their weights refreshed in place, new tokens are grafted in and
+     * joined to the same region. Returns what changed.
+     */
+    syncOneBrainToMesh() {
+        const edges = this.selfExtensionEdges.get(ONEBRAIN_ID);
+        const engine = this.hyperEngine;
+        if (!edges || edges.length === 0 || !engine)
+            return { added: 0, updated: 0 };
+        if (this.oneBrainMeshIds.size === 0 && engine.neuronsInGroup(ONEBRAIN_NAME).length > 0) {
+            // A mesh that already carries OneBrain from elsewhere (restored
+            // state, another instance on the shared engine): grafting again
+            // would duplicate the region.
+            return { added: 0, updated: 0, skipped: "OneBrain is already on this mesh" };
+        }
+        const special = new Set(Object.values(this.tokenizer.specialTokens ?? {}));
+        const nameOf = (side, token) => `OneBrain ${side} ${token}`;
+        const meaningOf = (side, token) => {
+            const ch = special.has(token) ? `token ${token}` : JSON.stringify(this.tokenizer.tokenIdToChar(token));
+            return side === "in" ? `memory input ${ch}` : `memory output ${ch}`;
+        };
+        // Neurons OneBrain has that the mesh does not yet.
+        const missing = new Map();
+        for (const e of edges) {
+            for (const [side, token] of [["in", e.from], ["out", e.to]]) {
+                const name = nameOf(side, token);
+                if (!this.oneBrainMeshIds.has(name) && !missing.has(name))
+                    missing.set(name, { name, definition: meaningOf(side, token), connections: {} });
+            }
+        }
+        for (const e of edges) {
+            const from = missing.get(nameOf("in", e.from));
+            if (from && missing.has(nameOf("out", e.to)))
+                from.connections[nameOf("out", e.to)] = e.weight;
+        }
+        let added = 0;
+        if (missing.size > 0) {
+            const region = this.oneBrainGraftCount === 0 ? ONEBRAIN_NAME : `${ONEBRAIN_NAME}+${this.oneBrainGraftCount}`;
+            const graft = graftNetSkill(engine, region, [...missing.values()]);
+            this.oneBrainGraftCount++;
+            for (const [name, id] of Object.entries(graft.ids)) {
+                this.oneBrainMeshIds.set(name, id);
+                // Later grafts join the same region, so OneBrain stays ONE group.
+                engine.setNeuronGroup(id, ONEBRAIN_NAME);
+            }
+            added = graft.added;
+            if (graft.skipped)
+                console.error(`[NeuroClaw] OneBrain graft: ${graft.skipped}`);
+        }
+        // Every OneBrain weight as a mesh connection (input -> output).
+        let updated = 0;
+        for (const e of edges) {
+            const from = this.oneBrainMeshIds.get(nameOf("in", e.from));
+            const to = this.oneBrainMeshIds.get(nameOf("out", e.to));
+            if (from !== undefined && to !== undefined && engine.setConnection(to, from, e.weight))
+                updated++;
+        }
+        return { added, updated };
     }
     /**
      * Record the current OneBrain as a new version in the versioned,
