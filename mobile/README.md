@@ -1,17 +1,31 @@
 # NeuroClaw on your phone
 
-Two native apps that run NeuroClaw's **full network on the phone** and use the bigger one on your PC when they can reach it.
+Two native apps that run NeuroClaw's **full network on the phone, offline**, and **sync with your PC** whenever they can reach it.
 
 The network on the phone is not a port. It is the PC's own engine code, bundled into one file (`mobile/brain/bundle/neuroclaw-brain.js`, about 100 KB) that both apps run in a hidden web view. Android and iPhone therefore run exactly the same brain as the PC.
 
 | | Android (`android/`, Kotlin) | iPhone (`ios/`, SwiftUI) |
 |---|---|---|
 | Floating bubble over other apps | Yes (needs "Display over other apps") | No: iOS does not allow it, so open the app |
-| Chat with NeuroClaw on your PC | Yes | Yes |
-| Photo for training data | Only when you tap **Photo** | Only when you tap **Photo** |
-| Without the PC | The full network runs on the phone: the mesh with OneBrain grafted in, the Zip Loop with send neurons, net-skill routing, and yes/no. Messages and photos are also queued for the PC | Same |
+| Who answers | Always the phone's own network: the mesh with OneBrain grafted in, the Zip Loop with send neurons, net-skill routing, and yes/no. Works with no connection at all | Same |
+| Photo for training data | Only when you tap **Photo**; kept on the phone until it syncs | Same |
+| Sync with the PC | Automatic after each message or photo, plus **Sync now** | Same |
 
-## 1. Set up the PC
+## What sync does
+
+When the PC is reachable (after each message or photo, or when you tap **Sync now**):
+
+- **Phone → PC:**
+  - your conversations, which go into the PC's conversation log (its learning agent trains on them) and memory;
+  - your photos, which go to `~/.neuroclaw/captures/`;
+  - any yes/no examples taught on the phone.
+- **PC → phone:**
+  - the PC's OneBrain, if it's newer than the phone's (the phone rebuilds its network around it and keeps it for the next launch);
+  - the PC's yes/no knowledge, re-learned on the phone from the example texts because the phone's network is narrower.
+
+Nothing waits on sync. Without the PC, everything stays on the phone until the next time it can reach it. The server side is `POST /api/phone-sync`.
+
+## 1. Set up the PC (only for syncing)
 
 1. Run NeuroClaw as usual (`npm run dev`). The phone connects to the web app's port, **3000**.
 2. In NeuroClaw, set a **Remote Access password**. The phone uses it to sign in.
@@ -33,7 +47,7 @@ echo "sdk.dir=/path/to/Android/sdk" > local.properties   # or set ANDROID_HOME
 Then on the phone:
 
 1. Install the APK (allow "install unknown apps" for your file manager or browser).
-2. Open NeuroClaw, enter the PC address and password, and tap **Save**.
+2. Open NeuroClaw. It works right away with no setup. To sync, enter the PC address and password and tap **Save**.
 3. Tap **Allow over other apps**, turn it on for NeuroClaw, and come back.
 4. Tap **Start bubble**. The bubble floats over every app: tap it to talk, drag it to move it.
 5. To turn it off, use **Stop** in the notification or **Stop bubble** in the app. A notification is always shown while the bubble is on.

@@ -1,111 +1,119 @@
 package ai.neuroclaw.app
 
 import android.content.Context
+import org.json.JSONArray
 import org.json.JSONObject
 import java.io.File
 import java.io.IOException
+import java.text.DateFormat
+import java.util.Date
 
 /**
- * One place the app talks to NeuroClaw, on the PC or on the phone.
+ * Offline-first NeuroClaw.
  *
- * - PC reachable: the full brain answers (POST /api/chat), and anything
- *   queued while offline is sent first.
- * - PC not reachable: the phone's own copy of the network answers (the same
- *   engine, run on the phone -- see PhoneNetwork), and the message is also
- *   queued for the PC -- clearly marked as offline.
+ * The phone's own copy of the network (PhoneNetwork: the PC's engine, run on
+ * the phone) answers every message, with or without a connection. The PC is
+ * for syncing, whenever it is reachable:
  *
- * Captures work the same way: uploaded when the PC is reachable, kept on the
- * phone and uploaded later when it is not.
+ *   phone -> PC  conversations (the PC's learning agent trains on them),
+ *                photos (training data), yes/no examples taught on the phone;
+ *   PC -> phone  the PC's OneBrain when it is newer, and its yes/no knowledge.
  *
- * Blocking: call off the main thread.
+ * Sync runs in the background after each message or photo and from the Sync
+ * button; nothing waits on it.
  */
 class Brain(private val context: Context) {
     val settings = Settings(context)
     private val client = NeuroClient(settings)
-    /** The full network on the phone: answers whenever the PC cannot. */
     val phone = PhoneNetwork(context).also { it.start() }
-    private val history = ArrayList<Pair<String, String>>()
+    private val prefs = context.getSharedPreferences("neuroclaw-sync", Context.MODE_PRIVATE)
 
-    private val queueFile get() = File(context.filesDir, "pending-messages.jsonl")
+    private val turnsFile get() = File(context.filesDir, "unsynced-turns.jsonl")
     val capturesDir: File get() = File(context.filesDir, "captures").apply { mkdirs() }
     private val pendingCapturesDir: File get() = File(context.filesDir, "captures/pending").apply { mkdirs() }
+    private val syncLock = Any()
 
-    data class Reply(val text: String, val offline: Boolean)
+    data class Reply(val text: String, val ms: Long)
 
+    /** Answer on the phone, then sync in the background. */
     fun send(message: String): Reply {
-        return try {
-            flushPending()
-            val reply = client.chat(message, history)
-            history.add("user" to message)
-            history.add("ai" to reply)
-            Reply(reply, offline = false)
-        } catch (e: NeuroClient.ServerError) {
-            // The PC answered but refused (e.g. wrong password): not an offline case.
-            Reply("PC error: ${e.message}", offline = false)
-        } catch (e: IOException) {
-            // The PC is not reachable: the phone's own network answers, and
-            // the message is also queued so the PC sees it later.
-            queueMessage(message)
-            val answer = runCatching { phone.chat(message) }
-            answer.fold(
-                onSuccess = { a ->
-                    val memory = if (a.recalled.isEmpty()) "" else "\n(OneBrain recalls: ${a.recalled.joinToString(" ")})"
-                    Reply("${a.reply}$memory\n[phone network, ${a.ms} ms; also queued for your PC]", offline = true)
-                },
-                onFailure = { err -> Reply("Offline, and the phone's network failed: ${err.message}. Your message is queued for your PC.", offline = true) },
-            )
-        }
+        val answer = runCatching { phone.chat(message) }
+        val reply = answer.fold(
+            onSuccess = { a ->
+                val memory = if (a.recalled.isEmpty()) "" else "\n(OneBrain recalls: ${a.recalled.joinToString(" ")})"
+                Reply("${a.reply}$memory", a.ms)
+            },
+            onFailure = { err -> Reply("The phone's network failed: ${err.message}", 0) },
+        )
+        turnsFile.appendText(
+            JSONObject().put("message", message).put("reply", reply.text).put("at", System.currentTimeMillis()).toString() + "\n",
+        )
+        syncInBackground()
+        return reply
     }
 
-    /** A capture was taken: upload it now, or keep it to upload later. Returns true if it reached the PC. */
-    fun capture(photo: File, note: String): Boolean {
+    /** Keep a tapped photo for the PC and sync. */
+    fun capture(photo: File, note: String) {
         val takenAt = System.currentTimeMillis()
-        return try {
-            client.uploadCapture(photo.readBytes(), note, takenAt)
-            photo.delete()
-            flushPending()
-            true
-        } catch (e: IOException) {
-            val kept = File(pendingCapturesDir, "$takenAt.jpg")
-            photo.renameTo(kept)
-            File(pendingCapturesDir, "$takenAt.json").writeText(JSONObject().put("note", note).put("capturedAt", takenAt).toString())
-            false
-        }
+        photo.renameTo(File(pendingCapturesDir, "$takenAt.jpg"))
+        File(pendingCapturesDir, "$takenAt.json").writeText(JSONObject().put("note", note).put("capturedAt", takenAt).toString())
+        syncInBackground()
     }
 
-    fun pendingCount(): Pair<Int, Int> {
-        val messages = if (queueFile.exists()) queueFile.readLines().count { it.isNotBlank() } else 0
-        val captures = pendingCapturesDir.listFiles { f -> f.name.endsWith(".jpg") }?.size ?: 0
-        return messages to captures
+    fun syncInBackground() {
+        if (!settings.configured) return
+        Thread { runCatching { sync() } }.start()
     }
 
-    private fun queueMessage(message: String) {
-        queueFile.appendText(JSONObject().put("message", message).put("at", System.currentTimeMillis()).toString() + "\n")
-    }
+    /** One sync with the PC. Returns what happened, in words. */
+    fun sync(): String = synchronized(syncLock) {
+        if (!settings.configured) return "No PC address set: everything stays on the phone."
+        try {
+            val lines = if (turnsFile.exists()) turnsFile.readLines().filter { it.isNotBlank() } else emptyList()
+            val turns = JSONArray().apply { lines.forEach { runCatching { put(JSONObject(it)) } } }
+            val out = phone.syncOut(clear = false)
+            val response = client.sync(turns, out.optJSONArray("teach") ?: JSONArray(), out.optLong("oneBrainVersion"))
 
-    /** Send everything queued while offline. Stops at the first failure and keeps the rest. */
-    fun flushPending() {
-        if (queueFile.exists()) {
-            val remaining = queueFile.readLines().filter { it.isNotBlank() }.toMutableList()
-            while (remaining.isNotEmpty()) {
-                val msg = runCatching { JSONObject(remaining[0]).getString("message") }.getOrNull()
-                if (msg != null) {
-                    // Throws if the PC drops mid-flush; what is left stays queued.
-                    val reply = client.chat("(sent while offline) $msg", history)
-                    history.add("user" to msg)
-                    history.add("ai" to reply)
-                }
-                remaining.removeAt(0)
-                if (remaining.isEmpty()) queueFile.delete() else queueFile.writeText(remaining.joinToString("\n", postfix = "\n"))
+            // The PC has them now.
+            if (lines.isNotEmpty()) {
+                val now = if (turnsFile.exists()) turnsFile.readLines().filter { it.isNotBlank() } else emptyList()
+                val added = now.drop(lines.size)
+                if (added.isEmpty()) turnsFile.delete() else turnsFile.writeText(added.joinToString("\n", postfix = "\n"))
             }
+            phone.syncOut(clear = true)
+
+            val oneBrain = response.optJSONObject("oneBrain")
+            val newModel = oneBrain?.optString("model")?.takeIf { it.isNotEmpty() }
+            if (newModel != null) phone.saveOneBrain(newModel)
+            phone.syncIn(newModel, response.optJSONObject("yesNo")?.toString())
+
+            var photos = 0
+            val files = pendingCapturesDir.listFiles { f -> f.name.endsWith(".jpg") }?.sortedBy { it.name } ?: emptyList()
+            for (photo in files) {
+                val meta = File(photo.path.removeSuffix(".jpg") + ".json")
+                val info = runCatching { JSONObject(meta.readText()) }.getOrNull()
+                client.uploadCapture(photo.readBytes(), info?.optString("note") ?: "", info?.optLong("capturedAt") ?: photo.lastModified())
+                photo.delete(); meta.delete()
+                photos++
+            }
+            prefs.edit().putLong("lastSync", System.currentTimeMillis()).apply()
+            buildString {
+                append("Synced: ${lines.size} conversation turn(s), $photos photo(s) sent")
+                if (newModel != null) append("; got the PC's newer OneBrain")
+                append(".")
+            }
+        } catch (e: NeuroClient.ServerError) {
+            "PC refused the sync: ${e.message}"
+        } catch (e: IOException) {
+            "PC not reachable; everything stays on the phone until it is."
         }
-        val photos = pendingCapturesDir.listFiles { f -> f.name.endsWith(".jpg") }?.sortedBy { it.name } ?: emptyList()
-        for (photo in photos) {
-            val meta = File(photo.path.removeSuffix(".jpg") + ".json")
-            val info = runCatching { JSONObject(meta.readText()) }.getOrNull()
-            client.uploadCapture(photo.readBytes(), info?.optString("note") ?: "", info?.optLong("capturedAt") ?: photo.lastModified())
-            photo.delete()
-            meta.delete()
-        }
+    }
+
+    fun status(): String {
+        val turns = if (turnsFile.exists()) turnsFile.readLines().count { it.isNotBlank() } else 0
+        val photos = pendingCapturesDir.listFiles { f -> f.name.endsWith(".jpg") }?.size ?: 0
+        val last = prefs.getLong("lastSync", 0L)
+        val when_ = if (last == 0L) "never" else DateFormat.getDateTimeInstance(DateFormat.SHORT, DateFormat.SHORT).format(Date(last))
+        return "Last synced with PC: $when_. Waiting to sync: $turns turn(s), $photos photo(s)."
     }
 }

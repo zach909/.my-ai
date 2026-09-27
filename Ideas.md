@@ -29,3 +29,6 @@ Status: ✅ done · 🔨 in progress · ⏳ to do
   - the Zip Loop with send neurons, net-skill routing, and yes/no.
 
   Without the PC, the phone's own network answers; what it learns is saved between launches. One message takes about 4 to 5 s on a desktop CPU, more on a phone.
+- ✅ **Offline on the phone, syncs with the PC.** The phone's own network always answers, even with no connection. Sync (automatic, plus **Sync now**) works both ways, over `POST /api/phone-sync`:
+  - phone → PC: conversations (into the PC's learning log), photos, and yes/no examples;
+  - PC → phone: the PC's newer OneBrain and its yes/no knowledge.

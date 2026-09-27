@@ -1,26 +1,29 @@
 import Foundation
 
-/// Messages and photos waiting for the PC, kept in the app's own files.
+/// Conversation turns and photos waiting to sync to the PC, kept in the app's own files.
 final class OfflineQueue {
     struct Photo { let file: URL; let jpeg: Data; let note: String; let capturedAt: Int }
+    struct Turn: Codable { let message: String; let reply: String; let at: Int }
 
     private let dir: URL = {
         let d = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("pending")
         try? FileManager.default.createDirectory(at: d, withIntermediateDirectories: true)
         return d
     }()
-    private var messagesFile: URL { dir.appendingPathComponent("messages.json") }
+    private var turnsFile: URL { dir.appendingPathComponent("turns.json") }
 
-    private func messages() -> [String] {
-        (try? JSONDecoder().decode([String].self, from: Data(contentsOf: messagesFile))) ?? []
+    func turns() -> [Turn] {
+        (try? JSONDecoder().decode([Turn].self, from: Data(contentsOf: turnsFile))) ?? []
     }
-    private func save(_ list: [String]) {
-        try? JSONEncoder().encode(list).write(to: messagesFile)
+    private func save(_ list: [Turn]) {
+        try? JSONEncoder().encode(list).write(to: turnsFile)
     }
 
-    func add(message: String) { save(messages() + [message]) }
-    func nextMessage() -> String? { messages().first }
-    func dropMessage() { save(Array(messages().dropFirst())) }
+    func add(turn message: String, reply: String) {
+        save(turns() + [Turn(message: message, reply: reply, at: Int(Date().timeIntervalSince1970 * 1000))])
+    }
+    /// The first `count` turns reached the PC.
+    func dropTurns(_ count: Int) { save(Array(turns().dropFirst(count))) }
 
     func add(photo: Data, note: String, capturedAt: Int) {
         let base = dir.appendingPathComponent("\(capturedAt)")
@@ -38,8 +41,8 @@ final class OfflineQueue {
         try? FileManager.default.removeItem(at: photo.file)
         try? FileManager.default.removeItem(at: photo.file.deletingPathExtension().appendingPathExtension("json"))
     }
-    func counts() -> (messages: Int, photos: Int) {
+    func counts() -> (turns: Int, photos: Int) {
         let files = (try? FileManager.default.contentsOfDirectory(at: dir, includingPropertiesForKeys: nil)) ?? []
-        return (messages().count, files.filter { $0.pathExtension == "jpg" }.count)
+        return (turns().count, files.filter { $0.pathExtension == "jpg" }.count)
     }
 }

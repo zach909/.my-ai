@@ -8,8 +8,8 @@ import java.net.HttpURLConnection
 import java.net.URL
 
 /**
- * NeuroClaw on your PC, over its own HTTP API: POST /api/chat for a reply,
- * POST /api/captures for a photo. Authenticates with HTTP Basic using the
+ * NeuroClaw on your PC, for syncing: POST /api/phone-sync to exchange what
+ * each side learned, POST /api/captures for a photo. Authenticates with HTTP Basic using the
  * Remote Access password, which the server accepts for API calls.
  *
  * Blocking: call it off the main thread.
@@ -18,16 +18,12 @@ class NeuroClient(private val settings: Settings) {
 
     class ServerError(val status: Int, message: String) : IOException(message)
 
-    /** One chat turn. `history` is earlier turns as (role, content), oldest first. */
-    fun chat(message: String, history: List<Pair<String, String>>): String {
-        val body = JSONObject()
-            .put("message", message)
-            .put("history", JSONArray().apply {
-                history.takeLast(12).forEach { (role, content) -> put(JSONObject().put("role", role).put("content", content)) }
-            })
-        val reply = post("/api/chat", body)
-        return reply.optString("response", "")
-    }
+    /**
+     * Catch up with the PC: send the conversations and yes/no examples from
+     * the phone, get back the PC's OneBrain (if newer) and yes/no knowledge.
+     */
+    fun sync(turns: JSONArray, teach: JSONArray, oneBrainVersion: Long): JSONObject =
+        post("/api/phone-sync", JSONObject().put("turns", turns).put("teach", teach).put("oneBrainVersion", oneBrainVersion))
 
     /** Upload one tapped capture as training data (stored on the PC under ~/.neuroclaw/captures). */
     fun uploadCapture(jpeg: ByteArray, note: String, capturedAt: Long) {

@@ -59,13 +59,13 @@ interface QuestionRegion {
   countYes: number;
   countNo: number;
   /** Recent examples (capped), kept to calibrate how scores turn into probabilities. */
-  samples: Array<{ v: number[]; yes: boolean }>;
+  samples: Array<{ v: number[]; yes: boolean; text?: string }>;
 }
 
 /** Saved form: the neurons are rebuilt on load, so only what was taught is kept. */
 export interface YesNoState {
   version: 2;
-  questions: Array<{ question: string; sumYes: number[]; sumNo: number[]; countYes: number; countNo: number; samples?: Array<{ v: number[]; yes: boolean }> }>;
+  questions: Array<{ question: string; sumYes: number[]; sumNo: number[]; countYes: number; countNo: number; samples?: Array<{ v: number[]; yes: boolean; text?: string }> }>;
 }
 
 /** Examples kept per question for calibration. The running sums keep everything. */
@@ -150,7 +150,9 @@ export class YesNoDoorway {
     const sum = answer ? r.sumYes : r.sumNo;
     for (let d = 0; d < v.length; d++) sum[d] += v[d];
     if (answer) r.countYes++; else r.countNo++;
-    r.samples.push({ v, yes: answer });
+    // The text too, so what was taught can move to a network of another width
+    // (the phone's is narrower than the PC's) and be re-learned there.
+    r.samples.push({ v, yes: answer, text: text.slice(0, 2000) });
     if (r.samples.length > MAX_SAMPLES) r.samples.shift();
     this.retune(r);
     return { examples: { yes: r.countYes, no: r.countNo } };
@@ -220,6 +222,13 @@ export class YesNoDoorway {
     };
   }
 
+  /** Drop what a question was taught (its region stays in the mesh, emptied). */
+  private forget(question: string): void {
+    const r = this.regions.get(normalizeQuestion(question));
+    if (!r) return;
+    r.sumYes.fill(0); r.sumNo.fill(0); r.countYes = 0; r.countNo = 0; r.samples = [];
+  }
+
   /** Every question this doorway knows and how many examples each side has. */
   questions(): Array<{ question: string; examples: { yes: number; no: number } }> {
     return Array.from(this.regions.values()).map((r) => ({ question: r.question, examples: { yes: r.countYes, no: r.countNo } }));
@@ -239,7 +248,15 @@ export class YesNoDoorway {
     if (!state || state.version !== 2 || !Array.isArray(state.questions)) return;
     const dims = this.engine.getDimensions();
     for (const q of state.questions) {
-      if (!Array.isArray(q.sumYes) || q.sumYes.length !== dims) continue;
+      if (!Array.isArray(q.sumYes) || q.sumYes.length !== dims) {
+        // Taught on a network of another width: its vectors do not fit here,
+        // so re-learn the question from the example texts it kept.
+        const texts = (q.samples ?? []).filter((x) => typeof x?.text === "string");
+        if (texts.length === 0) continue;
+        this.forget(q.question);
+        for (const x of texts) this.teach(q.question, x.text!, x.yes);
+        continue;
+      }
       const r = this.region(q.question);
       r.sumYes = q.sumYes.slice();
       r.sumNo = q.sumNo.slice();

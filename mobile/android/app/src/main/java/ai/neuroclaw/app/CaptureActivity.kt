@@ -9,8 +9,8 @@ import androidx.core.content.FileProvider
 import java.io.File
 
 /**
- * Tap-to-capture: opens the system camera for exactly one photo, sends it to
- * the PC as training data (or keeps it to send later), and closes. Nothing is
+ * Tap-to-capture: opens the system camera for exactly one photo, keeps it on
+ * the phone for the PC (it goes over on the next sync), and closes. Nothing is
  * captured unless you tap -- no background recording.
  */
 class CaptureActivity : Activity() {
@@ -44,8 +44,8 @@ class CaptureActivity : Activity() {
         }
         val note = intent.getStringExtra(EXTRA_NOTE) ?: ""
         val app = applicationContext
-        Shared.background({ Shared.brain(app).capture(photo, note) }) { sent ->
-            Toast.makeText(app, if (sent) "Photo sent to your PC" else "Saved on the phone; will send when your PC is reachable", Toast.LENGTH_SHORT).show()
+        Shared.background({ Shared.brain(app).capture(photo, note) }) {
+            Toast.makeText(app, "Photo saved; it goes to your PC on the next sync", Toast.LENGTH_SHORT).show()
         }
         finish()
     }
