@@ -24,7 +24,8 @@ Status: ✅ done · 🔨 in progress · ⏳ to do
   - **Android** (`mobile/android`, native Kotlin; the APK builds): a floating bubble over other apps (tap to talk, drag to move) and a full-screen chat. It talks to NeuroClaw on your PC over your Wi-Fi, and a photo is captured only when you tap **Photo**, sent to the PC as training data (`~/.neuroclaw/captures/`).
   - **Offline:** OneBrain on the phone answers from memory, and messages and photos are queued and sent when the PC is back.
   - **iPhone** (`mobile/ios`, SwiftUI): the same minus the bubble, which iOS does not allow. It needs a Mac to build, and it has not been compiled yet.
+- ✅ **Full network on the phone, cross-platform.** The PC's own engine is bundled into one ~100 KB file (`npm run build:phone-brain`) that Android and iPhone both run in a hidden web view. It includes:
+  - the mesh with the full equation and OneBrain grafted in (86 neurons);
+  - the Zip Loop with send neurons, net-skill routing, and yes/no.
 
-## To do
-
-- ⏳ **Full network on the phone.** Offline mode currently runs only OneBrain's memory recall. Running the whole mesh on the phone means porting the engine to Kotlin/Swift.
+  Without the PC, the phone's own network answers; what it learns is saved between launches. One message takes about 4 to 5 s on a desktop CPU, more on a phone.

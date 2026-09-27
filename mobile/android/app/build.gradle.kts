@@ -33,8 +33,11 @@ android {
 }
 
 val copyOneBrain by tasks.registering(Copy::class) {
-    from(rootProject.file("../../models && skills/onebrain/model.json"))
-    into(layout.buildDirectory.dir("generated/onebrain-assets/onebrain"))
+    from(rootProject.file("../../models && skills/onebrain/model.json")) { into("onebrain") }
+    // The full network for the phone: the PC's engine bundled by
+    // mobile/brain (npm run build:phone-brain), run in a hidden WebView.
+    from(rootProject.file("../brain/bundle/neuroclaw-brain.js"))
+    into(layout.buildDirectory.dir("generated/onebrain-assets"))
 }
 tasks.named("preBuild") { dependsOn(copyOneBrain) }
 

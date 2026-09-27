@@ -10,6 +10,7 @@
     "server": "node scripts/server.mjs",
     "launch": "node scripts/launcher.mjs",
     "build": "vite build && node scripts/finalize-static-build.mjs",
+    "build:phone-brain": "vite build -c mobile/brain/vite.config.ts",
     "preview": "vite preview",
     "lint:css": "stylelint \"src/**/*.css\" --fix --quiet",
     "lint:js": "eslint src --ext ts,tsx --report-unused-disable-directives",

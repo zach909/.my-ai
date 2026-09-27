@@ -15,6 +15,9 @@ targets:
       # OneBrain ships in the app for offline answers: the same model the PC loads.
       - path: "../../models && skills/onebrain/model.json"
         buildPhase: resources
+      # The full network: the PC's engine bundled for phones (npm run build:phone-brain).
+      - path: "../brain/bundle/neuroclaw-brain.js"
+        buildPhase: resources
     info:
       path: NeuroClaw/Info.plist
       properties:

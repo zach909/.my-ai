@@ -2,7 +2,8 @@ import Foundation
 import UIKit
 
 /// The PC when reachable (POST /api/chat, /api/captures, HTTP Basic with the
-/// Remote Access password); OneBrain on the phone plus a queue otherwise.
+/// Remote Access password); otherwise the full network on the phone
+/// (PhoneNetwork) answers and the message is queued for the PC.
 @MainActor
 final class Brain: ObservableObject {
     struct Line: Identifiable { let id = UUID(); let who: String; let text: String }
@@ -17,7 +18,8 @@ final class Brain: ObservableObject {
     }
 
     private var history: [(String, String)] = []
-    private let oneBrain = OneBrainRecall()
+    /// The full network on the phone: answers whenever the PC cannot.
+    let phone = PhoneNetwork()
     private let queue = OfflineQueue()
 
     var pending: (messages: Int, photos: Int) { queue.counts() }
@@ -33,10 +35,16 @@ final class Brain: ObservableObject {
         } catch let error as ServerError {
             lines.append(Line(who: "NeuroClaw", text: "PC error: \(error.message)"))
         } catch {
+            // PC not reachable: the phone's own network answers, and the
+            // message is also queued so the PC sees it later.
             queue.add(message: text)
-            let recalled = oneBrain.recall(text)
-            lines.append(Line(who: "NeuroClaw (offline)", text:
-                "PC not reachable: your message is queued and will be sent when it is.\nOneBrain on the phone recalls: \(recalled.isEmpty ? "nothing" : recalled.joined(separator: " "))"))
+            do {
+                let a = try await phone.chat(text)
+                let memory = a.recalled.isEmpty ? "" : "\n(OneBrain recalls: \(a.recalled.joined(separator: " ")))"
+                lines.append(Line(who: "NeuroClaw (phone)", text: "\(a.reply)\(memory)\n[phone network, \(a.ms) ms; also queued for your PC]"))
+            } catch {
+                lines.append(Line(who: "NeuroClaw (offline)", text: "The phone's network failed: \(error.localizedDescription). Your message is queued for your PC."))
+            }
         }
     }
 

@@ -116,6 +116,8 @@ class OverlayService : Service() {
     }
 
     override fun onDestroy() {
+        val brain = Shared.brain(this)
+        Shared.io.execute { brain.phone.save() }
         if (panelShown) panel?.let { windows.removeView(it) }
         bubble?.let { windows.removeView(it) }
         panel = null; bubble = null

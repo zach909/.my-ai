@@ -84,6 +84,13 @@ class MainActivity : Activity() {
         refreshStatus()
     }
 
+    override fun onPause() {
+        super.onPause()
+        // Keep what the phone's network learned for the next launch.
+        val brain = Shared.brain(this)
+        Shared.io.execute { brain.phone.save() }
+    }
+
     override fun onResume() {
         super.onResume()
         refreshStatus()

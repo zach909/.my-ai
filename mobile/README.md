@@ -1,13 +1,15 @@
 # NeuroClaw on your phone
 
-Two native apps that talk to NeuroClaw running on your PC. When the PC can't be reached, they fall back to OneBrain on the phone.
+Two native apps that run NeuroClaw's **full network on the phone** and use the bigger one on your PC when they can reach it.
+
+The network on the phone is not a port. It is the PC's own engine code, bundled into one file (`mobile/brain/bundle/neuroclaw-brain.js`, about 100 KB) that both apps run in a hidden web view. Android and iPhone therefore run exactly the same brain as the PC.
 
 | | Android (`android/`, Kotlin) | iPhone (`ios/`, SwiftUI) |
 |---|---|---|
 | Floating bubble over other apps | Yes (needs "Display over other apps") | No: iOS does not allow it, so open the app |
 | Chat with NeuroClaw on your PC | Yes | Yes |
 | Photo for training data | Only when you tap **Photo** | Only when you tap **Photo** |
-| Offline | OneBrain recall on the phone; messages and photos are queued and sent when the PC is reachable | Same |
+| Without the PC | The full network runs on the phone: the mesh with OneBrain grafted in, the Zip Loop with send neurons, net-skill routing, and yes/no. Messages and photos are also queued for the PC | Same |
 
 ## 1. Set up the PC
 
@@ -49,7 +51,22 @@ open NeuroClaw.xcodeproj
 
 Pick your Apple ID team under **Signing & Capabilities**, then run it on your phone. Tap **PC** to enter the address and password.
 
+## The network on the phone
+
+`mobile/brain/src/index.ts` builds the phone's network from the engine in `models && skills/core`: the full equation (network weight and bias, waves, connection biases) on a 32-neuron, 32-dimension mesh. OneBrain's 54 neurons are grafted in, for 86 in total. What it learns is saved when the app goes to the background and restored on the next launch.
+
+After changing the engine, rebuild the bundle before building the apps:
+
+```sh
+npm run build:phone-brain     # -> mobile/brain/bundle/neuroclaw-brain.js
+```
+
+`test/core/phone-brain.test.ts` runs the bundle in a bare JavaScript context, with no Node and no browser features, the way a phone might.
+
 ## Limits
 
-- **Offline answers are memory, not the full brain.** The phone runs OneBrain's recall (tens of neurons, bundled from `models && skills/onebrain/model.json`). The full network only runs on the PC; running it on the phone would mean porting the engine.
+- **Speed.** One message takes about 4 to 5 s on a desktop CPU in a browser, so expect roughly 10 to 20 s on a phone. Most of that is the Zip Loop streaming the prompt in bit by bit.
+- **Size.** The phone's mesh is smaller than the PC's (86 neurons against the PC's 64-neuron base plus everything grafted into it), and a reply the phone's network writes is limited to a few bytes per message. The PC gives more room.
+- **Not trained yet.** Until the network is trained to write replies, the phone answers "one brain has nothing trained to say here yet." plus what OneBrain recalls, the same as the PC does.
+- **Saved state is about 4 MB.** It is saved when the app goes to the background, not after every message.
 - **The camera captures only when you tap.** There is no background recording. If you point it at people, they are in your training data, so ask them first.

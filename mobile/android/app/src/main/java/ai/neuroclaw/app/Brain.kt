@@ -10,8 +10,9 @@ import java.io.IOException
  *
  * - PC reachable: the full brain answers (POST /api/chat), and anything
  *   queued while offline is sent first.
- * - PC not reachable: the message is queued for the PC, and OneBrain on the
- *   phone answers from memory in the meantime -- clearly marked as offline.
+ * - PC not reachable: the phone's own copy of the network answers (the same
+ *   engine, run on the phone -- see PhoneNetwork), and the message is also
+ *   queued for the PC -- clearly marked as offline.
  *
  * Captures work the same way: uploaded when the PC is reachable, kept on the
  * phone and uploaded later when it is not.
@@ -21,7 +22,8 @@ import java.io.IOException
 class Brain(private val context: Context) {
     val settings = Settings(context)
     private val client = NeuroClient(settings)
-    private val oneBrain by lazy { OneBrainRecall(context) }
+    /** The full network on the phone: answers whenever the PC cannot. */
+    val phone = PhoneNetwork(context).also { it.start() }
     private val history = ArrayList<Pair<String, String>>()
 
     private val queueFile get() = File(context.filesDir, "pending-messages.jsonl")
@@ -41,13 +43,16 @@ class Brain(private val context: Context) {
             // The PC answered but refused (e.g. wrong password): not an offline case.
             Reply("PC error: ${e.message}", offline = false)
         } catch (e: IOException) {
+            // The PC is not reachable: the phone's own network answers, and
+            // the message is also queued so the PC sees it later.
             queueMessage(message)
-            val recalled = oneBrain.recall(message)
-            val memory = if (recalled.isEmpty()) "nothing" else recalled.joinToString(" ")
-            Reply(
-                "Offline (PC not reachable): your message is queued and will be sent when it is.\n" +
-                    "OneBrain on the phone recalls: $memory",
-                offline = true,
+            val answer = runCatching { phone.chat(message) }
+            answer.fold(
+                onSuccess = { a ->
+                    val memory = if (a.recalled.isEmpty()) "" else "\n(OneBrain recalls: ${a.recalled.joinToString(" ")})"
+                    Reply("${a.reply}$memory\n[phone network, ${a.ms} ms; also queued for your PC]", offline = true)
+                },
+                onFailure = { err -> Reply("Offline, and the phone's network failed: ${err.message}. Your message is queued for your PC.", offline = true) },
             )
         }
     }
