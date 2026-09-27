@@ -74,6 +74,8 @@ export class NeuroclawLLM {
     oneBrainGraftCount = 0;
     /** Paths of the files the last generate() streamed through the Zip Loop, for introspection. */
     lastZipLoopFiles = [];
+    /** The Zip Loop's output archive from the last generate(), or null. */
+    lastZipLoopOutput = null;
     selfExtensionsDir;
     bundledExtensionsDir;
     generationCount = 0;
@@ -321,6 +323,9 @@ export class NeuroclawLLM {
         }
         this.lastZipLoopFiles = Object.keys(zipFiles);
         const oneBrainRun = await runUntilStoppedAsync(zip, { files: zipFiles }, { quietTicks: 32, maxTicks: GENERATE_MAX_TICKS });
+        // Kept so the tool-neuron layer can read a fired tool's arguments
+        // (plugins/<plugin>/<tool>.json) from what the network actually wrote.
+        this.lastZipLoopOutput = oneBrainRun.tree ?? null;
         const oneBrainOutput = Object.entries(oneBrainRun.tree?.files ?? {})
             .filter(([path]) => path.startsWith(ZIP_FOLDERS.output))
             .map(([, content]) => content)

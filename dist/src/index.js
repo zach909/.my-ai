@@ -971,6 +971,23 @@ export class NeuroclawSystem {
         //    isolated event (continuous context, Section 7).
         try {
             let result = await this.runner.generate(input, priorHistory.map(h => h.item.content), turnSkills);
+            // Tools by neuron. While the mesh thought about this message, any
+            // tool neuron that crossed its firing line latched; step() calls those
+            // tools now -- access-checked, with arguments from the Zip Loop's own
+            // output (plugins/<plugin>/<tool>.json), and the result fed back into
+            // the mesh on that plugin's result neurons. Firing a neuron is the
+            // call; nothing has to be spelled out letter by letter.
+            if (this.toolNeurons) {
+                try {
+                    const calls = await this.toolNeurons.step(this.llm.lastZipLoopOutput ?? null);
+                    if (calls.length > 0) {
+                        details.toolCalls = calls.map(c => ({ plugin: c.plugin, tool: c.tool, ok: c.ok, ...(c.error ? { error: c.error } : {}) }));
+                    }
+                }
+                catch (e) {
+                    console.warn("Tool neurons step failed:", e);
+                }
+            }
             // EmpathyEngine.adjustDecision() was built and tested but never called:
             // when alignment supports genuine autonomous judgement, adapt tone to
             // the user's actual emotional state (supportive/enthusiastic/direct);

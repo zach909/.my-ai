@@ -108,6 +108,8 @@ export declare class NeuroclawLLM {
     oneBrainMeshIds: Map<string, number>;
     /** Paths of the files the last generate() streamed through the Zip Loop. */
     lastZipLoopFiles: string[];
+    /** The Zip Loop's output archive from the last generate(), or null. */
+    lastZipLoopOutput: import("./core/zip-halt.js").ZipTree | null;
     recallFromSelfExtensions(prompt: string, topK?: number): {
         outputs: { token: number; char: string; score: number }[];
         extensions: { id: string; activation: number }[];
