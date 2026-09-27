@@ -172,6 +172,57 @@ function connectionsOf(neuron: SkillNeuron): Array<[string, number]> {
 }
 
 /**
+ * Set one grafted neuron up for what it means: its state, the direction it
+ * answers to, its wave, and the region it belongs to. Shared by the first
+ * graft and by updateNetSkill(), so a neuron edited live is placed exactly
+ * the way a freshly grafted one is.
+ */
+function placeNeuron(engine: HyperDimensionalEngine, id: number, neuron: SkillNeuron & { name: string }, skillName: string): void {
+  const dims = engine.getDimensions();
+  const definition = (neuron.definition ?? "").trim();
+  const meaning = definition || neuron.name;
+  if (definition) {
+    // Where its meaning points. A neuron that began at random would be a
+    // neuron the skill contributed nothing to.
+    engine.setNeuronState(id, embedText(definition, dims));
+  }
+  // And what makes it ANSWER to that meaning rather than merely start
+  // there. A state is recomputed from its inputs on every tick, so seeding
+  // it places a neuron for exactly one iteration and then the Zip Loop
+  // overwrites it -- measured, [0.9,-0.9,...] reads [0.01,-0.02,...] one
+  // tick later. Incoming weights survive, and they are what decides whether
+  // this neuron does anything when its meaning arrives.
+  //
+  // Without this, "the next time the AI encounters that type of file, the
+  // wave can reach the newly created capability" was not true: the skill
+  // was in the mesh, connected to everything, and deaf to the one thing it
+  // was built for.
+  engine.tuneNeuronTo(id, 0, embedText(meaning, dims));
+  // And the wave it carries. A grafted neuron is in the shared pool with
+  // everything else from its first tick; this decides what it sounds like
+  // there.
+  //
+  // What the skill asked for, if it asked; otherwise the wave its meaning
+  // asks for, falling back to its name when it has no definition --
+  // something it means is better than nowhere in the band.
+  const asked = neuron.wave;
+  const derived = waveForMeaning(definition || neuron.name);
+  const frequency = typeof asked?.frequency === "number" && Number.isFinite(asked.frequency)
+    ? asked.frequency
+    : derived.frequency;
+  const phase = typeof asked?.phase === "number" && Number.isFinite(asked.phase)
+    ? asked.phase
+    : derived.phase;
+  engine.setWaveSignature(id, frequency, phase);
+  // And which skill it belongs to. Without this a grafted skill is a pile
+  // of neurons that happen to have arrived together: the engine's own
+  // gating could not select it, and nothing could ask how close it had
+  // grown to another skill. A Net Skill is a REGION, and this is the only
+  // thing that makes it one.
+  engine.setNeuronGroup(id, skillName);
+}
+
+/**
  * Graft one skill into one engine.
  *
  * Idempotent by skill name: asked twice, the second call reports the ids the
@@ -228,51 +279,10 @@ export function graftNetSkill(
   }
 
   const byName: Record<string, number> = {};
-  const dims = engine.getDimensions();
   named.forEach((neuron, index) => {
     const id = ids[index];
     byName[neuron.name] = id;
-    const definition = (neuron.definition ?? "").trim();
-    const meaning = definition || neuron.name;
-    if (definition) {
-      // Where its meaning points. A neuron that began at random would be a
-      // neuron the skill contributed nothing to.
-      engine.setNeuronState(id, embedText(definition, dims));
-    }
-    // And what makes it ANSWER to that meaning rather than merely start
-    // there. A state is recomputed from its inputs on every tick, so seeding
-    // it places a neuron for exactly one iteration and then the Zip Loop
-    // overwrites it -- measured, [0.9,-0.9,...] reads [0.01,-0.02,...] one
-    // tick later. Incoming weights survive, and they are what decides whether
-    // this neuron does anything when its meaning arrives.
-    //
-    // Without this, "the next time the AI encounters that type of file, the
-    // wave can reach the newly created capability" was not true: the skill
-    // was in the mesh, connected to everything, and deaf to the one thing it
-    // was built for.
-    engine.tuneNeuronTo(id, 0, embedText(meaning, dims));
-    // And the wave it carries. A grafted neuron is in the shared pool with
-    // everything else from its first tick; this decides what it sounds like
-    // there.
-    //
-    // What the skill asked for, if it asked; otherwise the wave its meaning
-    // asks for, falling back to its name when it has no definition --
-    // something it means is better than nowhere in the band.
-    const asked = neuron.wave;
-    const derived = waveForMeaning(definition || neuron.name);
-    const frequency = typeof asked?.frequency === "number" && Number.isFinite(asked.frequency)
-      ? asked.frequency
-      : derived.frequency;
-    const phase = typeof asked?.phase === "number" && Number.isFinite(asked.phase)
-      ? asked.phase
-      : derived.phase;
-    engine.setWaveSignature(id, frequency, phase);
-    // And which skill it belongs to. Without this a grafted skill is a pile
-    // of neurons that happen to have arrived together: the engine's own
-    // gating could not select it, and nothing could ask how close it had
-    // grown to another skill. A Net Skill is a REGION, and this is the only
-    // thing that makes it one.
-    engine.setNeuronGroup(id, skillName);
+    placeNeuron(engine, id, neuron, skillName);
   });
 
   // The skill's own structure, so it arrives as a network rather than as a
@@ -296,4 +306,95 @@ export function graftedSkills(engine: HyperDimensionalEngine): Array<{ skill: st
   const registry = grafted.get(engine);
   if (!registry) return [];
   return Array.from(registry, ([skill, ids]) => ({ skill, ids: { ...ids } }));
+}
+
+export interface UpdateResult extends GraftResult {
+  /** Neurons already in the region that were re-placed for their (possibly edited) meaning. */
+  updated: number;
+  /** Neurons that left the skill: detached from the region, their skill connections zeroed. */
+  removed: number;
+}
+
+/**
+ * Bring an already-grafted skill in line with its current definition: the
+ * Extension Builder's live path, so a skill being built IS the region of the
+ * running mesh rather than a project that joins it on install.
+ *
+ * - New neurons are added to the mesh and placed like a first graft.
+ * - Existing ones are re-placed (meaning, wave, region), so an edited
+ *   definition takes effect immediately.
+ * - Neurons no longer in the skill leave the region and lose their
+ *   connections within it. They stay in the mesh (all-to-all neurons are not
+ *   deleted), but belong to no skill and carry none of its structure.
+ * - The skill's internal connections are rewritten to exactly what it
+ *   declares now: removed connections go to zero, others take their weight.
+ *
+ * A skill that was never grafted is grafted.
+ */
+export function updateNetSkill(
+  engine: HyperDimensionalEngine,
+  skillName: string,
+  neurons: SkillNeuron[],
+): UpdateResult {
+  const registry = registryFor(engine);
+  const existing = registry.get(skillName);
+  if (!existing) return { ...graftNetSkill(engine, skillName, neurons), updated: 0, removed: 0 };
+
+  const named = neurons.filter((n): n is SkillNeuron & { name: string } =>
+    typeof n?.name === "string" && n.name.trim().length > 0);
+  const byName: Record<string, number> = {};
+  let updated = 0;
+  const fresh: Array<SkillNeuron & { name: string }> = [];
+  for (const neuron of named) {
+    const id = existing[neuron.name];
+    if (id === undefined) { fresh.push(neuron); continue; }
+    byName[neuron.name] = id;
+    placeNeuron(engine, id, neuron, skillName);
+    updated++;
+  }
+
+  let added = 0;
+  let skipped: string | undefined;
+  if (fresh.length > 0) {
+    const room = Math.max(0, Math.min(fresh.length, MAX_NEURONS_PER_SKILL - Object.keys(byName).length, MAX_MESH_NEURONS - engine.getNeuronCount()));
+    if (room < fresh.length) skipped = `only ${room} of ${fresh.length} new neurons joined (cap: ${MAX_NEURONS_PER_SKILL} per skill, ${MAX_MESH_NEURONS} in the mesh)`;
+    const ids = room > 0 ? engine.addNeurons(room) : [];
+    ids.forEach((id, index) => {
+      const neuron = fresh[index];
+      byName[neuron.name] = id;
+      placeNeuron(engine, id, neuron, skillName);
+    });
+    added = ids.length;
+  }
+
+  // Neurons that left: out of the region, and none of the skill's structure.
+  const kept = new Set(Object.values(byName));
+  let removed = 0;
+  for (const [name, id] of Object.entries(existing)) {
+    if (byName[name] === id || kept.has(id)) continue;
+    engine.clearNeuronGroup(id, skillName);
+    for (const other of Object.values(existing)) {
+      if (other === id) continue;
+      engine.setConnection(other, id, 0);
+      engine.setConnection(id, other, 0);
+    }
+    removed++;
+  }
+
+  // Internal structure exactly as declared now.
+  const members = Object.values(byName);
+  for (const to of members) for (const from of members) if (to !== from) engine.setConnection(to, from, 0);
+  let connections = 0;
+  for (const neuron of named) {
+    const from = byName[neuron.name];
+    if (from === undefined) continue;
+    for (const [targetName, weight] of connectionsOf(neuron)) {
+      const to = byName[targetName];
+      if (to === undefined) continue;
+      if (engine.setConnection(to, from, weight)) connections++;
+    }
+  }
+
+  registry.set(skillName, byName);
+  return { added, ids: { ...byName }, connections, neuronCount: engine.getNeuronCount(), skipped, updated, removed };
 }

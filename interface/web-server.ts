@@ -1494,6 +1494,21 @@ export class WebServer {
    * there) can query this exact tag rather than mixing skill triggers in
    * with ordinary chat-turn memories.
    */
+  /**
+   * Make a grafted skill's region routable in both routers that gate the one
+   * mesh -- the live pipeline's and chat's (UnifiedBrain via NeuroclawLLM) --
+   * described by what its neurons mean.
+   */
+  private registerSkillForRouting(
+    system: { pipeline: { registerSkillRegion: (id: string, name: string, meaning: string) => void }; llm?: { skillRouter?: { register: (r: { id: string; name: string; meaning: string }) => number } } },
+    name: string,
+    neurons: Array<{ name?: string; definition?: string }>,
+  ): void {
+    const meaning = [name, ...neurons.map((n) => `${n.name ?? ''} ${n.definition ?? ''}`.trim())].filter(Boolean).join(' ').slice(0, 2000);
+    system.pipeline.registerSkillRegion(name, name, meaning);
+    system.llm?.skillRouter?.register({ id: name, name, meaning });
+  }
+
   private rememberSkillScript(
     system: { memory: { remember: (content: string, opts: { importance?: number; tags?: string[]; payload?: string; pinned?: boolean }) => unknown } },
     userSays: string,
@@ -1539,6 +1554,7 @@ export class WebServer {
       const engine = system.pipeline.ensureBrain();
       if (engine) {
         const result = graftNetSkill(engine, name, neurons);
+        this.registerSkillForRouting(system, name, neurons);
         grafted = {
           added: result.added,
           connections: result.connections,
@@ -1670,6 +1686,7 @@ export class WebServer {
         try {
           const engine = system.pipeline.ensureBrain();
           const result = graftNetSkill(engine, extName, neurons);
+          this.registerSkillForRouting(system, extName, neurons);
           graftedNeurons += result.added;
         } catch {
           // A skill that cannot be grafted still gets remembered below. Losing
@@ -3974,6 +3991,32 @@ export class WebServer {
     // see reasoning-engine.ts) instead of the editor's Save/Install buttons
     // being a complete dead end: previously they only reported a byte count
     // and threw the built project away, wired to neither disk nor chat.
+    // POST /api/extension/live-sync -- the Extension Builder building
+    // directly into the network. The builder sends its project after each
+    // edit; this brings the skill's region of the ONE live mesh in line with
+    // it (updateNetSkill: new neurons grafted, edited ones re-placed, removed
+    // ones detached, connections rewritten) and makes it routable. Nothing is
+    // written to disk here -- Install (/api/extension/register) still saves
+    // the project; this is what makes the network change as you build.
+    if (pathname === '/api/extension/live-sync' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req) as { name?: string; neurons?: SkillNeuron[] } | null;
+        const name = (body?.name ?? '').trim();
+        if (!name) { this.sendJson(res, { ok: false, error: 'name is required' }, 400); return; }
+        const neurons = Array.isArray(body?.neurons) ? body!.neurons : [];
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const engine = system.pipeline.ensureBrain();
+        const { updateNetSkill } = await import('../models && skills/core/net-skill-graft.js');
+        const result = updateNetSkill(engine, name, neurons);
+        this.registerSkillForRouting(system, name, neurons);
+        this.sendJson(res, { ok: true, ...result });
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+
     if (pathname === '/api/extension/register' && method === 'POST') {
       try {
         const body = await this.parseBody(req) as

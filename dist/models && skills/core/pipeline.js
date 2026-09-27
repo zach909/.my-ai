@@ -591,6 +591,19 @@ export class NeuroPipeline {
         this.ensureSubsystems();
         return this.hyperEngine;
     }
+    /**
+     * Make a grafted net skill routable: without this its region is in the
+     * mesh but routing never selects it, and a grouped neuron holds its state
+     * on every tick that selects anything else -- so an installed skill would
+     * only ever run when nothing at all was chosen.
+     */
+    registerSkillRegion(id, name, meaning) {
+        this.ensureSubsystems();
+        if (!this.skillRouter.has(id))
+            this.expertPluginMap.set(this.expertPluginMap.size, id);
+        this.expertMeaning.set(id, meaning);
+        this.skillRouter.register({ id, name, meaning });
+    }
     getZipIO() {
         return this.zipIO;
     }
