@@ -38,4 +38,45 @@ describe('a prompting skill reaches the zip loop', () => {
     // instructions must not crowd out the conversation.
     expect(instructions.length).toBeLessThanOrEqual(3);
   }, 120_000);
+
+  it('hands the chosen skills to generation, not just to the context buffer', async () => {
+    const { getNeuroclawSystem } = await import('../../src/index.js');
+    const system = await getNeuroclawSystem();
+    const runner = (system as unknown as { runner: { generate: (...a: unknown[]) => Promise<string> } }).runner;
+    const original = runner.generate.bind(runner);
+    let skillsPassed: Array<{ name: string }> | undefined;
+    runner.generate = async (...a: unknown[]) => { skillsPassed = a[2] as Array<{ name: string }>; return original(...a); };
+    try {
+      await system.processQuery('How should I plan a difficult task?');
+    } finally {
+      runner.generate = original;
+    }
+    expect(Array.isArray(skillsPassed) && skillsPassed.length > 0).toBe(true);
+    expect(skillsPassed!.length).toBeLessThanOrEqual(3);
+    expect(skillsPassed!.every((k) => typeof k.name === 'string' && k.name.length > 0)).toBe(true);
+  }, 120_000);
+
+  it('streams prompting skills through the neural Zip Loop doorway with the prompt', async () => {
+    const { NeuroclawLLM } = await import('../../models && skills/llm.js');
+    const { mkdtempSync, rmSync } = await import('node:fs');
+    const { tmpdir } = await import('node:os');
+    const { join } = await import('node:path');
+    const dir = mkdtempSync(join(tmpdir(), 'ps-zip-'));
+    try {
+      const llm = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: null });
+      await llm.generate('plan the week', {
+        promptingSkills: [
+          { name: 'plan-first', title: 'Plan first', description: 'Break the goal into steps before acting.' },
+          { name: 'check-work', title: 'Check work', description: 'Verify each step.' },
+        ],
+      });
+      // The prompt and each skill, in its own prompting-skills/ folder, went
+      // into the one archive the mesh reads bit by bit.
+      expect(llm.lastZipLoopFiles).toContain('prompt/prompt.txt');
+      expect(llm.lastZipLoopFiles).toContain('prompting-skills/plan-first/SKILL.txt');
+      expect(llm.lastZipLoopFiles).toContain('prompting-skills/check-work/SKILL.txt');
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }, 120_000);
 });

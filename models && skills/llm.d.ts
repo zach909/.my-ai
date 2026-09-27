@@ -30,6 +30,11 @@ export interface GenerateOptions {
     temperature: number;
     /** Relevant prior conversation turns to ground the response in (Section 7). */
     memoryContext: string[];
+    /**
+     * Prompting skills that apply to this prompt. Each is streamed through the
+     * Zip Loop with the prompt, as prompting-skills/<name>/SKILL.txt.
+     */
+    promptingSkills: Array<{ name: string; title?: string; description?: string }>;
 }
 export declare class NeuroclawLLM {
     private config;
@@ -101,6 +106,8 @@ export declare class NeuroclawLLM {
     /** Graft OneBrain's neurons onto the live mesh (hyperEngine) and write its weights as mesh connections. */
     syncOneBrainToMesh(): { added: number; updated: number; skipped?: string };
     oneBrainMeshIds: Map<string, number>;
+    /** Paths of the files the last generate() streamed through the Zip Loop. */
+    lastZipLoopFiles: string[];
     recallFromSelfExtensions(prompt: string, topK?: number): {
         outputs: { token: number; char: string; score: number }[];
         extensions: { id: string; activation: number }[];

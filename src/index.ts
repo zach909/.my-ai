@@ -968,6 +968,7 @@ export class NeuroclawSystem {
     // Only the ones that apply to what actually arrived -- a skill declares
     // when it applies, and putting every stored instruction on the loop for
     // every message would drown the input in advice about other tasks.
+    const turnSkills: Array<{ name: string; title: string; description: string }> = [];
     try {
       const { loadRegistry } = await import("../models && skills/core/prompting-skill-store.js");
       const registry = loadRegistry();
@@ -985,6 +986,7 @@ export class NeuroclawSystem {
         await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
         if (skill.source !== "web") this.learnFrom(`Skill "${skill.title}": ${skill.description}`, "skill");
         details.skills.push(skill.title);
+        turnSkills.push({ name: skill.name, title: skill.title, description: skill.description });
       }
     } catch {
       // No registry on disk, or an unreadable one. A missing instruction is
@@ -1122,7 +1124,7 @@ export class NeuroclawSystem {
     //    integrates previous context instead of treating the prompt as an
     //    isolated event (continuous context, Section 7).
     try {
-      let result = await this.runner.generate(input, priorHistory.map(h => h.item.content));
+      let result = await this.runner.generate(input, priorHistory.map(h => h.item.content), turnSkills);
       // EmpathyEngine.adjustDecision() was built and tested but never called:
       // when alignment supports genuine autonomous judgement, adapt tone to
       // the user's actual emotional state (supportive/enthusiastic/direct);

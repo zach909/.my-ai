@@ -12,14 +12,14 @@ Status: ✅ done · 🔨 in progress · ⏳ to do
   - Input: each bit is one tick with only the data neuron driven, then one tick with data + send.
   - Output: a bit is read only when the send-out neuron turns on. If it stops firing, the message is over.
 - ✅ **Replace the MoE with the net-skill system.** The Mixture-of-Experts router is deleted. Each skill/plugin is a region of the one mesh, and `NetSkillRouter` switches on the regions whose meaning matches the input. Hyperdimensional thinking, all-to-all connections, the Zip Loop and quantum interference are unchanged.
+- ✅ **Prompt skills go into the Zip Loop.** Chat hands the prompting skills that apply to a message (up to 3) to generation, and each one is streamed through the neural Zip Loop with the prompt, as `prompting-skills/<name>/SKILL.txt`.
 
 ## Working on
 
-- 🔨 **Prompt skills go into the Zip Loop.** A prompting skill's instructions go through the Zip Loop along with the message.
+- 🔨 **Extension Builder builds directly into the network.** What you build lands in the live mesh, not in a separate project file.
 
 ## To do
 
-- ⏳ **Extension Builder builds directly into the network.** What you build lands in the live mesh, not in a separate project file.
 - ⏳ **The AI has access to mods.** Mods overwrite the app's own source files, so this needs a safety switch that is off by default.
 - ⏳ **Yes/no questions with a probability.** A TypeScript API: give it a whole email plus a question like "is this spam?", and it answers yes or no with how likely that is.
 - ⏳ **Tools fire from their own neurons.** Each tool is a neuron; highlighting (firing) that neuron calls the tool. Tools should not be called by spelling the call out letter by letter through the Zip Loop.

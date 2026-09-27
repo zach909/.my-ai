@@ -41,6 +41,10 @@ const GENERATE_MAX_TICKS = 256;
 // doorway costs 8 real sendBit() calls, so this is what actually keeps
 // a long prompt from turning one chat turn into a multi-minute run.
 const ONE_BRAIN_PROMPT_CHAR_CAP = 200;
+// Prompting skills ride the same doorway as the prompt, so they pay the same
+// per-bit cost: a few, and each one short.
+const ONE_BRAIN_PROMPTING_SKILLS_MAX = 3;
+const ONE_BRAIN_PROMPTING_SKILL_CHAR_CAP = 160;
 // Self-extensions that ship with the repo (models && skills/self_ext_*,
 // including the merged self_ext_combined). Resolved from source or from
 // the dist/ copy of this file, whichever is running.
@@ -68,6 +72,8 @@ export class NeuroclawLLM {
     /** OneBrain neuron name -> neuron id in the live mesh (hyperEngine), once grafted. */
     oneBrainMeshIds = new Map();
     oneBrainGraftCount = 0;
+    /** Paths of the files the last generate() streamed through the Zip Loop, for introspection. */
+    lastZipLoopFiles = [];
     selfExtensionsDir;
     bundledExtensionsDir;
     generationCount = 0;
@@ -299,7 +305,22 @@ export class NeuroclawLLM {
         // archive, not per character of meaning.
         const oneBrainPrompt = prompt.length > ONE_BRAIN_PROMPT_CHAR_CAP ? prompt.slice(0, ONE_BRAIN_PROMPT_CHAR_CAP) : prompt;
         const zip = new ZipLoopInterface(this.brain.getHyper(), ONE_BRAIN_NEURON_IDS);
-        const oneBrainRun = await runUntilStoppedAsync(zip, { files: { [`${ZIP_FOLDERS.prompt}prompt.txt`]: oneBrainPrompt } }, { quietTicks: 32, maxTicks: GENERATE_MAX_TICKS });
+        // The applicable prompting skills go in WITH the prompt, each in its
+        // own prompting-skills/<name>/ folder -- the same shape
+        // /api/zip-loop/run uses -- so the network receives the instruction
+        // alongside the question through the one doorway, rather than it
+        // being pasted into the prompt where it would be indistinguishable
+        // from what was actually asked.
+        const zipFiles = { [`${ZIP_FOLDERS.prompt}prompt.txt`]: oneBrainPrompt };
+        for (const skill of (options.promptingSkills ?? []).slice(0, ONE_BRAIN_PROMPTING_SKILLS_MAX)) {
+            const name = String(skill?.name ?? skill?.title ?? "").replace(/[^a-zA-Z0-9._-]+/g, "-").slice(0, 60);
+            if (!name)
+                continue;
+            const text = `${skill.title ?? name}: ${skill.description ?? ""}`.slice(0, ONE_BRAIN_PROMPTING_SKILL_CHAR_CAP);
+            zipFiles[`${ZIP_FOLDERS.promptingSkills}${name}/SKILL.txt`] = text;
+        }
+        this.lastZipLoopFiles = Object.keys(zipFiles);
+        const oneBrainRun = await runUntilStoppedAsync(zip, { files: zipFiles }, { quietTicks: 32, maxTicks: GENERATE_MAX_TICKS });
         const oneBrainOutput = Object.entries(oneBrainRun.tree?.files ?? {})
             .filter(([path]) => path.startsWith(ZIP_FOLDERS.output))
             .map(([, content]) => content)
