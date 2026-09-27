@@ -25,7 +25,6 @@ export type { PluginMetadata, PluginInstance, PluginManagerConfig } from "./plug
 export type { Expert } from "./core/onebrain.js";
 export { NeuroclawTrainer } from "./trainer.js";
 export type { TrainingConfig, NGramTable, TrainedWeights } from "./trainer.js";
-export { Tokenizer } from "./tokenizer.js";
 export { Neuron } from "./neuron.js";
 export type { NeuronState } from "./neuron.js";
 export { SimulationEngine } from "./simulation.js";

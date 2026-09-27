@@ -17,13 +17,12 @@ Status: ✅ done · 🔨 in progress · ⏳ to do
 - ✅ **The AI has access to mods.** The terminal plugin has `list_mods`, `read_mod`, `apply_mod` and `revert_mod` tools. Looking is ordinary file reading. Applying or reverting needs the new `mods.apply` capability (level `system`, under the Workspace switch), which is **not granted by default**: turn it on in Access. The tools check it themselves, so a chat request can't skip it. Applying keeps a backup, and `revert_mod` restores it.
 - ✅ **Yes/no questions with a probability.** `YesNoDoorway` (`models && skills/core/yes-no.ts`) and `/api/yes-no/teach` and `/api/yes-no/ask`: teach it examples, then give it a whole email plus "Is this spam?" and it answers yes or no with a calibrated probability. Each question is its own 3-neuron region of the mesh. See `wiki/Yes-No-Questions.md`.
 - ✅ **Tools fire from their own neurons.** Every terminal and desktop tool has its own neuron in the mesh (`tool-neurons.ts`). That layer already existed, but its firings were only acted on from the manual Zip Loop endpoint. Now every chat turn calls the tools whose neurons fired: access-checked, with arguments from the Zip Loop's output, and results fed back into the mesh. The calls are listed in the turn's details (`toolCalls`).
-
-## Working on
-
-- 🔨 **Delete the tokenizer.** Remove `models && skills/tokenizer.js` and move everything that used it onto raw bytes, which is what the Zip Loop already speaks.
+- ✅ **Delete the tokenizer.** `tokenizer.js` is gone, and text is its UTF-8 bytes everywhere, the same as the Zip Loop:
+  - the chat embedding, OneBrain's neuron labels (`memory_input_b<byte>`), recall, the RLM action space, and the trainer's alphabet;
+  - OneBrain models saved with old tokenizer ids are converted to bytes when loaded. The bundled OneBrain was converted, which dropped 3 neurons and 71 connections that sat on the old start/end/unknown markers.
 
 ## To do
 
-- ⏳ **Android app (and Apple).** An installable APK that can display over other apps, so you can talk to it like any phone assistant, with camera access (Meta-glasses style) to collect training data.
+- ⏳ **Android app (and Apple).** Waiting on a few decisions before building. An installable APK that can display over other apps, so you can talk to it like any phone assistant, with camera access (Meta-glasses style) to collect training data.
   - iOS does not allow apps to draw over other apps, so an iPhone version would have to be an ordinary app, a widget or a Siri shortcut.
   - Camera capture should stay on the device, be visibly on, and be opt-in, because it records other people too.

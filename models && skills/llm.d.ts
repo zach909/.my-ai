@@ -5,7 +5,6 @@ import { NeuronMesh } from "./core/onebrain.js";
 import { HyperDimensionalEngine } from "./core/onebrain.js";
 import { ValueRangeAllocator } from "./core/value-range.js";
 import { UnifiedBrain, type BrainSnapshot } from "./core/unified-brain.js";
-import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
 export interface LLMConfig {
     embeddingDim: number;
@@ -39,7 +38,6 @@ export interface GenerateOptions {
 export declare class NeuroclawLLM {
     private config;
     private builder;
-    private tokenizer;
     private trainer;
     private quantizer;
     private brain;
@@ -157,7 +155,6 @@ export declare class NeuroclawLLM {
     demoteFailingNeurons(failureId: string): void;
     getBuilder(): ExtensionBuilder;
     getExtensionManager(): ExtensionManager;
-    getTokenizer(): Tokenizer;
     getTrainer(): NeuroclawTrainer;
     getSkillRouter(): NetSkillRouter;
     isBuilt(): boolean;

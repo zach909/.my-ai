@@ -3,7 +3,7 @@
   "name": "OneBrain",
   "description": "OneBrain: 14 self-authored extensions merged into one model",
   "createdAt": 1790445939893,
-  "updatedAt": 1790445939893,
+  "updatedAt": 1790536351650,
   "prompt": "OneBrain",
   "sourceCount": 14,
   "sources": [
@@ -22,6 +22,6 @@
     "self_ext_65",
     "self_ext_70"
   ],
-  "neuronCount": 57,
-  "connectionCount": 409
+  "neuronCount": 54,
+  "connectionCount": 338
 }

@@ -54,7 +54,6 @@ export { PROGRAMMING_SKILLS, getSkillById, getSkillsByCategory, getSkillsByExper
 export { ModelManager } from "./model-manager.js";
 export { PluginManager } from "./plugin-manager.js";
 export { NeuroclawTrainer } from "./trainer.js";
-export { Tokenizer } from "./tokenizer.js";
 export { Neuron } from "./neuron.js";
 export { SimulationEngine } from "./simulation.js";
 export { BackgroundQuantizer } from "./core/quantizer.js";

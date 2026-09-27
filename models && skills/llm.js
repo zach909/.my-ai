@@ -13,10 +13,36 @@ import { BackgroundQuantizer } from "./core/quantizer.js";
 import { UnifiedBrain } from "./core/unified-brain.js";
 import { RLMTrainer } from "./core/rlm.js";
 import { ThornsEngine } from "./core/thorns.js";
-import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
 import { ZipLoopInterface } from "./core/onebrain.js";
 import { runUntilStoppedAsync, ZIP_FOLDERS } from "./core/zip-halt.js";
+// No tokenizer: text is its UTF-8 bytes, the same thing the Zip Loop
+// streams. The trainer (character-level n-gram/embedding tables) keeps ids
+// 0-3 for pad/bos/eos/unk, so byte b is id b + BYTE_ID_OFFSET, and its text
+// is the bytes spelled as latin1 characters -- one character per byte.
+const BYTE_ID_OFFSET = 4;
+const BYTE_VOCAB_SIZE = 256 + BYTE_ID_OFFSET;
+const BYTE_CHAR_TO_ID = new Map();
+const BYTE_ID_TO_CHAR = new Map();
+for (let b = 0; b < 256; b++) {
+    BYTE_CHAR_TO_ID.set(String.fromCharCode(b), b + BYTE_ID_OFFSET);
+    BYTE_ID_TO_CHAR.set(b + BYTE_ID_OFFSET, String.fromCharCode(b));
+}
+/** Text as the trainer reads it: its UTF-8 bytes, one latin1 character each. */
+function asByteText(text) { return Buffer.from(String(text), "utf-8").toString("latin1"); }
+function bytesOf(text) { return Array.from(Buffer.from(String(text), "utf-8")); }
+/** A byte as a person reads it: the character for printable ASCII, else its value. */
+function byteLabel(b) { return b >= 32 && b < 127 ? String.fromCharCode(b) : `byte ${b}`; }
+/** Deterministic embedding for a byte id the trainer has no learned embedding for yet. */
+function byteEmbedding(id, dim) {
+    const embedding = new Float32Array(dim);
+    const seed = id * 2654435761;
+    for (let i = 0; i < dim; i++) {
+        const hash = ((seed + i * 1013904223) >>> 0) / 4294967296;
+        embedding[i] = (hash - 0.5) * 2;
+    }
+    return embedding;
+}
 const DEFAULT_LLM_CONFIG = {
     embeddingDim: 64, hiddenDim: 128, numExperts: 4, meshNodes: 32,
     hyperNeurons: 16, hyperDimensions: 64, ballStates: 4,
@@ -56,7 +82,6 @@ function defaultBundledExtensionsDir() {
 export class NeuroclawLLM {
     config;
     builder;
-    tokenizer;
     trainer;
     quantizer;
     brain;
@@ -96,7 +121,6 @@ export class NeuroclawLLM {
     constructor(config = {}, hyperEngine = null) {
         this.config = { ...DEFAULT_LLM_CONFIG, ...config };
         this.builder = new ExtensionBuilder();
-        this.tokenizer = new Tokenizer();
         this.selfExtensionsDir = this.config.selfExtensionsDir ?? join(homedir(), ".neuroclaw", "extensions");
         if (!existsSync(this.selfExtensionsDir)) {
             mkdirSync(this.selfExtensionsDir, { recursive: true });
@@ -117,7 +141,7 @@ export class NeuroclawLLM {
         // own INPUT representation (Step 2's embedding lookup below) and
         // the text-learning surface (trainOnText/learnText), which is
         // OneBrain's own perception, not a second voice competing with it.
-        this.trainer = new NeuroclawTrainer(this.tokenizer.getVocabSize(), this.tokenizer.getCharToId(), this.tokenizer.getIdToChar(), { hiddenDim: this.config.hiddenDim });
+        this.trainer = new NeuroclawTrainer(BYTE_VOCAB_SIZE, BYTE_CHAR_TO_ID, BYTE_ID_TO_CHAR, { hiddenDim: this.config.hiddenDim });
         this.quantizer = new BackgroundQuantizer({
             enabled: true, bits: 4, method: "mixed",
             calibrationSamples: 128, excludeLayers: []
@@ -146,7 +170,7 @@ export class NeuroclawLLM {
         this.thornsEngine = new ThornsEngine();
         this.rlmTrainer = new RLMTrainer({
             hiddenDim: this.config.hiddenDim, stateDim: this.config.hiddenDim,
-            actionDim: this.tokenizer.getVocabSize(), explorationRate: 0.1,
+            actionDim: BYTE_VOCAB_SIZE, explorationRate: 0.1,
             discountFactor: 0.99, replayBufferSize: 10000, batchSize: 32,
             thinkSteps: this.config.thinkSteps
         });
@@ -225,7 +249,7 @@ export class NeuroclawLLM {
         await this.build(code);
     }
     async trainOnText(text) {
-        await this.trainer.train(text);
+        await this.trainer.train(asByteText(text));
         this.trained = true;
     }
     /**
@@ -237,7 +261,7 @@ export class NeuroclawLLM {
      * and then asking about it actually work.
      */
     async learnText(text) {
-        await this.trainer.learnText(text);
+        await this.trainer.learnText(asByteText(text));
         this.trained = true;
     }
     /** Characters of accumulated teaching material behind the prose predictor. */
@@ -260,10 +284,10 @@ export class NeuroclawLLM {
             });
         }
         // Step 2: Embedding — resized to embeddingDim
-        const lastChar = prompt[prompt.length - 1] ?? ' ';
-        const lastCharId = this.tokenizer.charToTokenId(lastChar);
-        const rawEmb = this.trainer.getEmbedding(lastCharId) ??
-            this.tokenizer.tokenToEmbedding(lastCharId, this.config.hiddenDim);
+        const promptBytes = bytesOf(prompt);
+        const lastByteId = (promptBytes[promptBytes.length - 1] ?? 32) + BYTE_ID_OFFSET;
+        const rawEmb = this.trainer.getEmbedding(lastByteId) ??
+            byteEmbedding(lastByteId, this.config.hiddenDim);
         const embedding = new Float32Array(this.config.embeddingDim);
         for (let i = 0; i < this.config.embeddingDim; i++)
             embedding[i] = rawEmb[i] ?? 0;
@@ -423,18 +447,18 @@ export class NeuroclawLLM {
     async createSelfExtension(prompt, output) {
         const extId = `self_ext_${this.generationCount}`;
         const extProject = this.builder.createProject(`Memory: ${prompt.slice(0, 30)}`, "Self-authored extension storing learned patterns");
-        const inputTokens = this.tokenizer.encode(prompt.slice(0, 20));
-        const outputTokens = this.tokenizer.encode(output.slice(0, 20));
+        const inputTokens = bytesOf(prompt).slice(0, 20);
+        const outputTokens = bytesOf(output).slice(0, 20);
         const inputIds = [];
         const outputIds = [];
         for (let i = 0; i < Math.min(inputTokens.length, 10); i++) {
-            const n = this.builder.addNeuron(extProject.id, `mem_in_${inputTokens[i]}`, 0);
+            const n = this.builder.addNeuron(extProject.id, `mem_in_b${inputTokens[i]}`, 0);
             if (n) {
                 inputIds.push(n.id);
             }
         }
         for (let i = 0; i < Math.min(outputTokens.length, 10); i++) {
-            const n = this.builder.addNeuron(extProject.id, `mem_out_${outputTokens[i]}`, 1);
+            const n = this.builder.addNeuron(extProject.id, `mem_out_b${outputTokens[i]}`, 1);
             if (n) {
                 outputIds.push(n.id);
             }
@@ -544,10 +568,9 @@ export class NeuroclawLLM {
             // would duplicate the region.
             return { added: 0, updated: 0, skipped: "OneBrain is already on this mesh" };
         }
-        const special = new Set(Object.values(this.tokenizer.specialTokens ?? {}));
-        const nameOf = (side, token) => `OneBrain ${side} ${token}`;
-        const meaningOf = (side, token) => {
-            const ch = special.has(token) ? `token ${token}` : JSON.stringify(this.tokenizer.tokenIdToChar(token));
+        const nameOf = (side, byte) => `OneBrain ${side} b${byte}`;
+        const meaningOf = (side, byte) => {
+            const ch = JSON.stringify(byteLabel(byte));
             return side === "in" ? `memory input ${ch}` : `memory output ${ch}`;
         };
         // Neurons OneBrain has that the mesh does not yet.
@@ -737,10 +760,7 @@ export class NeuroclawLLM {
      * being read, not just registered.
      */
     recallFromSelfExtensions(prompt, topK = 5) {
-        const active = new Set([this.tokenizer.specialTokens?.bos ?? 1]);
-        for (const ch of String(prompt))
-            active.add(this.tokenizer.charToTokenId(ch));
-        const special = new Set(Object.values(this.tokenizer.specialTokens ?? {}));
+        const active = new Set(bytesOf(prompt));
         const scores = new Map();
         const byExtension = [];
         for (const [id, edges] of this.selfExtensionEdges) {
@@ -755,10 +775,9 @@ export class NeuroclawLLM {
                 byExtension.push({ id, activation });
         }
         const outputs = [...scores.entries()]
-            .filter(([token]) => !special.has(token))
             .sort((a, b) => b[1] - a[1])
             .slice(0, topK)
-            .map(([token, score]) => ({ token, char: this.tokenizer.tokenIdToChar(token), score }));
+            .map(([byte, score]) => ({ byte, char: byteLabel(byte), score }));
         byExtension.sort((a, b) => b.activation - a.activation);
         return { outputs, extensions: byExtension };
     }
@@ -808,7 +827,6 @@ export class NeuroclawLLM {
     }
     getBuilder() { return this.builder; }
     getExtensionManager() { return this.extensionManager; }
-    getTokenizer() { return this.tokenizer; }
     getTrainer() { return this.trainer; }
     getSkillRouter() { return this.skillRouter; }
     isBuilt() { return this.built; }
