@@ -14,27 +14,29 @@ import { join, dirname } from 'node:path';
 const ROOT = process.cwd();
 
 /**
- * Find the TypeScript compiler.
+ * Find the TypeScript compiler entry point.
  *
- * npm installs the Windows command shim at node_modules/.bin/tsc.cmd. A
- * repository-level .bin/tsc may also exist, but it is not necessarily a
- * Windows-executable file. Prefer the normal package-manager location and
- * explicitly select the Windows .cmd shim when running on Windows.
+ * Do not execute npm's .bin/tsc.cmd shim directly on Windows. Node's
+ * child-process APIs can reject a .cmd path with EINVAL when it is spawned
+ * without a shell. The TypeScript package contains the real JavaScript entry
+ * point, so we invoke that file with the current Node executable instead.
  */
 function findTsc() {
-  const candidates = process.platform === 'win32'
-    ? [
-        join(ROOT, 'node_modules', '.bin', 'tsc.cmd'),
-        join(ROOT, 'node_modules', '.bin', 'tsc'),
-        join(ROOT, '.bin', 'tsc.cmd'),
-        join(ROOT, '.bin', 'tsc'),
-      ]
-    : [
-        join(ROOT, 'node_modules', '.bin', 'tsc'),
-        join(ROOT, '.bin', 'tsc'),
-      ];
+  const packageCompiler = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
+  if (existsSync(packageCompiler)) {
+    return { command: process.execPath, args: [packageCompiler] };
+  }
 
-  return candidates.find((candidate) => existsSync(candidate)) ?? null;
+  // Keep support for a repository-level executable as a fallback for unusual
+  // package-manager layouts. npm's Windows .cmd shim is deliberately excluded.
+  const fallback = process.platform === 'win32'
+    ? join(ROOT, '.bin', 'tsc.cmd')
+    : join(ROOT, '.bin', 'tsc');
+  if (existsSync(fallback)) {
+    return { command: fallback, args: [] };
+  }
+
+  return null;
 }
 
 let TSC = findTsc();
@@ -66,7 +68,7 @@ const DIRS = [
 
 // 1. Type-check + emit the TypeScript half.
 console.log('› tsc -p tsconfig.backend.json');
-execFileSync(TSC, ['-p', 'tsconfig.backend.json'], { stdio: 'inherit', cwd: ROOT });
+execFileSync(TSC.command, [...TSC.args, '-p', 'tsconfig.backend.json'], { stdio: 'inherit', cwd: ROOT });
 
 // 2. Copy JS-only modules (no .ts sibling) that tsc could not have emitted.
 let copied = 0;
