@@ -15,9 +15,14 @@ struct ContentView: View {
                     ScrollView {
                         LazyVStack(alignment: .leading, spacing: 12) {
                             let pending = brain.pending
-                            if pending.messages + pending.photos > 0 {
-                                Text("Waiting to send to your PC: \(pending.messages) message(s), \(pending.photos) photo(s).")
+                            Text("NeuroClaw runs on this phone and syncs with your PC when it can reach it.")
+                                .font(.footnote).foregroundStyle(.secondary)
+                            if pending.turns + pending.photos > 0 {
+                                Text("Waiting to sync: \(pending.turns) turn(s), \(pending.photos) photo(s).")
                                     .font(.footnote).foregroundStyle(.secondary)
+                            }
+                            if !brain.syncStatus.isEmpty {
+                                Text(brain.syncStatus).font(.footnote).foregroundStyle(.secondary)
                             }
                             ForEach(brain.lines) { line in
                                 VStack(alignment: .leading, spacing: 2) {
@@ -45,15 +50,18 @@ struct ContentView: View {
                 }.padding(.horizontal).padding(.bottom, 8)
             }
             .navigationTitle("NeuroClaw")
-            .toolbar { Button("PC") { showSettings = true } }
+            .toolbar {
+                Button("Sync now") { Task { await brain.sync() } }
+                Button("PC") { showSettings = true }
+            }
             .sheet(isPresented: $showSettings) { SettingsView().environmentObject(brain) }
             .sheet(isPresented: $showCamera) {
                 // Nothing is captured unless you tap Photo; the note is whatever is typed.
                 CameraView { image in
                     showCamera = false
                     guard let image else { return }
-                    let note = input
-                    Task { toast = await brain.capture(image, note: note) ? "Photo sent to your PC" : "Saved; will send when your PC is reachable" }
+                    brain.capture(image, note: input)
+                    toast = "Photo saved; it goes to your PC on the next sync"
                 }.ignoresSafeArea()
             }
         }
@@ -66,7 +74,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(footer: Text("The address NeuroClaw's web app is on, e.g. http://192.168.1.20:3000, and the Remote Access password set there.")) {
+                Section(footer: Text("Only for syncing: NeuroClaw runs on the phone either way. The address NeuroClaw's web app is on, e.g. http://192.168.1.20:3000, and the Remote Access password set there.")) {
                     TextField("PC address", text: $brain.serverURL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     SecureField("Password (blank if none)", text: $brain.password)
                 }

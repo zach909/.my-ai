@@ -31,6 +31,8 @@ class PhoneNetwork(private val context: Context) {
     private val nextId = AtomicInteger(1)
     private val pending = ConcurrentHashMap<Int, Pair<CountDownLatch, Array<String?>>>()
     private val stateFile get() = File(context.filesDir, "phone-network-state.json")
+    /** The PC's OneBrain, once a sync has brought a newer one than the app shipped with. */
+    private val syncedOneBrain get() = File(context.filesDir, "onebrain-from-pc.json")
 
     /** Start the network. Call once, from any thread; it builds the WebView on the main thread. */
     @SuppressLint("SetJavaScriptEnabled")
@@ -43,7 +45,8 @@ class PhoneNetwork(private val context: Context) {
                 override fun onPageFinished(v: WebView, url: String?) {
                     // The model and saved state are read here, passed in as JS string literals.
                     Shared.io.execute {
-                        val model = runCatching { context.assets.open("onebrain/model.json").bufferedReader().use { it.readText() } }.getOrNull()
+                        val model = runCatching { syncedOneBrain.takeIf { it.exists() }?.readText() }.getOrNull()
+                            ?: runCatching { context.assets.open("onebrain/model.json").bufferedReader().use { it.readText() } }.getOrNull()
                         val saved = runCatching { stateFile.takeIf { it.exists() }?.readText() }.getOrNull()
                         val script = "NeuroClawBrain.init(${quote(model)}, ${quote(saved)})"
                         Shared.main.post { v.evaluateJavascript(script) { ready.countDown() } }
@@ -69,6 +72,18 @@ class PhoneNetwork(private val context: Context) {
     }
 
     fun stats(): JSONObject = call("NeuroClawBrain.stats()", 10, async = false)
+
+    /** What the phone has for the PC (see NeuroClawBrain.syncOut in mobile/brain). */
+    fun syncOut(clear: Boolean): JSONObject = call("NeuroClawBrain.syncOut($clear)", 10, async = false)
+
+    /** Take in what the PC sent: a newer OneBrain (rebuilds the network around it) and its yes/no knowledge. */
+    fun syncIn(oneBrainModel: String?, yesNoState: String?): JSONObject =
+        call("NeuroClawBrain.syncIn(${quote(oneBrainModel)}, ${quote(yesNoState)})", 60, async = false)
+
+    /** Keep the PC's OneBrain so the next launch starts from it. */
+    fun saveOneBrain(model: String) {
+        syncedOneBrain.writeText(model)
+    }
 
     /** Save what the network has learned. Call when the app goes to the background. */
     fun save() {

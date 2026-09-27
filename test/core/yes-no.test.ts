@@ -103,4 +103,18 @@ describe('yes/no questions answered by the mesh', () => {
     // And it says how well it fits what it was taught.
     expect(r.fitAccuracy).toBeGreaterThanOrEqual(0.9);
   });
+
+  it('what was taught moves to a network of another width (PC 64 -> phone 32) by re-learning the texts', () => {
+    const saved = taught().toJSON();
+    const narrow = new HyperDimensionalEngine({
+      neuronCount: 32, dimensions: 32, propagationSteps: 8,
+      hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1, waveGain: 0.1, connectionBias: true,
+    });
+    const phone = new YesNoDoorway(narrow);
+    phone.load(saved);
+    const r = phone.ask('Is this spam?', 'Claim your FREE prize now, click here to win');
+    expect(r.trained).toBe(true);
+    expect(r.examples).toEqual({ yes: 6, no: 6 });
+    expect(r.answer).toBe('yes');
+  });
 });

@@ -15,8 +15,9 @@ import android.widget.LinearLayout
 import android.widget.TextView
 
 /**
- * Setup and a full-screen chat: where your PC is, its password, the
- * "display over other apps" permission, and turning the floating bubble on.
+ * Setup and a full-screen chat. NeuroClaw runs on the phone; the PC address
+ * and password are only for syncing. Also the "display over other apps"
+ * permission, the floating bubble, and Sync now.
  */
 class MainActivity : Activity() {
     private lateinit var status: TextView
@@ -44,6 +45,7 @@ class MainActivity : Activity() {
                 settings.serverUrl = url.text.toString()
                 settings.password = password.text.toString()
                 refreshStatus()
+                brain.syncInBackground()
             }
         }
         val overlay = Button(this).apply {
@@ -63,6 +65,16 @@ class MainActivity : Activity() {
                 moveTaskToBack(true)
             }
         }
+        val sync = Button(this).apply {
+            text = "Sync now"
+            setOnClickListener {
+                status.text = "Syncing with your PC..."
+                Shared.background({ Shared.brain(this@MainActivity).sync() }) { result ->
+                    refreshStatus()
+                    status.text = "$result\n${status.text}"
+                }
+            }
+        }
         val stop = Button(this).apply {
             text = "Stop bubble"
             setOnClickListener { startService(Intent(this@MainActivity, OverlayService::class.java).setAction(OverlayService.ACTION_STOP)) }
@@ -73,7 +85,7 @@ class MainActivity : Activity() {
             setPadding(pad, pad, pad, pad)
             addView(url); addView(password)
             addView(LinearLayout(context).apply { addView(save); addView(overlay) })
-            addView(LinearLayout(context).apply { addView(start); addView(stop) })
+            addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
             addView(status)
             addView(ChatPanel(context), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         })
@@ -99,11 +111,10 @@ class MainActivity : Activity() {
     private fun refreshStatus() {
         val brain = Shared.brain(this)
         val overlay = if (AndroidSettings.canDrawOverlays(this)) "allowed" else "not allowed yet"
-        val (messages, photos) = brain.pendingCount()
         status.text = buildString {
-            append(if (brain.settings.configured) "PC: ${brain.settings.serverUrl}" else "PC: not set (offline mode only)")
+            append(if (brain.settings.configured) "PC for syncing: ${brain.settings.serverUrl}" else "PC: not set (everything stays on the phone)")
             append("\nOver other apps: $overlay")
-            if (messages + photos > 0) append("\nWaiting to send: $messages message(s), $photos photo(s)")
+            append("\n${brain.status()}")
         }
     }
 }

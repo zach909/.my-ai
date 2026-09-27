@@ -89,7 +89,9 @@ export class YesNoDoorway {
             r.countYes++;
         else
             r.countNo++;
-        r.samples.push({ v, yes: answer });
+        // The text too, so what was taught can move to a network of another width
+        // (the phone's is narrower than the PC's) and be re-learned there.
+        r.samples.push({ v, yes: answer, text: text.slice(0, 2000) });
         if (r.samples.length > MAX_SAMPLES)
             r.samples.shift();
         this.retune(r);
@@ -159,6 +161,17 @@ export class YesNoDoorway {
             fitAccuracy: right / r.samples.length,
         };
     }
+    /** Drop what a question was taught (its region stays in the mesh, emptied). */
+    forget(question) {
+        const r = this.regions.get(normalizeQuestion(question));
+        if (!r)
+            return;
+        r.sumYes.fill(0);
+        r.sumNo.fill(0);
+        r.countYes = 0;
+        r.countNo = 0;
+        r.samples = [];
+    }
     /** Every question this doorway knows and how many examples each side has. */
     questions() {
         return Array.from(this.regions.values()).map((r) => ({ question: r.question, examples: { yes: r.countYes, no: r.countNo } }));
@@ -177,8 +190,17 @@ export class YesNoDoorway {
             return;
         const dims = this.engine.getDimensions();
         for (const q of state.questions) {
-            if (!Array.isArray(q.sumYes) || q.sumYes.length !== dims)
+            if (!Array.isArray(q.sumYes) || q.sumYes.length !== dims) {
+                // Taught on a network of another width: its vectors do not fit here,
+                // so re-learn the question from the example texts it kept.
+                const texts = (q.samples ?? []).filter((x) => typeof x?.text === "string");
+                if (texts.length === 0)
+                    continue;
+                this.forget(q.question);
+                for (const x of texts)
+                    this.teach(q.question, x.text, x.yes);
                 continue;
+            }
             const r = this.region(q.question);
             r.sumYes = q.sumYes.slice();
             r.sumNo = q.sumNo.slice();

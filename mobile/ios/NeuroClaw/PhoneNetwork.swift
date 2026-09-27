@@ -19,14 +19,35 @@ final class PhoneNetwork: NSObject, WKNavigationDelegate {
         FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("phone-network-state.json")
     }
 
+    private var syncedOneBrain: URL {
+        FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0].appendingPathComponent("onebrain-from-pc.json")
+    }
+
     struct Answer { let reply: String; let trained: Bool; let recalled: [String]; let ms: Int }
+
+    /// What the phone has for the PC (NeuroClawBrain.syncOut in mobile/brain).
+    func syncOut(clear: Bool) async throws -> [String: Any] {
+        await start()
+        return try await call("return NeuroClawBrain.syncOut(c)", ["c": clear])
+    }
+
+    /// Take in what the PC sent; a newer OneBrain is also kept for the next launch.
+    func syncIn(oneBrainModel: String?, yesNoState: String?) async throws {
+        await start()
+        if let model = oneBrainModel {
+            try? FileManager.default.createDirectory(at: syncedOneBrain.deletingLastPathComponent(), withIntermediateDirectories: true)
+            try? model.write(to: syncedOneBrain, atomically: true, encoding: .utf8)
+        }
+        _ = try await call("return NeuroClawBrain.syncIn(m, y)", ["m": oneBrainModel ?? NSNull(), "y": yesNoState ?? NSNull()])
+    }
 
     func start() async {
         if isReady { return }
         web.navigationDelegate = self
         web.loadHTMLString("<!doctype html><html><body><script src=\"neuroclaw-brain.js\"></script></body></html>", baseURL: Bundle.main.resourceURL)
         await withCheckedContinuation { started = $0 }
-        let model = Bundle.main.url(forResource: "model", withExtension: "json").flatMap { try? String(contentsOf: $0) }
+        // The PC's OneBrain once a sync has brought one, else the one the app shipped with.
+        let model = (try? String(contentsOf: syncedOneBrain)) ?? Bundle.main.url(forResource: "model", withExtension: "json").flatMap { try? String(contentsOf: $0) }
         let saved = try? String(contentsOf: stateFile)
         _ = try? await web.callAsyncJavaScript("return NeuroClawBrain.init(m, s)", arguments: ["m": model ?? NSNull(), "s": saved ?? NSNull()], contentWorld: .page)
         isReady = true

@@ -69,6 +69,10 @@ class PhoneBrain {
   private readonly router = new NetSkillRouter(2, PHONE_DIMENSIONS);
   private readonly yesNo: YesNoDoorway;
   private oneBrain: Edge[] = [];
+  /** modifiedAt of the OneBrain model loaded, so a sync can tell whether the PC's is newer. */
+  oneBrainVersion = 0;
+  /** Yes/no examples taught on the phone since the last sync, for the PC. */
+  teachLog: Array<{ question: string; text: string; answer: boolean }> = [];
   private busy = false;
 
   constructor() {
@@ -97,7 +101,9 @@ class PhoneBrain {
 
   /** Put OneBrain into the mesh as its own region, and make it routable. */
   loadOneBrain(modelJson: string): { neurons: number; connections: number } {
-    this.oneBrain = oneBrainEdges(JSON.parse(modelJson));
+    const model = JSON.parse(modelJson);
+    this.oneBrain = oneBrainEdges(model);
+    this.oneBrainVersion = typeof model.modifiedAt === "number" ? model.modifiedAt : 0;
     const nameOf = (side: string, b: number) => `OneBrain ${side} b${b}`;
     const neurons = new Map<string, SkillNeuron & { connections: Record<string, number> }>();
     for (const e of this.oneBrain) {
@@ -154,6 +160,7 @@ class PhoneBrain {
   ask(question: string, text: string) { return this.yesNo.ask(question, text); }
   teach(question: string, text: string, answer: boolean) {
     const r = this.yesNo.teach(question, text, answer);
+    this.teachLog.push({ question, text, answer });
     this.router.register({ id: `yes-no:${question.trim().toLowerCase()}`, name: question, meaning: question });
     return r;
   }
@@ -164,19 +171,25 @@ class PhoneBrain {
       dimensions: this.engine.getDimensions(),
       regions: this.router.listRegions().map((r) => r.id),
       oneBrainConnections: this.oneBrain.length,
+      oneBrainVersion: this.oneBrainVersion,
+      unsyncedExamples: this.teachLog.length,
       questions: this.yesNo.questions(),
     };
   }
 
   /** Everything the phone's network has learned, to save between app launches. */
   exportState(): string {
-    return JSON.stringify({ network: this.engine.captureNetworkState(), yesNo: this.yesNo.toJSON() });
+    return JSON.stringify({ network: this.engine.captureNetworkState(), yesNo: this.yesNo.toJSON(), teachLog: this.teachLog });
   }
+
+  yesNoState(): YesNoState { return this.yesNo.toJSON(); }
+  loadYesNo(state: YesNoState): void { this.yesNo.load(state); }
 
   importState(json: string): boolean {
     try {
-      const saved = JSON.parse(json) as { network?: unknown; yesNo?: YesNoState };
+      const saved = JSON.parse(json) as { network?: unknown; yesNo?: YesNoState; teachLog?: PhoneBrain["teachLog"] };
       if (saved.yesNo) this.yesNo.load(saved.yesNo);
+      if (Array.isArray(saved.teachLog)) this.teachLog = saved.teachLog;
       return saved.network ? this.engine.restoreNetworkState(saved.network as never) : true;
     } catch {
       return false;
@@ -216,6 +229,42 @@ const NeuroClawBrain = {
   },
   exportState(): string {
     try { if (!brain) throw new Error("init() first"); return ok(brain.exportState()); } catch (err) { return fail(err); }
+  },
+  /**
+   * What the phone has for the PC: the yes/no examples taught here since the
+   * last sync, and which OneBrain it runs. Pass `true` once the PC has them
+   * to clear the log.
+   */
+  syncOut(clear?: boolean | string): string {
+    try {
+      if (!brain) throw new Error("init() first");
+      const out = { teach: brain.teachLog.slice(), oneBrainVersion: brain.oneBrainVersion };
+      if (clear === true || clear === "true") brain.teachLog = [];
+      return ok(out);
+    } catch (err) { return fail(err); }
+  },
+  /**
+   * Apply what the PC sent back. A newer OneBrain from the PC rebuilds the
+   * phone's network around it (the mesh's own short-term state starts over;
+   * everything taught is kept); the PC's yes/no state -- which already
+   * includes what this phone sent -- replaces the phone's.
+   */
+  syncIn(oneBrainModelJson?: string | null, yesNoStateJson?: string | null): string {
+    try {
+      if (!brain) throw new Error("init() first");
+      let rebuilt = false;
+      if (oneBrainModelJson) {
+        const keepYesNo = brain.yesNoState();
+        const keepLog = brain.teachLog;
+        brain = new PhoneBrain();
+        brain.loadOneBrain(oneBrainModelJson);
+        brain.loadYesNo(keepYesNo);
+        brain.teachLog = keepLog;
+        rebuilt = true;
+      }
+      if (yesNoStateJson) brain.loadYesNo(JSON.parse(yesNoStateJson));
+      return ok({ rebuilt, ...brain.stats() });
+    } catch (err) { return fail(err); }
   },
 };
 

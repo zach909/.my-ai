@@ -1,15 +1,19 @@
 import Foundation
 import UIKit
 
-/// The PC when reachable (POST /api/chat, /api/captures, HTTP Basic with the
-/// Remote Access password); otherwise the full network on the phone
-/// (PhoneNetwork) answers and the message is queued for the PC.
+/// Offline-first NeuroClaw. The phone's own copy of the network
+/// (PhoneNetwork: the PC's engine, run on the phone) answers every message.
+/// The PC is for syncing whenever it is reachable:
+///   phone -> PC  conversations, photos, yes/no examples taught on the phone;
+///   PC -> phone  the PC's OneBrain when newer, and its yes/no knowledge.
+/// Sync runs in the background after each message or photo, and from Sync now.
 @MainActor
 final class Brain: ObservableObject {
     struct Line: Identifiable { let id = UUID(); let who: String; let text: String }
 
     @Published var lines: [Line] = []
     @Published var busy = false
+    @Published var syncStatus = ""
     @Published var serverURL: String = UserDefaults.standard.string(forKey: "serverURL") ?? "" {
         didSet { UserDefaults.standard.set(serverURL.trimmingCharacters(in: .whitespaces), forKey: "serverURL") }
     }
@@ -17,84 +21,73 @@ final class Brain: ObservableObject {
         didSet { UserDefaults.standard.set(password, forKey: "password") }
     }
 
-    private var history: [(String, String)] = []
-    /// The full network on the phone: answers whenever the PC cannot.
     let phone = PhoneNetwork()
     private let queue = OfflineQueue()
+    private var syncing = false
 
-    var pending: (messages: Int, photos: Int) { queue.counts() }
+    var pending: (turns: Int, photos: Int) { queue.counts() }
 
     func send(_ text: String) async {
         lines.append(Line(who: "You", text: text))
         busy = true
         defer { busy = false }
+        var reply: String
         do {
-            try await flush()
-            let reply = try await chat(text)
-            lines.append(Line(who: "NeuroClaw", text: reply))
-        } catch let error as ServerError {
-            lines.append(Line(who: "NeuroClaw", text: "PC error: \(error.message)"))
+            let a = try await phone.chat(text)
+            let memory = a.recalled.isEmpty ? "" : "\n(OneBrain recalls: \(a.recalled.joined(separator: " ")))"
+            reply = "\(a.reply)\(memory)"
         } catch {
-            // PC not reachable: the phone's own network answers, and the
-            // message is also queued so the PC sees it later.
-            queue.add(message: text)
-            do {
-                let a = try await phone.chat(text)
-                let memory = a.recalled.isEmpty ? "" : "\n(OneBrain recalls: \(a.recalled.joined(separator: " ")))"
-                lines.append(Line(who: "NeuroClaw (phone)", text: "\(a.reply)\(memory)\n[phone network, \(a.ms) ms; also queued for your PC]"))
-            } catch {
-                lines.append(Line(who: "NeuroClaw (offline)", text: "The phone's network failed: \(error.localizedDescription). Your message is queued for your PC."))
+            reply = "The phone's network failed: \(error.localizedDescription)"
+        }
+        lines.append(Line(who: "NeuroClaw", text: reply))
+        queue.add(turn: text, reply: reply)
+        Task { await sync() }
+    }
+
+    func capture(_ image: UIImage, note: String) {
+        guard let jpeg = image.jpegData(compressionQuality: 0.9) else { return }
+        queue.add(photo: jpeg, note: note, capturedAt: Int(Date().timeIntervalSince1970 * 1000))
+        Task { await sync() }
+    }
+
+    /// One sync with the PC; a no-op without a PC address.
+    func sync() async {
+        guard !serverURL.trimmingCharacters(in: .whitespaces).isEmpty, !syncing else { return }
+        syncing = true
+        defer { syncing = false }
+        do {
+            let turns = queue.turns()
+            let out = try await phone.syncOut(clear: false)
+            let response = try await post("/api/phone-sync", [
+                "turns": turns.map { ["message": $0.message, "reply": $0.reply, "at": $0.at] },
+                "teach": out["teach"] ?? [],
+                "oneBrainVersion": out["oneBrainVersion"] ?? 0,
+            ])
+            queue.dropTurns(turns.count)
+            _ = try await phone.syncOut(clear: true)
+            let model = (response["oneBrain"] as? [String: Any])?["model"] as? String
+            let yesNo = (response["yesNo"]).flatMap { try? JSONSerialization.data(withJSONObject: $0) }.map { String(decoding: $0, as: UTF8.self) }
+            try await phone.syncIn(oneBrainModel: model, yesNoState: yesNo)
+            var photos = 0
+            while let photo = queue.nextPhoto() {
+                _ = try await post("/api/captures", ["image": photo.jpeg.base64EncodedString(), "mime": "image/jpeg", "note": photo.note, "capturedAt": photo.capturedAt])
+                queue.dropPhoto(photo)
+                photos += 1
             }
-        }
-    }
-
-    func capture(_ image: UIImage, note: String) async -> Bool {
-        guard let jpeg = image.jpegData(compressionQuality: 0.9) else { return false }
-        let takenAt = Int(Date().timeIntervalSince1970 * 1000)
-        do {
-            try await upload(jpeg, note: note, capturedAt: takenAt)
-            return true
+            syncStatus = "Synced \(Date().formatted(date: .omitted, time: .shortened)): \(turns.count) turn(s), \(photos) photo(s)\(model != nil ? ", newer OneBrain from the PC" : "")."
+        } catch let error as ServerError {
+            syncStatus = "PC refused the sync: \(error.message)"
         } catch {
-            queue.add(photo: jpeg, note: note, capturedAt: takenAt)
-            return false
-        }
-    }
-
-    private func flush() async throws {
-        while let message = queue.nextMessage() {
-            let reply = try await chat("(sent while offline) \(message)")
-            lines.append(Line(who: "NeuroClaw", text: reply))
-            queue.dropMessage()
-        }
-        while let photo = queue.nextPhoto() {
-            try await upload(photo.jpeg, note: photo.note, capturedAt: photo.capturedAt)
-            queue.dropPhoto(photo)
+            syncStatus = "PC not reachable; everything stays on the phone until it is."
         }
     }
 
     struct ServerError: Error { let message: String }
 
-    private func chat(_ message: String) async throws -> String {
-        let body: [String: Any] = [
-            "message": message,
-            "history": history.suffix(12).map { ["role": $0.0, "content": $0.1] },
-        ]
-        let json = try await post("/api/chat", body)
-        let reply = json["response"] as? String ?? ""
-        history.append(("user", message)); history.append(("ai", reply))
-        return reply
-    }
-
-    private func upload(_ jpeg: Data, note: String, capturedAt: Int) async throws {
-        _ = try await post("/api/captures", [
-            "image": jpeg.base64EncodedString(), "mime": "image/jpeg", "note": note, "capturedAt": capturedAt,
-        ])
-    }
-
     private func post(_ path: String, _ body: [String: Any]) async throws -> [String: Any] {
         let base = serverURL.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         guard !base.isEmpty, let url = URL(string: base + path) else { throw URLError(.badURL) }
-        var request = URLRequest(url: url, timeoutInterval: 120)
+        var request = URLRequest(url: url, timeoutInterval: 60)
         request.httpMethod = "POST"
         // JSON only: the server refuses other content types (CSRF protection).
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")

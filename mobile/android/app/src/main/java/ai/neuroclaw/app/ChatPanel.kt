@@ -56,8 +56,7 @@ class ChatPanel(context: Context, private val onClose: (() -> Unit)? = null) : L
                     .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
             )
         }
-        val (messages, captures) = Shared.brain(context).pendingCount()
-        if (messages + captures > 0) append("Waiting to send to your PC: $messages message(s), $captures photo(s).")
+        append("NeuroClaw runs on this phone; it syncs with your PC when it can reach it.")
     }
 
     private fun submit() {
@@ -67,7 +66,7 @@ class ChatPanel(context: Context, private val onClose: (() -> Unit)? = null) : L
         append("You: $text")
         send.isEnabled = false
         Shared.background({ Shared.brain(context).send(text) }) { reply ->
-            append("NeuroClaw${if (reply.offline) " (offline)" else ""}: ${reply.text}")
+            append("NeuroClaw: ${reply.text}")
             send.isEnabled = true
         }
     }

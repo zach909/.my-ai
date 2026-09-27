@@ -4022,6 +4022,67 @@ export class WebServer {
     // see reasoning-engine.ts) instead of the editor's Save/Install buttons
     // being a complete dead end: previously they only reported a byte count
     // and threw the built project away, wired to neither disk nor chat.
+    // POST /api/phone-sync -- the phone app is offline-first: its own copy of
+    // the network answers, and this is how it and the PC catch up.
+    //   phone -> PC: { turns: [{ message, reply, at }], teach: [{ question,
+    //     text, answer }], oneBrainVersion } -- conversations go into the
+    //     conversation log the PC's learning agent trains from and into
+    //     memory; yes/no examples are taught to the PC's doorway.
+    //   PC -> phone: the PC's OneBrain (only when newer than the phone's
+    //     oneBrainVersion) and the PC's full yes/no state after the merge.
+    // Photos travel separately through POST /api/captures.
+    if (pathname === '/api/phone-sync' && method === 'POST') {
+      try {
+        const body = await this.parseBody(req, 20 * 1024 * 1024) as {
+          turns?: Array<{ message?: string; reply?: string; at?: number }>;
+          teach?: Array<{ question?: string; text?: string; answer?: unknown }>;
+          oneBrainVersion?: number;
+        } | null;
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const { appendConversationTurn } = await import('../src/lib/conversation-log.js');
+
+        let turns = 0;
+        for (const t of Array.isArray(body?.turns) ? body!.turns : []) {
+          const message = String(t?.message ?? '').trim();
+          if (!message) continue;
+          const reply = String(t?.reply ?? '');
+          appendConversationTurn(message, reply);
+          system.memory.remember(`user: ${message}\nai: ${reply}`, { importance: 0.5, tags: ['chat-turn', 'phone'] });
+          turns++;
+        }
+
+        const doorway = await this.yesNoDoorway();
+        let taught = 0;
+        for (const e of Array.isArray(body?.teach) ? body!.teach : []) {
+          if (!e?.question || !e?.text || typeof e.answer !== 'boolean') continue;
+          doorway.teach(String(e.question), String(e.text), e.answer);
+          taught++;
+        }
+        if (taught > 0) await this.saveYesNo(doorway);
+
+        // The PC's OneBrain: this install's own (what it has learned) if it
+        // has one, else the one bundled with the repo.
+        const { readOneBrain } = await import('../models && skills/onebrain-memory.js');
+        const own = readOneBrain(path.join(homedir(), '.neuroclaw', 'extensions'));
+        const bundled = readOneBrain(path.resolve(process.cwd(), 'models && skills'));
+        const pcOneBrain = own ?? bundled;
+        const version = pcOneBrain?.model?.modifiedAt ?? 0;
+        const phoneVersion = typeof body?.oneBrainVersion === 'number' ? body.oneBrainVersion : 0;
+
+        this.sendJson(res, {
+          ok: true,
+          received: { turns, taught },
+          oneBrain: pcOneBrain && version > phoneVersion ? { version, model: JSON.stringify(pcOneBrain.model) } : null,
+          yesNo: doorway.toJSON(),
+          syncedAt: Date.now(),
+        });
+      } catch (err) {
+        this.sendError(res, err);
+      }
+      return;
+    }
+
     // POST /api/captures -- a photo taken on the phone app (tap-to-capture),
     // kept as training data. JSON (like every POST here, for CSRF) carrying
     // the image as base64: { image, mime?, note?, capturedAt? }. Saved on
