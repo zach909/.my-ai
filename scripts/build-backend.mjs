@@ -8,29 +8,33 @@
 // the smoke suite (test/smoke.mjs) loads via file URLs.
 
 import { execFileSync } from 'node:child_process';
-import { readdirSync, statSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
+import { readdirSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 const ROOT = process.cwd();
 
 /**
- * Find the TypeScript compiler, and install dependencies if it is missing.
+ * Find the TypeScript compiler.
  *
- * `npm run dev` on a fresh clone died here with "tsc not found" and a note
- * saying to run npm install -- which is correct, and is also something the
- * script could simply do. A build step that knows exactly what is wrong, knows
- * the one command that fixes it, and stops to make someone type it is a build
- * step that fails for no reason.
- *
- * Both locations are checked because this repo keeps its toolchain symlinks in
- * .bin/ while a plain npm/pnpm/bun install puts them in node_modules/.bin/,
- * and a checkout can genuinely have either.
+ * npm installs the Windows command shim at node_modules/.bin/tsc.cmd. A
+ * repository-level .bin/tsc may also exist, but it is not necessarily a
+ * Windows-executable file. Prefer the normal package-manager location and
+ * explicitly select the Windows .cmd shim when running on Windows.
  */
 function findTsc() {
-  for (const candidate of [join(ROOT, '.bin', 'tsc'), join(ROOT, 'node_modules', '.bin', 'tsc')]) {
-    if (existsSync(candidate)) return candidate;
-  }
-  return null;
+  const candidates = process.platform === 'win32'
+    ? [
+        join(ROOT, 'node_modules', '.bin', 'tsc.cmd'),
+        join(ROOT, 'node_modules', '.bin', 'tsc'),
+        join(ROOT, '.bin', 'tsc.cmd'),
+        join(ROOT, '.bin', 'tsc'),
+      ]
+    : [
+        join(ROOT, 'node_modules', '.bin', 'tsc'),
+        join(ROOT, '.bin', 'tsc'),
+      ];
+
+  return candidates.find((candidate) => existsSync(candidate)) ?? null;
 }
 
 let TSC = findTsc();
@@ -48,6 +52,7 @@ if (!TSC) {
   console.error('  Run `npm install` (or `bun install` / `pnpm install`) in this directory, then try again.');
   process.exit(1);
 }
+
 // Directories that make up the backend runtime.
 const DIRS = [
   'models && skills',
