@@ -71,9 +71,9 @@ export declare class ThornsEngine {
     private maxHistoryLength;
     constructor();
     /**
-     * Connect THORNS to core subsystems (value allocator, mesh, hyperdimensional engine, RLM, MoE)
+     * Connect THORNS to core subsystems (value allocator, mesh, hyperdimensional engine, RLM, net-skill router)
      */
-    connectCore(valueAllocator: any, mesh: any, hyperEngine: any, rlmTrainer: any, moeRouter: any): void;
+    connectCore(valueAllocator: any, mesh: any, hyperEngine: any, rlmTrainer: any, skillRouter: any): void;
     /**
      * Main thinking entry point — analyzes input through all THORNS dimensions
      */

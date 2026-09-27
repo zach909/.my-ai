@@ -1,4 +1,4 @@
-import { MoERouter } from './onebrain.js';
+import { NetSkillRouter } from './net-skill-router.js';
 import { HyperDimensionalEngine } from './onebrain.js';
 import { RLMTrainer } from './rlm.js';
 import { ValueRangeAllocator } from './value-range.js';
@@ -19,7 +19,7 @@ const HYPER_NEURON_COUNT = 64;
 export class NeuroPipeline {
     constructor(config = {}) {
         // Subsystem instances — initialized lazily on first run to keep construction fast
-        this.moeRouter = null;
+        this.skillRouter = null;
         this.hyperEngine = null;
         this.rlm = null;
         this.valueRange = null;
@@ -30,9 +30,8 @@ export class NeuroPipeline {
         // initializeNeurons() has been called yet for this pipeline instance.
         this.valueBudgetSize = 0;
         this.valueInitialized = false;
-        // MoE expert index → real plugin/skill id, populated once at subsystem
-        // init so routing decisions name an actual capability instead of an
-        // anonymous randomly-initialized expert network.
+        // Registration order -> plugin/skill id, for introspection. Routing itself
+        // is by region id (NetSkillRouter), never by index.
         this.expertPluginMap = new Map();
         /** What each expert is FOR, in words -- its name and capabilities, not just its id. */
         this.expertMeaning = new Map();
@@ -60,51 +59,29 @@ export class NeuroPipeline {
     }
     // ─── Lazy initialisation ──────────────────────────────────────────────────
     ensureSubsystems() {
-        if (this.moeRouter)
+        if (this.skillRouter)
             return; // already initialised
-        this.moeRouter = new MoERouter({
-            // numExperts: 0 — every expert must be a real, named plugin/skill
-            // registered below. Pre-seeding anonymous experts here would let them
-            // win top-K routing with nothing behind their index (Section 2.2).
-            numExperts: 0,
-            topK: 2,
-            inputDim: this.config.embeddingDim,
-            outputDim: this.config.hiddenDim,
-            expertHiddenDim: this.config.hiddenDim,
-            loadBalancingLoss: 0.01,
-        });
-        // Register every plugin/skill (Section 1.11 / Section 2.2) as a real MoE
-        // expert so routing decisions can be traced back to an actual
-        // capability — not left as anonymous, randomly-initialized experts with
-        // nothing behind their index.
+        // Net-skill routing (net-skill-router.ts), not a Mixture-of-Experts gate:
+        // each plugin/skill is a named region of the one mesh, and a tick asks the
+        // regions whose MEANING is closest to the input. No separate router
+        // network, no random expert weights.
+        this.skillRouter = new NetSkillRouter(2, this.config.embeddingDim);
         this.expertPluginMap.clear();
         this.expertMeaning.clear();
+        const addRegion = (id, name, meaning) => {
+            this.expertPluginMap.set(this.expertPluginMap.size, id);
+            this.expertMeaning.set(id, meaning);
+            this.skillRouter.register({ id, name, meaning });
+        };
         for (const def of Object.values(pluginExtensions)) {
-            const expertId = this.moeRouter.addExpert({
-                id: def.id,
-                name: def.name,
-                specialization: def.capabilities.join(',') || def.type,
-            });
-            this.expertPluginMap.set(expertId, def.id);
-            this.expertMeaning.set(def.id, `${def.id} ${def.name} ${def.capabilities.join(' ')} ${def.type}`);
+            addRegion(def.id, def.name, `${def.id} ${def.name} ${def.capabilities.join(' ')} ${def.type}`);
         }
-        // Section 2.2: every skill in programming-skills.ts must be registered
-        // too. Registering one expert per individual skill (584 entries, each a
-        // full inputDim*hiddenDim weight matrix) would be a multi-hundred-MB
-        // memory blowup for what are really lookup/metadata records, not
-        // independent computational units — so, matching the grouping the
-        // (dead) SkillsManager already used, one expert is registered per
-        // distinct expertType category, and every individual skill maps to it.
+        // Section 2.2: every skill in programming-skills.ts is routable too, one
+        // region per expertType category (584 individual skills are lookup
+        // records, not independent computational units).
         const skillExpertTypes = new Set(PROGRAMMING_SKILLS.map(s => s.expertType));
         for (const expertType of skillExpertTypes) {
-            const id = `skill_${expertType}`;
-            const expertId = this.moeRouter.addExpert({
-                id,
-                name: `${expertType} skills`,
-                specialization: expertType,
-            });
-            this.expertPluginMap.set(expertId, id);
-            this.expertMeaning.set(id, `${id} ${expertType} skills ${expertType}`);
+            addRegion(`skill_${expertType}`, `${expertType} skills`, `skill_${expertType} ${expertType} skills ${expertType}`);
         }
         // Expert neurons live in the ONE network, not in a stage in front of it.
         //
@@ -335,7 +312,7 @@ export class NeuroPipeline {
      *
      * Sequence:
      *   0. ZipIO   — infinite loop context ingestion (Section 1.10)
-     *   1. MoE     — mixture-of-experts routing on the embedding
+     *   1. Net skills — route to the skill regions the input is about
      *   2. Elastic — all-to-all multidimensional transformer-core replacement
      *   3. HyperDim — hyper-dimensional state processing
      *   4. Quantum — quantum interference for exclusive input neurons
@@ -350,24 +327,19 @@ export class NeuroPipeline {
         }
         const steps = [];
         const pipelineStart = Date.now();
-        // ── Step 1: MoE routing ─────────────────────────────────────────────────
-        let moeOutput;
+        // ── Step 1: net-skill routing ───────────────────────────────────────────
+        // Which skill regions this input is about, by meaning (the text when
+        // there is one, otherwise the embedding itself).
+        const inputVec = this.resizeVector(embedding, this.config.embeddingDim);
         let selectedPlugins = [];
         {
             const t0 = Date.now();
-            // Resize embedding to match inputDim if needed
-            const inputVec = this.resizeVector(embedding, this.config.embeddingDim);
-            const layerOut = this.moeRouter.forward(inputVec, 0);
-            moeOutput = layerOut.output;
-            selectedPlugins = layerOut.decision.expertIndices
-                .map(i => this.expertPluginMap.get(i))
-                .filter((id) => id !== undefined);
-            const durationMs = Date.now() - t0;
+            selectedPlugins = this.skillRouter.select(inputText && inputText.trim() ? inputText : inputVec).ids;
             steps.push({
-                name: 'moe-router',
+                name: 'net-skill-router',
                 inputShape: [this.config.embeddingDim],
-                outputShape: [moeOutput.length],
-                durationMs,
+                outputShape: [selectedPlugins.length],
+                durationMs: Date.now() - t0,
             });
         }
         // ── Step 2: the network ─────────────────────────────────────────────
@@ -380,9 +352,8 @@ export class NeuroPipeline {
         // weight, no network bias, no wave, not connected to the neurons in the
         // other stage at all.
         //
-        // Now the router's output goes straight into the mesh every neuron lives
-        // in. Experts are groups of neurons inside it rather than a stage in front
-        // of it: `activeGroups` says which are being asked this tick, `driven`
+        // Now the input goes straight into the mesh every neuron lives in. Skills
+        // are regions of neurons inside it rather than a stage in front of it: `activeGroups` says which are being asked this tick, `driven`
         // says which are fed the input directly, and everything else in the
         // network still computes, still all-to-all, still carrying its own weight
         // and bias plus the whole network's, in numbers and in waves.
@@ -391,7 +362,7 @@ export class NeuroPipeline {
         let networkStateDeltas = new Map();
         {
             const t0 = Date.now();
-            const networkInput = this.resizeArray(Array.from(this.resizeVector(moeOutput, this.config.hiddenDim)), this.config.hyperDimensions);
+            const networkInput = this.resizeArray(Array.from(this.resizeVector(inputVec, this.config.hiddenDim)), this.config.hyperDimensions);
             const activeGroups = selectedPlugins.length > 0 ? new Set(selectedPlugins) : undefined;
             const driven = this.neuronIdsForExperts(selectedPlugins);
             const hyperResult = this.hyperEngine.process(networkInput, this.getValueLearningRates(), driven.size > 0 ? driven : new Set([0]), this.getValeFractions(), { activeGroups });
@@ -479,7 +450,7 @@ export class NeuroPipeline {
         }
         // ── Step 5b: Alignment veto ─────────────────────────────────────────────
         // Gate the chosen action rather than optimizing toward an alignment score.
-        // Capabilities come from whichever plugin experts the MoE actually picked.
+        // Capabilities come from whichever plugin regions routing actually picked.
         let alignment;
         {
             const t0 = Date.now();
@@ -504,11 +475,11 @@ export class NeuroPipeline {
             // Emit output to Zip I/O Loop
             const outputText = `Action:${rlmAction}|Quantum:${quantumOutput.slice(0, 3).join(',')}|Steps:${rlmThinkingSteps.length}`;
             await this.zipIO.emit(outputText);
-            finalOutput = this.generateOutput(quantumOutput, moeOutput, rlmAction, rlmThinkingSteps);
+            finalOutput = this.generateOutput(quantumOutput, inputVec, rlmAction, rlmThinkingSteps);
             const durationMs = Date.now() - t0;
             steps.push({
                 name: 'token-generation',
-                inputShape: [quantumOutput.length + moeOutput.length],
+                inputShape: [quantumOutput.length + inputVec.length],
                 outputShape: [finalOutput.length],
                 durationMs,
             });
@@ -563,7 +534,7 @@ export class NeuroPipeline {
         this.runHistory = [];
         this.totalRunsCount = 0;
         // Tear down subsystems so they are re-created fresh on next run
-        this.moeRouter = null;
+        this.skillRouter = null;
         this.hyperEngine = null;
         this.rlm = null;
         this.valueRange = null;
@@ -624,8 +595,8 @@ export class NeuroPipeline {
         return this.zipIO;
     }
     /**
-     * MoE expert index → real plugin/skill id, for introspection of which
-     * concrete capability each expert slot represents.
+     * Registration order → real plugin/skill id, for introspection of which
+     * regions routing can choose between.
      */
     getExpertPluginMap() {
         return new Map(this.expertPluginMap);
@@ -676,10 +647,10 @@ export class NeuroPipeline {
      * The output vector length matches embeddingDim so it can feed back into
      * the embedding space. Each position is a weighted blend of:
      *   - hyper-dimensional output (primary signal, weight 0.6)
-     *   - MoE output (secondary signal, weight 0.3)
+     *   - the input itself (secondary signal, weight 0.3)
      *   - RLM action gate (weight 0.1)
      */
-    generateOutput(hyperOutput, moeOutput, rlmAction, rlmThinkingSteps) {
+    generateOutput(hyperOutput, inputSignal, rlmAction, rlmThinkingSteps) {
         const outLen = this.config.embeddingDim;
         const out = new Array(outLen).fill(0);
         // Action gate: normalise action index to [0,1] and use as a scaling factor
@@ -690,9 +661,9 @@ export class NeuroPipeline {
             : 0;
         for (let i = 0; i < outLen; i++) {
             const hyper = hyperOutput[i % hyperOutput.length] ?? 0;
-            const moe = moeOutput[i % moeOutput.length] ?? 0;
+            const input = inputSignal[i % inputSignal.length] ?? 0;
             const contextBias = (actionGate + thinkEntropy) / 2;
-            out[i] = hyper * 0.6 + moe * 0.3 + contextBias * 0.1;
+            out[i] = hyper * 0.6 + input * 0.3 + contextBias * 0.1;
         }
         // L2-normalise so downstream layers receive unit-norm vectors
         const norm = Math.sqrt(out.reduce((s, v) => s + v * v, 0)) || 1;

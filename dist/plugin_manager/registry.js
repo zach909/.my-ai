@@ -1,5 +1,5 @@
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
-import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import { NetSkillMesh } from "../models && skills/core/net-skill-mesh.js";
 import * as nodeFs from "node:fs";
 import { writeFileAtomic } from "../models && skills/core/atomic-write.js";
 import { CapabilityRouter } from "./capability-router.js";
@@ -16,7 +16,7 @@ function sanitizePluginIdForPath(pluginId) {
     return pluginId.replace(/[^a-zA-Z0-9_-]+/g, "_") || "unknown";
 }
 export class PluginRegistry {
-    constructor(moe) {
+    constructor(skillMesh) {
         this.plugins = new Map();
         this.definitions = new Map();
         this.skills = new Map();
@@ -29,13 +29,13 @@ export class PluginRegistry {
         this.lastHandledBy = null;
         this.routingWrites = 0;
         this.routingLoaded = false;
-        /** Each registered plugin's neuron ids in `moe`'s shared mesh, set once in register(). */
+        /** Each registered plugin's neuron ids in the skill mesh, set once in register(). */
         this.pluginNeuronIds = new Map();
-        this.moe = moe ?? new MixtureOfExperts();
+        this.skillMesh = skillMesh ?? new NetSkillMesh();
     }
     /** The shared neural mesh every registered plugin's neurons live in. */
-    getMoE() {
-        return this.moe;
+    getSkillMesh() {
+        return this.skillMesh;
     }
     /** A registered plugin's real neuron ids in the shared mesh, if any (absent for an id that was never register()'d). */
     getPluginNeuronIds(pluginId) {
@@ -58,9 +58,9 @@ export class PluginRegistry {
         // sum), but their *activity* still becomes a real, wired part of the
         // mesh's propagation once dispatch() actually uses them (see
         // firePluginNeurons() below), not just a side-channel log entry.
-        if (!this.moe.getExpert(definition.id)) {
+        if (!this.skillMesh.getSkill(definition.id)) {
             const neuronCount = definition.type === "skill-expert" ? 4 : 1;
-            const expert = this.moe.addExpert(definition.id, definition.name, definition.capabilities?.[0] ?? definition.id, neuronCount);
+            const expert = this.skillMesh.addSkill(definition.id, definition.name, definition.capabilities?.[0] ?? definition.id, neuronCount);
             this.pluginNeuronIds.set(definition.id, expert.neuronIds);
         }
     }
@@ -77,10 +77,10 @@ export class PluginRegistry {
      * all-to-all connection count made propagation crawl.
      */
     joinMesh(skillId, displayName, neuronCount) {
-        const existing = this.moe.getExpert(skillId);
+        const existing = this.skillMesh.getSkill(skillId);
         if (existing)
             return this.pluginNeuronIds.get(skillId) ?? [];
-        const expert = this.moe.addExpert(skillId, displayName, "installed-skill", Math.max(1, neuronCount));
+        const expert = this.skillMesh.addSkill(skillId, displayName, "installed-skill", Math.max(1, neuronCount));
         this.pluginNeuronIds.set(skillId, expert.neuronIds);
         return expert.neuronIds;
     }
@@ -403,7 +403,7 @@ export class PluginRegistry {
         const meshInputs = new Map();
         for (const id of neuronIds)
             meshInputs.set(id, 1);
-        this.moe.getMesh().propagate(meshInputs);
+        this.skillMesh.getMesh().propagate(meshInputs);
     }
     async healthCheck() {
         const results = new Map();

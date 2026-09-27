@@ -22,8 +22,10 @@ export { loadQuantizationConfig, normalizeQuantizationConfig, DEFAULT_QUANTIZATI
 export type { QuantizationSystemConfig } from './quantization-config';
 export { ValueRangeAllocator } from './value-range';
 export type { ValueRangeConfig, NeuronAllocation } from './value-range';
-export { MoERouter } from './onebrain.js';
-export type { MoEConfig, RouterDecision, MoELayerOutput, ExpertUtilizationStats } from './onebrain.js';
+export { NetSkillRouter } from './net-skill-router.js';
+export type { NetSkillRegion, NetSkillSelection, NetSkillUsage } from './net-skill-router.js';
+export { NetSkillMesh } from './net-skill-mesh.js';
+export type { SkillRegion, SkillTickResult } from './net-skill-mesh.js';
 export { ExpertNetwork } from './expert';
 export type { ExpertConfig, ExpertMetadata } from './expert';
 export { NeuronMesh } from './onebrain.js';

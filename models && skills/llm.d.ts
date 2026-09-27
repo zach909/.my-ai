@@ -1,6 +1,6 @@
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
-import { MoERouter } from "./core/onebrain.js";
+import { NetSkillRouter } from "./core/net-skill-router.js";
 import { NeuronMesh } from "./core/onebrain.js";
 import { HyperDimensionalEngine } from "./core/onebrain.js";
 import { ValueRangeAllocator } from "./core/value-range.js";
@@ -56,7 +56,7 @@ export declare class NeuroclawLLM {
      */
     constructor(config?: Partial<LLMConfig>, hyperEngine?: HyperDimensionalEngine | null);
     get valueAllocator(): ValueRangeAllocator;
-    get moeRouter(): MoERouter;
+    get skillRouter(): NetSkillRouter;
     get mesh(): NeuronMesh;
     get hyperEngine(): HyperDimensionalEngine;
     setQuantumEnabled(enabled: boolean): void;
@@ -126,7 +126,7 @@ export declare class NeuroclawLLM {
         connectionCount: number;
         layerCount: number;
         expertCount: number;
-        moeUtilization: import("./index.js").ExpertUtilizationStats[];
+        skillUsage: import("./core/net-skill-router.js").NetSkillUsage[];
         valueDistribution: {
             totalPoints: number;
             neuronCount: number;
@@ -150,6 +150,6 @@ export declare class NeuroclawLLM {
     getExtensionManager(): ExtensionManager;
     getTokenizer(): Tokenizer;
     getTrainer(): NeuroclawTrainer;
-    getMoERouter(): MoERouter;
+    getSkillRouter(): NetSkillRouter;
     isBuilt(): boolean;
 }

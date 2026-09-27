@@ -6,7 +6,7 @@ import { NeuroclawLLM } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { publishGraftedNetSkills } from "../models && skills/core/net-skill-store.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
-import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import { NetSkillMesh } from "../models && skills/core/net-skill-mesh.js";
 import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";
@@ -173,10 +173,10 @@ export class NeuroclawSystem {
         // its own MixtureOfExperts (and therefore its own NeuronMesh), which left
         // every plugin's neurons wired all-to-all among *themselves* but severed
         // from the language brain's neurons -- two disconnected networks in one
-        // agent. Handing it a MoE backed by UnifiedBrain's own mesh puts plugin
+        // agent. Handing it a skill mesh backed by UnifiedBrain's own mesh puts plugin
         // neurons in the same all-to-all mesh as everything else, so a plugin
         // firing genuinely propagates into the rest of the network.
-        this.pluginRegistry = new PluginRegistry(new MixtureOfExperts(2, this.llm.mesh));
+        this.pluginRegistry = new PluginRegistry(new NetSkillMesh(2, this.llm.mesh));
         this.veto = new AlignmentVeto();
         this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
         // A doorway is made per feed rather than held: the pipeline builds its
@@ -511,20 +511,20 @@ export class NeuroclawSystem {
         await this.pluginRegistry.bootstrap();
         // Register a real implementation for every extension in the catalog.
         // Skill-type experts (coding, image, video, game, universal-language)
-        // also get a MoE SkillDefinition so they register as experts in the mesh.
+        // also get a SkillDefinition so they register as net-skill regions in the mesh.
         for (const [key, def] of Object.entries(pluginExtensions)) {
             const skillDef = def.type === "skill-expert"
                 ? {
                     id: def.id,
                     name: def.name,
-                    description: `${def.name} MoE expert`,
+                    description: `${def.name} net skill`,
                     expertIndex: this.pluginRegistry.getSkillCount(),
                     specialization: def.capabilities[0] ?? def.id,
                     selfAuthored: false,
                 }
                 : undefined;
             try {
-                const instance = createPluginInstance(def.name, def, skillDef, this.pluginRegistry.getMoE().getMesh());
+                const instance = createPluginInstance(def.name, def, skillDef, this.pluginRegistry.getSkillMesh().getMesh());
                 this.pluginRegistry.register(def, instance);
                 if (skillDef)
                     this.pluginRegistry.registerSkill(skillDef, def.id);
@@ -541,7 +541,7 @@ export class NeuroclawSystem {
             callHistoryInstance.setSource(phoneCallsInstance);
         }
         // Activate all plugins
-        console.log("Activating registered extensions & MoE experts...");
+        console.log("Activating registered extensions & net skills...");
         for (const id of Object.keys(pluginExtensions)) {
             try {
                 await this.pluginRegistry.activate(id);
@@ -963,7 +963,7 @@ export class NeuroclawSystem {
             return this.respondDirect(`From what I've been taught:\n${supporting}`, turnImportance);
         }
         // 6. Run the query through the real neural runner (THORNS intent →
-        //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation),
+        //    plugin/skill dispatch → mesh + hyperdimensional + net-skill generation),
         //    grounded in any relevant prior conversation turns so the response
         //    integrates previous context instead of treating the prompt as an
         //    isolated event (continuous context, Section 7).

@@ -4454,14 +4454,14 @@ export class WebServer {
                 }
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const system = await getNeuroclawSystem();
-                const moe = system.pluginRegistry.getMoE?.();
+                const skillMesh = system.pluginRegistry.getSkillMesh?.();
                 // One entry per neuron, so a change in neuron count changes the digest
                 // too -- a freeze that only noticed renames would miss the failure that
                 // actually matters, which is something quietly growing the main mesh.
                 const view = {
                     neuronNames: () => {
                         const names = [];
-                        for (const expert of moe?.listExperts() ?? []) {
+                        for (const expert of skillMesh?.listSkills() ?? []) {
                             for (let i = 0; i < expert.neuronIds.length; i++)
                                 names.push(expert.name);
                         }
@@ -4534,11 +4534,11 @@ export class WebServer {
                 // not merely intended.
                 const { getNeuroclawSystem: loadSystem } = await import('../src/index.js');
                 const system = await loadSystem();
-                const moe = system.pluginRegistry.getMoE?.();
+                const skillMesh = system.pluginRegistry.getSkillMesh?.();
                 const mainModel = {
                     neuronNames: () => {
                         const names = [];
-                        for (const expert of moe?.listExperts() ?? []) {
+                        for (const expert of skillMesh?.listSkills() ?? []) {
                             for (let i = 0; i < expert.neuronIds.length; i++)
                                 names.push(expert.name);
                         }

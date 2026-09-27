@@ -10,7 +10,7 @@ import { CapabilitiesRegistry } from "./capabilities.js";
 import { CLI } from "./cli.js";
 import { NeuroclawRunner } from "./runner.js";
 import { WebServer } from "./web-server.js";
-import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import { NetSkillMesh } from "../models && skills/core/net-skill-mesh.js";
 /**
  * Composition root. cli.ts, runner.ts and web-server.ts only export classes —
  * before this file existed nothing instantiated them, so `npm start`, the
@@ -46,14 +46,14 @@ async function registerRealPlugins(pluginRegistry) {
             ? {
                 id: def.id,
                 name: def.name,
-                description: `${def.name} MoE expert`,
+                description: `${def.name} net skill`,
                 expertIndex: pluginRegistry.getSkillCount(),
                 specialization: def.capabilities[0] ?? def.id,
                 selfAuthored: false,
             }
             : undefined;
         try {
-            const instance = createPluginInstance(def.name, def, skillDef, pluginRegistry.getMoE().getMesh());
+            const instance = createPluginInstance(def.name, def, skillDef, pluginRegistry.getSkillMesh().getMesh());
             pluginRegistry.register(def, instance);
             if (skillDef)
                 pluginRegistry.registerSkill(skillDef, def.id);
@@ -81,10 +81,10 @@ async function registerRealPlugins(pluginRegistry) {
 async function buildCore() {
     const llm = new NeuroclawLLM();
     const pipeline = new NeuroPipeline();
-    // One brain here too: back the plugin MoE with the language brain's own
+    // One brain here too: back the plugin skill mesh with the language brain's own
     // mesh so this boot path doesn't rebuild the fracture src/index.ts closes --
     // plugin neurons and language neurons belong to the same all-to-all network.
-    const pluginRegistry = new PluginRegistry(new MixtureOfExperts(2, llm.mesh));
+    const pluginRegistry = new PluginRegistry(new NetSkillMesh(2, llm.mesh));
     // bootstrap() only seeds placeholder PluginDefinitions/SkillDefinitions
     // (id/name pairs, no BasePlugin instance) from the static catalogs in
     // plugin_manager/registry-data.ts, purely so `plugins`/`skills` listings
