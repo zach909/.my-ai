@@ -2,6 +2,20 @@
 
 The AI receives compressed ("zipped") inputs and produces compressed outputs, both operating as circular buffers — when storage reaches capacity, the oldest information is overwritten, so the system runs continuously without needing unlimited memory. The design notes' theoretical example: "a 200,000 GB knowledge base processed efficiently through compression."
 
+## The doorway neurons: 0, 1 and send
+
+The Zip Loop talks to the mesh through three neurons on each side (`ZipLoopInterface`, `ZIP_LOOP_DEFAULT_IDS` in `models && skills/core/onebrain.ts`):
+
+| Side | Neurons |
+|---|---|
+| Input | `bit0In` (0), `bit1In` (1), `sendIn` (4) |
+| Output | `bit0Out` (2), `bit1Out` (3), `sendOut` (5) |
+
+A data neuron alone cannot say how many bits it means: holding the 0 neuron for three ticks could be "0", "00" or "000". **Send** is the clock that settles it. It alternates between off and fully on, and a bit exists only where send fires:
+
+- **Input**: every bit is two ticks. First the data neuron alone (send off: the bit is being set up), then the data neuron with send on (the bit is committed). "00" goes in as `0 → send → 0 → send`.
+- **Output**: a bit is read only on the tick `sendOut` turns on, and its value is whichever of `bit0Out`/`bit1Out` is higher at that moment. Holding send on does not repeat the bit. If send does not fire within 3 read ticks, the network has stopped sending: the byte reads as nothing, which is what lets a run end when the network decides it is done.
+
 ## Overview
 
 **Purpose**: Extend effective context far beyond what raw token storage would allow, by compressing everything that goes in and out and wrapping it in a bounded ring buffer instead of an ever-growing list.

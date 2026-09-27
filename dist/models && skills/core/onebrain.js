@@ -1606,6 +1606,89 @@ export class NeuronMesh {
     getGroups() {
         return Array.from(new Set(this.nodeGroups.values()));
     }
+    /**
+     * Absorb every node, connection, and group label from `other` into
+     * this mesh, wiring the two former-meshes' nodes to each other
+     * exactly like addNode() wires a brand-new node in (same
+     * connectionDensity-gated, symmetric random weight) -- the runtime
+     * counterpart to addNode()'s "grow with a brand-new node": this grows
+     * with nodes that already have real activation/bias/connections,
+     * because they came from an existing, already-settled mesh.
+     *
+     * Unlike addNode(), absorbed nodes keep the activation/bias/
+     * connections they already had in `other` -- they are relocated, not
+     * freshly initialized -- and `other`'s own connections *among its
+     * absorbed nodes* are copied over unchanged (remapped to new ids), so
+     * the two-way link addNode() gives every edge is preserved even where
+     * it isn't perfectly symmetric (a caller could have hand-edited one
+     * direction). Only the *cross* connections between self's original
+     * nodes and other's absorbed ones are new, since there is no history
+     * between two previously-separate meshes to preserve.
+     *
+     * `groupPrefix`, if given, is prepended ("prefix.originalGroup") to
+     * every absorbed node's group label, so two meshes that happen to use
+     * the same group name (e.g. both have a "coding" group) don't
+     * collide once merged. Omit it to keep other's group labels as-is.
+     *
+     * `other`'s own parallel backend (if it has one attached via
+     * setParallelBackend()) is untouched by this call -- whoever
+     * constructed and owns that MeshWorkerPool is still responsible for
+     * terminating it. `other` itself should not be used after merging
+     * into `self`.
+     *
+     * Returns other's old node id -> its new id in `self`, so a caller
+     * tracking identity across the merge can translate it.
+     */
+    mergeFrom(other, groupPrefix) {
+        const idMap = new Map();
+        const existingIds = Array.from(this.nodes.keys());
+        for (const [oldId, oldNode] of other.nodes) {
+            const newId = this.nextId++;
+            idMap.set(oldId, newId);
+            const node = {
+                id: newId,
+                activation: oldNode.activation,
+                bias: oldNode.bias,
+                connections: new Map(),
+                layer: oldNode.layer,
+                activationHistory: [...oldNode.activationHistory],
+            };
+            this.nodes.set(newId, node);
+            const group = other.nodeGroups.get(oldId);
+            if (group !== undefined) {
+                this.nodeGroups.set(newId, groupPrefix ? `${groupPrefix}.${group}` : group);
+            }
+        }
+        // Preserve other's own connections among its absorbed nodes.
+        for (const [oldId, oldNode] of other.nodes) {
+            const newNode = this.nodes.get(idMap.get(oldId));
+            for (const [oldNeighborId, weight] of oldNode.connections) {
+                const newNeighborId = idMap.get(oldNeighborId);
+                if (newNeighborId !== undefined)
+                    newNode.connections.set(newNeighborId, weight);
+            }
+        }
+        // New cross-connections between self's original nodes and the
+        // absorbed ones -- same connectionDensity-gated, symmetric random
+        // weight addNode() uses for a brand-new node. Only self's *original*
+        // nodes are targeted here (not other absorbed ones), so this never
+        // overwrites the internal connections just preserved above.
+        const density = this.config.connectionDensity;
+        for (const oldId of other.nodes.keys()) {
+            const newId = idMap.get(oldId);
+            const newNode = this.nodes.get(newId);
+            for (const existingId of existingIds) {
+                if (density < 1 && Math.random() >= density)
+                    continue;
+                const existingNode = this.nodes.get(existingId);
+                const weight = (Math.random() * 2 - 1) * Math.sqrt(1 / this.nodes.size);
+                newNode.connections.set(existingId, weight);
+                existingNode.connections.set(newId, weight);
+            }
+        }
+        this.cacheValid = false;
+        return idMap;
+    }
     updateConnection(fromId, toId, newWeight) {
         const from = this.nodes.get(fromId);
         const to = this.nodes.get(toId);
@@ -6267,6 +6350,10 @@ export class HyperDimensionalEngine {
         return `hd_${hash}`;
     }
 }
+/** The Zip Loop's neurons in every mesh: 0/1 in, 0/1 out, send in, send out. */
+export const ZIP_LOOP_DEFAULT_IDS = Object.freeze({
+    bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5,
+});
 /** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
 const ZIP_LOOP_PULSE = 1;
 /** Shared "nothing is externally driven this tick" set for receiveBits(). Safe to share because process()/settle() only ever read the driven set -- nothing on that path adds to or clears it. */
@@ -6291,6 +6378,18 @@ const ZIP_SETTLED_ITERATIONS = 2;
 const HYPER_DIM_TILE = 4;
 /** The wave the Zip Loop's bit neurons share. Its value does not matter; that all four share it does. */
 const ZIP_BIT_FREQUENCY = 0.25;
+/**
+ * The send neurons' wave: a different frequency from the bits, so the clock
+ * never interferes with (or cancels) the data it is clocking.
+ */
+const ZIP_SEND_FREQUENCY = 0.5;
+/**
+ * Read ticks allowed per output bit. A bit needs at least two -- send low,
+ * then send high -- and one more is slack for a network that holds send low
+ * a little longer. A bit whose send never fires within this is not a bit:
+ * the network has stopped sending.
+ */
+const ZIP_READ_TICKS_PER_BIT = 3;
 /** Shared options for every read tick: reading the network must not rewrite it. */
 const ZIP_LOOP_READ_ONLY = { learn: false };
 /**
@@ -6306,6 +6405,8 @@ export class ZipLoopInterface {
     constructor(engine, ids) {
         this.engine = engine;
         this.ids = ids;
+        /** Whether sendOut was active on the previous read tick (a bit is its rising edge). */
+        this.sendOutWasHigh = false;
         /** Reused input vectors; engine dimensions are fixed at construction, so these never need rebuilding. */
         this.pulseScratch = null;
         this.idleScratch = null;
@@ -6315,6 +6416,8 @@ export class ZipLoopInterface {
         this.lastSettleIterations = Number.MAX_SAFE_INTEGER;
         this.drivenBit0 = new Set([ids.bit0In]);
         this.drivenBit1 = new Set([ids.bit1In]);
+        this.sentBit0 = new Set([ids.bit0In, ids.sendIn]);
+        this.sentBit1 = new Set([ids.bit1In, ids.sendIn]);
         // Perfect enemies. The two input neurons carry the same wave half a cycle
         // apart, so a one and a zero arriving together annihilate exactly rather
         // than leaving a residue that means neither. Everything downstream of the
@@ -6328,6 +6431,8 @@ export class ZipLoopInterface {
         this.engine.setWaveSignature(ids.bit1In, ZIP_BIT_FREQUENCY, Math.PI);
         this.engine.setWaveSignature(ids.bit0Out, ZIP_BIT_FREQUENCY, 0);
         this.engine.setWaveSignature(ids.bit1Out, ZIP_BIT_FREQUENCY, Math.PI);
+        this.engine.setWaveSignature(ids.sendIn, ZIP_SEND_FREQUENCY, 0);
+        this.engine.setWaveSignature(ids.sendOut, ZIP_SEND_FREQUENCY, 0);
     }
     /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
     /** One byte in, MSB-first, without ending the message. */
@@ -6382,11 +6487,18 @@ export class ZipLoopInterface {
         // Settling to convergence is what you do when you want the ANSWER, and
         // that still happens: nextOutputByte() and learnFromEvent() both settle
         // fully. Streaming the question in does not need it.
+        //
+        // Two ticks per bit, with the send neuron as the clock: first the data
+        // neuron alone (send off -- the bit is being set up), then the data
+        // neuron with send fully on (the bit is committed). That is what lets
+        // "0", "00" and "000" be told apart: each zero ends with its own send.
         this.lastBit = bit;
         const ceiling = this.engine.getPropagationSteps();
         this.engine.setPropagationSteps(ZIP_INPUT_STEPS);
         try {
-            this.engine.process(this.pulseVector(), undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0, undefined, ZIP_LOOP_READ_ONLY);
+            const pulse = this.pulseVector();
+            this.engine.process(pulse, undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0, undefined, ZIP_LOOP_READ_ONLY);
+            this.engine.process(pulse, undefined, bit === 1 ? this.sentBit1 : this.sentBit0, undefined, ZIP_LOOP_READ_ONLY);
         }
         finally {
             this.engine.setPropagationSteps(ceiling);
@@ -6415,7 +6527,7 @@ export class ZipLoopInterface {
         // full settle ceiling. The states then mean "the message just arrived",
         // which is the moment the elastic core is meant to learn from, and the
         // input force each neuron felt is real rather than residual.
-        this.engine.process(this.pulseVector(), undefined, this.lastBit === 1 ? this.drivenBit1 : this.drivenBit0);
+        this.engine.process(this.pulseVector(), undefined, this.lastBit === 1 ? this.sentBit1 : this.sentBit0);
     }
     /** Lazily built idle vector, shared with nextOutputByte(). */
     idleVector() {
@@ -6431,96 +6543,78 @@ export class ZipLoopInterface {
         return this.pulseScratch;
     }
     /**
-     * Reads `count` bits back off the two output neurons, one settle() tick
-     * each, with nothing directly driven -- the network keeps evolving under
-     * its own recurrent dynamics between reads, exactly the "temporary
-     * context" the source description asks for. Whichever output neuron has
-     * higher energy after a tick is read as that tick's bit.
+     * The line an output neuron must clear to count as active: above the
+     * network's own mean energy, not a fixed constant (see nextOutputByte()).
+     */
+    activeLine() {
+        const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
+        return floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
+    }
+    /**
+     * One read tick. Returns the bit the network SENT on this tick, or null
+     * when it sent nothing: a bit exists only on the tick sendOut turns on
+     * (its rising edge), and its value is whichever data neuron is higher at
+     * that moment. Holding send on does not repeat the bit; it has to drop
+     * and fire again, exactly like the input side.
+     */
+    readTick(first) {
+        const idle = this.idleVector();
+        // learn: false -- reading is not learning. Every one of these ticks used
+        // to apply a full Hebbian update, so pulling an answer out of the
+        // network changed the network it was pulled from.
+        const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
+        // How hard the mesh worked to reach a stable state. The HARDEST tick of
+        // a read is what it cost: settled only if every tick settled.
+        if (first || read.settleIterations > this.lastSettleIterations) {
+            this.lastSettleIterations = read.settleIterations;
+        }
+        const line = this.activeLine();
+        const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
+        const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
+        const sendHigh = this.engine.getNeuronEnergy(this.ids.sendOut) > line;
+        const rising = sendHigh && !this.sendOutWasHigh;
+        this.sendOutWasHigh = sendHigh;
+        return { bit: rising ? (one > zero ? 1 : 0) : null };
+    }
+    /**
+     * Reads up to `count` bits the network sends, with nothing directly
+     * driven. Only bits the network clocked out with its send neuron count;
+     * if it stops sending (no send within ZIP_READ_TICKS_PER_BIT ticks) the
+     * read ends early and returns fewer than `count` bits.
      */
     receiveBits(count) {
-        const bits = new Array(count);
-        // Idle vector and the empty driven-set are constant across every tick, and
-        // each bit only needs two scalars back -- previously this rebuilt both per
-        // iteration and called getNeuronStates(), which deep-copies every neuron
-        // (object spread + fresh Float32Array each), then linear-scanned that
-        // throwaway snapshot twice. That made reading K bits O(K*N) allocations to
-        // recover 2K numbers; getNeuronEnergy() reads each in O(1) with none.
-        if (!this.idleScratch)
-            this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
-        const idle = this.idleScratch;
-        const bit0Out = this.ids.bit0Out;
-        const bit1Out = this.ids.bit1Out;
-        for (let i = 0; i < count; i++) {
-            // learn: false -- reading is not learning. Every one of these ticks used
-            // to apply a full Hebbian update, so pulling an answer out of the
-            // network changed the network it was pulled from, and reading the same
-            // thing twice gave two different networks.
-            const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
-            // How hard the mesh had to work to reach a stable state on this tick.
-            // The smallest of the eight is what the byte cost at its easiest.
-            if (i === 0 || read.settleIterations > this.lastSettleIterations) {
-                this.lastSettleIterations = read.settleIterations;
+        const bits = [];
+        let first = true;
+        while (bits.length < count) {
+            let got = null;
+            for (let t = 0; t < ZIP_READ_TICKS_PER_BIT && got === null; t++) {
+                got = this.readTick(first).bit;
+                first = false;
             }
-            bits[i] = this.engine.getNeuronEnergy(bit1Out) > this.engine.getNeuronEnergy(bit0Out) ? 1 : 0;
+            if (got === null)
+                break; // the network stopped sending
+            bits.push(got);
         }
         return bits;
     }
     /**
-     * One tick-group of output, or null when the network emitted nothing.
+     * One byte of output, or null when the network sent nothing.
      *
      * This is what makes the mesh a BitDoorway (zip-halt.ts) and therefore what
      * lets a run end when the NETWORK decides it is over rather than when a
-     * timer says so. An all-connected mesh has no last layer to fall out of, so
-     * silence is the only evidence that it has finished emitting -- and silence
-     * has to be a value the caller receives, not a gap it fails to notice.
-     *
-     * Silence means both output neurons sat below SILENT_OUTPUT for the whole
-     * byte. receiveBits() alone cannot express that: it compares the two and
-     * always returns a bit, so a completely dormant network reads as an endless
-     * stream of zeros -- indistinguishable from a network patiently emitting
-     * zeros, which is exactly the distinction a halt condition rests on.
+     * timer says so. With the send neuron that decision is explicit: a byte is
+     * eight bits the network clocked out with send, and a network that stops
+     * firing send has stopped talking. A byte cut short (send stopped part way)
+     * is not a byte, so it reads as null too -- the end of the message.
      */
     nextOutputByte() {
-        if (!this.idleScratch)
-            this.idleScratch = new Array(this.engine.getDimensions()).fill(0);
-        const idle = this.idleScratch;
+        const bits = this.receiveBits(8);
+        if (bits.length < 8)
+            return null;
         let byte = 0;
-        let heard = false;
-        for (let b = 0; b < 8; b++) {
-            // Reading, so not learning -- see receiveBits().
-            const read = this.engine.process(idle, undefined, ZIP_LOOP_NO_DRIVEN, undefined, ZIP_LOOP_READ_ONLY);
-            // How hard the mesh worked to reach a stable state on this tick. The
-            // HARDEST of the eight is what the byte cost: a byte is settled only if
-            // the network settled on every bit of it. Taking the easiest instead
-            // called every byte settled, because at least one bit of any byte lands
-            // in one iteration.
-            if (b === 0 || read.settleIterations > this.lastSettleIterations) {
-                this.lastSettleIterations = read.settleIterations;
-            }
-            const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
-            const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
-            // Speaking means standing out from the network's own floor, not
-            // clearing a fixed constant.
-            //
-            // SILENT_OUTPUT is 1e-6, which suited a small mesh where a quiet neuron
-            // really did sit near zero. On the live network of 336 neurons every
-            // neuron carries residual activity around 1e-3 -- a thousand times the
-            // threshold -- so the output neurons NEVER read as silent and the run
-            // could never end by going quiet. Measured over five reads: bit0Out
-            // 9.98e-4 against bit1Out 9.93e-4, both far above the line and barely
-            // half a percent apart, which is noise being reported as speech.
-            //
-            // Against the network's own mean energy instead, the same way the
-            // capability gap is measured against what a region usually manages. A
-            // network whose output neurons are merely as active as everything else
-            // is not saying anything; one where they stand above the rest is.
-            const floor = this.engine.meanNeuronEnergy() * SILENT_OUTPUT_RATIO;
-            const line = floor > SILENT_OUTPUT ? floor : SILENT_OUTPUT;
-            if (zero > line || one > line)
-                heard = true;
-            byte = (byte << 1) | (one > zero ? 1 : 0);
-        }
-        return heard ? byte : null;
+        for (const b of bits)
+            byte = (byte << 1) | b;
+        return byte;
     }
     /**
      * Did the network reach a stable state while producing the last byte?
@@ -6564,8 +6658,9 @@ export class ZipLoopInterface {
     /** Reads `byteCount` bytes back, packing each 8 bits MSB-first. */
     receiveBytes(byteCount) {
         const bits = this.receiveBits(byteCount * 8);
-        const out = new Uint8Array(byteCount);
-        for (let i = 0; i < byteCount; i++) {
+        const whole = Math.floor(bits.length / 8);
+        const out = new Uint8Array(whole);
+        for (let i = 0; i < whole; i++) {
             let byte = 0;
             for (let b = 0; b < 8; b++)
                 byte = (byte << 1) | bits[i * 8 + b];

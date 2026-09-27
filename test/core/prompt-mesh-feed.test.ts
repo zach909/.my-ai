@@ -123,7 +123,7 @@ describe('a prompt goes into the mesh as a file', () => {
       hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
       waveGain: 0.1, connectionBias: true,
     });
-    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     const before = engine.captureNetworkState().states;
 
     const feed = new PromptMeshFeed(() => zip, immediate);

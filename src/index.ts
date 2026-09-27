@@ -315,7 +315,7 @@ export class NeuroclawSystem {
     this.promptFeed = new PromptMeshFeed(() => {
       const engine = this.pipeline.getHyperEngine();
       if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
-      return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+      return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     });
     // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
     // promptFeed are the two callers that drive the SAME engine's doorway,

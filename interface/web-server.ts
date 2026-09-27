@@ -4580,7 +4580,7 @@ export class WebServer {
 
         const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
         const { runUntilStoppedAsync, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
-        const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+        const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
 
         // Capped hard. One settle per bit means an unbounded ceiling here
         // would be a request that never returns.

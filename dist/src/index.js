@@ -13,6 +13,7 @@ import { CLI } from "../interface/cli.js";
 import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
 import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
 import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
+import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/core/shared-mesh-sync.js";
 import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
@@ -28,6 +29,7 @@ import { PromptLibrary } from "../models && skills/core/prompt-library.js";
 import { WorkingMemory } from "../models && skills/core/working-memory.js";
 import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
+import { ActionLog } from "../models && skills/core/action-log.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
 import { WorldModel } from "../models && skills/core/world-model.js";
 import { MathEngine, evaluateExpression } from "../models && skills/core/math-engine.js";
@@ -143,6 +145,7 @@ export class NeuroclawSystem {
          * rather than an unbounded memory leak.
          */
         this.recentTraces = [];
+        this.lastLearned = "";
         this.contextCapacityGB = config?.maxContextGB || 200000;
         this.zipPersistDir = config?.persistDir ?? null;
         // Section 1.10/§7: NeuroPipeline owns a second, independent ZipIOSystem
@@ -184,13 +187,23 @@ export class NeuroclawSystem {
             const engine = this.pipeline.getHyperEngine();
             if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS)
                 return null;
-            return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+            return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
         });
         // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
         // promptFeed are the two callers that drive the SAME engine's doorway,
         // and a lock only each one holds separately would not stop them from
         // running at the same time as each other.
         this.continuousLearner = new ContinuousLearner(this.promptFeed.lock());
+        // The mesh's learning, kept across restarts and (opt-in,
+        // NEUROCLAW_SHARED_LEARNING=1) shared with other installs as weight
+        // changes -- see shared-mesh-sync.ts. Booted here, before anything grafts
+        // neurons in, so every install starts from the same committed base.
+        this.sharedMesh = new SharedMeshSync(() => this.pipeline.getHyperEngine(), this.promptFeed.lock(), { root: process.cwd() });
+        if (process.env.NEUROCLAW_SHARED_MESH !== "0" && !process.env.VITEST) {
+            this.sharedMesh.boot();
+            const interval = Number(process.env.NEUROCLAW_SHARED_LEARNING_INTERVAL_MS) || DEFAULT_SYNC_INTERVAL_MS;
+            setInterval(() => void this.sharedMesh.tick(), interval).unref();
+        }
         this.empathy = new EmpathyEngine();
         this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.pluginRegistry);
         // Hive Mind (Section 13): each agent's mind is the real neural runner, so
@@ -227,6 +240,7 @@ export class NeuroclawSystem {
         // emerges from their interaction (ASI §12), not from any one in isolation.
         this.monitor = new SelfMonitor();
         this.mistakes = new MistakeTracker();
+        this.actions = new ActionLog();
         this.knowledge = new KnowledgeGraph();
         // World model (Section 4): spec-aligned entity/causal/temporal vocabulary
         // over the same KnowledgeGraph -- not a second, duplicate graph.
@@ -694,8 +708,32 @@ export class NeuroclawSystem {
             prevention: corrected.slice(0, 500),
         });
         await this.zipIO.emit(corrected);
-        this.promptFeed.feed(corrected, "correction.txt");
+        this.learnFrom(corrected, "correction");
         return { applied: true, forgot };
+    }
+    /**
+     * The one way anything reaches the mesh to be learned from: user messages,
+     * the agent's own replies, corrections, skill instructions, local files and
+     * tool results. Web content is refused outright -- the mesh learns from
+     * what happens on this install, not from pages fetched off the internet.
+     *
+     * Same doorway and same cost as promptFeed.feed() (fire-and-forget, newest
+     * wins). The exact same text arriving twice in a row -- e.g. a message
+     * processQuery() already fed, then reported again by the chat service --
+     * is fed once.
+     */
+    learnFrom(text, source) {
+        if (source === "web")
+            return false;
+        const trimmed = typeof text === "string" ? text.trim() : "";
+        if (!trimmed)
+            return false;
+        const key = `${source}\u0000${trimmed}`;
+        if (key === this.lastLearned)
+            return false;
+        this.lastLearned = key;
+        this.promptFeed.feed(trimmed, `${source}.txt`);
+        return true;
     }
     async processQuery(input) {
         if (!this.initialized)
@@ -755,7 +793,7 @@ export class NeuroclawSystem {
         // and the settle loop is synchronous, so it would take every other
         // request with it -- which has already happened here once. See
         // PromptMeshFeed for why the queue is one deep.
-        this.promptFeed.feed(input);
+        this.learnFrom(input, "user");
         details.zipBytes = packZip({ files: { "prompt.txt": input } }).length;
         // Continuous learning: compares whatever the mesh predicted the user
         // would say against what they actually just said, trains on the gap,
@@ -798,6 +836,8 @@ export class NeuroclawSystem {
                 .slice(0, PROMPTING_SKILLS_PER_TURN);
             for (const skill of chosen) {
                 await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
+                if (skill.source !== "web")
+                    this.learnFrom(`Skill "${skill.title}": ${skill.description}`, "skill");
                 details.skills.push(skill.title);
             }
         }

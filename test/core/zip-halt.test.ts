@@ -218,7 +218,7 @@ describe('the real mesh doorway', () => {
     // streamed a real archive through here would take minutes.
     const { HyperDimensionalEngine, ZipLoopInterface } = await import('../../models && skills/core/onebrain.js');
     const engine = new HyperDimensionalEngine(8);
-    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
 
     // Compile-time proof that the mesh is a doorway a run can be driven
     // through -- the cheapest possible version of the integration test.
@@ -473,7 +473,7 @@ describe('the stop command', () => {
       hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
       waveGain: 0.1, connectionBias: true,
     });
-    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     const result = runUntilStopped(zip, { files: { 'prompt/prompt.txt': 'hi' } }, { quietTicks: 3, maxTicks: 120 });
 
     expect(result.stopReport).toBeTruthy();

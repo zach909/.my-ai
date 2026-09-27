@@ -783,7 +783,7 @@ function ChatConversation({
 
   /**
    * Zip the message together with everything staged and send it through the
-   * two input neurons.
+   * Zip Loop's input neurons (0, 1 and send).
    *
    * Reported honestly: "ceiling" means the run was cut off at its tick budget
    * rather than the network deciding it was done, and one settle per BIT means
@@ -792,7 +792,7 @@ function ChatConversation({
    */
   /**
    * Zip `messageText` (and any files) together and send it through the two
-   * input neurons. Structured, not pre-formatted: an attached FILE gets a
+   * input neurons (0, 1 and send). Structured, not pre-formatted: an attached FILE gets a
    * full assistant bubble reporting the outcome (sendMessage below), while a
    * plain typed message gets a small caption under the user's own bubble --
    * two different presentations of the same underlying send.

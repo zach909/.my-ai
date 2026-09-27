@@ -6,6 +6,7 @@ import { spawn } from 'node:child_process';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
+import { UserProfileStore } from '../models && skills/core/user-profile-store.js';
 import { installFromStore, installPromptingSkill, listInstalled, loadRegistry, publishPromptingSkill, readPublishedPromptingSkill, uninstallPromptingSkill, isBuiltIn, } from '../models && skills/core/prompting-skill-store.js';
 import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
@@ -789,6 +790,40 @@ export function parseJsonBody(raw) {
     catch {
         throw new HttpClientError('Invalid JSON', 400);
     }
+}
+// The Memory tab's "About you" and "Goals" lists. Loaded into long-term
+// memory once per memory instance (loadMemory() can swap it out).
+let userProfile = null;
+const profileSynced = new WeakSet();
+async function profileWithMemory() {
+    userProfile ?? (userProfile = new UserProfileStore());
+    const { getNeuroclawSystem } = await import('../src/index.js');
+    const memory = (await getNeuroclawSystem()).memory;
+    if (!profileSynced.has(memory)) {
+        userProfile.syncTo(memory);
+        profileSynced.add(memory);
+    }
+    return { store: userProfile, memory };
+}
+const ACTIVITY_MAX = 300;
+const activityLog = [];
+let activitySeq = 0;
+function activityStart(title, detail) {
+    const event = { id: ++activitySeq, kind: 'chat', status: 'running', title, detail, startedAt: Date.now() };
+    activityLog.push(event);
+    if (activityLog.length > ACTIVITY_MAX)
+        activityLog.splice(0, activityLog.length - ACTIVITY_MAX);
+    return event;
+}
+function activityEnd(event, ok, detail) {
+    event.status = ok ? 'ok' : 'error';
+    event.endedAt = Date.now();
+    if (detail !== undefined)
+        event.detail = detail;
+}
+function clip(text, max = 400) {
+    const s = typeof text === 'string' ? text : JSON.stringify(text) ?? '';
+    return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 export class WebServer {
     /**
@@ -2143,8 +2178,58 @@ export class WebServer {
         // Reading is open (it is this instance's own knowledge, and the wiki and
         // store are readable too). Forgetting is NOT -- it is destruction, and it
         // is gated for the same reason wiki and store deletion are.
+        // ── About you / Goals: what the user tells it directly ──────────────
+        // GET /api/profile, POST /api/profile/{about|goals} {text},
+        // PATCH /api/profile/{about|goals}/:id {text?, done?},
+        // DELETE /api/profile/{about|goals}/:id
+        if (pathname === '/api/profile' && method === 'GET') {
+            try {
+                const { store } = await profileWithMemory();
+                this.sendJson(res, store.get());
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        const profileMatch = pathname.match(/^\/api\/profile\/(about|goals)(?:\/([A-Za-z0-9-]+))?$/);
+        if (profileMatch) {
+            const list = profileMatch[1];
+            const id = profileMatch[2];
+            try {
+                const { store, memory } = await profileWithMemory();
+                if (!id && method === 'POST') {
+                    const body = await this.parseBody(req);
+                    if (typeof body?.text !== 'string' || !body.text.trim()) {
+                        this.sendJson(res, { error: 'Missing text field' }, 400);
+                        return;
+                    }
+                    this.sendJson(res, store.add(list, body.text, memory), 201);
+                    return;
+                }
+                if (id && method === 'PATCH') {
+                    const body = await this.parseBody(req);
+                    const updated = store.update(list, id, {
+                        text: typeof body?.text === 'string' ? body.text : undefined,
+                        done: typeof body?.done === 'boolean' ? body.done : undefined,
+                    }, memory);
+                    this.sendJson(res, updated ?? { error: 'Not found' }, updated ? 200 : 404);
+                    return;
+                }
+                if (id && method === 'DELETE') {
+                    const removed = store.remove(list, id, memory);
+                    this.sendJson(res, { removed }, removed ? 200 : 404);
+                    return;
+                }
+            }
+            catch (err) {
+                this.sendError(res, err);
+                return;
+            }
+        }
         if (pathname === '/api/memory' && method === 'GET') {
             try {
+                await profileWithMemory();
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const system = await getNeuroclawSystem();
                 const q = parsedUrl.searchParams.get('q')?.trim() ?? '';
@@ -2559,6 +2644,42 @@ export class WebServer {
             this.sendJson(res, result, result.ok ? 200 : 409);
             return;
         }
+        // GET /api/activity -- what the agent has been doing, newest first:
+        // chat turns (from the activity log above) and every tool call the tool
+        // layer has recorded, with its arguments and result. Read-only.
+        if (pathname === '/api/activity' && method === 'GET') {
+            try {
+                const events = activityLog.map(e => ({ ...e }));
+                let toolsEnabled = false;
+                try {
+                    const { getNeuroclawSystem } = await import('../src/index.js');
+                    const layer = (await getNeuroclawSystem()).toolNeurons;
+                    if (layer) {
+                        toolsEnabled = true;
+                        layer.history().forEach((call, i) => {
+                            events.push({
+                                id: `tool-${i}-${call.startedAt}`,
+                                kind: 'tool',
+                                status: call.ok ? 'ok' : 'error',
+                                title: `${call.plugin}.${call.tool}`,
+                                origin: call.origin,
+                                args: clip(call.args),
+                                detail: call.ok ? clip(call.result) : call.error,
+                                startedAt: call.startedAt,
+                                endedAt: call.endedAt,
+                            });
+                        });
+                    }
+                }
+                catch { /* no tool layer is not an error; chat activity still shows */ }
+                events.sort((a, b) => Number(b.startedAt) - Number(a.startedAt));
+                this.sendJson(res, { toolsEnabled, events: events.slice(0, ACTIVITY_MAX) });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
         if (pathname === '/api/chat' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
@@ -2581,7 +2702,19 @@ export class WebServer {
                         .filter((h) => typeof h?.role === 'string' && typeof h?.content === 'string')
                         .map(h => `${h.role}: ${h.content}`)
                     : undefined;
-                const response = await this.runner.generate(message, history);
+                // What the user told it about themselves and their goals, back in
+                // memory after a restart before the first reply needs it.
+                await profileWithMemory().catch(() => undefined);
+                const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+                let response;
+                try {
+                    response = await this.runner.generate(message, history);
+                }
+                catch (err) {
+                    activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+                    throw err;
+                }
+                activityEnd(activity, true, clip(response));
                 // What the turn actually used, for the three-dots panel. Read off the
                 // system rather than rebuilt here: a details panel assembled from
                 // guesses about what probably ran looks like evidence and is not.
@@ -2647,7 +2780,19 @@ export class WebServer {
                 const { getBot } = await import('../src/server/bot-service.js');
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const bot = await getBot(await getNeuroclawSystem());
-                const response = await bot.processMessage(message);
+                // What the user told it about themselves and their goals, back in
+                // memory after a restart before the first reply needs it.
+                await profileWithMemory().catch(() => undefined);
+                const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+                let response;
+                try {
+                    response = await bot.processMessage(message);
+                }
+                catch (err) {
+                    activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+                    throw err;
+                }
+                activityEnd(activity, true, clip(response.message));
                 this.sendJson(res, {
                     message: response.message,
                     confidence: response.confidence,
@@ -4209,7 +4354,7 @@ export class WebServer {
                 }
                 const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
                 const { runUntilStoppedAsync, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
-                const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+                const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
                 // Capped hard. One settle per bit means an unbounded ceiling here
                 // would be a request that never returns.
                 const maxTicks = Math.min(Math.max(1, Number(body?.maxTicks) || 512), 4096);

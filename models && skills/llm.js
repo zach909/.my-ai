@@ -28,7 +28,7 @@ const DEFAULT_LLM_CONFIG = {
 // a chat reply and a manual zip-loop run drive the identical doorway
 // into the identical mesh, not two different conventions for the same
 // four neurons.
-const ONE_BRAIN_NEURON_IDS = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 };
+const ONE_BRAIN_NEURON_IDS = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 };
 // Bounds a chat turn's one-brain run to something an interactive reply
 // can wait on. Every OUTPUT byte read is a full settle() of the mesh --
 // real work, not padding (see zip-halt.ts/onebrain.ts's own comments on

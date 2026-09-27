@@ -4898,14 +4898,14 @@ async function testZipLoopInterface() {
   // higher energy after a tick with nothing directly driven.
   {
     const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
-    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
 
     zip.sendBit(1);
     const afterOne = hd.getNeuronStates();
     check(afterOne[1].energy > 0, 'sendBit(1) genuinely drives the bit-1 input neuron (its energy rises above zero)');
 
     const hd2 = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
-    const zip2 = new ZipLoopInterface(hd2, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip2 = new ZipLoopInterface(hd2, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     zip2.sendBit(0);
     const afterZero = hd2.getNeuronStates();
     check(
@@ -4922,7 +4922,7 @@ async function testZipLoopInterface() {
   // outcome, not something the interface guarantees by construction.
   {
     const hd = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 6 });
-    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     const bits = zip.receiveBits(16);
     check(bits.length === 16 && bits.every(b => b === 0 || b === 1), 'receiveBits() returns exactly the requested count of genuine 0/1 bits');
     const bytes = zip.receiveBytes(2);
@@ -4933,7 +4933,7 @@ async function testZipLoopInterface() {
   // MSB-first) -- checked by counting settle() ticks via a spy on process().
   {
     const hd = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 6 });
-    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     let calls = 0;
     const origProcess = hd.process.bind(hd);
     hd.process = (...args) => { calls++; return origProcess(...args); };
