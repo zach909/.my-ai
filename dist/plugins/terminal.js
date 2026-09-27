@@ -24,6 +24,9 @@ import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSy
 import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
 import { ToolPlugin } from "../plugin_manager/sdk.js";
+import { readItem, listCatalog, readItemFile } from "../models && skills/core/store.js";
+import { applyMod, revertMod, isApplied, listAppliedMods } from "../models && skills/core/mod-apply.js";
+import { sharedAccessManager } from "../models && skills/core/access-settings.js";
 const execAsync = promisify(exec);
 const FORK_BOMB = /:\(\)\{\s*[:\s|&]+\};:/;
 const DANGEROUS_SIMPLE = /\bmkfs|\bshutdown|\breboot|\bhalt|\bpoweroff/i;
@@ -173,6 +176,71 @@ export class TerminalPlugin extends ToolPlugin {
                 if (!existsSync(full) || !statSync(full).isDirectory())
                     throw new Error(`"${full}" is not a directory.`);
                 return readdirSync(full).map(name => ({ name, directory: statSync(join(full, name)).isDirectory() }));
+            },
+        });
+        // Mods: store items that overwrite this app's own source files. Looking
+        // is ordinary file reading; applying or reverting is the separate
+        // mods.apply capability, which nothing grants by default -- the owner
+        // turns it on deliberately in the access settings. Applying keeps a
+        // backup, and revert_mod restores it (mod-apply.ts).
+        this.defineTool({
+            name: "list_mods",
+            description: "Every published mod in the store, the files it would overwrite, and whether it is applied here.",
+            args: [],
+            capability: "files.read",
+            run: async () => {
+                const applied = new Map(listAppliedMods().map(r => [r.name, r]));
+                return (listCatalog().mods ?? []).map(item => ({
+                    name: item.name,
+                    description: item.description,
+                    files: item.files.map(f => f.filename),
+                    applied: applied.has(item.name),
+                }));
+            },
+        });
+        this.defineTool({
+            name: "read_mod",
+            description: "Read one file of a published mod before deciding whether to apply it.",
+            args: ["name", "filename"],
+            capability: "files.read",
+            run: async (args) => {
+                const name = textArg(args, "name");
+                const filename = textArg(args, "filename");
+                if (!readItem("mods", name))
+                    throw new Error(`There is no published mod "${name}".`);
+                const content = readItemFile("mods", name, filename);
+                if (!content)
+                    throw new Error(`Mod "${name}" has no file "${filename}".`);
+                const text = content.toString("utf8");
+                return text.length > READ_FILE_LIMIT_CHARS
+                    ? { name, filename, content: text.slice(0, READ_FILE_LIMIT_CHARS), truncated: text.length - READ_FILE_LIMIT_CHARS }
+                    : { name, filename, content: text };
+            },
+        });
+        this.defineTool({
+            name: "apply_mod",
+            description: "Apply a published mod: overwrite this app's own files with the mod's files (a backup is kept). Takes effect on restart.",
+            args: ["name"],
+            capability: "mods.apply",
+            run: async (args) => {
+                // Checked here, not only declared: callTool() runs a tool for any
+                // caller, and a chat message asking for a mod must meet the same
+                // gate as the network firing the tool on its own.
+                sharedAccessManager().require("mods.apply");
+                return applyMod(textArg(args, "name"));
+            },
+        });
+        this.defineTool({
+            name: "revert_mod",
+            description: "Undo an applied mod: restore the files it overwrote from the backup.",
+            args: ["name"],
+            capability: "mods.apply",
+            run: async (args) => {
+                sharedAccessManager().require("mods.apply");
+                const name = textArg(args, "name");
+                if (!isApplied(name))
+                    throw new Error(`"${name}" is not currently applied.`);
+                return revertMod(name);
             },
         });
         this.defineTool({
