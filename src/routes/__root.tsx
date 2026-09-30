@@ -7,7 +7,7 @@ import {
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { TooltipProvider } from '@/components/ui/tooltip'
 import { Toaster } from '@/components/ui/toaster'
-import type { ReactNode } from 'react'
+import { useEffect, type ReactNode } from 'react'
 import indexCss from '../index.css?url'
 
 /**
@@ -19,6 +19,16 @@ import indexCss from '../index.css?url'
 const themeInitScript = `(function(){try{var t=localStorage.getItem('theme');var d=t==='dark'||(!t&&window.matchMedia('(prefers-color-scheme:dark)').matches);document.documentElement.classList.toggle('dark',d);}catch(e){}})();`
 
 const queryClient = new QueryClient()
+
+/** Registers the offline service worker (production builds only: in dev it would fight HMR). */
+function RegisterServiceWorker() {
+  useEffect(() => {
+    if (import.meta.env.PROD && 'serviceWorker' in navigator) {
+      navigator.serviceWorker.register('/sw.js').catch(() => {})
+    }
+  }, [])
+  return null
+}
 
 /**
  * Root route — owns the HTML document (SSR), global <head> (SEO-ready),
@@ -47,10 +57,14 @@ export const Route = createRootRoute({
   head: () => ({
     meta: [
       { charSet: 'utf-8' },
-      { name: 'viewport', content: 'width=device-width, initial-scale=1.0' },
+      { name: 'viewport', content: 'width=device-width, initial-scale=1.0, viewport-fit=cover' },
       { title: 'Corona — Prototype & Evaluate Superintelligence Modules' },
       { name: 'description', content: 'A full-stack platform for prototyping, integrating, and evaluating the essential modules required for building an Artificial Superintelligence.' },
       { name: 'theme-color', content: '#0b1120' },
+      { name: 'mobile-web-app-capable', content: 'yes' },
+      { name: 'apple-mobile-web-app-capable', content: 'yes' },
+      { name: 'apple-mobile-web-app-title', content: 'NeuroClaw' },
+      { name: 'apple-mobile-web-app-status-bar-style', content: 'black-translucent' },
       { property: 'og:type', content: 'website' },
       { property: 'og:title', content: 'Corona — Prototype & Evaluate Superintelligence Modules' },
       { property: 'og:description', content: 'A full-stack platform for prototyping, integrating, and evaluating the essential modules required for building an Artificial Superintelligence.' },
@@ -62,6 +76,8 @@ export const Route = createRootRoute({
     links: [
       { rel: 'stylesheet', href: indexCss },
       { rel: 'icon', type: 'image/svg+xml', href: '/favicon.svg' },
+      { rel: 'manifest', href: '/manifest.webmanifest' },
+      { rel: 'apple-touch-icon', href: '/icon.png' },
     ],
   }),
   shellComponent: RootDocument,
@@ -98,6 +114,7 @@ function RootDocument({ children }: { children: ReactNode }) {
         <QueryClientProvider client={queryClient}>
           <TooltipProvider delayDuration={0}>
             <Toaster />
+            <RegisterServiceWorker />
             {/*
               Full-bleed by default — NO app chrome. Child routes render directly.
               SaaS / dashboard app? The sidebar shell already exists at
