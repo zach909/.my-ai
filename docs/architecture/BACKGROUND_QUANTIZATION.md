@@ -26,9 +26,9 @@ Two distinct systems in this repo already touch quantization, and this
 system is the thing that connects them into one coherent pipeline instead
 of leaving them as separate one-off pieces:
 
-1. **Quantization-aware training (QAT)**, in `tinygpt/mesh.py` (Python) and
-   mirrored in TypeScript by `RLMTrainer` (`models && skills/core/rlm.ts`)
-   and `ElasticCoreBlock` (`models && skills/core/elastic-core.ts`): the
+1. **Quantization-aware training (QAT)**, originally in the removed `tinygpt/mesh.py` (Python), and
+   now in TypeScript by `RLMTrainer` (`models && skills/core/rlm.ts`)
+   and `ElasticCoreBlock` (`models && skills/core/onebrain.ts`): the
    forward pass reads *quantized* weights during training itself (via a
    straight-through estimator so gradients still flow at full precision),
    so the network converges toward weights that are already robust to the
@@ -65,7 +65,7 @@ Concretely, this system exists to deliver:
                          ┌────────────────────────────┐
                          │   Training / Build Pipeline  │
                          │  (NeuroPipeline, RLMTrainer, │
-                         │   ExtensionBuilder, tinygpt)  │
+                         │   ExtensionBuilder)             │
                          └───────────────┬──────────────┘
                                           │ finished weights (Record<string, Float32Array>)
                                           ▼
@@ -373,8 +373,8 @@ directly:
   every forward tick rather than a weight matrix refreshed once per
   training step — the two have different residual-feedback cadences and
   aren't a good fit for sharing one code path.
-- `tinygpt/mesh.py` (Python): `_fake_quant()` with a straight-through
-  gradient estimator is the reference implementation this whole pattern
+- `tinygpt/mesh.py` (Python, removed): `_fake_quant()` with a straight-through
+  gradient estimator was the reference implementation this whole pattern
   traces back to.
 
 This system doesn't change QAT's math — it keeps `BackgroundQuantizer`'s
@@ -474,8 +474,7 @@ see it mutate out from under it as the job continues.
 
 ## 8. How quantization occurs after building
 
-The build pipeline (`ExtensionBuilder`, `NeuroclawTrainer`, or the Python
-`tinygpt` trainer) is unaware of the scheduler — it produces a finished
+The build pipeline (`ExtensionBuilder`, or `NeuroclawTrainer`) is unaware of the scheduler — it produces a finished
 weight map and hands it off. The intended call sequence (matching the
 existing `saveWithoutQuantization()` / `installWithQuantization()` split
 documented in `wiki/Quantization.md`):

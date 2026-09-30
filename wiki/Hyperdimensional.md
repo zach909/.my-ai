@@ -8,7 +8,7 @@ Each neuron maintains multiple temporary internal states that change according t
 
 | Layer | File | What it is |
 |---|---|---|
-| TypeScript runtime backend | `models && skills/core/hyperdimensional.ts` — `HyperDimensionalEngine` | A dedicated multi-ball neuron-state engine with novelty detection and live correction |
+| TypeScript runtime backend | `models && skills/core/onebrain.ts` — `HyperDimensionalEngine` | A dedicated multi-ball neuron-state engine with novelty detection and live correction |
 
 ## `HyperDimensionalEngine` (TypeScript)
 

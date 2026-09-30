@@ -1,5 +1,7 @@
 # Foreground Mixture of Experts — Implementation Spec
 
+> **Superseded.** NeuroClaw no longer has a Mixture-of-Experts router. Which regions of the mesh run on a tick is now decided by net-skill routing (`models && skills/core/net-skill-router.ts`, see `wiki/MoE.md`). The `moe-router.ts`, `moe.ts`, and `tinygpt/moe.py` / `tinygpt/adaptive_routing.py` files named below have been removed. This document is kept as a design record only.
+
 Status: implementation-ready. Extends the existing Foreground MoE subsystem
 (`docs/ARCHITECTURE.md` §1.4/§1.4b) rather than replacing it. Every data
 structure and API below is additive to `models && skills/core/moe-router.ts`,

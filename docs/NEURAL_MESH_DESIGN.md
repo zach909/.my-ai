@@ -12,9 +12,9 @@ this repository rather than inventing a fourth:
 | Layer | File | Role |
 |---|---|---|
 | Python reference | `asi_core/neural_mesh.py` (`NeuralMesh`) | Readable, dependency-free reference implementation used for spec validation |
-| Python trainable core | `model && skills manager/tinygpt/mesh.py` (`MeshLM`) | `nn.Module`, backprop, quantization-aware training |
-| TypeScript runtime | `models && skills/core/mesh.ts` (`NeuronMesh`) | Hot path production pipeline, CSR-cached `propagate()` |
-| TypeScript extension mesh | `models && skills/core/elastic-core.ts` (`ElasticCoreBlock`) | Growable mesh for extension-builder edits |
+| Python trainable core (removed) | `tinygpt/mesh.py` (`MeshLM`) | Removed with the TinyGPT track. Gradient learning and quantization-aware training now live in the OneBrain engine (`ElasticCoreBlock`, `RLMTrainer`) |
+| TypeScript runtime | `models && skills/core/onebrain.ts` (`NeuronMesh`) | Hot path production pipeline, CSR-cached `propagate()` |
+| TypeScript extension mesh | `models && skills/core/onebrain.ts` (`ElasticCoreBlock`) | Growable mesh for extension-builder edits |
 
 Where these three diverge, this document defines the canonical behavior and
 calls out the divergence explicitly rather than silently picking one.
@@ -238,7 +238,7 @@ group:        uint16[N]
 activation:   float32[N]
 ```
 
-This is exactly the layout `models && skills/core/mesh.ts` uses for its
+This is exactly the layout `models && skills/core/onebrain.ts` uses for its
 `Float32Array`-backed `NeuronMesh`, and is why the TS runtime is the
 performance reference even though the Python file is the readability
 reference.
