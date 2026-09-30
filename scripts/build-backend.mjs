@@ -8,28 +8,34 @@
 // the smoke suite (test/smoke.mjs) loads via file URLs.
 
 import { execFileSync } from 'node:child_process';
-import { readdirSync, statSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
+import { readdirSync, mkdirSync, copyFileSync, existsSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 
 const ROOT = process.cwd();
 
 /**
- * Find the TypeScript compiler, and install dependencies if it is missing.
+ * Find the TypeScript compiler entry point.
  *
- * `npm run dev` on a fresh clone died here with "tsc not found" and a note
- * saying to run npm install -- which is correct, and is also something the
- * script could simply do. A build step that knows exactly what is wrong, knows
- * the one command that fixes it, and stops to make someone type it is a build
- * step that fails for no reason.
- *
- * Both locations are checked because this repo keeps its toolchain symlinks in
- * .bin/ while a plain npm/pnpm/bun install puts them in node_modules/.bin/,
- * and a checkout can genuinely have either.
+ * Do not execute npm's .bin/tsc.cmd shim directly on Windows. Node's
+ * child-process APIs can reject a .cmd path with EINVAL when it is spawned
+ * without a shell. The TypeScript package contains the real JavaScript entry
+ * point, so we invoke that file with the current Node executable instead.
  */
 function findTsc() {
-  for (const candidate of [join(ROOT, '.bin', 'tsc'), join(ROOT, 'node_modules', '.bin', 'tsc')]) {
-    if (existsSync(candidate)) return candidate;
+  const packageCompiler = join(ROOT, 'node_modules', 'typescript', 'bin', 'tsc');
+  if (existsSync(packageCompiler)) {
+    return { command: process.execPath, args: [packageCompiler] };
   }
+
+  // Keep support for a repository-level executable as a fallback for unusual
+  // package-manager layouts. npm's Windows .cmd shim is deliberately excluded.
+  const fallback = process.platform === 'win32'
+    ? join(ROOT, '.bin', 'tsc.cmd')
+    : join(ROOT, '.bin', 'tsc');
+  if (existsSync(fallback)) {
+    return { command: fallback, args: [] };
+  }
+
   return null;
 }
 
@@ -48,6 +54,7 @@ if (!TSC) {
   console.error('  Run `npm install` (or `bun install` / `pnpm install`) in this directory, then try again.');
   process.exit(1);
 }
+
 // Directories that make up the backend runtime.
 const DIRS = [
   'models && skills',
@@ -61,7 +68,7 @@ const DIRS = [
 
 // 1. Type-check + emit the TypeScript half.
 console.log('› tsc -p tsconfig.backend.json');
-execFileSync(TSC, ['-p', 'tsconfig.backend.json'], { stdio: 'inherit', cwd: ROOT });
+execFileSync(TSC.command, [...TSC.args, '-p', 'tsconfig.backend.json'], { stdio: 'inherit', cwd: ROOT });
 
 // 2. Copy JS-only modules (no .ts sibling) that tsc could not have emitted.
 let copied = 0;

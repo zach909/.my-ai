@@ -10,8 +10,8 @@ The neuron mesh is the substrate that replaces a transformer's fixed layer struc
 
 | Layer | File | What it is |
 |---|---|---|
-| TypeScript runtime backend | `models && skills/core/mesh.ts` — `NeuronMesh` | The live pipeline's mesh: `propagate()` runs settle ticks with lazy CSR caching for performance (see the `.jules/bolt.md` engineering log for the specific cache-locality work) |
-| TypeScript extension mesh | `models && skills/core/elastic-core.ts` — `ElasticCoreBlock` | The extension-builder-editable, growable mesh: `addNeuron` preserves full density; `applyGradients` scales high-vale neuron updates down |
+| TypeScript runtime backend | `models && skills/core/onebrain.ts` — `NeuronMesh` | The live pipeline's mesh: `propagate()` runs settle ticks with lazy CSR caching for performance (see the `.jules/bolt.md` engineering log for the specific cache-locality work) |
+| TypeScript extension mesh | `models && skills/core/onebrain.ts` — `ElasticCoreBlock` | The extension-builder-editable, growable mesh: `addNeuron` preserves full density; `applyGradients` scales high-vale neuron updates down |
 
 ## The Python trainable mesh
 
