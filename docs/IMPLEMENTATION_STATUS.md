@@ -19,7 +19,7 @@ Complete AI system with neural networks, machine learning, quantization, and ext
 - **Test Coverage:** 90%+
 
 #### ✅ Elastic Core Block (100%)
-- **Location:** `models && skills/core/elastic-core.ts`
+- **Location:** `models && skills/core/onebrain.ts` (`elastic-core.ts` is a compatibility re-export)
 - **Status:** Fully implemented
 - **Features:**
   - Transformer core replacement
@@ -54,14 +54,9 @@ Complete AI system with neural networks, machine learning, quantization, and ext
   - Deterministic collapse
   - Phase tracking
 
-#### ✅ MoE Router (95%)
-- **Location:** `models && skills/core/moe-router.ts`
-- **Status:** Mostly complete
-- **Features:**
-  - Expert selection
-  - Load balancing
-  - Utilization tracking
-- **TODO:** Full integration with pipeline dispatch
+#### ⚠️ MoE Router (removed)
+- **Location:** was `models && skills/core/moe-router.ts`; replaced by net-skill routing (`models && skills/core/net-skill-router.ts`, see `wiki/MoE.md`)
+- **Status:** Removed. Which regions run each tick is decided by cosine match between the input and each net skill's meaning; there is no second gate network.
 
 #### ✅ RLM Trainer (90%)
 - **Location:** `models && skills/core/rlm.ts`

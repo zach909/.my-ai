@@ -11,6 +11,16 @@ The network on the phone is not a port. It is the PC's own engine code, bundled 
 | Photo for training data | Only when you tap **Photo**; kept on the phone until it syncs | Same |
 | Sync with the PC | Automatic after each message or photo, plus **Sync now** | Same |
 
+## Fastest route: install it from the browser (PWA)
+
+No APK, no Xcode. The web app is installable and opens offline-capable from your home screen.
+
+1. Run NeuroClaw on the PC and set a **Remote Access password** (see step 1 below).
+2. On the phone, open `http://<PC address>:3000` in Chrome (Android) or Safari (iPhone).
+3. Android: menu → **Install app**. iPhone: Share → **Add to Home Screen**.
+
+Notes: browsers only offer install over HTTPS or `localhost`, so over plain LAN HTTP use Android's **Add to Home screen** shortcut, or put the PC behind an HTTPS tunnel. The service worker (`public/sw.js`) is registered in production builds only (`npm run build`). It never caches `/api/*`. The PWA does not run the on-phone brain or the floating bubble; use the native apps below for those.
+
 ## What sync does
 
 When the PC is reachable (after each message or photo, or when you tap **Sync now**):
@@ -64,6 +74,14 @@ open NeuroClaw.xcodeproj
 ```
 
 Pick your Apple ID team under **Signing & Capabilities**, then run it on your phone. Tap **PC** to enter the address and password.
+
+## Permissions, voice and screen (Android)
+
+- **Grant all permissions** (main screen): asks for every dangerous permission the app declares (mic, camera, contacts, calendar, call log, phone, SMS, location, sensors, Bluetooth, nearby Wi-Fi, media) in one batch, instead of one at a time as each feature happens to be tapped. Declaring a permission never uses it by itself — each button below only does something once its own permission is actually granted.
+- **🎙 (mic button, in chat):** voice-to-text. Tap to start listening, tap again to stop; the words land in the message box. Needs `RECORD_AUDIO`, granted by **Grant all permissions** or the system prompt.
+- **Screen button (in chat):** a one-shot screenshot, uploaded to the PC the same way a tapped **Photo** is (`~/.neuroclaw/captures/`, tagged "Screenshot"). Android requires a fresh consent dialog *every* capture — there is no way to make this silent or "always on" without leaving the OS's own screen-recording indicator up continuously, which this app does not do. Each tap is its own grant, taken and released immediately.
+
+System-level and signature-only permissions (`REBOOT`, `WRITE_SECURE_SETTINGS`, `INSTALL_PACKAGES`, and the like) are left out on purpose: a normal, sideloaded app can declare them, but Android silently refuses the grant regardless, so asking only produces dialogs that do nothing.
 
 ## The network on the phone
 
