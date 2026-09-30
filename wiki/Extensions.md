@@ -8,36 +8,28 @@ The AI creates extensions to store specialized memory, reasoning, and learned ab
 
 An extension is one of two things, distinguished the same way [[Plugins]] and [[Skills]] are:
 
-- A **skill extension** — a trained [[NeuroLang]] contract (`when X then Y`), saved via the [[Builder]] and registered as a new MoE expert (see [[MoE]]).
+- A **skill extension** — a specialised network (a *net skill*) whose neurons are grafted into the one OneBrain mesh as a named region (see [[MoE]] for how regions are selected each tick).
 - A **plugin extension** — a newly-configured local service connector, registered into the plugin registry.
+
+A separate kind of skill, the *prompting skill*, is a declarative document that tells the agent loop how to carry out a step. It is not an extension of the network and installing one runs no code.
 
 ## How an extension gets created
 
-1. **Definishon contracts** ([[NeuroLang]] / [[Builder]]): a `when`/`then` pair is trained into the mesh with gradient descent until its constraint loss converges.
-2. **Vale lock-in** ([[Elastic-Value-Budget]]): once a contract is satisfied, `raise_vale()` raises the stability of the neurons that implement it — the taught behaviour is now resistant to being overwritten by further training, without freezing the whole network.
-3. **Save vs. install** ([[Builder]] / [[Quantization]]): the extension is saved exact and editable first, then quantized on install — matching "extensions are quantized before installation" from the design notes.
-4. **Registration**: `register_skill()` (Python) / the equivalent registry call (TypeScript) makes the new capability permanently discoverable and routable, exactly like a built-in skill.
+1. **Build** ([[Builder]]): the Extension Builder (`extension-builder/builder.js`, `ExtensionBuilder`) holds the neuron graph. Contracts written in [[NeuroLang]] (`when X then Y`) are trained until their constraint loss converges.
+2. **Save vs. install** ([[Builder]] / [[Quantization]]): the extension is saved exact and editable first (`saveWithoutQuantization`), then quantized on install (`installWithQuantization`) — matching "extensions are quantized before installation" from the design notes.
+3. **Graft** (`models && skills/core/net-skill-graft.ts`, `graftNetSkill`): the skill's neurons join the running mesh, wired all-to-all with every neuron already there. Each new connection carries the same equation every existing connection does. Installing a skill by writing a description into long-term memory does not count: the network itself has to change, or it is a prompting skill under a net skill's name.
+4. **Lock-in** ([[Elastic-Value-Budget]]): once a contract is satisfied, the stability (vale) of the neurons implementing it is raised, so later training does not overwrite the taught behaviour without freezing the whole network.
+5. **Discovery**: `graftedSkills()` reports the regions actually in the mesh, and `net-skill-store.ts` can publish a description of each one to the store's "net-skills" kind. Only the description is published, not the weights, because weights are not portable between meshes of different sizes and histories.
+
+Nothing should be registered or written for a capability that failed to converge; the graft is for behaviour that was actually learned.
 
 ## The Skill Builder and Plugin Builder skills
 
-Both are themselves entries in the [[Skills]] extension list, and both are the literal mechanism this page describes, made callable at runtime:
+Both are entries in the [[Skills]] list and are the runtime-callable form of the steps above: Skill Builder trains and grafts a net skill, Plugin Builder configures and registers a plugin connector.
 
-This is what "the AI creates a coding extension to permanently preserve that knowledge" looks like concretely: the same `build_skill()` call the AI would make to preserve *any* newly-learned behaviour, called on a coding-flavoured set of contracts specifically.
+## Community extensions
 
-### `learn_and_extend()` — the autonomous flagship flow
-
-`build_skill()` trains and registers. The fully autonomous version of the design notes' flagship example — "after learning to code it creates a coding extension" — used to live in the Python TinyGPT track, which has been removed; the live path is the Extension Builder grafting a skill's neurons into the one network. In one call the AI:
-
-1. trains the capability into the mesh (real gradient descent),
-2. locks the satisfied neurons in with raised vale ([[Elastic-Value-Budget]], §2 — no forgetting),
-3. **only if it actually learned it** (the contracts converged) registers it as a live MoE skill, and
-4. installs it to disk in quantized form ([[Quantization]], §8 — "extensions are quantized before installation"), so the ability survives restarts.
-
-Crucially, nothing is registered or written for a capability the AI *failed* to learn — it never fabricates a coding extension for a skill it hasn't acquired. Run it live and narrated with `python main.py learn-code`, or see it asserted end to end in `test_integration.py` §4b and `test_core.py`'s `test_learn_and_extend`.
-
-### `install_extension()` — installing community skills
-
-"Users can install community skills or create new ones" (design notes, [[Platforms]]). Installing is the other half. It takes an `.ext` file another system authored (or a previous session saved), loads its weights into a fresh model, and registers the capability it carries as a live skill on the registry — so an extension someone else built becomes usable here, contract and all. `test_core.py`'s `test_install_community_extension` proves the full round-trip: an author system creates and shares an extension, and a fresh model + fresh registry installs it into a working, registered skill.
+"Users can install community skills or create new ones" (design notes, [[Platforms]]). The extension lifecycle — install, versioning, permissions, and storage — lives in `extension_system/` (`manager.ts`, `security.ts`, `semver.ts`, `store.ts`). A published net skill sits inert in the store until someone installs it on their machine; installing is always a local choice.
 
 ## The extension catalog (23 named extensions + Coding skill)
 
@@ -45,7 +37,11 @@ Location, Camera, Microphone, Voice Activation, Notifications, Account Info, Con
 
 ## Verifying it
 
-`python main.py demo` (`test_integration.py`) is the concrete, end-to-end proof. §4 builds a brand-new plugin live, dispatches it immediately, then builds a brand-new skill live and trains it into the *same* mesh already in use. §4b runs the full flagship narrative: the AI starts with no coding extension, learns a coding behaviour, and — because it actually learned it — autonomously registers the coding skill and installs the quantized extension to disk, while a deliberately unlearnable contract produces *no* extension at all. `python main.py learn-code` runs that flagship flow on its own with live narration.
+`npm test` runs the suites. The graft itself is covered by `test/core/net-skill-graft.test.ts` (what the graft adds to the mesh and what it must not disturb), with store publication in `test/core/net-skill-store.test.ts` and live sync in `test/core/net-skill-live-sync.test.ts`.
+
+## History
+
+Earlier versions of this page documented `build_skill()`, `learn_and_extend()`, `install_extension()`, and `python main.py learn-code`, which lived in the Python TinyGPT track. That track was removed, and none of those functions exist any more. The live path is the Extension Builder grafting a skill's neurons into the one network, as above.
 
 ## See Also
 
