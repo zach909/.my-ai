@@ -14,7 +14,7 @@ import { UnifiedBrain } from "./core/unified-brain.js";
 import { RLMTrainer } from "./core/rlm.js";
 import { ThornsEngine } from "./core/thorns.js";
 import { NeuroclawTrainer } from "./trainer.js";
-import { ZipLoopInterface } from "./core/onebrain.js";
+import { ZipLoopInterface, zipLoopIdsFor } from "./core/onebrain.js";
 import { runUntilStoppedAsync, ZIP_FOLDERS } from "./core/zip-halt.js";
 // No tokenizer: text is its UTF-8 bytes, the same thing the Zip Loop
 // streams. The trainer (character-level n-gram/embedding tables) keeps ids
@@ -48,13 +48,6 @@ const DEFAULT_LLM_CONFIG = {
     hyperNeurons: 16, hyperDimensions: 64, ballStates: 4,
     thinkSteps: 3, valuePoints: 10000, contextLength: 512,
 };
-// "You have two AIs, and one is one brain. And then you have a normal
-// LLM. I do not want the LLM. I want one brain." -- the same two
-// input/two output neuron ids /api/zip-loop/run wires up, reused here so
-// a chat reply and a manual zip-loop run drive the identical doorway
-// into the identical mesh, not two different conventions for the same
-// four neurons.
-const ONE_BRAIN_NEURON_IDS = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 };
 // Bounds a chat turn's one-brain run to something an interactive reply
 // can wait on. Every OUTPUT byte read is a full settle() of the mesh --
 // real work, not padding (see zip-halt.ts/onebrain.ts's own comments on
@@ -330,7 +323,7 @@ export class NeuroclawLLM {
         // doorway is capped, since the doorway's cost is per BIT of
         // archive, not per character of meaning.
         const oneBrainPrompt = prompt.length > ONE_BRAIN_PROMPT_CHAR_CAP ? prompt.slice(0, ONE_BRAIN_PROMPT_CHAR_CAP) : prompt;
-        const zip = new ZipLoopInterface(this.brain.getHyper(), ONE_BRAIN_NEURON_IDS);
+        const zip = new ZipLoopInterface(this.brain.getHyper(), zipLoopIdsFor(this.brain.getHyper()));
         // The applicable prompting skills go in WITH the prompt, each in its
         // own prompting-skills/<name>/ folder -- the same shape
         // /api/zip-loop/run uses -- so the network receives the instruction

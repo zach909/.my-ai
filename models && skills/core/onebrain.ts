@@ -7680,6 +7680,21 @@ export const ZIP_LOOP_DEFAULT_IDS: ZipLoopNeuronIds = Object.freeze({
   bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5,
 }) as ZipLoopNeuronIds;
 
+/** The toggle pair's place in the live mesh: the next two base neurons after the six above. */
+export const ZIP_LOOP_TOGGLE_IDS = Object.freeze({ toggleIn: 6, toggleOut: 7 });
+
+/**
+ * The ids the live mesh's Zip Loop uses: the default six plus the toggle
+ * pair, when the engine has neurons 6 and 7 to give. A mesh too small for
+ * them gets the six alone, which is the same doorway as before.
+ */
+export function zipLoopIdsFor(engine: { getNeuronCount(): number }): ZipLoopNeuronIds {
+  const top = Math.max(ZIP_LOOP_TOGGLE_IDS.toggleIn, ZIP_LOOP_TOGGLE_IDS.toggleOut);
+  return engine.getNeuronCount() > top
+    ? { ...ZIP_LOOP_DEFAULT_IDS, ...ZIP_LOOP_TOGGLE_IDS }
+    : { ...ZIP_LOOP_DEFAULT_IDS };
+}
+
 /** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
 const ZIP_LOOP_PULSE = 1;
 

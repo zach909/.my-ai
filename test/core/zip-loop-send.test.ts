@@ -6,7 +6,7 @@
  * up, fully on to commit it -- so a bit exists only where send fired.
  */
 import { describe, it, expect } from 'vitest';
-import { ZipLoopInterface, ZIP_LOOP_DEFAULT_IDS } from '../../models && skills/core/onebrain';
+import { ZipLoopInterface, ZIP_LOOP_DEFAULT_IDS, zipLoopIdsFor } from '../../models && skills/core/onebrain';
 
 const IDS = ZIP_LOOP_DEFAULT_IDS;
 const TOGGLE = { ...IDS, toggleIn: 6, toggleOut: 7 };
@@ -163,5 +163,15 @@ describe('Zip Loop toggle neuron: flips every bit', () => {
     const plain = fakeEngine();
     new ZipLoopInterface(plain.engine, IDS).sendBit(0);
     expect(plain.driven).toEqual([[IDS.bit0In], [IDS.bit0In, IDS.sendIn]]);
+  });
+});
+
+describe('the live mesh gets the toggle pair when it has room', () => {
+  it('adds neurons 6 and 7 to the default six', () => {
+    expect(zipLoopIdsFor({ getNeuronCount: () => 64 })).toEqual({ ...IDS, toggleIn: 6, toggleOut: 7 });
+  });
+
+  it('keeps the plain six on a mesh too small to hold them', () => {
+    expect(zipLoopIdsFor({ getNeuronCount: () => 7 })).toEqual(IDS);
   });
 });
