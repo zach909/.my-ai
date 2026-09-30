@@ -489,3 +489,47 @@ describe('the stop command', () => {
     }
   }, 60_000);
 });
+
+describe('a send-clocked doorway does not wait out the quiet ticks', () => {
+  const tree = { files: { 'output/a.txt': 'hello' } };
+
+  /** Counts how many reads the run paid for after the last byte. */
+  function counted(sendClocked: boolean) {
+    const door = replay(tree);
+    let reads = 0;
+    const next = door.nextOutputByte.bind(door);
+    return {
+      door: { ...door, sendClocked, nextOutputByte: () => { reads++; return next(); } } as BitDoorway,
+      reads: () => reads,
+    };
+  }
+
+  it('ends on the first send that never comes, once the network has spoken', () => {
+    const { door, reads } = counted(true);
+    const result = runUntilStopped(door, { files: {} }, { quietTicks: 32, maxTicks: 500 });
+    expect(result.halted).toBe(true);
+    expect(result.reason).toBe('went-quiet');
+    expect(result.complete).toBe(false);
+    expect(reads()).toBe(packZip(tree).length + 1);
+  });
+
+  it('is a complete stop when the network also asked to stop', () => {
+    const stopped = { files: { ...tree.files, [STOP_CALL]: '' } };
+    const door = { ...replay(stopped), sendClocked: true } as BitDoorway;
+    const result = runUntilStopped(door, { files: {} }, { quietTicks: 32, maxTicks: 500 });
+    expect(result.reason).toBe('stopped-itself');
+    expect(result.complete).toBe(true);
+  });
+
+  it('still waits the full quiet window on a doorway with no send neuron', () => {
+    const { door, reads } = counted(false);
+    runUntilStopped(door, { files: {} }, { quietTicks: 4, maxTicks: 500 });
+    expect(reads()).toBeGreaterThanOrEqual(packZip(tree).length + 4);
+  });
+
+  it('does not end a run that has not said anything yet', () => {
+    const door = { sendBytes: () => {}, sendClocked: true, nextOutputByte: () => null } as BitDoorway;
+    const result = runUntilStopped(door, { files: {} }, { quietTicks: 4, maxTicks: 40 });
+    expect(result.reason).toBe('ceiling');
+  });
+});

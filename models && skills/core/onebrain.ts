@@ -7664,6 +7664,15 @@ export interface ZipLoopNeuronIds {
    */
   sendIn: number;
   sendOut: number;
+  /**
+   * Optional toggle (phase) neuron on each side. It flips level on every bit,
+   * so the bit's place in the message is carried by the neuron itself: "0" is
+   * one bit at level low, "00" is low then high. Send says THAT a bit was
+   * sent; toggle says WHICH one, so two equal bits in a row stay two bits even
+   * if the network holds send on between them. Both or neither.
+   */
+  toggleIn?: number;
+  toggleOut?: number;
 }
 
 /** The Zip Loop's neurons in every mesh: 0/1 in, 0/1 out, send in, send out. */
@@ -7703,6 +7712,8 @@ const ZIP_BIT_FREQUENCY = 0.25;
  * never interferes with (or cancels) the data it is clocking.
  */
 const ZIP_SEND_FREQUENCY = 0.5;
+/** The toggle neurons' wave: distinct from both the bits and the send clock, for the same reason. */
+const ZIP_TOGGLE_FREQUENCY = 0.75;
 /**
  * Read ticks allowed per output bit. A bit needs at least two -- send low,
  * then send high -- and one more is slack for a network that holds send low
@@ -7724,6 +7735,8 @@ const ZIP_LOOP_READ_ONLY: ProcessOptions = { learn: false };
 const ZIP_INPUT_STEPS = 2;
 
 export class ZipLoopInterface {
+  /** Every output bit is clocked by sendOut, so a null byte is the network ending its message (see BitDoorway). */
+  readonly sendClocked = true;
   /** Constant per-interface drive sets, built once instead of per bit (see sendBit()). */
   private readonly drivenBit0: Set<number>;
   private readonly drivenBit1: Set<number>;
@@ -7732,6 +7745,13 @@ export class ZipLoopInterface {
   private readonly sentBit1: Set<number>;
   /** Whether sendOut was active on the previous read tick (a bit is its rising edge). */
   private sendOutWasHigh = false;
+  /** Toggle level of the previous read tick, to spot a flip. */
+  private toggleOutWasHigh = false;
+  /** Bits fed in since the message began; its parity is the toggle level. */
+  private bitsSent = 0;
+  /** Drive sets for each (bit, toggle level), setup and commit, built once: [bit][level]. */
+  private readonly togglePlain: Set<number>[][] | null;
+  private readonly toggleSent: Set<number>[][] | null;
   /** Reused input vectors; engine dimensions are fixed at construction, so these never need rebuilding. */
   private pulseScratch: number[] | null = null;
   private idleScratch: number[] | null = null;
@@ -7745,6 +7765,24 @@ export class ZipLoopInterface {
     this.drivenBit1 = new Set([ids.bit1In]);
     this.sentBit0 = new Set([ids.bit0In, ids.sendIn]);
     this.sentBit1 = new Set([ids.bit1In, ids.sendIn]);
+    if ((ids.toggleIn === undefined) !== (ids.toggleOut === undefined)) {
+      throw new Error("ZipLoopInterface: toggleIn and toggleOut go together");
+    }
+    if (ids.toggleIn !== undefined) {
+      const t = ids.toggleIn;
+      const datum = [ids.bit0In, ids.bit1In];
+      const build = (withSend: boolean) => datum.map(d => [false, true].map(level => {
+        const set = new Set([d]);
+        if (level) set.add(t);
+        if (withSend) set.add(ids.sendIn);
+        return set;
+      }));
+      this.togglePlain = build(false);
+      this.toggleSent = build(true);
+    } else {
+      this.togglePlain = null;
+      this.toggleSent = null;
+    }
 
     // Perfect enemies. The two input neurons carry the same wave half a cycle
     // apart, so a one and a zero arriving together annihilate exactly rather
@@ -7761,6 +7799,10 @@ export class ZipLoopInterface {
     this.engine.setWaveSignature(ids.bit1Out, ZIP_BIT_FREQUENCY, Math.PI);
     this.engine.setWaveSignature(ids.sendIn, ZIP_SEND_FREQUENCY, 0);
     this.engine.setWaveSignature(ids.sendOut, ZIP_SEND_FREQUENCY, 0);
+    if (ids.toggleIn !== undefined && ids.toggleOut !== undefined) {
+      this.engine.setWaveSignature(ids.toggleIn, ZIP_TOGGLE_FREQUENCY, 0);
+      this.engine.setWaveSignature(ids.toggleOut, ZIP_TOGGLE_FREQUENCY, 0);
+    }
   }
 
   /** Streams `bytes` in MSB-first bit order, one settle() tick per bit -- "0 -> wait -> 1 -> wait -> ..." */
@@ -7827,8 +7869,12 @@ export class ZipLoopInterface {
     this.engine.setPropagationSteps(ZIP_INPUT_STEPS);
     try {
       const pulse = this.pulseVector();
-      this.engine.process(pulse, undefined, bit === 1 ? this.drivenBit1 : this.drivenBit0, undefined, ZIP_LOOP_READ_ONLY);
-      this.engine.process(pulse, undefined, bit === 1 ? this.sentBit1 : this.sentBit0, undefined, ZIP_LOOP_READ_ONLY);
+      // With a toggle neuron the level flips on every bit: off, on, off, ...
+      const level = (this.bitsSent++ & 1) as 0 | 1;
+      const setup = this.togglePlain ? this.togglePlain[bit][level] : bit === 1 ? this.drivenBit1 : this.drivenBit0;
+      const commit = this.toggleSent ? this.toggleSent[bit][level] : bit === 1 ? this.sentBit1 : this.sentBit0;
+      this.engine.process(pulse, undefined, setup, undefined, ZIP_LOOP_READ_ONLY);
+      this.engine.process(pulse, undefined, commit, undefined, ZIP_LOOP_READ_ONLY);
     } finally {
       this.engine.setPropagationSteps(ceiling);
     }
@@ -7843,6 +7889,9 @@ export class ZipLoopInterface {
    */
   learnFromEvent(): void {
     if (this.lastBit === null) return;
+    // The message is over: the next one starts its toggle from low again.
+    const last = (this.bitsSent - 1) & 1;
+    this.bitsSent = 0;
     // Learn while the input is still THERE.
     //
     // The first version of this drove nothing, on an idle vector, and learned
@@ -7859,7 +7908,7 @@ export class ZipLoopInterface {
     this.engine.process(
       this.pulseVector(),
       undefined,
-      this.lastBit === 1 ? this.sentBit1 : this.sentBit0,
+      this.toggleSent ? this.toggleSent[this.lastBit][last] : this.lastBit === 1 ? this.sentBit1 : this.sentBit0,
     );
   }
 
@@ -7908,8 +7957,15 @@ export class ZipLoopInterface {
     const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
     const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
     const sendHigh = this.engine.getNeuronEnergy(this.ids.sendOut) > line;
-    const rising = sendHigh && !this.sendOutWasHigh;
+    let rising = sendHigh && !this.sendOutWasHigh;
     this.sendOutWasHigh = sendHigh;
+    if (this.ids.toggleOut !== undefined) {
+      const toggleHigh = this.engine.getNeuronEnergy(this.ids.toggleOut) > line;
+      // A flip while send is already held on is a new bit: the toggle is what
+      // keeps "00" from collapsing into "0" when send never drops between them.
+      if (sendHigh && !rising && toggleHigh !== this.toggleOutWasHigh) rising = true;
+      this.toggleOutWasHigh = toggleHigh;
+    }
     return { bit: rising ? (one > zero ? 1 : 0) : null };
   }
 
