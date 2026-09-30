@@ -21,6 +21,10 @@ No APK, no Xcode. The web app is installable and opens offline-capable from your
 
 Notes: browsers only offer install over HTTPS or `localhost`, so over plain LAN HTTP use Android's **Add to Home screen** shortcut, or put the PC behind an HTTPS tunnel. The service worker (`public/sw.js`) is registered in production builds only (`npm run build`). It never caches `/api/*`. The PWA does not run the on-phone brain or the floating bubble; use the native apps below for those.
 
+## No SDK or Mac? Let GitHub build it
+
+The **Mobile apps** workflow (`.github/workflows/mobile.yml`) builds both apps on GitHub's runners. In the repo: **Actions → Mobile apps → Run workflow**, then download the APK (`neuroclaw-android-debug-apk`) from the run. The iOS job is an unsigned simulator build that checks the Swift code compiles; installing on a real iPhone still needs Xcode and your Apple ID team (see section 3).
+
 ## What sync does
 
 When the PC is reachable (after each message or photo, or when you tap **Sync now**):
