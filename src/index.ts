@@ -113,8 +113,8 @@ export interface TurnDetails {
   toolCalls?: Array<{ plugin: string; tool: string; ok: boolean; error?: string }>;
 }
 
-/** Highest Zip Loop neuron id (the toggle out): the mesh needs more neurons than this. */
-const ZIP_BIT_NEURONS = 7;
+/** Highest Zip Loop neuron id (the ramp out): the mesh needs more neurons than this. */
+const ZIP_BIT_NEURONS = 5;
 
 const PROMPTING_SKILLS_PER_TURN = 3;
 const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
