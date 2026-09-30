@@ -37,7 +37,7 @@ Complete AI system with neural networks, machine learning, quantization, and ext
   - Redistributive learning
 
 #### ✅ Hyperdimensional Engine (100%)
-- **Location:** `models && skills/core/hyperdimensional.ts`
+- **Location:** `models && skills/core/onebrain.ts`
 - **Status:** Fully implemented
 - **Features:**
   - Multi-ball neuron states
@@ -46,7 +46,7 @@ Complete AI system with neural networks, machine learning, quantization, and ext
   - Live correction mechanism
 
 #### ✅ Quantum Neural Network (100%)
-- **Location:** `models && skills/core/quantum-net.ts`
+- **Location:** `models && skills/core/onebrain.ts`
 - **Status:** Fully implemented
 - **Features:**
   - Superposition support

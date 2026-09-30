@@ -1,4 +1,4 @@
-import { HyperDimensionalEngine as CoreHyperDimensionalEngine } from './core/hyperdimensional.js';
+import { HyperDimensionalEngine as CoreHyperDimensionalEngine } from './core/onebrain.js';
 export { CoreHyperDimensionalEngine as HyperDimensionalEngine };
 export class HyperDimensionalNetwork {
     neurons;

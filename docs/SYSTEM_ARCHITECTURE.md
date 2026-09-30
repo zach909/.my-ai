@@ -137,7 +137,7 @@ Evaluates multiple possible solutions before selecting actions.
 
 ### 7. Quantum Neural Network
 
-**Location:** `models && skills/core/quantum-net.ts`
+**Location:** `models && skills/core/onebrain.ts`
 
 Bridges classical and quantum computing paradigms.
 
