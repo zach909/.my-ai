@@ -1,11 +1,8 @@
 package ai.neuroclaw.app
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
 import android.text.InputType
@@ -65,6 +62,13 @@ class MainActivity : Activity() {
                 moveTaskToBack(true)
             }
         }
+        val grant = Button(this).apply {
+            text = "Grant all permissions"
+            setOnClickListener {
+                Permissions.requestAll(this@MainActivity)
+                status.text = "Requesting every permission NeuroClaw can use (mic, camera, contacts, location, SMS, calendar, and more) -- answer the system dialogs, then come back here."
+            }
+        }
         val sync = Button(this).apply {
             text = "Sync now"
             setOnClickListener {
@@ -86,13 +90,14 @@ class MainActivity : Activity() {
             addView(url); addView(password)
             addView(LinearLayout(context).apply { addView(save); addView(overlay) })
             addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
+            addView(grant)
             addView(status)
             addView(ChatPanel(context), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         })
 
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        }
+        // "Give it access to everything": ask for every permission up front, not
+        // one at a time as each feature happens to be tapped.
+        Permissions.requestAll(this)
         refreshStatus()
     }
 
@@ -111,9 +116,11 @@ class MainActivity : Activity() {
     private fun refreshStatus() {
         val brain = Shared.brain(this)
         val overlay = if (AndroidSettings.canDrawOverlays(this)) "allowed" else "not allowed yet"
+        val missing = Permissions.missing(this)
         status.text = buildString {
             append(if (brain.settings.configured) "PC for syncing: ${brain.settings.serverUrl}" else "PC: not set (everything stays on the phone)")
             append("\nOver other apps: $overlay")
+            append(if (missing.isEmpty()) "\nAll permissions granted." else "\n${missing.size} permission(s) not yet granted -- tap \"Grant all permissions\".")
             append("\n${brain.status()}")
         }
     }
