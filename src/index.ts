@@ -17,7 +17,7 @@ import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/co
 
 /** Where something the mesh learns from came from. "web" is always refused -- see learnFrom(). */
 export type LearnSource = "user" | "response" | "correction" | "skill" | "file" | "tool" | "web";
-import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
+import { ZipLoopInterface, zipLoopIdsFor } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
 import { HiveMind, SharedBlackboard, type HiveAgent } from "../models && skills/core/hive-mind.js";
@@ -113,7 +113,8 @@ export interface TurnDetails {
   toolCalls?: Array<{ plugin: string; tool: string; ok: boolean; error?: string }>;
 }
 
-const ZIP_BIT_NEURONS = 4;
+/** Highest Zip Loop neuron id (the toggle out): the mesh needs more neurons than this. */
+const ZIP_BIT_NEURONS = 7;
 
 const PROMPTING_SKILLS_PER_TURN = 3;
 const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
@@ -320,7 +321,7 @@ export class NeuroclawSystem {
     this.promptFeed = new PromptMeshFeed(() => {
       const engine = this.pipeline.getHyperEngine();
       if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
-      return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
+      return new ZipLoopInterface(engine, zipLoopIdsFor(engine));
     });
     // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
     // promptFeed are the two callers that drive the SAME engine's doorway,

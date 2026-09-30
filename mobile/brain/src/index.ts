@@ -19,7 +19,7 @@
  */
 import "./shims";
 import { Buffer } from "buffer";
-import { HyperDimensionalEngine, ZipLoopInterface, ZIP_LOOP_DEFAULT_IDS } from "../../../models && skills/core/onebrain";
+import { HyperDimensionalEngine, ZipLoopInterface, zipLoopIdsFor } from "../../../models && skills/core/onebrain";
 import { runUntilStoppedAsync, ZIP_FOLDERS } from "../../../models && skills/core/zip-halt";
 import { NetSkillRouter } from "../../../models && skills/core/net-skill-router";
 import { graftNetSkill, type SkillNeuron } from "../../../models && skills/core/net-skill-graft";
@@ -138,7 +138,7 @@ class PhoneBrain {
     try {
       const regions = this.router.select(text).ids;
       const prompt = text.length > PROMPT_CHAR_CAP ? text.slice(0, PROMPT_CHAR_CAP) : text;
-      const zip = new ZipLoopInterface(this.engine, ZIP_LOOP_DEFAULT_IDS);
+      const zip = new ZipLoopInterface(this.engine, zipLoopIdsFor(this.engine));
       const run = await runUntilStoppedAsync(zip, { files: { [`${ZIP_FOLDERS.prompt}prompt.txt`]: prompt } }, { quietTicks: 8, maxTicks: MAX_TICKS });
       const written = Object.entries(run.tree?.files ?? {})
         .filter(([p]) => p.startsWith(ZIP_FOLDERS.output))

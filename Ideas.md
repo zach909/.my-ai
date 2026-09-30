@@ -32,3 +32,5 @@ Status: ✅ done · 🔨 in progress · ⏳ to do
 - ✅ **Offline on the phone, syncs with the PC.** The phone's own network always answers, even with no connection. Sync (automatic, plus **Sync now**) works both ways, over `POST /api/phone-sync`:
   - phone → PC: conversations (into the PC's learning log), photos, and yes/no examples;
   - PC → phone: the PC's newer OneBrain and its yes/no knowledge.
+- ✅ **Zip Loop toggle neuron.** An optional neuron pair (`toggleIn` / `toggleOut`) that flips level on every bit, so the network can tell `0` from `00` even if it holds send on between bits. It restarts low each message. It is live: chat, `/api/zip-loop/run`, the prompt feed, continuous learning and the phone brain all use neurons 6 (in) and 7 (out) through `zipLoopIdsFor()`, falling back to the plain six on a mesh too small to hold them.
+- ✅ **No waiting out the quiet ticks.** A send-clocked doorway (`ZipLoopInterface`) ends a run on the first byte the network doesn't send once it has spoken, instead of waiting `quietTicks` (32) more reads.
