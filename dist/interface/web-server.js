@@ -4571,9 +4571,9 @@ export class WebServer {
                     }, 409);
                     return;
                 }
-                const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
+                const { ZipLoopInterface, zipLoopIdsFor } = await import('../models && skills/core/onebrain.js');
                 const { runUntilStoppedAsync, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
-                const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
+                const zip = new ZipLoopInterface(engine, zipLoopIdsFor(engine));
                 // Capped hard. One settle per bit means an unbounded ceiling here
                 // would be a request that never returns.
                 const maxTicks = Math.min(Math.max(1, Number(body?.maxTicks) || 512), 4096);

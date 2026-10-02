@@ -2,7 +2,7 @@ import { realpathSync } from "node:fs";
 import { writeFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { NeuroclawLLM } from "../models && skills/llm.js";
+import { NeuroclawLLM, ONE_BRAIN_SILENT_REPLY } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { publishGraftedNetSkills } from "../models && skills/core/net-skill-store.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
@@ -14,7 +14,7 @@ import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
 import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
 import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
 import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/core/shared-mesh-sync.js";
-import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
+import { ZipLoopInterface, zipLoopIdsFor } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
 import { HiveMind } from "../models && skills/core/hive-mind.js";
@@ -49,8 +49,37 @@ import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
 import { embedText } from "../models && skills/core/neuro-lang.js";
 import { ToolPlugin } from "../plugin_manager/sdk.js";
 import { ToolNeuronLayer } from "../models && skills/core/tool-neurons.js";
+import { routeToolCall } from "../models && skills/core/tool-router.js";
 import { sharedAccessManager } from "../models && skills/core/access-settings.js";
-const ZIP_BIT_NEURONS = 4;
+/** Mostly printable characters: what a trained mesh writes, as opposed to stray bytes from an untrained one. */
+function looksLikeText(text) {
+    let printable = 0;
+    for (const ch of text) {
+        const code = ch.codePointAt(0);
+        if (code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127 && code !== 0xfffd))
+            printable++;
+    }
+    return printable / Math.max(1, [...text].length) >= 0.9;
+}
+/** The brain's own words from a generate() reply, or null for silence and non-text bytes. */
+function brainText(reply) {
+    const text = reply.replace(/\n\nConfidence: \d+%[\s\S]*$/, "").trim();
+    if (!text || text === ONE_BRAIN_SILENT_REPLY || !looksLikeText(text))
+        return null;
+    return text;
+}
+function formatToolReply(events, why) {
+    return events.map(event => {
+        const name = `${event.plugin}.${event.tool}`;
+        if (!event.ok)
+            return `${name} did not run: ${event.error ?? "unknown error"}`;
+        const body = typeof event.result === "string" ? event.result : JSON.stringify(event.result ?? null, null, 2);
+        const clipped = body.length > 2000 ? `${body.slice(0, 2000)}\n... (${body.length - 2000} more characters)` : body;
+        return `Called ${name} (${why}):\n${clipped}`;
+    }).join("\n\n");
+}
+/** Highest Zip Loop neuron id (the toggle out): the mesh needs more neurons than this. */
+const ZIP_BIT_NEURONS = 7;
 const PROMPTING_SKILLS_PER_TURN = 3;
 const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
 /**
@@ -187,7 +216,7 @@ export class NeuroclawSystem {
             const engine = this.pipeline.getHyperEngine();
             if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS)
                 return null;
-            return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
+            return new ZipLoopInterface(engine, zipLoopIdsFor(engine));
         });
         // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
         // promptFeed are the two callers that drive the SAME engine's doorway,
@@ -734,6 +763,93 @@ export class NeuroclawSystem {
         this.lastLearned = key;
         this.promptFeed.feed(trimmed, `${source}.txt`);
         return true;
+    }
+    /**
+     * OneBrain as the front door of a chat turn.
+     *
+     * Asks the brain itself, and only the brain: no plugin dispatch, no taught-
+     * facts shortcut, no reasoner. What comes back is one of
+     *
+     *   - a tool call the network made by firing a tool neuron (its results are
+     *     the reply),
+     *   - a tool call the message asked for in so many words (tool-router.ts),
+     *     made as a neuron event and through the same Access check,
+     *   - what OneBrain wrote to its output, or
+     *   - `answered: false`, which tells the caller to use whatever it would
+     *     have used before. Silence, nonsense bytes, a missed deadline and a
+     *     disabled brain (NEUROCLAW_ONEBRAIN_FIRST=0) all read this way.
+     *
+     * The deadline matters: every output byte is a full settle of the mesh, so a
+     * reply can take minutes. The run is cut off at `deadlineMs` and the turn
+     * moves on rather than waiting.
+     */
+    async askOneBrain(input, options = {}) {
+        if (process.env.NEUROCLAW_ONEBRAIN_FIRST === "0")
+            return { answered: false, via: "none", text: "", toolCalls: [] };
+        if (!this.initialized)
+            await this.initialize();
+        const layer = this.toolNeurons;
+        // A message that names a tool call outright. The AlignmentVeto still gets
+        // to look at it first, and access is checked inside dispatch().
+        const routed = layer ? routeToolCall(input) : null;
+        if (layer && routed) {
+            const readOnly = ["read_file", "list_directory", "list_terminals", "list_windows", "screenshot"].includes(routed.tool);
+            const verdict = this.veto.evaluate({
+                id: `tool:${routed.plugin}.${routed.tool}:${Date.now()}`,
+                name: `${routed.plugin}.${routed.tool}`,
+                capabilities: [`${routed.plugin}.${routed.tool}`],
+                reversible: readOnly,
+                externalEffect: !readOnly,
+            });
+            const event = verdict.allowed
+                ? await layer.dispatch(routed.plugin, routed.tool, routed.args, "message")
+                : {
+                    plugin: routed.plugin, tool: routed.tool, args: routed.args, origin: "message", ok: false,
+                    error: `withheld by the alignment check: ${verdict.reasons.join("; ")}`, startedAt: Date.now(), endedAt: Date.now(),
+                };
+            const text = formatToolReply([event], routed.why);
+            return {
+                answered: true, via: "router", text,
+                toolCalls: [{ plugin: event.plugin, tool: event.tool, ok: event.ok, ...(event.error ? { error: event.error } : {}) }],
+            };
+        }
+        const reply = await this.llm.generate(input, {
+            deadlineMs: options.deadlineMs ?? 6000,
+            ...(options.history && options.history.length ? { memoryContext: options.history } : {}),
+        });
+        let events = [];
+        if (layer) {
+            try {
+                events = await layer.step(this.llm.lastZipLoopOutput ?? null);
+            }
+            catch (e) {
+                console.warn("Tool neurons step failed:", e);
+            }
+        }
+        const toolCalls = events.map(c => ({ plugin: c.plugin, tool: c.tool, ok: c.ok, ...(c.error ? { error: c.error } : {}) }));
+        if (events.length > 0) {
+            return { answered: true, via: "network", text: formatToolReply(events, "the network fired the tool's neuron"), toolCalls };
+        }
+        const text = brainText(reply);
+        if (text === null)
+            return { answered: false, via: "none", text: "", toolCalls };
+        return { answered: true, via: "brain", text, toolCalls };
+    }
+    /**
+     * What OneBrain itself says to some text, and nothing else: no tool router,
+     * no tool neurons, no plugins. For text that came from somewhere that must
+     * not be able to make this machine do anything (another model, say) --
+     * askOneBrain() would read "run `ls`" in it as a command. Null when the
+     * brain has nothing to say.
+     */
+    async speak(input, options = {}) {
+        if (!this.initialized)
+            await this.initialize();
+        const reply = await this.llm.generate(input, {
+            deadlineMs: options.deadlineMs ?? 6000,
+            ...(options.history && options.history.length ? { memoryContext: options.history } : {}),
+        });
+        return brainText(reply);
     }
     async processQuery(input) {
         if (!this.initialized)

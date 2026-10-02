@@ -156,35 +156,41 @@ export class ResearchPlugin extends BasePlugin {
     }
     /**
      * Real internet search -- no API key required or ever needed
-     * (DuckDuckGo's plain HTML results endpoint, not an authenticated
-     * API). Genuinely optional in the same sense the PyTorch backend is:
+     * (SearXNG's JSON endpoint, an open-source metasearch engine).
+     * Genuinely optional in the same sense the PyTorch backend is:
      * offline, DNS failure, or a blocked network degrades to an empty
      * result set, never throws, and never stops searchMemory()/
      * searchDrive() from working with zero network access at all.
      */
     async searchWeb(query, maxResults = 8) {
         try {
-            const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+            const url = `https://searx.space/search?q=${encodeURIComponent(query)}&format=json`;
             const res = await fetch(url, {
                 headers: { "User-Agent": "Mozilla/5.0 (compatible; NeuroClawResearch/1.0)" },
                 signal: AbortSignal.timeout(8000),
             });
             if (!res.ok)
                 return [];
-            const html = await res.text();
-            return this.parseDuckDuckGoHtml(html).slice(0, maxResults);
+            const data = await res.json();
+            return this.parseSearXNGJson(data).slice(0, maxResults);
         }
         catch {
             return [];
         }
     }
-    parseDuckDuckGoHtml(html) {
+    parseSearXNGJson(data) {
         const results = [];
-        const resultRegex = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-        const stripTags = (s) => s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim();
-        let m;
-        while ((m = resultRegex.exec(html)) !== null) {
-            results.push({ source: "web", title: stripTags(m[2]), snippet: stripTags(m[3]), location: m[1] });
+        if (!Array.isArray(data.results))
+            return results;
+        for (const item of data.results) {
+            if (item.title && item.url) {
+                results.push({
+                    source: "web",
+                    title: item.title,
+                    snippet: item.content || "",
+                    location: item.url,
+                });
+            }
         }
         return results;
     }
