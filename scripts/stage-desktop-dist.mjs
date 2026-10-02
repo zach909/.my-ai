@@ -15,7 +15,7 @@ const source = path.join(repoRoot, 'dist')
 const staged = path.join(repoRoot, 'desktop-app', '.staged-dist')
 
 console.log('[stage-desktop] building the web app…')
-execFileSync('npm', ['run', 'build'], { cwd: repoRoot, stdio: 'inherit' })
+execFileSync('npm', ['run', 'build'], { cwd: repoRoot, stdio: 'inherit', shell: process.platform === 'win32' })
 
 if (!existsSync(source)) {
   console.error('[stage-desktop] the build produced no dist/.')
