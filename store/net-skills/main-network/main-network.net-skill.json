@@ -3,1029 +3,1029 @@
   "neuronCount": 256,
   "neurons": [
     {
-      "name": "moby_README.md",
-      "id": 65
-    },
-    {
-      "name": "moby_CONTRIBUTING.md",
-      "id": 66
-    },
-    {
-      "name": "moby_go.mod",
-      "id": 67
-    },
-    {
-      "name": "moby_Dockerfile",
-      "id": 68
-    },
-    {
-      "name": "moby_cmd_dockerd_main.go",
-      "id": 69
-    },
-    {
-      "name": "moby_daemon_daemon.go",
-      "id": 70
-    },
-    {
-      "name": "moby_daemon_container.go",
-      "id": 71
-    },
-    {
-      "name": "moby_daemon_network.go",
-      "id": 72
-    },
-    {
-      "name": "moby_daemon_volumes.go",
-      "id": 73
-    },
-    {
-      "name": "moby_daemon_create.go",
-      "id": 74
-    },
-    {
-      "name": "moby_daemon_start.go",
-      "id": 75
-    },
-    {
-      "name": "moby_client_client.go",
-      "id": 76
-    },
-    {
-      "name": "a",
-      "id": 77
-    },
-    {
-      "name": "abortifacient",
-      "id": 78
-    },
-    {
-      "name": "acclaimed",
-      "id": 79
-    },
-    {
-      "name": "acquiesced",
-      "id": 80
-    },
-    {
-      "name": "adenoid",
-      "id": 81
-    },
-    {
-      "name": "advantest",
-      "id": 82
-    },
-    {
-      "name": "africans",
-      "id": 83
-    },
-    {
-      "name": "aguila",
-      "id": 84
-    },
-    {
-      "name": "ais",
-      "id": 85
-    },
-    {
-      "name": "alcoholism",
-      "id": 86
-    },
-    {
-      "name": "alix",
-      "id": 87
-    },
-    {
-      "name": "almaguer",
-      "id": 88
-    },
-    {
-      "name": "alums",
-      "id": 89
-    },
-    {
-      "name": "amendment",
-      "id": 90
-    },
-    {
-      "name": "amsterdam",
-      "id": 91
-    },
-    {
-      "name": "andriola",
-      "id": 92
-    },
-    {
-      "name": "annick",
-      "id": 93
-    },
-    {
-      "name": "antill",
-      "id": 94
-    },
-    {
-      "name": "appalls",
-      "id": 95
-    },
-    {
-      "name": "arabicon",
-      "id": 96
-    },
-    {
-      "name": "arganbright",
-      "id": 97
-    },
-    {
-      "name": "arnow",
-      "id": 98
-    },
-    {
-      "name": "asap",
-      "id": 99
-    },
-    {
-      "name": "assertiveness",
-      "id": 100
-    },
-    {
-      "name": "atmosphere",
-      "id": 101
-    },
-    {
-      "name": "augmentation",
-      "id": 102
-    },
-    {
-      "name": "ave",
-      "id": 103
-    },
-    {
-      "name": "azactam",
-      "id": 104
-    },
-    {
-      "name": "backstitches",
-      "id": 105
-    },
-    {
-      "name": "bakery",
-      "id": 106
-    },
-    {
-      "name": "balthazar",
-      "id": 107
-    },
-    {
-      "name": "bao",
-      "id": 108
-    },
-    {
-      "name": "barnaby",
-      "id": 109
-    },
-    {
-      "name": "basch",
-      "id": 110
-    },
-    {
-      "name": "battlefield",
-      "id": 111
-    },
-    {
-      "name": "beams",
-      "id": 112
-    },
-    {
-      "name": "bedraggle",
-      "id": 113
-    },
-    {
-      "name": "being",
-      "id": 114
-    },
-    {
-      "name": "beltsville",
-      "id": 115
-    },
-    {
-      "name": "bento",
-      "id": 116
-    },
-    {
-      "name": "berni",
-      "id": 117
-    },
-    {
-      "name": "bettering",
-      "id": 118
-    },
-    {
-      "name": "bieber",
-      "id": 119
-    },
-    {
-      "name": "bimbo",
-      "id": 120
-    },
-    {
-      "name": "birthdays",
-      "id": 121
-    },
-    {
-      "name": "blain",
-      "id": 122
-    },
-    {
-      "name": "blida",
-      "id": 123
-    },
-    {
-      "name": "blueberry",
-      "id": 124
-    },
-    {
-      "name": "bode",
-      "id": 125
-    },
-    {
-      "name": "bola",
-      "id": 126
-    },
-    {
-      "name": "bonneau",
-      "id": 127
-    },
-    {
-      "name": "borer",
-      "id": 128
-    },
-    {
-      "name": "bottles",
-      "id": 129
-    },
-    {
-      "name": "boxing",
-      "id": 130
-    },
-    {
-      "name": "bralorne",
-      "id": 131
-    },
-    {
-      "name": "brazenly",
-      "id": 132
-    },
-    {
-      "name": "brevets",
-      "id": 133
-    },
-    {
-      "name": "brislin",
-      "id": 134
-    },
-    {
-      "name": "bronzes",
-      "id": 135
-    },
-    {
-      "name": "brunett",
-      "id": 136
-    },
-    {
-      "name": "bucy",
-      "id": 137
-    },
-    {
-      "name": "bullen",
-      "id": 138
-    },
-    {
-      "name": "burell",
-      "id": 139
-    },
-    {
-      "name": "buse",
-      "id": 140
-    },
-    {
-      "name": "bybee",
-      "id": 141
-    },
-    {
-      "name": "cahall",
-      "id": 142
-    },
-    {
-      "name": "caloric",
-      "id": 143
-    },
-    {
-      "name": "candelaria",
-      "id": 144
-    },
-    {
-      "name": "capitalize",
-      "id": 145
-    },
-    {
-      "name": "cardozo",
-      "id": 146
-    },
-    {
-      "name": "carotenes",
-      "id": 147
-    },
-    {
-      "name": "casework",
-      "id": 148
-    },
-    {
-      "name": "catania",
-      "id": 149
-    },
-    {
-      "name": "cavorting",
-      "id": 150
-    },
-    {
-      "name": "centers",
-      "id": 151
-    },
-    {
-      "name": "chalabi",
-      "id": 152
-    },
-    {
-      "name": "charlottesville",
-      "id": 153
-    },
-    {
-      "name": "cheeseburgers",
-      "id": 154
-    },
-    {
-      "name": "chide",
-      "id": 155
-    },
-    {
-      "name": "chojnowski",
-      "id": 156
-    },
-    {
-      "name": "chukchi",
-      "id": 157
-    },
-    {
-      "name": "ciresi",
-      "id": 158
-    },
-    {
-      "name": "clasp",
-      "id": 159
-    },
-    {
-      "name": "clicks",
-      "id": 160
-    },
-    {
-      "name": "clum",
-      "id": 161
-    },
-    {
-      "name": "coded",
-      "id": 162
-    },
-    {
-      "name": "colestipol",
-      "id": 163
-    },
-    {
-      "name": "colt",
-      "id": 164
-    },
-    {
-      "name": "committeeman",
-      "id": 165
-    },
-    {
-      "name": "compressed",
-      "id": 166
-    },
-    {
-      "name": "condos",
-      "id": 167
-    },
-    {
-      "name": "conlon",
-      "id": 168
-    },
-    {
-      "name": "constitutionists",
-      "id": 169
-    },
-    {
-      "name": "controladora",
-      "id": 170
-    },
-    {
-      "name": "copiously",
-      "id": 171
-    },
-    {
-      "name": "cornfeld",
-      "id": 172
-    },
-    {
-      "name": "cosmonaut",
-      "id": 173
-    },
-    {
-      "name": "counterpunch",
-      "id": 174
-    },
-    {
-      "name": "coyer",
-      "id": 175
-    },
-    {
-      "name": "creams",
-      "id": 176
-    },
-    {
-      "name": "crisanti",
-      "id": 177
-    },
-    {
-      "name": "crotchety",
-      "id": 178
-    },
-    {
-      "name": "cuco",
-      "id": 179
-    },
-    {
-      "name": "curled",
-      "id": 180
-    },
-    {
-      "name": "cycolor",
-      "id": 181
-    },
-    {
-      "name": "dairies",
-      "id": 182
-    },
-    {
-      "name": "danis",
-      "id": 183
-    },
-    {
-      "name": "dataproducts",
-      "id": 184
-    },
-    {
-      "name": "deangelo",
-      "id": 185
-    },
-    {
-      "name": "dechine",
-      "id": 186
-    },
-    {
-      "name": "defaults",
-      "id": 187
-    },
-    {
-      "name": "deidre",
-      "id": 188
-    },
-    {
-      "name": "delisting",
-      "id": 189
-    },
-    {
-      "name": "demirel",
-      "id": 190
-    },
-    {
-      "name": "dent",
-      "id": 191
-    },
-    {
-      "name": "deregulate",
-      "id": 192
-    },
-    {
-      "name": "desjardin",
-      "id": 193
-    },
-    {
-      "name": "deutz",
-      "id": 194
-    },
-    {
-      "name": "diagonal",
-      "id": 195
-    },
-    {
-      "name": "dierolf",
-      "id": 196
-    },
-    {
-      "name": "dimare",
-      "id": 197
-    },
-    {
-      "name": "dirty",
-      "id": 198
-    },
-    {
-      "name": "disenfranchised",
-      "id": 199
-    },
-    {
-      "name": "disproves",
-      "id": 200
-    },
-    {
-      "name": "divergent",
-      "id": 201
-    },
-    {
-      "name": "doer",
-      "id": 202
-    },
-    {
-      "name": "donahey",
-      "id": 203
-    },
-    {
-      "name": "dorsch",
-      "id": 204
-    },
-    {
-      "name": "downturn",
-      "id": 205
-    },
-    {
-      "name": "dresser",
-      "id": 206
-    },
-    {
-      "name": "dryness",
-      "id": 207
-    },
-    {
-      "name": "dulak",
-      "id": 208
-    },
-    {
-      "name": "durden",
-      "id": 209
-    },
-    {
-      "name": "dyspnea",
-      "id": 210
-    },
-    {
-      "name": "eberhart",
-      "id": 211
-    },
-    {
-      "name": "edisto",
-      "id": 212
-    },
-    {
-      "name": "ehle",
-      "id": 213
-    },
-    {
-      "name": "elbowing",
-      "id": 214
-    },
-    {
-      "name": "ella",
-      "id": 215
-    },
-    {
-      "name": "embarks",
-      "id": 216
-    },
-    {
-      "name": "employers",
-      "id": 217
-    },
-    {
-      "name": "endurance",
-      "id": 218
-    },
-    {
-      "name": "enright",
-      "id": 219
-    },
-    {
-      "name": "eos",
-      "id": 220
-    },
-    {
-      "name": "eridania",
-      "id": 221
-    },
-    {
-      "name": "espe",
-      "id": 222
-    },
-    {
-      "name": "etzler",
-      "id": 223
-    },
-    {
-      "name": "everyplace",
-      "id": 224
-    },
-    {
-      "name": "executioner",
-      "id": 225
-    },
-    {
-      "name": "explosion",
-      "id": 226
-    },
-    {
-      "name": "eyring",
-      "id": 227
-    },
-    {
-      "name": "fait",
-      "id": 228
-    },
-    {
-      "name": "faridoun",
-      "id": 229
-    },
-    {
-      "name": "fauna",
-      "id": 230
-    },
-    {
-      "name": "feger",
-      "id": 231
-    },
-    {
-      "name": "feraluzi",
-      "id": 232
-    },
-    {
-      "name": "feuerman",
-      "id": 233
-    },
-    {
-      "name": "filers",
-      "id": 234
-    },
-    {
-      "name": "finnicum",
-      "id": 235
-    },
-    {
-      "name": "fiumara",
-      "id": 236
-    },
-    {
-      "name": "fleck",
-      "id": 237
-    },
-    {
-      "name": "florio",
-      "id": 238
-    },
-    {
-      "name": "folha",
-      "id": 239
-    },
-    {
-      "name": "forefinger",
-      "id": 240
-    },
-    {
-      "name": "forthrightly",
-      "id": 241
-    },
-    {
-      "name": "frame",
-      "id": 242
-    },
-    {
-      "name": "fredrich",
-      "id": 243
-    },
-    {
-      "name": "frieda",
-      "id": 244
-    },
-    {
-      "name": "fruitless",
-      "id": 245
-    },
-    {
-      "name": "fungible",
-      "id": 246
-    },
-    {
-      "name": "gadsden",
-      "id": 247
-    },
-    {
-      "name": "gallup",
-      "id": 248
-    },
-    {
-      "name": "gardeners",
-      "id": 249
-    },
-    {
-      "name": "gasses",
-      "id": 250
-    },
-    {
-      "name": "gears",
-      "id": 251
-    },
-    {
-      "name": "geneve",
-      "id": 252
-    },
-    {
-      "name": "gerling",
-      "id": 253
-    },
-    {
-      "name": "giannattasio",
-      "id": 254
-    },
-    {
-      "name": "gillogly",
-      "id": 255
-    },
-    {
-      "name": "glacken",
-      "id": 256
-    },
-    {
-      "name": "globex",
-      "id": 257
-    },
-    {
-      "name": "godine",
-      "id": 258
-    },
-    {
-      "name": "gollnick",
-      "id": 259
-    },
-    {
-      "name": "gorgon",
-      "id": 260
-    },
-    {
-      "name": "grabow",
-      "id": 261
-    },
-    {
-      "name": "grantham",
-      "id": 262
-    },
-    {
-      "name": "greenhalgh",
-      "id": 263
-    },
-    {
-      "name": "grillot",
-      "id": 264
-    },
-    {
-      "name": "groton",
-      "id": 265
-    },
-    {
-      "name": "guattery",
-      "id": 266
-    },
-    {
-      "name": "gum",
-      "id": 267
-    },
-    {
-      "name": "guzzle",
-      "id": 268
-    },
-    {
-      "name": "hafnia",
-      "id": 269
-    },
-    {
-      "name": "hallanan",
-      "id": 270
-    },
-    {
-      "name": "hamstrung",
-      "id": 271
-    },
-    {
-      "name": "hansel",
-      "id": 272
-    },
-    {
-      "name": "harl",
-      "id": 273
-    },
-    {
-      "name": "harvest",
-      "id": 274
-    },
-    {
-      "name": "hausler",
-      "id": 275
-    },
-    {
-      "name": "headsman",
-      "id": 276
-    },
-    {
-      "name": "hee",
-      "id": 277
-    },
-    {
-      "name": "hekker",
-      "id": 278
-    },
-    {
-      "name": "henard",
-      "id": 279
-    },
-    {
-      "name": "hering",
-      "id": 280
-    },
-    {
-      "name": "heupel",
-      "id": 281
-    },
-    {
-      "name": "hilb",
-      "id": 282
-    },
-    {
-      "name": "hipper",
-      "id": 283
-    },
-    {
-      "name": "hobson",
-      "id": 284
-    },
-    {
-      "name": "holder",
-      "id": 285
-    },
-    {
-      "name": "homebuilders",
-      "id": 286
-    },
-    {
-      "name": "hoosiers",
-      "id": 287
-    },
-    {
-      "name": "hosman",
-      "id": 288
-    },
-    {
-      "name": "howison",
-      "id": 289
-    },
-    {
-      "name": "hugs",
-      "id": 290
-    },
-    {
-      "name": "hunts",
+      "name": "src_README.md",
       "id": 291
     },
     {
-      "name": "hydroponic",
+      "name": "src_AGENTS.md",
       "id": 292
     },
     {
-      "name": "icing",
+      "name": "src_package.json",
       "id": 293
     },
     {
-      "name": "illuminated",
+      "name": "src_asi_core_unified_brain.py",
       "id": 294
     },
     {
-      "name": "imperato",
+      "name": "src_asi_core_neural_mesh.py",
       "id": 295
     },
     {
-      "name": "inaudible",
+      "name": "src_asi_core_vale_system.py",
       "id": 296
     },
     {
-      "name": "independent",
+      "name": "src_models____skills_core_onebrain.ts",
       "id": 297
     },
     {
-      "name": "inferences",
+      "name": "src_models____skills_core_neuro-lang.ts",
       "id": 298
     },
     {
-      "name": "iniguez",
+      "name": "src_models____skills_core_thorns.js",
       "id": 299
     },
     {
-      "name": "insouciance",
+      "name": "src_extension-builder_builder.js",
       "id": 300
     },
     {
-      "name": "interchange",
+      "name": "src_interface_web-server.ts",
       "id": 301
     },
     {
-      "name": "interview",
+      "name": "src_scripts_build-backend.mjs",
       "id": 302
     },
     {
-      "name": "inwood",
+      "name": "neuroclaw",
       "id": 303
     },
     {
-      "name": "isgur",
+      "name": "artificial",
       "id": 304
     },
     {
-      "name": "izzard",
+      "name": "system",
       "id": 305
     },
     {
-      "name": "janes",
+      "name": "for",
       "id": 306
     },
     {
-      "name": "jeaner",
+      "name": "edu",
       "id": 307
     },
     {
-      "name": "jetting",
+      "name": "uses",
       "id": 308
     },
     {
-      "name": "jointness",
+      "name": "only",
       "id": 309
     },
     {
-      "name": "judiciously",
+      "name": "warning",
       "id": 310
     },
     {
-      "name": "juxtapose",
+      "name": "this",
       "id": 311
     },
     {
-      "name": "kampa",
+      "name": "project",
       "id": 312
     },
     {
-      "name": "karshner",
+      "name": "beta",
       "id": 313
     },
     {
-      "name": "kazee",
+      "name": "are",
       "id": 314
     },
     {
-      "name": "kelsey",
+      "name": "not",
       "id": 315
     },
     {
-      "name": "kervin",
+      "name": "your",
       "id": 316
     },
     {
-      "name": "kielar",
+      "name": "actions",
       "id": 317
     },
     {
-      "name": "kindley",
+      "name": "what",
       "id": 318
     },
     {
-      "name": "kisner",
+      "name": "the",
       "id": 319
     },
     {
-      "name": "klinck",
+      "name": "code",
       "id": 320
+    },
+    {
+      "name": "does",
+      "id": 321
+    },
+    {
+      "name": "continuing",
+      "id": 322
+    },
+    {
+      "name": "you",
+      "id": 323
+    },
+    {
+      "name": "agree",
+      "id": 324
+    },
+    {
+      "name": "with",
+      "id": 325
+    },
+    {
+      "name": "statement",
+      "id": 326
+    },
+    {
+      "name": "and",
+      "id": 327
+    },
+    {
+      "name": "privacy",
+      "id": 328
+    },
+    {
+      "name": "policy",
+      "id": 329
+    },
+    {
+      "name": "terms",
+      "id": 330
+    },
+    {
+      "name": "conditions",
+      "id": 331
+    },
+    {
+      "name": "local",
+      "id": 332
+    },
+    {
+      "name": "first",
+      "id": 333
+    },
+    {
+      "name": "agent",
+      "id": 334
+    },
+    {
+      "name": "powered",
+      "id": 335
+    },
+    {
+      "name": "onebrain",
+      "id": 336
+    },
+    {
+      "name": "neural",
+      "id": 337
+    },
+    {
+      "name": "mesh",
+      "id": 338
+    },
+    {
+      "name": "engine",
+      "id": 339
+    },
+    {
+      "name": "underneath",
+      "id": 340
+    },
+    {
+      "name": "all",
+      "id": 341
+    },
+    {
+      "name": "neuron",
+      "id": 342
+    },
+    {
+      "name": "mixture",
+      "id": 343
+    },
+    {
+      "name": "experts",
+      "id": 344
+    },
+    {
+      "name": "routing",
+      "id": 345
+    },
+    {
+      "name": "described",
+      "id": 346
+    },
+    {
+      "name": "throughout",
+      "id": 347
+    },
+    {
+      "name": "repo",
+      "id": 348
+    },
+    {
+      "name": "live",
+      "id": 349
+    },
+    {
+      "name": "there",
+      "id": 350
+    },
+    {
+      "name": "itself",
+      "id": 351
+    },
+    {
+      "name": "made",
+      "id": 352
+    },
+    {
+      "name": "skills",
+      "id": 353
+    },
+    {
+      "name": "each",
+      "id": 354
+    },
+    {
+      "name": "capability",
+      "id": 355
+    },
+    {
+      "name": "trained",
+      "id": 356
+    },
+    {
+      "name": "packaged",
+      "id": 357
+    },
+    {
+      "name": "extension",
+      "id": 358
+    },
+    {
+      "name": "builder",
+      "id": 359
+    },
+    {
+      "name": "then",
+      "id": 360
+    },
+    {
+      "name": "registered",
+      "id": 361
+    },
+    {
+      "name": "into",
+      "id": 362
+    },
+    {
+      "name": "routable",
+      "id": 363
+    },
+    {
+      "name": "moe",
+      "id": 364
+    },
+    {
+      "name": "expert",
+      "id": 365
+    },
+    {
+      "name": "asi",
+      "id": 366
+    },
+    {
+      "name": "modular",
+      "id": 367
+    },
+    {
+      "name": "computing",
+      "id": 368
+    },
+    {
+      "name": "thinking",
+      "id": 369
+    },
+    {
+      "name": "self",
+      "id": 370
+    },
+    {
+      "name": "quick",
+      "id": 371
+    },
+    {
+      "name": "start",
+      "id": 372
+    },
+    {
+      "name": "bash",
+      "id": 373
+    },
+    {
+      "name": "git",
+      "id": 374
+    },
+    {
+      "name": "clone",
+      "id": 375
+    },
+    {
+      "name": "https",
+      "id": 376
+    },
+    {
+      "name": "github",
+      "id": 377
+    },
+    {
+      "name": "com",
+      "id": 378
+    },
+    {
+      "name": "scripts",
+      "id": 379
+    },
+    {
+      "name": "install",
+      "id": 380
+    },
+    {
+      "name": "build",
+      "id": 381
+    },
+    {
+      "name": "npm",
+      "id": 382
+    },
+    {
+      "name": "run",
+      "id": 383
+    },
+    {
+      "name": "dev",
+      "id": 384
+    },
+    {
+      "name": "test",
+      "id": 385
+    },
+    {
+      "name": "core",
+      "id": 386
+    },
+    {
+      "name": "unittest",
+      "id": 387
+    },
+    {
+      "name": "discover",
+      "id": 388
+    },
+    {
+      "name": "specific",
+      "id": 389
+    },
+    {
+      "name": "component",
+      "id": 390
+    },
+    {
+      "name": "from",
+      "id": 391
+    },
+    {
+      "name": "import",
+      "id": 392
+    },
+    {
+      "name": "brain",
+      "id": 393
+    },
+    {
+      "name": "print",
+      "id": 394
+    },
+    {
+      "name": "perceive",
+      "id": 395
+    },
+    {
+      "name": "structure",
+      "id": 396
+    },
+    {
+      "name": "top",
+      "id": 397
+    },
+    {
+      "name": "level",
+      "id": 398
+    },
+    {
+      "name": "overview",
+      "id": 399
+    },
+    {
+      "name": "bin",
+      "id": 400
+    },
+    {
+      "name": "symlinks",
+      "id": 401
+    },
+    {
+      "name": "typescript",
+      "id": 402
+    },
+    {
+      "name": "compiler",
+      "id": 403
+    },
+    {
+      "name": "tsc",
+      "id": 404
+    },
+    {
+      "name": "tsserver",
+      "id": 405
+    },
+    {
+      "name": "claude",
+      "id": 406
+    },
+    {
+      "name": "permission",
+      "id": 407
+    },
+    {
+      "name": "settings",
+      "id": 408
+    },
+    {
+      "name": "python",
+      "id": 409
+    },
+    {
+      "name": "reference",
+      "id": 410
+    },
+    {
+      "name": "stdlib",
+      "id": 411
+    },
+    {
+      "name": "its",
+      "id": 412
+    },
+    {
+      "name": "unit",
+      "id": 413
+    },
+    {
+      "name": "tests",
+      "id": 414
+    },
+    {
+      "name": "benchmarks",
+      "id": 415
+    },
+    {
+      "name": "bun",
+      "id": 416
+    },
+    {
+      "name": "config",
+      "id": 417
+    },
+    {
+      "name": "runtime",
+      "id": 418
+    },
+    {
+      "name": "access",
+      "id": 419
+    },
+    {
+      "name": "grants",
+      "id": 420
+    },
+    {
+      "name": "baselines",
+      "id": 421
+    },
+    {
+      "name": "desktop",
+      "id": 422
+    },
+    {
+      "name": "app",
+      "id": 423
+    },
+    {
+      "name": "electron",
+      "id": 424
+    },
+    {
+      "name": "wrapper",
+      "id": 425
+    },
+    {
+      "name": "macos",
+      "id": 426
+    },
+    {
+      "name": "windows",
+      "id": 427
+    },
+    {
+      "name": "debian",
+      "id": 428
+    },
+    {
+      "name": "dist",
+      "id": 429
+    },
+    {
+      "name": "compiled",
+      "id": 430
+    },
+    {
+      "name": "javascript",
+      "id": 431
+    },
+    {
+      "name": "output",
+      "id": 432
+    },
+    {
+      "name": "backend",
+      "id": 433
+    },
+    {
+      "name": "docs",
+      "id": 434
+    },
+    {
+      "name": "design",
+      "id": 435
+    },
+    {
+      "name": "specs",
+      "id": 436
+    },
+    {
+      "name": "guides",
+      "id": 437
+    },
+    {
+      "name": "status",
+      "id": 438
+    },
+    {
+      "name": "documents",
+      "id": 439
+    },
+    {
+      "name": "network",
+      "id": 440
+    },
+    {
+      "name": "training",
+      "id": 441
+    },
+    {
+      "name": "artifacts",
+      "id": 442
+    },
+    {
+      "name": "lifecycle",
+      "id": 443
+    },
+    {
+      "name": "versioning",
+      "id": 444
+    },
+    {
+      "name": "storage",
+      "id": 445
+    },
+    {
+      "name": "generated",
+      "id": 446
+    },
+    {
+      "name": "plugins",
+      "id": 447
+    },
+    {
+      "name": "wrote",
+      "id": 448
+    },
+    {
+      "name": "plus",
+      "id": 449
+    },
+    {
+      "name": "their",
+      "id": 450
+    },
+    {
+      "name": "wiki",
+      "id": 451
+    },
+    {
+      "name": "pages",
+      "id": 452
+    },
+    {
+      "name": "interface",
+      "id": 453
+    },
+    {
+      "name": "entry",
+      "id": 454
+    },
+    {
+      "name": "point",
+      "id": 455
+    },
+    {
+      "name": "http",
+      "id": 456
+    },
+    {
+      "name": "api",
+      "id": 457
+    },
+    {
+      "name": "server",
+      "id": 458
+    },
+    {
+      "name": "cli",
+      "id": 459
+    },
+    {
+      "name": "layer",
+      "id": 460
+    },
+    {
+      "name": "usb",
+      "id": 461
+    },
+    {
+      "name": "bootable",
+      "id": 462
+    },
+    {
+      "name": "image",
+      "id": 463
+    },
+    {
+      "name": "model",
+      "id": 464
+    },
+    {
+      "name": "manager",
+      "id": 465
+    },
+    {
+      "name": "neurolang",
+      "id": 466
+    },
+    {
+      "name": "dsl",
+      "id": 467
+    },
+    {
+      "name": "legacy",
+      "id": 468
+    },
+    {
+      "name": "tinygpt",
+      "id": 469
+    },
+    {
+      "name": "era",
+      "id": 470
+    },
+    {
+      "name": "files",
+      "id": 471
+    },
+    {
+      "name": "models",
+      "id": 472
+    },
+    {
+      "name": "every",
+      "id": 473
+    },
+    {
+      "name": "subsystem",
+      "id": 474
+    },
+    {
+      "name": "plugin",
+      "id": 475
+    },
+    {
+      "name": "registry",
+      "id": 476
+    },
+    {
+      "name": "loader",
+      "id": 477
+    },
+    {
+      "name": "sdk",
+      "id": 478
+    },
+    {
+      "name": "router",
+      "id": 479
+    },
+    {
+      "name": "camera",
+      "id": 480
+    },
+    {
+      "name": "email",
+      "id": 481
+    },
+    {
+      "name": "terminal",
+      "id": 482
+    },
+    {
+      "name": "store",
+      "id": 483
+    },
+    {
+      "name": "public",
+      "id": 484
+    },
+    {
+      "name": "static",
+      "id": 485
+    },
+    {
+      "name": "served",
+      "id": 486
+    },
+    {
+      "name": "vite",
+      "id": 487
+    },
+    {
+      "name": "icons",
+      "id": 488
+    },
+    {
+      "name": "robots",
+      "id": 489
+    },
+    {
+      "name": "txt",
+      "id": 490
+    },
+    {
+      "name": "sitemap",
+      "id": 491
+    },
+    {
+      "name": "launchers",
+      "id": 492
+    },
+    {
+      "name": "autonomous",
+      "id": 493
+    },
+    {
+      "name": "agents",
+      "id": 494
+    },
+    {
+      "name": "exams",
+      "id": 495
+    },
+    {
+      "name": "helpers",
+      "id": 496
+    },
+    {
+      "name": "src",
+      "id": 497
+    },
+    {
+      "name": "react",
+      "id": 498
+    },
+    {
+      "name": "frontend",
+      "id": 499
+    },
+    {
+      "name": "tanstack",
+      "id": 500
+    },
+    {
+      "name": "few",
+      "id": 501
+    },
+    {
+      "name": "shared",
+      "id": 502
+    },
+    {
+      "name": "libs",
+      "id": 503
+    },
+    {
+      "name": "vitest",
+      "id": 504
+    },
+    {
+      "name": "suites",
+      "id": 505
+    },
+    {
+      "name": "stack",
+      "id": 506
+    },
+    {
+      "name": "smoke",
+      "id": 507
+    },
+    {
+      "name": "security",
+      "id": 508
+    },
+    {
+      "name": "suite",
+      "id": 509
+    },
+    {
+      "name": "scientific",
+      "id": 510
+    },
+    {
+      "name": "database",
+      "id": 511
+    },
+    {
+      "name": "catalog",
+      "id": 512
+    },
+    {
+      "name": "source",
+      "id": 513
+    },
+    {
+      "name": "subfolder",
+      "id": 514
+    },
+    {
+      "name": "folder",
+      "id": 515
+    },
+    {
+      "name": "holds",
+      "id": 516
+    },
+    {
+      "name": "assets",
+      "id": 517
+    },
+    {
+      "name": "preflight",
+      "id": 518
+    },
+    {
+      "name": "doctor",
+      "id": 519
+    },
+    {
+      "name": "mjs",
+      "id": 520
+    },
+    {
+      "name": "before",
+      "id": 521
+    },
+    {
+      "name": "starts",
+      "id": 522
+    },
+    {
+      "name": "main",
+      "id": 523
+    },
+    {
+      "name": "process",
+      "id": 524
+    },
+    {
+      "name": "preload",
+      "id": 525
+    },
+    {
+      "name": "secure",
+      "id": 526
+    },
+    {
+      "name": "bridge",
+      "id": 527
+    },
+    {
+      "name": "renderer",
+      "id": 528
+    },
+    {
+      "name": "boot",
+      "id": 529
+    },
+    {
+      "name": "screen",
+      "id": 530
+    },
+    {
+      "name": "fallback",
+      "id": 531
+    },
+    {
+      "name": "html",
+      "id": 532
+    },
+    {
+      "name": "contains",
+      "id": 533
+    },
+    {
+      "name": "modules",
+      "id": 534
+    },
+    {
+      "name": "subsystems",
+      "id": 535
+    },
+    {
+      "name": "extensions",
+      "id": 536
+    },
+    {
+      "name": "built",
+      "id": 537
+    },
+    {
+      "name": "index",
+      "id": 538
+    },
+    {
+      "name": "lib",
+      "id": 539
+    },
+    {
+      "name": "bot",
+      "id": 540
+    },
+    {
+      "name": "service",
+      "id": 541
+    },
+    {
+      "name": "background",
+      "id": 542
+    },
+    {
+      "name": "saved",
+      "id": 543
+    },
+    {
+      "name": "records",
+      "id": 544
+    },
+    {
+      "name": "mostly",
+      "id": 545
+    },
+    {
+      "name": "leftovers",
+      "id": 546
     }
   ],
-  "publishedAt": "2026-09-13T19:51:27.943Z"
+  "publishedAt": "2026-10-02T22:19:02.699Z"
 }
