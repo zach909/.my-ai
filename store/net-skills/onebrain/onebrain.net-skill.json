@@ -1,0 +1,227 @@
+{
+  "skill": "OneBrain",
+  "neuronCount": 55,
+  "neurons": [
+    {
+      "name": "OneBrain in b116",
+      "id": 90
+    },
+    {
+      "name": "OneBrain out b115",
+      "id": 91
+    },
+    {
+      "name": "OneBrain out b95",
+      "id": 92
+    },
+    {
+      "name": "OneBrain out b68",
+      "id": 93
+    },
+    {
+      "name": "OneBrain out b101",
+      "id": 94
+    },
+    {
+      "name": "OneBrain out b102",
+      "id": 95
+    },
+    {
+      "name": "OneBrain out b105",
+      "id": 96
+    },
+    {
+      "name": "OneBrain out b110",
+      "id": 97
+    },
+    {
+      "name": "OneBrain out b78",
+      "id": 98
+    },
+    {
+      "name": "OneBrain in b101",
+      "id": 99
+    },
+    {
+      "name": "OneBrain in b115",
+      "id": 100
+    },
+    {
+      "name": "OneBrain out b100",
+      "id": 101
+    },
+    {
+      "name": "OneBrain out b111",
+      "id": 102
+    },
+    {
+      "name": "OneBrain out b97",
+      "id": 103
+    },
+    {
+      "name": "OneBrain out b108",
+      "id": 104
+    },
+    {
+      "name": "OneBrain out b49",
+      "id": 105
+    },
+    {
+      "name": "OneBrain out b46",
+      "id": 106
+    },
+    {
+      "name": "OneBrain out b106",
+      "id": 107
+    },
+    {
+      "name": "OneBrain in b84",
+      "id": 108
+    },
+    {
+      "name": "OneBrain out b32",
+      "id": 109
+    },
+    {
+      "name": "OneBrain out b116",
+      "id": 110
+    },
+    {
+      "name": "OneBrain in b104",
+      "id": 111
+    },
+    {
+      "name": "OneBrain in b32",
+      "id": 112
+    },
+    {
+      "name": "OneBrain in b112",
+      "id": 113
+    },
+    {
+      "name": "OneBrain in b97",
+      "id": 114
+    },
+    {
+      "name": "OneBrain out b103",
+      "id": 115
+    },
+    {
+      "name": "OneBrain out b104",
+      "id": 116
+    },
+    {
+      "name": "OneBrain in b105",
+      "id": 117
+    },
+    {
+      "name": "OneBrain in b110",
+      "id": 118
+    },
+    {
+      "name": "OneBrain in b107",
+      "id": 119
+    },
+    {
+      "name": "OneBrain in b103",
+      "id": 120
+    },
+    {
+      "name": "OneBrain out b114",
+      "id": 121
+    },
+    {
+      "name": "OneBrain in b121",
+      "id": 122
+    },
+    {
+      "name": "OneBrain in b73",
+      "id": 123
+    },
+    {
+      "name": "OneBrain out b34",
+      "id": 124
+    },
+    {
+      "name": "OneBrain in b109",
+      "id": 125
+    },
+    {
+      "name": "OneBrain in b108",
+      "id": 126
+    },
+    {
+      "name": "OneBrain in b114",
+      "id": 127
+    },
+    {
+      "name": "OneBrain out b55",
+      "id": 128
+    },
+    {
+      "name": "OneBrain out b74",
+      "id": 129
+    },
+    {
+      "name": "OneBrain in b99",
+      "id": 130
+    },
+    {
+      "name": "OneBrain in b111",
+      "id": 131
+    },
+    {
+      "name": "OneBrain out b73",
+      "id": 132
+    },
+    {
+      "name": "OneBrain out b109",
+      "id": 133
+    },
+    {
+      "name": "OneBrain out b45",
+      "id": 134
+    },
+    {
+      "name": "OneBrain in b79",
+      "id": 135
+    },
+    {
+      "name": "OneBrain out b98",
+      "id": 136
+    },
+    {
+      "name": "OneBrain out b118",
+      "id": 137
+    },
+    {
+      "name": "OneBrain out b83",
+      "id": 138
+    },
+    {
+      "name": "OneBrain in b102",
+      "id": 139
+    },
+    {
+      "name": "OneBrain in b100",
+      "id": 140
+    },
+    {
+      "name": "OneBrain out b99",
+      "id": 141
+    },
+    {
+      "name": "OneBrain in b98",
+      "id": 142
+    },
+    {
+      "name": "OneBrain in b118",
+      "id": 143
+    },
+    {
+      "name": "OneBrain in b119",
+      "id": 144
+    }
+  ],
+  "publishedAt": "2026-10-02T21:44:59.539Z"
+}
