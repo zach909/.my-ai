@@ -10,6 +10,7 @@
  */
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
+import { searxngSearch } from "./searxng.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 
@@ -215,42 +216,15 @@ export class ResearchPlugin extends BasePlugin {
   }
 
   /**
-   * Real internet search -- no API key required or ever needed
-   * (SearXNG's JSON endpoint, an open-source metasearch engine).
-   * Genuinely optional in the same sense the PyTorch backend is:
-   * offline, DNS failure, or a blocked network degrades to an empty
+   * Real internet search through a SearXNG instance (open source; see
+   * searxng.ts for which one and why). No API key. Genuinely optional:
+   * no instance, DNS failure, or a blocked network degrades to an empty
    * result set, never throws, and never stops searchMemory()/
    * searchDrive() from working with zero network access at all.
    */
   async searchWeb(query: string, maxResults = 8): Promise<SearchResult[]> {
-    try {
-      const url = `https://searx.space/search?q=${encodeURIComponent(query)}&format=json`;
-      const res = await fetch(url, {
-        headers: { "User-Agent": "Mozilla/5.0 (compatible; NeuroClawResearch/1.0)" },
-        signal: AbortSignal.timeout(8000),
-      });
-      if (!res.ok) return [];
-      const data = await res.json() as { results?: Array<{ title: string; url: string; content: string }> };
-      return this.parseSearXNGJson(data).slice(0, maxResults);
-    } catch {
-      return [];
-    }
-  }
-
-  private parseSearXNGJson(data: { results?: Array<{ title: string; url: string; content: string }> }): SearchResult[] {
-    const results: SearchResult[] = [];
-    if (!Array.isArray(data.results)) return results;
-    for (const item of data.results) {
-      if (item.title && item.url) {
-        results.push({
-          source: "web",
-          title: item.title,
-          snippet: item.content || "",
-          location: item.url,
-        });
-      }
-    }
-    return results;
+    const hits = await searxngSearch(query, maxResults);
+    return hits.map((h) => ({ source: "web" as const, title: h.title, snippet: h.snippet, location: h.url }));
   }
 
   /**
