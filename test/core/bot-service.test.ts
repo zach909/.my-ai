@@ -215,3 +215,69 @@ describe('matchSkillMesh() (via processMessage) -- trained skills directly answe
     expect(response.metadata?.domain).not.toBe('skill');
   });
 });
+
+describe('OneBrain as the front door (processMessage)', () => {
+  beforeEach(() => {
+    resetBot();
+  });
+  afterEach(() => {
+    resetBot();
+  });
+
+  const withBrain = (askOneBrain: (q: string) => Promise<unknown>) => {
+    const solved: string[] = [];
+    const system = {
+      ...(fakeSystemWithMemory() as unknown as Record<string, unknown>),
+      solve: async (problem: string) => {
+        solved.push(problem);
+        return { result: `solved: ${problem}`, confidence: 0.7, verified: true, domain: 'general', approach: 'default', transfers: [], subresults: 0, contradictions: [], criticIssues: [], trace: [] };
+      },
+      askOneBrain,
+    } as unknown as NeuroclawSystem;
+    return { system, solved };
+  };
+
+  it('answers from OneBrain first, and the rule-based path is never asked', async () => {
+    const { system, solved } = withBrain(async () => ({ answered: true, via: 'brain', text: 'the brain says hi', toolCalls: [] }));
+    const bot = await getBot(system);
+    const response = await bot.processMessage('what is the capital of France');
+    expect(response.message).toContain('the brain says hi');
+    expect(response.metadata?.domain).toBe('onebrain');
+    expect(response.metadata?.oneBrainVia).toBe('brain');
+    expect(solved).toEqual([]);
+  });
+
+  it('reports the tool calls the brain made', async () => {
+    const calls = [{ plugin: 'terminal', tool: 'read_file', ok: true }];
+    const { system } = withBrain(async () => ({ answered: true, via: 'router', text: 'Called terminal.read_file', toolCalls: calls }));
+    const bot = await getBot(system);
+    const response = await bot.processMessage('read file notes.txt');
+    expect(response.metadata?.oneBrainVia).toBe('router');
+    expect(response.metadata?.toolCalls).toEqual(calls);
+  });
+
+  it('falls through to the existing path when OneBrain has nothing to say', async () => {
+    const { system, solved } = withBrain(async () => ({ answered: false, via: 'none', text: '', toolCalls: [] }));
+    const bot = await getBot(system);
+    const response = await bot.processMessage('what is the capital of France');
+    expect(solved).toEqual(['what is the capital of France']);
+    expect(response.metadata?.domain).toBe('general');
+  });
+
+  it('falls through, and does not fail the reply, when OneBrain throws', async () => {
+    const { system, solved } = withBrain(async () => { throw new Error('mesh exploded'); });
+    const bot = await getBot(system);
+    const response = await bot.processMessage('what is the capital of France');
+    expect(solved.length).toBe(1);
+    expect(response.message).toContain('solved:');
+  });
+
+  it('route and error questions never go to OneBrain', async () => {
+    let asked = 0;
+    const { system } = withBrain(async () => { asked++; return { answered: true, via: 'brain', text: 'x', toolCalls: [] }; });
+    const bot = await getBot(system);
+    const response = await bot.processMessage('list all the pages');
+    expect(asked).toBe(0);
+    expect(response.metadata?.domain).toBe('route');
+  });
+});

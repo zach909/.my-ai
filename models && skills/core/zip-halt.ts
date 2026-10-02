@@ -231,6 +231,14 @@ export interface HaltConfig {
    * before the cap applied to anything.
    */
   maxTicks: number;
+  /**
+   * Wall-clock cutoff (a Date.now() timestamp) for the async run. Passing it
+   * ends the run the same way the tick ceiling does, so a caller that must
+   * answer within a time budget gets "cut off" rather than a hang. Ticks are
+   * the right clock for the mesh; this is for the person waiting on a reply.
+   * Ignored by the synchronous run, which cannot yield to be interrupted.
+   */
+  deadline?: number;
 }
 
 export const DEFAULT_HALT: HaltConfig = { quietTicks: 32, maxTicks: 100_000 };
@@ -671,23 +679,26 @@ function runLoop(
     return finish();
   }
 
+  const pastDeadline = (): boolean => config.deadline !== undefined && Date.now() >= config.deadline;
+
   return (async () => {
     // Feed the archive in with the thread handed back between bytes, then
     // learn from the whole message as one event -- the same two steps
     // sendBytes() does, just not all at once.
     if (doorway.sendByte && doorway.learnFromEvent) {
       for (const byte of packed) {
+        if (pastDeadline()) break;
         doorway.sendByte(byte);
         await yieldTo();
       }
-      doorway.learnFromEvent();
+      if (!pastDeadline()) doorway.learnFromEvent();
     } else {
       doorway.sendBytes(packed);
     }
     await yieldTo();
 
     let read = 0;
-    while (!decision.halted && read < budget) {
+    while (!decision.halted && read < budget && !pastDeadline()) {
       const byte = doorway.nextOutputByte();
       watcher.noteSettleCost(doorway.worstSettleIterations?.());
       decision = watcher.observe(byte);
