@@ -1,0 +1,407 @@
+{
+  "skill": "Coding Skills Network",
+  "neuronCount": 100,
+  "neurons": [
+    {
+      "name": "skill_js_add_0",
+      "id": 90
+    },
+    {
+      "name": "skill_js_add_1",
+      "id": 91
+    },
+    {
+      "name": "skill_js_add_2",
+      "id": 92
+    },
+    {
+      "name": "skill_js_add_3",
+      "id": 93
+    },
+    {
+      "name": "skill_js_add_4",
+      "id": 94
+    },
+    {
+      "name": "skill_js_add_5",
+      "id": 95
+    },
+    {
+      "name": "skill_js_add_6",
+      "id": 96
+    },
+    {
+      "name": "skill_js_add_7",
+      "id": 97
+    },
+    {
+      "name": "skill_js_add_8",
+      "id": 98
+    },
+    {
+      "name": "skill_js_add_9",
+      "id": 99
+    },
+    {
+      "name": "skill_js_add_10",
+      "id": 100
+    },
+    {
+      "name": "skill_js_add_11",
+      "id": 101
+    },
+    {
+      "name": "skill_js_add_12",
+      "id": 102
+    },
+    {
+      "name": "skill_js_add_13",
+      "id": 103
+    },
+    {
+      "name": "skill_js_add_14",
+      "id": 104
+    },
+    {
+      "name": "skill_js_add_15",
+      "id": 105
+    },
+    {
+      "name": "skill_js_add_16",
+      "id": 106
+    },
+    {
+      "name": "skill_js_add_17",
+      "id": 107
+    },
+    {
+      "name": "skill_js_add_18",
+      "id": 108
+    },
+    {
+      "name": "skill_js_add_19",
+      "id": 109
+    },
+    {
+      "name": "skill_js_add_20",
+      "id": 110
+    },
+    {
+      "name": "skill_js_add_21",
+      "id": 111
+    },
+    {
+      "name": "skill_js_add_22",
+      "id": 112
+    },
+    {
+      "name": "skill_js_add_23",
+      "id": 113
+    },
+    {
+      "name": "skill_js_add_24",
+      "id": 114
+    },
+    {
+      "name": "skill_python_mul_25",
+      "id": 115
+    },
+    {
+      "name": "skill_python_mul_26",
+      "id": 116
+    },
+    {
+      "name": "skill_python_mul_27",
+      "id": 117
+    },
+    {
+      "name": "skill_python_mul_28",
+      "id": 118
+    },
+    {
+      "name": "skill_python_mul_29",
+      "id": 119
+    },
+    {
+      "name": "skill_python_mul_30",
+      "id": 120
+    },
+    {
+      "name": "skill_python_mul_31",
+      "id": 121
+    },
+    {
+      "name": "skill_python_mul_32",
+      "id": 122
+    },
+    {
+      "name": "skill_python_mul_33",
+      "id": 123
+    },
+    {
+      "name": "skill_python_mul_34",
+      "id": 124
+    },
+    {
+      "name": "skill_python_mul_35",
+      "id": 125
+    },
+    {
+      "name": "skill_python_mul_36",
+      "id": 126
+    },
+    {
+      "name": "skill_python_mul_37",
+      "id": 127
+    },
+    {
+      "name": "skill_python_mul_38",
+      "id": 128
+    },
+    {
+      "name": "skill_python_mul_39",
+      "id": 129
+    },
+    {
+      "name": "skill_python_mul_40",
+      "id": 130
+    },
+    {
+      "name": "skill_python_mul_41",
+      "id": 131
+    },
+    {
+      "name": "skill_python_mul_42",
+      "id": 132
+    },
+    {
+      "name": "skill_python_mul_43",
+      "id": 133
+    },
+    {
+      "name": "skill_python_mul_44",
+      "id": 134
+    },
+    {
+      "name": "skill_python_mul_45",
+      "id": 135
+    },
+    {
+      "name": "skill_python_mul_46",
+      "id": 136
+    },
+    {
+      "name": "skill_python_mul_47",
+      "id": 137
+    },
+    {
+      "name": "skill_python_mul_48",
+      "id": 138
+    },
+    {
+      "name": "skill_python_mul_49",
+      "id": 139
+    },
+    {
+      "name": "skill_shell_sub_50",
+      "id": 140
+    },
+    {
+      "name": "skill_shell_sub_51",
+      "id": 141
+    },
+    {
+      "name": "skill_shell_sub_52",
+      "id": 142
+    },
+    {
+      "name": "skill_shell_sub_53",
+      "id": 143
+    },
+    {
+      "name": "skill_shell_sub_54",
+      "id": 144
+    },
+    {
+      "name": "skill_shell_sub_55",
+      "id": 145
+    },
+    {
+      "name": "skill_shell_sub_56",
+      "id": 146
+    },
+    {
+      "name": "skill_shell_sub_57",
+      "id": 147
+    },
+    {
+      "name": "skill_shell_sub_58",
+      "id": 148
+    },
+    {
+      "name": "skill_shell_sub_59",
+      "id": 149
+    },
+    {
+      "name": "skill_shell_sub_60",
+      "id": 150
+    },
+    {
+      "name": "skill_shell_sub_61",
+      "id": 151
+    },
+    {
+      "name": "skill_shell_sub_62",
+      "id": 152
+    },
+    {
+      "name": "skill_shell_sub_63",
+      "id": 153
+    },
+    {
+      "name": "skill_shell_sub_64",
+      "id": 154
+    },
+    {
+      "name": "skill_shell_sub_65",
+      "id": 155
+    },
+    {
+      "name": "skill_shell_sub_66",
+      "id": 156
+    },
+    {
+      "name": "skill_shell_sub_67",
+      "id": 157
+    },
+    {
+      "name": "skill_shell_sub_68",
+      "id": 158
+    },
+    {
+      "name": "skill_shell_sub_69",
+      "id": 159
+    },
+    {
+      "name": "skill_shell_sub_70",
+      "id": 160
+    },
+    {
+      "name": "skill_shell_sub_71",
+      "id": 161
+    },
+    {
+      "name": "skill_shell_sub_72",
+      "id": 162
+    },
+    {
+      "name": "skill_shell_sub_73",
+      "id": 163
+    },
+    {
+      "name": "skill_shell_sub_74",
+      "id": 164
+    },
+    {
+      "name": "skill_neurolang_value_75",
+      "id": 165
+    },
+    {
+      "name": "skill_neurolang_value_76",
+      "id": 166
+    },
+    {
+      "name": "skill_neurolang_value_77",
+      "id": 167
+    },
+    {
+      "name": "skill_neurolang_value_78",
+      "id": 168
+    },
+    {
+      "name": "skill_neurolang_value_79",
+      "id": 169
+    },
+    {
+      "name": "skill_neurolang_value_80",
+      "id": 170
+    },
+    {
+      "name": "skill_neurolang_value_81",
+      "id": 171
+    },
+    {
+      "name": "skill_neurolang_value_82",
+      "id": 172
+    },
+    {
+      "name": "skill_neurolang_value_83",
+      "id": 173
+    },
+    {
+      "name": "skill_neurolang_value_84",
+      "id": 174
+    },
+    {
+      "name": "skill_neurolang_value_85",
+      "id": 175
+    },
+    {
+      "name": "skill_neurolang_value_86",
+      "id": 176
+    },
+    {
+      "name": "skill_neurolang_value_87",
+      "id": 177
+    },
+    {
+      "name": "skill_neurolang_value_88",
+      "id": 178
+    },
+    {
+      "name": "skill_neurolang_value_89",
+      "id": 179
+    },
+    {
+      "name": "skill_neurolang_value_90",
+      "id": 180
+    },
+    {
+      "name": "skill_neurolang_value_91",
+      "id": 181
+    },
+    {
+      "name": "skill_neurolang_value_92",
+      "id": 182
+    },
+    {
+      "name": "skill_neurolang_value_93",
+      "id": 183
+    },
+    {
+      "name": "skill_neurolang_value_94",
+      "id": 184
+    },
+    {
+      "name": "skill_neurolang_value_95",
+      "id": 185
+    },
+    {
+      "name": "skill_neurolang_value_96",
+      "id": 186
+    },
+    {
+      "name": "skill_neurolang_value_97",
+      "id": 187
+    },
+    {
+      "name": "skill_neurolang_value_98",
+      "id": 188
+    },
+    {
+      "name": "skill_neurolang_value_99",
+      "id": 189
+    }
+  ],
+  "publishedAt": "2026-10-02T22:17:10.187Z"
+}
