@@ -10,6 +10,7 @@ The network on the phone is not a port. It is the PC's own engine code, bundled 
 | Who answers | Always the phone's own network: the mesh with OneBrain grafted in, the Zip Loop with send neurons, net-skill routing, and yes/no. Works with no connection at all | Same |
 | Photo for training data | Only when you tap **Photo**; kept on the phone until it syncs | Same |
 | Screen capture | **Screen** button, one screenshot per tap | Not built — iOS has no app-level screenshot API |
+| Agent bridge (lets NeuroClaw on your PC see and screenshot the phone, and drive the app) | Accessibility service, off until you turn it on in Android settings. Sees every window and can screenshot the screen (Android 11+); types, taps and presses Back **only in NeuroClaw's own windows** | Permissions → Agent bridge. Own screen only: window list, screenshot, typing into the focused field. No taps. Answers only while the app is open |
 | Voice-to-text | 🎙 button in chat | Same (mic button) |
 | Every permission in one place | **Grant all permissions** (main screen) | **Permissions** (Settings → PC → Permissions) |
 | Sync with the PC | Automatic after each message or photo, plus **Sync now** | Same |
@@ -23,6 +24,19 @@ No APK, no Xcode. The web app is installable and opens offline-capable from your
 3. Android: menu → **Install app**. iPhone: Share → **Add to Home Screen**.
 
 Notes: browsers only offer install over HTTPS or `localhost`, so over plain LAN HTTP use Android's **Add to Home screen** shortcut, or put the PC behind an HTTPS tunnel. The service worker (`public/sw.js`) is registered in production builds only (`npm run build`). It never caches `/api/*`. The PWA does not run the on-phone brain or the floating bubble; use the native apps below for those.
+
+## Letting the PC's agent reach the phone (the agent bridge)
+
+The desktop layer on the PC (`models && skills/core/desktop-control.ts`) can be pointed at a phone. The phone app serves a small token-protected HTTP API on port 7862 (contract: `PhoneBackend` in `models && skills/core/desktop/backends.ts`).
+
+1. On the phone, turn the bridge on: **Android** Settings → Accessibility → NeuroClaw agent bridge (the **Agent bridge** button opens it); **iPhone** Permissions → Agent bridge. The app shows the token.
+2. Reaching it:
+   - **Node on the phone itself (Android, Termux-style):** nothing to set; the PC-side code finds it on `127.0.0.1:7862`. Only the token is needed.
+   - **A PC reaching a phone:** turn on the Wi-Fi option in the app (off by default), then on the PC set `NEUROCLAW_PHONE_BRIDGE_URL=http://<phone address>:7862`.
+   - Always set `NEUROCLAW_PHONE_BRIDGE_TOKEN` to the token the app shows.
+3. The boundary is the same as on a desktop: the agent can **see** every window it is told about and **screenshot**, but can only **type, tap or close** NeuroClaw's own windows, and the app refuses anything else itself rather than trusting the PC.
+
+Neither app's bridge could be compiled or run where it was written (no Android SDK or Xcode), so expect small build fixes the first time.
 
 ## What sync does
 

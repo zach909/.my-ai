@@ -79,6 +79,21 @@ class MainActivity : Activity() {
                 }
             }
         }
+        // The agent bridge: lets the PC-side agent see this phone's windows and
+        // screen and drive NeuroClaw's own. Android's own Accessibility screen
+        // is what turns it on, so nothing happens until you do that.
+        val bridge = Button(this).apply {
+            text = "Agent bridge"
+            setOnClickListener { startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        }
+        val bridgeLan = Button(this).apply {
+            text = if (settings.bridgeLan) "Bridge: Wi-Fi on" else "Bridge: this phone only"
+            setOnClickListener {
+                settings.bridgeLan = !settings.bridgeLan
+                text = if (settings.bridgeLan) "Bridge: Wi-Fi on" else "Bridge: this phone only"
+                status.text = "Turn the bridge off and on again in Accessibility settings for this to take effect."
+            }
+        }
         val stop = Button(this).apply {
             text = "Stop bubble"
             setOnClickListener { startService(Intent(this@MainActivity, OverlayService::class.java).setAction(OverlayService.ACTION_STOP)) }
@@ -91,6 +106,7 @@ class MainActivity : Activity() {
             addView(LinearLayout(context).apply { addView(save); addView(overlay) })
             addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
             addView(grant)
+            addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
             addView(status)
             addView(ChatPanel(context), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         })
@@ -121,6 +137,7 @@ class MainActivity : Activity() {
             append(if (brain.settings.configured) "PC for syncing: ${brain.settings.serverUrl}" else "PC: not set (everything stays on the phone)")
             append("\nOver other apps: $overlay")
             append(if (missing.isEmpty()) "\nAll permissions granted." else "\n${missing.size} permission(s) not yet granted -- tap \"Grant all permissions\".")
+            append("\nAgent bridge: port ${BridgeServer.PORT}, token ${brain.settings.bridgeToken} (turn on in Accessibility settings; set NEUROCLAW_PHONE_BRIDGE_TOKEN on the PC to this token)")
             append("\n${brain.status()}")
         }
     }
