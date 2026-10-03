@@ -12,6 +12,11 @@ struct NeuroClawApp: App {
     var body: some Scene {
         WindowGroup { ContentView().environmentObject(brain) }
             // Keep what the phone's network learned for the next launch.
-            .onChange(of: phase) { p in if p == .background { Task { await brain.phone.save() } } }
+            .onChange(of: phase) { p in
+                if p == .background { Task { await brain.phone.save() } }
+                // The agent bridge only answers in the foreground, so it is
+                // (re)started whenever the app comes back, if you turned it on.
+                if p == .active { AgentBridge.shared.startIfEnabled() }
+            }
     }
 }

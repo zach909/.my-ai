@@ -34,6 +34,7 @@ targets:
         # each). The description is what the system prompt actually shows
         # the person, so each one says, plainly, what NeuroClaw would do
         # with it.
+        NSLocalNetworkUsageDescription: "Used only if you turn on the agent bridge's Wi-Fi option, so your PC can reach NeuroClaw on this phone."
         NSLocationWhenInUseUsageDescription: "Used only if you ask NeuroClaw something that needs your location."
         NSLocationAlwaysAndWhenInUseUsageDescription: "Used only if you ask NeuroClaw something that needs your location, including while the app isn't open."
         NSContactsUsageDescription: "Used only if you ask NeuroClaw to look up or work with a contact."

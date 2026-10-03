@@ -8,6 +8,9 @@ import SwiftUI
 struct PermissionsView: View {
     @State private var results: [Permissions.Status] = []
     @State private var busy = false
+    @ObservedObject private var bridge = AgentBridge.shared
+    @State private var bridgeOn = AgentBridge.shared.enabled
+    @State private var bridgeLan = AgentBridge.shared.lan
 
     var body: some View {
         List {
@@ -20,6 +23,17 @@ struct PermissionsView: View {
                     }
                 }
                 .disabled(busy)
+            }
+            Section(footer: Text("Lets the NeuroClaw agent on your PC see and screenshot NeuroClaw's own screen and type into its focused text field. iOS does not allow anything beyond the app itself, and it only answers while NeuroClaw is open. Set NEUROCLAW_PHONE_BRIDGE_URL and NEUROCLAW_PHONE_BRIDGE_TOKEN on the PC.")) {
+                Toggle("Agent bridge", isOn: $bridgeOn)
+                    .onChange(of: bridgeOn) { AgentBridge.shared.enabled = $0 }
+                Toggle("Reachable from my PC over Wi-Fi", isOn: $bridgeLan)
+                    .onChange(of: bridgeLan) { value in
+                        AgentBridge.shared.lan = value
+                        if AgentBridge.shared.enabled { AgentBridge.shared.start() }
+                    }
+                statusRow("Status", value: bridge.running ? "Listening on port 7862" : "Off")
+                statusRow("Token", value: AgentBridge.shared.token)
             }
             Section("Each one") {
                 row("location", "Location") { await Permissions.requestLocation() }
