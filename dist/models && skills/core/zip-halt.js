@@ -191,8 +191,11 @@ const SETTLED_TOLERANCE = 0.25;
  * is verified and one that is merely written down.
  */
 class HaltWatcher {
-    constructor(config = DEFAULT_HALT) {
+    constructor(config = DEFAULT_HALT, 
+    /** The doorway frames every bit with a send neuron, so silence is a decision, not a pause. */
+    sendClocked = false) {
         this.config = config;
+        this.sendClocked = sendClocked;
         this.ticks = 0;
         this.quiet = 0;
         this.sawStop = false;
@@ -256,6 +259,16 @@ class HaltWatcher {
         // off a run that never said anything -- it is a guarantee of
         // termination, not a verdict that the network is done.
         const hasSpoken = this.bytes.length > 0;
+        // The send neuron is the end of the wait. On a send-clocked doorway a byte
+        // is eight bits the network clocked out, and a null already means send
+        // did not fire within its own read allowance -- the network has said it
+        // has nothing more. Waiting out quietTicks on top of that is paying, tick
+        // after tick, for a pause the send neuron rules out.
+        if (this.sendClocked && hasSpoken && byte === null) {
+            return this.sawStop
+                ? { halted: true, reason: "stopped-itself", ticks: this.ticks, sawStop: true, complete: true }
+                : { halted: true, reason: "went-quiet", ticks: this.ticks, sawStop: false, complete: false };
+        }
         if (hasSpoken && this.settledRun >= SETTLED_BYTES) {
             return { halted: true, reason: "settled", ticks: this.ticks, sawStop: this.sawStop, complete: true };
         }
@@ -408,7 +421,7 @@ export async function runUntilStoppedAsync(doorway, input, config = DEFAULT_HALT
 }
 function runLoop(doorway, input, config, yieldTo) {
     const packed = packZip(input);
-    const watcher = new HaltWatcher(config);
+    const watcher = new HaltWatcher(config, doorway.sendClocked === true);
     let decision = { halted: false, ticks: 0, sawStop: false, complete: false };
     // The ceiling counts the WHOLE run, not just the answer.
     //
@@ -456,23 +469,27 @@ function runLoop(doorway, input, config, yieldTo) {
             decision = { ...decision, halted: true, reason: "ceiling" };
         return finish();
     }
+    const pastDeadline = () => config.deadline !== undefined && Date.now() >= config.deadline;
     return (async () => {
         // Feed the archive in with the thread handed back between bytes, then
         // learn from the whole message as one event -- the same two steps
         // sendBytes() does, just not all at once.
         if (doorway.sendByte && doorway.learnFromEvent) {
             for (const byte of packed) {
+                if (pastDeadline())
+                    break;
                 doorway.sendByte(byte);
                 await yieldTo();
             }
-            doorway.learnFromEvent();
+            if (!pastDeadline())
+                doorway.learnFromEvent();
         }
         else {
             doorway.sendBytes(packed);
         }
         await yieldTo();
         let read = 0;
-        while (!decision.halted && read < budget) {
+        while (!decision.halted && read < budget && !pastDeadline()) {
             const byte = doorway.nextOutputByte();
             watcher.noteSettleCost(doorway.worstSettleIterations?.());
             decision = watcher.observe(byte);

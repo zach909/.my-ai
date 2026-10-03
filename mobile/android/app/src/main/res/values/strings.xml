@@ -1,4 +1,5 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">NeuroClaw</string>
+    <string name="agent_bridge_description">Lets the NeuroClaw agent list the open windows and take a screenshot, and type or tap inside NeuroClaw\'s own windows only. It cannot type or tap in any other app. Off until you turn it on here.</string>
 </resources>

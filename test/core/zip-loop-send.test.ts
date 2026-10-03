@@ -6,15 +6,16 @@
  * up, fully on to commit it -- so a bit exists only where send fired.
  */
 import { describe, it, expect } from 'vitest';
-import { ZipLoopInterface, ZIP_LOOP_DEFAULT_IDS } from '../../models && skills/core/onebrain';
+import { ZipLoopInterface, ZIP_LOOP_DEFAULT_IDS, zipLoopIdsFor } from '../../models && skills/core/onebrain';
 
 const IDS = ZIP_LOOP_DEFAULT_IDS;
+const TOGGLE = { ...IDS, toggleIn: 6, toggleOut: 7 };
 
 /**
  * Just enough of HyperDimensionalEngine for the Zip Loop: records which
  * neurons each tick drove, and plays back scripted output energies.
  */
-function fakeEngine(outputScript: Array<{ zero: number; one: number; send: number }> = []) {
+function fakeEngine(outputScript: Array<{ zero: number; one: number; send: number; toggle?: number }> = []) {
   const driven: number[][] = [];
   let tick = -1;
   const engine = {
@@ -30,6 +31,7 @@ function fakeEngine(outputScript: Array<{ zero: number; one: number; send: numbe
     },
     getNeuronEnergy: (id: number) => {
       const t = outputScript[tick] ?? { zero: 0, one: 0, send: 0 };
+      if (id === TOGGLE.toggleOut) return t.toggle ?? 0;
       if (id === IDS.bit0Out) return t.zero;
       if (id === IDS.bit1Out) return t.one;
       if (id === IDS.sendOut) return t.send;
@@ -109,5 +111,67 @@ describe('Zip Loop output: a bit only when send turns on', () => {
       { zero: b ? OFF : ON, one: b ? ON : OFF, send: ON },
     ]);
     expect(new ZipLoopInterface(fakeEngine(script).engine, IDS).nextOutputByte()).toBeNull();
+  });
+});
+
+describe('Zip Loop toggle neuron: flips every bit', () => {
+  it('drives the toggle on alternate bits, so "00" differs from "0" by more than a count', () => {
+    const { engine, driven } = fakeEngine();
+    const zip = new ZipLoopInterface(engine, TOGGLE);
+    zip.sendBit(0);
+    zip.sendBit(0);
+    zip.sendBit(0);
+    const T = TOGGLE.toggleIn;
+    expect(driven).toEqual([
+      [IDS.bit0In], [IDS.bit0In, IDS.sendIn],
+      [IDS.bit0In, T], [IDS.bit0In, IDS.sendIn, T],
+      [IDS.bit0In], [IDS.bit0In, IDS.sendIn],
+    ]);
+  });
+
+  it('starts every message from low again', () => {
+    const { engine, driven } = fakeEngine();
+    const zip = new ZipLoopInterface(engine, TOGGLE);
+    zip.sendBit(1);
+    zip.learnFromEvent();
+    driven.length = 0;
+    zip.sendBit(1);
+    expect(driven[0]).toEqual([IDS.bit1In]);
+  });
+
+  it('reads two equal bits as two when send stays held on but the toggle flips', () => {
+    const { engine } = fakeEngine([
+      { zero: ON, one: OFF, send: ON, toggle: OFF },
+      { zero: ON, one: OFF, send: ON, toggle: ON },
+      { zero: ON, one: OFF, send: ON, toggle: ON },
+      { zero: ON, one: OFF, send: ON, toggle: OFF },
+    ]);
+    expect(new ZipLoopInterface(engine, TOGGLE).receiveBits(3)).toEqual([0, 0, 0]);
+  });
+
+  it('does not double-count a bit whose toggle flips on the tick before send', () => {
+    const { engine } = fakeEngine([
+      { zero: ON, one: OFF, send: OFF, toggle: ON },
+      { zero: ON, one: OFF, send: ON, toggle: ON },
+    ]);
+    expect(new ZipLoopInterface(engine, TOGGLE).receiveBits(2)).toEqual([0]);
+  });
+
+  it('refuses half a toggle pair, and is unchanged without one', () => {
+    const { engine } = fakeEngine();
+    expect(() => new ZipLoopInterface(engine, { ...IDS, toggleIn: 6 })).toThrow();
+    const plain = fakeEngine();
+    new ZipLoopInterface(plain.engine, IDS).sendBit(0);
+    expect(plain.driven).toEqual([[IDS.bit0In], [IDS.bit0In, IDS.sendIn]]);
+  });
+});
+
+describe('the live mesh gets the toggle pair when it has room', () => {
+  it('adds neurons 6 and 7 to the default six', () => {
+    expect(zipLoopIdsFor({ getNeuronCount: () => 64 })).toEqual({ ...IDS, toggleIn: 6, toggleOut: 7 });
+  });
+
+  it('keeps the plain six on a mesh too small to hold them', () => {
+    expect(zipLoopIdsFor({ getNeuronCount: () => 7 })).toEqual(IDS);
   });
 });

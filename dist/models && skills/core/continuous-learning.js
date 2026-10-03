@@ -25,11 +25,9 @@
  * DoorwayLock (doorway-lock.ts) rather than inventing a second kind of
  * safety that could fail to cover the first.
  */
-import { ZipLoopInterface } from "./onebrain.js";
+import { ZipLoopInterface, zipLoopIdsFor } from "./onebrain.js";
 import { ZIP_FOLDERS, DEFAULT_HALT, runUntilStoppedAsync } from "./zip-halt.js";
 import { tokenSimilarity } from "./prediction-engine.js";
-/** Same ids every other zip-loop caller in this codebase uses for the live mesh. */
-export const DEFAULT_ZIP_IDS = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 };
 /** Where a prediction is packed for the mesh to read back later. */
 const PREDICT_FILE = `${ZIP_FOLDERS.prompt}predict-next-user-message.txt`;
 /** How much context a prediction run is given -- the mesh's own state carries the rest. */
@@ -46,10 +44,10 @@ export class ContinuousLearner {
      * @param lock  PromptMeshFeed's own DoorwayLock, shared rather than
      *              duplicated -- see this file's own doc comment for why.
      * @param ids   Zip-loop bit neuron ids for the engine passed into
-     *              onUserMessage(). Same default every other caller in this
-     *              codebase uses for the live mesh.
+     *              onUserMessage(). Defaults to zipLoopIdsFor(engine), the
+     *              ids every other caller uses for the live mesh.
      */
-    constructor(lock, ids = DEFAULT_ZIP_IDS) {
+    constructor(lock, ids) {
         this.lock = lock;
         this.ids = ids;
         this.pending = null;
@@ -102,7 +100,7 @@ export class ContinuousLearner {
     }
     async predictNext(engine, context) {
         return this.lock.run(async () => {
-            const zip = new ZipLoopInterface(engine, this.ids);
+            const zip = new ZipLoopInterface(engine, this.ids ?? zipLoopIdsFor(engine));
             const tree = { files: { [PREDICT_FILE]: context } };
             const result = await runUntilStoppedAsync(zip, tree, { quietTicks: DEFAULT_HALT.quietTicks, maxTicks: PREDICT_MAX_TICKS });
             return extractOutputText(result.tree);

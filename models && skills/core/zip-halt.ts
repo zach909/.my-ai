@@ -231,6 +231,14 @@ export interface HaltConfig {
    * before the cap applied to anything.
    */
   maxTicks: number;
+  /**
+   * Wall-clock cutoff (a Date.now() timestamp) for the async run. Passing it
+   * ends the run the same way the tick ceiling does, so a caller that must
+   * answer within a time budget gets "cut off" rather than a hang. Ticks are
+   * the right clock for the mesh; this is for the person waiting on a reply.
+   * Ignored by the synchronous run, which cannot yield to be interrupted.
+   */
+  deadline?: number;
 }
 
 export const DEFAULT_HALT: HaltConfig = { quietTicks: 32, maxTicks: 100_000 };
@@ -287,7 +295,11 @@ class HaltWatcher {
   private settledRun = 0;
   private lastSettleCost = -1;
 
-  constructor(private readonly config: HaltConfig = DEFAULT_HALT) {}
+  constructor(
+    private readonly config: HaltConfig = DEFAULT_HALT,
+    /** The doorway frames every bit with a send neuron, so silence is a decision, not a pause. */
+    private readonly sendClocked = false,
+  ) {}
 
   /**
    * One tick of output. `byte` is null when the network emitted nothing this
@@ -346,6 +358,17 @@ class HaltWatcher {
     // termination, not a verdict that the network is done.
     const hasSpoken = this.bytes.length > 0;
 
+    // The send neuron is the end of the wait. On a send-clocked doorway a byte
+    // is eight bits the network clocked out, and a null already means send
+    // did not fire within its own read allowance -- the network has said it
+    // has nothing more. Waiting out quietTicks on top of that is paying, tick
+    // after tick, for a pause the send neuron rules out.
+    if (this.sendClocked && hasSpoken && byte === null) {
+      return this.sawStop
+        ? { halted: true, reason: "stopped-itself", ticks: this.ticks, sawStop: true, complete: true }
+        : { halted: true, reason: "went-quiet", ticks: this.ticks, sawStop: false, complete: false };
+    }
+
     if (hasSpoken && this.settledRun >= SETTLED_BYTES) {
       return { halted: true, reason: "settled", ticks: this.ticks, sawStop: this.sawStop, complete: true };
     }
@@ -400,6 +423,12 @@ export interface BitDoorway {
    * state. The signal the run stops on -- see "settled" in HaltReason.
    */
   worstSettleIterations?(): number;
+  /**
+   * True when every output bit is clocked by a send neuron. Then a null byte
+   * means the network stopped sending, and the run ends on it at once rather
+   * than after HaltConfig.quietTicks of waiting.
+   */
+  readonly sendClocked?: boolean;
   /** One tick of output. Null means the network emitted nothing this tick. */
   nextOutputByte(): number | null;
   /**
@@ -599,7 +628,7 @@ function runLoop(
 ): RunResult | Promise<RunResult> {
   const packed = packZip(input);
 
-  const watcher = new HaltWatcher(config);
+  const watcher = new HaltWatcher(config, doorway.sendClocked === true);
   let decision: HaltDecision = { halted: false, ticks: 0, sawStop: false, complete: false };
 
   // The ceiling counts the WHOLE run, not just the answer.
@@ -650,23 +679,26 @@ function runLoop(
     return finish();
   }
 
+  const pastDeadline = (): boolean => config.deadline !== undefined && Date.now() >= config.deadline;
+
   return (async () => {
     // Feed the archive in with the thread handed back between bytes, then
     // learn from the whole message as one event -- the same two steps
     // sendBytes() does, just not all at once.
     if (doorway.sendByte && doorway.learnFromEvent) {
       for (const byte of packed) {
+        if (pastDeadline()) break;
         doorway.sendByte(byte);
         await yieldTo();
       }
-      doorway.learnFromEvent();
+      if (!pastDeadline()) doorway.learnFromEvent();
     } else {
       doorway.sendBytes(packed);
     }
     await yieldTo();
 
     let read = 0;
-    while (!decision.halted && read < budget) {
+    while (!decision.halted && read < budget && !pastDeadline()) {
       const byte = doorway.nextOutputByte();
       watcher.noteSettleCost(doorway.worstSettleIterations?.());
       decision = watcher.observe(byte);

@@ -8,7 +8,7 @@ Every neuron carries a unique wave signature; a neuron's input determines its wa
 
 | Layer | File | What it is |
 |---|---|---|
-| TypeScript runtime backend | `models && skills/core/quantum-net.ts` — `QuantumNeuralNet` | Signature/phase computation, pairwise and group interference, Born-rule (`amplitude²`) probabilistic collapse |
+| TypeScript runtime backend | `models && skills/core/onebrain.ts` — `QuantumNeuralNet` | Signature/phase computation, pairwise and group interference, Born-rule (`amplitude²`) probabilistic collapse |
 
 ## `QuantumNeuralNet` (TypeScript)
 

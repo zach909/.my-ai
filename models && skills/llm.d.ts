@@ -34,7 +34,14 @@ export interface GenerateOptions {
      * Zip Loop with the prompt, as prompting-skills/<name>/SKILL.txt.
      */
     promptingSkills: Array<{ name: string; title?: string; description?: string }>;
+    /**
+     * Give up on OneBrain's answer after this many milliseconds. A run cut off
+     * reads as silent (ONE_BRAIN_SILENT_REPLY) rather than hanging the caller.
+     */
+    deadlineMs: number;
 }
+/** What generate() says when OneBrain wrote nothing. */
+export declare const ONE_BRAIN_SILENT_REPLY = "one brain has nothing trained to say here yet.";
 export declare class NeuroclawLLM {
     private config;
     private builder;

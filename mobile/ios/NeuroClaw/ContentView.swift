@@ -3,9 +3,11 @@ import UIKit
 
 struct ContentView: View {
     @EnvironmentObject var brain: Brain
+    @StateObject private var voice = VoiceRecognizer()
     @State private var input = ""
     @State private var showCamera = false
     @State private var showSettings = false
+    @State private var showWeb = false
     @State private var toast: String?
 
     var body: some View {
@@ -39,9 +41,16 @@ struct ContentView: View {
                 if let toast { Text(toast).font(.footnote).foregroundStyle(.secondary) }
                 HStack {
                     TextField("Talk to NeuroClaw", text: $input, axis: .vertical).textFieldStyle(.roundedBorder).lineLimit(1...4)
+                    Button(voice.isListening ? "⏹" : "🎙") {
+                        voice.toggle(
+                            onText: { input = $0 },
+                            onError: { toast = $0 }
+                        )
+                    }
                     Button("Photo") { showCamera = true }
                         .disabled(!UIImagePickerController.isSourceTypeAvailable(.camera))
                     Button("Send") {
+                        voice.stop()
                         let text = input.trimmingCharacters(in: .whitespacesAndNewlines)
                         guard !text.isEmpty else { return }
                         input = ""
@@ -51,10 +60,21 @@ struct ContentView: View {
             }
             .navigationTitle("NeuroClaw")
             .toolbar {
+                Button("Web app") { showWeb = true }
+                    .disabled(brain.serverURL.isEmpty)
                 Button("Sync now") { Task { await brain.sync() } }
                 Button("PC") { showSettings = true }
             }
             .sheet(isPresented: $showSettings) { SettingsView().environmentObject(brain) }
+            .fullScreenCover(isPresented: $showWeb) {
+                NavigationStack {
+                    WebAppView(urlString: brain.serverURL)
+                        .ignoresSafeArea(edges: .bottom)
+                        .navigationTitle("NeuroClaw")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { Button("Close") { showWeb = false } }
+                }
+            }
             .sheet(isPresented: $showCamera) {
                 // Nothing is captured unless you tap Photo; the note is whatever is typed.
                 CameraView { image in
@@ -77,6 +97,9 @@ struct SettingsView: View {
                 Section(footer: Text("Only for syncing: NeuroClaw runs on the phone either way. The address NeuroClaw's web app is on, e.g. http://192.168.1.20:3000, and the Remote Access password set there.")) {
                     TextField("PC address", text: $brain.serverURL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     SecureField("Password (blank if none)", text: $brain.password)
+                }
+                Section {
+                    NavigationLink("Permissions") { PermissionsView() }
                 }
             }
             .navigationTitle("Your PC")
