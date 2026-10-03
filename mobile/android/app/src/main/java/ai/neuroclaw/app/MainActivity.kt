@@ -45,6 +45,13 @@ class MainActivity : Activity() {
                 brain.syncInBackground()
             }
         }
+        val webApp = Button(this).apply {
+            text = "Open web app"
+            setOnClickListener {
+                if (settings.serverUrl.isEmpty()) status.text = "Enter your PC address and tap Save first."
+                else startActivity(Intent(this@MainActivity, WebActivity::class.java))
+            }
+        }
         val overlay = Button(this).apply {
             text = "Allow over other apps"
             setOnClickListener {
@@ -103,7 +110,7 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
             addView(url); addView(password)
-            addView(LinearLayout(context).apply { addView(save); addView(overlay) })
+            addView(LinearLayout(context).apply { addView(save); addView(webApp); addView(overlay) })
             addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
             addView(grant)
             addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
