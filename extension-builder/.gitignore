@@ -61,3 +61,9 @@ skill-mesh-history.jsonl
 # skill weights (those live in extensions/drill-weights/*.json, which
 # ARE committed and pushed on genuine improvement).
 skill-quality-history.json
+
+# models && skills/core/shared-mesh-sync.ts's local state: this install's
+# own mesh learning at full precision, its random install id, and push
+# bookkeeping. The shared parts (shared-mesh/base.json and, only when
+# NEUROCLAW_SHARED_LEARNING=1, shared-mesh/deltas/<id>.json) are tracked.
+shared-mesh-local/

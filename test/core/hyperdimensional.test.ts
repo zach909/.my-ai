@@ -52,7 +52,7 @@ describe('reading is not learning', () => {
     // it came from, and reading the same thing twice gave two different
     // networks.
     const engine = smallEngine();
-    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     const before = engine.captureNetworkState();
     for (let i = 0; i < 4; i++) zip.nextOutputByte();
     expect(engine.captureNetworkState().connDiag).toBe(before.connDiag);
@@ -63,7 +63,7 @@ describe('reading is not learning', () => {
     // on the way in would make the Zip Loop a doorway into a network that
     // never learns anything through it.
     const engine = smallEngine();
-    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     const before = engine.captureNetworkState();
     zip.sendBytes(new Uint8Array([0b10110011]));
     expect(engine.captureNetworkState().connDiag).not.toBe(before.connDiag);
@@ -772,7 +772,7 @@ describe('the Zip Loop\'s two bits are perfect enemies', () => {
     // they drifted apart nothing would say so.
     const engine = new HyperDimensionalEngine({ neuronCount: 12, dimensions: 4, waveGain: 1 });
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const _zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
 
     const zero = engine.waveSignature(0)!;
     const one = engine.waveSignature(1)!;
@@ -795,7 +795,7 @@ describe('the Zip Loop\'s two bits are perfect enemies', () => {
       waveFeedback: 0,
     });
     // eslint-disable-next-line @typescript-eslint/no-unused-vars
-    const _zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const _zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
 
     const decode = (b64: string) => {
       const buf = Buffer.from(b64, 'base64');

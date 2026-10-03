@@ -22,8 +22,8 @@ import { Button } from '@/components/ui/button'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
-import { ArrowUpRight, Atom, Blocks, KeyRound, Loader2, LogOut, ShieldOff, Settings as SettingsIcon, Sparkles, Store as StoreIcon, TrendingUp } from 'lucide-react'
-import { toast } from 'sonner'
+import { ArrowUpRight, Atom, Blocks, KeyRound, Loader2, LogOut, ShieldOff, Settings as SettingsIcon, Sparkles, Store as StoreIcon, TrendingUp } from '@/components/icons'
+import { toast } from '@/lib/toast'
 import { AccessPanel } from './access'
 
 /**

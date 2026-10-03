@@ -6,7 +6,7 @@
  * not want to learn biology": a genuine physics/chemistry curriculum
  * (quantum mechanics, atomic theory, the mole concept, special/general
  * relativity), trained the same real @definishon way build-main-network.mjs
- * trained cmudict and build-self-knowledge-network.mjs trained the wiki --
+ * trained pronunciations and build-self-knowledge-network.mjs trained the wiki --
  * every concept below is an original, factually-accurate short definition
  * (not copied from any external source), fit via genuine torch.autograd
  * gradient descent against the same fixed DEFINITION_TRIGGER contract

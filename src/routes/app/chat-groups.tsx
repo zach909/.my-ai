@@ -32,6 +32,7 @@
  * the store follow.
  */
 
+import { ProfileLists } from '@/components/ProfileLists'
 import { createFileRoute, Link } from '@tanstack/react-router'
 import { useState, useEffect, useCallback, useMemo } from 'react'
 import { Button } from '@/components/ui/button'
@@ -42,8 +43,8 @@ import {
   Users, Loader2, Sparkles,
   Folder, MessageSquare, RefreshCw, ChevronDown, ArrowRight, Search, X,
   Brain, Trash2, Pin, AlertTriangle,
-} from 'lucide-react'
-import { toast } from 'sonner'
+} from '@/components/icons'
+import { toast } from '@/lib/toast'
 import { setThreadPinned } from '@/lib/chat-pins'
 
 export const Route = createFileRoute('/app/chat-groups')({
@@ -564,6 +565,8 @@ function MemoryPanel() {
           and the skills installed into it. {data ? <strong>{data.total.toLocaleString()}</strong> : '—'} memories.
         </p>
       </div>
+
+      <ProfileLists onChange={() => void load()} />
 
       <div className="flex flex-wrap items-center gap-2">
         <Input

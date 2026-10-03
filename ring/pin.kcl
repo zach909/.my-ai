@@ -1,0 +1,28 @@
+// Captive hinge pin
+// Estimated rivet with small retaining heads.
+@settings(defaultLengthUnit = mm, kclVersion = 2.0)
+
+shaftRadius = 1.45mm
+shaftLength = 12.2mm
+headRadius = 2.2mm
+headThickness = 0.8mm
+
+shaftProfile = sketch(on = XY) {
+  rim = circle(center = [var 0mm, var 0mm], start = [var 1.45mm, var 0mm])
+  coincident([rim.center, ORIGIN])
+  distance([rim.center, rim.start]) == shaftRadius
+  verticalDistance([rim.center, rim.start]) == 0mm
+}
+shaft = extrude(region(segments = [shaftProfile.rim]), length = shaftLength, symmetric = true)
+hide(shaftProfile)
+headProfile = sketch(on = offsetPlane(XY, offset = shaftLength / 2)) {
+  rim = circle(center = [var 0mm, var 0mm], start = [var 2.2mm, var 0mm])
+  coincident([rim.center, ORIGIN])
+  distance([rim.center, rim.start]) == headRadius
+  verticalDistance([rim.center, rim.start]) == 0mm
+}
+upperHead = extrude(region(segments = [headProfile.rim]), length = headThickness)
+lowerHead = clone(upperHead)
+  |> rotate(axis = X, angle = 180deg, global = true)
+hide(headProfile)
+pin = union([shaft, upperHead, lowerHead])

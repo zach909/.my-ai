@@ -1,9 +1,0 @@
-{
-  "id": "self_ext_25",
-  "name": "Memory: The system is discovering",
-  "description": "Self-authored extension storing learned patterns from generation 25",
-  "createdAt": 1782416253722,
-  "prompt": "The system is discovering",
-  "neuronCount": 20,
-  "connectionCount": 100
-}

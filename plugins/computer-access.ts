@@ -67,7 +67,7 @@ export class ComputerAccessPlugin extends BasePlugin {
     return { switch: name, on: false };
   }
 
-  /** What this machine can actually do graphically, tools and session included. */
+  /** What this machine can actually do graphically: which backend answered and what it can do. */
   probe() {
     return this.desktop().probe();
   }
@@ -101,10 +101,10 @@ export class ComputerAccessPlugin extends BasePlugin {
 
     if (/^(desktop )?probe$|^can you control (the |my )?(desktop|screen)\??$/i.test(input)) {
       const probe = await this.probe();
-      const missing = Object.entries(probe.tools).filter(([, present]) => !present).map(([t]) => t);
+      const cannot = Object.entries(probe.capabilities).filter(([, can]) => !can).map(([name]) => name);
       return {
         tool: "computer-access",
-        result: `${probe.summary}${missing.length ? `\nMissing tools: ${missing.join(", ")}.` : ""}`,
+        result: `${probe.summary}${probe.usable && cannot.length ? `\nNot available here: ${cannot.join(", ")}.` : ""}`,
       };
     }
 

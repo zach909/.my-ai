@@ -13,7 +13,7 @@ import {
   Settings,
   Cpu,
   Code,
-} from "lucide-react";
+} from "@/components/icons";
 // Code-split for the same reason as the loading spinner: this is a decorative
 // mark on one route, and three.js has no business in the entry chunk for it.
 const TwistedStripLogo = lazy(() =>

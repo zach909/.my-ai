@@ -2,18 +2,22 @@ import { realpathSync } from "node:fs";
 import { writeFile, readFile, readdir } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { join } from "node:path";
-import { NeuroclawLLM } from "../models && skills/llm.js";
+import { NeuroclawLLM, ONE_BRAIN_SILENT_REPLY } from "../models && skills/llm.js";
 import { NeuroPipeline } from "../models && skills/core/pipeline.js";
 import { publishGraftedNetSkills } from "../models && skills/core/net-skill-store.js";
 import { PluginRegistry } from "../plugin_manager/registry.js";
-import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import { NetSkillMesh } from "../models && skills/core/net-skill-mesh.js";
 import { NeuroclawRunner } from "../interface/runner.js";
 import { WebServer } from "../interface/web-server.js";
 import { CLI } from "../interface/cli.js";
 import { AlignmentVeto } from "../models && skills/core/alignment-veto.js";
 import { ZipIOSystem, PromptMeshFeed } from "../models && skills/core/zip-io.js";
 import { ContinuousLearner } from "../models && skills/core/continuous-learning.js";
-import { ZipLoopInterface } from "../models && skills/core/onebrain.js";
+import { SharedMeshSync, DEFAULT_SYNC_INTERVAL_MS } from "../models && skills/core/shared-mesh-sync.js";
+
+/** Where something the mesh learns from came from. "web" is always refused -- see learnFrom(). */
+export type LearnSource = "user" | "response" | "correction" | "skill" | "file" | "tool" | "web";
+import { ZipLoopInterface, zipLoopIdsFor } from "../models && skills/core/onebrain.js";
 import { packZip } from "../models && skills/core/zip-halt.js";
 import { EmpathyEngine } from "../models && skills/core/empathy.js";
 import { HiveMind, SharedBlackboard, type HiveAgent } from "../models && skills/core/hive-mind.js";
@@ -28,6 +32,7 @@ import { PromptLibrary } from "../models && skills/core/prompt-library.js";
 import { WorkingMemory } from "../models && skills/core/working-memory.js";
 import { SelfMonitor } from "../models && skills/core/self-monitor.js";
 import { MistakeTracker } from "../models && skills/core/mistake-tracker.js";
+import { ActionLog } from "../models && skills/core/action-log.js";
 import { KnowledgeGraph } from "../models && skills/core/knowledge-graph.js";
 import { WorldModel } from "../models && skills/core/world-model.js";
 import { MathEngine, evaluateExpression } from "../models && skills/core/math-engine.js";
@@ -52,6 +57,10 @@ import { PhoneCallsPlugin } from "../plugins/phone-calls.js";
 import { createPluginInstance, pluginExtensions } from "../plugins/index.js";
 import type { SkillDefinition } from "../plugin_manager/types.js";
 import { embedText } from "../models && skills/core/neuro-lang.js";
+import { ToolPlugin } from "../plugin_manager/sdk.js";
+import { ToolNeuronLayer } from "../models && skills/core/tool-neurons.js";
+import { routeToolCall } from "../models && skills/core/tool-router.js";
+import { sharedAccessManager } from "../models && skills/core/access-settings.js";
 
 /**
  * Neuroclaw System - Complete AI with neural networks, extensions, and safety
@@ -98,9 +107,46 @@ export interface TurnDetails {
   zipBytes: number;
   /** Milliseconds from message in to answer out. */
   ms: number;
+  /**
+   * Tools the network called this turn by firing their neurons -- not by
+   * spelling a call out through the Zip Loop. Empty when no tool neuron fired.
+   */
+  toolCalls?: Array<{ plugin: string; tool: string; ok: boolean; error?: string }>;
 }
 
-const ZIP_BIT_NEURONS = 4;
+/** Highest Zip Loop neuron id (the ramp out): the mesh needs more neurons than this. */
+const ZIP_BIT_NEURONS = 5;
+/** How one chat turn went through askOneBrain(). */
+export interface OneBrainTurn {
+  /** False means "use the fallback" -- the brain had nothing usable to say. */
+  answered: boolean;
+  via: "router" | "network" | "brain" | "none";
+  text: string;
+  toolCalls: Array<{ plugin: string; tool: string; ok: boolean; error?: string }>;
+}
+
+/** Mostly printable characters: what a trained mesh writes, as opposed to stray bytes from an untrained one. */
+function looksLikeText(text: string): boolean {
+  let printable = 0;
+  for (const ch of text) {
+    const code = ch.codePointAt(0)!;
+    if (code === 9 || code === 10 || code === 13 || (code >= 32 && code !== 127 && code !== 0xfffd)) printable++;
+  }
+  return printable / Math.max(1, [...text].length) >= 0.9;
+}
+
+function formatToolReply(events: Array<{ plugin: string; tool: string; ok: boolean; result?: unknown; error?: string }>, why: string): string {
+  return events.map(event => {
+    const name = `${event.plugin}.${event.tool}`;
+    if (!event.ok) return `${name} did not run: ${event.error ?? "unknown error"}`;
+    const body = typeof event.result === "string" ? event.result : JSON.stringify(event.result ?? null, null, 2);
+    const clipped = body.length > 2000 ? `${body.slice(0, 2000)}\n... (${body.length - 2000} more characters)` : body;
+    return `Called ${name} (${why}):\n${clipped}`;
+  }).join("\n\n");
+}
+
+/** Highest Zip Loop neuron id (the toggle out): the mesh needs more neurons than this. */
+const ZIP_BIT_NEURONS = 7;
 
 const PROMPTING_SKILLS_PER_TURN = 3;
 const GROUNDED_ANSWER_MIN_SIMILARITY = 0.35;
@@ -168,6 +214,15 @@ export class NeuroclawSystem {
    * zip-loop calls can never interleave with promptFeed's.
    */
   continuousLearner: ContinuousLearner;
+  /** Persists the mesh's learning and (opt-in) shares it as weight changes. */
+  sharedMesh: SharedMeshSync;
+  /**
+   * The network's other outputs and inputs: one neuron per terminal and
+   * desktop tool, and a result channel per plugin, in the same engine the
+   * Zip Loop talks through. Built in initialize(), once the plugins exist;
+   * null before then, or when NEUROCLAW_TOOL_NEURONS=0.
+   */
+  toolNeurons: ToolNeuronLayer | null = null;
   /**
    * What the last turn actually used, for the three-dots panel in the chat.
    *
@@ -185,12 +240,25 @@ export class NeuroclawSystem {
   compressor: ContextCompressor;
   router: IntentRouter;
   prompting: PromptingSkill;
-  /** Saved, reusable prompt templates -- distinct from both `prompting` (goal decomposition) and MoE skills/experts. */
+  /** Saved, reusable prompt templates -- distinct from both `prompting` (goal decomposition) and net skills. */
   promptLibrary: PromptLibrary;
   workingMemory: WorkingMemory;
   // AGI / ASI capability layer (integrated in solve()).
   monitor: SelfMonitor;
   mistakes: MistakeTracker;
+  /**
+   * Spec Part 9 sections 161-163 / Part 10 section 191 (Action History /
+   * Human Approval / Transparency): asi_core.UnifiedBrain's ActionLog
+   * (asi_core/action_log.py) had no TypeScript counterpart anywhere in
+   * the live app until this field. Nothing requires approval by default
+   * — a caller opts a structural action in via
+   * actions.requireApprovalFor(...) and gates it behind
+   * actions.request()/actions.perform(), exactly like
+   * NeuralMesh.add_expert_group/ExtensionSystem.create are gated on the
+   * Python side (see also NeuronMesh.mergeFrom, this engine's closest
+   * structural-growth analog to add_expert_group).
+   */
+  actions: ActionLog;
   knowledge: KnowledgeGraph;
   worldModel: WorldModel;
   math: MathEngine;
@@ -272,10 +340,10 @@ export class NeuroclawSystem {
     // its own MixtureOfExperts (and therefore its own NeuronMesh), which left
     // every plugin's neurons wired all-to-all among *themselves* but severed
     // from the language brain's neurons -- two disconnected networks in one
-    // agent. Handing it a MoE backed by UnifiedBrain's own mesh puts plugin
+    // agent. Handing it a skill mesh backed by UnifiedBrain's own mesh puts plugin
     // neurons in the same all-to-all mesh as everything else, so a plugin
     // firing genuinely propagates into the rest of the network.
-    this.pluginRegistry = new PluginRegistry(new MixtureOfExperts(2, this.llm.mesh));
+    this.pluginRegistry = new PluginRegistry(new NetSkillMesh(2, this.llm.mesh));
     this.veto = new AlignmentVeto();
     this.zipIO = new ZipIOSystem(this.contextCapacityGB, this.zipPersistDir ?? undefined);
     // A doorway is made per feed rather than held: the pipeline builds its
@@ -285,13 +353,23 @@ export class NeuroclawSystem {
     this.promptFeed = new PromptMeshFeed(() => {
       const engine = this.pipeline.getHyperEngine();
       if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return null;
-      return new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+      return new ZipLoopInterface(engine, zipLoopIdsFor(engine));
     });
     // Shares promptFeed's own DoorwayLock rather than a fresh one: this and
     // promptFeed are the two callers that drive the SAME engine's doorway,
     // and a lock only each one holds separately would not stop them from
     // running at the same time as each other.
     this.continuousLearner = new ContinuousLearner(this.promptFeed.lock());
+    // The mesh's learning, kept across restarts and (opt-in,
+    // NEUROCLAW_SHARED_LEARNING=1) shared with other installs as weight
+    // changes -- see shared-mesh-sync.ts. Booted here, before anything grafts
+    // neurons in, so every install starts from the same committed base.
+    this.sharedMesh = new SharedMeshSync(() => this.pipeline.getHyperEngine(), this.promptFeed.lock(), { root: process.cwd() });
+    if (process.env.NEUROCLAW_SHARED_MESH !== "0" && !process.env.VITEST) {
+      this.sharedMesh.boot();
+      const interval = Number(process.env.NEUROCLAW_SHARED_LEARNING_INTERVAL_MS) || DEFAULT_SYNC_INTERVAL_MS;
+      setInterval(() => void this.sharedMesh.tick(), interval).unref();
+    }
     this.empathy = new EmpathyEngine();
     this.runner = new NeuroclawRunner(this.llm, this.pipeline, this.pluginRegistry);
     // Hive Mind (Section 13): each agent's mind is the real neural runner, so
@@ -329,6 +407,7 @@ export class NeuroclawSystem {
     // emerges from their interaction (ASI §12), not from any one in isolation.
     this.monitor = new SelfMonitor();
     this.mistakes = new MistakeTracker();
+    this.actions = new ActionLog();
     this.knowledge = new KnowledgeGraph();
     // World model (Section 4): spec-aligned entity/causal/temporal vocabulary
     // over the same KnowledgeGraph -- not a second, duplicate graph.
@@ -561,6 +640,42 @@ export class NeuroclawSystem {
   }
 
   /**
+   * Plugins whose tools become neurons. The two halves of the computer: the
+   * terminal (commands and files) and the desktop (windows, screen, input).
+   */
+  static readonly TOOL_NEURON_PLUGINS = ["terminal", "desktop"] as const;
+
+  /**
+   * Give the terminal's and the desktop's tools their neurons in the real
+   * network -- the engine the Zip Loop streams through, not a copy.
+   *
+   * Shares the chat feed's doorway lock, because tool results and prompts
+   * drive the same engine; and the Access page's AccessManager, because a
+   * tool the network fires on its own must not reach anything a person has
+   * not allowed. Costs 20 neurons (16 tools, 2 result neurons per plugin),
+   * and every tick of an all-to-all mesh grows with the square of its size.
+   * NEUROCLAW_TOOL_NEURONS=0 leaves them out.
+   */
+  private attachToolNeurons(): void {
+    if (this.toolNeurons || process.env.NEUROCLAW_TOOL_NEURONS === "0") return;
+    try {
+      const layer = new ToolNeuronLayer(this.pipeline.ensureBrain(), {
+        lock: this.promptFeed.lock(),
+        access: sharedAccessManager(),
+      });
+      for (const id of NeuroclawSystem.TOOL_NEURON_PLUGINS) {
+        const plugin = this.pluginRegistry.getPluginInstance(id);
+        if (!(plugin instanceof ToolPlugin)) continue;
+        const attached = layer.attach(plugin);
+        if (attached.skipped) console.warn(`Tool neurons for "${id}" skipped: ${attached.skipped}`);
+      }
+      this.toolNeurons = layer;
+    } catch (e) {
+      console.warn("Tool neurons could not be attached:", e);
+    }
+  }
+
+  /**
    * Initialize all subsystems
    */
   async initialize(): Promise<void> {
@@ -571,27 +686,29 @@ export class NeuroclawSystem {
 
     // Register a real implementation for every extension in the catalog.
     // Skill-type experts (coding, image, video, game, universal-language)
-    // also get a MoE SkillDefinition so they register as experts in the mesh.
+    // also get a SkillDefinition so they register as net-skill regions in the mesh.
     for (const [key, def] of Object.entries(pluginExtensions)) {
       const skillDef: SkillDefinition | undefined =
         def.type === "skill-expert"
           ? {
               id: def.id,
               name: def.name,
-              description: `${def.name} MoE expert`,
+              description: `${def.name} net skill`,
               expertIndex: this.pluginRegistry.getSkillCount(),
               specialization: def.capabilities[0] ?? def.id,
               selfAuthored: false,
             }
           : undefined;
       try {
-        const instance = createPluginInstance(def.name, def, skillDef, this.pluginRegistry.getMoE().getMesh());
+        const instance = createPluginInstance(def.name, def, skillDef, this.pluginRegistry.getSkillMesh().getMesh());
         this.pluginRegistry.register(def, instance);
         if (skillDef) this.pluginRegistry.registerSkill(skillDef, def.id);
       } catch (e) {
         console.warn(`Failed to instantiate extension "${key}":`, e);
       }
     }
+
+    this.attachToolNeurons();
 
     // Wire dependencies
     const callHistoryInstance = this.pluginRegistry.getPluginInstance("call-history") as CallHistoryPlugin | undefined;
@@ -601,7 +718,7 @@ export class NeuroclawSystem {
     }
 
     // Activate all plugins
-    console.log("Activating registered extensions & MoE experts...");
+    console.log("Activating registered extensions & net skills...");
     for (const id of Object.keys(pluginExtensions)) {
       try {
         await this.pluginRegistry.activate(id);
@@ -771,9 +888,110 @@ export class NeuroclawSystem {
     });
 
     await this.zipIO.emit(corrected);
-    this.promptFeed.feed(corrected, "correction.txt");
+    this.learnFrom(corrected, "correction");
 
     return { applied: true, forgot };
+  }
+
+  /**
+   * The one way anything reaches the mesh to be learned from: user messages,
+   * the agent's own replies, corrections, skill instructions, local files and
+   * tool results. Web content is refused outright -- the mesh learns from
+   * what happens on this install, not from pages fetched off the internet.
+   *
+   * Same doorway and same cost as promptFeed.feed() (fire-and-forget, newest
+   * wins). The exact same text arriving twice in a row -- e.g. a message
+   * processQuery() already fed, then reported again by the chat service --
+   * is fed once.
+   */
+  learnFrom(text: string, source: LearnSource): boolean {
+    if (source === "web") return false;
+    const trimmed = typeof text === "string" ? text.trim() : "";
+    if (!trimmed) return false;
+    const key = `${source}\u0000${trimmed}`;
+    if (key === this.lastLearned) return false;
+    this.lastLearned = key;
+    this.promptFeed.feed(trimmed, `${source}.txt`);
+    return true;
+  }
+
+  private lastLearned = "";
+
+  /**
+   * OneBrain as the front door of a chat turn.
+   *
+   * Asks the brain itself, and only the brain: no plugin dispatch, no taught-
+   * facts shortcut, no reasoner. What comes back is one of
+   *
+   *   - a tool call the network made by firing a tool neuron (its results are
+   *     the reply),
+   *   - a tool call the message asked for in so many words (tool-router.ts),
+   *     made as a neuron event and through the same Access check,
+   *   - what OneBrain wrote to its output, or
+   *   - `answered: false`, which tells the caller to use whatever it would
+   *     have used before. Silence, nonsense bytes, a missed deadline and a
+   *     disabled brain (NEUROCLAW_ONEBRAIN_FIRST=0) all read this way.
+   *
+   * The deadline matters: every output byte is a full settle of the mesh, so a
+   * reply can take minutes. The run is cut off at `deadlineMs` and the turn
+   * moves on rather than waiting.
+   */
+  async askOneBrain(
+    input: string,
+    options: { deadlineMs?: number; history?: string[] } = {},
+  ): Promise<OneBrainTurn> {
+    if (process.env.NEUROCLAW_ONEBRAIN_FIRST === "0") return { answered: false, via: "none", text: "", toolCalls: [] };
+    if (!this.initialized) await this.initialize();
+    const layer = this.toolNeurons;
+
+    // A message that names a tool call outright. The AlignmentVeto still gets
+    // to look at it first, and access is checked inside dispatch().
+    const routed = layer ? routeToolCall(input) : null;
+    if (layer && routed) {
+      const readOnly = ["read_file", "list_directory", "list_terminals", "list_windows", "screenshot"].includes(routed.tool);
+      const verdict = this.veto.evaluate({
+        id: `tool:${routed.plugin}.${routed.tool}:${Date.now()}`,
+        name: `${routed.plugin}.${routed.tool}`,
+        capabilities: [`${routed.plugin}.${routed.tool}`],
+        reversible: readOnly,
+        externalEffect: !readOnly,
+      });
+      const event = verdict.allowed
+        ? await layer.dispatch(routed.plugin, routed.tool, routed.args, "message")
+        : {
+          plugin: routed.plugin, tool: routed.tool, args: routed.args, origin: "message" as const, ok: false,
+          error: `withheld by the alignment check: ${verdict.reasons.join("; ")}`, startedAt: Date.now(), endedAt: Date.now(),
+        };
+      const text = formatToolReply([event], routed.why);
+      return {
+        answered: true, via: "router", text,
+        toolCalls: [{ plugin: event.plugin, tool: event.tool, ok: event.ok, ...(event.error ? { error: event.error } : {}) }],
+      };
+    }
+
+    const reply = await this.llm.generate(input, {
+      deadlineMs: options.deadlineMs ?? 6000,
+      ...(options.history && options.history.length ? { memoryContext: options.history } : {}),
+    });
+
+    let events: Awaited<ReturnType<ToolNeuronLayer["step"]>> = [];
+    if (layer) {
+      try {
+        events = await layer.step(this.llm.lastZipLoopOutput ?? null);
+      } catch (e) {
+        console.warn("Tool neurons step failed:", e);
+      }
+    }
+    const toolCalls = events.map(c => ({ plugin: c.plugin, tool: c.tool, ok: c.ok, ...(c.error ? { error: c.error } : {}) }));
+    if (events.length > 0) {
+      return { answered: true, via: "network", text: formatToolReply(events, "the network fired the tool's neuron"), toolCalls };
+    }
+
+    const text = reply.replace(/\n\nConfidence: \d+%[\s\S]*$/, "").trim();
+    if (!text || text === ONE_BRAIN_SILENT_REPLY || !looksLikeText(text)) {
+      return { answered: false, via: "none", text: "", toolCalls };
+    }
+    return { answered: true, via: "brain", text, toolCalls };
   }
 
   async processQuery(input: string): Promise<string> {
@@ -802,7 +1020,6 @@ export class NeuroclawSystem {
     //    stay aligned (Empathy).
     this.empathy.updateUserContext(input);
     const emotion = this.empathy.analyzeEmotion(input);
-    const turnStarted = Date.now();
     const details: TurnDetails = {
       skills: [], recalled: [], route: null,
       emotion: { valence: emotion.valence, arousal: emotion.arousal },
@@ -836,7 +1053,7 @@ export class NeuroclawSystem {
     // and the settle loop is synchronous, so it would take every other
     // request with it -- which has already happened here once. See
     // PromptMeshFeed for why the queue is one deep.
-    this.promptFeed.feed(input);
+    this.learnFrom(input, "user");
     details.zipBytes = packZip({ files: { "prompt.txt": input } }).length;
 
     // Continuous learning: compares whatever the mesh predicted the user
@@ -866,6 +1083,7 @@ export class NeuroclawSystem {
     // Only the ones that apply to what actually arrived -- a skill declares
     // when it applies, and putting every stored instruction on the loop for
     // every message would drown the input in advice about other tasks.
+    const turnSkills: Array<{ name: string; title: string; description: string }> = [];
     try {
       const { loadRegistry } = await import("../models && skills/core/prompting-skill-store.js");
       const registry = loadRegistry();
@@ -881,7 +1099,9 @@ export class NeuroclawSystem {
         .slice(0, PROMPTING_SKILLS_PER_TURN);
       for (const skill of chosen) {
         await this.zipIO.ingest(`Skill "${skill.title}": ${skill.description}`);
+        if (skill.source !== "web") this.learnFrom(`Skill "${skill.title}": ${skill.description}`, "skill");
         details.skills.push(skill.title);
+        turnSkills.push({ name: skill.name, title: skill.title, description: skill.description });
       }
     } catch {
       // No registry on disk, or an unreadable one. A missing instruction is
@@ -1014,12 +1234,28 @@ export class NeuroclawSystem {
     }
 
     // 6. Run the query through the real neural runner (THORNS intent →
-    //    plugin/skill dispatch → mesh + hyperdimensional + MoE generation),
+    //    plugin/skill dispatch → mesh + hyperdimensional + net-skill generation),
     //    grounded in any relevant prior conversation turns so the response
     //    integrates previous context instead of treating the prompt as an
     //    isolated event (continuous context, Section 7).
     try {
-      let result = await this.runner.generate(input, priorHistory.map(h => h.item.content));
+      let result = await this.runner.generate(input, priorHistory.map(h => h.item.content), turnSkills);
+      // Tools by neuron. While the mesh thought about this message, any
+      // tool neuron that crossed its firing line latched; step() calls those
+      // tools now -- access-checked, with arguments from the Zip Loop's own
+      // output (plugins/<plugin>/<tool>.json), and the result fed back into
+      // the mesh on that plugin's result neurons. Firing a neuron is the
+      // call; nothing has to be spelled out letter by letter.
+      if (this.toolNeurons) {
+        try {
+          const calls = await this.toolNeurons.step(this.llm.lastZipLoopOutput ?? null);
+          if (calls.length > 0) {
+            details.toolCalls = calls.map(c => ({ plugin: c.plugin, tool: c.tool, ok: c.ok, ...(c.error ? { error: c.error } : {}) }));
+          }
+        } catch (e) {
+          console.warn("Tool neurons step failed:", e);
+        }
+      }
       // EmpathyEngine.adjustDecision() was built and tested but never called:
       // when alignment supports genuine autonomous judgement, adapt tone to
       // the user's actual emotional state (supportive/enthusiastic/direct);

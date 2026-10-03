@@ -4,7 +4,7 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Label } from '@/components/ui/label'
 import { Card, CardHeader, CardTitle, CardContent, CardDescription } from '@/components/ui/card'
-import { Brain, Search, Sparkles, ArrowRight, Loader2, Copy, Check, X, Blocks } from 'lucide-react'
+import { Brain, Search, Sparkles, ArrowRight, Loader2, Copy, Check, X, Blocks } from '@/components/icons'
 import { useBuilder, BuilderCanvas } from '@/features/builder'
 
 /**
@@ -213,8 +213,8 @@ function BuilderPage() {
   // ALTERNATIVE backend to handleTrain() above: real torch.autograd/torch.optim
   // gradient descent, run server-side (see use-builder.ts's trainWithPyTorch()
   // and interface/web-server.ts's POST /api/extension/train-pytorch) against
-  // the PyTorch copy vendored under extension-builder/PyTorch. Strictly
-  // optional -- if this machine has no Python/torch, the request still comes
+  // whatever `torch` is installed in this machine's Python environment.
+  // Strictly optional -- if this machine has no Python/torch, the request still comes
   // back {ok:false, error} instead of throwing, and the regular Train button
   // above is completely unaffected either way.
   const handleTrainPyTorch = async () => {
@@ -915,6 +915,27 @@ function BuilderPage() {
               {statusMsg}
             </p>
           )}
+          <div className="mt-2 flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+            <label className="flex items-center gap-1.5">
+              <input
+                type="checkbox"
+                checked={b.liveSync.enabled}
+                onChange={(e) => b.setLiveSyncEnabled(e.target.checked)}
+              />
+              Build directly into the network
+            </label>
+            <span role="status" aria-live="polite">
+              {!b.liveSync.enabled
+                ? 'Off: the network only changes when you install.'
+                : b.liveSync.status === 'syncing'
+                  ? 'Syncing into the network...'
+                  : b.liveSync.status === 'synced'
+                    ? `Live in the network: +${b.liveSync.added ?? 0} new, ${b.liveSync.updated ?? 0} updated, ${b.liveSync.removed ?? 0} removed, ${b.liveSync.connections ?? 0} connections.`
+                    : b.liveSync.status === 'error'
+                      ? `Could not sync into the network: ${b.liveSync.error}`
+                      : 'Edits go into the live network as you build.'}
+            </span>
+          </div>
         </section>
 
         {/* right: inspector + NeuroLang */}

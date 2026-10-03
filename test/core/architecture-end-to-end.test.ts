@@ -114,7 +114,7 @@ describe('the architecture, end to end', () => {
 
   it('streams a byte through the 1 and 0 neurons, which are exact enemies', () => {
     const engine = new HyperDimensionalEngine(config());
-    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     const snap = engine.captureNetworkState();
     const freq = decode(snap.waveFreq as string);
     const phase = decode(snap.wavePhase as string);
@@ -187,7 +187,7 @@ describe('the architecture, end to end', () => {
       hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
       waveGain: 0.1, connectionBias: true,
     });
-    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     const result = runUntilStopped(zip, { files: { 'prompt/prompt.txt': 'hi' } }, { quietTicks: 3, maxTicks: 200 });
 
     // This USED to assert 'settled' -- which was a false positive that

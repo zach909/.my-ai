@@ -1,1 +1,0 @@
-../internals/style-common.xsl

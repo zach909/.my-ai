@@ -10,7 +10,7 @@
 
 import { pathToFileURL } from 'node:url';
 import { resolve } from 'node:path';
-import { mkdtempSync, rmSync, existsSync } from 'node:fs';
+import { mkdtempSync, rmSync, existsSync, mkdirSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 
@@ -32,33 +32,25 @@ function embedding(dim, seed) {
   return a;
 }
 
-async function testMoE() {
-  const { MoERouter } = await load('models && skills/core/onebrain.js');
-  const cfg = { numExperts: 8, topK: 2, inputDim: 32, outputDim: 32, expertHiddenDim: 32, loadBalancingLoss: 0.01 };
-  const base = new MoERouter(cfg);
-  const baseOut = Array.from(base.forward(embedding(32, 1), 0).output);
-  check(baseOut.length === 32 && allFinite(baseOut), 'MoE base routing is finite');
-
-  const withExperts = new MoERouter(cfg);
-  for (let i = 0; i < 6; i++) withExperts.addExpert({ id: `p${i}`, name: `plugin${i}`, specialization: 'x' });
-  const out = Array.from(withExperts.forward(embedding(32, 2), 0).output);
-  check(out.length === 32 && allFinite(out), 'MoE routing stays finite after addExpert (NaN regression)');
-
-  // removeExpert must keep the dense (input x expert) invariant so the next
-  // forward() doesn't index out of bounds.
-  const rm = new MoERouter(cfg);
-  for (let i = 0; i < 4; i++) rm.addExpert({ id: `e${i}`, name: `e${i}`, specialization: 'x' });
-  const beforeCount = rm.getExpertCount();
-  rm.removeExpert(3); // delete a middle expert
-  let removeOk = true;
-  try {
-    const o = Array.from(rm.forward(embedding(32, 3), 0).output);
-    removeOk = o.length === 32 && allFinite(o) && rm.getExpertCount() === beforeCount - 1;
-    rm.addExpert({ id: 'again', name: 'again', specialization: 'x' });
-    const o2 = Array.from(rm.forward(embedding(32, 4), 0).output);
-    removeOk = removeOk && allFinite(o2);
-  } catch { removeOk = false; }
-  check(removeOk, 'MoE forward works after removeExpert and remove+add (out-of-bounds regression)');
+// Net-skill routing (replaces the MoE router): a region is chosen because
+// what it means matches the input, not by a separate gate's random weights.
+async function testNetSkillRouter() {
+  const { NetSkillRouter } = await load('models && skills/core/net-skill-router.js');
+  const r = new NetSkillRouter(1, 64);
+  r.register({ id: 'email', name: 'Email', meaning: 'send and read email messages inbox' });
+  r.register({ id: 'camera', name: 'Camera', meaning: 'take photos with the camera' });
+  r.register({ id: 'files', name: 'File System', meaning: 'read and write files on disk' });
+  check(r.getRegionCount() === 3, 'Net-skill router registers named regions');
+  check(r.select('please check my email inbox for new messages').ids[0] === 'email', 'Net-skill routing picks the region whose meaning matches the input (email)');
+  check(r.select('take a photo with the camera').ids[0] === 'camera', 'Net-skill routing picks the region whose meaning matches the input (camera)');
+  const again = r.select('please check my email inbox for new messages').ids;
+  check(again.length === 1 && again[0] === 'email', 'Net-skill routing is deterministic and honours topK');
+  r.register({ id: 'email', name: 'Email', meaning: 'send and read email messages inbox' });
+  check(r.getRegionCount() === 3, 'Re-registering a region redescribes it instead of adding another');
+  const vec = Array.from(embedding(64, 5));
+  const byVec = r.select(vec).ids;
+  check(byVec.every((id) => r.has(id)), 'Net-skill routing accepts a vector input too');
+  check(r.getUsage().reduce((a, u) => a + u.selected, 0) >= 3, 'Net-skill router reports per-region usage');
 }
 
 async function testPipeline() {
@@ -722,10 +714,10 @@ async function testExpertRegistrationCompleteness() {
   const expectedSkillExpertIds = Array.from(expectedSkillTypes).map(t => `skill_${t}`);
 
   const allPluginsRegistered = expectedPluginIds.every(id => registered.has(id));
-  check(allPluginsRegistered, `Section 2.2: every plugins/index.ts entry (${expectedPluginIds.length}) is a registered MoE expert`);
+  check(allPluginsRegistered, `Section 2.2: every plugins/index.ts entry (${expectedPluginIds.length}) is a registered net-skill region`);
 
   const allSkillTypesRegistered = expectedSkillExpertIds.every(id => registered.has(id));
-  check(allSkillTypesRegistered, `Section 2.2: every programming-skills.ts expertType (${expectedSkillExpertIds.length}) is a registered MoE expert`);
+  check(allSkillTypesRegistered, `Section 2.2: every programming-skills.ts expertType (${expectedSkillExpertIds.length}) is a registered net-skill region`);
 
   // No anonymous experts polluting the router: registered count must be
   // exactly plugins + skill-types, nothing extra with no plugin/skill behind it.
@@ -744,17 +736,17 @@ async function testExpertRegistrationCompleteness() {
   check(noRegistryExtras, 'Elastic Core registry: every expert->neuron entry belongs to a registered plugin/skill expert');
 }
 
-async function testMoESharedMesh() {
-  const { MixtureOfExperts } = await load('models && skills/core/onebrain.js');
+async function testNetSkillMesh() {
+  const { NetSkillMesh } = await load('models && skills/core/net-skill-mesh.js');
 
   // Two skills with overlapping neuron ranges wired into the same mesh at
   // density 1.0 (Section 2.1's verification scenario).
-  const moe = new MixtureOfExperts(1); // topK=1: exactly one expert selected per tick
+  const moe = new NetSkillMesh(1); // topK=1: exactly one region selected per tick
   // 12 neurons/skill: with relu, a recomputed-but-still-zero neuron is
   // indistinguishable from a frozen one, so use enough neurons that "all 12
   // independently relu-clamp to zero" is negligible (~1/4096 at worst).
-  const skillA = moe.addExpert('skillA', 'Skill A', 'a', 12);
-  const skillB = moe.addExpert('skillB', 'Skill B', 'b', 12);
+  const skillA = moe.addSkill('skillA', 'Skill A', 'play music songs audio', 12);
+  const skillB = moe.addSkill('skillB', 'Skill B', 'weather forecast rain temperature', 12);
   const mesh = moe.getMesh();
 
   // (a) both skills' neurons have live connections to arbitrary main-mesh
@@ -763,12 +755,12 @@ async function testMoESharedMesh() {
   const aFullyWired = skillA.neuronIds.every(id =>
     skillB.neuronIds.every(other => mesh.getNode(id).connections.has(other))
   );
-  check(aFullyWired, 'MoE: skill A neurons are wired to skill B neurons (density 1.0 ignores group)');
+  check(aFullyWired, 'Net skills: skill A neurons are wired to skill B neurons (density 1.0 ignores group)');
   const totalNodes = mesh.getNodeCount();
   const fullyConnected = [...skillA.neuronIds, ...skillB.neuronIds].every(
     id => mesh.getNode(id).connections.size === totalNodes - 1
   );
-  check(fullyConnected, 'MoE: every skill neuron connects to all other nodes in the mesh');
+  check(fullyConnected, 'Net skills: every skill neuron connects to all other nodes in the mesh');
 
   // (b) on a tick where only one skill's group is selected, only that
   // skill's neurons execute forward computation — the mesh's propagate()
@@ -783,8 +775,8 @@ async function testMoESharedMesh() {
   const beforeB = skillB.neuronIds.map(id => mesh.getNode(id).activation);
   mesh.propagate(aInputs, undefined, new Set(['skillA']));
   const bUnchanged = skillB.neuronIds.every((id, i) => mesh.getNode(id).activation === beforeB[i]);
-  check(bUnchanged, "MoE: unselected skill B's neurons did not execute (activation frozen) while skill A ran");
-  check(Number.isFinite(mesh.getNode(skillA.neuronIds[0]).activation), 'MoE: selected skill A neurons did execute (finite new activation)');
+  check(bUnchanged, "Net skills: unselected skill B's neurons did not execute (activation frozen) while skill A ran");
+  check(Number.isFinite(mesh.getNode(skillA.neuronIds[0]).activation), 'Net skills: selected skill A neurons did execute (finite new activation)');
 
   // (c) the unselected skill's neurons still exist in the connection graph
   // and can be selected on a subsequent tick without re-wiring.
@@ -793,14 +785,13 @@ async function testMoESharedMesh() {
   const beforeBSecond = skillB.neuronIds.map(id => mesh.getNode(id).activation);
   mesh.propagate(bInputs, undefined, new Set(['skillB']));
   const bNowRan = skillB.neuronIds.some((id, i) => mesh.getNode(id).activation !== beforeBSecond[i]);
-  check(stillWired && bNowRan, 'MoE: previously-unselected skill B computes next tick with no re-wiring needed');
+  check(stillWired && bNowRan, 'Net skills: previously-unselected skill B computes next tick with no re-wiring needed');
 
-  // moe.tick() itself: real router scoring end-to-end, still finite/stable.
-  const routingInput = new Float32Array(768).fill(0.1);
+  // tick() itself: net-skill routing by meaning, end to end.
   const tickInputs = new Map([...skillA.neuronIds, ...skillB.neuronIds].map(id => [id, 0.2]));
-  const { activeExperts } = moe.tick(routingInput, tickInputs);
-  check(activeExperts.length === 1 && (activeExperts[0] === 'skillA' || activeExperts[0] === 'skillB'),
-    `MoE: tick() router selects exactly topK=1 registered expert (got ${JSON.stringify(activeExperts)})`);
+  const { activeSkills } = moe.tick('what is the weather forecast, will it rain', tickInputs);
+  check(activeSkills.length === 1 && activeSkills[0] === 'skillB',
+    `Net skills: tick() routes to the one region the input is about (got ${JSON.stringify(activeSkills)})`);
 }
 
 async function testMeshStability() {
@@ -1729,20 +1720,42 @@ async function testResearchPlugin() {
   const { ResearchPlugin } = await load('plugins/research.js');
   const r = new ResearchPlugin({ id: 'research', name: 'Research', type: 'api-connection', capabilities: [] });
 
-  // Real filesystem search, scoped to this repo -- must find the plugin's
-  // own source file. Regression guard for a real bug caught while
-  // building this: a naive depth-first walk exhausts its whole file
-  // budget descending into whichever subdirectory sorts first
-  // alphabetically (this repo's own extension-builder/Moby, 13,000+
-  // vendored files) before ever reaching a sibling directory like
-  // plugins/ -- silently starving every later-sorted directory. The fix
-  // is breadth-first traversal; this proves plugins/research.ts itself
-  // is actually found, not just that *some* file somewhere matched.
-  const driveHits = await r.searchDrive('class ResearchPlugin', { root: process.cwd(), maxResults: 5 });
-  check(driveHits.some(h => h.location.endsWith('plugins/research.ts')),
-    'ResearchPlugin.searchDrive() finds its own source file in a real repo with a large, alphabetically-earlier sibling directory (BFS, not DFS-starved)');
-  check(driveHits.every(h => h.source === 'drive' && h.snippet.length > 0),
-    'ResearchPlugin.searchDrive() results carry a real snippet, not just a bare filename');
+  // Regression guard for a real bug caught while building this: a naive
+  // depth-first walk exhausts its whole file budget descending into
+  // whichever subdirectory sorts first alphabetically before ever reaching
+  // a later-sorted sibling -- silently starving it. The fix is
+  // breadth-first traversal. Built synthetically here (an alphabetically-
+  // first directory stuffed with more files than maxFiles allows, plus the
+  // real target in an alphabetically-later sibling) rather than relying on
+  // this repo happening to contain a large early-sorted directory --
+  // extension-builder/Moby (a vendored moby/moby source tree, 13,000+
+  // files) used to make this true incidentally, but a regression guard
+  // shouldn't depend on unrelated repo contents that could be removed.
+  const bfsDir = mkdtempSync(join(tmpdir(), 'neuroclaw-bfs-'));
+  try {
+    const bigDir = join(bfsDir, 'aaa_big_sibling');
+    mkdirSync(bigDir);
+    for (let i = 0; i < 200; i++) {
+      writeFileSync(join(bigDir, `file_${String(i).padStart(4, '0')}.txt`), `filler content ${i}`);
+    }
+    const targetDir = join(bfsDir, 'zzz_target');
+    mkdirSync(targetDir);
+    writeFileSync(join(targetDir, 'research.ts'), 'export class ResearchPlugin {}');
+
+    const driveHits = await r.searchDrive('class ResearchPlugin', { root: bfsDir, maxResults: 5, maxFiles: 50 });
+    check(driveHits.some(h => h.location.endsWith('zzz_target/research.ts') || h.location.endsWith('zzz_target\\research.ts')),
+      'ResearchPlugin.searchDrive() finds a target in an alphabetically-later sibling despite a huge alphabetically-earlier directory and a small maxFiles budget (BFS, not DFS-starved)');
+    check(driveHits.every(h => h.source === 'drive' && h.snippet.length > 0),
+      'ResearchPlugin.searchDrive() results carry a real snippet, not just a bare filename');
+  } finally {
+    rmSync(bfsDir, { recursive: true, force: true });
+  }
+
+  // Also exercised against this real repo, unbounded, as a live sanity
+  // check that the plugin's own source is findable in practice.
+  const realHits = await r.searchDrive('class ResearchPlugin', { root: process.cwd(), maxResults: 5 });
+  check(realHits.some(h => h.location.endsWith('plugins/research.ts')),
+    'ResearchPlugin.searchDrive() finds its own source file in this real repo');
 
   // A directory that doesn't exist must degrade to zero results, not throw.
   const noHits = await r.searchDrive('anything', { root: './definitely/does/not/exist/xyz', maxResults: 5 });
@@ -2043,18 +2056,29 @@ async function testSelfExtension() {
   const { NeuroclawLLM } = await load('models && skills/llm.js');
   const dir = mkdtempSync(join(tmpdir(), 'selfext-'));
   try {
-    const llm = new NeuroclawLLM({ selfExtensionsDir: dir });
-    llm.build();
-    const before = llm.getStats().selfExtensionsCount ?? 0;
+    const llm = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: null });
+    await llm.build();
     const builder = llm.getBuilder();
     const projectsBefore = builder.projects.size;
     await llm.createSelfExtension('learn to greet', 'hello, nice to meet you');
-    const { readdirSync, existsSync: exists } = await import('node:fs');
-    const entries = readdirSync(dir).filter((e) => e.startsWith('self_ext_'));
-    check(entries.length >= 1, 'Self-extension is created on disk');
-    const extDir = join(dir, entries[0]);
-    check(exists(join(extDir, 'model.json')), 'Self-extension is saved un-quantized (model.json)');
-    check(exists(join(extDir, 'model.q4.json')), 'Self-extension is quantized before install (model.q4.json)');
+    const { readdirSync, existsSync: exists, readFileSync: read } = await import('node:fs');
+    check(!readdirSync(dir).some((e) => e.startsWith('self_ext_')), 'A new self-extension is not saved as its own self_ext_N model');
+    const extDir = join(dir, 'onebrain');
+    check(exists(join(extDir, 'model.json')), 'Self-extension is folded into OneBrain, saved un-quantized (onebrain/model.json)');
+    check(exists(join(extDir, 'model.q4.json')), 'OneBrain is quantized before install (onebrain/model.q4.json)');
+    const first = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+    check(first.connections.length > 0 && first.weightCounts.length === first.weights.length, 'OneBrain holds the learned connections with per-weight sample counts');
+    await llm.createSelfExtension('learn to greet', 'hello, nice to meet you');
+    const second = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+    check(second.connections.length === first.connections.length && second.weightCounts.reduce((a, b) => a + b, 0) > first.weightCounts.reduce((a, b) => a + b, 0),
+      'Folding the same pattern again averages into existing connections instead of adding duplicates');
+    const index = read(join(dir, 'index.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+    check(index.length === 1 && index[0] === 'onebrain', 'index.jsonl lists only OneBrain');
+    await llm.createSelfExtension('zebra quiz', 'xylophone');
+    const grownModel = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+    check(llm.brain.getHyper().neuronsInGroup('OneBrain').length === grownModel.neurons.length,
+      'new tokens folded into OneBrain are grafted onto the mesh in the same OneBrain region');
+    check(llm.extensionManager.installedVersions('onebrain').length >= 2, 'Each fold is recorded as a new OneBrain version in the extension registry');
     // ExtensionBuilder.deleteProject() existed but had no caller: every
     // self-extension's builder-internal project (its own neurons/connections/
     // layers Maps) was persisted to disk/selfExtensions and then never
@@ -2065,9 +2089,106 @@ async function testSelfExtension() {
     for (let i = 0; i < 5; i++) {
       await llm.createSelfExtension(`learn thing ${i}`, `response ${i}`);
     }
+    check(llm.extensionManager.installedVersions('onebrain').length <= 5, 'OneBrain registry history is capped at the last 5 versions');
     check(builder.projects.size === projectsBefore, "repeated createSelfExtension() calls never accumulate leaked projects in builder.projects");
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+// OneBrain (models && skills/onebrain) is the single model the 14 old
+// self_ext_N memory extensions were merged into. It must get every
+// extension property the wiki promises (Extensions.md / Builder.md /
+// Quantization.md / MoE.md): saved exact + installed 4-bit, loaded back at
+// startup as a routable MoE expert, recorded in the versioned registry, and
+// its weights actually read on recall.
+async function testOneBrainExtension() {
+  const { NeuroclawLLM } = await load('models && skills/llm.js');
+  const { readFileSync: read, readdirSync } = await import('node:fs');
+  const bundled = resolve(process.cwd(), 'models && skills');
+  const extDir = join(bundled, 'onebrain');
+  const fp32 = JSON.parse(read(join(extDir, 'model.json'), 'utf8'));
+  const q4 = JSON.parse(read(join(extDir, 'model.q4.json'), 'utf8'));
+  const meta = JSON.parse(read(join(extDir, 'meta.json'), 'utf8'));
+  check(meta.name === 'OneBrain' && meta.sources.length === 14 && fp32.weightFormat === 'fp32' && q4.weightFormat === 'int4' && q4.weightBits === 4,
+    'OneBrain merges all 14 self-extensions and ships exact (fp32) + installed (int4) copies');
+  const indexIds = read(join(bundled, 'index.jsonl'), 'utf8').split('\n').filter(Boolean).map((l) => JSON.parse(l).id);
+  check(indexIds.length === 1 && indexIds[0] === 'onebrain' && !readdirSync(bundled).some((d) => /^self_ext_/.test(d)),
+    'OneBrain is the only bundled model: no self_ext_* folders or index entries remain');
+  const maxErr = fp32.weights.reduce((m, w, i) => (w === null ? m : Math.max(m, Math.abs(Math.max(-1, Math.min(1, w)) - (q4.weights[i] - q4.quantZeroPoint) * q4.quantScale))), 0);
+  check(maxErr <= q4.quantScale / 2 + 1e-6, `OneBrain's 4-bit copy dequantizes to within half a step of the fp32 weights (max err ${maxErr.toFixed(4)})`);
+
+  const dir = mkdtempSync(join(tmpdir(), 'selfext-onebrain-'));
+  const bareDir = mkdtempSync(join(tmpdir(), 'selfext-bare-'));
+  try {
+    const llm = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: bundled });
+    await llm.build();
+    check([...llm.selfExtensions.keys()].includes('onebrain'), 'build() reloads OneBrain (survives restarts)');
+    const bare = new NeuroclawLLM({ selfExtensionsDir: bareDir, bundledExtensionsDir: null });
+    await bare.build();
+    const expertsBefore = bare.getSkillRouter().getRegionCount();
+    const added = bare.reloadSelfExtensions(bundled);
+    check(added === 1 && bare.getSkillRouter().getRegionCount() === expertsBefore + 1, 'OneBrain is registered as exactly one routable net-skill region');
+    check(llm.extensionManager.store.listVersions('onebrain').length === 1, 'OneBrain is recorded once in the versioned extension registry');
+    const recall = llm.recallFromSelfExtensions('I observe that the pattern shows', 5);
+    check(recall.outputs.length > 0 && recall.extensions[0]?.id === 'onebrain', "recallFromSelfExtensions() runs OneBrain's weights and returns output tokens");
+
+    // OneBrain is ON the mesh: its neurons are a region of the one live
+    // HyperDimensionalEngine (the same one the Zip Loop drives), its weights
+    // are mesh connections, and a think() computes those neurons.
+    const engine = llm.brain.getHyper();
+    const region = engine.neuronsInGroup('OneBrain');
+    check(region.length === fp32.neurons.length && llm.oneBrainMeshIds.size === fp32.neurons.length,
+      `OneBrain's ${fp32.neurons.length} neurons are grafted onto the live mesh as one "OneBrain" region`);
+    const N = engine.getNeuronCount(); const D = engine.totalDims;
+    const lab = new Map(fp32.neurons.map(([id, n]) => [id, n.label]));
+    const nameFor = (label) => label.replace(/^memory_input_/, 'OneBrain in ').replace(/^memory_output_/, 'OneBrain out ');
+    const mismatched = fp32.connections.filter(([, c]) => {
+      const w = fp32.weights[c.weightIndex]; if (w === null) return false;
+      const from = llm.oneBrainMeshIds.get(nameFor(lab.get(c.fromNeuronId)));
+      const to = llm.oneBrainMeshIds.get(nameFor(lab.get(c.toNeuronId)));
+      return engine.connDiag[(to * D) * N + from] !== Math.fround(w);
+    });
+    check(mismatched.length === 0, "every OneBrain weight is a real connection in the mesh");
+    // Net-skill routing decides which regions run: a prompt about memory
+    // recall selects OneBrain, and then the mesh computes its neurons.
+    const recallPrompt = 'memory recall of learned patterns';
+    check(llm.getSkillRouter().score(recallPrompt)[0]?.id === 'onebrain', 'net-skill routing selects OneBrain for a memory-recall prompt');
+    check(region.every((id) => engine.neuronsInGroup('onebrain').includes(id)), "OneBrain's neurons are in the group routing selects it by");
+    const before = region.map((id) => Array.from(engine.getNeuronStates()[id].state.slice(0, 4)).join());
+    const thought = await llm.brain.think(Buffer.from(recallPrompt, 'utf-8'), new Float32Array(64).fill(0.1));
+    const after = region.map((id) => Array.from(engine.getNeuronStates()[id].state.slice(0, 4)).join());
+    check(thought.activeExperts.includes('onebrain') && after.some((v, i) => v !== before[i]), 'a think() routed to OneBrain computes the OneBrain neurons');
+    const grown = llm.syncOneBrainToMesh();
+    check(grown.added === 0 && engine.neuronsInGroup('OneBrain').length === region.length, 're-syncing OneBrain does not duplicate its region');
+
+    const again = new NeuroclawLLM({ selfExtensionsDir: dir, bundledExtensionsDir: bundled });
+    await again.build();
+    check(again.extensionManager.store.listVersions('onebrain').length === 1, 'a restart does not re-version an already-registered extension');
+
+    // Leftover standalone self_ext_N models from before automatic folding
+    // are merged into OneBrain (seeded from the bundled one) at startup.
+    const legacy = mkdtempSync(join(tmpdir(), 'selfext-legacy-'));
+    try {
+      const { mkdirSync: mk, writeFileSync: wr, existsSync: ex } = await import('node:fs');
+      const oldModel = { neurons: [['a', { id: 'a', label: 'memory_input_5' }], ['b', { id: 'b', label: 'memory_output_6' }]],
+        connections: [['c', { id: 'c', fromNeuronId: 'a', toNeuronId: 'b', weightIndex: 0 }]], weights: [0.5] };
+      mk(join(legacy, 'self_ext_5'), { recursive: true });
+      wr(join(legacy, 'self_ext_5', 'model.json'), JSON.stringify(oldModel));
+      wr(join(legacy, 'index.jsonl'), JSON.stringify({ id: 'self_ext_5', prompt: 'x' }) + '\n');
+      const migrated = new NeuroclawLLM({ selfExtensionsDir: legacy, bundledExtensionsDir: bundled });
+      await migrated.build();
+      const mb = JSON.parse(read(join(legacy, 'onebrain', 'model.json'), 'utf8'));
+      check(!ex(join(legacy, 'self_ext_5')) && [...migrated.selfExtensions.keys()].join() === 'onebrain',
+        'startup merges leftover self_ext_N models into OneBrain and deletes them');
+      check(mb.weightCounts.reduce((a, b) => a + b, 0) === fp32.weightCounts.reduce((a, b) => a + b, 0) + 1,
+        "the migrated OneBrain keeps everything in the bundled OneBrain plus the leftover model's weights");
+    } finally {
+      rmSync(legacy, { recursive: true, force: true });
+    }
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+    rmSync(bareDir, { recursive: true, force: true });
   }
 }
 
@@ -4773,14 +4894,14 @@ async function testZipLoopInterface() {
   // higher energy after a tick with nothing directly driven.
   {
     const hd = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
-    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
 
     zip.sendBit(1);
     const afterOne = hd.getNeuronStates();
     check(afterOne[1].energy > 0, 'sendBit(1) genuinely drives the bit-1 input neuron (its energy rises above zero)');
 
     const hd2 = new HyperDimensionalEngine({ dimensions: 6, neuronCount: 8 });
-    const zip2 = new ZipLoopInterface(hd2, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip2 = new ZipLoopInterface(hd2, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     zip2.sendBit(0);
     const afterZero = hd2.getNeuronStates();
     check(
@@ -4797,23 +4918,26 @@ async function testZipLoopInterface() {
   // outcome, not something the interface guarantees by construction.
   {
     const hd = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 6 });
-    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
+    // With the send neuron, a read returns only the bits the network actually
+    // clocked out -- up to the count asked for, never padding with guesses.
     const bits = zip.receiveBits(16);
-    check(bits.length === 16 && bits.every(b => b === 0 || b === 1), 'receiveBits() returns exactly the requested count of genuine 0/1 bits');
+    check(bits.length <= 16 && bits.every(b => b === 0 || b === 1), 'receiveBits() returns at most the requested count, and only genuine 0/1 bits');
     const bytes = zip.receiveBytes(2);
-    check(bytes.length === 2 && bytes instanceof Uint8Array, 'receiveBytes() packs 8 bits per byte MSB-first into a real Uint8Array');
+    check(bytes.length <= 2 && bytes instanceof Uint8Array, 'receiveBytes() packs only whole sent bytes (8 bits, MSB-first) into a real Uint8Array');
   }
 
   // sendBytes() streams the correct total number of bits (8 per byte,
   // MSB-first) -- checked by counting settle() ticks via a spy on process().
   {
     const hd = new HyperDimensionalEngine({ dimensions: 4, neuronCount: 6 });
-    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(hd, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     let calls = 0;
     const origProcess = hd.process.bind(hd);
     hd.process = (...args) => { calls++; return origProcess(...args); };
     zip.sendBytes(new Uint8Array([0b10110010, 0xff]));
-    // 16 bits, plus one more for the learning event at the end.
+    // 16 bits at two ticks each (setup, then send), plus one more for the
+    // learning event at the end.
     //
     // The bits themselves go in read-only now: learning on every bit ran a
     // full O(N^2*D) pass per bit, which at the live mesh size was 1281 ms
@@ -4821,7 +4945,7 @@ async function testZipLoopInterface() {
     // learn from an EVENT weighted by the input received during it. A bit is
     // not an event; the message is. So the seventeenth tick is where the
     // learning actually happens.
-    check(calls === 17, `sendBytes() of 2 bytes drives 16 settle() ticks, one per bit, plus one learning event (got ${calls})`);
+    check(calls === 33, `sendBytes() of 2 bytes drives 32 settle() ticks, two per bit (data, then data + send), plus one learning event (got ${calls})`);
   }
 }
 
@@ -5326,7 +5450,7 @@ async function main() {
   process.env.NEUROCLAW_GENERATED_DIR = generatedScratchDir;
 
   const suites = [
-    ['MoE router', testMoE],
+    ['Net-skill router', testNetSkillRouter],
     ['Pipeline', testPipeline],
     ['Pipeline runHistory capacity (Section 7)', testPipelineRunHistoryCapacity],
     ['Pipeline elastic growth', testPipelineElasticGrowth],
@@ -5343,7 +5467,7 @@ async function main() {
     ['NeuroLang live wiring (Section 2.3)', testNeuroLangLiveWiring],
     ['Quantum interference', testQuantum],
     ['Expert registration completeness (Section 2.2)', testExpertRegistrationCompleteness],
-    ['MoE shared mesh (Section 2.1)', testMoESharedMesh],
+    ['Net-skill mesh (Section 2.1)', testNetSkillMesh],
     ['Mesh stability', testMeshStability],
     ['Alignment veto', testAlignmentVeto],
     ['Number systems (complex/dual)', testNumberSystems],
@@ -5367,6 +5491,7 @@ async function main() {
     ['Neural Definition directives', testNeuralDefinitionDirectives],
     ['End-to-end encryption', testEncryption],
     ['Self-authored extensions', testSelfExtension],
+    ['OneBrain self-extension', testOneBrainExtension],
     ['Behavioral Code-to-Net (Section 21)', testCodeToNet],
     ['NeuroLang parse() yields to event loop across many @code= lines (Section 26)', testNeuroLangParseYields],
     ['NeuriLang CLI wiring reaches Code-to-Net/Net Search (Section 21/22)', testNeuriLangCliWiring],
@@ -5442,7 +5567,11 @@ async function main() {
     ['Retrieval-grounded answering: a taught fact is actually usable', testGroundedAnswering],
     ['No duplicate JSX attributes across src/**/*.tsx (recurring bad-merge regression guard)', testNoDuplicateJsxAttributes],
   ];
+  // SMOKE_ONLY=<regex> runs just the suites whose names match -- the whole
+  // suite takes a long time, and checking one area should not need all of it.
+  const only = process.env.SMOKE_ONLY ? new RegExp(process.env.SMOKE_ONLY, 'i') : null;
   for (const [name, fn] of suites) {
+    if (only && !only.test(name)) continue;
     results.push(`\n${name}:`);
     try { await fn(); }
     catch (e) { failed++; results.push(`  FAIL ${name} threw: ${e && e.message}`); }

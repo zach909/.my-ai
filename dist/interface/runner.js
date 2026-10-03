@@ -35,7 +35,7 @@ export class NeuroclawRunner extends EventEmitter {
         this.systemAccess = systemAccess ?? new SystemAccess({ multiDesktop: true, multiMouse: true, multiKeyboard: true });
         this.multiDesktopManager = multiDesktopManager ?? this.systemAccess.getMultiDesktop();
     }
-    async generate(prompt, memoryContext) {
+    async generate(prompt, memoryContext, promptingSkills) {
         if (!this.running)
             await this.start();
         // Section 4.1/7: every real prompt also feeds the continuous output
@@ -59,7 +59,11 @@ export class NeuroclawRunner extends EventEmitter {
         }
         // Fall through to LLM generation (all 6 neural subsystems), grounded in any
         // relevant recalled conversation turns (continuous context, Section 7).
-        const response = await this.llm.generate(prompt, memoryContext && memoryContext.length ? { memoryContext } : undefined);
+        const response = await this.llm.generate(prompt, {
+            ...(memoryContext && memoryContext.length ? { memoryContext } : {}),
+            // Prompting skills go into the Zip Loop with the prompt (llm.generate).
+            ...(promptingSkills && promptingSkills.length ? { promptingSkills } : {}),
+        });
         // The loop only ever saw one side of the conversation: prompts went in and
         // the agent's own answers did not, so it could never learn that an answer
         // follows a question -- there were no answers in it.

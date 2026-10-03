@@ -35,8 +35,8 @@ describe('triggerConversationLearning()', () => {
 
     // Generous bound: three overlapping real calls should not cost
     // anywhere near 3x a solo call if the guard is doing its job. Give it
-    // slack for real-world timing noise (this is a real subprocess-backed
-    // cycle, not a mock).
+    // slack for real-world timing noise (this is a real training cycle,
+    // not a mock).
     expect(concurrentElapsed).toBeLessThan(Math.max(soloElapsed * 2.5, 5000));
   }, 60_000);
 });

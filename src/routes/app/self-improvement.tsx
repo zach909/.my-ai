@@ -28,7 +28,7 @@ import {
   Tooltip,
   XAxis,
   YAxis,
-} from "recharts";
+} from "@/components/charts/line-chart";
 import {
   Card,
   CardContent,
@@ -53,9 +53,9 @@ import {
   Plus,
   Rocket,
   Square,
-} from "lucide-react";
+} from "@/components/icons";
 import { Button } from "@/components/ui/button";
-import { toast } from "sonner";
+import { toast } from "@/lib/toast";
 import {
   buildExamPassRateSeries,
   buildPassRateSeries,
@@ -158,11 +158,11 @@ function OverviewPanel({
 }: {
   onOpenTab: (tab: SelfImprovementTab) => void;
 }) {
-  // Charting libraries generally assume a real DOM (ResizeObserver,
-  // measured container width) -- rendering only after mount avoids
-  // asking recharts to measure anything during this app's SSR
-  // prerender pass (npm run build), same reason other client-only
-  // widgets in this project gate on a mounted flag.
+  // The chart component assumes a real DOM (ResizeObserver, measured
+  // container width) -- rendering only after mount avoids asking it to
+  // measure anything during this app's SSR prerender pass (npm run
+  // build), same reason other client-only widgets in this project gate
+  // on a mounted flag.
   const [mounted, setMounted] = useState(false);
   const [selfImprovement, setSelfImprovement] = useState<
     Record<string, ScoreboardEntry>

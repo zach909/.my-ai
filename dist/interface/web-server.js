@@ -1,11 +1,15 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
+import { homedir } from 'node:os';
 import { spawn } from 'node:child_process';
 import { AppLauncher } from './app-launcher.js';
 import { EncryptionManager } from './encryption.js';
 import { ChatHistoryStore } from '../models && skills/core/chat-history-store.js';
+import { UserProfileStore } from '../models && skills/core/user-profile-store.js';
 import { installFromStore, installPromptingSkill, listInstalled, loadRegistry, publishPromptingSkill, readPublishedPromptingSkill, uninstallPromptingSkill, isBuiltIn, } from '../models && skills/core/prompting-skill-store.js';
 import { PROMPTING_CATEGORIES, PROMPTING_CATEGORY_LABELS, PromptingSkillError, builtInPromptingSkills } from '../models && skills/core/prompting-skills.js';
 import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndSync, listWikiBackups, restoreWikiBackup, WikiNameError } from '../models && skills/core/wiki-store.js';
@@ -15,7 +19,7 @@ import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills } from '../models && skills/core/net-skill-graft.js';
 import { STORE_KINDS, STORE_KIND_LABELS, StoreError, listCatalog, publishAndSync, readItem, deleteAndSync, } from '../models && skills/core/store.js';
-import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFileAndSync, linkSkillUploadWikiAndSync, unlinkSkillUploadWikiAndSync, recordSkillUploadRsiPassAndSync, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
+import { listSkillUploads, readSkillUpload, readSkillUploadFile, readSkillUploadExtraFile, pullSkillUploadCatalog, pullSkillUploadPackage, saveSkillUploadAndSync, saveSkillUploadExtraFilesAndSync, deleteSkillUploadAndSync, deleteSkillUploadExtraFileAndSync, linkSkillUploadWikiAndSync, unlinkSkillUploadWikiAndSync, recordSkillUploadRsiPassAndSync, SkillUploadError, SKILL_UPLOAD_SLOTS, } from '../models && skills/core/skill-upload-store.js';
 /**
  * Keeps exactly one `extension-builder/pytorch_trainer.py` subprocess alive
  * for the life of the server instead of spawning (and re-importing torch
@@ -211,61 +215,527 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Neuroclaw Terminal</title>
 <style>
+  :root {
+    --primary: #4a7dff;
+    --primary-light: #7d9fff;
+    --secondary: #e8eaed;
+    --bg-dark: #0b0d10;
+    --bg-light: #14171c;
+    --border: #232830;
+    --text: #e8eaed;
+    --blur-radius: 40px;
+    --saturation: 1.8;
+    --contrast: 1.15;
+  }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0a0a0a; color: #00ff41; font-family: 'Courier New', monospace; height: 100vh; display: flex; flex-direction: column; }
-  #header { background: #111; padding: 12px 20px; border-bottom: 1px solid #00ff41; display: flex; justify-content: space-between; align-items: center; }
-  #header h1 { font-size: 14px; font-weight: normal; text-transform: uppercase; letter-spacing: 2px; }
-  #status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; }
-  #status-dot.online { background: #00ff41; box-shadow: 0 0 8px #00ff41; }
-  #status-dot.offline { background: #ff0040; box-shadow: 0 0 8px #ff0040; }
-  #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
-  .message { position: relative; max-width: 80%; padding: 10px 14px; border-radius: 4px; line-height: 1.5; font-size: 13px; animation: fadeIn 0.3s ease-out; }
-  .copy-btn { position: absolute; top: 4px; right: 4px; opacity: 0; background: #222; color: #00ff41; border: 1px solid #333; border-radius: 3px; font-size: 10px; padding: 2px 6px; cursor: pointer; transition: opacity 0.2s; }
-  .message:hover .copy-btn, .copy-btn:focus { opacity: 1; }
-  .edit-btn { background: none; border: none; color: #00ff41; opacity: 0.45; font-size: 13px; line-height: 1; padding: 2px 4px; margin-right: 6px; cursor: pointer; transition: opacity 0.2s; }
-  .edit-btn:hover, .edit-btn:focus { opacity: 1; }
-  .edit-area { width: 100%; box-sizing: border-box; background: #0b0b0b; color: #00ff41; border: 1px solid #00ff41; border-radius: 3px; font: inherit; padding: 6px; resize: vertical; min-height: 4.5em; }
-  .edit-actions { display: flex; gap: 6px; margin-top: 6px; }
-  .edit-actions button { background: #222; color: #00ff41; border: 1px solid #333; border-radius: 3px; font-size: 11px; padding: 3px 10px; cursor: pointer; }
-  .edit-actions button:hover { border-color: #00ff41; }
-  .edited-tag { color: #00ff41; opacity: 0.5; font-size: 10px; margin-left: 6px; }
-  .dots-btn { background: none; border: none; color: #00ff41; opacity: 0.45; font-size: 14px; line-height: 1; padding: 2px 4px; margin-right: 6px; cursor: pointer; transition: opacity 0.2s; }
-  .dots-btn:hover, .dots-btn:focus, .dots-btn[aria-expanded="true"] { opacity: 1; }
-  .details { margin-top: 8px; border-left: 2px solid #00ff41; padding: 6px 10px; background: #0b0b0b; font-size: 11px; color: #8f8; }
-  .details h4 { margin: 0 0 4px; font-size: 11px; color: #00ff41; text-transform: uppercase; letter-spacing: 0.05em; }
-  .details dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0 0 6px; }
-  .details dt { opacity: 0.6; }
-  .details dd { margin: 0; word-break: break-word; }
-  .details ul { margin: 0 0 6px; padding-left: 16px; }
-  .details .none { opacity: 0.5; font-style: italic; }
-  .message.user { align-self: flex-end; background: #003300; border: 1px solid #00ff4144; }
-  .message.ai { align-self: flex-start; background: #111; border: 1px solid #333; }
-  .message.system { align-self: center; background: #111; border: 1px solid #333; color: #888; font-style: italic; font-size: 11px; }
-  .message.error { align-self: center; background: #330000; border: 1px solid #ff004044; color: #ff6666; }
-  .timestamp { font-size: 10px; color: #888; margin-top: 4px; }
-  #input-area { border-top: 1px solid #00ff4144; padding: 12px 20px; background: #111; display: flex; gap: 10px; }
-  #input { flex: 1; background: #0a0a0a; border: 1px solid #333; color: #00ff41; padding: 10px 14px; font-family: 'Courier New', monospace; font-size: 13px; outline: none; border-radius: 4px; }
-  #input:focus { border-color: #00ff41; }
-  #input:disabled { opacity: 0.5; cursor: not-allowed; }
-  #send-btn { background: #003300; color: #00ff41; border: 1px solid #00ff41; padding: 10px 20px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 4px; }
-  #send-btn:hover { background: #005500; }
-  #send-btn:active, #clear-btn:active { transform: translateY(1px); }
-  #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  #clear-btn { background: transparent; color: #888; border: 1px solid #333; padding: 4px 8px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 11px; border-radius: 4px; transition: all 0.2s; }
-  #clear-btn:hover { color: #00ff41; border-color: #00ff41; background: #003300; }
-  *:focus-visible { outline: 1px solid #00ff41; outline-offset: 2px; }
-  .thinking { color: #888; font-style: italic; font-size: 11px; align-self: flex-start; animation: pulse 1.5s infinite; }
-  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-  @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+
+  body {
+    background: var(--bg-dark);
+    color: var(--text);
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #header {
+    backdrop-filter: blur(var(--blur-radius)) saturate(var(--saturation)) contrast(var(--contrast));
+    background: rgba(20, 23, 28, 0.7);
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0 0 20px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    box-shadow: 0 2px 8px rgba(255, 255, 255, 0.08) inset,
+                0 -1px 3px rgba(0, 0, 0, 0.2) inset;
+  }
+
+  #header h1 {
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+  }
+
+  #status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 10px;
+    animation: specularGlow 2s infinite;
+  }
+
+  #status-dot.online {
+    background: #4dff4d;
+    box-shadow: 0 0 12px #4dff4d, 0 0 24px rgba(77, 255, 77, 0.4);
+  }
+
+  #status-dot.offline {
+    background: #ff4d7a;
+    box-shadow: 0 0 12px #ff4d7a, 0 0 24px rgba(255, 77, 122, 0.4);
+  }
+
+  #chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    scroll-behavior: smooth;
+  }
+
+  .message {
+    position: relative;
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: 16px;
+    line-height: 1.6;
+    font-size: 14px;
+    animation: morphicExpand 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 8px rgba(255, 255, 255, 0.04) inset,
+                0 8px 16px rgba(0, 0, 0, 0.12);
+  }
+
+  .message::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .copy-btn, .edit-btn, .dots-btn {
+    background: none;
+    border: none;
+    color: var(--primary);
+    opacity: 0.5;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    font-size: 13px;
+    padding: 4px 6px;
+  }
+
+  .copy-btn:hover, .edit-btn:hover, .dots-btn:hover,
+  .copy-btn:focus, .edit-btn:focus, .dots-btn:focus {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+
+  .edit-area {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(14, 16, 20, 0.6);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font: inherit;
+    padding: 8px 12px;
+    resize: vertical;
+    min-height: 5em;
+    backdrop-filter: blur(20px);
+  }
+
+  .edit-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .edit-actions button {
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+  }
+
+  .edit-actions button:hover {
+    background: var(--primary-light);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(74, 125, 255, 0.3);
+  }
+
+  .edited-tag {
+    color: var(--primary);
+    opacity: 0.6;
+    font-size: 11px;
+    margin-left: 8px;
+  }
+
+  .details {
+    margin-top: 10px;
+    border-left: 3px solid var(--primary);
+    padding: 8px 12px;
+    background: rgba(74, 125, 255, 0.05);
+    border-radius: 0 8px 8px 0;
+    font-size: 12px;
+    color: var(--text);
+    backdrop-filter: blur(10px);
+  }
+
+  .details h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+
+  .details dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 0 0 8px;
+  }
+
+  .details dt {
+    opacity: 0.65;
+    font-weight: 500;
+  }
+
+  .details dd {
+    margin: 0;
+    word-break: break-word;
+    color: var(--text);
+  }
+
+  .details ul {
+    margin: 0 0 8px;
+    padding-left: 20px;
+  }
+
+  .details .none {
+    opacity: 0.5;
+    font-style: italic;
+  }
+
+  .message.user {
+    align-self: flex-end;
+    background: rgba(74, 125, 255, 0.1);
+    border-color: rgba(74, 125, 255, 0.3);
+  }
+
+  .message.ai {
+    align-self: flex-start;
+    background: rgba(232, 234, 237, 0.05);
+  }
+
+  .message.system {
+    align-self: center;
+    background: rgba(74, 125, 255, 0.05);
+    border-color: rgba(74, 125, 255, 0.2);
+    color: var(--text);
+    opacity: 0.8;
+    font-style: italic;
+    font-size: 12px;
+  }
+
+  .message.error {
+    align-self: center;
+    background: rgba(255, 77, 122, 0.1);
+    border-color: rgba(255, 77, 122, 0.3);
+    color: #ff8b9e;
+  }
+
+  .timestamp {
+    font-size: 11px;
+    color: var(--text);
+    opacity: 0.6;
+    margin-top: 6px;
+  }
+
+  #input-area {
+    border-top: 1px solid var(--border);
+    padding: 16px 24px;
+    background: rgba(20, 23, 28, 0.4);
+    backdrop-filter: blur(30px);
+    display: flex;
+    gap: 12px;
+    position: relative;
+  }
+
+  #input {
+    flex: 1;
+    background: rgba(11, 13, 16, 0.5);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 16px;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+    border-radius: 12px;
+    transition: all 0.2s;
+    backdrop-filter: blur(10px);
+  }
+
+  #input:focus {
+    border-color: var(--primary);
+    background: rgba(11, 13, 16, 0.7);
+    box-shadow: 0 0 0 3px rgba(74, 125, 255, 0.1),
+                0 2px 8px rgba(74, 125, 255, 0.15);
+  }
+
+  #input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  #send-btn, #clear-btn {
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    border-radius: 12px;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    font-weight: 500;
+    letter-spacing: 0.3px;
+  }
+
+  #send-btn {
+    background: var(--primary);
+    color: white;
+    padding: 12px 24px;
+    box-shadow: 0 4px 12px rgba(74, 125, 255, 0.3);
+  }
+
+  #send-btn:hover {
+    background: var(--primary-light);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(74, 125, 255, 0.4);
+  }
+
+  #send-btn:active {
+    transform: translateY(0);
+  }
+
+  #send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  #clear-btn {
+    background: rgba(232, 234, 237, 0.1);
+    color: var(--text);
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    opacity: 0.7;
+  }
+
+  #clear-btn:hover {
+    background: rgba(74, 125, 255, 0.2);
+    border-color: var(--primary);
+    color: var(--primary);
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .thinking {
+    color: var(--primary);
+    font-style: italic;
+    font-size: 12px;
+    align-self: flex-start;
+    animation: breathing 2s ease-in-out infinite;
+    opacity: 0.7;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes morphicExpand {
+    from { opacity: 0; transform: scale(0.92) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  @keyframes breathing {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  @keyframes specularGlow {
+    0%, 100% { box-shadow: 0 0 12px currentColor, 0 0 24px rgba(var(--primary), 0.4); }
+    50% { box-shadow: 0 0 16px currentColor, 0 0 32px rgba(var(--primary), 0.6); }
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(74, 125, 255, 0.3);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(74, 125, 255, 0.5);
+  }
+
+  #background-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(11, 13, 16, 0.95) 0%, rgba(14, 17, 24, 0.95) 100%);
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+
+  .ring-container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 300px;
+    height: 300px;
+    perspective: 1200px;
+  }
+
+  .ring {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    animation: spinRingVertical 8s linear infinite;
+    transform-style: preserve-3d;
+  }
+
+  .ring-element {
+    position: absolute;
+    width: 200px;
+    height: 200px;
+    border: 3px solid var(--primary);
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-50%);
+    opacity: 0.3;
+    box-shadow: 0 0 30px rgba(74, 125, 255, 0.5), inset 0 0 30px rgba(74, 125, 255, 0.2);
+  }
+
+  .ring-element:nth-child(1) {
+    width: 200px;
+    height: 200px;
+    animation: orbitRing 8s linear infinite;
+  }
+
+  .ring-element:nth-child(2) {
+    width: 150px;
+    height: 150px;
+    opacity: 0.5;
+    animation: orbitRing 6s linear infinite reverse;
+  }
+
+  .ring-element:nth-child(3) {
+    width: 100px;
+    height: 100px;
+    opacity: 0.7;
+    animation: orbitRing 4s linear infinite;
+  }
+
+  .sphere {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-50%) translateZ(0);
+    background: radial-gradient(135deg at 35% 35%, rgba(74, 125, 255, 0.9) 0%, rgba(74, 125, 255, 0.5) 50%, rgba(74, 125, 255, 0.1) 100%);
+    box-shadow: 0 0 40px rgba(74, 125, 255, 0.8),
+                inset -8px -8px 20px rgba(0, 0, 0, 0.4),
+                inset 4px 4px 12px rgba(255, 255, 255, 0.2);
+    animation: sphereFloat 3s ease-in-out infinite;
+  }
+
+  body {
+    position: relative;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(11, 13, 16, 0.95) 0%, rgba(14, 17, 24, 0.95) 100%);
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  #header, #chat-container, #input-area {
+    position: relative;
+    z-index: 1;
+  }
+
+  @keyframes spinRingVertical {
+    from { transform: rotateY(0deg); }
+    to { transform: rotateY(360deg); }
+  }
+
+  @keyframes orbitRing {
+    from { transform: translateX(-50%) translateY(-50%) rotateX(90deg) rotateZ(0deg); }
+    to { transform: translateX(-50%) translateY(-50%) rotateX(90deg) rotateZ(360deg); }
+  }
+
+  @keyframes sphereFloat {
+    0%, 100% { transform: translateX(-50%) translateY(-50%) translateZ(0) scale(1); }
+    50% { transform: translateX(-50%) translateY(-50%) translateZ(20px) scale(1.05); }
+  }
 </style>
 </head>
 <body>
+<div id="background-canvas">
+  <div class="ring-container">
+    <div class="ring">
+      <div class="ring-element"></div>
+      <div class="ring-element"></div>
+      <div class="ring-element"></div>
+    </div>
+    <div class="sphere"></div>
+  </div>
+</div>
 <div id="header">
   <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
   <div style="display:flex; align-items:center; gap:15px;">
     <button id="clear-btn" aria-label="Clear chat history">Clear</button>
-    <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
+    <div id="status-text" style="font-size:12px; color:var(--text); opacity:0.6;">Starting...</div>
   </div>
 </div>
 <div id="chat-container" role="log" aria-live="polite" aria-atomic="false"></div>
@@ -656,7 +1126,7 @@ class PasswordLock {
  */
 export function isWikiPublicRoute(pathname, method) {
     if (method === 'GET') {
-        return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+$/.test(pathname);
+        return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(pathname);
     }
     if (method === 'POST') {
         return pathname === '/api/wiki';
@@ -719,6 +1189,88 @@ export function isSharedChatPublicRoute(pathname, method) {
             /^\/api\/shared-chat\/rooms\/[a-z0-9-]+\/(messages|ask)$/.test(pathname));
     }
     return false;
+}
+// The built dashboard (the React app's `npm run build` output, committed in
+// dist/). The backend serves it itself, with Node built-ins only, so a phone
+// or any browser pointed at this port gets the same pages the PC does.
+// Only these prefixes are served: dist/ also holds the compiled backend.
+const DASHBOARD_DIR = fileURLToPath(new URL('..', import.meta.url));
+const DASHBOARD_PAGES = ['/app', '/builder', '/desktop'];
+const DASHBOARD_FILES = new Set(['/favicon.svg', '/icon.png', '/icon.svg', '/icons.svg', '/robots.txt', '/welcome.html']);
+const DASHBOARD_TYPES = {
+    '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+    '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
+    '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
+    '.wasm': 'application/wasm', '.map': 'application/json',
+};
+const DASHBOARD_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+    "font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'";
+/** Map a URL path to a file inside dist/, or null when it is not a dashboard path. */
+export function resolveDashboardFile(pathname, dir = DASHBOARD_DIR) {
+    let rel;
+    try {
+        rel = decodeURIComponent(pathname);
+    }
+    catch {
+        return null;
+    }
+    if (rel.includes('\0') || rel.includes('\\'))
+        return null;
+    const root = path.resolve(dir);
+    const target = path.resolve(root, '.' + rel);
+    // Judge the path after normalising it, so "/app/../interface/x.js" is
+    // checked as the "/interface/x.js" it really is.
+    const norm = '/' + path.relative(root, target).split(path.sep).join('/');
+    if (norm.startsWith('/..'))
+        return null;
+    rel = norm;
+    const isPage = DASHBOARD_PAGES.some(p => rel === p || rel.startsWith(p + '/'));
+    if (!isPage && !rel.startsWith('/assets/') && !DASHBOARD_FILES.has(rel))
+        return null;
+    const isFile = (f) => { try {
+        return statSync(f).isFile();
+    }
+    catch {
+        return false;
+    } };
+    if (isFile(target))
+        return target;
+    if (!isPage)
+        return null;
+    // Prerendered routes live at <route>/index.html; anything else under a page
+    // root falls back to that root's own entry so the client-side router can take over.
+    const index = path.join(target, 'index.html');
+    if (isFile(index))
+        return index;
+    if (path.extname(rel))
+        return null;
+    const top = '/' + rel.split('/')[1];
+    const fallback = path.join(root, top, 'index.html');
+    return isFile(fallback) ? fallback : null;
+}
+/** Serve the dashboard for GET/HEAD; true when it handled the request. */
+async function serveDashboard(req, res, pathname) {
+    const method = req.method?.toUpperCase() ?? 'GET';
+    if (method !== 'GET' && method !== 'HEAD')
+        return false;
+    const file = resolveDashboardFile(pathname);
+    if (!file)
+        return false;
+    let body;
+    try {
+        body = await readFile(file);
+    }
+    catch {
+        return false;
+    }
+    const ext = path.extname(file).toLowerCase();
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.setHeader('X-Frame-Options', 'DENY');
+    res.setHeader('Content-Security-Policy', DASHBOARD_CSP);
+    res.setHeader('Cache-Control', pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
+    res.writeHead(200, { 'Content-Type': DASHBOARD_TYPES[ext] ?? 'application/octet-stream', 'Content-Length': body.length });
+    res.end(method === 'HEAD' ? undefined : body);
+    return true;
 }
 /**
  * Which routes exist so someone can log in at all, and therefore cannot
@@ -789,6 +1341,40 @@ export function parseJsonBody(raw) {
     catch {
         throw new HttpClientError('Invalid JSON', 400);
     }
+}
+// The Memory tab's "About you" and "Goals" lists. Loaded into long-term
+// memory once per memory instance (loadMemory() can swap it out).
+let userProfile = null;
+const profileSynced = new WeakSet();
+async function profileWithMemory() {
+    userProfile ?? (userProfile = new UserProfileStore());
+    const { getNeuroclawSystem } = await import('../src/index.js');
+    const memory = (await getNeuroclawSystem()).memory;
+    if (!profileSynced.has(memory)) {
+        userProfile.syncTo(memory);
+        profileSynced.add(memory);
+    }
+    return { store: userProfile, memory };
+}
+const ACTIVITY_MAX = 300;
+const activityLog = [];
+let activitySeq = 0;
+function activityStart(title, detail) {
+    const event = { id: ++activitySeq, kind: 'chat', status: 'running', title, detail, startedAt: Date.now() };
+    activityLog.push(event);
+    if (activityLog.length > ACTIVITY_MAX)
+        activityLog.splice(0, activityLog.length - ACTIVITY_MAX);
+    return event;
+}
+function activityEnd(event, ok, detail) {
+    event.status = ok ? 'ok' : 'error';
+    event.endedAt = Date.now();
+    if (detail !== undefined)
+        event.detail = detail;
+}
+function clip(text, max = 400) {
+    const s = typeof text === 'string' ? text : JSON.stringify(text) ?? '';
+    return s.length > max ? `${s.slice(0, max)}…` : s;
 }
 export class WebServer {
     /**
@@ -864,6 +1450,48 @@ export class WebServer {
         // GET /api/status so "did the runner actually pick up my trained
         // network on this boot" is observable, not just assumed.
         this.loadedExtensions = { files: 0, remembered: 0, graftedNeurons: 0 };
+        /**
+         * "Integrate it into the runner of the model": every real Extension
+         * Builder deliverable this session (Main Network, Coding Skills
+         * Network, the merged network, ...) only ever became part of the live
+         * agent when POST /api/extension/register happened to be called during
+         * that one server process's lifetime -- system.memory.remember() has
+         * no persistence of its own, so a trained network was invisible to the
+         * agent again the moment the server restarted, with nothing to reload
+         * it. This is the fix: on every real server boot, read every
+         * previously saved extension file (extension-builder/extensions/*.ext.json
+         * -- the exact artifacts train(), trainWithPyTorch(), Save, and
+         * Install already write) and remember() each one's definitions/scripts
+         * into the live NeuroclawSystem, the same way register() does for one
+         * extension at a time. A trained network is now a permanent property
+         * of the runner, not a one-session fluke of whoever happened to click
+         * a button.
+         *
+         * Deliberately best-effort: a missing directory, an unreadable file, or
+         * malformed JSON in one saved extension must never stop the server from
+         * finishing its boot sequence -- skip that one file and keep going.
+         */
+        /**
+         * Remembers one trained skill script as a directly-matchable (trigger,
+         * response) pair -- `content` is the trigger text alone (what actually
+         * gets embedded and compared against a live query), `payload` is the
+         * literal response text to return verbatim on a confident match. This
+         * replaced an earlier version that flattened both into one sentence
+         * ("When asked X, Y responds: Z") and stored no payload at all -- that
+         * meant the trigger's own embedding was diluted by boilerplate text
+         * around it, AND there was no way to recover the exact response
+         * without re-parsing the flattened sentence. Both are fixed here.
+         *
+         * Pinned, because an installed skill is knowledge the user deliberately
+         * added: capacity eviction may drop what the system merely observed, but
+         * never what someone installed.
+         *
+         * Tagged 'skill-script' (plus the source extension's name) so
+         * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
+         * there) can query this exact tag rather than mixing skill triggers in
+         * with ordinary chat-turn memories.
+         */
+        this.yesNo = null;
         this.runner = runner;
         this.launcher = launcher ?? new AppLauncher();
     }
@@ -925,6 +1553,10 @@ export class WebServer {
         // first time someone actually asks for it, not pulled wholesale here on
         // every boot regardless of whether anyone browses anything.
         await pullStoreCatalog({ manifestsOnly: true }).catch(() => { });
+        // Skill uploads use the same shared `store` branch but live outside the
+        // generic store catalogue. Pull their manifests too so uploaded packages
+        // are visible on a fresh device; payloads remain on-demand.
+        await pullSkillUploadCatalog().catch(() => { });
         // Same reasoning, same placement: loading every saved extension is
         // real work (parsing N files, remembering M neurons) that only makes
         // sense to pay once per actual live server process, not once per
@@ -1056,13 +1688,17 @@ export class WebServer {
 <script>
   var setting = false;
   var el = function (id) { return document.getElementById(id); };
+  function after() {
+    var n = new URLSearchParams(location.search).get('next');
+    return n && n.charAt(0) === '/' && n.charAt(1) !== '/' && n.charAt(1) !== '\\\\' ? n : '/';
+  }
   function say(text, ok) {
     var m = el('msg');
     m.textContent = text;
     m.className = 'msg ' + (ok ? 'good' : 'bad');
   }
   fetch('/api/auth/status').then(function (r) { return r.json(); }).then(function (s) {
-    if (s.loggedIn && s.passwordSet) { location.href = '/'; return; }
+    if (s.loggedIn && s.passwordSet) { location.href = after(); return; }
     setting = !s.passwordSet;
     if (!setting) return;
     el('title').textContent = 'Set a password';
@@ -1097,7 +1733,7 @@ export class WebServer {
     }).then(function (result) {
       if (!result.ok) { say(result.data.error || 'That did not work.', false); el('go').disabled = false; return; }
       say(setting ? 'Password set. Opening...' : 'Welcome back.', true);
-      location.href = '/';
+      location.href = after();
     }).catch(function () {
       say('Could not reach the server.', false);
       el('go').disabled = false;
@@ -1139,7 +1775,9 @@ export class WebServer {
         this.setSecurityHeaders(res);
         const wantsHtml = (req.headers.accept ?? '').includes('text/html');
         if (wantsHtml) {
-            res.writeHead(302, { Location: '/login' });
+            const next = (req.method ?? 'GET') === 'GET' && (req.url ?? '').startsWith('/') && !(req.url ?? '').startsWith('//')
+                ? `?next=${encodeURIComponent(req.url)}` : '';
+            res.writeHead(302, { Location: `/login${next}` });
             res.end();
             return;
         }
@@ -1226,7 +1864,7 @@ export class WebServer {
      * (or none) pass their own ceiling explicitly; nobody else's behavior
      * changes.
      */
-    async parseBody(req, maxBytes = 1024 * 1024) {
+    async parseBody(req, maxBytes = Number.POSITIVE_INFINITY) {
         // CSRF: this server has no auth and setSecurityHeaders() never sends
         // Access-Control-Allow-Origin, so cross-origin JS can't *read* a
         // response -- but that alone doesn't stop the *request* from being
@@ -1337,47 +1975,43 @@ export class WebServer {
             trainedNeurons, epochsRun: result.epochsRun, converged: result.converged, torchVersion: result.torchVersion,
         };
     }
+    yesNoFile() {
+        return process.env.NEUROCLAW_YES_NO_FILE ?? path.join(homedir(), '.neuroclaw', 'yes-no.json');
+    }
+    /** The yes/no doorway on the live mesh, with everything taught before restored into it. */
+    async yesNoDoorway() {
+        if (this.yesNo)
+            return this.yesNo;
+        const { YesNoDoorway } = await import('../models && skills/core/yes-no.js');
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const doorway = new YesNoDoorway(system.pipeline.ensureBrain());
+        const { promises: fs } = await import('node:fs');
+        try {
+            doorway.load(JSON.parse(await fs.readFile(this.yesNoFile(), 'utf8')));
+        }
+        catch {
+            // Nothing taught yet, or an unreadable file: start empty rather than fail.
+        }
+        this.yesNo = doorway;
+        return doorway;
+    }
+    async saveYesNo(doorway) {
+        const { promises: fs } = await import('node:fs');
+        const file = this.yesNoFile();
+        await fs.mkdir(path.dirname(file), { recursive: true });
+        await fs.writeFile(file, JSON.stringify(doorway.toJSON()), 'utf8');
+    }
     /**
-     * "Integrate it into the runner of the model": every real Extension
-     * Builder deliverable this session (Main Network, Coding Skills
-     * Network, the merged network, ...) only ever became part of the live
-     * agent when POST /api/extension/register happened to be called during
-     * that one server process's lifetime -- system.memory.remember() has
-     * no persistence of its own, so a trained network was invisible to the
-     * agent again the moment the server restarted, with nothing to reload
-     * it. This is the fix: on every real server boot, read every
-     * previously saved extension file (extension-builder/extensions/*.ext.json
-     * -- the exact artifacts train(), trainWithPyTorch(), Save, and
-     * Install already write) and remember() each one's definitions/scripts
-     * into the live NeuroclawSystem, the same way register() does for one
-     * extension at a time. A trained network is now a permanent property
-     * of the runner, not a one-session fluke of whoever happened to click
-     * a button.
-     *
-     * Deliberately best-effort: a missing directory, an unreadable file, or
-     * malformed JSON in one saved extension must never stop the server from
-     * finishing its boot sequence -- skip that one file and keep going.
+     * Make a grafted skill's region routable in both routers that gate the one
+     * mesh -- the live pipeline's and chat's (UnifiedBrain via NeuroclawLLM) --
+     * described by what its neurons mean.
      */
-    /**
-     * Remembers one trained skill script as a directly-matchable (trigger,
-     * response) pair -- `content` is the trigger text alone (what actually
-     * gets embedded and compared against a live query), `payload` is the
-     * literal response text to return verbatim on a confident match. This
-     * replaced an earlier version that flattened both into one sentence
-     * ("When asked X, Y responds: Z") and stored no payload at all -- that
-     * meant the trigger's own embedding was diluted by boilerplate text
-     * around it, AND there was no way to recover the exact response
-     * without re-parsing the flattened sentence. Both are fixed here.
-     *
-     * Pinned, because an installed skill is knowledge the user deliberately
-     * added: capacity eviction may drop what the system merely observed, but
-     * never what someone installed.
-     *
-     * Tagged 'skill-script' (plus the source extension's name) so
-     * bot-service.ts's live skill-match fast path (see SKILL_MATCH_THRESHOLD
-     * there) can query this exact tag rather than mixing skill triggers in
-     * with ordinary chat-turn memories.
-     */
+    registerSkillForRouting(system, name, neurons) {
+        const meaning = [name, ...neurons.map((n) => `${n.name ?? ''} ${n.definition ?? ''}`.trim())].filter(Boolean).join(' ').slice(0, 2000);
+        system.pipeline.registerSkillRegion(name, name, meaning);
+        system.llm?.skillRouter?.register({ id: name, name, meaning });
+    }
     rememberSkillScript(system, userSays, response, extName) {
         system.memory.remember(userSays, { importance: 0.7, tags: ['skill-script', extName], payload: response, pinned: true });
     }
@@ -1413,6 +2047,7 @@ export class WebServer {
             const engine = system.pipeline.ensureBrain();
             if (engine) {
                 const result = graftNetSkill(engine, name, neurons);
+                this.registerSkillForRouting(system, name, neurons);
                 grafted = {
                     added: result.added,
                     connections: result.connections,
@@ -1541,6 +2176,7 @@ export class WebServer {
                 try {
                     const engine = system.pipeline.ensureBrain();
                     const result = graftNetSkill(engine, extName, neurons);
+                    this.registerSkillForRouting(system, extName, neurons);
                     graftedNeurons += result.added;
                 }
                 catch {
@@ -1722,26 +2358,27 @@ export class WebServer {
             return;
         }
         // GET/POST /api/settings/brain -- the Settings page's "Brain Behavior"
-        // section. Both setQuantumEnabled()/setPredictorMode() (NeuroclawLLM)
-        // were real, tested, and reachable only from TypeScript -- no endpoint
-        // existed to flip either one, so the (off-by-default) quantum
-        // interference stage and the code-vs-prose predictor choice were
-        // permanently stuck at whatever NeuroclawSystem's constructor left them.
-        // Routed through getNeuroclawSystem()'s singleton, the one real system
-        // this.llm now shares its engine with (see the one-brain fix) -- not a
-        // second, disconnected LLM instance.
+        // section. Routed through getNeuroclawSystem()'s singleton, the one
+        // real system this.llm now shares its engine with (see the one-brain
+        // fix) -- not a second, disconnected LLM instance.
+        //
+        // predictorMode used to live here too (word-vs-code predictor choice
+        // for NeuroclawLLM's OLD char-sampler fallback). "Remember to delete
+        // every AI that is not the OneBrain" removed that fallback (and the
+        // separate codeTrainer it toggled between) entirely -- there is no
+        // second predictor left to choose between, so the setting is gone
+        // rather than left pointing at nothing.
         //
         // "add quantum interference always on" -- quantumEnabled is now
         // vestigial: isQuantumEnabled() always returns true and
         // setQuantumEnabled() is a no-op (see unified-brain.ts), so POSTing
-        // either value here has no effect and GET always reports true.
+        // it has no effect and GET always reports true.
         if (pathname === '/api/settings/brain' && method === 'GET') {
             try {
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const system = await getNeuroclawSystem();
                 this.sendJson(res, {
                     quantumEnabled: system.llm.isQuantumEnabled(),
-                    predictorMode: system.llm.getPredictorMode(),
                 });
             }
             catch (err) {
@@ -1757,12 +2394,8 @@ export class WebServer {
                 if (typeof body?.quantumEnabled === 'boolean') {
                     system.llm.setQuantumEnabled(body.quantumEnabled);
                 }
-                if (body?.predictorMode === 'word' || body?.predictorMode === 'code') {
-                    system.llm.setPredictorMode(body.predictorMode);
-                }
                 this.sendJson(res, {
                     quantumEnabled: system.llm.isQuantumEnabled(),
-                    predictorMode: system.llm.getPredictorMode(),
                 });
             }
             catch (err) {
@@ -1920,6 +2553,55 @@ export class WebServer {
             }
             catch (err) {
                 this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
+        // ── Mods: the one store kind that writes onto this device's real files ──
+        // Every other kind's "Install" copies into an isolated, harmless folder
+        // (see the block above). A mod's whole point is to overwrite an actual
+        // file in this machine's own working copy, so it gets its own apply/
+        // revert verbs rather than sharing install/uninstall -- the generic pair
+        // never touches anything outside extension-builder/installed/, and
+        // reusing that language for a mod would say something false about what
+        // is about to happen. See mod-apply.ts for the safety properties this
+        // rests on (dotfile targets are refused at publish time, and every
+        // apply is backed up so revert can undo it).
+        if (pathname === '/api/store/mods/applied' && method === 'GET') {
+            try {
+                const { listAppliedMods, outdatedAppliedMods } = await import('../models && skills/core/mod-apply.js');
+                this.sendJson(res, {
+                    applied: listAppliedMods(),
+                    outdated: outdatedAppliedMods().map(o => ({
+                        name: o.record.name,
+                        appliedVersion: o.record.appliedVersion,
+                        publishedVersion: o.published.updatedAt,
+                    })),
+                });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
+        const modApplyMatch = pathname.match(/^\/api\/store\/mods\/([A-Za-z0-9._-]+)\/apply$/);
+        if (modApplyMatch && method === 'POST') {
+            const { applyMod, ModApplyError } = await import('../models && skills/core/mod-apply.js');
+            try {
+                this.sendJson(res, await applyMod(modApplyMatch[1]), 201);
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, err instanceof ModApplyError ? 400 : 500);
+            }
+            return;
+        }
+        const modRevertMatch = pathname.match(/^\/api\/store\/mods\/([A-Za-z0-9._-]+)\/revert$/);
+        if (modRevertMatch && method === 'POST') {
+            const { revertMod, ModApplyError } = await import('../models && skills/core/mod-apply.js');
+            try {
+                this.sendJson(res, revertMod(modRevertMatch[1]));
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, err instanceof ModApplyError ? 400 : 500);
             }
             return;
         }
@@ -2093,8 +2775,58 @@ export class WebServer {
         // Reading is open (it is this instance's own knowledge, and the wiki and
         // store are readable too). Forgetting is NOT -- it is destruction, and it
         // is gated for the same reason wiki and store deletion are.
+        // ── About you / Goals: what the user tells it directly ──────────────
+        // GET /api/profile, POST /api/profile/{about|goals} {text},
+        // PATCH /api/profile/{about|goals}/:id {text?, done?},
+        // DELETE /api/profile/{about|goals}/:id
+        if (pathname === '/api/profile' && method === 'GET') {
+            try {
+                const { store } = await profileWithMemory();
+                this.sendJson(res, store.get());
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        const profileMatch = pathname.match(/^\/api\/profile\/(about|goals)(?:\/([A-Za-z0-9-]+))?$/);
+        if (profileMatch) {
+            const list = profileMatch[1];
+            const id = profileMatch[2];
+            try {
+                const { store, memory } = await profileWithMemory();
+                if (!id && method === 'POST') {
+                    const body = await this.parseBody(req);
+                    if (typeof body?.text !== 'string' || !body.text.trim()) {
+                        this.sendJson(res, { error: 'Missing text field' }, 400);
+                        return;
+                    }
+                    this.sendJson(res, store.add(list, body.text, memory), 201);
+                    return;
+                }
+                if (id && method === 'PATCH') {
+                    const body = await this.parseBody(req);
+                    const updated = store.update(list, id, {
+                        text: typeof body?.text === 'string' ? body.text : undefined,
+                        done: typeof body?.done === 'boolean' ? body.done : undefined,
+                    }, memory);
+                    this.sendJson(res, updated ?? { error: 'Not found' }, updated ? 200 : 404);
+                    return;
+                }
+                if (id && method === 'DELETE') {
+                    const removed = store.remove(list, id, memory);
+                    this.sendJson(res, { removed }, removed ? 200 : 404);
+                    return;
+                }
+            }
+            catch (err) {
+                this.sendError(res, err);
+                return;
+            }
+        }
         if (pathname === '/api/memory' && method === 'GET') {
             try {
+                await profileWithMemory();
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const system = await getNeuroclawSystem();
                 const q = parsedUrl.searchParams.get('q')?.trim() ?? '';
@@ -2509,6 +3241,42 @@ export class WebServer {
             this.sendJson(res, result, result.ok ? 200 : 409);
             return;
         }
+        // GET /api/activity -- what the agent has been doing, newest first:
+        // chat turns (from the activity log above) and every tool call the tool
+        // layer has recorded, with its arguments and result. Read-only.
+        if (pathname === '/api/activity' && method === 'GET') {
+            try {
+                const events = activityLog.map(e => ({ ...e }));
+                let toolsEnabled = false;
+                try {
+                    const { getNeuroclawSystem } = await import('../src/index.js');
+                    const layer = (await getNeuroclawSystem()).toolNeurons;
+                    if (layer) {
+                        toolsEnabled = true;
+                        layer.history().forEach((call, i) => {
+                            events.push({
+                                id: `tool-${i}-${call.startedAt}`,
+                                kind: 'tool',
+                                status: call.ok ? 'ok' : 'error',
+                                title: `${call.plugin}.${call.tool}`,
+                                origin: call.origin,
+                                args: clip(call.args),
+                                detail: call.ok ? clip(call.result) : call.error,
+                                startedAt: call.startedAt,
+                                endedAt: call.endedAt,
+                            });
+                        });
+                    }
+                }
+                catch { /* no tool layer is not an error; chat activity still shows */ }
+                events.sort((a, b) => Number(b.startedAt) - Number(a.startedAt));
+                this.sendJson(res, { toolsEnabled, events: events.slice(0, ACTIVITY_MAX) });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
         if (pathname === '/api/chat' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
@@ -2531,7 +3299,19 @@ export class WebServer {
                         .filter((h) => typeof h?.role === 'string' && typeof h?.content === 'string')
                         .map(h => `${h.role}: ${h.content}`)
                     : undefined;
-                const response = await this.runner.generate(message, history);
+                // What the user told it about themselves and their goals, back in
+                // memory after a restart before the first reply needs it.
+                await profileWithMemory().catch(() => undefined);
+                const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+                let response;
+                try {
+                    response = await this.runner.generate(message, history);
+                }
+                catch (err) {
+                    activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+                    throw err;
+                }
+                activityEnd(activity, true, clip(response));
                 // What the turn actually used, for the three-dots panel. Read off the
                 // system rather than rebuilt here: a details panel assembled from
                 // guesses about what probably ran looks like evidence and is not.
@@ -2597,7 +3377,19 @@ export class WebServer {
                 const { getBot } = await import('../src/server/bot-service.js');
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const bot = await getBot(await getNeuroclawSystem());
-                const response = await bot.processMessage(message);
+                // What the user told it about themselves and their goals, back in
+                // memory after a restart before the first reply needs it.
+                await profileWithMemory().catch(() => undefined);
+                const activity = activityStart(`Chat: ${clip(message, 80)}`, clip(message));
+                let response;
+                try {
+                    response = await bot.processMessage(message);
+                }
+                catch (err) {
+                    activityEnd(activity, false, err instanceof Error ? err.message : String(err));
+                    throw err;
+                }
+                activityEnd(activity, true, clip(response.message));
                 this.sendJson(res, {
                     message: response.message,
                     confidence: response.confidence,
@@ -2909,7 +3701,11 @@ export class WebServer {
                     return;
                 }
                 const text = body?.text ?? '';
-                await this.runner.getLLM().trainOnText(text);
+                // learnText() (not trainOnText()): trainOnText() rebuilds the model
+                // from only this one string, erasing every fact taught by an
+                // earlier POST here. See NeuroclawTrainer.learnText() and
+                // src/index.ts's learn().
+                await this.runner.getLLM().learnText(text);
                 const stats = this.runner.getLLM().getStats();
                 this.sendJson(res, { ok: true, samplesProcessed: stats.samplesProcessed });
             }
@@ -3034,12 +3830,10 @@ export class WebServer {
             }
             return;
         }
-        // GET /api/wiki/:name — one page's raw markdown. `name` must be a bare
-        // filename stem (letters/digits/-/_ only, matching the page names
-        // [[WikiLink]] syntax already uses throughout wiki/*.md) so this can
-        // never escape the wiki/ directory — no `.`/`/` is accepted at all,
+        // GET /api/wiki/:name — one page's raw markdown. `name` can be nested
+        // paths like "getting-started/installation" (letters/digits/-/_/\/ only),
         // which rules out both `..` traversal and an absolute-path override.
-        const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)$/);
+        const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)$/);
         if (wikiMatch && method === 'GET') {
             const local = readWikiPage(wikiMatch[1]);
             if (local) {
@@ -3081,7 +3875,7 @@ export class WebServer {
         // taken of this bot-published page (before each overwrite/edit/delete),
         // oldest first, so a caller can see what's recoverable before choosing
         // one to restore.
-        const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)\/backups$/);
+        const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/backups$/);
         if (backupsMatch && method === 'GET') {
             try {
                 const backups = listWikiBackups(backupsMatch[1]);
@@ -3097,7 +3891,7 @@ export class WebServer {
         // of its own backups (body: { timestamp }). A write, not a read, so
         // (unlike the routes above) this still goes through the normal
         // remoteAccessLock gate.
-        const restoreMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)\/restore$/);
+        const restoreMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/restore$/);
         if (restoreMatch && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
@@ -3307,7 +4101,7 @@ export class WebServer {
         const skillUploadExtraFilesMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files$/);
         if (skillUploadExtraFilesMatch && method === 'POST') {
             try {
-                const body = await this.parseBody(req);
+                const body = await this.parseBody(req, Number.POSITIVE_INFINITY);
                 if (!Array.isArray(body?.files) || body.files.length === 0) {
                     this.sendJson(res, { error: 'Expected a non-empty "files" array of { filename, content }' }, 400);
                     return;
@@ -3334,7 +4128,15 @@ export class WebServer {
         const skillUploadExtraFileMatch = pathname.match(/^\/api\/skill-uploads\/([A-Za-z0-9_-]+)\/files\/([A-Za-z0-9_.-]+)$/);
         if (skillUploadExtraFileMatch && method === 'GET') {
             const [, name, filename] = skillUploadExtraFileMatch;
-            const file = readSkillUploadExtraFile(name, decodeURIComponent(filename));
+            // A package may have been published from another device. Pull the
+            // package from the shared store branch before reading the requested
+            // file, so large extra files are available remotely without requiring
+            // every device to download every payload at boot.
+            const requestedFilename = decodeURIComponent(filename);
+            if (!readSkillUploadExtraFile(name, requestedFilename)) {
+                await pullSkillUploadPackage(name).catch(() => { });
+            }
+            const file = readSkillUploadExtraFile(name, requestedFilename);
             if (!file) {
                 this.sendJson(res, { error: `No extra file named "${filename}" in "${name}"` }, 404);
                 return;
@@ -3600,6 +4402,184 @@ export class WebServer {
         // see reasoning-engine.ts) instead of the editor's Save/Install buttons
         // being a complete dead end: previously they only reported a byte count
         // and threw the built project away, wired to neither disk nor chat.
+        // POST /api/phone-sync -- the phone app is offline-first: its own copy of
+        // the network answers, and this is how it and the PC catch up.
+        //   phone -> PC: { turns: [{ message, reply, at }], teach: [{ question,
+        //     text, answer }], oneBrainVersion } -- conversations go into the
+        //     conversation log the PC's learning agent trains from and into
+        //     memory; yes/no examples are taught to the PC's doorway.
+        //   PC -> phone: the PC's OneBrain (only when newer than the phone's
+        //     oneBrainVersion) and the PC's full yes/no state after the merge.
+        // Photos travel separately through POST /api/captures.
+        if (pathname === '/api/phone-sync' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req, 20 * 1024 * 1024);
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const { appendConversationTurn } = await import('../src/lib/conversation-log.js');
+                let turns = 0;
+                for (const t of Array.isArray(body?.turns) ? body.turns : []) {
+                    const message = String(t?.message ?? '').trim();
+                    if (!message)
+                        continue;
+                    const reply = String(t?.reply ?? '');
+                    appendConversationTurn(message, reply);
+                    system.memory.remember(`user: ${message}\nai: ${reply}`, { importance: 0.5, tags: ['chat-turn', 'phone'] });
+                    turns++;
+                }
+                const doorway = await this.yesNoDoorway();
+                let taught = 0;
+                for (const e of Array.isArray(body?.teach) ? body.teach : []) {
+                    if (!e?.question || !e?.text || typeof e.answer !== 'boolean')
+                        continue;
+                    doorway.teach(String(e.question), String(e.text), e.answer);
+                    taught++;
+                }
+                if (taught > 0)
+                    await this.saveYesNo(doorway);
+                // The PC's OneBrain: this install's own (what it has learned) if it
+                // has one, else the one bundled with the repo.
+                const { readOneBrain } = await import('../models && skills/onebrain-memory.js');
+                const own = readOneBrain(path.join(homedir(), '.neuroclaw', 'extensions'));
+                const bundled = readOneBrain(path.resolve(process.cwd(), 'models && skills'));
+                const pcOneBrain = own ?? bundled;
+                const version = pcOneBrain?.model?.modifiedAt ?? 0;
+                const phoneVersion = typeof body?.oneBrainVersion === 'number' ? body.oneBrainVersion : 0;
+                this.sendJson(res, {
+                    ok: true,
+                    received: { turns, taught },
+                    oneBrain: pcOneBrain && version > phoneVersion ? { version, model: JSON.stringify(pcOneBrain.model) } : null,
+                    yesNo: doorway.toJSON(),
+                    syncedAt: Date.now(),
+                });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        // POST /api/captures -- a photo taken on the phone app (tap-to-capture),
+        // kept as training data. JSON (like every POST here, for CSRF) carrying
+        // the image as base64: { image, mime?, note?, capturedAt? }. Saved on
+        // this machine only, under ~/.neuroclaw/captures/ (never the repo), as
+        // <time>.<ext> plus a <time>.json sidecar with the note and when it was
+        // taken. Behind the same login as everything else that writes.
+        // GET /api/captures lists what has been saved.
+        if (pathname === '/api/captures') {
+            try {
+                const dir = process.env.NEUROCLAW_CAPTURES_DIR ?? path.join(homedir(), '.neuroclaw', 'captures');
+                const { promises: fs } = await import('node:fs');
+                if (method === 'GET') {
+                    const files = await fs.readdir(dir).catch(() => []);
+                    const items = [];
+                    for (const f of files.filter((n) => n.endsWith('.json')).sort().reverse().slice(0, 200)) {
+                        try {
+                            items.push(JSON.parse(await fs.readFile(path.join(dir, f), 'utf8')));
+                        }
+                        catch { /* skip unreadable */ }
+                    }
+                    this.sendJson(res, { dir, count: items.length, captures: items });
+                    return;
+                }
+                if (method !== 'POST') {
+                    this.sendJson(res, { error: 'GET or POST' }, 405);
+                    return;
+                }
+                const body = await this.parseBody(req, 15 * 1024 * 1024);
+                const mime = String(body?.mime ?? 'image/jpeg');
+                const ext = { 'image/jpeg': 'jpg', 'image/png': 'png', 'image/webp': 'webp' }[mime];
+                if (!ext) {
+                    this.sendJson(res, { error: `unsupported image type ${mime}` }, 400);
+                    return;
+                }
+                const bytes = Buffer.from(String(body?.image ?? ''), 'base64');
+                if (bytes.length === 0) {
+                    this.sendJson(res, { error: 'image (base64) is required' }, 400);
+                    return;
+                }
+                await fs.mkdir(dir, { recursive: true });
+                const capturedAt = typeof body?.capturedAt === 'number' ? body.capturedAt : Date.now();
+                const id = `${capturedAt}-${Math.random().toString(36).slice(2, 8)}`;
+                await fs.writeFile(path.join(dir, `${id}.${ext}`), bytes);
+                const record = { id, file: `${id}.${ext}`, mime, bytes: bytes.length, note: String(body?.note ?? '').slice(0, 2000), capturedAt, receivedAt: Date.now() };
+                await fs.writeFile(path.join(dir, `${id}.json`), JSON.stringify(record, null, 2));
+                this.sendJson(res, { ok: true, ...record }, 201);
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        // Yes/no questions with a probability (models && skills/core/yes-no.ts):
+        //   GET  /api/yes-no        -- the questions taught so far
+        //   POST /api/yes-no/teach  -- { question, text, answer: boolean }
+        //   POST /api/yes-no/ask    -- { question, text } -> answer + probability
+        // Each question is a region of the one live mesh. What was taught is saved
+        // to ~/.neuroclaw/yes-no.json and restored into the mesh on first use.
+        if (pathname === '/api/yes-no' || pathname === '/api/yes-no/teach' || pathname === '/api/yes-no/ask') {
+            try {
+                const doorway = await this.yesNoDoorway();
+                if (pathname === '/api/yes-no' && method === 'GET') {
+                    this.sendJson(res, { questions: doorway.questions() });
+                    return;
+                }
+                if (method !== 'POST') {
+                    this.sendJson(res, { error: 'POST required' }, 405);
+                    return;
+                }
+                const body = await this.parseBody(req);
+                const question = String(body?.question ?? '').trim();
+                const text = String(body?.text ?? '');
+                if (!question || !text) {
+                    this.sendJson(res, { error: 'question and text are required' }, 400);
+                    return;
+                }
+                if (pathname === '/api/yes-no/teach') {
+                    if (typeof body?.answer !== 'boolean') {
+                        this.sendJson(res, { error: 'answer must be true or false' }, 400);
+                        return;
+                    }
+                    const result = doorway.teach(question, text, body.answer);
+                    await this.saveYesNo(doorway);
+                    this.sendJson(res, { ok: true, ...result });
+                    return;
+                }
+                this.sendJson(res, doorway.ask(question, text));
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
+        // POST /api/extension/live-sync -- the Extension Builder building
+        // directly into the network. The builder sends its project after each
+        // edit; this brings the skill's region of the ONE live mesh in line with
+        // it (updateNetSkill: new neurons grafted, edited ones re-placed, removed
+        // ones detached, connections rewritten) and makes it routable. Nothing is
+        // written to disk here -- Install (/api/extension/register) still saves
+        // the project; this is what makes the network change as you build.
+        if (pathname === '/api/extension/live-sync' && method === 'POST') {
+            try {
+                const body = await this.parseBody(req);
+                const name = (body?.name ?? '').trim();
+                if (!name) {
+                    this.sendJson(res, { ok: false, error: 'name is required' }, 400);
+                    return;
+                }
+                const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const engine = system.pipeline.ensureBrain();
+                const { updateNetSkill } = await import('../models && skills/core/net-skill-graft.js');
+                const result = updateNetSkill(engine, name, neurons);
+                this.registerSkillForRouting(system, name, neurons);
+                this.sendJson(res, { ok: true, ...result });
+            }
+            catch (err) {
+                this.sendError(res, err);
+            }
+            return;
+        }
         if (pathname === '/api/extension/register' && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
@@ -3629,8 +4609,9 @@ export class WebServer {
         // (HyperDimensionalEngine.trainDefinitions() in
         // "models && skills/core/onebrain.ts"): this one does genuine
         // torch.autograd/torch.optim gradient descent via a Python subprocess
-        // (extension-builder/pytorch_trainer.py), against the PyTorch source
-        // vendored under extension-builder/PyTorch for local reference/build.
+        // (extension-builder/pytorch_trainer.py), against whatever `torch` is
+        // installed in this machine's Python environment (`pip install torch`,
+        // per the root requirements.txt) -- no PyTorch source is vendored here.
         //
         // Deliberately NOT wired into extension-builder/builder.js: that file is
         // loaded directly in the browser (see its own header comment) with no
@@ -3833,7 +4814,7 @@ export class WebServer {
         // mechanism as extension-builder/merge-networks.mjs, live instead of
         // a one-time build step -- see that file's doc comment for why this
         // only makes sense for PyTorch-trained (@definishon/scripting)
-        // neurons, never Code-to-Net's byte-chain ones (moby/Debian), which
+        // neurons, never Code-to-Net's byte-chain ones (project source/config), which
         // have no trained weights to average in the first place.
         if (pathname === '/api/extension/merge-with-saved' && method === 'POST') {
             try {
@@ -3955,6 +4936,41 @@ export class WebServer {
         // ?path= chooses where in the archive it lands (default input/), so the
         // same route takes a recording, an image, or anything else without
         // needing a variant per kind of file.
+        // GET /api/tool-neurons -- the network's other outputs and inputs.
+        //
+        // Which neuron each terminal and desktop tool is, which pair of neurons
+        // each plugin's results come back in on, and what has fired and been
+        // called. Read-only: nothing here drives the network.
+        if (pathname === '/api/tool-neurons' && method === 'GET') {
+            try {
+                const { getNeuroclawSystem } = await import('../src/index.js');
+                const system = await getNeuroclawSystem();
+                const layer = system.toolNeurons;
+                if (!layer) {
+                    this.sendJson(res, { enabled: false, reason: process.env.NEUROCLAW_TOOL_NEURONS === '0' ? 'NEUROCLAW_TOOL_NEURONS=0' : 'not attached' });
+                    return;
+                }
+                this.sendJson(res, {
+                    enabled: true,
+                    ...layer.layout(),
+                    // Every tool's score against the network as it stands -- read-only.
+                    decision: layer.decide(),
+                    waiting: layer.fired(),
+                    stats: layer.getStats(),
+                    recent: layer.history().slice(-20).map(call => ({
+                        tool: `${call.plugin}.${call.tool}`,
+                        origin: call.origin,
+                        ok: call.ok,
+                        error: call.error,
+                        at: call.endedAt,
+                    })),
+                });
+            }
+            catch (err) {
+                this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+            }
+            return;
+        }
         if (pathname === '/api/zip-loop/file' && method === 'POST') {
             // "zip loop no file size limit" -- no ceiling here either. Used to
             // match the transcription route's 25MB cap; removed so a large
@@ -4109,9 +5125,9 @@ export class WebServer {
                     }, 409);
                     return;
                 }
-                const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
+                const { ZipLoopInterface, zipLoopIdsFor } = await import('../models && skills/core/onebrain.js');
                 const { runUntilStoppedAsync, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
-                const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+                const zip = new ZipLoopInterface(engine, zipLoopIdsFor(engine));
                 // Capped hard. One settle per bit means an unbounded ceiling here
                 // would be a request that never returns.
                 const maxTicks = Math.min(Math.max(1, Number(body?.maxTicks) || 512), 4096);
@@ -4130,6 +5146,12 @@ export class WebServer {
                         resumed = engine.restoreNetworkState(saved);
                 }
                 const result = await runUntilStoppedAsync(zip, { files, binary }, { quietTicks, maxTicks });
+                // The network's other outputs. Any terminal or desktop tool neuron that
+                // fired during the run is a call, and its arguments are in the run's own
+                // output archive (plugins/<plugin>/<tool>.json) -- the other side of the
+                // same Zip Loop. Results go back in on each plugin's own input neurons,
+                // queued behind the doorway lock, so this response does not wait for them.
+                const toolCalls = system.toolNeurons ? await system.toolNeurons.step(result.tree) : [];
                 // When it stops it saves the input of every neuron -- whatever the
                 // reason it stopped. A run cut off at the ceiling has MORE worth
                 // keeping than one that ended tidily, since its state is the only
@@ -4162,6 +5184,11 @@ export class WebServer {
                     stopReport: result.stopReport,
                     stopReportFile: STOP_REPORT_FILE,
                     resumed,
+                    toolCalls: toolCalls.map(call => ({
+                        tool: `${call.plugin}.${call.tool}`,
+                        ok: call.ok,
+                        error: call.error,
+                    })),
                 });
             }
             catch (err) {
@@ -4200,14 +5227,14 @@ export class WebServer {
                 }
                 const { getNeuroclawSystem } = await import('../src/index.js');
                 const system = await getNeuroclawSystem();
-                const moe = system.pluginRegistry.getMoE?.();
+                const skillMesh = system.pluginRegistry.getSkillMesh?.();
                 // One entry per neuron, so a change in neuron count changes the digest
                 // too -- a freeze that only noticed renames would miss the failure that
                 // actually matters, which is something quietly growing the main mesh.
                 const view = {
                     neuronNames: () => {
                         const names = [];
-                        for (const expert of moe?.listExperts() ?? []) {
+                        for (const expert of skillMesh?.listSkills() ?? []) {
                             for (let i = 0; i < expert.neuronIds.length; i++)
                                 names.push(expert.name);
                         }
@@ -4280,11 +5307,11 @@ export class WebServer {
                 // not merely intended.
                 const { getNeuroclawSystem: loadSystem } = await import('../src/index.js');
                 const system = await loadSystem();
-                const moe = system.pluginRegistry.getMoE?.();
+                const skillMesh = system.pluginRegistry.getSkillMesh?.();
                 const mainModel = {
                     neuronNames: () => {
                         const names = [];
-                        for (const expert of moe?.listExperts() ?? []) {
+                        for (const expert of skillMesh?.listSkills() ?? []) {
                             for (let i = 0; i < expert.neuronIds.length; i++)
                                 names.push(expert.name);
                         }
@@ -4555,6 +5582,8 @@ export class WebServer {
             }
             return;
         }
+        if (await serveDashboard(req, res, pathname))
+            return;
         this.sendJson(res, { error: 'Not Found' }, 404);
     }
 }

@@ -137,6 +137,8 @@ class UnifiedBrain:
         context_capacity: int = 32,
         mistake_reward_threshold: float = 0.3,
         mistake_repeat_penalty: float = -1.0,
+        parallel_workers: int = 0,
+        parallel_min_neurons: int = 32,
     ):
         self.mesh = NeuralMesh(
             n_neurons=n_neurons,
@@ -146,6 +148,8 @@ class UnifiedBrain:
             continuous=True,
             seed=seed,
             auto_route=True,
+            parallel_workers=parallel_workers,
+            parallel_min_neurons=parallel_min_neurons,
         )
 
         # Spec Part 4 section 39: name expert groups (e.g. "coding",
@@ -214,6 +218,12 @@ class UnifiedBrain:
         self._hive_mind: Optional[HiveMind] = None
 
         self._sync_vale_to_mesh()
+
+    def close(self) -> None:
+        """Shut down the mesh's parallel worker pool, if `parallel_workers`
+        ever created one (see NeuralMesh.close). No-op otherwise; safe to
+        call more than once."""
+        self.mesh.close()
 
     # -- Skills / extension points -----------------------------------
 
@@ -820,7 +830,8 @@ class UnifiedBrain:
 # Convenience factory functions
 def create_brain(
     config_type: str = "default",
-    expert_names: Optional[List[str]] = None
+    expert_names: Optional[List[str]] = None,
+    parallel_workers: int = 0,
 ) -> "UnifiedBrain":
     """
     Create a UnifiedBrain with preset configurations.
@@ -828,6 +839,14 @@ def create_brain(
     Args:
         config_type: "tiny", "small", "default", "large", or "massive"
         expert_names: Optional names for expert groups
+        parallel_workers: >0 distributes each settle tick's per-neuron
+            update across this many subprocesses once the mesh has enough
+            active neurons to be worth it (see NeuralMesh's class
+            docstring / parallel_min_neurons). 0 (default) is the
+            original, single-process behavior -- worth considering for
+            "massive" (256 neurons) or a custom n_neurons well above that,
+            where the per-tick O(n_neurons^2) work is large enough to
+            outweigh the subprocess coordination cost.
 
     Returns:
         Configured UnifiedBrain instance
@@ -845,6 +864,7 @@ def create_brain(
         **cfg,
         expert_names=expert_names,
         hd_dimensions=cfg["n_dimensions"] * 32,  # Scale HD dims with neural dims
+        parallel_workers=parallel_workers,
     )
 
 

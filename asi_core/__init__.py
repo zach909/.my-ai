@@ -121,6 +121,14 @@ from .background_quantization import (
     BillingSystem,
 )
 
+from .endurance_training import (
+    EnduranceTrainer,
+    EnduranceReport,
+    Task,
+    TaskStats,
+    build_task_library,
+)
+
 __version__ = "0.1.0"
 __all__ = [
     # Neural Mesh
@@ -214,4 +222,10 @@ __all__ = [
     # Background Quantization
     "Quantizer",
     "BillingSystem",
+    # Endurance Training
+    "EnduranceTrainer",
+    "EnduranceReport",
+    "Task",
+    "TaskStats",
+    "build_task_library",
 ]

@@ -6,7 +6,7 @@
 
 Every 30 minutes by default (configurable via `NEUROCLAW_SELF_IMPROVE_INTERVAL_MS`), the loop:
 
-1. **Picks a target** from a fixed whitelist of this project's own skill-training scripts — currently `build-physics-chemistry-network.mjs`, `train-coding-skills.mjs`, `build-main-network.mjs` (moby/cmudict), `build-self-knowledge-network.mjs` (the wiki + session scripts), and `build-capability-exam-network.mjs` (see the capability exam section below). This is real training, the same genuine `torch.autograd` gradient descent used everywhere else in this project — never a simulated or fabricated result.
+1. **Picks a target** from a fixed whitelist of this project's own skill-training scripts — currently `build-physics-chemistry-network.mjs`, `train-coding-skills.mjs`, `build-main-network.mjs` (project-source/pronunciations), `build-self-knowledge-network.mjs` (the wiki + session scripts), and `build-capability-exam-network.mjs` (see the capability exam section below). This is real training, the same genuine `torch.autograd` gradient descent used everywhere else in this project — never a simulated or fabricated result.
 2. **Mutates its hyperparameters** — an evolution-strategy-style perturbation of the current best-known epochs/learning-rate/tolerance, the same algorithm family as `trainDefinitionsRandomSearch()` elsewhere in this repo.
 3. **Trains the candidate in a sandbox** — a throwaway `git worktree` checked out fresh from the current commit, with its own freshly built `dist/`. The live server's own working directory is never touched.
 4. **Judges the result** three ways, all required:
@@ -106,12 +106,28 @@ Both are trained from real local data, never fabricated. The result is written t
 
 The 20-minute loop above is a catch-up fallback now, not the primary path. `src/lib/conversation-learning-trigger.ts` fires a real training cycle **right after every real exchange**, called directly from `bot-service.ts` the moment a response is logged — you don't wait for the timer.
 
-- **Fire-and-forget**: the chat response you already got back is never delayed by this. `triggerConversationLearning()` runs the cycle in the background and swallows any failure (missing `python3`/`torch`, disk issue) rather than surfacing it to you — same graceful-degradation rule as every other optional dependency in this project.
+- **Fire-and-forget**: the chat response you already got back is never delayed by this. `triggerConversationLearning()` runs the cycle in the background and swallows any failure (e.g. a disk issue) rather than surfacing it to you. This cycle trains via `ExtensionBuilder.train()`'s JS delta rule — no PyTorch, no Python process, no install step — so it runs automatically out of the box; nothing here is an optional dependency to begin with.
 - **Two locks, because two different processes can both try to train at once**: an in-process `learningInFlight` flag skips a trigger fired while this server's own last cycle is still running, and a real cross-process file lock (`extension-builder/conversation-learning.lock`, gitignored, `acquireLock()`/`releaseLock()` in `scripts/conversation-learning-agent.mjs`) stops the immediate trigger and the separate 20-minute background process from training at the same moment. A lock older than 10 minutes is treated as abandoned and reclaimed automatically, so a crashed process can never wedge learning shut. Either way, nothing is lost — `state.lastTrainedTurnAt` means the next cycle that *does* get the lock picks up whatever a skipped one missed.
 
 ### Personalized to you
 
 There are no accounts and no multi-tenant separation in this project (see [[Privacy-Policy]]) — one install has exactly one conversation log. So everything this agent trains is shaped only by whoever actually talks to *this* instance, on *this* machine. That's real personalization for a single local install, not a shared/generic model: nobody else's conversations ever touch your trained state, and yours never touch anyone else's.
+
+## Shared mesh learning (`models && skills/core/shared-mesh-sync.ts`) — opt-in
+
+"When one person's agent learns, everyone's agent learns" — done with **weight changes, not conversations**.
+
+**What the mesh learns from.** Everything the agent sees except the web, through one entry point, `UnifiedBrain.learnFrom(text, source)`: your messages and the agent's replies on every chat (not only the `recall` path — previously the default `solve` path never reached the mesh at all), corrections, and the prompting skills that apply to a message. A source of `"web"` is refused outright, and a reply built from a web-sourced prompting skill or the research/browser plugins (`metadata.usedWeb`) is not learned from — only your own message is. Feeding costs the same as it always has (about a second per byte on the live mesh, one-deep queue, newest wins), so under heavy use some inputs are superseded before they are streamed.
+
+**Kept across restarts (always).** Before this, the mesh's learned weights were never saved — every restart threw its learning away. Now every install loads one committed starting network, `extension-builder/shared-mesh/base.json` (every install must start from the same weights, or neuron 5 on one machine has nothing to do with neuron 5 on another), then adds its own saved learning from the gitignored `extension-builder/shared-mesh-local/`. Saved every `NEUROCLAW_SHARED_LEARNING_INTERVAL_MS` (30 min).
+
+**Shared (only with `NEUROCLAW_SHARED_LEARNING=1`, off by default).**
+- Each sync pushes this install's own weight change — int8-quantised and gzipped, learned parameters only (no activations), for the 64-neuron block every install shares (neurons grafted by skills later stay local) — to `extension-builder/shared-mesh/deltas/<random-id>.json` on `main`. The push runs in a detached `scripts/shared-mesh-publish.mjs` process so the server never blocks on git.
+- Other installs' delta files arrive through the normal git auto-pull and are merged by federated averaging: `core = base + own + Σ others / (installs + 1)`. What an install publishes is always `core − base − what it absorbed`, so nobody re-publishes anyone else's learning.
+- Files from other installs are untrusted: wrong base, wrong shape, non-finite values, or steps bigger than `MAX_DELTA_ABS` are ignored.
+- Only installs with push access to this repository can send; everyone who opts in can receive.
+
+`NEUROCLAW_SHARED_MESH=0` turns the whole thing off (no base load, no local persistence). `node scripts/shared-mesh-base.mjs --force` regenerates the base — which invalidates every published delta, so only do it to start over.
 
 ## Peer sync (`scripts/peer-sync.mjs`)
 

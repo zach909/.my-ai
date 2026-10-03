@@ -2,11 +2,12 @@
  * Tests for the local-only conversation-learning pipeline:
  * src/lib/conversation-log.ts (the real append/read of local turns) and
  * scripts/conversation-learning-agent.mjs's pure sample-building logic.
- * The real end-to-end training (real pytorch_trainer.py, real
- * convergence) was verified manually via `node
- * scripts/conversation-learning-agent.mjs --once` against a real local
- * log before shipping -- 5/5 samples genuinely converged -- same
- * precedent as this session's other autonomous-agent scripts.
+ * The real end-to-end training (ExtensionBuilder.train()'s JS delta
+ * rule -- no PyTorch, no Python process) was verified manually via
+ * `node scripts/conversation-learning-agent.mjs --once` against a real
+ * local log, with no torch installed in that environment, before
+ * shipping -- 9/9 samples genuinely converged -- same precedent as this
+ * session's other autonomous-agent scripts.
  */
 
 import { mkdtempSync, rmSync, appendFileSync, existsSync, readFileSync, utimesSync } from 'node:fs';

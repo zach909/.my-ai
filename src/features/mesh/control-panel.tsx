@@ -17,7 +17,7 @@ import {
   Zap,
   Brain,
   Activity,
-} from 'lucide-react';
+} from '@/components/icons';
 import type { MeshStats, Neuron } from '@/features/mesh/types';
 
 // ─── Stats Panel ────────────────────────────────────────────────────────────

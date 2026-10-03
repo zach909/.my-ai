@@ -26,13 +26,11 @@
  * safety that could fail to cover the first.
  */
 
-import { ZipLoopInterface, type HyperDimensionalEngine, type ZipLoopNeuronIds } from "./onebrain.js";
+import { ZipLoopInterface, zipLoopIdsFor, type HyperDimensionalEngine, type ZipLoopNeuronIds } from "./onebrain.js";
 import { ZIP_FOLDERS, type ZipTree, DEFAULT_HALT, runUntilStoppedAsync } from "./zip-halt.js";
 import { tokenSimilarity } from "./prediction-engine.js";
 import type { DoorwayLock } from "./doorway-lock.js";
 
-/** Same ids every other zip-loop caller in this codebase uses for the live mesh. */
-export const DEFAULT_ZIP_IDS: ZipLoopNeuronIds = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 };
 
 /** Where a prediction is packed for the mesh to read back later. */
 const PREDICT_FILE = `${ZIP_FOLDERS.prompt}predict-next-user-message.txt`;
@@ -68,12 +66,12 @@ export class ContinuousLearner {
    * @param lock  PromptMeshFeed's own DoorwayLock, shared rather than
    *              duplicated -- see this file's own doc comment for why.
    * @param ids   Zip-loop bit neuron ids for the engine passed into
-   *              onUserMessage(). Same default every other caller in this
-   *              codebase uses for the live mesh.
+   *              onUserMessage(). Defaults to zipLoopIdsFor(engine), the
+   *              ids every other caller uses for the live mesh.
    */
   constructor(
     private readonly lock: DoorwayLock,
-    private readonly ids: ZipLoopNeuronIds = DEFAULT_ZIP_IDS,
+    private readonly ids?: ZipLoopNeuronIds,
   ) {}
 
   /** What the mesh currently expects the user to say next, if anything has been predicted yet. */
@@ -130,7 +128,7 @@ export class ContinuousLearner {
 
   private async predictNext(engine: HyperDimensionalEngine, context: string): Promise<string> {
     return this.lock.run(async () => {
-      const zip = new ZipLoopInterface(engine, this.ids);
+      const zip = new ZipLoopInterface(engine, this.ids ?? zipLoopIdsFor(engine));
       const tree: ZipTree = { files: { [PREDICT_FILE]: context } };
       const result = await runUntilStoppedAsync(
         zip,

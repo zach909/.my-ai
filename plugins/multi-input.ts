@@ -2,6 +2,7 @@ import { execFileSync } from "node:child_process";
 import type { PluginDefinition } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
 import { MultiDesktopManager } from "../interface/multi-desktop.js";
+import { X11 } from "../models && skills/core/desktop/x11.js";
 
 export class MultiInputPlugin extends BasePlugin {
   private desktopManager: MultiDesktopManager;
@@ -258,11 +259,9 @@ export class MultiInputPlugin extends BasePlugin {
       const dev = this.desktopManager.getVirtualDevices().find(d => d.type === 'mouse');
       if (dev) {
         try {
-          execFileSync("xdotool", ["mousemove", String(Math.round(x)), String(Math.round(y))], {
-            timeout: 2000,
-            env: { ...process.env, DISPLAY: ":0" },
-            stdio: "ignore"
-          });
+          // The display's own protocol, not a helper program. The ":0" fallback
+          // is what this call always assumed.
+          await X11.with(c => c.movePointer(x, y), process.env.DISPLAY || ":0");
         } catch { }
       }
     }
@@ -274,12 +273,7 @@ export class MultiInputPlugin extends BasePlugin {
         const safe = key.replace(/[^a-zA-Z0-9 ]/g, "").toLowerCase();
         if (!safe) return;
         if (safe.length > 32) return;
-        const keyArg = safe === " " ? "space" : safe;
-        execFileSync("xdotool", ["key", keyArg], {
-          timeout: 2000,
-          env: { ...process.env, DISPLAY: ":0" },
-          stdio: "ignore"
-        });
+        await X11.with(c => c.typeText(safe, 0), process.env.DISPLAY || ":0");
       } catch { }
     }
   }

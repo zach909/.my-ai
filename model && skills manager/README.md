@@ -337,13 +337,6 @@ Each `.pt` checkpoint stores the full `ModelConfig`, so `chat.py` and
 `finetune.py` reconstruct the exact architecture (mesh, MoE, or elastic-mesh
 configuration) automatically — you only pass the `.pt` path.
 
-## Vendored local runtime
-
-Alongside the Python stack, this directory vendors the Ollama runtime (the Go
-tree: `main.go`, `llama/`, `server/`, …) as an optional local inference backend
-for pre-quantized GGUF models. It is upstream code — see its `docs/` folder for
-usage; it is not part of the mesh implementation.
-
 ## Notes
 
 - Use `--device cpu --no-amp` on CPU; `--device cuda --dtype bfloat16` on a

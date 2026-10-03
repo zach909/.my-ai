@@ -21,9 +21,10 @@ import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { Card } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
-import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus, MessageSquare, X, Download } from 'lucide-react'
+import { Send, Sparkles, EyeOff, History, Loader2, Copy, Check, Plus, MessageSquare, X, Download } from '@/components/icons'
+import { RingCrownBackground } from '@/components/RingCrownBackground'
 import { AgentPulse } from '@/components/agent-pulse'
-import { toast } from 'sonner'
+import { toast } from '@/lib/toast'
 import { VoiceRecorder } from '@/components/VoiceRecorder'
 import { AttachFile } from '@/components/AttachFile'
 import { EditMessage } from '@/components/EditMessage'
@@ -782,7 +783,7 @@ function ChatConversation({
 
   /**
    * Zip the message together with everything staged and send it through the
-   * two input neurons.
+   * Zip Loop's input neurons (0, 1 and send).
    *
    * Reported honestly: "ceiling" means the run was cut off at its tick budget
    * rather than the network deciding it was done, and one settle per BIT means
@@ -791,7 +792,7 @@ function ChatConversation({
    */
   /**
    * Zip `messageText` (and any files) together and send it through the two
-   * input neurons. Structured, not pre-formatted: an attached FILE gets a
+   * input neurons (0, 1 and send). Structured, not pre-formatted: an attached FILE gets a
    * full assistant bubble reporting the outcome (sendMessage below), while a
    * plain typed message gets a small caption under the user's own bubble --
    * two different presentations of the same underlying send.
@@ -866,11 +867,12 @@ function ChatConversation({
 
   return (
     <div
-      className="relative flex h-full flex-col"
+      className="relative isolate flex h-full flex-col"
       onDragOver={(e) => { e.preventDefault(); setDragOver(true) }}
       onDragLeave={(e) => { if (e.currentTarget === e.target) setDragOver(false) }}
       onDrop={handleDrop}
     >
+      <RingCrownBackground />
       {dragOver && (
         <div className="pointer-events-none absolute inset-0 z-10 flex animate-fade-in items-center justify-center rounded-lg border-2 border-dashed border-primary bg-primary/10 backdrop-blur-[1px]">
           <p className="rounded-md bg-background px-4 py-2 text-sm font-medium text-primary shadow-lg">

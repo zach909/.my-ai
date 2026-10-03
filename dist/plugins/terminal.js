@@ -20,8 +20,13 @@
  * implemented or registered.
  */
 import { exec, spawn, execFileSync } from "node:child_process";
+import { existsSync, mkdirSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs";
+import { dirname, join, resolve } from "node:path";
 import { promisify } from "node:util";
-import { BasePlugin } from "../plugin_manager/sdk.js";
+import { ToolPlugin } from "../plugin_manager/sdk.js";
+import { readItem, listCatalog, readItemFile } from "../models && skills/core/store.js";
+import { applyMod, revertMod, isApplied, listAppliedMods } from "../models && skills/core/mod-apply.js";
+import { sharedAccessManager } from "../models && skills/core/access-settings.js";
 const execAsync = promisify(exec);
 const FORK_BOMB = /:\(\)\{\s*[:\s|&]+\};:/;
 const DANGEROUS_SIMPLE = /\bmkfs|\bshutdown|\breboot|\bhalt|\bpoweroff/i;
@@ -48,7 +53,19 @@ export function isBlockedCommand(cmd) {
 }
 /** How much of a background terminal's output is kept readable, per stream. */
 const SESSION_BUFFER_CHARS = 64000;
-export class TerminalPlugin extends BasePlugin {
+/** Past this, read_file hands back the head and says it stopped. */
+const READ_FILE_LIMIT_CHARS = 256000;
+function textArg(args, name) {
+    const value = args[name];
+    if (typeof value !== "string")
+        throw new Error(`${name} must be text.`);
+    return value;
+}
+function optionalText(args, name) {
+    const value = args[name];
+    return typeof value === "string" && value.length > 0 ? value : undefined;
+}
+export class TerminalPlugin extends ToolPlugin {
     constructor(definition) {
         super(definition);
         this.bgProcs = [];
@@ -68,6 +85,171 @@ export class TerminalPlugin extends BasePlugin {
          * machine.
          */
         this.sessions = new Map();
+        this.defineTools();
+    }
+    /**
+     * The terminal's tools. Each is one output neuron in the network (see
+     * models && skills/core/tool-neurons.ts), so each is one nameable action.
+     *
+     * The file tools live here rather than only in the file-system plugin
+     * because a terminal session is where files get written in practice -- a
+     * build writes output, a script needs a config -- and "write a new file" is
+     * the action the network most needs as a single neuron of its own.
+     */
+    defineTools() {
+        this.defineTool({
+            name: "run",
+            description: "Run a shell command and wait for it to finish.",
+            args: ["command"],
+            optionalArgs: ["cwd", "timeoutMs"],
+            capability: "terminal.execute",
+            run: async (args) => this.run(textArg(args, "command"), {
+                cwd: optionalText(args, "cwd"),
+                timeoutMs: typeof args.timeoutMs === "number" ? args.timeoutMs : undefined,
+            }),
+        });
+        this.defineTool({
+            name: "run_background",
+            description: "Start a shell command in its own background terminal and return its process id.",
+            args: ["command"],
+            optionalArgs: ["cwd"],
+            capability: "terminal.execute",
+            run: async (args) => ({ pid: this.runBg(textArg(args, "command"), optionalText(args, "cwd")) }),
+        });
+        this.defineTool({
+            name: "list_terminals",
+            description: "Every background terminal and whether it is still running.",
+            args: [],
+            capability: "terminal.open",
+            run: async () => this.terminals().map(({ stdout: _out, stderr: _err, ...rest }) => rest),
+        });
+        this.defineTool({
+            name: "read_terminal",
+            description: "What one background terminal has printed so far.",
+            args: ["pid"],
+            capability: "terminal.open",
+            run: async (args) => {
+                const session = this.terminal(Number(args.pid));
+                if (!session)
+                    throw new Error(`No background terminal with pid ${String(args.pid)}.`);
+                return session;
+            },
+        });
+        this.defineTool({
+            name: "write_file",
+            description: "Write a new file (or replace one), creating its folder if needed.",
+            args: ["path", "content"],
+            optionalArgs: ["cwd"],
+            capability: "files.write",
+            run: async (args) => {
+                const full = resolve(optionalText(args, "cwd") ?? process.cwd(), textArg(args, "path"));
+                mkdirSync(dirname(full), { recursive: true });
+                const content = textArg(args, "content");
+                writeFileSync(full, content, "utf8");
+                return { path: full, bytes: Buffer.byteLength(content, "utf8") };
+            },
+        });
+        this.defineTool({
+            name: "read_file",
+            description: "Read a text file.",
+            args: ["path"],
+            optionalArgs: ["cwd"],
+            capability: "files.read",
+            run: async (args) => {
+                const full = resolve(optionalText(args, "cwd") ?? process.cwd(), textArg(args, "path"));
+                if (!existsSync(full) || !statSync(full).isFile())
+                    throw new Error(`"${full}" is not a file.`);
+                const text = readFileSync(full, "utf8");
+                return text.length > READ_FILE_LIMIT_CHARS
+                    ? { path: full, content: text.slice(0, READ_FILE_LIMIT_CHARS), truncated: text.length - READ_FILE_LIMIT_CHARS }
+                    : { path: full, content: text };
+            },
+        });
+        this.defineTool({
+            name: "list_directory",
+            description: "What is in a folder.",
+            args: ["path"],
+            optionalArgs: ["cwd"],
+            capability: "files.read",
+            run: async (args) => {
+                const full = resolve(optionalText(args, "cwd") ?? process.cwd(), textArg(args, "path"));
+                if (!existsSync(full) || !statSync(full).isDirectory())
+                    throw new Error(`"${full}" is not a directory.`);
+                return readdirSync(full).map(name => ({ name, directory: statSync(join(full, name)).isDirectory() }));
+            },
+        });
+        // Mods: store items that overwrite this app's own source files. Looking
+        // is ordinary file reading; applying or reverting is the separate
+        // mods.apply capability, which nothing grants by default -- the owner
+        // turns it on deliberately in the access settings. Applying keeps a
+        // backup, and revert_mod restores it (mod-apply.ts).
+        this.defineTool({
+            name: "list_mods",
+            description: "Every published mod in the store, the files it would overwrite, and whether it is applied here.",
+            args: [],
+            capability: "files.read",
+            run: async () => {
+                const applied = new Map(listAppliedMods().map(r => [r.name, r]));
+                return (listCatalog().mods ?? []).map(item => ({
+                    name: item.name,
+                    description: item.description,
+                    files: item.files.map(f => f.filename),
+                    applied: applied.has(item.name),
+                }));
+            },
+        });
+        this.defineTool({
+            name: "read_mod",
+            description: "Read one file of a published mod before deciding whether to apply it.",
+            args: ["name", "filename"],
+            capability: "files.read",
+            run: async (args) => {
+                const name = textArg(args, "name");
+                const filename = textArg(args, "filename");
+                if (!readItem("mods", name))
+                    throw new Error(`There is no published mod "${name}".`);
+                const content = readItemFile("mods", name, filename);
+                if (!content)
+                    throw new Error(`Mod "${name}" has no file "${filename}".`);
+                const text = content.toString("utf8");
+                return text.length > READ_FILE_LIMIT_CHARS
+                    ? { name, filename, content: text.slice(0, READ_FILE_LIMIT_CHARS), truncated: text.length - READ_FILE_LIMIT_CHARS }
+                    : { name, filename, content: text };
+            },
+        });
+        this.defineTool({
+            name: "apply_mod",
+            description: "Apply a published mod: overwrite this app's own files with the mod's files (a backup is kept). Takes effect on restart.",
+            args: ["name"],
+            capability: "mods.apply",
+            run: async (args) => {
+                // Checked here, not only declared: callTool() runs a tool for any
+                // caller, and a chat message asking for a mod must meet the same
+                // gate as the network firing the tool on its own.
+                sharedAccessManager().require("mods.apply");
+                return applyMod(textArg(args, "name"));
+            },
+        });
+        this.defineTool({
+            name: "revert_mod",
+            description: "Undo an applied mod: restore the files it overwrote from the backup.",
+            args: ["name"],
+            capability: "mods.apply",
+            run: async (args) => {
+                sharedAccessManager().require("mods.apply");
+                const name = textArg(args, "name");
+                if (!isApplied(name))
+                    throw new Error(`"${name}" is not currently applied.`);
+                return revertMod(name);
+            },
+        });
+        this.defineTool({
+            name: "which",
+            description: "Where a program is installed, or null when it is not.",
+            args: ["name"],
+            capability: "system.info",
+            run: async (args) => this.which(textArg(args, "name")),
+        });
     }
     async run(cmd, opts = {}) {
         if (isBlockedCommand(cmd)) {
@@ -196,7 +378,11 @@ export class TerminalPlugin extends BasePlugin {
         const m = input.match(/^(run|exec|execute|shell|terminal)\s*:?\s+([\s\S]+)$/i);
         if (!m)
             return null;
-        return this.run(m[2]);
+        // Through callTool, not run() directly: a command typed in chat is a call
+        // of the "run" tool like any other, so the network hears about it on the
+        // run neuron and gets the output back on the terminal's result channel.
+        const event = await this.callTool("run", { command: m[2] }, "message");
+        return event.ok ? event.result : { stdout: "", stderr: "", returncode: null, error: event.error };
     }
     async onHealthCheck() {
         return this.active;

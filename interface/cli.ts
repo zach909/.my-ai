@@ -355,7 +355,10 @@ export class CLI {
 
   private async handleTrain(text: string): Promise<void> {
     if (!text) { console.log(this.colorize(GRAY, '  Usage: train <text>')); return; }
-    await this.llm.trainOnText(text);
+    // learnText() (not trainOnText()): trainOnText() rebuilds the model from
+    // only this one string, erasing every earlier `train` call in the same
+    // session. See NeuroclawTrainer.learnText() and src/index.ts's learn().
+    await this.llm.learnText(text);
     const stats = this.llm.getStats();
     console.log(this.colorize(GREEN, `  Trained on ${text.length} chars. Total samples: ${stats.samplesProcessed}`));
   }

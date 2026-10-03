@@ -1,11 +1,10 @@
 import { ExtensionBuilder } from "../extension-builder/builder.js";
 import { ExtensionManager } from "../extension_system/manager.js";
-import { MoERouter } from "./core/onebrain.js";
+import { NetSkillRouter } from "./core/net-skill-router.js";
 import { NeuronMesh } from "./core/onebrain.js";
 import { HyperDimensionalEngine } from "./core/onebrain.js";
 import { ValueRangeAllocator } from "./core/value-range.js";
 import { UnifiedBrain, type BrainSnapshot } from "./core/unified-brain.js";
-import { Tokenizer } from "./tokenizer.js";
 import { NeuroclawTrainer } from "./trainer.js";
 export interface LLMConfig {
     embeddingDim: number;
@@ -22,17 +21,30 @@ export interface LLMConfig {
     quantumEnabled?: boolean;
     /** Directory where self-authored extensions are persisted. */
     selfExtensionsDir?: string;
+    /** Repo-bundled self-extensions loaded at build(); null disables. Defaults to `models && skills/`. */
+    bundledExtensionsDir?: string | null;
 }
 export interface GenerateOptions {
     maxTokens: number;
     temperature: number;
     /** Relevant prior conversation turns to ground the response in (Section 7). */
     memoryContext: string[];
+    /**
+     * Prompting skills that apply to this prompt. Each is streamed through the
+     * Zip Loop with the prompt, as prompting-skills/<name>/SKILL.txt.
+     */
+    promptingSkills: Array<{ name: string; title?: string; description?: string }>;
+    /**
+     * Give up on OneBrain's answer after this many milliseconds. A run cut off
+     * reads as silent (ONE_BRAIN_SILENT_REPLY) rather than hanging the caller.
+     */
+    deadlineMs: number;
 }
+/** What generate() says when OneBrain wrote nothing. */
+export declare const ONE_BRAIN_SILENT_REPLY = "one brain has nothing trained to say here yet.";
 export declare class NeuroclawLLM {
     private config;
     private builder;
-    private tokenizer;
     private trainer;
     private quantizer;
     private brain;
@@ -54,7 +66,7 @@ export declare class NeuroclawLLM {
      */
     constructor(config?: Partial<LLMConfig>, hyperEngine?: HyperDimensionalEngine | null);
     get valueAllocator(): ValueRangeAllocator;
-    get moeRouter(): MoERouter;
+    get skillRouter(): NetSkillRouter;
     get mesh(): NeuronMesh;
     get hyperEngine(): HyperDimensionalEngine;
     setQuantumEnabled(enabled: boolean): void;
@@ -89,7 +101,24 @@ export declare class NeuroclawLLM {
         neurons: number;
         experts: number;
     } | null;
-    reloadSelfExtensions(): void;
+    reloadSelfExtensions(dir?: string): number;
+    registerLoadedSelfExtensions(): Promise<void>;
+    /** Fold learned edges into OneBrain, persist it, and register a new registry version. */
+    foldIntoOneBrain(edges: { from: number; to: number; weight: number }[], sourceIds?: string[]): Promise<unknown>;
+    registerOneBrainVersion(serialized: string, sourceIds?: string[]): Promise<void>;
+    /** Merge leftover standalone self_ext_N models in selfExtensionsDir into OneBrain; returns how many. */
+    migrateSelfExtensionsIntoOneBrain(): Promise<number>;
+    /** Graft OneBrain's neurons onto the live mesh (hyperEngine) and write its weights as mesh connections. */
+    syncOneBrainToMesh(): { added: number; updated: number; skipped?: string };
+    oneBrainMeshIds: Map<string, number>;
+    /** Paths of the files the last generate() streamed through the Zip Loop. */
+    lastZipLoopFiles: string[];
+    /** The Zip Loop's output archive from the last generate(), or null. */
+    lastZipLoopOutput: import("./core/zip-halt.js").ZipTree | null;
+    recallFromSelfExtensions(prompt: string, topK?: number): {
+        outputs: { token: number; char: string; score: number }[];
+        extensions: { id: string; activation: number }[];
+    };
     quantize(): Promise<string | null>;
     save(): string | null;
     searchNeurons(query: string): import("../extension-builder/builder.js").NeuronData[];
@@ -111,7 +140,7 @@ export declare class NeuroclawLLM {
         connectionCount: number;
         layerCount: number;
         expertCount: number;
-        moeUtilization: import("./index.js").ExpertUtilizationStats[];
+        skillUsage: import("./core/net-skill-router.js").NetSkillUsage[];
         valueDistribution: {
             totalPoints: number;
             neuronCount: number;
@@ -133,8 +162,7 @@ export declare class NeuroclawLLM {
     demoteFailingNeurons(failureId: string): void;
     getBuilder(): ExtensionBuilder;
     getExtensionManager(): ExtensionManager;
-    getTokenizer(): Tokenizer;
     getTrainer(): NeuroclawTrainer;
-    getMoERouter(): MoERouter;
+    getSkillRouter(): NetSkillRouter;
     isBuilt(): boolean;
 }

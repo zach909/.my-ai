@@ -23,6 +23,22 @@ bun run bench:mesh
 ```
 Benchmarks the neuron mesh propagation with all-to-all connectivity.
 
+#### NeuronMesh — parallel (worker_threads)
+```bash
+bun run bench:mesh-parallel
+```
+Compares the same dense propagate() step run serially against
+`MeshWorkerPool`, a multi-core `node:worker_threads` backend that shards
+the O(n²) weighted-sum across threads via `SharedArrayBuffer` + `Atomics`
+(see `mesh-worker-pool.ts` / `mesh-worker-thread.ts`, wired in through
+`NeuronMesh.setParallelBackend()`). Node-only (Bun works too, since both
+support `worker_threads` + shared memory); not available in a browser
+bundle. Uses a 1,000–2,000 node mesh rather than `bench:mesh`'s 200,
+because that's the range where the parallel win actually shows up —
+below `parallelMinNodes` the coordination overhead exceeds what
+parallelizing saves, which `bench:mesh`'s smaller mesh deliberately
+stays under.
+
 #### MoE Router
 ```bash
 bun run bench:moe

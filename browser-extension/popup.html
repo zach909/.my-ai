@@ -1,0 +1,35 @@
+<!doctype html>
+<html>
+<head>
+<meta charset="utf-8">
+<style>
+  :root { --bg:#fff; --fg:#111; --muted:#666; --card:#f4f4f5; --accent:#6d28d9; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#18181b; --fg:#f4f4f5; --muted:#a1a1aa; --card:#27272a; --accent:#a78bfa; } }
+  body { margin:0; width:320px; font:14px system-ui,sans-serif; background:var(--bg); color:var(--fg); }
+  main { padding:16px; display:flex; flex-direction:column; gap:12px; }
+  h1 { font-size:16px; margin:0; }
+  #idea { background:var(--card); border-radius:8px; padding:16px; min-height:60px; text-align:center; font-size:15px; }
+  .row { display:flex; gap:8px; }
+  button { flex:1; padding:8px; border:0; border-radius:6px; cursor:pointer; background:var(--accent); color:#fff; font-weight:600; }
+  button.secondary { background:var(--card); color:var(--fg); }
+  input { flex:1; padding:6px 8px; border-radius:6px; border:1px solid var(--muted); background:var(--bg); color:var(--fg); }
+  small { color:var(--muted); }
+</style>
+</head>
+<body>
+<main>
+  <h1>🎲 Chance</h1>
+  <div id="idea">Press the button for a random idea.</div>
+  <div class="row">
+    <button id="roll">Surprise me</button>
+    <button id="try" class="secondary" disabled>Try it in chat</button>
+  </div>
+  <form id="add" class="row">
+    <input id="draft" placeholder="Add your own idea…">
+    <button type="submit" class="secondary" style="flex:0 0 auto">Add</button>
+  </form>
+  <small id="status"></small>
+</main>
+<script src="popup.js"></script>
+</body>
+</html>

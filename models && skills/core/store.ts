@@ -23,7 +23,7 @@ import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 import { writeFileAtomic, writeJsonAtomic } from "./atomic-write.js";
 
 /** What kinds of thing the store holds. Each is a folder under `store/`. */
-export const STORE_KINDS = ["net-skills", "prompting", "plugins", "binaries", "source", "files", "wiki"] as const;
+export const STORE_KINDS = ["net-skills", "prompting", "mods", "plugins", "binaries", "source", "files", "wiki"] as const;
 export type StoreKind = (typeof STORE_KINDS)[number];
 
 /** Human labels, used by the UI so the names live in one place. */
@@ -37,6 +37,13 @@ export const STORE_KIND_LABELS: Record<StoreKind, string> = {
   // act loop (see prompting-skills.ts). Listed right after Net Skills because
   // they are the ones that change how the agent works rather than what it knows.
   prompting: "Prompting Skills",
+  // A mod's files are published under the exact repo-relative path they are
+  // meant to occupy -- see mod-apply.ts. Every other kind installs into an
+  // isolated, harmless folder under extension-builder/installed/; a mod is
+  // the one kind whose whole point is to overwrite a real file in this
+  // device's own working copy of the repository, so it gets its own section
+  // rather than being folded into "files" or "source".
+  mods: "Mods",
   plugins: "Plugins & Tools",
   binaries: "Binary Skills",
   source: "Source Code",

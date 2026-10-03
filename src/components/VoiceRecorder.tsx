@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Mic, Square } from 'lucide-react'
+import { Mic, Square } from '@/components/icons'
 import { AgentPulse } from '@/components/agent-pulse'
 import { stageFile, StageError, generatedName, type StagedFile } from '@/lib/stage-file'
 

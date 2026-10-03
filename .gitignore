@@ -1,3 +1,4 @@
+node_modules/
 # Compiled and build artifacts
 *.pyc
 __pycache__/

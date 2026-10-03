@@ -50,20 +50,16 @@ class ModelFileLoader {
 }
 export { ModelFileLoader };
 export { NeuroclawLLM } from "./llm.js";
-export { SkillsManager } from "./skills-manager.js";
 export { PROGRAMMING_SKILLS, getSkillById, getSkillsByCategory, getSkillsByExpertType, searchSkills, getAllCategories, getAllExpertTypes } from "./programming-skills.js";
 export { ModelManager } from "./model-manager.js";
 export { PluginManager } from "./plugin-manager.js";
-export { MixtureOfExperts } from "./moe.js";
 export { NeuroclawTrainer } from "./trainer.js";
-export { Tokenizer } from "./tokenizer.js";
 export { Neuron } from "./neuron.js";
 export { SimulationEngine } from "./simulation.js";
 export { BackgroundQuantizer } from "./core/quantizer.js";
 export { ValueRangeAllocator } from "./core/value-range.js";
-export { MoERouter } from "./core/moe-router.js";
-export { NeuronMesh } from "./core/mesh.js";
-export { HyperDimensionalEngine } from "./core/hyperdimensional.js";
+export { NeuronMesh } from "./core/onebrain.js";
+export { HyperDimensionalEngine } from "./core/onebrain.js";
 export { RLMTrainer } from "./core/rlm.js";
 export { NeuroLangInterpreter } from "./core/neuro-lang.js";
 export { NeuroPipeline } from "./core/pipeline.js";

@@ -2,7 +2,7 @@
 
 ## System Summary
 
-NeuroClaw is a private, local AI system that runs entirely on your machine (Mac, Windows, or Linux). It is powered by **OneBrain**, the neural mesh engine that does the actual computation — all-to-all neuron connectivity, quantization, MoE routing — described throughout this wiki. NeuroClaw the agent is composed of skills, each trained and packaged by the [[Builder|Extension Builder]] and registered into OneBrain as a routable [[MoE]] expert.
+NeuroClaw is a private, local AI system that runs entirely on your machine (Mac, Windows, or Linux). It is powered by **OneBrain**, the neural mesh engine that does the actual computation — all-to-all neuron connectivity, quantization, net-skill routing — described throughout this wiki. NeuroClaw the agent is composed of skills, each trained and packaged by the [[Builder|Extension Builder]] and grafted into OneBrain as a routable net-skill region (see [[MoE|Net-Skill Routing]]).
 
 **Key Principle**: NO EXTERNAL APIs - all processing happens locally.
 
@@ -42,10 +42,10 @@ NeuroClaw is a private, local AI system that runs entirely on your machine (Mac,
 
 ### Foreground Systems (Processing & Reasoning)
 
-#### 1. Mixture of Experts (MoE)
-- **Purpose**: Efficient routing to specialized processing units
-- **Features**: Load balancing, top-K routing, dynamic expert management
-- **Benefits**: Efficient and faster processing
+#### 1. Net-Skill Routing (replaced the MoE)
+- **Purpose**: Only the skill regions an input is about compute on a tick
+- **Mechanism**: Each skill/plugin is a named region of the one mesh; the input is scored against each region's meaning and the top-k become the tick's active groups (see [[MoE|Net-Skill Routing]])
+- **Benefits**: No second gating network; a region is chosen for what it means
 
 #### 2. All-to-All Connectivity (NeuronMesh)
 - **Purpose**: Non-linear, autonomous computation with infinite context
@@ -91,7 +91,7 @@ NeuroClaw is a private, local AI system that runs entirely on your machine (Mac,
 - **Integration**: Easy drop-in due to all-to-all connectivity
 
 ### Skills
-- **Definition**: Experts added into the MoE
+- **Definition**: Regions grafted into the mesh, chosen by net-skill routing
 - **Categories**: Plugin-maker, Skill-maker, Coding, Image, Video, Game
 
 ### Extension Builder Features
@@ -113,7 +113,7 @@ NeuroClaw is a private, local AI system that runs entirely on your machine (Mac,
 
 1. **Input**: User provides text or other input (as zip loop)
 2. **NeuroLang Parsing**: Parse input through custom language interpreter
-3. **MoE Routing**: Routes to appropriate experts based on input
+3. **Net-Skill Routing**: Switches on the skill regions the input is about
 4. **Mesh Propagation**: Activations propagate through all-to-all network
 5. **Hyperdimensional Processing**: Multi-state reasoning with novelty detection
 6. **RLM Decision**: Reinforcement learning selects action, avoids loops
@@ -123,7 +123,7 @@ NeuroClaw is a private, local AI system that runs entirely on your machine (Mac,
 ## Key Benefits
 
 - **Autonomous**: Never stops, maintains infinite context
-- **Efficient**: Quantization, MoE routing, zero-sum value allocation
+- **Efficient**: Quantization, net-skill routing, zero-sum value allocation
 - **Adaptive**: Elastic value budget protects important knowledge
 - **Self-Improving**: Creates extensions to save learned capabilities
 - **Private**: All local, encrypted end-to-end, no external APIs

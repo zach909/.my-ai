@@ -108,7 +108,7 @@ describe('TARGETS -- covers the skills, not just one script', () => {
 
   it('every target has a metric function that returns a number in [0,1] for a well-formed summary', () => {
     for (const target of TARGETS) {
-      const score = target.metric({ trainedCount: 5, curriculumCount: 10, cmudictCount: 10, wikiCount: 10, finalAccuracy: 0.5 });
+      const score = target.metric({ trainedCount: 5, curriculumCount: 10, pronunciationCount: 10, wikiCount: 10, finalAccuracy: 0.5 });
       expect(typeof score).toBe('number');
       expect(score).toBeGreaterThanOrEqual(0);
       expect(score).toBeLessThanOrEqual(1);
@@ -117,7 +117,7 @@ describe('TARGETS -- covers the skills, not just one script', () => {
 
   it('every target metric degrades to 0 instead of throwing/NaN on a zero-denominator summary', () => {
     for (const target of TARGETS) {
-      const score = target.metric({ trainedCount: 0, curriculumCount: 0, cmudictCount: 0, wikiCount: 0, finalAccuracy: 0 });
+      const score = target.metric({ trainedCount: 0, curriculumCount: 0, pronunciationCount: 0, wikiCount: 0, finalAccuracy: 0 });
       expect(Number.isFinite(score)).toBe(true);
     }
   });

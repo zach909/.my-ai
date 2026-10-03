@@ -10,17 +10,23 @@
  * model is gonna say, and then that's how it learns."
  *
  * Two real, different prediction directions trained per conversation
- * turn, both via genuine torch.autograd gradient descent (the same
- * pytorch_trainer.py contract every other @definishon in this repo
- * uses) -- neither is hand-written, both are whatever gradient descent
- * actually converges on for that turn's real content:
+ * turn, both via ExtensionBuilder.train()'s hand-rolled JS delta rule
+ * (HyperDimensionalEngine.trainDefinitions() in
+ * "models && skills/core/neuro-lang.ts" -- the same zero-dependency
+ * mechanism every other script-trained neuron and the regular Extension
+ * Builder "Train" button already use) -- neither is hand-written, both
+ * are whatever the delta rule actually converges on for that turn's real
+ * content. This needs nothing beyond Node.js: no PyTorch, no Python
+ * process, no install step, so it trains automatically the moment the
+ * server is running, out of the box. Each direction becomes one
+ * dedicated neuron with one addScript(inputText, targetText) sample:
  *
  *   1. "predict what any input into the model is gonna say" --
- *      input = embedTurn("user", the user's actual message),
- *      target = embedTurn("ai", this agent's actual response) to it.
- *   2. "predict what you're gonna say" -- input = embedTurn("ai", this
- *      agent's PRIOR response), target = embedTurn("user", the user's NEXT
- *      real message) that actually followed it.
+ *      inputText = the user's actual message,
+ *      targetText = this agent's actual response to it.
+ *   2. "predict what you're gonna say" -- inputText = this agent's PRIOR
+ *      response, targetText = the user's NEXT real message that actually
+ *      followed it.
  *
  * Absolute privacy boundary, enforced structurally, not just by policy:
  * this entire script only ever reads
@@ -42,7 +48,6 @@
  *        node scripts/conversation-learning-agent.mjs --once   (one cycle, for testing)
  */
 
-import { spawn } from 'node:child_process'
 import { existsSync, readFileSync, writeFileSync, mkdirSync, realpathSync, statSync, unlinkSync } from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
@@ -53,7 +58,6 @@ const LOG_PATH = path.join(ROOT, 'extension-builder', 'conversation-log.jsonl')
 const OUTPUT_PATH = path.join(ROOT, 'extension-builder', 'extensions', 'conversation_learning.ext.json')
 const STATE_PATH = path.join(ROOT, 'extension-builder', 'conversation-learning-state.json')
 const LOCK_PATH = path.join(ROOT, 'extension-builder', 'conversation-learning.lock')
-const DIMS = 16
 const MAX_TURNS = 150 // bounded, same reasoning as every other capped batch this session
 // A stale lock (the process that held it died without cleaning up --
 // e.g. `kill -9`, an OOM) shouldn't wedge learning forever. Real cycles
@@ -141,8 +145,8 @@ export function readRecentTurns(logPath = LOG_PATH, limit = MAX_TURNS) {
  * Builds both real training-sample directions from a real turn history.
  * Pure function, directly testable. Each sample carries a stable `key`
  * (used to skip re-training turns whose content hasn't changed, and to
- * cap growth by only ever keeping the DIMS embedding target, never the
- * raw text, past this point).
+ * cap growth by only ever keeping the fixed-size embedding target, never
+ * the raw text, past this point).
  */
 export function buildSamples(turns) {
   const samples = []
@@ -173,46 +177,6 @@ export function buildSamples(turns) {
     }
   }
   return samples
-}
-
-function trainSamples(worktreeRoot, samples) {
-  return new Promise((resolve) => {
-    const scriptPath = path.join(worktreeRoot, 'extension-builder', 'pytorch_trainer.py')
-    let child
-    try {
-      child = spawn('python3', [scriptPath], { stdio: ['pipe', 'pipe', 'pipe'] })
-    } catch (err) {
-      resolve({ ok: false, error: `could not launch python3: ${err.message}` })
-      return
-    }
-    let stdout = ''
-    let stderr = ''
-    child.stdout.on('data', (d) => { stdout += d })
-    child.stderr.on('data', (d) => { stderr += d })
-    child.on('error', (err) => resolve({ ok: false, error: `python3 not available: ${err.message}` }))
-    child.on('close', () => {
-      const line = stdout.trim().split('\n').pop() ?? ''
-      try {
-        resolve(JSON.parse(line))
-      } catch {
-        resolve({ ok: false, error: stderr.trim() || 'no output from pytorch_trainer.py' })
-      }
-    })
-    ;(async () => {
-      const { embedTurn } = await import(path.join(worktreeRoot, 'dist', 'models && skills', 'core', 'neuro-lang.js'))
-      // embedTurn, not embedText: the speaker is a reserved dimension, so the
-      // same sentence said by the AI and by the user lands somewhere genuinely
-      // different rather than 4% apart.
-      const trainerSamples = samples.map((s, idx) => ({
-        readout: idx,
-        input: embedTurn(s.inputSpeaker, s.inputText, DIMS),
-        target: embedTurn(s.targetSpeaker, s.targetText, DIMS),
-      }))
-      const spec = { dims: DIMS, numReadouts: samples.length, epochs: 1200, learningRate: 0.05, tolerance: 1e-3, samples: trainerSamples }
-      child.stdin.write(JSON.stringify(spec) + '\n')
-      child.stdin.end()
-    })()
-  })
 }
 
 function loadState(statePath = STATE_PATH) {
@@ -271,32 +235,30 @@ export async function runOneCycle({ logPath = LOG_PATH, outputPath = OUTPUT_PATH
       'Trained locally on real (message, response) turns -- never published, never shared. See wiki/Privacy-Policy.md.',
     )
 
-    const trainResult = await trainSamples(worktreeRoot, samples)
-    let convergedCount = 0
     const neurons = []
     for (let i = 0; i < samples.length; i++) {
       const s = samples[i]
       const neuron = builder.addNeuron(project.id, `${s.kind}_${i}`, 0)
       if (!neuron) continue
       builder.addScript(project.id, neuron.id, s.inputText, s.targetText)
-      const converged = trainResult.ok && trainResult.sampleConverged?.[i] === true
-      neuron.trained = converged
-      if (converged) convergedCount++
       neurons.push(neuron)
     }
 
-    if (!trainResult.ok) {
-      log(`training unavailable this cycle (${trainResult.error}) -- neurons kept as untrained definitions, will retry`)
-    } else {
-      log(`${convergedCount}/${samples.length} sample(s) genuinely converged`)
-    }
+    // Pure JS delta-rule training (ExtensionBuilder.train(), the same
+    // mechanism the regular Extension Builder "Train" button uses) --
+    // synchronous, no subprocess, no Python, no PyTorch. It mutates
+    // `neuron.trained` directly on the neuron objects pushed above, so
+    // there's nothing further to wire up here beyond reading the result.
+    const trainResult = builder.train(project.id, { epochs: 1200 })
+    const convergedCount = neurons.filter((n) => n.trained).length
+    log(`${convergedCount}/${samples.length} sample(s) genuinely converged`)
 
     mkdirSync(path.dirname(outputPath), { recursive: true })
     writeFileSync(outputPath, builder.saveWithoutQuantization(project.id), 'utf8')
     saveState({ lastTrainedTurnAt: newestTurnAt, turnsSeen: turns.length, convergedCount, sampleCount: samples.length }, statePath)
 
     log(`saved: ${path.relative(ROOT, outputPath)}`)
-    return { ok: true, trained: true, turnCount: turns.length, sampleCount: samples.length, convergedCount, pytorchOk: trainResult.ok }
+    return { ok: true, trained: true, turnCount: turns.length, sampleCount: samples.length, convergedCount, converged: trainResult?.converged ?? false }
   } finally {
     releaseLock(lockPath)
   }

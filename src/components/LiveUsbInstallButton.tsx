@@ -15,8 +15,8 @@
  */
 import { useEffect, useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { HardDriveDownload, Loader2 } from 'lucide-react'
-import { toast } from 'sonner'
+import { HardDriveDownload, Loader2 } from '@/components/icons'
+import { toast } from '@/lib/toast'
 import { cn } from '@/lib/utils'
 
 export function LiveUsbInstallButton({ collapsed }: { collapsed: boolean }) {

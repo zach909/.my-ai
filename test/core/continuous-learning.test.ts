@@ -115,7 +115,7 @@ describe('ContinuousLearner', () => {
     // A PromptMeshFeed feed that we can hold open mid-stream.
     let release: (() => void) | null = null;
     const parked = () => new Promise<void>(resolve => { release = resolve; });
-    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 });
+    const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
     const feed = new PromptMeshFeed(() => zip, parked, lock);
     const learner = new ContinuousLearner(lock);
 

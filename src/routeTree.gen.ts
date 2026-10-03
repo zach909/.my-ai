@@ -20,6 +20,8 @@ import { Route as AppSelfImprovementRouteImport } from './routes/app/self-improv
 import { Route as AppPinnedChatsRouteImport } from './routes/app/pinned-chats'
 import { Route as AppChatGroupsRouteImport } from './routes/app/chat-groups'
 import { Route as AppChatRouteImport } from './routes/app/chat'
+import { Route as AppChanceRouteImport } from './routes/app/chance'
+import { Route as AppActivityRouteImport } from './routes/app/activity'
 import { Route as AppAccessRouteImport } from './routes/app/access'
 
 const DesktopRoute = DesktopRouteImport.update({
@@ -77,6 +79,16 @@ const AppChatRoute = AppChatRouteImport.update({
   path: '/chat',
   getParentRoute: () => AppRoute,
 } as any)
+const AppChanceRoute = AppChanceRouteImport.update({
+  id: '/chance',
+  path: '/chance',
+  getParentRoute: () => AppRoute,
+} as any)
+const AppActivityRoute = AppActivityRouteImport.update({
+  id: '/activity',
+  path: '/activity',
+  getParentRoute: () => AppRoute,
+} as any)
 const AppAccessRoute = AppAccessRouteImport.update({
   id: '/access',
   path: '/access',
@@ -89,6 +101,8 @@ export interface FileRoutesByFullPath {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/access': typeof AppAccessRoute
+  '/app/activity': typeof AppActivityRoute
+  '/app/chance': typeof AppChanceRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
   '/app/pinned-chats': typeof AppPinnedChatsRoute
@@ -102,6 +116,8 @@ export interface FileRoutesByTo {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/access': typeof AppAccessRoute
+  '/app/activity': typeof AppActivityRoute
+  '/app/chance': typeof AppChanceRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
   '/app/pinned-chats': typeof AppPinnedChatsRoute
@@ -117,6 +133,8 @@ export interface FileRoutesById {
   '/builder': typeof BuilderRoute
   '/desktop': typeof DesktopRoute
   '/app/access': typeof AppAccessRoute
+  '/app/activity': typeof AppActivityRoute
+  '/app/chance': typeof AppChanceRoute
   '/app/chat': typeof AppChatRoute
   '/app/chat-groups': typeof AppChatGroupsRoute
   '/app/pinned-chats': typeof AppPinnedChatsRoute
@@ -133,6 +151,8 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/access'
+    | '/app/activity'
+    | '/app/chance'
     | '/app/chat'
     | '/app/chat-groups'
     | '/app/pinned-chats'
@@ -146,6 +166,8 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/access'
+    | '/app/activity'
+    | '/app/chance'
     | '/app/chat'
     | '/app/chat-groups'
     | '/app/pinned-chats'
@@ -160,6 +182,8 @@ export interface FileRouteTypes {
     | '/builder'
     | '/desktop'
     | '/app/access'
+    | '/app/activity'
+    | '/app/chance'
     | '/app/chat'
     | '/app/chat-groups'
     | '/app/pinned-chats'
@@ -255,6 +279,20 @@ declare module '@tanstack/react-router' {
       preLoaderRoute: typeof AppChatRouteImport
       parentRoute: typeof AppRoute
     }
+    '/app/chance': {
+      id: '/app/chance'
+      path: '/chance'
+      fullPath: '/app/chance'
+      preLoaderRoute: typeof AppChanceRouteImport
+      parentRoute: typeof AppRoute
+    }
+    '/app/activity': {
+      id: '/app/activity'
+      path: '/activity'
+      fullPath: '/app/activity'
+      preLoaderRoute: typeof AppActivityRouteImport
+      parentRoute: typeof AppRoute
+    }
     '/app/access': {
       id: '/app/access'
       path: '/access'
@@ -267,6 +305,8 @@ declare module '@tanstack/react-router' {
 
 interface AppRouteChildren {
   AppAccessRoute: typeof AppAccessRoute
+  AppActivityRoute: typeof AppActivityRoute
+  AppChanceRoute: typeof AppChanceRoute
   AppChatRoute: typeof AppChatRoute
   AppChatGroupsRoute: typeof AppChatGroupsRoute
   AppPinnedChatsRoute: typeof AppPinnedChatsRoute
@@ -278,6 +318,8 @@ interface AppRouteChildren {
 
 const AppRouteChildren: AppRouteChildren = {
   AppAccessRoute: AppAccessRoute,
+  AppActivityRoute: AppActivityRoute,
+  AppChanceRoute: AppChanceRoute,
   AppChatRoute: AppChatRoute,
   AppChatGroupsRoute: AppChatGroupsRoute,
   AppPinnedChatsRoute: AppPinnedChatsRoute,

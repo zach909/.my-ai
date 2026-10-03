@@ -1,9 +1,0 @@
-{
-  "id": "self_ext_15",
-  "name": "Memory: The pattern shows",
-  "description": "Self-authored extension storing learned patterns from generation 15",
-  "createdAt": 1782416013641,
-  "prompt": "The pattern shows",
-  "neuronCount": 20,
-  "connectionCount": 100
-}

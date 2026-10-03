@@ -1,6 +1,6 @@
 import { useState } from 'react'
 import { Button } from '@/components/ui/button'
-import { Pencil, X, Check } from 'lucide-react'
+import { Pencil, X, Check } from '@/components/icons'
 
 /**
  * The pen underneath an assistant reply: rewrite what it said.

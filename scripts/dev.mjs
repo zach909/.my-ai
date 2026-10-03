@@ -9,6 +9,7 @@
 
 import { spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
+import { join } from 'node:path';
 import { spawnAwait } from './spawn-utils.mjs';
 
 const ROOT = process.cwd();
@@ -90,18 +91,20 @@ try {
   await waitForPort(BACKEND_PORT);
   console.log(`[dev] backend is ready on port ${BACKEND_PORT}`);
 } catch (err) {
-  console.error(`[dev] ${err.message} — starting Vite anyway; /api/* calls will fail until the backend is up.`);
+  console.error(`[dev] ${err.message}`);
 }
 
-const vite = spawn('npx', ['vite'], { cwd: ROOT, stdio: 'inherit' });
+// The frontend (Vite, React) and its packages are gone from package.json, so
+// this now runs the backend alone and stays up until it exits or is stopped.
+// Run Vite's JS entry through the current Node binary rather than `npx`:
+// on Windows `npx` is `npx.cmd`, which spawn() can't launch without a shell
+// (fails with ENOENT).
+const viteBin = join(ROOT, 'node_modules', 'vite', 'bin', 'vite.js');
+const vite = spawn(process.execPath, [viteBin], { cwd: ROOT, stdio: 'inherit' });
 
 function shutdown() {
-  vite.kill();
   backend.kill();
 }
-vite.on('exit', (code) => {
-  backend.kill();
-  process.exit(code ?? 0);
-});
+backend.on('exit', (code) => process.exit(code ?? 0));
 process.on('SIGINT', shutdown);
 process.on('SIGTERM', shutdown);

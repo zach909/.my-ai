@@ -41,8 +41,8 @@ const GIT_TIMEOUT_MS = 10_000;
 /** `git archive` of the whole catalogue is still a small, text-only tree. */
 const ARCHIVE_TIMEOUT_MS = 30_000;
 
-/** Refuses a payload larger than the store's own per-file cap, even if the index claims otherwise. */
-const MAX_FETCH_BYTES = 8 * 1024 * 1024;
+/** No application-level per-file ceiling. The actual remote/storage provider limits still apply. */
+const MAX_FETCH_BYTES = Number.POSITIVE_INFINITY;
 
 export class StoreFetchError extends StoreError {}
 

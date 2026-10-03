@@ -24,8 +24,8 @@ import { SharedAppLayout } from '@/layouts/shared-app-layout'
  * `src/routes/app.tsx` and the `src/routes/app/` folder. Deleting is always safe.
  *
  * Auth-gate the whole shell by wrapping <Outlet /> in your auth check here — one
- * place, not per page. Browser-only state (blink.auth, localStorage, window) must
- * sit inside <BlinkClientBoundary> or use `ssr: false`, or SSR crashes.
+ * place, not per page. Browser-only state (auth state, localStorage, window) must
+ * sit inside <ClientOnlyBoundary> or use `ssr: false`, or SSR crashes.
  */
 export const Route = createFileRoute('/app')({
   component: AppLayout,

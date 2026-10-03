@@ -1,0 +1,1 @@
+async function e(e,t){let n=await fetch(`/api/chat-history/threads/${encodeURIComponent(e)}/pin`,{method:`POST`,headers:{"Content-Type":`application/json`},body:JSON.stringify({pinned:t})});if(!n.ok)throw Error(`HTTP ${n.status}`);return(await n.json()).pinned===!0}export{e as t};

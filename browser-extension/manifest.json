@@ -1,0 +1,8 @@
+{
+  "manifest_version": 3,
+  "name": "NeuroClaw Chance",
+  "version": "1.0.0",
+  "description": "Click for a random idea, then open it in your local NeuroClaw chat.",
+  "action": { "default_title": "Chance", "default_popup": "popup.html" },
+  "permissions": ["storage", "clipboardWrite"]
+}

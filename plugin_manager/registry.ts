@@ -1,7 +1,7 @@
 import type { PluginDefinition, SkillDefinition } from "./types.js";
 import type { BasePlugin, PluginContext, PluginLogger } from "./sdk.js";
 import { PLUGIN_LIST, LANGUAGE_SKILLS } from "./registry-data.js";
-import { MixtureOfExperts } from "../models && skills/core/onebrain.js";
+import { NetSkillMesh } from "../models && skills/core/net-skill-mesh.js";
 import * as nodeFs from "node:fs";
 import { writeFileAtomic } from "../models && skills/core/atomic-write.js";
 import { CapabilityRouter, type Ranked } from "./capability-router.js";
@@ -42,17 +42,17 @@ export class PluginRegistry {
    * skill-experts already use (models && skills/core/onebrain.ts) -- a plugin here is
    * simply another expert group in the same shared mesh.
    */
-  private readonly moe: MixtureOfExperts;
-  /** Each registered plugin's neuron ids in `moe`'s shared mesh, set once in register(). */
+  private readonly skillMesh: NetSkillMesh;
+  /** Each registered plugin's neuron ids in the skill mesh, set once in register(). */
   private readonly pluginNeuronIds: Map<string, number[]> = new Map();
 
-  constructor(moe?: MixtureOfExperts) {
-    this.moe = moe ?? new MixtureOfExperts();
+  constructor(skillMesh?: NetSkillMesh) {
+    this.skillMesh = skillMesh ?? new NetSkillMesh();
   }
 
   /** The shared neural mesh every registered plugin's neurons live in. */
-  getMoE(): MixtureOfExperts {
-    return this.moe;
+  getSkillMesh(): NetSkillMesh {
+    return this.skillMesh;
   }
 
   /** A registered plugin's real neuron ids in the shared mesh, if any (absent for an id that was never register()'d). */
@@ -77,9 +77,9 @@ export class PluginRegistry {
     // sum), but their *activity* still becomes a real, wired part of the
     // mesh's propagation once dispatch() actually uses them (see
     // firePluginNeurons() below), not just a side-channel log entry.
-    if (!this.moe.getExpert(definition.id)) {
+    if (!this.skillMesh.getSkill(definition.id)) {
       const neuronCount = definition.type === "skill-expert" ? 4 : 1;
-      const expert = this.moe.addExpert(
+      const expert = this.skillMesh.addSkill(
         definition.id,
         definition.name,
         definition.capabilities?.[0] ?? definition.id,
@@ -102,9 +102,9 @@ export class PluginRegistry {
    * all-to-all connection count made propagation crawl.
    */
   joinMesh(skillId: string, displayName: string, neuronCount: number): number[] {
-    const existing = this.moe.getExpert(skillId);
+    const existing = this.skillMesh.getSkill(skillId);
     if (existing) return this.pluginNeuronIds.get(skillId) ?? [];
-    const expert = this.moe.addExpert(skillId, displayName, "installed-skill", Math.max(1, neuronCount));
+    const expert = this.skillMesh.addSkill(skillId, displayName, "installed-skill", Math.max(1, neuronCount));
     this.pluginNeuronIds.set(skillId, expert.neuronIds);
     return expert.neuronIds;
   }
@@ -325,7 +325,7 @@ export class PluginRegistry {
         // buckets without absorbing everything routed here. It has to be
         // reachable from ordinary phrasing: "turn off computer access" is the
         // one sentence that must always work.
-        desktop: ['computer-access', 'multi-input'],
+        desktop: ['computer-access', 'desktop', 'multi-input'],
         input: ['computer-access', 'multi-input'],
         workspace: ['computer-access', 'multi-input'],
         access: ['computer-access'],
@@ -449,7 +449,7 @@ export class PluginRegistry {
     if (!neuronIds || neuronIds.length === 0) return;
     const meshInputs = new Map<number, number>();
     for (const id of neuronIds) meshInputs.set(id, 1);
-    this.moe.getMesh().propagate(meshInputs);
+    this.skillMesh.getMesh().propagate(meshInputs);
   }
 
   async healthCheck(): Promise<Map<string, boolean>> {

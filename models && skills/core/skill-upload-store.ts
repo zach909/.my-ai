@@ -37,6 +37,8 @@
  */
 
 import { existsSync, mkdirSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { execFile } from "node:child_process";
+import { tmpdir } from "node:os";
 import path from "node:path";
 import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 
@@ -95,6 +97,88 @@ export interface SkillUploadManifest {
 
 export interface SkillUploadSummary extends SkillUploadManifest {
   name: string;
+}
+
+export interface SkillUploadPullResult {
+  pulled: boolean;
+  reason?: string;
+}
+
+const SKILL_UPLOAD_PULL_TIMEOUT_MS = 10 * 60_000;
+
+function git(args: string[], cwd: string): Promise<{ ok: boolean; stdout: string; stderr: string }> {
+  return new Promise(resolve => {
+    execFile("git", args, { cwd, timeout: SKILL_UPLOAD_PULL_TIMEOUT_MS, maxBuffer: 4 * 1024 * 1024 },
+      (err, stdout, stderr) => resolve({ ok: !err, stdout: String(stdout ?? ""), stderr: String(stderr ?? "") }),
+    );
+  });
+}
+
+async function skillUploadRepoRoot(): Promise<string | null> {
+  const start = extensionsDir();
+  const res = await git(["rev-parse", "--show-toplevel"], existsSync(start) ? start : path.dirname(start));
+  if (!res.ok) return null;
+  const root = res.stdout.trim();
+  return root || null;
+}
+
+/**
+ * Pulls shared skill-upload manifests from the store branch into this device.
+ * Publishing already commits extension-builder/extensions/<name> to the store branch;
+ * this is the missing read side that makes those packages visible on another device.
+ * Only manifests are pulled at boot so large payloads are not downloaded just to list them.
+ */
+export async function pullSkillUploadCatalog(opts: { remote?: string; branch?: string } = {}): Promise<SkillUploadPullResult> {
+  const root = await skillUploadRepoRoot();
+  if (!root) return { pulled: false, reason: "Not a git repository." };
+  const remote = opts.remote ?? "origin";
+  const branch = opts.branch ?? "store";
+  const remotes = await git(["remote"], root);
+  if (!remotes.ok || !remotes.stdout.split("\n").map(s => s.trim()).includes(remote)) {
+    return { pulled: false, reason: `This clone has no "${remote}" remote.` };
+  }
+  await git(["fetch", remote, `${branch}:refs/remotes/${remote}/${branch}`], root);
+  const rev = await git(["rev-parse", `${remote}/${branch}`], root);
+  if (!rev.ok) return { pulled: false, reason: `No "${branch}" branch on "${remote}" yet.` };
+  const tmpFile = path.join(tmpdir(), `neuroclaw-skill-upload-manifests-${process.pid}-${Date.now()}.tar`);
+  try {
+    const archive = await git(["archive", "--output", tmpFile, rev.stdout.trim(), "--", "extension-builder/extensions/*/manifest.json"], root);
+    if (!archive.ok) {
+      if (/did not match any files/.test(archive.stderr)) return { pulled: true };
+      return { pulled: false, reason: "Could not read skill-upload manifests from the store branch." };
+    }
+    const extracted = await new Promise<boolean>(resolve => {
+      execFile("tar", ["-xf", tmpFile, "-C", root], { timeout: SKILL_UPLOAD_PULL_TIMEOUT_MS }, err => resolve(!err));
+    });
+    if (!extracted) return { pulled: false, reason: "Could not extract skill-upload manifests." };
+    return { pulled: true };
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
+}
+
+/** Pulls one complete shared skill-upload package when a device asks for one of its files. */
+export async function pullSkillUploadPackage(name: string, opts: { remote?: string; branch?: string } = {}): Promise<SkillUploadPullResult> {
+  assertSafeName(name);
+  const root = await skillUploadRepoRoot();
+  if (!root) return { pulled: false, reason: "Not a git repository." };
+  const remote = opts.remote ?? "origin";
+  const branch = opts.branch ?? "store";
+  await git(["fetch", remote, `${branch}:refs/remotes/${remote}/${branch}`], root);
+  const rev = await git(["rev-parse", `${remote}/${branch}`], root);
+  if (!rev.ok) return { pulled: false, reason: `No "${branch}" branch on "${remote}" yet.` };
+  const tmpFile = path.join(tmpdir(), `neuroclaw-skill-upload-${name}-${process.pid}-${Date.now()}.tar`);
+  try {
+    const prefix = `extension-builder/extensions/${name}`;
+    const archive = await git(["archive", "--output", tmpFile, rev.stdout.trim(), "--", prefix], root);
+    if (!archive.ok) return { pulled: false, reason: `The shared skill package "${name}" is not on ${remote}/${branch}.` };
+    const extracted = await new Promise<boolean>(resolve => {
+      execFile("tar", ["-xf", tmpFile, "-C", root], { timeout: SKILL_UPLOAD_PULL_TIMEOUT_MS }, err => resolve(!err));
+    });
+    return extracted ? { pulled: true } : { pulled: false, reason: `Could not extract the shared skill package "${name}".` };
+  } finally {
+    rmSync(tmpFile, { force: true });
+  }
 }
 
 function extensionsDir(): string {
