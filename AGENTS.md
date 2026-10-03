@@ -34,4 +34,4 @@ None required. The app is local-first. No external API keys needed to boot.
 ## Notes / gotchas
 - Backend build uses the repo's `.bin/tsc` symlink → needs `node_modules` installed first (the dev script handles this).
 - Python `asi_core/` is standalone (stdlib only, empty requirements.txt) and is NOT part of the web runtime.
-- Web search needs a SearXNG instance: `NEUROCLAW_SEARXNG_URL`, default `http://127.0.0.1:8080` (see docs/BACKROOM.md and plugins/searxng.ts).
+- Web search needs a SearXNG instance: `NEUROCLAW_SEARXNG_URL`, default `http://127.0.0.1:8080` (see plugins/searxng.ts).

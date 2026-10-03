@@ -33,7 +33,6 @@ import { StorePlugin } from "./store.js";
 import { GithubPublishPlugin } from "./github-publish.js";
 import { ComputerAccessPlugin } from "./computer-access.js";
 import { HivePlugin } from "./hive.js";
-import { BackroomPlugin } from "./backroom.js";
 import type { BasePlugin } from "../plugin_manager/sdk.js";
 
 export { LocationPlugin } from "./location.js";
@@ -69,7 +68,6 @@ export { StorePlugin } from "./store.js";
 export { GithubPublishPlugin } from "./github-publish.js";
 export { ComputerAccessPlugin } from "./computer-access.js";
 export { HivePlugin } from "./hive.js";
-export { BackroomPlugin } from "./backroom.js";
 
 export function createPluginInstance(
   name: string,
@@ -121,7 +119,6 @@ export function createPluginInstance(
   if (lower === "github" || lower === "github-publish" || lower === "github publish") return new GithubPublishPlugin(definition);
   if (lower === "computer access" || lower === "computer-access") return new ComputerAccessPlugin(definition);
   if (lower === "hive") return new HivePlugin(definition);
-  if (lower === "backroom") return new BackroomPlugin(definition);
   throw new Error(`Unknown plugin: ${name}`);
 }
 
@@ -183,8 +180,6 @@ const pluginExtensions: Record<string, PluginDefinition> = {
   // already wired into NeuroclawSystem via collaborate()/solve()/
   // autonomousTask() but previously unreachable by name from a plain message.
   hive: { id: "hive", name: "Hive", type: "api-connection", capabilities: ["hive", "delegate", "summon"] },
-  // NeuroClaw and an Ollama-hosted model (Gemma) talking to each other until stopped.
-  backroom: { id: "backroom", name: "Backroom", type: "api-connection", capabilities: ["backroom", "converse"] },
 };
 
 const allExtensions: ExtensionManifest[] = Object.entries(pluginExtensions).map(([key, def]) => ({

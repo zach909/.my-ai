@@ -61,13 +61,6 @@ function looksLikeText(text) {
     }
     return printable / Math.max(1, [...text].length) >= 0.9;
 }
-/** The brain's own words from a generate() reply, or null for silence and non-text bytes. */
-function brainText(reply) {
-    const text = reply.replace(/\n\nConfidence: \d+%[\s\S]*$/, "").trim();
-    if (!text || text === ONE_BRAIN_SILENT_REPLY || !looksLikeText(text))
-        return null;
-    return text;
-}
 function formatToolReply(events, why) {
     return events.map(event => {
         const name = `${event.plugin}.${event.tool}`;
@@ -830,26 +823,11 @@ export class NeuroclawSystem {
         if (events.length > 0) {
             return { answered: true, via: "network", text: formatToolReply(events, "the network fired the tool's neuron"), toolCalls };
         }
-        const text = brainText(reply);
-        if (text === null)
+        const text = reply.replace(/\n\nConfidence: \d+%[\s\S]*$/, "").trim();
+        if (!text || text === ONE_BRAIN_SILENT_REPLY || !looksLikeText(text)) {
             return { answered: false, via: "none", text: "", toolCalls };
+        }
         return { answered: true, via: "brain", text, toolCalls };
-    }
-    /**
-     * What OneBrain itself says to some text, and nothing else: no tool router,
-     * no tool neurons, no plugins. For text that came from somewhere that must
-     * not be able to make this machine do anything (another model, say) --
-     * askOneBrain() would read "run `ls`" in it as a command. Null when the
-     * brain has nothing to say.
-     */
-    async speak(input, options = {}) {
-        if (!this.initialized)
-            await this.initialize();
-        const reply = await this.llm.generate(input, {
-            deadlineMs: options.deadlineMs ?? 6000,
-            ...(options.history && options.history.length ? { memoryContext: options.history } : {}),
-        });
-        return brainText(reply);
     }
     async processQuery(input) {
         if (!this.initialized)

@@ -8,7 +8,6 @@
     "dev": "node scripts/dev.mjs",
     "server": "node scripts/server.mjs",
     "launch": "node scripts/launcher.mjs",
-    "backroom": "node scripts/build-backend.mjs && node scripts/backroom.mjs",
     "lint:types": "tsc -p tsconfig.backend.json --noEmit",
     "lint": "npm run lint:types",
     "test:smoke": "node scripts/build-backend.mjs && node test/smoke.mjs",
