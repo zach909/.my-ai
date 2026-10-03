@@ -9,6 +9,9 @@ The network on the phone is not a port. It is the PC's own engine code, bundled 
 | Floating bubble over other apps | Yes (needs "Display over other apps") | No: iOS does not allow it, so open the app |
 | Who answers | Always the phone's own network: the mesh with OneBrain grafted in, the Zip Loop with send neurons, net-skill routing, and yes/no. Works with no connection at all | Same |
 | Photo for training data | Only when you tap **Photo**; kept on the phone until it syncs | Same |
+| Screen capture | **Screen** button, one screenshot per tap | Not built — iOS has no app-level screenshot API |
+| Voice-to-text | 🎙 button in chat | Same (mic button) |
+| Every permission in one place | **Grant all permissions** (main screen) | **Permissions** (Settings → PC → Permissions) |
 | Sync with the PC | Automatic after each message or photo, plus **Sync now** | Same |
 
 ## Fastest route: install it from the browser (PWA)
@@ -82,6 +85,21 @@ Pick your Apple ID team under **Signing & Capabilities**, then run it on your ph
 - **Screen button (in chat):** a one-shot screenshot, uploaded to the PC the same way a tapped **Photo** is (`~/.neuroclaw/captures/`, tagged "Screenshot"). Android requires a fresh consent dialog *every* capture — there is no way to make this silent or "always on" without leaving the OS's own screen-recording indicator up continuously, which this app does not do. Each tap is its own grant, taken and released immediately.
 
 System-level and signature-only permissions (`REBOOT`, `WRITE_SECURE_SETTINGS`, `INSTALL_PACKAGES`, and the like) are left out on purpose: a normal, sideloaded app can declare them, but Android silently refuses the grant regardless, so asking only produces dialogs that do nothing.
+
+## Permissions (iPhone)
+
+Settings → **PC** → **Permissions**, in the app. **Grant all permissions** at the top asks, one dialog after another, for every category iOS recognizes: Location (When In Use, then Always), Contacts, Calendars, Reminders, Photos, Microphone, Camera, Speech Recognition, Health & Fitness/Motion, Media & Apple Music, Notifications (incl. Critical Alerts), App Tracking Transparency, Bluetooth, HealthKit, HomeKit, Siri & Search, and Face ID/Touch ID (a real biometric challenge — there is no separate "ask" for that one, evaluating the policy *is* the request). Each is also listed individually below it, to (re)request just one.
+
+Three items have no request dialog at all — this is an iOS limitation, not something an app can route around:
+
+- **Background App Refresh** and **Cellular Data** are set by the person, in Settings, full stop; an app can only read the current state (`Permissions.swift`'s `backgroundRefreshStatus()` / `cellularStatus()`). The app declares `UIBackgroundModes: [fetch]` and runs a real sync (`AppDelegate.swift`) whenever iOS wakes it for one.
+- **Files and Folders** (`NSDocumentsFolderUsageDescription`/`NSDownloadsFolderUsageDescription`) are Mac Catalyst keys for folder-level sandbox access; a plain iOS app reaches files through the system document picker instead, which has its own, separate authorization.
+
+Two more need a step in Xcode this repo cannot do for you:
+
+- **HealthKit** and **HomeKit** each need their capability turned on for the app ID (Signing & Capabilities → **+ Capability** → HealthKit / HomeKit). **HomeKit also needs a paid Apple Developer Program membership** — Xcode will say so if you try it on a free personal-team account. `NeuroClaw.entitlements` already lists both; until the capability is added, those two rows report that plainly instead of a grant.
+
+Siri here is authorization only (`INPreferences.requestSiriAuthorization`); donating specific shortcuts/intents needs a separate Intents Extension target, which is its own Xcode project surface and out of scope for a repo nobody can compile here.
 
 ## The network on the phone
 
