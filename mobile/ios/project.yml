@@ -18,13 +18,47 @@ targets:
       # The full network: the PC's engine bundled for phones (npm run build:phone-brain).
       - path: "../brain/bundle/neuroclaw-brain.js"
         buildPhase: resources
+    entitlements:
+      # The file itself (not generated from properties here) so its
+      # explanatory comment survives `xcodegen generate` -- see
+      # NeuroClaw.entitlements: HealthKit and HomeKit do nothing without
+      # their capability also turned on in Xcode.
+      path: NeuroClaw/NeuroClaw.entitlements
     info:
       path: NeuroClaw/Info.plist
       properties:
         CFBundleDisplayName: NeuroClaw
         UILaunchScreen: {}
-        NSCameraUsageDescription: "Take a photo only when you tap Photo; it is sent to NeuroClaw on your PC as training data."
+        # "Give it access to everything": one usage-description string per
+        # permission category iOS recognizes (Permissions.swift requests
+        # each). The description is what the system prompt actually shows
+        # the person, so each one says, plainly, what NeuroClaw would do
+        # with it.
+        NSLocationWhenInUseUsageDescription: "Used only if you ask NeuroClaw something that needs your location."
+        NSLocationAlwaysAndWhenInUseUsageDescription: "Used only if you ask NeuroClaw something that needs your location, including while the app isn't open."
+        NSContactsUsageDescription: "Used only if you ask NeuroClaw to look up or work with a contact."
+        NSCalendarsUsageDescription: "Used only if you ask NeuroClaw about your calendar or to schedule something."
+        NSRemindersUsageDescription: "Used only if you ask NeuroClaw to create or check a reminder."
+        NSPhotoLibraryUsageDescription: "Used only if you ask NeuroClaw to look at or work with a photo in your library."
+        NSPhotoLibraryAddUsageDescription: "Used only if you ask NeuroClaw to save something to your photo library."
+        NSBluetoothAlwaysUsageDescription: "Used only if you ask NeuroClaw to work with a nearby Bluetooth device."
+        NSBluetoothPeripheralUsageDescription: "Used only if you ask NeuroClaw to work with a nearby Bluetooth device."
         NSLocalNetworkUsageDescription: "Talk to NeuroClaw running on your PC on this network."
+        NSMicrophoneUsageDescription: "Used for voice-to-text: NeuroClaw only listens while you're holding the mic button."
+        NSCameraUsageDescription: "Take a photo only when you tap Photo; it is sent to NeuroClaw on your PC as training data."
+        NSFaceIDUsageDescription: "Used only if you ask NeuroClaw to confirm it's you before doing something sensitive."
+        NSSpeechRecognitionUsageDescription: "Turns your voice into text for the mic button; nothing is sent anywhere until you tap Send."
+        NSHealthShareUsageDescription: "Used only if you ask NeuroClaw about your step count or other health data."
+        NSHealthUpdateUsageDescription: "Used only if you ask NeuroClaw to log health data on your behalf."
+        NSMotionUsageDescription: "Used only if you ask NeuroClaw something that needs your activity or motion data."
+        NSHomeKitUsageDescription: "Used only if you ask NeuroClaw to check or control a HomeKit accessory."
+        NSAppleMusicUsageDescription: "Used only if you ask NeuroClaw to look at or play something in your media library."
+        NSDocumentsFolderUsageDescription: "Used only if you ask NeuroClaw to open or save a file in Documents (Mac Catalyst only)."
+        NSDownloadsFolderUsageDescription: "Used only if you ask NeuroClaw to open or save a file in Downloads (Mac Catalyst only)."
+        NSSiriUsageDescription: "Lets you ask Siri to talk to NeuroClaw."
+        NSUserTrackingUsageDescription: "NeuroClaw does not track you across other apps or websites; declined here, nothing changes."
+        UIBackgroundModes:
+          - fetch
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
           NSAllowsArbitraryLoads: true

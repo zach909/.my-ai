@@ -25,6 +25,16 @@ final class Brain: ObservableObject {
     private let queue = OfflineQueue()
     private var syncing = false
 
+    /// The live Brain, for AppDelegate's background-fetch handler -- the one
+    /// thing here with no View to hand it to directly. Set at init; there is
+    /// only ever one Brain for the app's lifetime (@StateObject in
+    /// NeuroClawApp), so this never dangles in practice.
+    static weak var current: Brain?
+
+    init() {
+        Brain.current = self
+    }
+
     var pending: (turns: Int, photos: Int) { queue.counts() }
 
     func send(_ text: String) async {

@@ -8,6 +8,7 @@ import SwiftUI
 struct NeuroClawApp: App {
     @StateObject private var brain = Brain()
     @Environment(\.scenePhase) private var phase
+    @UIApplicationDelegateAdaptor(AppDelegate.self) private var appDelegate
     var body: some Scene {
         WindowGroup { ContentView().environmentObject(brain) }
             // Keep what the phone's network learned for the next launch.
