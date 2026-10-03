@@ -253,53 +253,395 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Neuroclaw Terminal</title>
 <style>
+  :root {
+    --primary: #4a7dff;
+    --primary-light: #7d9fff;
+    --secondary: #e8eaed;
+    --bg-dark: #0b0d10;
+    --bg-light: #14171c;
+    --border: #232830;
+    --text: #e8eaed;
+    --blur-radius: 40px;
+    --saturation: 1.8;
+    --contrast: 1.15;
+  }
+
   * { margin: 0; padding: 0; box-sizing: border-box; }
-  body { background: #0a0a0a; color: #00ff41; font-family: 'Courier New', monospace; height: 100vh; display: flex; flex-direction: column; }
-  #header { background: #111; padding: 12px 20px; border-bottom: 1px solid #00ff41; display: flex; justify-content: space-between; align-items: center; }
-  #header h1 { font-size: 14px; font-weight: normal; text-transform: uppercase; letter-spacing: 2px; }
-  #status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 8px; }
-  #status-dot.online { background: #00ff41; box-shadow: 0 0 8px #00ff41; }
-  #status-dot.offline { background: #ff0040; box-shadow: 0 0 8px #ff0040; }
-  #chat-container { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
-  .message { position: relative; max-width: 80%; padding: 10px 14px; border-radius: 4px; line-height: 1.5; font-size: 13px; animation: fadeIn 0.3s ease-out; }
-  .copy-btn { position: absolute; top: 4px; right: 4px; opacity: 0; background: #222; color: #00ff41; border: 1px solid #333; border-radius: 3px; font-size: 10px; padding: 2px 6px; cursor: pointer; transition: opacity 0.2s; }
-  .message:hover .copy-btn, .copy-btn:focus { opacity: 1; }
-  .edit-btn { background: none; border: none; color: #00ff41; opacity: 0.45; font-size: 13px; line-height: 1; padding: 2px 4px; margin-right: 6px; cursor: pointer; transition: opacity 0.2s; }
-  .edit-btn:hover, .edit-btn:focus { opacity: 1; }
-  .edit-area { width: 100%; box-sizing: border-box; background: #0b0b0b; color: #00ff41; border: 1px solid #00ff41; border-radius: 3px; font: inherit; padding: 6px; resize: vertical; min-height: 4.5em; }
-  .edit-actions { display: flex; gap: 6px; margin-top: 6px; }
-  .edit-actions button { background: #222; color: #00ff41; border: 1px solid #333; border-radius: 3px; font-size: 11px; padding: 3px 10px; cursor: pointer; }
-  .edit-actions button:hover { border-color: #00ff41; }
-  .edited-tag { color: #00ff41; opacity: 0.5; font-size: 10px; margin-left: 6px; }
-  .dots-btn { background: none; border: none; color: #00ff41; opacity: 0.45; font-size: 14px; line-height: 1; padding: 2px 4px; margin-right: 6px; cursor: pointer; transition: opacity 0.2s; }
-  .dots-btn:hover, .dots-btn:focus, .dots-btn[aria-expanded="true"] { opacity: 1; }
-  .details { margin-top: 8px; border-left: 2px solid #00ff41; padding: 6px 10px; background: #0b0b0b; font-size: 11px; color: #8f8; }
-  .details h4 { margin: 0 0 4px; font-size: 11px; color: #00ff41; text-transform: uppercase; letter-spacing: 0.05em; }
-  .details dl { display: grid; grid-template-columns: auto 1fr; gap: 2px 10px; margin: 0 0 6px; }
-  .details dt { opacity: 0.6; }
-  .details dd { margin: 0; word-break: break-word; }
-  .details ul { margin: 0 0 6px; padding-left: 16px; }
-  .details .none { opacity: 0.5; font-style: italic; }
-  .message.user { align-self: flex-end; background: #003300; border: 1px solid #00ff4144; }
-  .message.ai { align-self: flex-start; background: #111; border: 1px solid #333; }
-  .message.system { align-self: center; background: #111; border: 1px solid #333; color: #888; font-style: italic; font-size: 11px; }
-  .message.error { align-self: center; background: #330000; border: 1px solid #ff004044; color: #ff6666; }
-  .timestamp { font-size: 10px; color: #888; margin-top: 4px; }
-  #input-area { border-top: 1px solid #00ff4144; padding: 12px 20px; background: #111; display: flex; gap: 10px; }
-  #input { flex: 1; background: #0a0a0a; border: 1px solid #333; color: #00ff41; padding: 10px 14px; font-family: 'Courier New', monospace; font-size: 13px; outline: none; border-radius: 4px; }
-  #input:focus { border-color: #00ff41; }
-  #input:disabled { opacity: 0.5; cursor: not-allowed; }
-  #send-btn { background: #003300; color: #00ff41; border: 1px solid #00ff41; padding: 10px 20px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 13px; border-radius: 4px; }
-  #send-btn:hover { background: #005500; }
-  #send-btn:active, #clear-btn:active { transform: translateY(1px); }
-  #send-btn:disabled { opacity: 0.5; cursor: not-allowed; }
-  #clear-btn { background: transparent; color: #888; border: 1px solid #333; padding: 4px 8px; cursor: pointer; font-family: 'Courier New', monospace; font-size: 11px; border-radius: 4px; transition: all 0.2s; }
-  #clear-btn:hover { color: #00ff41; border-color: #00ff41; background: #003300; }
-  *:focus-visible { outline: 1px solid #00ff41; outline-offset: 2px; }
-  .thinking { color: #888; font-style: italic; font-size: 11px; align-self: flex-start; animation: pulse 1.5s infinite; }
-  .sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border-width: 0; }
-  @keyframes fadeIn { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
-  @keyframes pulse { 0% { opacity: 0.4; } 50% { opacity: 1; } 100% { opacity: 0.4; } }
+
+  body {
+    background: var(--bg-dark);
+    color: var(--text);
+    font-family: system-ui, -apple-system, 'Segoe UI', sans-serif;
+    height: 100vh;
+    display: flex;
+    flex-direction: column;
+  }
+
+  #header {
+    backdrop-filter: blur(var(--blur-radius)) saturate(var(--saturation)) contrast(var(--contrast));
+    background: rgba(20, 23, 28, 0.7);
+    padding: 16px 24px;
+    border-bottom: 1px solid var(--border);
+    border-radius: 0 0 20px 20px;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    position: relative;
+    box-shadow: 0 2px 8px rgba(255, 255, 255, 0.08) inset,
+                0 -1px 3px rgba(0, 0, 0, 0.2) inset;
+  }
+
+  #header h1 {
+    font-size: 16px;
+    font-weight: 500;
+    letter-spacing: 0.5px;
+  }
+
+  #status-dot {
+    width: 10px;
+    height: 10px;
+    border-radius: 50%;
+    display: inline-block;
+    margin-right: 10px;
+    animation: specularGlow 2s infinite;
+  }
+
+  #status-dot.online {
+    background: #4dff4d;
+    box-shadow: 0 0 12px #4dff4d, 0 0 24px rgba(77, 255, 77, 0.4);
+  }
+
+  #status-dot.offline {
+    background: #ff4d7a;
+    box-shadow: 0 0 12px #ff4d7a, 0 0 24px rgba(255, 77, 122, 0.4);
+  }
+
+  #chat-container {
+    flex: 1;
+    overflow-y: auto;
+    padding: 24px;
+    display: flex;
+    flex-direction: column;
+    gap: 16px;
+    scroll-behavior: smooth;
+  }
+
+  .message {
+    position: relative;
+    max-width: 85%;
+    padding: 12px 16px;
+    border-radius: 16px;
+    line-height: 1.6;
+    font-size: 14px;
+    animation: morphicExpand 0.4s cubic-bezier(0.34, 1.56, 0.64, 1);
+    backdrop-filter: blur(20px);
+    border: 1px solid var(--border);
+    box-shadow: 0 2px 8px rgba(255, 255, 255, 0.04) inset,
+                0 8px 16px rgba(0, 0, 0, 0.12);
+  }
+
+  .message::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border-radius: 16px;
+    background: linear-gradient(135deg, rgba(255, 255, 255, 0.1) 0%, transparent 50%);
+    pointer-events: none;
+  }
+
+  .copy-btn, .edit-btn, .dots-btn {
+    background: none;
+    border: none;
+    color: var(--primary);
+    opacity: 0.5;
+    cursor: pointer;
+    transition: all 0.2s cubic-bezier(0.34, 1.56, 0.64, 1);
+    font-size: 13px;
+    padding: 4px 6px;
+  }
+
+  .copy-btn:hover, .edit-btn:hover, .dots-btn:hover,
+  .copy-btn:focus, .edit-btn:focus, .dots-btn:focus {
+    opacity: 1;
+    transform: scale(1.1);
+  }
+
+  .edit-area {
+    width: 100%;
+    box-sizing: border-box;
+    background: rgba(14, 16, 20, 0.6);
+    color: var(--text);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    font: inherit;
+    padding: 8px 12px;
+    resize: vertical;
+    min-height: 5em;
+    backdrop-filter: blur(20px);
+  }
+
+  .edit-actions {
+    display: flex;
+    gap: 8px;
+    margin-top: 8px;
+  }
+
+  .edit-actions button {
+    background: var(--primary);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 12px;
+    padding: 6px 14px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-weight: 500;
+  }
+
+  .edit-actions button:hover {
+    background: var(--primary-light);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(74, 125, 255, 0.3);
+  }
+
+  .edited-tag {
+    color: var(--primary);
+    opacity: 0.6;
+    font-size: 11px;
+    margin-left: 8px;
+  }
+
+  .details {
+    margin-top: 10px;
+    border-left: 3px solid var(--primary);
+    padding: 8px 12px;
+    background: rgba(74, 125, 255, 0.05);
+    border-radius: 0 8px 8px 0;
+    font-size: 12px;
+    color: var(--text);
+    backdrop-filter: blur(10px);
+  }
+
+  .details h4 {
+    margin: 0 0 6px;
+    font-size: 12px;
+    color: var(--primary);
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    font-weight: 600;
+  }
+
+  .details dl {
+    display: grid;
+    grid-template-columns: auto 1fr;
+    gap: 4px 12px;
+    margin: 0 0 8px;
+  }
+
+  .details dt {
+    opacity: 0.65;
+    font-weight: 500;
+  }
+
+  .details dd {
+    margin: 0;
+    word-break: break-word;
+    color: var(--text);
+  }
+
+  .details ul {
+    margin: 0 0 8px;
+    padding-left: 20px;
+  }
+
+  .details .none {
+    opacity: 0.5;
+    font-style: italic;
+  }
+
+  .message.user {
+    align-self: flex-end;
+    background: rgba(74, 125, 255, 0.1);
+    border-color: rgba(74, 125, 255, 0.3);
+  }
+
+  .message.ai {
+    align-self: flex-start;
+    background: rgba(232, 234, 237, 0.05);
+  }
+
+  .message.system {
+    align-self: center;
+    background: rgba(74, 125, 255, 0.05);
+    border-color: rgba(74, 125, 255, 0.2);
+    color: var(--text);
+    opacity: 0.8;
+    font-style: italic;
+    font-size: 12px;
+  }
+
+  .message.error {
+    align-self: center;
+    background: rgba(255, 77, 122, 0.1);
+    border-color: rgba(255, 77, 122, 0.3);
+    color: #ff8b9e;
+  }
+
+  .timestamp {
+    font-size: 11px;
+    color: var(--text);
+    opacity: 0.6;
+    margin-top: 6px;
+  }
+
+  #input-area {
+    border-top: 1px solid var(--border);
+    padding: 16px 24px;
+    background: rgba(20, 23, 28, 0.4);
+    backdrop-filter: blur(30px);
+    display: flex;
+    gap: 12px;
+    position: relative;
+  }
+
+  #input {
+    flex: 1;
+    background: rgba(11, 13, 16, 0.5);
+    border: 1px solid var(--border);
+    color: var(--text);
+    padding: 12px 16px;
+    font-family: inherit;
+    font-size: 14px;
+    outline: none;
+    border-radius: 12px;
+    transition: all 0.2s;
+    backdrop-filter: blur(10px);
+  }
+
+  #input:focus {
+    border-color: var(--primary);
+    background: rgba(11, 13, 16, 0.7);
+    box-shadow: 0 0 0 3px rgba(74, 125, 255, 0.1),
+                0 2px 8px rgba(74, 125, 255, 0.15);
+  }
+
+  #input:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  #send-btn, #clear-btn {
+    border: none;
+    cursor: pointer;
+    font-family: inherit;
+    font-size: 14px;
+    border-radius: 12px;
+    transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+    font-weight: 500;
+    letter-spacing: 0.3px;
+  }
+
+  #send-btn {
+    background: var(--primary);
+    color: white;
+    padding: 12px 24px;
+    box-shadow: 0 4px 12px rgba(74, 125, 255, 0.3);
+  }
+
+  #send-btn:hover {
+    background: var(--primary-light);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(74, 125, 255, 0.4);
+  }
+
+  #send-btn:active {
+    transform: translateY(0);
+  }
+
+  #send-btn:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+    transform: none;
+  }
+
+  #clear-btn {
+    background: rgba(232, 234, 237, 0.1);
+    color: var(--text);
+    padding: 8px 16px;
+    border: 1px solid var(--border);
+    opacity: 0.7;
+  }
+
+  #clear-btn:hover {
+    background: rgba(74, 125, 255, 0.2);
+    border-color: var(--primary);
+    color: var(--primary);
+    opacity: 1;
+    transform: translateY(-1px);
+  }
+
+  *:focus-visible {
+    outline: 2px solid var(--primary);
+    outline-offset: 2px;
+  }
+
+  .thinking {
+    color: var(--primary);
+    font-style: italic;
+    font-size: 12px;
+    align-self: flex-start;
+    animation: breathing 2s ease-in-out infinite;
+    opacity: 0.7;
+  }
+
+  .sr-only {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    padding: 0;
+    margin: -1px;
+    overflow: hidden;
+    clip: rect(0, 0, 0, 0);
+    white-space: nowrap;
+    border-width: 0;
+  }
+
+  @keyframes fadeIn {
+    from { opacity: 0; transform: translateY(10px); }
+    to { opacity: 1; transform: translateY(0); }
+  }
+
+  @keyframes morphicExpand {
+    from { opacity: 0; transform: scale(0.92) translateY(8px); }
+    to { opacity: 1; transform: scale(1) translateY(0); }
+  }
+
+  @keyframes breathing {
+    0%, 100% { opacity: 0.4; }
+    50% { opacity: 1; }
+  }
+
+  @keyframes specularGlow {
+    0%, 100% { box-shadow: 0 0 12px currentColor, 0 0 24px rgba(var(--primary), 0.4); }
+    50% { box-shadow: 0 0 16px currentColor, 0 0 32px rgba(var(--primary), 0.6); }
+  }
+
+  ::-webkit-scrollbar {
+    width: 8px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: rgba(74, 125, 255, 0.3);
+    border-radius: 4px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: rgba(74, 125, 255, 0.5);
+  }
 </style>
 </head>
 <body>
@@ -307,7 +649,7 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
   <div style="display:flex; align-items:center; gap:15px;">
     <button id="clear-btn" aria-label="Clear chat history">Clear</button>
-    <div id="status-text" style="font-size:12px;color:#888;">Starting...</div>
+    <div id="status-text" style="font-size:12px; color:var(--text); opacity:0.6;">Starting...</div>
   </div>
 </div>
 <div id="chat-container" role="log" aria-live="polite" aria-atomic="false"></div>
