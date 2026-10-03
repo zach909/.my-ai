@@ -7662,14 +7662,19 @@ export interface ZipLoopNeuronIds {
    * commit it. So "00" is 0 -> send -> 0 -> send, and a bit exists only
    * where send fired.
    */
-  sendIn: number;
-  sendOut: number;
+  sendIn?: number;
+  sendOut?: number;
   /**
    * Optional toggle (phase) neuron on each side. It flips level on every bit,
    * so the bit's place in the message is carried by the neuron itself: "0" is
    * one bit at level low, "00" is low then high. Send says THAT a bit was
    * sent; toggle says WHICH one, so two equal bits in a row stay two bits even
    * if the network holds send on between them. Both or neither.
+   *
+   * With no send pair, the toggle is the ramp that replaces it: one tick per
+   * bit, the level alternating max, min, max, ... from a resting min, and
+   * every flip is a committed bit. A run of equal bits is a run of flips, so
+   * "0" and "00" differ with nothing else needed to tell them apart.
    */
   toggleIn?: number;
   toggleOut?: number;
@@ -7680,19 +7685,17 @@ export const ZIP_LOOP_DEFAULT_IDS: ZipLoopNeuronIds = Object.freeze({
   bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5,
 }) as ZipLoopNeuronIds;
 
-/** The toggle pair's place in the live mesh: the next two base neurons after the six above. */
-export const ZIP_LOOP_TOGGLE_IDS = Object.freeze({ toggleIn: 6, toggleOut: 7 });
+/** The ramp pair's place in the live mesh: neurons 4 and 5, where the send pair used to be. */
+export const ZIP_LOOP_RAMP_IDS = Object.freeze({ toggleIn: 4, toggleOut: 5 });
 
 /**
- * The ids the live mesh's Zip Loop uses: the default six plus the toggle
- * pair, when the engine has neurons 6 and 7 to give. A mesh too small for
- * them gets the six alone, which is the same doorway as before.
+ * The ids the live mesh's Zip Loop uses: the two bit neurons in and out, and
+ * the ramp neuron in and out in place of send. One tick per bit. The engine
+ * is taken so a caller can't build the ids without one; the ids themselves
+ * don't depend on its size, which callers already check.
  */
-export function zipLoopIdsFor(engine: { getNeuronCount(): number }): ZipLoopNeuronIds {
-  const top = Math.max(ZIP_LOOP_TOGGLE_IDS.toggleIn, ZIP_LOOP_TOGGLE_IDS.toggleOut);
-  return engine.getNeuronCount() > top
-    ? { ...ZIP_LOOP_DEFAULT_IDS, ...ZIP_LOOP_TOGGLE_IDS }
-    : { ...ZIP_LOOP_DEFAULT_IDS };
+export function zipLoopIdsFor(_engine: { getNeuronCount(): number }): ZipLoopNeuronIds {
+  return { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, ...ZIP_LOOP_RAMP_IDS };
 }
 
 /** Canonical drive magnitude for "this input neuron is active this tick" -- the actual value doesn't carry the bit (which of the two neurons is driven does); a fixed constant just needs to be a real, reproducible stimulus. */
@@ -7767,6 +7770,9 @@ export class ZipLoopInterface {
   /** Drive sets for each (bit, toggle level), setup and commit, built once: [bit][level]. */
   private readonly togglePlain: Set<number>[][] | null;
   private readonly toggleSent: Set<number>[][] | null;
+  /** Ramp-only (no send): one tick per bit, the toggle is the clock. Drive sets [bit][bitIndex parity]. */
+  private readonly rampOnly: boolean;
+  private readonly rampSets: Set<number>[][] | null;
   /** Reused input vectors; engine dimensions are fixed at construction, so these never need rebuilding. */
   private pulseScratch: number[] | null = null;
   private idleScratch: number[] | null = null;
@@ -7778,18 +7784,33 @@ export class ZipLoopInterface {
   constructor(private readonly engine: HyperDimensionalEngine, private readonly ids: ZipLoopNeuronIds) {
     this.drivenBit0 = new Set([ids.bit0In]);
     this.drivenBit1 = new Set([ids.bit1In]);
-    this.sentBit0 = new Set([ids.bit0In, ids.sendIn]);
-    this.sentBit1 = new Set([ids.bit1In, ids.sendIn]);
+    if ((ids.sendIn === undefined) !== (ids.sendOut === undefined)) {
+      throw new Error("ZipLoopInterface: sendIn and sendOut go together");
+    }
     if ((ids.toggleIn === undefined) !== (ids.toggleOut === undefined)) {
       throw new Error("ZipLoopInterface: toggleIn and toggleOut go together");
     }
-    if (ids.toggleIn !== undefined) {
+    this.rampOnly = ids.sendIn === undefined;
+    if (this.rampOnly && ids.toggleIn === undefined) {
+      throw new Error("ZipLoopInterface: needs a send pair or a ramp (toggle) pair to clock its bits");
+    }
+    const sendId = ids.sendIn;
+    this.sentBit0 = new Set(sendId === undefined ? [ids.bit0In] : [ids.bit0In, sendId]);
+    this.sentBit1 = new Set(sendId === undefined ? [ids.bit1In] : [ids.bit1In, sendId]);
+    if (this.rampOnly) {
+      // Bit k drives the ramp at max when k is even and leaves it at min when odd.
+      const t = ids.toggleIn as number;
+      this.rampSets = [ids.bit0In, ids.bit1In].map(d => [new Set([d, t]), new Set([d])]);
+    } else {
+      this.rampSets = null;
+    }
+    if (!this.rampOnly && ids.toggleIn !== undefined) {
       const t = ids.toggleIn;
       const datum = [ids.bit0In, ids.bit1In];
       const build = (withSend: boolean) => datum.map(d => [false, true].map(level => {
         const set = new Set([d]);
         if (level) set.add(t);
-        if (withSend) set.add(ids.sendIn);
+        if (withSend) set.add(ids.sendIn as number);
         return set;
       }));
       this.togglePlain = build(false);
@@ -7812,8 +7833,10 @@ export class ZipLoopInterface {
     this.engine.setWaveSignature(ids.bit1In, ZIP_BIT_FREQUENCY, Math.PI);
     this.engine.setWaveSignature(ids.bit0Out, ZIP_BIT_FREQUENCY, 0);
     this.engine.setWaveSignature(ids.bit1Out, ZIP_BIT_FREQUENCY, Math.PI);
-    this.engine.setWaveSignature(ids.sendIn, ZIP_SEND_FREQUENCY, 0);
-    this.engine.setWaveSignature(ids.sendOut, ZIP_SEND_FREQUENCY, 0);
+    if (ids.sendIn !== undefined && ids.sendOut !== undefined) {
+      this.engine.setWaveSignature(ids.sendIn, ZIP_SEND_FREQUENCY, 0);
+      this.engine.setWaveSignature(ids.sendOut, ZIP_SEND_FREQUENCY, 0);
+    }
     if (ids.toggleIn !== undefined && ids.toggleOut !== undefined) {
       this.engine.setWaveSignature(ids.toggleIn, ZIP_TOGGLE_FREQUENCY, 0);
       this.engine.setWaveSignature(ids.toggleOut, ZIP_TOGGLE_FREQUENCY, 0);
@@ -7886,6 +7909,11 @@ export class ZipLoopInterface {
       const pulse = this.pulseVector();
       // With a toggle neuron the level flips on every bit: off, on, off, ...
       const level = (this.bitsSent++ & 1) as 0 | 1;
+      if (this.rampSets) {
+        // One tick: the data neuron with the ramp at max (even bit) or min (odd bit).
+        this.engine.process(pulse, undefined, this.rampSets[bit][level], undefined, ZIP_LOOP_READ_ONLY);
+        return;
+      }
       const setup = this.togglePlain ? this.togglePlain[bit][level] : bit === 1 ? this.drivenBit1 : this.drivenBit0;
       const commit = this.toggleSent ? this.toggleSent[bit][level] : bit === 1 ? this.sentBit1 : this.sentBit0;
       this.engine.process(pulse, undefined, setup, undefined, ZIP_LOOP_READ_ONLY);
@@ -7907,6 +7935,10 @@ export class ZipLoopInterface {
     // The message is over: the next one starts its toggle from low again.
     const last = (this.bitsSent - 1) & 1;
     this.bitsSent = 0;
+    if (this.rampSets) {
+      this.engine.process(this.pulseVector(), undefined, this.rampSets[this.lastBit][last]);
+      return;
+    }
     // Learn while the input is still THERE.
     //
     // The first version of this drove nothing, on an idle vector, and learned
@@ -7971,7 +8003,15 @@ export class ZipLoopInterface {
     const line = this.activeLine();
     const zero = this.engine.getNeuronEnergy(this.ids.bit0Out);
     const one = this.engine.getNeuronEnergy(this.ids.bit1Out);
-    const sendHigh = this.engine.getNeuronEnergy(this.ids.sendOut) > line;
+    if (this.rampOnly) {
+      // The ramp is the clock: a bit is a flip of its level, from a resting min.
+      if (first) this.toggleOutWasHigh = false;
+      const high = this.engine.getNeuronEnergy(this.ids.toggleOut as number) > line;
+      const flipped = high !== this.toggleOutWasHigh;
+      this.toggleOutWasHigh = high;
+      return { bit: flipped ? (one > zero ? 1 : 0) : null };
+    }
+    const sendHigh = this.engine.getNeuronEnergy(this.ids.sendOut as number) > line;
     let rising = sendHigh && !this.sendOutWasHigh;
     this.sendOutWasHigh = sendHigh;
     if (this.ids.toggleOut !== undefined) {
