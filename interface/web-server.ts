@@ -1,6 +1,8 @@
 import http from 'node:http';
 import crypto from 'node:crypto';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, readFileSync, statSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { homedir } from 'node:os';
 import { spawn, type ChildProcessWithoutNullStreams } from 'node:child_process';
@@ -1239,6 +1241,67 @@ export function isSharedChatPublicRoute(pathname: string, method: string): boole
   return false;
 }
 
+// The built dashboard (the React app's `npm run build` output, committed in
+// dist/). The backend serves it itself, with Node built-ins only, so a phone
+// or any browser pointed at this port gets the same pages the PC does.
+// Only these prefixes are served: dist/ also holds the compiled backend.
+const DASHBOARD_DIR = fileURLToPath(new URL('..', import.meta.url));
+const DASHBOARD_PAGES = ['/app', '/builder', '/desktop'];
+const DASHBOARD_FILES = new Set(['/favicon.svg', '/icon.png', '/icon.svg', '/icons.svg', '/robots.txt', '/welcome.html']);
+const DASHBOARD_TYPES: Record<string, string> = {
+  '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.mjs': 'text/javascript; charset=utf-8',
+  '.css': 'text/css; charset=utf-8', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png',
+  '.jpg': 'image/jpeg', '.ico': 'image/x-icon', '.woff': 'font/woff', '.woff2': 'font/woff2', '.txt': 'text/plain; charset=utf-8',
+  '.wasm': 'application/wasm', '.map': 'application/json',
+};
+const DASHBOARD_CSP = "default-src 'self'; script-src 'self' 'unsafe-inline'; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com; " +
+  "font-src 'self' data: https://fonts.gstatic.com; img-src 'self' data: blob:; media-src 'self' blob:; worker-src 'self' blob:; connect-src 'self'";
+
+/** Map a URL path to a file inside dist/, or null when it is not a dashboard path. */
+export function resolveDashboardFile(pathname: string, dir: string = DASHBOARD_DIR): string | null {
+  let rel: string;
+  try { rel = decodeURIComponent(pathname); } catch { return null; }
+  if (rel.includes('\0') || rel.includes('\\')) return null;
+  const root = path.resolve(dir);
+  const target = path.resolve(root, '.' + rel);
+  // Judge the path after normalising it, so "/app/../interface/x.js" is
+  // checked as the "/interface/x.js" it really is.
+  const norm = '/' + path.relative(root, target).split(path.sep).join('/');
+  if (norm.startsWith('/..')) return null;
+  rel = norm;
+  const isPage = DASHBOARD_PAGES.some(p => rel === p || rel.startsWith(p + '/'));
+  if (!isPage && !rel.startsWith('/assets/') && !DASHBOARD_FILES.has(rel)) return null;
+  const isFile = (f: string) => { try { return statSync(f).isFile(); } catch { return false; } };
+  if (isFile(target)) return target;
+  if (!isPage) return null;
+  // Prerendered routes live at <route>/index.html; anything else under a page
+  // root falls back to that root's own entry so the client-side router can take over.
+  const index = path.join(target, 'index.html');
+  if (isFile(index)) return index;
+  if (path.extname(rel)) return null;
+  const top = '/' + rel.split('/')[1];
+  const fallback = path.join(root, top, 'index.html');
+  return isFile(fallback) ? fallback : null;
+}
+
+/** Serve the dashboard for GET/HEAD; true when it handled the request. */
+async function serveDashboard(req: http.IncomingMessage, res: http.ServerResponse, pathname: string): Promise<boolean> {
+  const method = req.method?.toUpperCase() ?? 'GET';
+  if (method !== 'GET' && method !== 'HEAD') return false;
+  const file = resolveDashboardFile(pathname);
+  if (!file) return false;
+  let body: Buffer;
+  try { body = await readFile(file); } catch { return false; }
+  const ext = path.extname(file).toLowerCase();
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Content-Security-Policy', DASHBOARD_CSP);
+  res.setHeader('Cache-Control', pathname.startsWith('/assets/') ? 'public, max-age=31536000, immutable' : 'no-cache');
+  res.writeHead(200, { 'Content-Type': DASHBOARD_TYPES[ext] ?? 'application/octet-stream', 'Content-Length': body.length });
+  res.end(method === 'HEAD' ? undefined : body);
+  return true;
+}
+
 /**
  * Which routes exist so someone can log in at all, and therefore cannot
  * themselves require being logged in. Nothing here reads or changes anything
@@ -1633,13 +1696,17 @@ export class WebServer {
 <script>
   var setting = false;
   var el = function (id) { return document.getElementById(id); };
+  function after() {
+    var n = new URLSearchParams(location.search).get('next');
+    return n && n.charAt(0) === '/' && n.charAt(1) !== '/' && n.charAt(1) !== '\\\\' ? n : '/';
+  }
   function say(text, ok) {
     var m = el('msg');
     m.textContent = text;
     m.className = 'msg ' + (ok ? 'good' : 'bad');
   }
   fetch('/api/auth/status').then(function (r) { return r.json(); }).then(function (s) {
-    if (s.loggedIn && s.passwordSet) { location.href = '/'; return; }
+    if (s.loggedIn && s.passwordSet) { location.href = after(); return; }
     setting = !s.passwordSet;
     if (!setting) return;
     el('title').textContent = 'Set a password';
@@ -1674,7 +1741,7 @@ export class WebServer {
     }).then(function (result) {
       if (!result.ok) { say(result.data.error || 'That did not work.', false); el('go').disabled = false; return; }
       say(setting ? 'Password set. Opening...' : 'Welcome back.', true);
-      location.href = '/';
+      location.href = after();
     }).catch(function () {
       say('Could not reach the server.', false);
       el('go').disabled = false;
@@ -1715,7 +1782,9 @@ export class WebServer {
     this.setSecurityHeaders(res);
     const wantsHtml = (req.headers.accept ?? '').includes('text/html');
     if (wantsHtml) {
-      res.writeHead(302, { Location: '/login' });
+      const next = (req.method ?? 'GET') === 'GET' && (req.url ?? '').startsWith('/') && !(req.url ?? '').startsWith('//')
+        ? `?next=${encodeURIComponent(req.url as string)}` : '';
+      res.writeHead(302, { Location: `/login${next}` });
       res.end();
       return;
     }
@@ -5732,6 +5801,8 @@ export class WebServer {
       }
       return;
     }
+
+    if (await serveDashboard(req, res, pathname)) return;
 
     this.sendJson(res, { error: 'Not Found' }, 404);
   }

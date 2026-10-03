@@ -11,7 +11,7 @@ The network on the phone is not a port. It is the PC's own engine code, bundled 
 | Photo for training data | Only when you tap **Photo**; kept on the phone until it syncs | Same |
 | Screen capture | **Screen** button, one screenshot per tap | Not built — iOS has no app-level screenshot API |
 | Agent bridge (lets NeuroClaw on your PC see and screenshot the phone, and drive the app) | Accessibility service, off until you turn it on in Android settings. Sees every window and can screenshot the screen (Android 11+); types, taps and presses Back **only in NeuroClaw's own windows** | Permissions → Agent bridge. Own screen only: window list, screenshot, typing into the focused field. No taps. Answers only while the app is open |
-| Full web interface (same screens as the browser) | **Open web app** button: the PC's web UI in Android's built-in WebView. Needs the PC address; the page does its own login | **Web app** toolbar button: the same, in WKWebView |
+| Full web interface (same screens as the browser) | **Open web app** button: the PC's full web dashboard (`/app`, served by the backend) in Android's built-in WebView. Needs the PC address; the page does its own login | **Web app** toolbar button: the same, in WKWebView |
 | Voice-to-text | 🎙 button in chat | Same (mic button) |
 | Every permission in one place | **Grant all permissions** (main screen) | **Permissions** (Settings → PC → Permissions) |
 | Sync with the PC | Automatic after each message or photo, plus **Sync now** | Same |
@@ -55,9 +55,9 @@ Nothing waits on sync. Without the PC, everything stays on the phone until the n
 
 ## 1. Set up the PC (only for syncing)
 
-1. Run NeuroClaw as usual (`npm run dev`). The phone connects to the web app's port, **3000**.
+1. Run NeuroClaw as usual (`npm run dev`). The phone connects to the backend's port, **7861**, which serves the dashboard at `/app`.
 2. In NeuroClaw, set a **Remote Access password**. The phone uses it to sign in.
-3. Find the PC's address on your Wi-Fi (for example `192.168.1.20`). On the phone you will enter `http://192.168.1.20:3000`.
+3. Find the PC's address on your Wi-Fi (for example `192.168.1.20`). On the phone you will enter `http://192.168.1.20:7861`.
 
 Photos you send arrive on the PC in `~/.neuroclaw/captures/`: each one is a `.jpg` plus a `.json` file holding the note and the time it was taken. They are never put in the repo. `GET /api/captures` lists them.
 

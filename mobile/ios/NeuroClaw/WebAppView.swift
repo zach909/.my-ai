@@ -1,13 +1,15 @@
 import SwiftUI
 import WebKit
 
-/// The PC's own web interface, full screen, so the phone shows and does exactly
+/// The PC's own web dashboard (/app: chat, chat groups, store, builder and the rest), full screen, so the phone shows and does exactly
 /// what the browser does. WKWebView is Apple's built-in web view; nothing third-party.
 /// The page handles its own login (session cookie).
 struct WebAppView: UIViewRepresentable {
     let urlString: String
 
-    func makeCoordinator() -> Coordinator { Coordinator(base: urlString) }
+    private var base: String { urlString.trimmingCharacters(in: .whitespaces).trimmingCharacters(in: CharacterSet(charactersIn: "/")) }
+
+    func makeCoordinator() -> Coordinator { Coordinator(base: base) }
 
     func makeUIView(context: Context) -> WKWebView {
         let config = WKWebViewConfiguration()
@@ -16,7 +18,7 @@ struct WebAppView: UIViewRepresentable {
         let web = WKWebView(frame: .zero, configuration: config)
         web.navigationDelegate = context.coordinator
         web.allowsBackForwardNavigationGestures = true
-        if let url = URL(string: urlString) { web.load(URLRequest(url: url)) }
+        if let url = URL(string: base + "/app") { web.load(URLRequest(url: url)) }
         return web
     }
 
