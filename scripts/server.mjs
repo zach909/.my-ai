@@ -2,22 +2,24 @@
 /**
  * server.mjs — `npm run server`: builds and starts the production
  * backend, prints a read-only startup resource diagnostic and an
- * automatic update check, and launches five autonomous agents alongside
+ * automatic update check, and launches six autonomous agents alongside
  * it: the self-improvement loop (scripts/self-improve.mjs, tunes
  * existing skills' hyperparameters), the skill-creation agent
  * (scripts/skill-agent.mjs -- "a separate AI... working on skills":
  * researches new topics, writes them up, and trains genuinely new
  * skills from scratch, publishing five things per skill -- see that
- * file's own doc comment), the skill-drill agent
- * (scripts/skill-drill-agent.mjs -- the fifth of those five things:
- * constantly re-drills each published skill with fresh problems,
- * judges whether it genuinely got better, and pushes real
- * improvements), the conversation-learning agent
+ * file's own doc comment), the conversation-learning agent
  * (scripts/conversation-learning-agent.mjs -- "it learns by talking to
  * you": trains on real local usage, strictly local, never published),
- * and the peer-sync listener (scripts/peer-sync.mjs). All child
- * processes get the CPU/memory-aware tuning from process-tuning.mjs so
- * these cycles run as fast as this machine's real resources allow.
+ * the autonomous-learning agent (scripts/autonomous-learning-agent.mjs --
+ * extracts domain-specific patterns from conversations and creates
+ * published net-skills for reasoning, chip-design, physics, ai-coding),
+ * the skill-drill agent (scripts/skill-drill-agent.mjs -- constantly
+ * re-drills published skills with fresh problems, judges whether they
+ * genuinely improve, and pushes real improvements), and the peer-sync
+ * listener (scripts/peer-sync.mjs). All child processes get the
+ * CPU/memory-aware tuning from process-tuning.mjs so these cycles run as
+ * fast as this machine's real resources allow.
  *
  * Mirrors scripts/dev.mjs's structure (build once, spawn, tear down
  * together on exit) but for the production entry point instead of the
@@ -91,6 +93,14 @@ if (process.env.NEUROCLAW_CONVERSATION_LEARNING !== '0') {
   children.push(conversationLearner)
 } else {
   console.log('[server] conversation-learning agent disabled (NEUROCLAW_CONVERSATION_LEARNING=0)')
+}
+
+if (process.env.NEUROCLAW_AUTONOMOUS_LEARNING !== '0') {
+  console.log('[server] starting autonomous-learning agent (extracts domain learnings -> publishes net-skills)...')
+  const autonomousLearner = spawn('node', ['scripts/autonomous-learning-agent.mjs'], { cwd: ROOT, stdio: 'inherit', env: childEnv })
+  children.push(autonomousLearner)
+} else {
+  console.log('[server] autonomous-learning agent disabled (NEUROCLAW_AUTONOMOUS_LEARNING=0)')
 }
 
 if (process.env.NEUROCLAW_SKILL_DRILLS !== '0') {
