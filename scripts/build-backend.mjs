@@ -43,7 +43,7 @@ let TSC = findTsc();
 if (!TSC) {
   console.log('› tsc is missing — installing dependencies first');
   try {
-    execFileSync('npm', ['install', '--no-audit', '--no-fund'], { stdio: 'inherit', cwd: ROOT });
+    execFileSync('npm', ['install', '--no-audit', '--no-fund'], { stdio: 'inherit', cwd: ROOT, shell: process.platform === 'win32' });
   } catch (err) {
     console.error(`✗ npm install failed: ${err.message}`);
   }
