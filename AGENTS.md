@@ -26,3 +26,22 @@ None required. The app is local-first. No external API keys needed to boot.
 - Backend build uses the repo's `.bin/tsc` symlink → needs `node_modules` installed first (the dev script handles this).
 - `/` is a 307 redirect to `/app`; health check must follow redirects.
 - Python `asi_core/` is standalone (stdlib only, empty requirements.txt) and is NOT part of the web runtime.
+
+## Hard rule: no third-party models or code for anything the network itself should do
+The user has said this many times, explicitly: do not bring in a third-party model,
+library, or service to do work that belongs to NeuroClaw's own neural mesh or Zip
+Loop. No Whisper, no cloud STT/TTS APIs, no third-party ML packages, nothing
+downloaded or `npm install`ed to replace or sit in front of the network's own
+reasoning. This is a standing rule, not a one-time answer to one request.
+- Voice-to-text buttons use only the OS's own first-party API (Android
+  `SpeechRecognizer`, iOS `SFSpeechRecognizer`/`AVAudioEngine` via `Speech`/
+  `AVFoundation`) purely to turn speech into a text string in the input box.
+  That string then goes through `brain.send(text)` exactly like typed text —
+  through the real byte-level Zip Loop, no tokenizer, nothing short-circuited.
+- Before adding any new dependency (npm, pip, Gradle, CocoaPods/SPM) ask
+  whether it does cognition/understanding work the mesh should be doing
+  instead. If so, don't add it — extend the mesh/Zip Loop/skills instead,
+  even if that's slower or more work.
+- There is no tokenizer anywhere in this repo (`tokenizer.js` was deleted,
+  not disabled) and it must stay that way: text is raw UTF-8 bytes through
+  the Zip Loop everywhere, always.
