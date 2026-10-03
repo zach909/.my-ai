@@ -658,7 +658,7 @@ class PasswordLock {
  */
 export function isWikiPublicRoute(pathname, method) {
     if (method === 'GET') {
-        return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+$/.test(pathname);
+        return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(pathname);
     }
     if (method === 'POST') {
         return pathname === '/api/wiki';
@@ -3274,12 +3274,10 @@ export class WebServer {
             }
             return;
         }
-        // GET /api/wiki/:name — one page's raw markdown. `name` must be a bare
-        // filename stem (letters/digits/-/_ only, matching the page names
-        // [[WikiLink]] syntax already uses throughout wiki/*.md) so this can
-        // never escape the wiki/ directory — no `.`/`/` is accepted at all,
+        // GET /api/wiki/:name — one page's raw markdown. `name` can be nested
+        // paths like "getting-started/installation" (letters/digits/-/_/\/ only),
         // which rules out both `..` traversal and an absolute-path override.
-        const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)$/);
+        const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)$/);
         if (wikiMatch && method === 'GET') {
             const local = readWikiPage(wikiMatch[1]);
             if (local) {
@@ -3321,7 +3319,7 @@ export class WebServer {
         // taken of this bot-published page (before each overwrite/edit/delete),
         // oldest first, so a caller can see what's recoverable before choosing
         // one to restore.
-        const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)\/backups$/);
+        const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/backups$/);
         if (backupsMatch && method === 'GET') {
             try {
                 const backups = listWikiBackups(backupsMatch[1]);
@@ -3337,7 +3335,7 @@ export class WebServer {
         // of its own backups (body: { timestamp }). A write, not a read, so
         // (unlike the routes above) this still goes through the normal
         // remoteAccessLock gate.
-        const restoreMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)\/restore$/);
+        const restoreMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/restore$/);
         if (restoreMatch && method === 'POST') {
             try {
                 const body = await this.parseBody(req);

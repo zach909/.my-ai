@@ -104,6 +104,26 @@
                 android:value="Floating assistant bubble the user opened, shown over other apps" />
         </service>
 
+        <!--
+          The agent bridge (AgentBridgeService.kt / BridgeServer.kt): an
+          accessibility service, so Android's own consent screen and the
+          Settings -> Accessibility switch are what turn it on. It serves a
+          token-protected HTTP API on port 7862 (loopback unless you opt in to
+          Wi-Fi in the app) for the PC-side desktop layer.
+        -->
+        <service
+            android:name=".AgentBridgeService"
+            android:exported="false"
+            android:label="NeuroClaw agent bridge"
+            android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
+            <intent-filter>
+                <action android:name="android.accessibilityservice.AccessibilityService" />
+            </intent-filter>
+            <meta-data
+                android:name="android.accessibilityservice"
+                android:resource="@xml/agent_bridge_config" />
+        </service>
+
         <provider
             android:name="androidx.core.content.FileProvider"
             android:authorities="${applicationId}.captures"

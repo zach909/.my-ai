@@ -16,4 +16,25 @@ class Settings(context: Context) {
         set(value) = prefs.edit().putString("password", value).apply()
 
     val configured: Boolean get() = serverUrl.isNotEmpty()
+
+    /**
+     * The secret the PC must present to the agent bridge (BridgeServer.kt).
+     * Made once, from the system's secure random source, and shown in the app
+     * so you can paste it into NEUROCLAW_PHONE_BRIDGE_TOKEN.
+     */
+    val bridgeToken: String
+        get() {
+            val existing = prefs.getString("bridgeToken", null)
+            if (!existing.isNullOrEmpty()) return existing
+            val bytes = ByteArray(16)
+            java.security.SecureRandom().nextBytes(bytes)
+            val made = bytes.joinToString("") { "%02x".format(it) }
+            prefs.edit().putString("bridgeToken", made).apply()
+            return made
+        }
+
+    /** Whether the bridge listens on Wi-Fi (for a PC) rather than only on this phone. Off by default. */
+    var bridgeLan: Boolean
+        get() = prefs.getBoolean("bridgeLan", false)
+        set(value) = prefs.edit().putBoolean("bridgeLan", value).apply()
 }

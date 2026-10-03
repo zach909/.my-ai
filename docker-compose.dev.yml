@@ -13,6 +13,5 @@ services:
     ports:
       - "3000:3000"
     environment:
-      - NEUROCLAW_AUTO_UPDATE=0
       - CHOKIDAR_USEPOLLING=true
     restart: unless-stopped
