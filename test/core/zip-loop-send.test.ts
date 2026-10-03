@@ -10,12 +10,14 @@ import { ZipLoopInterface, ZIP_LOOP_DEFAULT_IDS, zipLoopIdsFor } from '../../mod
 
 const IDS = ZIP_LOOP_DEFAULT_IDS;
 const TOGGLE = { ...IDS, toggleIn: 6, toggleOut: 7 };
+/** The live ids: a ramp in place of send, one tick per bit. */
+const RAMP = { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, toggleIn: 4, toggleOut: 5 };
 
 /**
  * Just enough of HyperDimensionalEngine for the Zip Loop: records which
  * neurons each tick drove, and plays back scripted output energies.
  */
-function fakeEngine(outputScript: Array<{ zero: number; one: number; send: number; toggle?: number }> = []) {
+function fakeEngine(outputScript: Array<{ zero: number; one: number; send: number; toggle?: number }> = [], toggleOutId = TOGGLE.toggleOut) {
   const driven: number[][] = [];
   let tick = -1;
   const engine = {
@@ -31,7 +33,7 @@ function fakeEngine(outputScript: Array<{ zero: number; one: number; send: numbe
     },
     getNeuronEnergy: (id: number) => {
       const t = outputScript[tick] ?? { zero: 0, one: 0, send: 0 };
-      if (id === TOGGLE.toggleOut) return t.toggle ?? 0;
+      if (id === toggleOutId) return t.toggle ?? 0;
       if (id === IDS.bit0Out) return t.zero;
       if (id === IDS.bit1Out) return t.one;
       if (id === IDS.sendOut) return t.send;
@@ -166,12 +168,73 @@ describe('Zip Loop toggle neuron: flips every bit', () => {
   });
 });
 
-describe('the live mesh gets the toggle pair when it has room', () => {
-  it('adds neurons 6 and 7 to the default six', () => {
-    expect(zipLoopIdsFor({ getNeuronCount: () => 64 })).toEqual({ ...IDS, toggleIn: 6, toggleOut: 7 });
+describe('Zip Loop ramp: max to min, one tick per bit, replacing send', () => {
+  const rampEngine = (script: Array<{ zero: number; one: number; send: number; toggle?: number }> = []) =>
+    fakeEngine(script, RAMP.toggleOut);
+
+  it('sends each bit in a single tick, the ramp at max on even bits and min on odd', () => {
+    const { engine, driven } = rampEngine();
+    const zip = new ZipLoopInterface(engine, RAMP);
+    zip.sendBit(0);
+    zip.sendBit(0);
+    zip.sendBit(1);
+    expect(driven).toEqual([
+      [RAMP.bit0In, RAMP.toggleIn],
+      [RAMP.bit0In],
+      [RAMP.bit1In, RAMP.toggleIn],
+    ]);
   });
 
-  it('keeps the plain six on a mesh too small to hold them', () => {
-    expect(zipLoopIdsFor({ getNeuronCount: () => 7 })).toEqual(IDS);
+  it('never drives a send neuron, and "0" and "00" differ by their flips', () => {
+    const one = rampEngine(); new ZipLoopInterface(one.engine, RAMP).sendBit(0);
+    const two = rampEngine(); const z = new ZipLoopInterface(two.engine, RAMP); z.sendBit(0); z.sendBit(0);
+    expect(one.driven.length).toBe(1);
+    expect(two.driven.length).toBe(2);
+    expect(two.driven[0]).not.toEqual(two.driven[1]);
+  });
+
+  it('starts every message at max again', () => {
+    const { engine, driven } = rampEngine();
+    const zip = new ZipLoopInterface(engine, RAMP);
+    zip.sendBit(1);
+    zip.learnFromEvent();
+    driven.length = 0;
+    zip.sendBit(1);
+    expect(driven[0]).toEqual([RAMP.bit1In, RAMP.toggleIn]);
+  });
+
+  it('reads one bit per flip of the ramp, including repeated zeros', () => {
+    const { engine } = rampEngine([
+      { zero: ON, one: OFF, send: OFF, toggle: ON },   // max: bit 0
+      { zero: ON, one: OFF, send: OFF, toggle: OFF },  // min: bit 0
+      { zero: OFF, one: ON, send: OFF, toggle: ON },   // max: bit 1
+    ]);
+    expect(new ZipLoopInterface(engine, RAMP).receiveBits(3)).toEqual([0, 0, 1]);
+  });
+
+  it('a ramp that stops flipping means the network stopped sending', () => {
+    const { engine } = rampEngine(Array(40).fill({ zero: ON, one: OFF, send: OFF, toggle: ON }));
+    const zip = new ZipLoopInterface(engine, RAMP);
+    // one flip (rest -> max) gives a first bit, then it holds: nothing more.
+    expect(zip.receiveBits(4)).toEqual([0]);
+    expect(zip.nextOutputByte()).toBeNull();
+  });
+
+  it('assembles a byte from eight flips, MSB first', () => {
+    const bits = [1, 0, 1, 1, 0, 0, 1, 1];
+    const script = bits.map((b, k) => ({ zero: b ? OFF : ON, one: b ? ON : OFF, send: OFF, toggle: k % 2 === 0 ? ON : OFF }));
+    expect(new ZipLoopInterface(rampEngine(script).engine, RAMP).nextOutputByte()).toBe(0b10110011);
+  });
+
+  it('needs a send pair or a ramp pair to clock its bits', () => {
+    const { engine } = rampEngine();
+    expect(() => new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3 })).toThrow();
+    expect(() => new ZipLoopInterface(engine, { ...IDS, sendOut: undefined })).toThrow();
+  });
+});
+
+describe('the live mesh uses the ramp in place of send', () => {
+  it('gives neurons 4 and 5 to the ramp and none to send', () => {
+    expect(zipLoopIdsFor({ getNeuronCount: () => 64 })).toEqual(RAMP);
   });
 });

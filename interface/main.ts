@@ -15,6 +15,23 @@ import { NeuroclawRunner } from "./runner.js";
 import { WebServer } from "./web-server.js";
 import { NetSkillMesh } from "../models && skills/core/net-skill-mesh.js";
 
+// Initialize the learning system at startup (loads published net-skills)
+async function initializeLearningSystem() {
+  try {
+    const LearningLoader = await import('../scripts/learning-loader.mjs');
+    const result = await LearningLoader.initializeLearningSystem();
+    if (result.ok) {
+      console.log(`[learning] Loaded ${result.summary.domainCount} domain net-skills (${result.summary.totalNeurons} neurons, ${result.summary.totalSamples} samples).`);
+    } else {
+      console.warn(`[learning] Failed to initialize: ${result.error}`);
+    }
+    return result;
+  } catch (err) {
+    console.warn('[learning] Could not load learning system:', (err as Error).message);
+    return { ok: false, loadedSkills: {}, meshSkills: {}, summary: { domainsLoaded: [], domainCount: 0, totalNeurons: 0, totalSamples: 0, skills: {} } };
+  }
+}
+
 /**
  * Composition root. cli.ts, runner.ts and web-server.ts only export classes —
  * before this file existed nothing instantiated them, so `npm start`, the
@@ -119,6 +136,10 @@ export async function startWeb(port: number): Promise<WebServer> {
   const { llm, pipeline, pluginRegistry, systemAccess } = await buildCore();
   const runner = new NeuroclawRunner(llm, pipeline, pluginRegistry, systemAccess, systemAccess.getMultiDesktop());
   const web = new WebServer(runner);
+
+  // Initialize learning system: load published net-skills at startup
+  await initializeLearningSystem();
+
   // Loopback-only unless NEUROCLAW_WEB_HOST opts into remote access, in
   // which case NEUROCLAW_WEB_PASSWORD is required -- see WebServer.start()'s
   // doc comment for why an unauthenticated remote bind is refused outright.
