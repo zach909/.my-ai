@@ -7,6 +7,7 @@ struct ContentView: View {
     @State private var input = ""
     @State private var showCamera = false
     @State private var showSettings = false
+    @State private var showWeb = false
     @State private var toast: String?
 
     var body: some View {
@@ -59,10 +60,21 @@ struct ContentView: View {
             }
             .navigationTitle("NeuroClaw")
             .toolbar {
+                Button("Web app") { showWeb = true }
+                    .disabled(brain.serverURL.isEmpty)
                 Button("Sync now") { Task { await brain.sync() } }
                 Button("PC") { showSettings = true }
             }
             .sheet(isPresented: $showSettings) { SettingsView().environmentObject(brain) }
+            .fullScreenCover(isPresented: $showWeb) {
+                NavigationStack {
+                    WebAppView(urlString: brain.serverURL)
+                        .ignoresSafeArea(edges: .bottom)
+                        .navigationTitle("NeuroClaw")
+                        .navigationBarTitleDisplayMode(.inline)
+                        .toolbar { Button("Close") { showWeb = false } }
+                }
+            }
             .sheet(isPresented: $showCamera) {
                 // Nothing is captured unless you tap Photo; the note is whatever is typed.
                 CameraView { image in

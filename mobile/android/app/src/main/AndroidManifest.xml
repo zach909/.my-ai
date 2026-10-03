@@ -76,6 +76,12 @@
             </intent-filter>
         </activity>
 
+        <!-- The PC's web interface, full screen. -->
+        <activity
+            android:name=".WebActivity"
+            android:exported="false"
+            android:windowSoftInputMode="adjustResize" />
+
         <!-- Transparent: opens the system camera for one photo, uploads it, closes. -->
         <activity
             android:name=".CaptureActivity"
