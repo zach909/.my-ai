@@ -2,7 +2,7 @@
 
 Status: specification (formalizes and extends the existing prototype in
 `extension-builder/`, `src/features/builder/`, `plugin_manager/`, and
-`model && skills manager/tinygpt/extension_builder.py`; see `wiki/Builder.md`
+the removed `tinygpt/extension_builder.py` Python builder; see `wiki/Builder.md`
 for the narrative overview). This document is the build-out plan for the
 gaps: file format, packaging/installation, debugging, search, and testing.
 
@@ -219,7 +219,7 @@ single-neuron `typeModelOutput`.
 
 - `ExtensionBuilder.getStats(projectId)` (existing) — cheap sanity counts, asserted in tests after every mutating sequence.
 - New `explainConnection(projectId, connectionId)`: returns `{from, to, weight, bias, contribution}` given the current neuron values — the programmatic form of the inspector, usable from `test/smoke.mjs` without a browser.
-- Python side (`tinygpt/extension_builder.py`): `eb.train(..., verbose=True)` already narrates loss per epoch (per `wiki/Builder.md` §"Training contracts"); this spec adds `eb.train(..., trace=True)` returning the full per-epoch loss/quantization-error series for offline plotting, rather than only printing it.
+- Python side (removed with the TinyGPT track; the TypeScript `ExtensionBuilder` is the live builder): `eb.train(..., verbose=True)` already narrates loss per epoch (per `wiki/Builder.md` §"Training contracts"); this spec adds `eb.train(..., trace=True)` returning the full per-epoch loss/quantization-error series for offline plotting, rather than only printing it.
 
 ### 5.3 Error surfacing
 
@@ -246,7 +246,7 @@ explicit stages so packaging (§7) has a stable contract to call into.
                         path) skipped — TS graphs quantize weights directly, no activation calibration needed since there's no trained forward pass at that layer
  [4] Quantize        — fake-quant → real quant: weights mapped to `bits`-width
                         integers with a symmetric scale factor per tensor
-                        (existing `_fake_quant` in `tinygpt/mesh.py`; TS side
+                        (previously `_fake_quant` in the removed `tinygpt/mesh.py`; TS side
                         rounds `ConnectionData.weight`/`bias` to the requested
                         precision)
  [5] Error report    — quantization_error() (Python, existing) / new TS
@@ -476,7 +476,7 @@ public API) is the contract. This spec:
 
 ### 9.2 Python public surface
 
-`tinygpt/extension_builder.py`'s `ExtensionBuilder`/`Definishon`,
+the removed `tinygpt/extension_builder.py`'s `ExtensionBuilder`/`Definishon`,
 `build_skill`, `build_plugin`, `learn_and_extend`, `install_extension`
 (all existing, per `wiki/Extensions.md`) remain the Python-side contract
 unchanged. This spec adds a `trace=True` kwarg to `train()` (§5.2) as the

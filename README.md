@@ -1,5 +1,5 @@
 # NeuroClaw - Artificial Superintelligence System
-
+FOR EDU USES ONLY
 
 WARNING ⚠️ THIS PROJECT IS IN BETA. WE ARE NOT RESPONSIBLE FOR YOUR ACTIONS OR WHAT THE CODE DOES. BY CONTINUING YOU AGREE WITH THIS STATEMENT AND THE [PRIVACY POLICY](PRIVACY.md) AND [TERMS AND CONDITIONS](TERMS.md).
 
@@ -715,7 +715,11 @@ Each `self_ext_N` folder is a memory extension the agent saved at generation N. 
 | `models && skills/core/agent-workspace.ts` | The agent's own terminals and files, kept separate from the user's. |
 | `models && skills/core/access-manager.ts` | Access control: what the agent is allowed to do to the computer, deny-by-default. |
 | `models && skills/core/access-settings.ts` | Saves access kill switches and grants to disk so they survive restarts. |
-| `models && skills/core/desktop-control.ts` | The graphical access layer: windows, input, screenshots, and app launching, all gated by `AccessManager`. |
+| `models && skills/core/desktop-control.ts` | The graphical access layer: windows, input, screenshots, and app launching, all gated by `AccessManager`. Runs on the native backends below; nothing to install. |
+| `models && skills/core/desktop/x11.ts` | A direct X11 client over `node:net`: windows, screenshots, XTEST keys and clicks. Replaces wmctrl, xdotool and gnome-screenshot. |
+| `models && skills/core/desktop/dbus.ts` | A D-Bus client over `node:net` and the desktop-portal request flow. Replaces gdbus; gives Wayland its screenshots and settings. |
+| `models && skills/core/desktop/png.ts` | A PNG encoder on `node:zlib`. |
+| `models && skills/core/desktop/backends.ts` | One interface over X11, Wayland, a phone (the NeuroClaw app's bridge) and "not supported here" (Windows, macOS, no display). |
 | `models && skills/core/remote-access.ts` | Remote-access password and login sessions for reaching the instance from another machine. |
 | `models && skills/core/alignment-veto.ts` | Deterministic alignment veto gate. It is not a learned objective. |
 | `models && skills/core/empathy.ts` | Empathy engine: tracks the user's feelings and intent to keep the agent aligned. |
@@ -823,7 +827,7 @@ TypeScript plugins (`*.ts`) run in the Node backend. Python plugins (`plugin_*.p
 | `plugins/radios.ts` | Wi-Fi, Bluetooth, cellular, and NFC radio status and control. |
 | `plugins/research.ts` | Multi-source research that cross-checks claims and reports what is corroborated. |
 | `plugins/robotics.ts` | Robot actuators, sensors, and state. |
-| `plugins/screenshots.ts` | Screen capture. |
+| `plugins/screenshots.ts` | Screen capture through the native backends (no screenshot program, no temp files). |
 | `plugins/self_replicate.ts` | Spawns cloned agents with custom prompts and roles. |
 | `plugins/store.ts` | Lets the agent publish, edit, and install store items itself. |
 | `plugins/tasks.ts` | To-do and task list. |
@@ -1047,7 +1051,10 @@ Run with `npm test` (smoke + Vitest + install test). Everything in `test/core/` 
 | `test/core/conversation-learning.test.ts` | Conversation logging and the training pipeline. |
 | `test/core/critic.test.ts` | Critic verifies claims independently. |
 | `test/core/delete-everything.test.ts` | "Delete all memory and chats" really deletes everything. |
-| `test/core/desktop-control.test.ts` | Graphical access layer gating (without a real display). |
+| `test/core/desktop-control.test.ts` | Graphical access layer: gating and degradation with no display, a real X server (Xvfb), and a stand-in phone bridge. |
+| `test/core/x11-native.test.ts` | The X11 client against a real X server. Skips if Xvfb is absent. |
+| `test/core/dbus-native.test.ts` | The D-Bus client against a real bus daemon, including the portal request flow. |
+| `test/core/screenshots-native.test.ts` | Screen capture on the native backends. |
 | `test/core/domain-skills.test.ts` | The eight domain neuron regions. |
 | `test/core/doorway-lock.test.ts` | Only one caller drives `settle()` at a time. |
 | `test/core/drill-generators.test.ts` | Every drill generator's answers are correct. |

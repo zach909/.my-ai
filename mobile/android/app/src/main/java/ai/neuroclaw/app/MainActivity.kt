@@ -1,11 +1,8 @@
 package ai.neuroclaw.app
 
-import android.Manifest
 import android.app.Activity
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
-import android.os.Build
 import android.os.Bundle
 import android.provider.Settings as AndroidSettings
 import android.text.InputType
@@ -48,6 +45,13 @@ class MainActivity : Activity() {
                 brain.syncInBackground()
             }
         }
+        val webApp = Button(this).apply {
+            text = "Open web app"
+            setOnClickListener {
+                if (settings.serverUrl.isEmpty()) status.text = "Enter your PC address and tap Save first."
+                else startActivity(Intent(this@MainActivity, WebActivity::class.java))
+            }
+        }
         val overlay = Button(this).apply {
             text = "Allow over other apps"
             setOnClickListener {
@@ -65,6 +69,13 @@ class MainActivity : Activity() {
                 moveTaskToBack(true)
             }
         }
+        val grant = Button(this).apply {
+            text = "Grant all permissions"
+            setOnClickListener {
+                Permissions.requestAll(this@MainActivity)
+                status.text = "Requesting every permission NeuroClaw can use (mic, camera, contacts, location, SMS, calendar, and more) -- answer the system dialogs, then come back here."
+            }
+        }
         val sync = Button(this).apply {
             text = "Sync now"
             setOnClickListener {
@@ -73,6 +84,21 @@ class MainActivity : Activity() {
                     refreshStatus()
                     status.text = "$result\n${status.text}"
                 }
+            }
+        }
+        // The agent bridge: lets the PC-side agent see this phone's windows and
+        // screen and drive NeuroClaw's own. Android's own Accessibility screen
+        // is what turns it on, so nothing happens until you do that.
+        val bridge = Button(this).apply {
+            text = "Agent bridge"
+            setOnClickListener { startActivity(Intent(AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS)) }
+        }
+        val bridgeLan = Button(this).apply {
+            text = if (settings.bridgeLan) "Bridge: Wi-Fi on" else "Bridge: this phone only"
+            setOnClickListener {
+                settings.bridgeLan = !settings.bridgeLan
+                text = if (settings.bridgeLan) "Bridge: Wi-Fi on" else "Bridge: this phone only"
+                status.text = "Turn the bridge off and on again in Accessibility settings for this to take effect."
             }
         }
         val stop = Button(this).apply {
@@ -84,15 +110,17 @@ class MainActivity : Activity() {
             orientation = LinearLayout.VERTICAL
             setPadding(pad, pad, pad, pad)
             addView(url); addView(password)
-            addView(LinearLayout(context).apply { addView(save); addView(overlay) })
+            addView(LinearLayout(context).apply { addView(save); addView(webApp); addView(overlay) })
             addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
+            addView(grant)
+            addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
             addView(status)
             addView(ChatPanel(context), LinearLayout.LayoutParams(LinearLayout.LayoutParams.MATCH_PARENT, 0, 1f))
         })
 
-        if (Build.VERSION.SDK_INT >= 33 && checkSelfPermission(Manifest.permission.POST_NOTIFICATIONS) != PackageManager.PERMISSION_GRANTED) {
-            requestPermissions(arrayOf(Manifest.permission.POST_NOTIFICATIONS), 1)
-        }
+        // "Give it access to everything": ask for every permission up front, not
+        // one at a time as each feature happens to be tapped.
+        Permissions.requestAll(this)
         refreshStatus()
     }
 
@@ -111,9 +139,12 @@ class MainActivity : Activity() {
     private fun refreshStatus() {
         val brain = Shared.brain(this)
         val overlay = if (AndroidSettings.canDrawOverlays(this)) "allowed" else "not allowed yet"
+        val missing = Permissions.missing(this)
         status.text = buildString {
             append(if (brain.settings.configured) "PC for syncing: ${brain.settings.serverUrl}" else "PC: not set (everything stays on the phone)")
             append("\nOver other apps: $overlay")
+            append(if (missing.isEmpty()) "\nAll permissions granted." else "\n${missing.size} permission(s) not yet granted -- tap \"Grant all permissions\".")
+            append("\nAgent bridge: port ${BridgeServer.PORT}, token ${brain.settings.bridgeToken} (turn on in Accessibility settings; set NEUROCLAW_PHONE_BRIDGE_TOKEN on the PC to this token)")
             append("\n${brain.status()}")
         }
     }

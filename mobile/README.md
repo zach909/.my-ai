@@ -9,7 +9,38 @@ The network on the phone is not a port. It is the PC's own engine code, bundled 
 | Floating bubble over other apps | Yes (needs "Display over other apps") | No: iOS does not allow it, so open the app |
 | Who answers | Always the phone's own network: the mesh with OneBrain grafted in, the Zip Loop with send neurons, net-skill routing, and yes/no. Works with no connection at all | Same |
 | Photo for training data | Only when you tap **Photo**; kept on the phone until it syncs | Same |
+| Screen capture | **Screen** button, one screenshot per tap | Not built — iOS has no app-level screenshot API |
+| Agent bridge (lets NeuroClaw on your PC see and screenshot the phone, and drive the app) | Accessibility service, off until you turn it on in Android settings. Sees every window and can screenshot the screen (Android 11+); types, taps and presses Back **only in NeuroClaw's own windows** | Permissions → Agent bridge. Own screen only: window list, screenshot, typing into the focused field. No taps. Answers only while the app is open |
+| Full web interface (same screens as the browser) | **Open web app** button: the PC's web UI in Android's built-in WebView. Needs the PC address; the page does its own login | **Web app** toolbar button: the same, in WKWebView |
+| Voice-to-text | 🎙 button in chat | Same (mic button) |
+| Every permission in one place | **Grant all permissions** (main screen) | **Permissions** (Settings → PC → Permissions) |
 | Sync with the PC | Automatic after each message or photo, plus **Sync now** | Same |
+
+## Fastest route: install it from the browser (PWA)
+
+No APK, no Xcode. The web app is installable and opens offline-capable from your home screen.
+
+1. Run NeuroClaw on the PC and set a **Remote Access password** (see step 1 below).
+2. On the phone, open `http://<PC address>:3000` in Chrome (Android) or Safari (iPhone).
+3. Android: menu → **Install app**. iPhone: Share → **Add to Home Screen**.
+
+Notes: browsers only offer install over HTTPS or `localhost`, so over plain LAN HTTP use Android's **Add to Home screen** shortcut, or put the PC behind an HTTPS tunnel. The service worker (`public/sw.js`) is registered in production builds only (`npm run build`). It never caches `/api/*`. The PWA does not run the on-phone brain or the floating bubble; use the native apps below for those.
+
+## No SDK or Mac? Let GitHub build it
+
+The **Mobile apps** workflow (`.github/workflows/mobile.yml`) builds both apps on GitHub's runners. In the repo: **Actions → Mobile apps → Run workflow**, then download the APK (`neuroclaw-android-debug-apk`) from the run. The iOS job is an unsigned simulator build that checks the Swift code compiles; installing on a real iPhone still needs Xcode and your Apple ID team (see section 3).
+## Letting the PC's agent reach the phone (the agent bridge)
+
+The desktop layer on the PC (`models && skills/core/desktop-control.ts`) can be pointed at a phone. The phone app serves a small token-protected HTTP API on port 7862 (contract: `PhoneBackend` in `models && skills/core/desktop/backends.ts`).
+
+1. On the phone, turn the bridge on: **Android** Settings → Accessibility → NeuroClaw agent bridge (the **Agent bridge** button opens it); **iPhone** Permissions → Agent bridge. The app shows the token.
+2. Reaching it:
+   - **Node on the phone itself (Android, Termux-style):** nothing to set; the PC-side code finds it on `127.0.0.1:7862`. Only the token is needed.
+   - **A PC reaching a phone:** turn on the Wi-Fi option in the app (off by default), then on the PC set `NEUROCLAW_PHONE_BRIDGE_URL=http://<phone address>:7862`.
+   - Always set `NEUROCLAW_PHONE_BRIDGE_TOKEN` to the token the app shows.
+3. The boundary is the same as on a desktop: the agent can **see** every window it is told about and **screenshot**, but can only **type, tap or close** NeuroClaw's own windows, and the app refuses anything else itself rather than trusting the PC.
+
+Neither app's bridge could be compiled or run where it was written (no Android SDK or Xcode), so expect small build fixes the first time.
 
 ## What sync does
 
@@ -64,6 +95,29 @@ open NeuroClaw.xcodeproj
 ```
 
 Pick your Apple ID team under **Signing & Capabilities**, then run it on your phone. Tap **PC** to enter the address and password.
+
+## Permissions, voice and screen (Android)
+
+- **Grant all permissions** (main screen): asks for every dangerous permission the app declares (mic, camera, contacts, calendar, call log, phone, SMS, location, sensors, Bluetooth, nearby Wi-Fi, media) in one batch, instead of one at a time as each feature happens to be tapped. Declaring a permission never uses it by itself — each button below only does something once its own permission is actually granted.
+- **🎙 (mic button, in chat):** voice-to-text. Tap to start listening, tap again to stop; the words land in the message box. Needs `RECORD_AUDIO`, granted by **Grant all permissions** or the system prompt.
+- **Screen button (in chat):** a one-shot screenshot, uploaded to the PC the same way a tapped **Photo** is (`~/.neuroclaw/captures/`, tagged "Screenshot"). Android requires a fresh consent dialog *every* capture — there is no way to make this silent or "always on" without leaving the OS's own screen-recording indicator up continuously, which this app does not do. Each tap is its own grant, taken and released immediately.
+
+System-level and signature-only permissions (`REBOOT`, `WRITE_SECURE_SETTINGS`, `INSTALL_PACKAGES`, and the like) are left out on purpose: a normal, sideloaded app can declare them, but Android silently refuses the grant regardless, so asking only produces dialogs that do nothing.
+
+## Permissions (iPhone)
+
+Settings → **PC** → **Permissions**, in the app. **Grant all permissions** at the top asks, one dialog after another, for every category iOS recognizes: Location (When In Use, then Always), Contacts, Calendars, Reminders, Photos, Microphone, Camera, Speech Recognition, Health & Fitness/Motion, Media & Apple Music, Notifications (incl. Critical Alerts), App Tracking Transparency, Bluetooth, HealthKit, HomeKit, Siri & Search, and Face ID/Touch ID (a real biometric challenge — there is no separate "ask" for that one, evaluating the policy *is* the request). Each is also listed individually below it, to (re)request just one.
+
+Three items have no request dialog at all — this is an iOS limitation, not something an app can route around:
+
+- **Background App Refresh** and **Cellular Data** are set by the person, in Settings, full stop; an app can only read the current state (`Permissions.swift`'s `backgroundRefreshStatus()` / `cellularStatus()`). The app declares `UIBackgroundModes: [fetch]` and runs a real sync (`AppDelegate.swift`) whenever iOS wakes it for one.
+- **Files and Folders** (`NSDocumentsFolderUsageDescription`/`NSDownloadsFolderUsageDescription`) are Mac Catalyst keys for folder-level sandbox access; a plain iOS app reaches files through the system document picker instead, which has its own, separate authorization.
+
+Two more need a step in Xcode this repo cannot do for you:
+
+- **HealthKit** and **HomeKit** each need their capability turned on for the app ID (Signing & Capabilities → **+ Capability** → HealthKit / HomeKit). **HomeKit also needs a paid Apple Developer Program membership** — Xcode will say so if you try it on a free personal-team account. `NeuroClaw.entitlements` already lists both; until the capability is added, those two rows report that plainly instead of a grant.
+
+Siri here is authorization only (`INPreferences.requestSiriAuthorization`); donating specific shortcuts/intents needs a separate Intents Extension target, which is its own Xcode project surface and out of scope for a repo nobody can compile here.
 
 ## The network on the phone
 

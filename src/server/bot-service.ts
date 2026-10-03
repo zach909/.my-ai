@@ -82,6 +82,10 @@ export interface BotResponse {
     promptingSkills?: string[]
     /** True when any part of this answer came from the web (a web-sourced prompting skill, or the research/browser plugins). Such answers are never learned from -- see UnifiedBrain.learnFrom(). */
     usedWeb?: boolean
+    /** Set when domain is 'onebrain' -- whether OneBrain answered in its own words ('brain'), fired a tool neuron ('network'), or the message named a tool call outright ('router'). */
+    oneBrainVia?: 'brain' | 'network' | 'router'
+    /** Tools called this turn, with whether each succeeded. */
+    toolCalls?: Array<{ plugin: string; tool: string; ok: boolean; error?: string }>
   }
   /** Set when this response reports an error, so callers can look it up via getRecentErrors(). */
   errorId?: string
@@ -321,6 +325,14 @@ export class ChatBot {
     if (intent === 'route') return this.buildRouteResponse()
     if (intent === 'error') return this.buildErrorResponse()
 
+    // OneBrain is the front door. Everything that follows -- the prompting-
+    // skill loop, trained-skill matches, the reasoner -- is what answers when
+    // the brain has nothing usable to say, not what gets asked first. The
+    // brain can also act: a tool neuron it fires, or a tool call the message
+    // names outright, comes back as the reply here.
+    const front = await this.tryOneBrain(userMessage)
+    if (front) return front
+
     // "Skills directly connected into the rest of it" -- a trained skill
     // (published by scripts/skill-agent.mjs, or manually built/registered
     // via the Extension Builder) gets first chance at answering, ahead of
@@ -387,6 +399,34 @@ export class ChatBot {
           metadata: { domain: result.domain },
         }
       }
+    }
+  }
+
+  /**
+   * Asks OneBrain first. Null means it had nothing usable (silent, cut off at
+   * its deadline, disabled, or this system does not have a brain to ask), and
+   * the caller falls through to the rule-based path exactly as before. Never
+   * throws into the chat path.
+   */
+  private async tryOneBrain(userMessage: string): Promise<BotResponse | null> {
+    if (!this.system || typeof this.system.askOneBrain !== 'function') return null
+    try {
+      const deadlineMs = Number(process.env.NEUROCLAW_ONEBRAIN_DEADLINE_MS) || undefined
+      const turn = await this.system.askOneBrain(userMessage, { deadlineMs })
+      if (!turn.answered) return null
+      return {
+        message: turn.text,
+        confidence: turn.via === 'brain' ? 0.6 : 0.9,
+        suggestions: this.generateSuggestions(userMessage, turn.text, 'onebrain'),
+        metadata: {
+          domain: 'onebrain',
+          oneBrainVia: turn.via === 'none' ? undefined : turn.via,
+          ...(turn.toolCalls.length > 0 ? { toolCalls: turn.toolCalls } : {}),
+        },
+      }
+    } catch (error) {
+      logError('bot-service.tryOneBrain', error, { userMessage })
+      return null
     }
   }
 

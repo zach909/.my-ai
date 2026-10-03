@@ -34,16 +34,15 @@
  * list.
  */
 
-import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync, readdirSync, unlinkSync, writeFileSync, statSync } from "node:fs";
 import path from "node:path";
 import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 import { storeRoot } from "./store.js";
 
-// Matches the same rule interface/web-server.ts's GET /api/wiki/:name
-// already enforced: a bare filename stem, no '.' or '/' at all, so this can
-// never escape either directory (rules out both '..' traversal and an
-// absolute-path override).
-const SAFE_NAME = /^[A-Za-z0-9_-]+$/;
+// Allows nested paths like "getting-started/installation" or "api/v1/endpoints"
+// while preventing directory traversal (.., .) and absolute paths. Each segment
+// must be a valid identifier (letters, digits, '-', '_'), no empty segments.
+const SAFE_NAME = /^[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/;
 
 export type WikiSource = "human" | "bot";
 
@@ -52,6 +51,7 @@ export interface WikiPageSummary {
   title: string;
   description: string;
   source: WikiSource;
+  sources?: string[];
 }
 
 export interface WikiPage extends WikiPageSummary {
@@ -69,7 +69,9 @@ function botWikiDir(): string {
 }
 
 function backupsDir(name: string): string {
-  return path.join(botWikiDir(), ".backups", name);
+  // Flatten nested names by replacing '/' with '__' for backup storage
+  const flatName = name.replace(/\//g, "__");
+  return path.join(botWikiDir(), ".backups", flatName);
 }
 
 /**
@@ -107,43 +109,83 @@ function backupBeforeChange(name: string): void {
   writeFileSync(path.join(dir, `${stamp}.md`), content, "utf8");
 }
 
-/** Pull a title and one-line description out of a page's raw markdown -- every page in wiki/*.md and store/wiki/*.md follows the `# Title` + paragraph shape this extracts. */
-export function extractWikiSummary(raw: string): { title: string; description: string } {
+/** Pull a title, one-line description, and sources out of a page's raw markdown. */
+export function extractWikiSummary(raw: string): { title: string; description: string; sources: string[] } {
   const lines = raw.split("\n");
   let title = "";
   let description = "";
+  const sources: string[] = [];
+  let inSourcesSection = false;
+
   for (const line of lines) {
     const trimmed = line.trim();
+
+    // Check for Sources section heading
+    if (trimmed.match(/^#+\s+Sources?\s*$/i)) {
+      inSourcesSection = true;
+      continue;
+    }
+
+    // Exit sources section on new heading (that's not Sources)
+    if (trimmed.match(/^#+\s+/) && inSourcesSection && !trimmed.match(/^#+\s+Sources?\s*$/i)) {
+      inSourcesSection = false;
+    }
+
+    if (inSourcesSection) {
+      // Extract URLs/sources from list items (- URL or * URL or 1. URL format)
+      const sourceMatch = trimmed.match(/^[-*]\s+(.+)$/) || trimmed.match(/^\d+\.\s+(.+)$/);
+      if (sourceMatch) {
+        sources.push(sourceMatch[1].trim());
+      }
+      continue;
+    }
+
     if (!title) {
       const h1 = trimmed.match(/^#\s+(.+)$/);
       if (h1) title = h1[1].trim();
       continue;
     }
+
     if (!trimmed || trimmed.startsWith("#") || trimmed.startsWith("|") || trimmed.startsWith("```")) continue;
-    description = trimmed;
-    break;
+    if (!description) {
+      description = trimmed;
+      // Don't break -- continue to find sources
+    }
   }
-  return { title, description };
+
+  return { title, description, sources };
 }
 
 function assertSafeName(name: string): void {
   if (!SAFE_NAME.test(name)) {
     throw new WikiNameError(
-      `"${name}" is not a valid wiki page name -- letters, digits, '-', and '_' only (no '.' or '/').`
+      `"${name}" is not a valid wiki page name -- use letters, digits, '-', '_', and '/' for nesting (e.g., "getting-started/installation").`
     );
   }
 }
 
-function listDir(dir: string, source: WikiSource): WikiPageSummary[] {
+function listDir(dir: string, source: WikiSource, prefix = ""): WikiPageSummary[] {
   if (!existsSync(dir)) return [];
-  return readdirSync(dir)
-    .filter((f) => f.endsWith(".md"))
-    .map((f) => {
-      const name = f.slice(0, -3);
-      const raw = readFileSync(path.join(dir, f), "utf8");
-      return { name, source, ...extractWikiSummary(raw) };
-    })
-    .sort((a, b) => a.title.localeCompare(b.title));
+  const results: WikiPageSummary[] = [];
+
+  for (const entry of readdirSync(dir)) {
+    if (entry.startsWith(".")) continue; // skip hidden files/dirs
+    const fullPath = path.join(dir, entry);
+    const stat = statSync(fullPath);
+
+    if (stat.isDirectory()) {
+      // Recursively list nested directories
+      const nested = listDir(fullPath, source, prefix ? `${prefix}/${entry}` : entry);
+      results.push(...nested);
+    } else if (entry.endsWith(".md")) {
+      const name = prefix ? `${prefix}/${entry.slice(0, -3)}` : entry.slice(0, -3);
+      const raw = readFileSync(fullPath, "utf8");
+      const { sources, ...summary } = extractWikiSummary(raw);
+      results.push({ name, source, ...summary, ...(sources.length > 0 && { sources }) });
+    }
+  }
+
+  return results.sort((a, b) => a.title.localeCompare(b.title));
 }
 
 /** The curated collection followed by the bot-published one -- two groups, not interleaved, so a caller that doesn't re-group by `source` still shows curated pages first. */
@@ -154,15 +196,17 @@ export function listWikiPages(): WikiPageSummary[] {
 /** Checks the curated collection first, then the bot-published one -- a curated page's name always wins if the two ever collide. */
 export function readWikiPage(name: string): WikiPage | null {
   assertSafeName(name);
-  const humanFile = path.join(wikiDir(), `${name}.md`);
+  const humanFile = path.join(wikiDir(), ...name.split("/")) + ".md";
   if (existsSync(humanFile)) {
     const content = readFileSync(humanFile, "utf8");
-    return { name, source: "human", content, ...extractWikiSummary(content) };
+    const { sources, ...summary } = extractWikiSummary(content);
+    return { name, source: "human", content, ...summary, ...(sources.length > 0 && { sources }) };
   }
-  const botFile = path.join(botWikiDir(), `${name}.md`);
+  const botFile = path.join(botWikiDir(), ...name.split("/")) + ".md";
   if (existsSync(botFile)) {
     const content = readFileSync(botFile, "utf8");
-    return { name, source: "bot", content, ...extractWikiSummary(content) };
+    const { sources, ...summary } = extractWikiSummary(content);
+    return { name, source: "bot", content, ...summary, ...(sources.length > 0 && { sources }) };
   }
   return null;
 }
@@ -189,14 +233,15 @@ export function publishWikiPage(name: string, title: string, content: string): W
   // curated page first (see its own doc comment). That's a silent no-op
   // from the caller's point of view: a "publish"/"edit" that reports
   // success but is never actually visible anywhere. Fail loudly instead.
-  if (existsSync(path.join(wikiDir(), `${name}.md`))) {
+  const humanFile = path.join(wikiDir(), ...name.split("/")) + ".md";
+  if (existsSync(humanFile)) {
     throw new WikiNameError(
       `"${name}" is already a curated wiki page and can't be overwritten here -- pick a different name.`
     );
   }
   backupBeforeChange(name);
-  const dir = botWikiDir();
-  if (!existsSync(dir)) mkdirSync(dir, { recursive: true });
+  const baseDir = botWikiDir();
+  if (!existsSync(baseDir)) mkdirSync(baseDir, { recursive: true });
   const hasHeading = /^\s*#\s+.+/.test(content);
   const draft = hasHeading ? content : `# ${title.trim()}\n\n${content}`;
   // Write and return the exact same string -- previously this wrote
@@ -204,10 +249,13 @@ export function publishWikiPage(name: string, title: string, content: string): W
   // publish response's content didn't byte-for-byte match what a follow-up
   // GET /api/wiki/:name would return for the same page.
   const body = draft.endsWith("\n") ? draft : `${draft}\n`;
-  const file = path.join(dir, `${name}.md`);
+  const file = path.join(baseDir, ...name.split("/")) + ".md";
+  // Create parent directories for nested paths
+  const fileDir = path.dirname(file);
+  if (!existsSync(fileDir)) mkdirSync(fileDir, { recursive: true });
   writeFileSync(file, body, "utf8");
-  const { title: extractedTitle, description } = extractWikiSummary(body);
-  return { name, source: "bot", title: extractedTitle || title.trim(), description, content: body };
+  const { title: extractedTitle, description, sources } = extractWikiSummary(body);
+  return { name, source: "bot", title: extractedTitle || title.trim(), description, ...(sources.length > 0 && { sources }), content: body };
 }
 
 /**
@@ -224,10 +272,11 @@ export function publishWikiPage(name: string, title: string, content: string): W
  */
 export function deleteWikiPage(name: string): void {
   assertSafeName(name);
-  if (existsSync(path.join(wikiDir(), `${name}.md`))) {
+  const humanFile = path.join(wikiDir(), ...name.split("/")) + ".md";
+  if (existsSync(humanFile)) {
     throw new WikiNameError(`"${name}" is a curated wiki page and can't be deleted here.`);
   }
-  const file = path.join(botWikiDir(), `${name}.md`);
+  const file = path.join(botWikiDir(), ...name.split("/")) + ".md";
   if (!existsSync(file)) {
     throw new WikiNameError(`No bot-published page named "${name}" to delete.`);
   }

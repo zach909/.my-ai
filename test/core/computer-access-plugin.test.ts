@@ -50,7 +50,8 @@ describe('reaching the access layers at all', () => {
     const probe = await plugin.probe()
     // On a machine with no display this must say so, not claim success.
     expect(typeof probe.summary).toBe('string')
-    expect(probe.usable).toBe(Boolean(probe.display || probe.wayland) && probe.tools.wmctrl)
+    expect(typeof probe.backend).toBe('string')
+    if (!probe.display && !probe.wayland) expect(probe.usable).toBe(false)
   })
 })
 

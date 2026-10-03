@@ -546,10 +546,40 @@ export class ToolNeuronLayer {
    * listening to -- spelled from the layer's side for a caller that holds the
    * layer rather than the plugin.
    */
-  async call(plugin: string, tool: string, args: Record<string, unknown> = {}): Promise<ToolCallEvent> {
+  async call(plugin: string, tool: string, args: Record<string, unknown> = {}, origin: ToolOrigin = "direct"): Promise<ToolCallEvent> {
     const source = this.sources.get(plugin);
     if (!source) throw new Error(`No plugin "${plugin}" is attached to the network's tool layer.`);
-    return source.callTool(tool, args, "direct");
+    return source.callTool(tool, args, origin);
+  }
+
+  /**
+   * A call asked for from outside the network -- a chat message naming a tool
+   * (tool-router.ts) -- made with the same Access page check a network firing
+   * gets, which call() does not do.
+   *
+   * It is still a neuron event: the plugin's observer sees it, so the tool's
+   * neuron is driven and the result goes back in on the plugin's channel. A
+   * call access refuses never reaches the tool and comes back as a failed event.
+   */
+  async dispatch(plugin: string, tool: string, args: Record<string, unknown>, origin: ToolOrigin = "message"): Promise<ToolCallEvent> {
+    const neuron = this.neurons.get(`${plugin}.${tool}`);
+    if (!neuron) {
+      const now = Date.now();
+      return { plugin, tool, args, origin, ok: false, error: `No tool neuron for ${plugin}.${tool}.`, startedAt: now, endedAt: now };
+    }
+    if (this.access && neuron.spec.capability) {
+      try {
+        this.access.require(neuron.spec.capability);
+      } catch (err) {
+        const now = Date.now();
+        const event: ToolCallEvent = {
+          plugin, tool, args, origin, ok: false, error: err instanceof Error ? err.message : String(err), startedAt: now, endedAt: now,
+        };
+        this.record(event);
+        return event;
+      }
+    }
+    return this.call(plugin, tool, args, origin);
   }
 
   // ─── Inputs: results ──────────────────────────────────────────────────

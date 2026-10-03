@@ -658,7 +658,7 @@ class PasswordLock {
  */
 export function isWikiPublicRoute(pathname, method) {
     if (method === 'GET') {
-        return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+$/.test(pathname);
+        return pathname === '/api/wiki' || /^\/api\/wiki\/[A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*$/.test(pathname);
     }
     if (method === 'POST') {
         return pathname === '/api/wiki';
@@ -3274,12 +3274,10 @@ export class WebServer {
             }
             return;
         }
-        // GET /api/wiki/:name — one page's raw markdown. `name` must be a bare
-        // filename stem (letters/digits/-/_ only, matching the page names
-        // [[WikiLink]] syntax already uses throughout wiki/*.md) so this can
-        // never escape the wiki/ directory — no `.`/`/` is accepted at all,
+        // GET /api/wiki/:name — one page's raw markdown. `name` can be nested
+        // paths like "getting-started/installation" (letters/digits/-/_/\/ only),
         // which rules out both `..` traversal and an absolute-path override.
-        const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)$/);
+        const wikiMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)$/);
         if (wikiMatch && method === 'GET') {
             const local = readWikiPage(wikiMatch[1]);
             if (local) {
@@ -3321,7 +3319,7 @@ export class WebServer {
         // taken of this bot-published page (before each overwrite/edit/delete),
         // oldest first, so a caller can see what's recoverable before choosing
         // one to restore.
-        const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)\/backups$/);
+        const backupsMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/backups$/);
         if (backupsMatch && method === 'GET') {
             try {
                 const backups = listWikiBackups(backupsMatch[1]);
@@ -3337,7 +3335,7 @@ export class WebServer {
         // of its own backups (body: { timestamp }). A write, not a read, so
         // (unlike the routes above) this still goes through the normal
         // remoteAccessLock gate.
-        const restoreMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+)\/restore$/);
+        const restoreMatch = pathname.match(/^\/api\/wiki\/([A-Za-z0-9_-]+(?:\/[A-Za-z0-9_-]+)*)\/restore$/);
         if (restoreMatch && method === 'POST') {
             try {
                 const body = await this.parseBody(req);
@@ -4571,9 +4569,9 @@ export class WebServer {
                     }, 409);
                     return;
                 }
-                const { ZipLoopInterface } = await import('../models && skills/core/onebrain.js');
+                const { ZipLoopInterface, zipLoopIdsFor } = await import('../models && skills/core/onebrain.js');
                 const { runUntilStoppedAsync, DEFAULT_HALT } = await import('../models && skills/core/zip-halt.js');
-                const zip = new ZipLoopInterface(engine, { bit0In: 0, bit1In: 1, bit0Out: 2, bit1Out: 3, sendIn: 4, sendOut: 5 });
+                const zip = new ZipLoopInterface(engine, zipLoopIdsFor(engine));
                 // Capped hard. One settle per bit means an unbounded ceiling here
                 // would be a request that never returns.
                 const maxTicks = Math.min(Math.max(1, Number(body?.maxTicks) || 512), 4096);

@@ -4,6 +4,7 @@ import dns from 'node:dns/promises';
 import { URL } from 'node:url';
 import type { PluginDefinition, ChromeAppConfig } from "../plugin_manager/types.js";
 import { BasePlugin } from "../plugin_manager/sdk.js";
+import { searxngSearch } from "./searxng.js";
 
 export interface HistoryEntry {
   url: string;
@@ -123,12 +124,8 @@ export class BrowserPlugin extends BasePlugin {
   }
 
   async search(query: string): Promise<SearchResult[]> {
-    const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-    try {
-      const html = await this.fetchUrl(url);
-      const results = this.parseDuckDuckGoResults(html);
-      if (results.length > 0) return results;
-    } catch { /* fall through to local cache */ }
+    const results = await searxngSearch(query);
+    if (results.length > 0) return results;
 
     const cached = this.history.filter(h => h.url.toLowerCase().includes(query.toLowerCase()));
     if (cached.length > 0) {
@@ -197,42 +194,6 @@ export class BrowserPlugin extends BasePlugin {
       req.on('error', reject);
       req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
     });
-  }
-
-  private parseDuckDuckGoResults(html: string): SearchResult[] {
-    const results: SearchResult[] = [];
-    const resultRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
-    const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-
-    let m: RegExpExecArray | null;
-    const titles: string[] = [];
-    const links: string[] = [];
-    while ((m = resultRegex.exec(html)) !== null) {
-      links.push(this.decodeHtml(m[1]));
-      titles.push(this.stripHtml(m[2]));
-    }
-
-    const snippets: string[] = [];
-    while ((m = snippetRegex.exec(html)) !== null) {
-      snippets.push(this.stripHtml(m[1]));
-    }
-
-    for (let i = 0; i < Math.min(links.length, 8); i++) {
-      results.push({
-        title: titles[i] ?? `Result ${i + 1}`,
-        url: links[i] ?? '',
-        snippet: snippets[i] ?? '',
-      });
-    }
-    return results;
-  }
-
-  private decodeHtml(str: string): string {
-    return str.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#x2F;/g, '/');
-  }
-
-  private stripHtml(str: string): string {
-    return str.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
   }
 
   getCurrentUrl(): string {

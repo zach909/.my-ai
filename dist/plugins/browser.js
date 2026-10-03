@@ -3,6 +3,7 @@ import https from 'node:https';
 import dns from 'node:dns/promises';
 import { URL } from 'node:url';
 import { BasePlugin } from "../plugin_manager/sdk.js";
+import { searxngSearch } from "./searxng.js";
 export class BrowserPlugin extends BasePlugin {
     constructor(definition) {
         super(definition);
@@ -95,14 +96,9 @@ export class BrowserPlugin extends BasePlugin {
         return true;
     }
     async search(query) {
-        const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-        try {
-            const html = await this.fetchUrl(url);
-            const results = this.parseDuckDuckGoResults(html);
-            if (results.length > 0)
-                return results;
-        }
-        catch { /* fall through to local cache */ }
+        const results = await searxngSearch(query);
+        if (results.length > 0)
+            return results;
         const cached = this.history.filter(h => h.url.toLowerCase().includes(query.toLowerCase()));
         if (cached.length > 0) {
             return cached.map(h => ({ title: h.title, url: h.url, snippet: `Visited ${new Date(h.visitedAt).toLocaleDateString()}` }));
@@ -165,36 +161,6 @@ export class BrowserPlugin extends BasePlugin {
             req.on('error', reject);
             req.on('timeout', () => { req.destroy(); reject(new Error('Timeout')); });
         });
-    }
-    parseDuckDuckGoResults(html) {
-        const results = [];
-        const resultRegex = /<a[^>]*class="result__a"[^>]*href="([^"]*)"[^>]*>([\s\S]*?)<\/a>/g;
-        const snippetRegex = /<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-        let m;
-        const titles = [];
-        const links = [];
-        while ((m = resultRegex.exec(html)) !== null) {
-            links.push(this.decodeHtml(m[1]));
-            titles.push(this.stripHtml(m[2]));
-        }
-        const snippets = [];
-        while ((m = snippetRegex.exec(html)) !== null) {
-            snippets.push(this.stripHtml(m[1]));
-        }
-        for (let i = 0; i < Math.min(links.length, 8); i++) {
-            results.push({
-                title: titles[i] ?? `Result ${i + 1}`,
-                url: links[i] ?? '',
-                snippet: snippets[i] ?? '',
-            });
-        }
-        return results;
-    }
-    decodeHtml(str) {
-        return str.replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#x2F;/g, '/');
-    }
-    stripHtml(str) {
-        return str.replace(/<[^>]*>/g, '').replace(/&amp;/g, '&').replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').trim();
     }
     getCurrentUrl() {
         return this.currentUrl;
