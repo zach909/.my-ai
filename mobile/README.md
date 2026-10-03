@@ -11,6 +11,7 @@ The network on the phone is not a port. It is the PC's own engine code, bundled 
 | Photo for training data | Only when you tap **Photo**; kept on the phone until it syncs | Same |
 | Screen capture | **Screen** button, one screenshot per tap | Not built — iOS has no app-level screenshot API |
 | Agent bridge (lets NeuroClaw on your PC see and screenshot the phone, and drive the app) | Accessibility service, off until you turn it on in Android settings. Sees every window and can screenshot the screen (Android 11+); types, taps and presses Back **only in NeuroClaw's own windows** | Permissions → Agent bridge. Own screen only: window list, screenshot, typing into the focused field. No taps. Answers only while the app is open |
+| Full web interface (same screens as the browser) | **Open web app** button: the PC's web UI in Android's built-in WebView. Needs the PC address; the page does its own login | **Web app** toolbar button: the same, in WKWebView |
 | Voice-to-text | 🎙 button in chat | Same (mic button) |
 | Every permission in one place | **Grant all permissions** (main screen) | **Permissions** (Settings → PC → Permissions) |
 | Sync with the PC | Automatic after each message or photo, plus **Sync now** | Same |
