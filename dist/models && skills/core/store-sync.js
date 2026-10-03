@@ -49,7 +49,7 @@ import path from "node:path";
  * Bounded so a hung network call cannot wedge a publish request forever.
  * A push of a few small files is a sub-second operation; 30s is generous.
  */
-const GIT_TIMEOUT_MS = 30000;
+const GIT_TIMEOUT_MS = 10 * 60000;
 /** The hash of the empty tree -- the same in every git repository ever. */
 const EMPTY_TREE = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 /**

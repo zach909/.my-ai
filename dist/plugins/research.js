@@ -1,4 +1,5 @@
 import { BasePlugin } from "../plugin_manager/sdk.js";
+import { searxngSearch } from "./searxng.js";
 import { readFileSync, readdirSync, statSync } from "node:fs";
 import { join, resolve, relative } from "node:path";
 const DEFAULT_SKIP_DIRS = new Set(["node_modules", ".git", "dist", "clones", ".next", ".cache", "__pycache__"]);
@@ -155,38 +156,15 @@ export class ResearchPlugin extends BasePlugin {
         return results;
     }
     /**
-     * Real internet search -- no API key required or ever needed
-     * (DuckDuckGo's plain HTML results endpoint, not an authenticated
-     * API). Genuinely optional in the same sense the PyTorch backend is:
-     * offline, DNS failure, or a blocked network degrades to an empty
+     * Real internet search through a SearXNG instance (open source; see
+     * searxng.ts for which one and why). No API key. Genuinely optional:
+     * no instance, DNS failure, or a blocked network degrades to an empty
      * result set, never throws, and never stops searchMemory()/
      * searchDrive() from working with zero network access at all.
      */
     async searchWeb(query, maxResults = 8) {
-        try {
-            const url = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
-            const res = await fetch(url, {
-                headers: { "User-Agent": "Mozilla/5.0 (compatible; NeuroClawResearch/1.0)" },
-                signal: AbortSignal.timeout(8000),
-            });
-            if (!res.ok)
-                return [];
-            const html = await res.text();
-            return this.parseDuckDuckGoHtml(html).slice(0, maxResults);
-        }
-        catch {
-            return [];
-        }
-    }
-    parseDuckDuckGoHtml(html) {
-        const results = [];
-        const resultRegex = /<a[^>]*class="result__a"[^>]*href="([^"]+)"[^>]*>([\s\S]*?)<\/a>[\s\S]*?<a[^>]*class="result__snippet"[^>]*>([\s\S]*?)<\/a>/g;
-        const stripTags = (s) => s.replace(/<[^>]+>/g, "").replace(/&amp;/g, "&").replace(/&#x27;/g, "'").replace(/&quot;/g, '"').trim();
-        let m;
-        while ((m = resultRegex.exec(html)) !== null) {
-            results.push({ source: "web", title: stripTags(m[2]), snippet: stripTags(m[3]), location: m[1] });
-        }
-        return results;
+        const hits = await searxngSearch(query, maxResults);
+        return hits.map((h) => ({ source: "web", title: h.title, snippet: h.snippet, location: h.url }));
     }
     /**
      * "conduct research studies itself and have the logic flow for that" +

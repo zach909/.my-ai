@@ -199,6 +199,12 @@ export class ChatBot {
                 // acquireLock()) make this safe to call on every single turn even
                 // while the background loop or a previous trigger is mid-cycle.
                 void triggerConversationLearning();
+                // The live mesh learns from the exchange too -- every chat, not only
+                // the 'recall' path that goes through processQuery(). An answer that
+                // came from the web is not learned from; the user's own message is.
+                this.system?.learnFrom?.(userMessage, 'user');
+                if (!response.metadata?.usedWeb)
+                    this.system?.learnFrom?.(response.message, 'response');
             }
             this.conversationHistory.push({
                 id: `msg_${Date.now()}_assistant`,
@@ -249,6 +255,14 @@ export class ChatBot {
             return this.buildRouteResponse();
         if (intent === 'error')
             return this.buildErrorResponse();
+        // OneBrain is the front door. Everything that follows -- the prompting-
+        // skill loop, trained-skill matches, the reasoner -- is what answers when
+        // the brain has nothing usable to say, not what gets asked first. The
+        // brain can also act: a tool neuron it fires, or a tool call the message
+        // names outright, comes back as the reply here.
+        const front = await this.tryOneBrain(userMessage);
+        if (front)
+            return front;
         // "Skills directly connected into the rest of it" -- a trained skill
         // (published by scripts/skill-agent.mjs, or manually built/registered
         // via the Extension Builder) gets first chance at answering, ahead of
@@ -316,6 +330,36 @@ export class ChatBot {
         }
     }
     /**
+     * Asks OneBrain first. Null means it had nothing usable (silent, cut off at
+     * its deadline, disabled, or this system does not have a brain to ask), and
+     * the caller falls through to the rule-based path exactly as before. Never
+     * throws into the chat path.
+     */
+    async tryOneBrain(userMessage) {
+        if (!this.system || typeof this.system.askOneBrain !== 'function')
+            return null;
+        try {
+            const deadlineMs = Number(process.env.NEUROCLAW_ONEBRAIN_DEADLINE_MS) || undefined;
+            const turn = await this.system.askOneBrain(userMessage, { deadlineMs });
+            if (!turn.answered)
+                return null;
+            return {
+                message: turn.text,
+                confidence: turn.via === 'brain' ? 0.6 : 0.9,
+                suggestions: this.generateSuggestions(userMessage, turn.text, 'onebrain'),
+                metadata: {
+                    domain: 'onebrain',
+                    oneBrainVia: turn.via === 'none' ? undefined : turn.via,
+                    ...(turn.toolCalls.length > 0 ? { toolCalls: turn.toolCalls } : {}),
+                },
+            };
+        }
+        catch (error) {
+            logError('bot-service.tryOneBrain', error, { userMessage });
+            return null;
+        }
+    }
+    /**
      * Runs the prompting-skill loop for this message, or returns null to leave
      * the existing behaviour alone.
      *
@@ -338,6 +382,7 @@ export class ChatBot {
             if (!run || !run.answered)
                 return null;
             const skillsUsed = [...new Set(run.result.steps.map(s => s.skill).filter(Boolean))];
+            const usedWeb = await skillsTouchWeb(skillsUsed);
             return {
                 message: run.message,
                 confidence: 0.9,
@@ -349,6 +394,7 @@ export class ChatBot {
                     loopOutcome: run.result.outcome,
                     loopIterations: run.result.iterations,
                     promptingSkills: skillsUsed,
+                    usedWeb,
                 },
                 attachments: run.attachments.length > 0 ? run.attachments : undefined,
             };
@@ -652,4 +698,20 @@ export async function getBot(system) {
 }
 export function resetBot() {
     botInstance = null;
+}
+/** Whether any of these prompting skills reads the web (a 'web' perception source, or the research/browser plugins). Unknown skills count as not-web. */
+async function skillsTouchWeb(names) {
+    if (names.length === 0)
+        return false;
+    try {
+        const { loadRegistry } = await import('../../models && skills/core/prompting-skill-store.js');
+        const registry = loadRegistry();
+        return names.some((name) => {
+            const skill = registry.get(name);
+            return skill?.source === 'web' || /^(research|browser)$/i.test(skill?.plugin ?? '');
+        });
+    }
+    catch {
+        return false;
+    }
 }
