@@ -642,9 +642,133 @@ const HTML_TEMPLATE = `<!DOCTYPE html>
   ::-webkit-scrollbar-thumb:hover {
     background: rgba(74, 125, 255, 0.5);
   }
+
+  #background-canvas {
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(11, 13, 16, 0.95) 0%, rgba(14, 17, 24, 0.95) 100%);
+    pointer-events: none;
+    z-index: 0;
+    overflow: hidden;
+  }
+
+  .ring-container {
+    position: absolute;
+    top: 50%;
+    left: 50%;
+    transform: translate(-50%, -50%);
+    width: 300px;
+    height: 300px;
+    perspective: 1200px;
+  }
+
+  .ring {
+    position: relative;
+    width: 100%;
+    height: 100%;
+    animation: spinRingVertical 8s linear infinite;
+    transform-style: preserve-3d;
+  }
+
+  .ring-element {
+    position: absolute;
+    width: 200px;
+    height: 200px;
+    border: 3px solid var(--primary);
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-50%);
+    opacity: 0.3;
+    box-shadow: 0 0 30px rgba(74, 125, 255, 0.5), inset 0 0 30px rgba(74, 125, 255, 0.2);
+  }
+
+  .ring-element:nth-child(1) {
+    width: 200px;
+    height: 200px;
+    animation: orbitRing 8s linear infinite;
+  }
+
+  .ring-element:nth-child(2) {
+    width: 150px;
+    height: 150px;
+    opacity: 0.5;
+    animation: orbitRing 6s linear infinite reverse;
+  }
+
+  .ring-element:nth-child(3) {
+    width: 100px;
+    height: 100px;
+    opacity: 0.7;
+    animation: orbitRing 4s linear infinite;
+  }
+
+  .sphere {
+    position: absolute;
+    width: 60px;
+    height: 60px;
+    border-radius: 50%;
+    top: 50%;
+    left: 50%;
+    transform: translateX(-50%) translateY(-50%) translateZ(0);
+    background: radial-gradient(135deg at 35% 35%, rgba(74, 125, 255, 0.9) 0%, rgba(74, 125, 255, 0.5) 50%, rgba(74, 125, 255, 0.1) 100%);
+    box-shadow: 0 0 40px rgba(74, 125, 255, 0.8),
+                inset -8px -8px 20px rgba(0, 0, 0, 0.4),
+                inset 4px 4px 12px rgba(255, 255, 255, 0.2);
+    animation: sphereFloat 3s ease-in-out infinite;
+  }
+
+  body {
+    position: relative;
+  }
+
+  body::before {
+    content: '';
+    position: fixed;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: linear-gradient(135deg, rgba(11, 13, 16, 0.95) 0%, rgba(14, 17, 24, 0.95) 100%);
+    z-index: 0;
+    pointer-events: none;
+  }
+
+  #header, #chat-container, #input-area {
+    position: relative;
+    z-index: 1;
+  }
+
+  @keyframes spinRingVertical {
+    from { transform: rotateY(0deg); }
+    to { transform: rotateY(360deg); }
+  }
+
+  @keyframes orbitRing {
+    from { transform: translateX(-50%) translateY(-50%) rotateX(90deg) rotateZ(0deg); }
+    to { transform: translateX(-50%) translateY(-50%) rotateX(90deg) rotateZ(360deg); }
+  }
+
+  @keyframes sphereFloat {
+    0%, 100% { transform: translateX(-50%) translateY(-50%) translateZ(0) scale(1); }
+    50% { transform: translateX(-50%) translateY(-50%) translateZ(20px) scale(1.05); }
+  }
 </style>
 </head>
 <body>
+<div id="background-canvas">
+  <div class="ring-container">
+    <div class="ring">
+      <div class="ring-element"></div>
+      <div class="ring-element"></div>
+      <div class="ring-element"></div>
+    </div>
+    <div class="sphere"></div>
+  </div>
+</div>
 <div id="header">
   <h1><span id="status-dot" class="offline" role="img" aria-label="System status: Offline"></span>Neuroclaw v0.1.0</h1>
   <div style="display:flex; align-items:center; gap:15px;">
