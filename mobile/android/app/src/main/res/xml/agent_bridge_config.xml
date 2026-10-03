@@ -1,7 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
 <!--
   The agent bridge: lets the NeuroClaw agent see which windows are open, take a
-  screenshot, and type or tap -- but only in NeuroClaw's own windows (the
+  screenshot, and type or tap, but only in NeuroClaw's own windows (the
   service refuses everything else; see BridgeServer.kt). Android shows the
   system's own consent screen for this, and the service does nothing until you
   turn it on in Settings -> Accessibility.

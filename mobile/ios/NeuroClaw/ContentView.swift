@@ -94,7 +94,7 @@ struct SettingsView: View {
     var body: some View {
         NavigationStack {
             Form {
-                Section(footer: Text("Only for syncing: NeuroClaw runs on the phone either way. The address NeuroClaw's web app is on, e.g. http://192.168.1.20:3000, and the Remote Access password set there.")) {
+                Section(footer: Text("Only for syncing: NeuroClaw runs on the phone either way. The address NeuroClaw's web app is on, e.g. http://192.168.1.20:7861, and the Remote Access password set there.")) {
                     TextField("PC address", text: $brain.serverURL).keyboardType(.URL).textInputAutocapitalization(.never).autocorrectionDisabled()
                     SecureField("Password (blank if none)", text: $brain.password)
                 }

@@ -13,8 +13,8 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 
 /**
- * The PC's own web interface, full screen, so the phone shows and does exactly
- * what the browser does. Uses Android's built-in WebView; nothing third-party.
+ * The PC's own web dashboard (/app: chat, chat groups, store, builder and the
+ * rest), full screen, so the phone shows and does exactly what the browser does. Uses Android's built-in WebView; nothing third-party.
  * The page handles its own login (session cookie), so no password is passed in.
  */
 class WebActivity : Activity() {
@@ -52,7 +52,7 @@ class WebActivity : Activity() {
         when {
             base.isEmpty() -> finish()
             savedInstanceState != null && web.restoreState(savedInstanceState) != null -> Unit
-            else -> web.loadUrl(base)
+            else -> web.loadUrl("$base/app")
         }
     }
 
