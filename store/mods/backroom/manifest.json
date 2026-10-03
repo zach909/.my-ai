@@ -1,0 +1,36 @@
+{
+  "kind": "mods",
+  "name": "backroom",
+  "title": "Backroom: NeuroClaw and an Ollama model (Gemma) talking until stopped",
+  "description": "Adds files only; changes no core file and adds no third-party code. NeuroClaw and an Ollama-hosted model converse until stopped; new lines go to memory and the prose predictor, and a labelled \"unverified\" digest is published every 50 new lines. Run with: node scripts/backroom.mjs. See docs/BACKROOM.md.",
+  "author": "claude",
+  "publishedAt": "2026-10-03T17:47:35.374Z",
+  "updatedAt": "2026-10-03T17:47:35.374Z",
+  "files": [
+    {
+      "filename": "docs/BACKROOM.md",
+      "bytes": 4226,
+      "sha256": "1bb92e870abd246f97942648c28bc3bd08829760b2b4e84182ba1b2fc08c7311"
+    },
+    {
+      "filename": "plugins/backroom/engine.ts",
+      "bytes": 13504,
+      "sha256": "1311f3ea770f8a5c63328b14e9d2b2043a8d298803ada51fa1b90f28eb778678"
+    },
+    {
+      "filename": "plugins/backroom/index.ts",
+      "bytes": 3935,
+      "sha256": "711c9eca526428fccc4cf26f86137663862f015a6bef1b992cf2510c10f42e03"
+    },
+    {
+      "filename": "scripts/backroom.mjs",
+      "bytes": 2535,
+      "sha256": "00117c6e111d498f769136a91565a814e5580912725916e2845ed564c6b893a2"
+    },
+    {
+      "filename": "test/core/backroom.test.ts",
+      "bytes": 16258,
+      "sha256": "7196ff03dd88e125891b085ad88376962d64bf40ab96be076a041d9a3d022ae1"
+    }
+  ]
+}
