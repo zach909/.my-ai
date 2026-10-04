@@ -28,10 +28,11 @@
 import { existsSync, mkdirSync, readFileSync, readdirSync, rmSync, statSync, writeFileSync } from "node:fs";
 import { createHash } from "node:crypto";
 import path from "node:path";
-import { assertKind, assertSafeName, readItem, readItemFile, type StoreItem, type StoreKind } from "./store.js";
+import { assertKind, assertSafeName, readItem, readItemFile, STORE_KINDS, type StoreItem, type StoreKind } from "./store.js";
 import { fetchItemFile } from "./store-fetch.js";
 import { writeFileAtomic, writeJsonAtomic } from "./atomic-write.js";
 import { isAgentSkillFile, parseAgentSkill } from "./agent-skill.js";
+import { markUsed } from "./store-usage.js";
 
 export class StoreInstallError extends Error {}
 
@@ -52,6 +53,13 @@ export interface InstalledRecord {
   installedVersion: string;
   installedAt: number;
   files: Array<{ filename: string; bytes: number; sha256: string }>;
+  /**
+   * Set when auto-offload (store-offload.ts) removed this item's files from the
+   * device after confirming the store branch holds them. The record stays so the
+   * item is still listed as installed and can be fetched back; a fresh
+   * installItem() writes a record without it.
+   */
+  offloadedAt?: number;
 }
 
 const RECORD = "installed.json";
@@ -183,7 +191,23 @@ export async function installItem(kind: string, name: string): Promise<InstallRe
   };
   mkdirSync(dir, { recursive: true });
   writeJsonAtomic(path.join(dir, RECORD), record);
+  markUsed(item.kind, item.name);
   return { record, downloaded, missing };
+}
+
+/**
+ * Bring an offloaded item's files back from the store branch.
+ *
+ * A no-op for an item whose files are all still here, so it is safe to call
+ * before reading any installed file.
+ */
+export async function rehydrateInstalled(kind: string, name: string): Promise<InstallResult | null> {
+  const record = readInstalled(kind, name);
+  if (!record) return null;
+  const dir = itemInstallDir(kind, name);
+  const allHere = record.files.every(f => existsSync(path.join(dir, f.filename)));
+  if (allHere && !record.offloadedAt) return null;
+  return installItem(kind, name);
 }
 
 /**
@@ -222,6 +246,10 @@ export function listInstalledItems(): InstalledRecord[] {
   if (!existsSync(root)) return [];
   const out: InstalledRecord[] = [];
   for (const kind of readdirSync(root)) {
+    // Only store kinds hold installed items. The root also holds mods-backup/
+    // (mod-apply.ts) and the usage log, and asking readInstalled() about those
+    // threw, which broke listing as soon as any mod had been applied.
+    if (!(STORE_KINDS as readonly string[]).includes(kind)) continue;
     const kindDir = path.join(root, kind);
     if (!statSync(kindDir).isDirectory()) continue;
     for (const name of readdirSync(kindDir)) {
@@ -354,6 +382,17 @@ export function planActivation(kind: string, name: string): ActivationPlan {
   if (!record) {
     return { from: [], memories: [], neurons: [], nothingLoadable: `"${kind}/${name}" is not installed.` };
   }
+  if (record.offloadedAt) {
+    return {
+      from: [],
+      memories: [],
+      neurons: [],
+      nothingLoadable:
+        `"${kind}/${name}" was offloaded after going unused. Its files are on the store branch; ` +
+        `install it again to fetch them back.`,
+    };
+  }
+  markUsed(kind, name);
 
   const from: string[] = [];
   const memories: ActivatableMemory[] = [];

@@ -17,6 +17,7 @@
  * chosen for exactly the reason it exists.
  */
 import { embedText } from "./neuro-lang.js";
+import { SkillAccuracyLedger, type SkillStatus } from "./net-skill-accuracy.js";
 
 export interface NetSkillRegion {
   id: string;
@@ -58,7 +59,24 @@ export class NetSkillRouter {
   private readonly usage = new Map<string, number>();
   private totalSelections = 0;
 
-  constructor(private readonly topK: number = 2, private readonly dims: number = 64) {}
+  /**
+   * How well each region has predicted before, and which are switched off for
+   * it. Private to this router unless the owner hands in a shared one, which
+   * is how every router in a running system comes to agree on the same
+   * on/off state.
+   */
+  private ledger: SkillAccuracyLedger;
+
+  constructor(
+    private readonly topK: number = 2,
+    private readonly dims: number = 64,
+    ledger: SkillAccuracyLedger = new SkillAccuracyLedger(),
+  ) {
+    this.ledger = ledger;
+  }
+
+  getLedger(): SkillAccuracyLedger { return this.ledger; }
+  setLedger(ledger: SkillAccuracyLedger): void { this.ledger = ledger; }
 
   /** Add (or redescribe) a region. Returns how many regions there are. */
   register(region: NetSkillRegion): number {
@@ -106,11 +124,57 @@ export class NetSkillRouter {
    * nothing is -- the caller then runs the mesh ungated.
    */
   select(input: string | ArrayLike<number>, k: number = this.topK): NetSkillSelection {
-    const chosen = this.score(input).filter((s) => s.score >= MIN_SCORE).slice(0, Math.max(0, k));
+    // Switched-off regions are skipped before the cut to k, so the next-best
+    // region takes the place instead of the tick running one short.
+    const chosen = this.score(input)
+      .filter((s) => s.score >= MIN_SCORE && this.ledger.isEnabled(s.id))
+      .slice(0, Math.max(0, k));
     const scores = new Map(chosen.map((s) => [s.id, s.score]));
     for (const { id } of chosen) this.usage.set(id, (this.usage.get(id) ?? 0) + 1);
     this.totalSelections += chosen.length;
     return { ids: chosen.map((s) => s.id), scores };
+  }
+
+  /**
+   * Score this router's prediction for `input` against what turned out to be
+   * the right regions, and let the result feed the on/off decision.
+   *
+   * `actual` is ground truth from outside the router: the regions the input
+   * really ended up needing (the plugins whose tools ran and succeeded, say).
+   * With nothing known there is nothing to judge, and nothing is recorded: a
+   * turn with no outcome is not a miss.
+   *
+   * It re-runs the prediction itself, over EVERY region including switched-off
+   * ones. A region that is off is not run, but it can still be asked "would you
+   * have been picked, and were you right?", which is how it earns its way back.
+   *
+   * `inScope` limits which regions are judged. A region that can never show up
+   * in `actual` (because no signal for it exists yet) must not be recorded as
+   * wrong every time it is predicted.
+   */
+  judge(
+    input: string | ArrayLike<number>,
+    actual: Iterable<string>,
+    inScope?: (id: string) => boolean,
+  ): Array<{ id: string; hit: boolean; flipped: "on" | "off" | null }> {
+    const truth = new Set(actual);
+    if (truth.size === 0) return [];
+    // If none of the named outcomes is a region this router has, the outcome is
+    // in a different vocabulary and says nothing about this router's
+    // predictions. Scoring them all as misses would switch off good regions.
+    if (!Array.from(truth).some((id) => this.regions.has(id))) return [];
+    const out: Array<{ id: string; hit: boolean; flipped: "on" | "off" | null }> = [];
+    for (const { id } of this.score(input).filter((s) => s.score >= MIN_SCORE).slice(0, this.topK)) {
+      if (inScope && !inScope(id)) continue;
+      const hit = truth.has(id);
+      out.push({ id, hit, flipped: this.ledger.record(id, hit) });
+    }
+    return out;
+  }
+
+  /** Every registered region with its track record and whether it is running. */
+  getAccuracy(): Array<SkillStatus & { name: string }> {
+    return Array.from(this.regions.values(), (r) => ({ ...this.ledger.status(r.id), name: r.name }));
   }
 
   /** How often each region has been selected: the load-balance view the MoE used to report. */
