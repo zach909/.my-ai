@@ -14,6 +14,7 @@ A comprehensive AI/ASI system with modular architecture implementing neural mesh
 
 ```bash
 git clone https://github.com/zach909/.my-ai.git
+
 cd .my-ai
 
 # Installation
