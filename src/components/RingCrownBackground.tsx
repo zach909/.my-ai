@@ -1,19 +1,22 @@
 /**
  * Ring Crown — the spinning backdrop built from `ring.zip`, the Zoo KCL
  * project of an articulated crown ring: 24 fork-and-tongue links and 24 hinge
- * pins forming a closed chain with six raised and six lowered 90-degree tips,
- * coloured in four sectors (blue, yellow, green, red).
+ * pins forming a closed chain with six raised and six lowered 90-degree tips.
+ *
+ * The ring is now one colour (warm amber) instead of four sectors, and it
+ * revolves AROUND a solid sphere at its centre rather than spinning about its
+ * own symmetry axis — turning the opposite way from before, at a deliberately
+ * uneven pace. A perfectly smooth rotation of a near-symmetric crown barely
+ * reads as motion; the surging, easing speed is what makes it look alive.
  *
  * The KCL itself needs a CAD kernel to render, so this component reproduces
- * its solved layout in three.js (see ring-crown-geometry.ts) and spins it:
- * rotation is driven from elapsed time rather than accumulated per-frame
- * deltas, so the speed is identical on any refresh rate. A slow nod about the
- * horizontal axis keeps the peaks sweeping through the light — a crown turned
- * about its own symmetry axis alone would barely read as moving.
+ * its solved layout in three.js (see ring-crown-geometry.ts). Rotation is
+ * driven from elapsed time rather than accumulated per-frame deltas, so the
+ * motion path is identical on any refresh rate.
  *
  * Links are drawn as rounded bars and pins as rivets; the joint geometry that
  * the CAD model constrains (fork gaps, bores, tongue twists) is invisible at
- * background scale, so the silhouette and colouring carry the likeness.
+ * background scale, so the silhouette carries the likeness.
  */
 
 import { useMemo, useRef } from 'react'
@@ -22,21 +25,26 @@ import * as THREE from 'three'
 import { usePageVisible } from '@/hooks/usePageVisible'
 import {
   buildCrownLayout,
-  LINK_COLORS,
+  CORE_SPHERE_RADIUS,
   LINK_LENGTH,
   LINK_MATERIAL,
   LINK_THICKNESS,
   LINK_WIDTH,
-  PIN_COLORS,
   PIN_HEAD_RADIUS,
   PIN_HEAD_THICKNESS,
   PIN_LENGTH,
   PIN_RADIUS,
+  PIN_COLOR,
+  RING_COLOR,
   SCALE,
 } from './ring-crown-geometry'
 
-/** Turns per second around the vertical axis. Slow enough to stay a backdrop. */
-const SPIN_RATE = 0.06
+/** Base revolutions per second around the sphere. Slow enough to stay a backdrop. */
+const ORBIT_RATE = 0.07
+/** How much the orbital speed surges and eases (0 would be perfectly smooth). */
+const SURGE_AMOUNT = 0.3
+/** Seconds per surge cycle. */
+const SURGE_PERIOD = 3.6
 
 /** Mid-level of the zigzag (baseHeight × SCALE), so the crown centres itself. */
 const CENTER_Y = 22 * SCALE
@@ -48,8 +56,9 @@ function centerGroup(links: { position: THREE.Vector3 }[], pins: { position: THR
   return box.getCenter(new THREE.Vector3())
 }
 
-function SpinningRingCrown() {
-  const groupRef = useRef<THREE.Group>(null)
+function OrbitingRingCrown() {
+  const orbitRef = useRef<THREE.Group>(null)
+  const tiltRef = useRef<THREE.Group>(null)
   const { links, pins, center } = useMemo(() => {
     const layout = buildCrownLayout()
     const c = centerGroup(layout.links, layout.pins)
@@ -58,38 +67,52 @@ function SpinningRingCrown() {
   }, [])
 
   useFrame((state) => {
-    const g = groupRef.current
-    if (!g) return
     const t = state.clock.elapsedTime
-    g.rotation.y = t * SPIN_RATE * Math.PI * 2
-    // Gentle tilt oscillation so both the top and bottom tips catch the light.
-    g.rotation.x = 0.5 + Math.sin(t * 0.11) * 0.08
+    if (orbitRef.current) {
+      // Negative yaw: the ring circles the sphere the other way than before.
+      // The surge term keeps the pace uneven so the motion actually reads.
+      const surge = 1 + SURGE_AMOUNT * Math.sin((t / SURGE_PERIOD) * Math.PI * 2)
+      orbitRef.current.rotation.y = -t * ORBIT_RATE * Math.PI * 2 * surge
+    }
+    if (tiltRef.current) {
+      tiltRef.current.rotation.x = 0.5 + Math.sin(t * 0.11) * 0.1
+    }
   })
 
   return (
-    <group ref={groupRef} position={center.clone().negate()}>
-      {links.map((l, i) => (
-        <mesh key={`link-${i}`} position={l.position} quaternion={l.quaternion}>
-          <boxGeometry args={[LINK_LENGTH, LINK_WIDTH, LINK_THICKNESS]} />
-          <meshStandardMaterial color={LINK_COLORS[Math.floor(i / 6) % 4]} {...LINK_MATERIAL} />
-        </mesh>
-      ))}
-      {pins.map((p, i) => (
-        <group key={`pin-${i}`} position={p.position} quaternion={p.quaternion}>
-          <mesh>
-            <cylinderGeometry args={[PIN_RADIUS, PIN_RADIUS, PIN_LENGTH, 12]} />
-            <meshStandardMaterial color={PIN_COLORS[i % 4]} {...LINK_MATERIAL} />
-          </mesh>
-          <mesh position={[0, PIN_LENGTH / 2, 0]}>
-            <cylinderGeometry args={[PIN_HEAD_RADIUS, PIN_HEAD_RADIUS, PIN_HEAD_THICKNESS, 12]} />
-            <meshStandardMaterial color={PIN_COLORS[i % 4]} {...LINK_MATERIAL} />
-          </mesh>
-          <mesh position={[0, -PIN_LENGTH / 2, 0]}>
-            <cylinderGeometry args={[PIN_HEAD_RADIUS, PIN_HEAD_RADIUS, PIN_HEAD_THICKNESS, 12]} />
-            <meshStandardMaterial color={PIN_COLORS[i % 4]} {...LINK_MATERIAL} />
-          </mesh>
+    <group position={center.clone().negate()}>
+      {/* The sphere the ring orbits — sits at the centre of the scene. */}
+      <mesh position={[0, CENTER_Y, 0]}>
+        <sphereGeometry args={[CORE_SPHERE_RADIUS, 48, 32]} />
+        <meshStandardMaterial color={RING_COLOR} roughness={0.35} metalness={0.35} />
+      </mesh>
+
+      <group ref={orbitRef}>
+        <group ref={tiltRef}>
+          {links.map((l, i) => (
+            <mesh key={`link-${i}`} position={l.position} quaternion={l.quaternion}>
+              <boxGeometry args={[LINK_LENGTH, LINK_WIDTH, LINK_THICKNESS]} />
+              <meshStandardMaterial color={RING_COLOR} {...LINK_MATERIAL} />
+            </mesh>
+          ))}
+          {pins.map((p, i) => (
+            <group key={`pin-${i}`} position={p.position} quaternion={p.quaternion}>
+              <mesh>
+                <cylinderGeometry args={[PIN_RADIUS, PIN_RADIUS, PIN_LENGTH, 12]} />
+                <meshStandardMaterial color={PIN_COLOR} {...LINK_MATERIAL} />
+              </mesh>
+              <mesh position={[0, PIN_LENGTH / 2, 0]}>
+                <cylinderGeometry args={[PIN_HEAD_RADIUS, PIN_HEAD_RADIUS, PIN_HEAD_THICKNESS, 12]} />
+                <meshStandardMaterial color={PIN_COLOR} {...LINK_MATERIAL} />
+              </mesh>
+              <mesh position={[0, -PIN_LENGTH / 2, 0]}>
+                <cylinderGeometry args={[PIN_HEAD_RADIUS, PIN_HEAD_RADIUS, PIN_HEAD_THICKNESS, 12]} />
+                <meshStandardMaterial color={PIN_COLOR} {...LINK_MATERIAL} />
+              </mesh>
+            </group>
+          ))}
         </group>
-      ))}
+      </group>
     </group>
   )
 }
@@ -115,7 +138,7 @@ export function RingCrownBackground({ opacity = 0.25 }: { opacity?: number }) {
       >
         <hemisphereLight args={[0xffffff, 0x444444, 1.1]} />
         <directionalLight position={[3, 5, 4]} intensity={1} />
-        <SpinningRingCrown />
+        <OrbitingRingCrown />
       </Canvas>
     </div>
   )
