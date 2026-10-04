@@ -1,5 +1,8 @@
 # NeuroClaw - Artificial Superintelligence System
-FOR EDU USES ONLY
+
+built FOR EDU USES ONLY
+
+please spread the word
 
 WARNING ⚠️ THIS PROJECT IS IN BETA. WE ARE NOT RESPONSIBLE FOR YOUR ACTIONS OR WHAT THE CODE DOES. BY CONTINUING YOU AGREE WITH THIS STATEMENT AND THE [PRIVACY POLICY](PRIVACY.md) AND [TERMS AND CONDITIONS](TERMS.md).
 
@@ -11,6 +14,7 @@ A comprehensive AI/ASI system with modular architecture implementing neural mesh
 
 ```bash
 git clone https://github.com/zach909/.my-ai.git
+
 cd .my-ai
 
 # Installation

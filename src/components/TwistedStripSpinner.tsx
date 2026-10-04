@@ -21,15 +21,23 @@ import { buildTwistedStripGeometry, STRIP_MATERIAL } from './twisted-strip-geome
 
 /** Turns per second. Slow enough to read as deliberate, not frantic. */
 const SPIN_RATE = 0.22
+/** How much the spin surges and eases (0 would be perfectly smooth). */
+const SURGE_AMOUNT = 0.3
+/** Seconds per surge cycle. */
+const SURGE_PERIOD = 2.6
 
 function SpinningStrip() {
   const ref = useRef<THREE.Group>(null)
   const geometry = useMemo(() => buildTwistedStripGeometry(), [])
 
   useFrame((state) => {
-    if (!ref.current) return
     const t = state.clock.elapsedTime
-    ref.current.rotation.y = t * SPIN_RATE * Math.PI * 2
+    if (!ref.current) return
+    // Negative: turns the other way than before. The surge term keeps the
+    // pace uneven — a perfectly smooth spin of this near-symmetric loop
+    // barely reads as moving at all.
+    const surge = 1 + SURGE_AMOUNT * Math.sin((t / SURGE_PERIOD) * Math.PI * 2)
+    ref.current.rotation.y = -t * SPIN_RATE * Math.PI * 2 * surge
     // A slight counter-nod keeps the silhouette changing, so the strip reads as
     // a solid object rotating in space rather than a flat ring scrolling.
     ref.current.rotation.x = Math.sin(t * SPIN_RATE * Math.PI) * 0.14
