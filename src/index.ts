@@ -114,8 +114,6 @@ export interface TurnDetails {
   toolCalls?: Array<{ plugin: string; tool: string; ok: boolean; error?: string }>;
 }
 
-/** Highest Zip Loop neuron id (the ramp out): the mesh needs more neurons than this. */
-const ZIP_BIT_NEURONS = 5;
 /** How one chat turn went through askOneBrain(). */
 export interface OneBrainTurn {
   /** False means "use the fallback" -- the brain had nothing usable to say. */
