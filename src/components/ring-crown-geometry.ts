@@ -65,6 +65,20 @@ const MID_ROLL = Math.asin(MID_TANGENT * Math.sin(JOINT_ANGLE / 2))
 export const SCALE = 0.023
 
 /**
+ * The crown's own bounding box in scene units, measured from the real joint
+ * layout (not estimated) so callers can frame it exactly — used by
+ * RingCrownBackground to fill the viewport with the ring.
+ */
+export const CROWN_EXTENT = (() => {
+  const pts: THREE.Vector3[] = []
+  for (let i = 0; i < LINK_COUNT; i++) pts.push(jointPosition(i))
+  const box = new THREE.Box3().setFromPoints(pts)
+  const size = box.getSize(new THREE.Vector3())
+  const center = box.getCenter(new THREE.Vector3())
+  return { size, center }
+})()
+
+/**
  * One colour for the whole ring — links and pins alike. The KCL model split
  * the crown into four coloured sectors (blue, yellow, green, red); the blue
  * was dropped along with the multi-colour scheme, so every link shares a
