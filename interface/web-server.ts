@@ -27,6 +27,7 @@ import { listWikiPages, readWikiPage, publishWikiPageAndSync, deleteWikiPageAndS
 import { listRemoteOnlyBotPages, readRemoteBotPage } from '../models && skills/core/wiki-remote.js';
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
+import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
 import {
@@ -1566,6 +1567,10 @@ export class WebServer {
     // generic store catalogue. Pull their manifests too so uploaded packages
     // are visible on a fresh device; payloads remain on-demand.
     await pullSkillUploadCatalog().catch(() => {});
+    // Downloaded skills, plugins and mods that nothing has used for a while are
+    // moved off this device (once the store branch is confirmed to hold them)
+    // and download again on demand. NEUROCLAW_AUTO_OFFLOAD=0 turns it off.
+    startAutoOffload();
     // Same reasoning, same placement: loading every saved extension is
     // real work (parsing N files, remembering M neurons) that only makes
     // sense to pay once per actual live server process, not once per
@@ -2654,6 +2659,68 @@ export class WebServer {
       try {
         const { updateInstalls } = await import('../models && skills/core/store-install.js');
         this.sendJson(res, await updateInstalls());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // ── Net skills: switching them on and off ───────────────────────────
+    // A skill is switched off automatically when its record of predicting what
+    // an input is about stays poor, and back on when it recovers. "mode" is the
+    // owner's override: "auto" follows the record, "on" and "off" ignore it.
+    if (pathname === '/api/net-skills/accuracy' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, { gate: system.skillLedger.gate, skills: system.netSkillAccuracy() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/net-skills/switch' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { id?: unknown; mode?: unknown } | null;
+        if (typeof body?.id !== 'string' || !(body.mode === 'auto' || body.mode === 'on' || body.mode === 'off')) {
+          this.sendJson(res, { error: 'Expected { id: string, mode: "auto" | "on" | "off" }.' }, 400);
+          return;
+        }
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        if (!system.setNetSkillSwitch(body.id, body.mode)) {
+          this.sendJson(res, { error: `There is no net skill "${body.id}".` }, 404);
+          return;
+        }
+        this.sendJson(res, system.skillLedger.status(body.id));
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // ── Offloading downloaded items that have gone unused ───────────────
+    // GET lists what is idle (disk only, nothing is checked or removed).
+    // POST runs an offload now: { dryRun?: boolean, idleDays?: number }. An
+    // item is only removed once the store branch is confirmed to hold it, and
+    // is downloaded again the next time anything asks for it.
+    if (pathname === '/api/store/offload' && method === 'GET') {
+      try {
+        const { listOffloadCandidates, configuredIdleDays } = await import('../models && skills/core/store-offload.js');
+        this.sendJson(res, { idleDays: configuredIdleDays(), idle: listOffloadCandidates() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/store/offload' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { dryRun?: unknown; idleDays?: unknown } | null;
+        const { offloadIdle } = await import('../models && skills/core/store-offload.js');
+        const idleDays = typeof body?.idleDays === 'number' && body.idleDays >= 0 ? body.idleDays : undefined;
+        this.sendJson(res, await offloadIdle({ dryRun: body?.dryRun === true, idleDays }));
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
       }
