@@ -15,21 +15,20 @@
         }
         
         :root {
-            --primary: #6366f1;
-            --primary-light: #818cf8;
-            --primary-dark: #4f46e5;
-            --accent: #06b6d4;
-            --bg-dark: #0f172a;
-            --bg-card: #1e293b;
-            --text-primary: #f8fafc;
-            --text-secondary: #94a3b8;
-            --border: #334155;
-            --glow: rgba(99, 102, 241, 0.4);
+            --primary: #ff9a84;
+            --primary-light: #ffc4b4;
+            --primary-dark: #e8705a;
+            --accent: #ffb78a;
+            --bg-dark: #110c0e;
+            --bg-card: #1b1216;
+            --text-primary: #f8ede9;
+            --text-secondary: rgba(248, 237, 233, 0.62);
+            --border: rgba(255, 228, 218, 0.2);
+            --glow: rgba(255, 154, 132, 0.4);
         }
         
         body {
-            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: radial-gradient(ellipse at top, #1e293b 0%, #0f172a 100%);
+            font-family: ui-rounded, 'SF Pro Rounded', 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
             min-height: 100vh;
             display: flex;
             align-items: center;
@@ -39,35 +38,16 @@
             overflow-x: hidden;
         }
         
-        body::before {
-            content: '';
-            position: absolute;
-            top: -50%;
-            left: -50%;
-            width: 200%;
-            height: 200%;
-            background: 
-                radial-gradient(circle at 20% 80%, rgba(99, 102, 241, 0.15) 0%, transparent 50%),
-                radial-gradient(circle at 80% 20%, rgba(6, 182, 212, 0.15) 0%, transparent 50%);
-            animation: pulse 8s ease-in-out infinite;
-            pointer-events: none;
-        }
-        
-        @keyframes pulse {
-            0%, 100% { opacity: 0.5; transform: scale(1); }
-            50% { opacity: 0.8; transform: scale(1.05); }
-        }
-        
         .container {
-            background: rgba(30, 41, 59, 0.8);
-            backdrop-filter: blur(20px);
-            border-radius: 24px;
+            background: rgba(255, 240, 232, 0.08);
+            backdrop-filter: blur(26px) saturate(1.5);
+            border-radius: 36px;
             padding: 50px;
             max-width: 650px;
             text-align: center;
             box-shadow: 
                 0 25px 80px rgba(0, 0, 0, 0.4),
-                0 0 0 1px rgba(255, 255, 255, 0.1),
+                0 0 0 1px rgba(255, 228, 218, 0.2),
                 inset 0 1px 0 rgba(255, 255, 255, 0.1);
             position: relative;
             z-index: 1;
@@ -81,7 +61,7 @@
         
         .icon {
             font-size: 72px;
-            filter: drop-shadow(0 0 30px rgba(99, 102, 241, 0.5));
+            filter: drop-shadow(0 0 30px rgba(255, 154, 132, 0.5));
             animation: float 3s ease-in-out infinite;
         }
         
@@ -97,7 +77,7 @@
             transform: translate(-50%, -50%);
             width: 120px;
             height: 120px;
-            background: radial-gradient(circle, rgba(99, 102, 241, 0.3) 0%, transparent 70%);
+            background: radial-gradient(circle, rgba(255, 154, 132, 0.3) 0%, transparent 70%);
             border-radius: 50%;
             animation: glow 2s ease-in-out infinite;
         }
@@ -113,7 +93,7 @@
             font-weight: 700;
             margin-bottom: 8px;
             letter-spacing: -0.02em;
-            background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+            background: linear-gradient(135deg, #fff 0%, #ffc4b4 100%);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             background-clip: text;
@@ -147,15 +127,16 @@
             display: inline-flex;
             align-items: center;
             gap: 8px;
-            background: linear-gradient(135deg, var(--primary) 0%, var(--primary-dark) 100%);
-            color: white;
+            background: rgba(255, 154, 132, 0.16);
+            color: var(--primary-light);
             padding: 14px 32px;
-            border-radius: 12px;
+            border-radius: 999px;
+            border: 1px solid rgba(255, 154, 132, 0.5);
+            backdrop-filter: blur(12px);
             text-decoration: none;
             font-size: 1em;
             font-weight: 600;
-            transition: all 0.3s cubic-bezier(0.4, 0, 0.2, 1);
-            border: none;
+            transition: all 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
             cursor: pointer;
             position: relative;
             overflow: hidden;
@@ -178,11 +159,11 @@
         
         .btn:hover {
             transform: translateY(-2px);
-            box-shadow: 0 15px 40px rgba(99, 102, 241, 0.4);
+            box-shadow: 0 15px 40px rgba(255, 154, 132, 0.4);
         }
         
         .btn-secondary {
-            background: rgba(255, 255, 255, 0.05);
+            background: rgba(255, 238, 230, 0.07);
             color: var(--text-primary);
             border: 1px solid var(--border);
         }
@@ -201,7 +182,7 @@
         .spinner {
             width: 36px;
             height: 36px;
-            border: 2px solid rgba(99, 102, 241, 0.2);
+            border: 2px solid rgba(255, 154, 132, 0.2);
             border-top-color: var(--primary);
             border-radius: 50%;
             animation: spin 1s linear infinite;
@@ -223,8 +204,8 @@
         .feature {
             padding: 16px;
             background: rgba(255, 255, 255, 0.03);
-            border-radius: 12px;
-            border: 1px solid rgba(255, 255, 255, 0.05);
+            border-radius: 22px;
+            border: 1px solid rgba(255, 228, 218, 0.12);
             transition: all 0.3s;
             display: flex;
             align-items: center;
@@ -233,7 +214,7 @@
         
         .feature:hover {
             background: rgba(255, 255, 255, 0.06);
-            border-color: rgba(99, 102, 241, 0.3);
+            border-color: rgba(255, 154, 132, 0.3);
             transform: translateY(-2px);
         }
         
