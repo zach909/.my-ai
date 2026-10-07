@@ -8,10 +8,10 @@
  *
  * The ring is drawn with the browser's own 2D canvas. Nothing is loaded from
  * anywhere else: no 3D library, no font, no image. The cord is a closed smooth
- * curve through the same 24 joints the crown ring uses (see
- * src/components/ring-crown-geometry.ts), with the top and bottom tips drawn in
- * and the middle pushed out, rendered as a dense run of shaded spheres sorted
- * back to front. Seen end on it reads as one continuous piece.
+ * wave with the crown ring's proportions (see
+ * src/components/ring-crown-geometry.ts): six rises and six dips, the top and
+ * bottom tips tucked in and the middle eased out, rendered as a dense run of
+ * shaded spheres sorted back to front. Seen end on it reads as one continuous piece.
  *
  * Everything here is cosmetic. If the script fails to run, or canvas is
  * missing, the page is exactly as it was, minus the background.
@@ -64,33 +64,21 @@ export const AMBIENT_JS = String.raw`(function () {
   var ctx = canvas.getContext('2d');
   if (!ctx) return;
 
-  /* ---- The cord: a closed smooth curve through the ring's 24 joints ---- */
-  var JOINTS = 24, SCALE = 0.023, PITCH = 22, STEP = (2 * Math.PI) / JOINTS;
+  /* ---- The cord: one smooth closed wave, six rises and six dips, tips tucked in and the middle eased out ---- */
+  var SCALE = 0.023, PITCH = 22, STEP = (2 * Math.PI) / 24;
   var R = PITCH / (Math.SQRT2 * Math.sin(STEP));
   var RISE = R * Math.sqrt(2 * Math.cos(STEP) * (1 - Math.cos(STEP)));
-  var BASE = 22, TIP_IN = 0.3, MID_OUT = 0.08, PER_SEGMENT = 96;
-  var BEAD = 3.3 * SCALE, SPHERE = 0.92;
+  var TIP_IN = 0.1, MID_OUT = 0.04, FIT = 0.88;
+  var BEAD = 3.3 * SCALE * FIT, SPHERE = 0.92;
 
-  function joint(i) {
-    var k = ((i % JOINTS) + JOINTS) % JOINTS, ph = k % 4, a = k * STEP;
-    var h = ph === 0 ? BASE + RISE : ph === 2 ? BASE - RISE : BASE;
-    var r = R * (ph === 0 || ph === 2 ? 1 - TIP_IN : 1 + MID_OUT);
-    return [r * Math.cos(a) * SCALE, (h - BASE) * SCALE, -r * Math.sin(a) * SCALE];
-  }
-  var P = [];
-  for (var j = 0; j < JOINTS; j++) P.push(joint(j));
-
-  var N = JOINTS * PER_SEGMENT;
+  var N = 2304;
   var px = new Float32Array(N), py = new Float32Array(N), pz = new Float32Array(N);
-  for (var s = 0; s < JOINTS; s++) {
-    var p0 = P[(s + JOINTS - 1) % JOINTS], p1 = P[s], p2 = P[(s + 1) % JOINTS], p3 = P[(s + 2) % JOINTS];
-    for (var q = 0; q < PER_SEGMENT; q++) {
-      var t = q / PER_SEGMENT, t2 = t * t, t3 = t2 * t, n = s * PER_SEGMENT + q, out = [0, 0, 0];
-      for (var c = 0; c < 3; c++) {
-        out[c] = 0.5 * ((2 * p1[c]) + (-p0[c] + p2[c]) * t + (2 * p0[c] - 5 * p1[c] + 4 * p2[c] - p3[c]) * t2 + (-p0[c] + 3 * p1[c] - 3 * p2[c] + p3[c]) * t3);
-      }
-      px[n] = out[0]; py[n] = out[1]; pz[n] = out[2];
-    }
+  for (var n = 0; n < N; n++) {
+    var th = (n / N) * Math.PI * 2;
+    var rad = R * (1 + MID_OUT - (TIP_IN + MID_OUT) * (0.5 + 0.5 * Math.cos(12 * th)));
+    px[n] = rad * Math.cos(th) * SCALE * FIT;
+    py[n] = RISE * Math.cos(6 * th) * SCALE * FIT;
+    pz[n] = -rad * Math.sin(th) * SCALE * FIT;
   }
 
   /* ---- Sprites: a lit sphere in a few brightnesses, so far parts of the cord sit back ---- */
