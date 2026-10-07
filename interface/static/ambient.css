@@ -1,0 +1,45 @@
+
+:root { --nc-bg: #110c0e; --nc-bg-2: #1b1216; --nc-accent: #ff9a84; --nc-accent-soft: #ffc4b4; --nc-ink: #f8ede9; --nc-line: rgba(255, 228, 218, 0.2); }
+html { background: radial-gradient(120% 90% at 50% 40%, var(--nc-bg-2) 0%, var(--nc-bg) 70%) fixed, var(--nc-bg) !important; }
+body { background: transparent !important; }
+#nc-ambient { position: fixed; inset: 0; z-index: -1; overflow: hidden; pointer-events: none; }
+#nc-ambient canvas { position: absolute; inset: 0; display: block; width: 100%; height: 100%; }
+#nc-ambient .nc-a { position: absolute; border-radius: 50%; filter: blur(70px); opacity: 0.5; }
+#nc-ambient .nc-a1 { width: 46vmax; height: 46vmax; left: -12vmax; top: -14vmax; background: radial-gradient(circle, rgba(255, 140, 110, 0.55), transparent 65%); animation: nc-drift-a 19s ease-in-out infinite alternate; }
+#nc-ambient .nc-a2 { width: 40vmax; height: 40vmax; right: -14vmax; bottom: -12vmax; background: radial-gradient(circle, rgba(255, 190, 150, 0.4), transparent 65%); animation: nc-drift-b 23s ease-in-out infinite alternate; }
+#nc-ambient .nc-a3 { width: 30vmax; height: 30vmax; left: 38%; top: 55%; background: radial-gradient(circle, rgba(236, 110, 140, 0.32), transparent 65%); animation: nc-drift-c 17s ease-in-out infinite alternate; }
+/* Ready-made pieces for stand-alone pages (class="nc-soft" on <body>): the same glass, buttons and inputs as the terminal page. */
+.nc-soft { color: var(--nc-ink); font-family: ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif; }
+.nc-glass { background: rgba(255, 240, 232, 0.08); border: 1px solid var(--nc-line); border-radius: 32px; backdrop-filter: blur(26px) saturate(1.5); -webkit-backdrop-filter: blur(26px) saturate(1.5); box-shadow: 0 1px 0 rgba(255, 255, 255, 0.18) inset, 0 30px 80px rgba(0, 0, 0, 0.5), 0 0 90px rgba(255, 140, 110, 0.12); }
+.nc-btn { font: inherit; font-weight: 700; color: var(--nc-ink); cursor: pointer; background: rgba(255, 238, 230, 0.07); border: 1px solid var(--nc-line); border-radius: 999px; padding: 9px 18px; backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px); box-shadow: 0 1px 0 rgba(255, 255, 255, 0.22) inset, 0 6px 16px rgba(0, 0, 0, 0.18); transition: transform 0.3s cubic-bezier(0.34, 1.56, 0.64, 1), background 0.2s, border-color 0.2s; }
+.nc-btn:hover { background: rgba(255, 238, 230, 0.14); border-color: rgba(255, 228, 218, 0.4); transform: translateY(-2px) scale(1.03); }
+.nc-btn:active { transform: translateY(0) scale(0.95); }
+.nc-btn:disabled { opacity: 0.5; cursor: default; transform: none; }
+.nc-btn.primary { color: var(--nc-accent-soft); background: rgba(255, 154, 132, 0.16); border-color: rgba(255, 154, 132, 0.5); box-shadow: 0 1px 0 rgba(255, 220, 208, 0.3) inset, 0 8px 22px rgba(255, 120, 95, 0.18); }
+.nc-btn.primary:hover { background: rgba(255, 154, 132, 0.28); border-color: rgba(255, 154, 132, 0.8); }
+.nc-input { font: inherit; color: var(--nc-ink); background: rgba(20, 12, 14, 0.4); border: 1px solid var(--nc-line); border-radius: 999px; padding: 10px 18px; outline: none; transition: border-color 0.2s, box-shadow 0.25s; }
+.nc-input::placeholder { color: rgba(248, 237, 233, 0.4); }
+.nc-input:focus { border-color: rgba(255, 154, 132, 0.7); box-shadow: 0 0 0 4px rgba(255, 154, 132, 0.14); }
+.nc-dim { color: rgba(248, 237, 233, 0.62); }
+
+/* The built dashboard (Tailwind tokens): same palette, see-through surfaces so the ring shows, rounder corners. */
+:root, .dark {
+  --background: oklch(14% .015 20 / .55); --foreground: oklch(95% .015 40);
+  --card: oklch(20% .02 20 / .55); --card-foreground: oklch(95% .015 40);
+  --popover: oklch(20% .02 20 / .94); --popover-foreground: oklch(95% .015 40);
+  --primary: oklch(78% .13 35); --primary-foreground: oklch(18% .03 20);
+  --secondary: oklch(28% .03 25 / .6); --secondary-foreground: oklch(88% .04 40);
+  --muted: oklch(22% .02 20 / .5); --muted-foreground: oklch(74% .025 40);
+  --accent: oklch(80% .11 55); --accent-foreground: oklch(18% .03 20);
+  --border: oklch(95% .03 40 / .16); --input: oklch(95% .03 40 / .16); --ring: oklch(78% .13 35);
+  --chart-1: oklch(78% .13 35); --chart-2: oklch(80% .11 55); --chart-3: oklch(72% .12 150); --chart-4: oklch(70% .13 10); --chart-5: oklch(76% .1 80);
+  --sidebar: oklch(13% .015 20 / .6); --sidebar-foreground: oklch(95% .015 40);
+  --sidebar-primary: oklch(78% .13 35); --sidebar-primary-foreground: oklch(18% .03 20);
+  --sidebar-accent: oklch(28% .03 25 / .6); --sidebar-accent-foreground: oklch(95% .015 40);
+  --sidebar-border: oklch(95% .03 40 / .16); --sidebar-ring: oklch(78% .13 35);
+  --radius: 1.25rem;
+}
+@keyframes nc-drift-a { to { transform: translate(14vmax, 10vmax) scale(1.2); } }
+@keyframes nc-drift-b { to { transform: translate(-12vmax, -9vmax) scale(1.15); } }
+@keyframes nc-drift-c { to { transform: translate(-16vmax, -12vmax) scale(0.85); } }
+@media (prefers-reduced-motion: reduce) { #nc-ambient .nc-a { animation: none; } }
