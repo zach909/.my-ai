@@ -45,6 +45,7 @@ import { SelfModel } from "../models && skills/core/self-model.js";
 import { SelfImprovement } from "../models && skills/core/self-improvement.js";
 import { AutonomousLearner } from "../models && skills/core/autonomous-learner.js";
 import { PredictionEngine } from "../models && skills/core/prediction-engine.js";
+import { DoorwayRegistry } from "../models && skills/core/doorways.js";
 import { SkillAccuracyLedger, type SkillStatus, type SkillSwitch } from "../models && skills/core/net-skill-accuracy.js";
 import type { NetSkillRouter } from "../models && skills/core/net-skill-router.js";
 import { DiscoveryEngine } from "../models && skills/core/discovery-engine.js";
@@ -207,6 +208,8 @@ export class NeuroclawSystem {
   zipIO: ZipIOSystem;
   /** Everything said, through the real Zip Loop, as a file. */
   promptFeed: PromptMeshFeed;
+  /** Doorways into the mesh besides the Zip Loop, declared by extensions (doorways.ts). */
+  doorways: DoorwayRegistry;
   /**
    * Continuous learning: predicts what the user will say next, and trains
    * the mesh on the gap once they actually do. Shares promptFeed's own
@@ -372,6 +375,8 @@ export class NeuroclawSystem {
     // and a lock only each one holds separately would not stop them from
     // running at the same time as each other.
     this.continuousLearner = new ContinuousLearner(this.promptFeed.lock());
+    // Every other doorway shares that same lock: they all drive the one engine.
+    this.doorways = new DoorwayRegistry(() => this.pipeline.getHyperEngine() ?? null, this.promptFeed.lock());
     // The mesh's learning, kept across restarts and (opt-in,
     // NEUROCLAW_SHARED_LEARNING=1) shared with other installs as weight
     // changes -- see shared-mesh-sync.ts. Booted here, before anything grafts

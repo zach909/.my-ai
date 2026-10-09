@@ -2134,13 +2134,19 @@ export class WebServer {
       let remembered = 0;
       let graftedNeurons = 0;
       for (const filename of entries) {
-        let data: { project?: { name?: string }; name?: string; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
+        let data: { project?: { name?: string }; name?: string; io?: unknown; neurons?: Array<{ name?: string; definition?: string; scripts?: Array<{ userSays?: string; response?: string }> }> };
         try {
           data = JSON.parse(await fs.readFile(path.join(dir, filename), 'utf8'));
         } catch {
           continue; // malformed/unreadable -- skip this one file, don't fail the boot
         }
         const extName = data.project?.name ?? data.name ?? filename;
+        // The doorways an extension asks for (its "io" block), declared before
+        // anything else so an extension that is only a doorway still counts.
+        if (data.io !== undefined) {
+          const { skipped } = system.doorways.declareFromExtension(extName, data.io);
+          for (const bad of skipped) console.warn(`[doorways] ${extName}: skipped an entry: ${bad.reason}`);
+        }
         const neurons = Array.isArray(data.neurons) ? data.neurons : [];
         if (neurons.length === 0) continue;
         filesLoaded++;
@@ -2569,6 +2575,53 @@ export class WebServer {
         this.sendJson(res, await updateInstalls());
       } catch (err) {
         this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    // ── Doorways besides the Zip Loop ───────────────────────────────────
+    // Extensions declare them (their "io" block). Data goes in and out as raw
+    // bytes, base64 on the wire; nothing here makes tokens out of anything.
+    if (pathname === '/api/doorways' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, { doorways: system.doorways.list() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
+    if (pathname === '/api/doorways/send' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { name?: unknown; data?: unknown } | null;
+        if (typeof body?.name !== 'string' || typeof body?.data !== 'string') {
+          this.sendJson(res, { error: 'Expected { name: string, data: base64 string }.' }, 400);
+          return;
+        }
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, await system.doorways.send(body.name, new Uint8Array(Buffer.from(body.data, 'base64'))));
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    if (pathname === '/api/doorways/receive' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as { name?: unknown; bytes?: unknown } | null;
+        if (typeof body?.name !== 'string' || typeof body?.bytes !== 'number') {
+          this.sendJson(res, { error: 'Expected { name: string, bytes: number }.' }, 400);
+          return;
+        }
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const out = await system.doorways.receive(body.name, body.bytes);
+        this.sendJson(res, { bytes: out.length, data: Buffer.from(out).toString('base64') });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
       }
       return;
     }
@@ -4694,6 +4747,8 @@ export class WebServer {
         const body = await this.parseBody(req) as
           {
             name?: string;
+            /** Doorways beyond the Zip Loop this extension asks for: { inputs: [{name, kind}], outputs: [{name, kind}] }. */
+            io?: unknown;
             neurons?: Array<{
               name?: string; value?: number; definition?: string;
               scripts?: Array<{ userSays?: string; response?: string }>;
@@ -4701,6 +4756,13 @@ export class WebServer {
           } | null;
         const name = (body?.name ?? '').trim() || `extension_${Date.now()}`;
         const neurons = Array.isArray(body?.neurons) ? body.neurons : [];
+        let doorways: { declared: number; skipped: Array<{ reason: string }> } | undefined;
+        if (body?.io !== undefined) {
+          const { getNeuroclawSystem } = await import('../src/index.js');
+          const system = await getNeuroclawSystem();
+          const result = system.doorways.declareFromExtension(name, body.io);
+          doorways = { declared: result.declared.length, skipped: result.skipped.map(s => ({ reason: s.reason })) };
+        }
 
         const path = await import('node:path');
         const { promises: fs } = await import('node:fs');
@@ -4708,7 +4770,7 @@ export class WebServer {
         await fs.mkdir(dir, { recursive: true });
         const safe = name.replace(/[^a-zA-Z0-9_-]+/g, '_');
         const filename = `${safe}_${Date.now()}.ext.json`;
-        await fs.writeFile(path.join(dir, filename), JSON.stringify({ name, neurons }, null, 2), 'utf8');
+        await fs.writeFile(path.join(dir, filename), JSON.stringify(body?.io !== undefined ? { name, io: body.io, neurons } : { name, neurons }, null, 2), 'utf8');
 
         const { remembered, grafted } = await this.installSkillProject(name, neurons);
 
@@ -4716,7 +4778,7 @@ export class WebServer {
         // actually joined the running mesh and how many of the skill's own
         // connections came with them. Reported rather than assumed -- a graft
         // that silently did nothing would look exactly like one that worked.
-        this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered, grafted });
+        this.sendJson(res, { ok: true, savedAs: filename, neuronCount: neurons.length, remembered, grafted, ...(doorways ? { doorways } : {}) });
       } catch (err) {
         this.sendError(res, err);
       }
