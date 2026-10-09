@@ -25,9 +25,9 @@
  * the bar between two neighbouring joints, tilted along the path and rolled
  * about its long axis (±linkRoll / ±midRoll, from pinTilt/midTilt) the way
  * the KCL cants the fork-and-tongue parts, so the flat faces stay tangent to
- * the ring. Colours follow main.kcl: six blue, six yellow, six green, six
- * red links in four consecutive sectors, each pin a shade darker than its
- * sector's links.
+ * the ring. Colouring no longer follows main.kcl's four-sector scheme — the
+ * whole ring is now one colour (warm amber), with pins a slightly deeper
+ * shade of the same hue, and the blue is gone entirely.
  */
 
 import * as THREE from 'three'
@@ -64,15 +64,46 @@ const MID_ROLL = Math.asin(MID_TANGENT * Math.sin(JOINT_ANGLE / 2))
 /** Scene scale: the ~87 mm-wide ring becomes roughly two units across. */
 export const SCALE = 0.023
 
-/** Link colours, in sector order — straight from main.kcl's appearance(). */
-export const LINK_COLORS = ['#389ED3', '#EEE38C', '#6AAF65', '#E94842']
-/** Pin colours, one shade darker per sector. */
-export const PIN_COLORS = ['#2C82B4', '#D8C66D', '#4D9350', '#CB3935']
+/**
+ * The crown's own bounding box in scene units, measured from the real joint
+ * layout (not estimated) so callers can frame it exactly — used by
+ * RingCrownBackground to fill the viewport with the ring.
+ */
+export const CROWN_EXTENT = (() => {
+  const pts: THREE.Vector3[] = []
+  for (let i = 0; i < LINK_COUNT; i++) pts.push(jointPosition(i))
+  const box = new THREE.Box3().setFromPoints(pts)
+  const size = box.getSize(new THREE.Vector3())
+  const center = box.getCenter(new THREE.Vector3())
+  return { size, center }
+})()
+
+/**
+ * One colour for the whole ring — links and pins alike. The KCL model split
+ * the crown into four coloured sectors (blue, yellow, green, red); the blue
+ * was dropped along with the multi-colour scheme, so every link shares a
+ * single warm amber that matches the interface accent token.
+ */
+export const RING_COLOR = '#F0B45C'
+/** Pins read as a slightly deeper shade of the same hue, not a new colour. */
+export const PIN_COLOR = '#D89A44'
+
+/** @deprecated Kept as arrays of the single colour so any legacy index still works. */
+export const LINK_COLORS = [RING_COLOR, RING_COLOR, RING_COLOR, RING_COLOR]
+/** @deprecated See LINK_COLORS. */
+export const PIN_COLORS = [PIN_COLOR, PIN_COLOR, PIN_COLOR, PIN_COLOR]
 
 /** Rounded-bar size for a link, proportional to the KCL part (linkPitch × 11 × 6). */
 export const LINK_LENGTH = LINK_PITCH * SCALE
 export const LINK_WIDTH = 11 * SCALE
 export const LINK_THICKNESS = 6 * SCALE
+
+/**
+ * Radius of the sphere the ring orbits at its centre. Sized to sit just
+ * inside the ring's inner edge so the chain visibly circles it instead of
+ * intersecting it.
+ */
+export const CORE_SPHERE_RADIUS = CROWN_RADIUS * Math.SQRT2 * 0.62 * SCALE
 
 /** Hinge pin: 2.9 mm shaft with 4.4 mm retaining heads (pin.kcl). */
 export const PIN_RADIUS = 1.45 * SCALE
