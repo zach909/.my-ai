@@ -46,6 +46,7 @@ import { SelfImprovement } from "../models && skills/core/self-improvement.js";
 import { AutonomousLearner } from "../models && skills/core/autonomous-learner.js";
 import { PredictionEngine } from "../models && skills/core/prediction-engine.js";
 import { DoorwayRegistry } from "../models && skills/core/doorways.js";
+import { ReplayStore, compressContext, primeWithReplay, zipLoopProbe } from "../models && skills/core/context-replay.js";
 import { SkillAccuracyLedger, type SkillStatus, type SkillSwitch } from "../models && skills/core/net-skill-accuracy.js";
 import type { NetSkillRouter } from "../models && skills/core/net-skill-router.js";
 import { DiscoveryEngine } from "../models && skills/core/discovery-engine.js";
@@ -210,6 +211,9 @@ export class NeuroclawSystem {
   promptFeed: PromptMeshFeed;
   /** Doorways into the mesh besides the Zip Loop, declared by extensions (doorways.ts). */
   doorways: DoorwayRegistry;
+  /** Short prompts that give the mesh an old conversation's context through the Zip Loop (context-replay.ts). */
+  contextReplay: ReplayStore;
+  private compactingThreads = new Set<string>();
   /**
    * Continuous learning: predicts what the user will say next, and trains
    * the mesh on the gap once they actually do. Shares promptFeed's own
@@ -377,6 +381,9 @@ export class NeuroclawSystem {
     this.continuousLearner = new ContinuousLearner(this.promptFeed.lock());
     // Every other doorway shares that same lock: they all drive the one engine.
     this.doorways = new DoorwayRegistry(() => this.pipeline.getHyperEngine() ?? null, this.promptFeed.lock());
+    this.contextReplay = new ReplayStore(
+      process.env.NEUROCLAW_CONTEXT_REPLAY_FILE ?? join(process.cwd(), "extension-builder", "context-replay.json"),
+    );
     // The mesh's learning, kept across restarts and (opt-in,
     // NEUROCLAW_SHARED_LEARNING=1) shared with other installs as weight
     // changes -- see shared-mesh-sync.ts. Booted here, before anything grafts
@@ -1011,6 +1018,73 @@ export class NeuroclawSystem {
       return { answered: false, via: "none", text: "", toolCalls };
     }
     return { answered: true, via: "brain", text, toolCalls };
+  }
+
+  /**
+   * Continue an old conversation: give the mesh its context through the Zip
+   * Loop as a short replay prompt (context compression), not by streaming the
+   * whole history again. The new prompt is then added as usual by learnFrom().
+   * If the conversation has changed since its replay was made, a fresh one is
+   * worked out in the background.
+   *
+   * Only the most recent part of the conversation is measured: the mesh takes
+   * about 37 ms a bit, so the history looked at is bounded
+   * (NEUROCLAW_CONTEXT_REPLAY_HISTORY_BYTES, default 256).
+   */
+  async continueThread(threadId: string, messages: Array<{ content: string }>): Promise<{ primed: boolean; replayBytes: number; compacting: boolean }> {
+    const text = this.replayHistory(messages);
+    if (Buffer.byteLength(text, "utf8") < 32) return { primed: false, replayBytes: 0, compacting: false };
+
+    const replay = this.contextReplay.replayFor(threadId);
+    let primed = false;
+    if (replay && replay.length > 0) {
+      try {
+        primed = await this.primeReplay(replay);
+      } catch (err) {
+        console.warn("[context] could not prime the mesh with the replay:", err instanceof Error ? err.message : err);
+      }
+    }
+    let compacting = this.compactingThreads.has(threadId);
+    if (!compacting && !this.contextReplay.isCurrent(threadId, text)) {
+      compacting = true;
+      void this.compactThread(threadId, text);
+    }
+    return { primed, replayBytes: replay?.length ?? 0, compacting };
+  }
+
+  private replayHistory(messages: Array<{ content: string }>): string {
+    const cap = Number(process.env.NEUROCLAW_CONTEXT_REPLAY_HISTORY_BYTES) || 256;
+    const bytes = Buffer.from(messages.map(m => m.content).join("\n"), "utf8");
+    return bytes.length <= cap ? bytes.toString("utf8") : bytes.subarray(bytes.length - cap).toString("utf8");
+  }
+
+  private async primeReplay(replay: Uint8Array): Promise<boolean> {
+    const engine = this.pipeline.getHyperEngine();
+    if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return false;
+    return this.promptFeed.lock().run(async () => {
+      await primeWithReplay(zipLoopProbe(engine, new ZipLoopInterface(engine, zipLoopIdsFor(engine))), replay);
+      return true;
+    });
+  }
+
+  /** Work out the replay for a conversation's recent text, holding the doorway so nothing else settles the mesh meanwhile. */
+  private async compactThread(threadId: string, text: string): Promise<void> {
+    this.compactingThreads.add(threadId);
+    try {
+      await this.promptFeed.lock().run(async () => {
+        const engine = this.pipeline.getHyperEngine();
+        if (!engine || engine.getNeuronCount() <= ZIP_BIT_NEURONS) return;
+        const probe = zipLoopProbe(engine, new ZipLoopInterface(engine, zipLoopIdsFor(engine)));
+        const result = await compressContext(probe, new Uint8Array(Buffer.from(text, "utf8")), {
+          maxMs: Number(process.env.NEUROCLAW_CONTEXT_REPLAY_MS) || 120_000,
+        });
+        this.contextReplay.set(threadId, text, result);
+      });
+    } catch (err) {
+      console.warn("[context] could not compress this conversation:", err instanceof Error ? err.message : err);
+    } finally {
+      this.compactingThreads.delete(threadId);
+    }
   }
 
   /** Every router in the system. They share one ledger, but each holds its own regions. */

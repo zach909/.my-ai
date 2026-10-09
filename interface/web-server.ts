@@ -3733,6 +3733,13 @@ export class WebServer {
           this.sendJson(res, { error: 'Thread not found' }, 404);
           return;
         }
+        // Continuing an old conversation: the mesh gets its context as a short
+        // replay through the Zip Loop (context compression), in the background,
+        // so the page never waits on it.
+        void import('../src/index.js')
+          .then(m => m.getNeuroclawSystem())
+          .then(system => system.continueThread(thread.id, thread.messages))
+          .catch(() => undefined);
         this.sendJson(res, { thread });
       } catch (err) {
         const msg = err instanceof Error ? err.message : String(err);

@@ -108,6 +108,8 @@ extension-builder/installed/.usage.json
 # How well each net skill has predicted before, and which are switched off for
 # it (net-skill-accuracy.ts). Learned on this machine, not shared.
 extension-builder/net-skill-accuracy.json
+# Short prompts that re-create an old conversation's effect on the mesh (context-replay.ts). Per-machine.
+extension-builder/context-replay.json
 
 # What the network was holding when its last run stopped (neuron states and
 # every connection, a few megabytes). Per-machine runtime state, rewritten on
