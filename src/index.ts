@@ -46,6 +46,7 @@ import { SelfImprovement } from "../models && skills/core/self-improvement.js";
 import { AutonomousLearner } from "../models && skills/core/autonomous-learner.js";
 import { PredictionEngine } from "../models && skills/core/prediction-engine.js";
 import { DoorwayRegistry } from "../models && skills/core/doorways.js";
+import { LiveStreams, PreNeedCache } from "../models && skills/core/live-content.js";
 import { ReplayStore, compressContext, primeWithReplay, zipLoopProbe } from "../models && skills/core/context-replay.js";
 import { SkillAccuracyLedger, type SkillStatus, type SkillSwitch } from "../models && skills/core/net-skill-accuracy.js";
 import type { NetSkillRouter } from "../models && skills/core/net-skill-router.js";
@@ -214,6 +215,10 @@ export class NeuroclawSystem {
   /** Short prompts that give the mesh an old conversation's context through the Zip Loop (context-replay.ts). */
   contextReplay: ReplayStore;
   private compactingThreads = new Set<string>();
+  /** What the mesh is making right now that is already being used (live-content.ts). */
+  live = new LiveStreams();
+  /** Things made before they were asked for, held aside; dropped when what was said changes (live-content.ts). */
+  preNeed = new PreNeedCache<unknown>();
   /**
    * Continuous learning: predicts what the user will say next, and trains
    * the mesh on the gap once they actually do. Shares promptFeed's own
@@ -935,6 +940,8 @@ export class NeuroclawSystem {
     const key = `${source}\u0000${trimmed}`;
     if (key === this.lastLearned) return false;
     this.lastLearned = key;
+    // What was prepared ahead was made for the old context.
+    this.preNeed.invalidate();
     this.promptFeed.feed(trimmed, `${source}.txt`);
     return true;
   }

@@ -2626,6 +2626,66 @@ export class WebServer {
       return;
     }
 
+    // ── Live content: played while the mesh is still making it ───────────
+    // The source is the mesh's own output on a doorway. Playing may begin as
+    // soon as it can never catch up with what is made (startDelaySeconds 0).
+    if (pathname === '/api/live/start' && method === 'POST') {
+      try {
+        const body = (await this.parseBody(req)) as
+          { doorway?: unknown; bytesPerSecond?: unknown; totalSeconds?: unknown; chunkBytes?: unknown } | null;
+        if (typeof body?.doorway !== 'string' || typeof body?.bytesPerSecond !== 'number' || !(body.bytesPerSecond > 0)) {
+          this.sendJson(res, { error: 'Expected { doorway: string, bytesPerSecond: number > 0, totalSeconds?: number, chunkBytes?: number }.' }, 400);
+          return;
+        }
+        const name = body.doorway;
+        const chunk = typeof body.chunkBytes === 'number' && body.chunkBytes > 0 ? Math.min(Math.floor(body.chunkBytes), 65536) : 256;
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const stream = system.live.open(
+          { pull: async () => { const out = await system.doorways.receive(name, chunk); return out.length > 0 ? out : null; } },
+          { bytesPerSecond: body.bytesPerSecond, totalSeconds: typeof body.totalSeconds === 'number' ? body.totalSeconds : undefined },
+        );
+        this.sendJson(res, stream.status());
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    const liveMatch = pathname.match(/^\/api\/live\/([^/]+)$/);
+    if (liveMatch && (method === 'GET' || method === 'DELETE')) {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        const id = decodeURIComponent(liveMatch[1]);
+        if (method === 'DELETE') {
+          this.sendJson(res, { stopped: system.live.stop(id) });
+          return;
+        }
+        const stream = system.live.get(id);
+        if (!stream) { this.sendJson(res, { error: 'No such live stream.' }, 404); return; }
+        const q = new URL(req.url ?? '/', 'http://x').searchParams;
+        const from = Math.max(0, Number(q.get('from')) || 0);
+        const limit = Math.min(1 << 20, Math.max(0, Number(q.get('limit')) || 65536));
+        const data = stream.read(from, limit);
+        this.sendJson(res, { ...stream.status(), from, bytes: data.length, data: Buffer.from(data).toString('base64') });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 400);
+      }
+      return;
+    }
+
+    if (pathname === '/api/preneed' && method === 'GET') {
+      try {
+        const { getNeuroclawSystem } = await import('../src/index.js');
+        const system = await getNeuroclawSystem();
+        this.sendJson(res, { preNeed: system.preNeed.stats(), live: system.live.list() });
+      } catch (err) {
+        this.sendJson(res, { error: err instanceof Error ? err.message : String(err) }, 500);
+      }
+      return;
+    }
+
     // ── Net skills: switching them on and off ───────────────────────────
     // A skill is switched off automatically when its record of predicting what
     // an input is about stays poor, and back on when it recovers. "mode" is the
