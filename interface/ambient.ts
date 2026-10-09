@@ -13,8 +13,7 @@
  * bottom tips tucked in and the middle eased out, rendered as a dense run of
  * shaded spheres sorted back to front. Seen end on it reads as one continuous piece.
  *
- * In the centre sits a glowing sphere. The AI's icon (interface/ai-icon.ts) is
- * only the page icon in the browser tab, served at /ai-icon.jpg.
+ * In the centre sits a glowing sphere.
  *
  * Everything here is cosmetic. If the script fails to run, or canvas is
  * missing, the page is exactly as it was, minus the background.
@@ -215,7 +214,7 @@ export const AMBIENT_JS = String.raw`(function () {
 
 /** The two asset paths, served without a login: they are only the look of the page, and the login page needs them. */
 export function isAmbientRoute(pathname: string, method: string): boolean {
-  return (method === "GET" || method === "HEAD") && (pathname === "/ambient.css" || pathname === "/ambient.js" || pathname === "/ai-icon.jpg");
+  return (method === "GET" || method === "HEAD") && (pathname === "/ambient.css" || pathname === "/ambient.js");
 }
 
 const MARK = 'data-nc-ambient="1"';
@@ -226,10 +225,9 @@ const MARK = 'data-nc-ambient="1"';
  */
 export function injectAmbient(html: string): string {
   if (html.includes(MARK)) return html;
-  // The AI's icon is every page's icon, replacing whatever icon the page named.
-  const link = `<link rel="icon" type="image/jpeg" href="/ai-icon.jpg" ${MARK}><link rel="stylesheet" href="/ambient.css" ${MARK}>`;
+  const link = `<link rel="stylesheet" href="/ambient.css" ${MARK}>`;
   const script = `<script src="/ambient.js" defer ${MARK}></script>`;
-  let out = html.replace(/<link\b[^>]*\brel=["']?(?:shortcut )?icon["']?[^>]*>/gi, "");
+  let out = html;
   if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `${link}</head>`);
   else if (/<body[\s>]/i.test(out)) out = out.replace(/<body/i, `${link}<body`);
   else return html;
