@@ -12,6 +12,7 @@ import { describe, it, expect } from 'vitest'
 import { readFileSync } from 'node:fs'
 import path from 'node:path'
 import { AMBIENT_CSS, AMBIENT_JS } from '../../interface/ambient.js'
+import { AI_ICON_JPEG } from '../../interface/ai-icon.js'
 
 const COPIES = ['desktop-app/src/renderer', 'browser-extension', 'interface/static']
 const read = (file: string) => readFileSync(path.resolve(__dirname, '../..', file), 'utf8')
@@ -21,6 +22,7 @@ describe('standalone copies of the ambient look', () => {
     it(`${dir} matches the source (run: node scripts/sync-ambient.mjs)`, () => {
       expect(read(`${dir}/ambient.css`)).toBe(AMBIENT_CSS)
       expect(read(`${dir}/ambient.js`)).toBe(AMBIENT_JS)
+      expect(readFileSync(path.resolve(__dirname, '../..', dir, 'ai-icon.jpg')).equals(AI_ICON_JPEG)).toBe(true)
     })
   }
 })

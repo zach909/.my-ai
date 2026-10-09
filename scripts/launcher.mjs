@@ -60,6 +60,10 @@ function readLook(file) {
 }
 const LOOK_CSS = readLook('ambient.css');
 const LOOK_JS = readLook('ambient.js');
+// The icon as a data URI, only if the file really is a JPEG (an LFS pointer that was never pulled is not).
+const ICON_BYTES = (() => { try { return readFileSync(path.join(ROOT, 'interface', 'static', 'ai-icon.jpg')); } catch { return null; } })();
+const LOOK_ICON = ICON_BYTES && ICON_BYTES[0] === 0xff && ICON_BYTES[1] === 0xd8
+  ? `<script>window.__ncIcon=${JSON.stringify('data:image/jpeg;base64,' + ICON_BYTES.toString('base64'))}</script>` : '';
 
 let handled = false;
 
@@ -79,7 +83,7 @@ function startingPageHtml() {
     <h1>Starting Neuroclaw…</h1>
     <p class="nc-dim">This page reloads on its own the moment it's ready.</p>
   </div>
-  <script>${LOOK_JS}</script>
+  ${LOOK_ICON}<script>${LOOK_JS}</script>
   <script>
   (function retry() {
     fetch(location.href, { cache: 'no-store', method: 'HEAD' })
@@ -120,7 +124,7 @@ function fallbackPageHtml(command, reason) {
     on purpose. Open a terminal yourself (Terminal / PowerShell / your shell), paste, and press
     Enter.</p>
   </div>
-  <script>${LOOK_JS}</script>
+  ${LOOK_ICON}<script>${LOOK_JS}</script>
   <script>
   var cmd = ${JSON.stringify(command)};
   function copy() {

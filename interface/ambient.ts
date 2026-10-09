@@ -13,6 +13,9 @@
  * bottom tips tucked in and the middle eased out, rendered as a dense run of
  * shaded spheres sorted back to front. Seen end on it reads as one continuous piece.
  *
+ * In the centre sits the AI's icon (interface/ai-icon.ts), also used as every
+ * page's favicon; if it cannot load, a plain sphere takes its place.
+ *
  * Everything here is cosmetic. If the script fails to run, or canvas is
  * missing, the page is exactly as it was, minus the background.
  */
@@ -112,6 +115,23 @@ export const AMBIENT_JS = String.raw`(function () {
   }
   for (var sh = 0; sh < SHADES; sh++) sprites.push(makeSprite(0.5 + (sh / (SHADES - 1)) * 0.6));
 
+  /* ---- The AI icon in the centre. Falls back to a plain sphere if it cannot load. ---- */
+  var icon = new Image(), iconReady = false;
+  icon.onload = function () { iconReady = true; };
+  var me = document.currentScript;
+  var iconSrc = window.__ncIcon || (me && me.src ? me.src.replace(/ambient\.js(\?.*)?$/, 'ai-icon.jpg') : '');
+  if (iconSrc) icon.src = iconSrc;
+
+  function roundRectPath(x, y, w, h, r) {
+    ctx.beginPath();
+    ctx.moveTo(x + r, y);
+    ctx.arcTo(x + w, y, x + w, y + h, r);
+    ctx.arcTo(x + w, y + h, x, y + h, r);
+    ctx.arcTo(x, y + h, x, y, r);
+    ctx.arcTo(x, y, x + w, y, r);
+    ctx.closePath();
+  }
+
   /* ---- Size and fit ---- */
   var W = 0, H = 0, DPR = 1, DIST = 6, FOCAL = 1;
   function resize() {
@@ -191,12 +211,32 @@ export const AMBIENT_JS = String.raw`(function () {
     };
     for (; idx < N && sz[order[idx]] <= 0; idx++) drawBead(order[idx]);
 
-    var core = ctx.createRadialGradient(cx - sr * 0.28, cy - sr * 0.32, sr * 0.1, cx, cy, sr);
-    core.addColorStop(0, 'rgb(96,50,52)');
-    core.addColorStop(0.6, 'rgb(44,22,26)');
-    core.addColorStop(1, 'rgb(26,13,16)');
-    ctx.fillStyle = core;
-    ctx.beginPath(); ctx.arc(cx, cy, sr, 0, Math.PI * 2); ctx.fill();
+    if (iconReady) {
+      var side = sr * 1.7, ix = cx - side / 2, iy = cy - side / 2, rr = side * 0.2;
+      ctx.save();
+      roundRectPath(ix, iy, side, side, rr);
+      ctx.shadowColor = 'rgba(255,138,112,0.5)';
+      ctx.shadowBlur = 44 * DPR;
+      ctx.fillStyle = 'rgb(26,13,16)';
+      ctx.fill();
+      ctx.restore();
+      ctx.save();
+      roundRectPath(ix, iy, side, side, rr);
+      ctx.clip();
+      ctx.drawImage(icon, ix, iy, side, side);
+      ctx.restore();
+      roundRectPath(ix, iy, side, side, rr);
+      ctx.strokeStyle = 'rgba(255,196,180,0.4)';
+      ctx.lineWidth = 1.5;
+      ctx.stroke();
+    } else {
+      var core = ctx.createRadialGradient(cx - sr * 0.28, cy - sr * 0.32, sr * 0.1, cx, cy, sr);
+      core.addColorStop(0, 'rgb(96,50,52)');
+      core.addColorStop(0.6, 'rgb(44,22,26)');
+      core.addColorStop(1, 'rgb(26,13,16)');
+      ctx.fillStyle = core;
+      ctx.beginPath(); ctx.arc(cx, cy, sr, 0, Math.PI * 2); ctx.fill();
+    }
 
     for (; idx < N; idx++) drawBead(order[idx]);
   }
@@ -212,7 +252,7 @@ export const AMBIENT_JS = String.raw`(function () {
 
 /** The two asset paths, served without a login: they are only the look of the page, and the login page needs them. */
 export function isAmbientRoute(pathname: string, method: string): boolean {
-  return (method === "GET" || method === "HEAD") && (pathname === "/ambient.css" || pathname === "/ambient.js");
+  return (method === "GET" || method === "HEAD") && (pathname === "/ambient.css" || pathname === "/ambient.js" || pathname === "/ai-icon.jpg");
 }
 
 const MARK = 'data-nc-ambient="1"';
@@ -223,9 +263,10 @@ const MARK = 'data-nc-ambient="1"';
  */
 export function injectAmbient(html: string): string {
   if (html.includes(MARK)) return html;
-  const link = `<link rel="stylesheet" href="/ambient.css" ${MARK}>`;
+  // The AI's icon is every page's icon, replacing whatever icon the page named.
+  const link = `<link rel="icon" type="image/jpeg" href="/ai-icon.jpg" ${MARK}><link rel="stylesheet" href="/ambient.css" ${MARK}>`;
   const script = `<script src="/ambient.js" defer ${MARK}></script>`;
-  let out = html;
+  let out = html.replace(/<link\b[^>]*\brel=["']?(?:shortcut )?icon["']?[^>]*>/gi, "");
   if (/<\/head>/i.test(out)) out = out.replace(/<\/head>/i, `${link}</head>`);
   else if (/<body[\s>]/i.test(out)) out = out.replace(/<body/i, `${link}<body`);
   else return html;

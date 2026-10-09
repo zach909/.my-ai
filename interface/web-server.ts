@@ -29,6 +29,7 @@ import { getSharedChatStore, SharedChatError } from '../models && skills/core/sh
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { startAutoOffload } from '../models && skills/core/store-offload.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
+import { AI_ICON_JPEG } from './ai-icon.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
 import {
@@ -2269,6 +2270,11 @@ export class WebServer {
     // The ring behind every page (ambient.ts). Plain text, no secrets.
     if (isAmbientRoute(pathname, method)) {
       this.setSecurityHeaders(res);
+      if (pathname === '/ai-icon.jpg') {
+        res.writeHead(200, { 'Content-Type': 'image/jpeg', 'Cache-Control': 'public, max-age=86400', 'Content-Length': AI_ICON_JPEG.length });
+        res.end(method === 'HEAD' ? undefined : AI_ICON_JPEG);
+        return;
+      }
       const css = pathname === '/ambient.css';
       res.writeHead(200, {
         'Content-Type': css ? 'text/css; charset=utf-8' : 'text/javascript; charset=utf-8',
