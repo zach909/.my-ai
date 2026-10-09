@@ -4,27 +4,24 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Neuroclaw</title>
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <style>
   :root {
-    --bg-primary: #0f172a;
-    --bg-secondary: #1e293b;
-    --bg-tertiary: #334155;
-    --accent-primary: #6366f1;
-    --accent-secondary: #818cf8;
-    --accent-glow: rgba(99, 102, 241, 0.3);
-    --text-primary: #f8fafc;
-    --text-secondary: #94a3b8;
-    --text-muted: #64748b;
-    --border: #334155;
+    --bg-primary: #110c0e;
+    --bg-secondary: #1b1216;
+    --bg-tertiary: #3b2b2e;
+    --accent-primary: #ff9a84;
+    --accent-secondary: #ffc4b4;
+    --accent-glow: rgba(255, 154, 132, 0.3);
+    --text-primary: #f8ede9;
+    --text-secondary: #b9a7a2;
+    --text-muted: #8f7d79;
+    --border: #3b2b2e;
     --success: #10b981;
-    --error: #ef4444;
+    --error: #ff9aa8;
   }
   * { margin: 0; padding: 0; box-sizing: border-box; }
   body { 
-    background: linear-gradient(135deg, #0f172a 0%, #1e293b 100%); 
+    background: linear-gradient(135deg, #110c0e 0%, #1b1216 100%); 
     color: var(--text-primary); 
     font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; 
     height: 100vh; 
@@ -38,13 +35,13 @@
     position: absolute;
     top: 0; left: 0; right: 0; bottom: 0;
     background: 
-      radial-gradient(circle at 20% 30%, rgba(99, 102, 241, 0.08) 0%, transparent 40%),
-      radial-gradient(circle at 80% 70%, rgba(6, 182, 212, 0.08) 0%, transparent 40%);
+      radial-gradient(circle at 20% 30%, rgba(255, 154, 132, 0.08) 0%, transparent 40%),
+      radial-gradient(circle at 80% 70%, rgba(255, 190, 150, 0.08) 0%, transparent 40%);
     pointer-events: none;
     z-index: 0;
   }
   #header { 
-    background: rgba(15, 23, 42, 0.95); 
+    background: rgba(17, 12, 14, 0.95); 
     backdrop-filter: blur(10px);
     padding: 12px 24px; 
     border-bottom: 1px solid var(--border); 
@@ -60,7 +57,7 @@
     font-size: 16px; 
     font-weight: 600; 
     letter-spacing: 0.5px;
-    background: linear-gradient(135deg, #fff 0%, #a5b4fc 100%);
+    background: linear-gradient(135deg, #fff 0%, #ffc4b4 100%);
     -webkit-background-clip: text;
     -webkit-text-fill-color: transparent;
     background-clip: text;
@@ -81,7 +78,7 @@
   #status-text { font-size: 13px; color: var(--text-secondary); }
   #tabs { 
     display: flex; 
-    background: rgba(15, 23, 42, 0.8); 
+    background: rgba(17, 12, 14, 0.8); 
     border-bottom: 1px solid var(--border); 
     flex-wrap: wrap;
     position: relative;
@@ -99,7 +96,7 @@
     transition: all 0.2s;
   }
   .tab:hover { 
-    background: rgba(99, 102, 241, 0.1); 
+    background: rgba(255, 154, 132, 0.1); 
     color: var(--text-primary);
   }
   .tab.active { 
@@ -113,7 +110,7 @@
   #chat-container { display: flex; flex-direction: column; gap: 12px; }
   .msg { 
     padding: 12px 16px; 
-    border-radius: 12px; 
+    border-radius: 24px; 
     max-width: 85%; 
     white-space: pre-wrap; 
     line-height: 1.6; 
@@ -128,7 +125,7 @@
     background: var(--bg-tertiary); 
     color: var(--text-secondary); 
     border: 1px solid var(--border); 
-    border-radius: 6px; 
+    border-radius: 999px; 
     font-size: 11px; 
     padding: 4px 8px; 
     cursor: pointer; 
@@ -140,7 +137,7 @@
     align-self: flex-end; 
     background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%); 
     color: white;
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    box-shadow: 0 4px 12px rgba(255, 154, 132, 0.3);
   }
   .msg.ai { 
     align-self: flex-start; 
@@ -161,7 +158,7 @@
     gap: 10px; 
     padding: 16px 24px; 
     border-top: 1px solid var(--border);
-    background: rgba(15, 23, 42, 0.8);
+    background: rgba(17, 12, 14, 0.8);
     position: relative;
     z-index: 10;
   }
@@ -174,12 +171,12 @@
     padding: 12px 16px; 
     font-size: 14px; 
     outline: none;
-    border-radius: 10px;
+    border-radius: 999px;
     transition: all 0.2s;
   }
   #input:focus { 
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    box-shadow: 0 0 0 3px rgba(255, 154, 132, 0.1);
   }
   button { 
     background: linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary) 100%); 
@@ -190,12 +187,12 @@
     font-weight: 600; 
     font-size: 13px; 
     transition: all 0.2s;
-    border-radius: 10px;
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.3);
+    border-radius: 999px;
+    box-shadow: 0 4px 12px rgba(255, 154, 132, 0.3);
   }
   button:hover { 
     transform: translateY(-2px);
-    box-shadow: 0 6px 20px rgba(99, 102, 241, 0.4);
+    box-shadow: 0 6px 20px rgba(255, 154, 132, 0.4);
   }
   button:active { transform: translateY(0); }
   button.ghost { 
@@ -222,19 +219,19 @@
     min-height: 180px; 
     resize: vertical; 
     outline: none;
-    border-radius: 10px;
+    border-radius: 24px;
     font-family: 'JetBrains Mono', monospace;
     line-height: 1.6;
   }
   textarea:focus { 
     border-color: var(--accent-primary);
-    box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+    box-shadow: 0 0 0 3px rgba(255, 154, 132, 0.1);
   }
   .hint { color: var(--text-muted); font-size: 13px; margin: 10px 0; line-height: 1.6; }
   .hint code {
-    background: rgba(99, 102, 241, 0.15);
+    background: rgba(255, 154, 132, 0.15);
     padding: 2px 6px;
-    border-radius: 4px;
+    border-radius: 24px;
     font-family: 'JetBrains Mono', monospace;
     color: var(--accent-secondary);
   }
@@ -244,12 +241,12 @@
     border: 1px solid var(--border); 
     background: var(--bg-secondary); 
     padding: 16px; 
-    border-radius: 12px;
+    border-radius: 24px;
     transition: all 0.2s;
   }
   .card:hover {
     border-color: var(--accent-primary);
-    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.15);
+    box-shadow: 0 4px 20px rgba(255, 154, 132, 0.15);
   }
   .card h3 { 
     font-size: 12px; 
@@ -268,7 +265,7 @@
     padding: 12px; 
     margin-top: 12px; 
     font-size: 13px; 
-    border-radius: 8px; 
+    border-radius: 24px; 
     background: var(--bg-primary);
   }
   .neuron .name { color: var(--accent-secondary); font-weight: 600; }
@@ -285,11 +282,12 @@
   a:hover { text-decoration: underline; }
   ::-webkit-scrollbar { width: 8px; }
   ::-webkit-scrollbar-track { background: var(--bg-primary); }
-  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
+  ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 24px; }
   ::-webkit-scrollbar-thumb:hover { background: var(--text-muted); }
 </style>
+<link rel="stylesheet" href="static/ambient.css">
 </head>
-<body>
+<body class="nc-soft">
 <div id="header">
   <h1><span id="status-dot" role="img" aria-label="System status: Offline"></span>Neuroclaw</h1>
   <div id="status-text">connecting…</div>
@@ -315,8 +313,8 @@
   <h2 class="section">Extension Builder — NeuroLang</h2>
   <p class="hint">Define named neurons with a value, a vale (resistance to change), and a contract/definition, then <b>Build</b> to save them as a persistent extension on disk. Neurons are auto-wired all-to-all (weight 0.1) unless overridden. Syntax: <code>name="x"</code> creates a neuron; then <code>"x"@value="0.9"</code>, <code>"x"@vale="0.8"</code>, <code>"x"@definition="text"</code>.</p>
   <div style="display:flex;gap:8px;flex-wrap:wrap;margin-bottom:8px;">
-    <input type="text" id="ext-name" placeholder="extension name" style="flex:1;min-width:160px;background:#0a0a0a;border:1px solid #063;color:#00ff41;padding:8px;">
-    <input type="text" id="ext-desc" placeholder="description (optional)" style="flex:2;min-width:160px;background:#0a0a0a;border:1px solid #063;color:#00ff41;padding:8px;">
+    <input type="text" id="ext-name" placeholder="extension name" style="flex:1;min-width:160px;background:#140c0e;border:1px solid #3b2b2e;color:#8fe3a8;padding:8px;">
+    <input type="text" id="ext-desc" placeholder="description (optional)" style="flex:2;min-width:160px;background:#140c0e;border:1px solid #3b2b2e;color:#8fe3a8;padding:8px;">
     <label class="hint" style="display:flex;align-items:center;gap:6px;margin:0;"><input type="checkbox" id="ext-quantize"> quantize (8-bit)</label>
   </div>
   <textarea id="neuri-code">name="greeting"
@@ -550,5 +548,6 @@ name="reply"
   function esc(s){ return String(s).replace(/[&<>"]/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;'}[c])); }
   checkStatus(); setInterval(checkStatus, 8000);
 </script>
+<script src="static/ambient.js"></script>
 </body>
 </html>

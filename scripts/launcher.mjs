@@ -42,7 +42,7 @@
 import { createServer } from 'node:http';
 import { spawn } from 'node:child_process';
 import { createConnection } from 'node:net';
-import { existsSync, mkdirSync, openSync } from 'node:fs';
+import { existsSync, mkdirSync, openSync, readFileSync } from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -52,28 +52,34 @@ const HOST = process.env.NEUROCLAW_WEB_HOST || '127.0.0.1';
 /** How long to wait for the real backend before giving up and falling back. */
 const LAUNCH_TIMEOUT_MS = 90_000;
 
+// The shared look (interface/ambient.ts, written out by scripts/sync-ambient.mjs).
+// Read once and inlined: these pages are served by this tiny process alone, with
+// nothing else to fetch from. If the files are missing the pages still work, plain.
+function readLook(file) {
+  try { return readFileSync(path.join(ROOT, 'interface', 'static', file), 'utf8'); } catch { return ''; }
+}
+const LOOK_CSS = readLook('ambient.css');
+const LOOK_JS = readLook('ambient.js');
+
 let handled = false;
 
 function startingPageHtml() {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Starting Neuroclaw…</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<style>${LOOK_CSS}</style>
 <style>
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-    font-family:system-ui,-apple-system,sans-serif;background:#0b0b10;color:#e8e8ee}
-  .card{max-width:420px;text-align:center;padding:24px}
-  .spinner{width:32px;height:32px;margin:0 auto 18px;border-radius:50%;
-    border:3px solid #2a2a35;border-top-color:#7c6cff;animation:spin .8s linear infinite}
-  @keyframes spin{to{transform:rotate(360deg)}}
+  body{box-sizing:border-box;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:16px;background:#110c0e}
+  .card{max-width:420px;text-align:center;padding:28px 36px}
   h1{font-size:18px;margin:0 0 8px}
-  p{font-size:13px;color:#9a9aab;margin:0}
+  p{font-size:13px;margin:0}
 </style></head>
-<body>
-  <div class="card">
-    <div class="spinner" role="status" aria-label="Starting"></div>
+<body class="nc-soft">
+  <div class="card nc-glass" role="status">
     <h1>Starting Neuroclaw…</h1>
-    <p>This page reloads on its own the moment it's ready.</p>
+    <p class="nc-dim">This page reloads on its own the moment it's ready.</p>
   </div>
+  <script>${LOOK_JS}</script>
   <script>
   (function retry() {
     fetch(location.href, { cache: 'no-store', method: 'HEAD' })
@@ -89,33 +95,32 @@ function fallbackPageHtml(command, reason) {
   return `<!doctype html>
 <html><head><meta charset="utf-8"><title>Start Neuroclaw</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
+<style>${LOOK_CSS}</style>
 <style>
-  body{margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;
-    font-family:system-ui,-apple-system,sans-serif;background:#0b0b10;color:#e8e8ee;padding:24px}
-  .card{max-width:520px}
+  body{box-sizing:border-box;margin:0;min-height:100vh;display:flex;align-items:center;justify-content:center;padding:24px;background:#110c0e}
+  .card{max-width:520px;padding:30px 34px}
   h1{font-size:20px;margin:0 0 8px}
-  p{font-size:13px;color:#9a9aab;line-height:1.5}
-  pre{background:#17171f;border:1px solid #2a2a35;border-radius:8px;padding:14px 16px;
+  p{font-size:13px;line-height:1.5}
+  pre{background:rgba(20,12,14,.55);border:1px solid var(--nc-line);border-radius:22px;padding:14px 18px;
     font-size:13px;overflow-x:auto;user-select:all}
-  button{margin-top:10px;padding:8px 16px;border-radius:6px;border:1px solid #3a3a4a;
-    background:#7c6cff;color:#fff;font-size:13px;cursor:pointer}
-  button:active{transform:scale(.97)}
-  .note{margin-top:18px;padding-top:14px;border-top:1px solid #22222c}
-  .ok{color:#6cff9c}
+  .nc-btn{margin-top:10px;font-size:13px}
+  .note{margin-top:18px;padding-top:14px;border-top:1px solid var(--nc-line)}
+  .ok{color:#8fe3a8}
 </style></head>
-<body>
-  <div class="card">
+<body class="nc-soft">
+  <div class="card nc-glass">
     <h1>Couldn't start it automatically</h1>
-    <p>${reason}</p>
-    <p>Run this in a terminal, from this folder:</p>
+    <p class="nc-dim">${reason}</p>
+    <p class="nc-dim">Run this in a terminal, from this folder:</p>
     <pre id="cmd">${escaped}</pre>
-    <button id="copy" type="button">Copy command</button>
+    <button id="copy" type="button" class="nc-btn primary">Copy command</button>
     <span id="copied" class="ok" style="margin-left:8px;font-size:13px"></span>
-    <p class="note">This page can't open a terminal for you — a web page running a command on
+    <p class="note nc-dim">This page can't open a terminal for you — a web page running a command on
     your machine on its own is exactly the thing browsers refuse to allow, for anyone's site,
     on purpose. Open a terminal yourself (Terminal / PowerShell / your shell), paste, and press
     Enter.</p>
   </div>
+  <script>${LOOK_JS}</script>
   <script>
   var cmd = ${JSON.stringify(command)};
   function copy() {
