@@ -16,7 +16,6 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 
 const root = join(dirname(fileURLToPath(import.meta.url)), '..');
 const { AMBIENT_CSS, AMBIENT_JS } = await import(pathToFileURL(join(root, 'dist', 'interface', 'ambient.js')).href);
-const { AI_ICON_JPEG } = await import(pathToFileURL(join(root, 'dist', 'interface', 'ai-icon.js')).href);
 
 export const AMBIENT_COPY_DIRS = [
   'desktop-app/src/renderer',
@@ -28,6 +27,5 @@ for (const dir of AMBIENT_COPY_DIRS) {
   mkdirSync(join(root, dir), { recursive: true });
   writeFileSync(join(root, dir, 'ambient.css'), AMBIENT_CSS);
   writeFileSync(join(root, dir, 'ambient.js'), AMBIENT_JS);
-  writeFileSync(join(root, dir, 'ai-icon.jpg'), AI_ICON_JPEG);
-  console.log(`wrote ${dir}/ambient.css, ambient.js and ai-icon.jpg`);
+  console.log(`wrote ${dir}/ambient.css and ambient.js`);
 }
