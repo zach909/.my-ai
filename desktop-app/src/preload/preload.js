@@ -383,6 +383,7 @@ contextBridge.exposeInMainWorld('electronAPI', {
     screenCapture: () => captureScreenFrame(),
     screenRecording: (args = {}) => recordScreenClip(args),
     systemAudioCapture: (args = {}) => captureSystemAudio(args),
+    audioRecording: (args = {}) => recordMicrophone(args),
     speechSynthesis: (args = {}) => synthesizeSpeech(args),
     audioPlayback: (args = {}) => playLocalAudio(args),
     accessibility: (args = {}) => readAppAccessibilityTree(args),
