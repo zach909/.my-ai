@@ -10,7 +10,7 @@ import UserNotifications
 /// Each tool uses public iOS APIs and returns JSON-serializable dictionaries.
 /// Sensitive data is only returned after iOS has granted the relevant permission.
 enum NativeToolRegistry {
-    static let definitions: [[String: Any]] = [
+    private static let baseDefinitions: [[String: Any]] = [
         ["name": "permissions.status", "description": "Return the current authorization state of supported iOS capabilities.", "input_schema": ["type": "object", "properties": [:]]],
         ["name": "contacts.search", "description": "Search contacts by name, email, or phone. Requires Contacts permission.", "input_schema": ["type": "object", "properties": ["query": ["type": "string"]], "required": ["query"]]],
         ["name": "calendar.list_events", "description": "List calendar events in an ISO-8601 date range. Requires Calendar permission.", "input_schema": ["type": "object", "properties": ["start": ["type": "string"], "end": ["type": "string"]], "required": ["start", "end"]]],
@@ -19,6 +19,8 @@ enum NativeToolRegistry {
         ["name": "notifications.cancel", "description": "Cancel a previously scheduled local notification by identifier.", "input_schema": ["type": "object", "properties": ["identifier": ["type": "string"]], "required": ["identifier"]]],
         ["name": "app.open_url", "description": "Ask iOS to open a URL or registered app URL scheme. The system may show confirmation or refuse.", "input_schema": ["type": "object", "properties": ["url": ["type": "string"]], "required": ["url"]]]
     ]
+
+    static var definitions: [[String: Any]] { baseDefinitions + ExtendedNativeTools.definitions }
 
     static func invoke(name: String, arguments: [String: Any]) async -> (Int, [String: Any]) {
         switch name {
@@ -63,7 +65,7 @@ enum NativeToolRegistry {
             }
             return opened ? (200, ["ok": true]) : (409, ["error": "iOS could not open this URL"])
         default:
-            return (404, ["error": "unknown_tool", "name": name, "available_tools": definitions.compactMap { $0["name"] as? String }])
+            return await ExtendedNativeTools.invoke(name: name, arguments: arguments)
         }
     }
 
@@ -179,7 +181,7 @@ enum NativeToolRegistry {
                 store.requestAccess(to: .reminder) { granted, _ in continuation.resume(returning: granted) }
             }
             guard granted else { return (403, ["error": "reminders_permission_denied"]) }
-        } else if status != .authorized && status != .fullAccess {
+        } else if !hasEventReadAccess(status) {
             return (403, ["error": "reminders_permission_denied", "status": eventLabel(status)])
         }
         return await withCheckedContinuation { continuation in
