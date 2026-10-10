@@ -43,6 +43,22 @@ check(getTool('windowsServiceSecurityDescriptor').implementation === 'native-win
 check(getTool('windowsAccountPolicy').implementation === 'native-windows', 'local account policy inspection is read-only');
 check(getTool('windowsNetworkShares').implementation === 'native-windows', 'network share inventory is read-only');
 check(getTool('windowsPowerShellExecutionPolicy').implementation === 'native-windows', 'execution policy inspection does not alter policy');
+check(getTool('wifiStatus').implementation === 'native-windows', 'Wi-Fi status is inspected without changing network configuration');
+check(getTool('bluetooth').implementation === 'native-windows', 'Bluetooth device metadata inspection is implemented');
+check(getTool('usbDevices').implementation === 'native-windows', 'USB device metadata inspection is implemented');
+check(getTool('printers').implementation === 'native-windows', 'installed printer inventory is implemented');
+check(getTool('audioDevices').implementation === 'native-windows', 'audio endpoint inventory is implemented without bypassing capture consent');
+check(getTool('displays').implementation === 'native-windows', 'display metadata is read through Electron');
+check(getTool('installedApps').implementation === 'native-windows', 'installed application inventory has an explicit bounded scope');
+check(getTool('startupSettings').implementation === 'native-windows', 'startup registry entries are inspected read-only');
+check(getTool('scheduledTasks').implementation === 'native-windows', 'scheduled task metadata is listed without modifying tasks');
+check(getTool('powerBattery').implementation === 'native-windows', 'battery metadata is inspected where supported');
+check(getTool('firewallStatus').implementation === 'native-windows', 'firewall status is read-only');
+check(getTool('securityStatus').implementation === 'native-windows', 'security provider status is inspected read-only');
+check(getTool('eventLogs').implementation === 'native-windows', 'event log metadata is listed without changing logs');
+check(getTool('windowsServices').implementation === 'native-windows', 'service metadata is listed without service control');
+check(getTool('systemSettings').implementation === 'native-windows', 'basic Windows system settings metadata is inspected read-only');
+
 
 check(getToolStatus('contacts').status === 'adapter-required', 'unsupported provider tools report adapter-required status');
 check(getTool('deleteFile').implementation === 'adapter-required', 'destructive file operations are not falsely marked available');
