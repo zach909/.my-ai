@@ -10,7 +10,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
-const FILES = ['ipc-handlers.test.js', 'doctor.test.mjs'];
+const FILES = ['ipc-handlers.test.js', 'windows-capability-tools.test.js', 'doctor.test.mjs'];
 
 let anyFailed = false;
 for (const file of FILES) {
