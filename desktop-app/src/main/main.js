@@ -1325,7 +1325,7 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         return { success: true, path: outputPath, bytes: pdf.length, content: 'current-app-window' };
       }
       case 'manageStartup': {
-        if (!['win32', 'darwin', 'linux'].includes(process.platform)) return { success: false, status: 'unsupported-on-platform' };
+        if (!['win32', 'darwin'].includes(process.platform)) return { success: false, status: 'unsupported-on-platform' };
         if (typeof args.enabled !== 'boolean') return { success: false, error: 'enabled must be a boolean.' };
         const approval = await dialog.showMessageBox(mainWindow, {
           type: 'question', buttons: [args.enabled ? 'Enable startup' : 'Disable startup', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
