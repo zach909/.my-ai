@@ -84,6 +84,16 @@ check(getTool('systemSoundSettings').implementation === 'native', 'system sound 
 check(getTool('accessibilitySettings').implementation === 'native', 'accessibility shortcut opens Windows Settings without enabling input monitoring');
 check(getTool('locationSettings').implementation === 'native', 'location shortcut opens Windows privacy settings without enabling location');
 check(getTool('windowsAppCapabilities').implementation === 'native', 'packaging context is reported without claiming manifest grants');
+check(getTool('appDiagnostics').implementation === 'native', 'app diagnostics expose log metadata without log contents');
+check(getTool('developerTools').implementation === 'native', 'developer tool checks run fixed version commands only');
+check(getTool('appLaunch').implementation === 'native', 'app launch routes through user-confirmed process launch');
+check(getTool('environmentRead').implementation === 'native', 'environment inspection is restricted to an allowlist');
+check(getTool('gitRepositories').implementation === 'native', 'Git inspection uses a user-selected repository and read-only commands');
+check(getTool('taskManager').implementation === 'native', 'task inventory includes only app-owned processes');
+check(getTool('clipboardImageRead').implementation === 'native-consent', 'clipboard image reads require explicit confirmation');
+check(getTool('clipboardClear').implementation === 'native-consent', 'clipboard clearing requires explicit confirmation');
+check(getTool('uacElevationRequest').implementation === 'admin-or-adapter', 'generic elevation remains unavailable without a dedicated reviewed helper');
+
 
 
 check(getTool('wifiStatus').implementation === 'native-windows', 'Wi-Fi status is inspected without changing network configuration');
