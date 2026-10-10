@@ -928,8 +928,15 @@ private enum LocalNetworkDiscovery {
                 continuation.resume(returning: (status, payload))
             }
             browser.stateUpdateHandler = { state in
-                if case .failed(let error) = state {
+                switch state {
+                case .failed(let error):
                     finish(403, ["error": "local_network_browser_failed", "detail": error.localizedDescription])
+                case .waiting(let error):
+                    // Local-network denial commonly leaves Network.framework waiting.
+                    // Do not report an empty discovery list as proof of authorization.
+                    finish(403, ["error": "local_network_access_unavailable_or_denied", "detail": error.localizedDescription])
+                default:
+                    break
                 }
             }
             browser.browseResultsChangedHandler = { results, _ in
