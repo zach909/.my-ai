@@ -14,6 +14,7 @@ import Intents
 import LocalAuthentication
 import MediaPlayer
 import Network
+import NearbyInteraction
 import Photos
 import Speech
 import UIKit
@@ -73,7 +74,9 @@ enum ExtendedNativeTools {
         tool("files.read_selected", "Read a user-selected document using a security-scoped URL."),
         tool("files.export", "Export a file through a user-facing share or document picker."),
         tool("network.local_discovery", "Discover local-network services only after iOS permission."),
-        tool("nearby.start_session", "Start a Nearby Interaction session where supported."),
+        tool("nearby.start_session", "Start a Nearby Interaction session using a peer discovery token."),
+        tool("nearby.get_local_token", "Export this device discovery token for secure out-of-band exchange with a nearby peer."),
+        tool("nearby.get_measurements", "Read the latest Nearby Interaction distance and direction measurements."),
         tool("nearby.stop_session", "Stop an active Nearby Interaction session."),
         tool("homekit.get_status", "Report HomeKit entitlement and authorization readiness."),
         tool("homekit.list_homes", "List HomeKit homes after capability setup and authorization."),
@@ -149,6 +152,9 @@ enum ExtendedNativeTools {
         case "files.export":
             properties = ["filename": ["type": "string"], "data_base64": ["type": "string"]]
             required = ["data_base64"]
+        case "nearby.start_session":
+            properties = ["peer_token_base64": ["type": "string", "description": "Base64 of an archived NIDiscoveryToken exchanged with the peer"]]
+            required = ["peer_token_base64"]
         case "network.local_discovery":
             properties = ["service_type": ["type": "string", "description": "Bonjour service type, such as _http._tcp"], "seconds": ["type": "number", "minimum": 1, "maximum": 10]]
             required = []
@@ -332,6 +338,14 @@ enum ExtendedNativeTools {
             return await HomeKitTools.controlAccessory(arguments)
         case "nfc.read_tag":
             return await NFCReaderFlow.shared.readTag()
+        case "nearby.get_local_token":
+            return NearbyInteractionTools.localToken()
+        case "nearby.start_session":
+            return NearbyInteractionTools.start(arguments)
+        case "nearby.get_measurements":
+            return NearbyInteractionTools.measurements()
+        case "nearby.stop_session":
+            return NearbyInteractionTools.stop()
         case "contacts.create":
             return await createContact(arguments)
         case "contacts.update":
@@ -349,8 +363,7 @@ enum ExtendedNativeTools {
         case "reminders.delete":
             return await deleteReminder(arguments)
 
-        case "nearby.start_session", "nearby.stop_session":
-            return (409, ["error": "foreground_or_capability_flow_required", "detail": "This operation requires a foreground UIKit flow, a configured entitlement, or a supported user-selected resource. No device data was changed."])
+
         default:
             return (404, ["error": "unknown_extended_tool", "name": name])
         }
@@ -1059,5 +1072,77 @@ private final class NFCReaderFlow: NSObject, NFCNDEFReaderSessionDelegate {
         self.continuation = nil
         continuation?.resume(returning: result)
         self.session = nil
+    }
+}
+
+
+@available(iOS 16.0, *)
+private final class NearbyInteractionTools: NSObject, NISessionDelegate {
+    private static let shared = NearbyInteractionTools()
+    private var session: NISession?
+    private var lastMeasurement: [String: Any] = [:]
+    private var lastError: String?
+
+    static func localToken() -> (Int, [String: Any]) {
+        guard NISession.isSupported else { return (501, ["error": "nearby_interaction_unsupported_on_device"]) }
+        guard let token = shared.session?.discoveryToken ?? NISession().discoveryToken else {
+            return (500, ["error": "nearby_discovery_token_unavailable"])
+        }
+        do {
+            let data = try NSKeyedArchiver.archivedData(withRootObject: token, requiringSecureCoding: true)
+            return (200, ["token_base64": data.base64EncodedString(), "note": "Exchange this token with the peer over a trusted channel; it does not discover peers by itself."])
+        } catch {
+            return (500, ["error": "nearby_token_archive_failed", "detail": error.localizedDescription])
+        }
+    }
+
+    static func start(_ arguments: [String: Any]) -> (Int, [String: Any]) {
+        guard NISession.isSupported else { return (501, ["error": "nearby_interaction_unsupported_on_device"]) }
+        guard let encoded = arguments["peer_token_base64"] as? String,
+              let data = Data(base64Encoded: encoded),
+              let token = try? NSKeyedUnarchiver.unarchivedObject(ofClass: NIDiscoveryToken.self, from: data) else {
+            return (400, ["error": "valid_peer_token_base64_required"])
+        }
+        shared.session?.invalidate()
+        let session = NISession()
+        session.delegate = shared
+        shared.session = session
+        shared.lastMeasurement = [:]
+        shared.lastError = nil
+        session.run(NINearbyPeerConfiguration(peerToken: token))
+        return (200, ["started": true, "note": "Measurements arrive asynchronously; call nearby.get_measurements to read the latest result."])
+    }
+
+    static func measurements() -> (Int, [String: Any]) {
+        if let lastError = shared.lastError { return (409, ["error": "nearby_session_error", "detail": lastError]) }
+        guard shared.session != nil else { return (409, ["error": "nearby_session_not_started"]) }
+        return (200, ["active": true, "measurement": shared.lastMeasurement])
+    }
+
+    static func stop() -> (Int, [String: Any]) {
+        guard shared.session != nil else { return (200, ["stopped": true, "already_stopped": true]) }
+        shared.session?.invalidate()
+        shared.session = nil
+        shared.lastMeasurement = [:]
+        return (200, ["stopped": true])
+    }
+
+    func session(_ session: NISession, didUpdate nearbyObjects: [NINearbyObject]) {
+        guard let object = nearbyObjects.first else { return }
+        var value: [String: Any] = ["peer_token": String(describing: object.discoveryToken)]
+        if let distance = object.distance { value["distance_meters"] = distance }
+        if let direction = object.direction {
+            value["direction_radians"] = ["x": direction.x, "y": direction.y, "z": direction.z]
+        }
+        lastMeasurement = value
+    }
+
+    func session(_ session: NISession, didInvalidateWith error: Error) {
+        lastError = error.localizedDescription
+        self.session = nil
+    }
+
+    func sessionSuspensionEnded(_ session: NISession) {
+        session.run(NINearbyPeerConfiguration(peerToken: session.discoveryToken!))
     }
 }
