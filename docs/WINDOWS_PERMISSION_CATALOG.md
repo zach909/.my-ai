@@ -120,3 +120,21 @@ A conventional Electron/Win32 desktop app does not receive one universal Windows
 - Microsoft Support, Windows privacy settings that apps use: https://support.microsoft.com/en-us/windows/privacy/windows-privacy-settings-that-apps-use
 - Microsoft Learn, File access permissions: https://learn.microsoft.com/en-us/windows/apps/develop/files/file-access-permissions
 - Microsoft Learn, App capability declarations: https://learn.microsoft.com/en-us/windows/apps/develop/app-capability-declarations
+
+
+## Individual tool API
+
+The desktop preload exposes individual tools under `window.electronAPI.windowsTools`. For example:
+
+```js
+const inventory = await window.electronAPI.windowsTools.list();
+const system = await window.electronAPI.windowsTools.systemInfo();
+const photo = await window.electronAPI.windowsTools.camera();
+const location = await window.electronAPI.windowsTools.location();
+const audio = await window.electronAPI.windowsTools.microphone({ seconds: 5 });
+const selected = await window.electronAPI.windowsTools.selectFile();
+```
+
+The catalog includes a named tool for each capability. The first implemented tools include file/folder selection, bounded reads/writes through native dialogs, camera photo capture, microphone recording capped at 10 seconds, geolocation, clipboard read/write, notifications, network-interface information, system/environment information, Windows process listing, consent-gated program launch and stopping only app-owned processes, and opening URLs/paths.
+
+All camera, microphone, location, clipboard-read, and external-program operations are permission/consent sensitive. Camera and microphone streams are stopped after capture; returned media is passed back as a photo data URL or base64 audio recording. The tools that need provider/native adapters return `adapter-required` rather than claiming to work. See `desktop-app/src/main/windows-capability-tools.js` for the live registry and runtime status.
