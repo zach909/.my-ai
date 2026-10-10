@@ -98,6 +98,7 @@ enum ExtendedNativeTools {
         tool("permissions.request_motion", "Request motion and fitness access."),
         tool("permissions.request_music", "Request media library / Apple Music access."),
         tool("permissions.request_notifications", "Request notification authorization; critical alerts still require Apple's entitlement."),
+        tool("permissions.request_local_network", "Trigger iOS local-network authorization through a brief Bonjour discovery attempt."),
         tool("permissions.request_tracking", "Request App Tracking Transparency authorization."),
         tool("permissions.request_bluetooth", "Trigger Bluetooth authorization through the public API."),
         tool("permissions.request_health", "Request HealthKit step-count access; HealthKit entitlement is required."),
@@ -258,8 +259,10 @@ enum ExtendedNativeTools {
         case "capabilities.catalog":
             return (200, ["implemented_tools": NativeToolRegistry.definitions.compactMap { $0["name"] as? String } + definitions.compactMap { $0["name"] as? String }, "platform_limits": ["No unrestricted filesystem access", "No reading SMS/iMessage, call history, or arbitrary email inboxes", "No arbitrary cross-app screen capture or tap injection", "No changing system permissions or settings on behalf of the user", "Background execution is scheduled and system-controlled", "HealthKit/HomeKit require valid entitlements and user authorization"]])
         case "permissions.request_all":
-            let statuses = await Permissions.requestAll()
-            return (200, ["requested": statuses.map { ["id": $0.id, "label": $0.label, "result": $0.result] }, "note": "iOS may suppress repeat prompts, require foreground UI, or require separate entitlement approval. Some settings cannot be requested by apps."])
+            var statuses = await Permissions.requestAll().map { ["id": $0.id, "label": $0.label, "result": $0.result] as [String: Any] }
+            let localNetwork = await LocalNetworkDiscovery.discover(["service_type": "_http._tcp", "seconds": 1])
+            statuses.append(["id": "local_network", "label": "Local Network", "result": localNetwork.0 == 200 ? "Discovery attempted; inspect local_network_result" : String(describing: localNetwork.1["error"] ?? "unavailable")])
+            return (200, ["requested": statuses, "local_network_result": localNetwork.1, "note": "iOS may suppress repeat prompts, require foreground UI, or require separate entitlement approval. Some settings cannot be requested by apps."])
         case "permissions.request_location":
             return (200, ["permission": "location", "result": await Permissions.requestLocation()])
         case "permissions.request_contacts":
@@ -287,6 +290,9 @@ enum ExtendedNativeTools {
             return (200, ["permission": "media_library", "result": await Permissions.requestAppleMusic()])
         case "permissions.request_notifications":
             return (200, ["permission": "notifications", "result": await Permissions.requestNotifications()])
+        case "permissions.request_local_network":
+            let result = await LocalNetworkDiscovery.discover(["service_type": "_http._tcp", "seconds": 1])
+            return (result.0, ["permission": "local_network", "result": result.1])
         case "permissions.request_tracking":
             return (200, ["permission": "app_tracking_transparency", "result": await Permissions.requestTracking()])
         case "permissions.request_bluetooth":
