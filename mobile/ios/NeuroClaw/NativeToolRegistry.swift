@@ -1,8 +1,15 @@
+import AVFoundation
+import AppTrackingTransparency
 import Contacts
+import CoreBluetooth
 import CoreLocation
+import CoreMotion
 import Photos
 import EventKit
 import Foundation
+import HealthKit
+import MediaPlayer
+import Speech
 import UIKit
 import UserNotifications
 
@@ -75,13 +82,26 @@ enum NativeToolRegistry {
         let reminders = EKEventStore.authorizationStatus(for: .reminder)
         let photos = photoLabel(PHPhotoLibrary.authorizationStatus(for: .readWrite))
         let notifications = await UNUserNotificationCenter.current().notificationSettings()
+        let location = CLLocationManager()
         return [
             "contacts": contactLabel(contact),
             "calendar": eventLabel(calendar),
             "reminders": eventLabel(reminders),
             "photos": photos,
             "notifications": String(describing: notifications.authorizationStatus),
-            "location": String(describing: CLLocationManager.authorizationStatus())
+            "location": String(describing: location.authorizationStatus),
+            "location_services_enabled": CLLocationManager.locationServicesEnabled(),
+            "camera": String(describing: AVCaptureDevice.authorizationStatus(for: .video)),
+            "microphone": String(describing: AVAudioSession.sharedInstance().recordPermission),
+            "speech_recognition": String(describing: SFSpeechRecognizer.authorizationStatus()),
+            "motion_fitness": String(describing: CMMotionActivityManager.authorizationStatus()),
+            "media_library": String(describing: MPMediaLibrary.authorizationStatus()),
+            "bluetooth": String(describing: CBManager.authorization),
+            "app_tracking_transparency": String(describing: ATTrackingManager.trackingAuthorizationStatus),
+            "healthkit_available": HKHealthStore.isHealthDataAvailable(),
+            "background_app_refresh": await MainActor.run { String(describing: UIApplication.shared.backgroundRefreshStatus) },
+            "local_network_bridge_enabled": UserDefaults.standard.bool(forKey: "bridgeLan"),
+            "note": "Some APIs deliberately hide per-data-type grant state. HealthKit read denial cannot be distinguished from an empty result; local network and cellular restrictions are system-managed."
         ]
     }
 
