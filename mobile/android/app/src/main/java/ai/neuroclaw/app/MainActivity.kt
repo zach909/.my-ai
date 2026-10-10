@@ -90,11 +90,27 @@ class MainActivity : Activity() {
                 status.text = "Requesting declared runtime permissions. Answer the system dialogs; some permissions require separate Settings pages or special eligibility."
             }
         }
-        val backgroundPermissions = Button(this).apply {
-            text = "Request background location / sensor access"
+        val backgroundLocation = Button(this).apply {
+            text = "Request background location"
             setOnClickListener {
-                Permissions.requestBackground(this@MainActivity)
-                status.text = "Requesting eligible background permissions separately. Android may require foreground permission first or a separate Settings approval."
+                if (!Permissions.has(this@MainActivity, android.Manifest.permission.ACCESS_FINE_LOCATION) &&
+                    !Permissions.has(this@MainActivity, android.Manifest.permission.ACCESS_COARSE_LOCATION)) {
+                    status.text = "Grant foreground location first, then request background location."
+                } else {
+                    Permissions.requestBackgroundLocation(this@MainActivity)
+                    status.text = "Android may require a separate Settings approval for background location."
+                }
+            }
+        }
+        val backgroundSensors = Button(this).apply {
+            text = "Request background body-sensor access"
+            setOnClickListener {
+                if (!Permissions.has(this@MainActivity, android.Manifest.permission.BODY_SENSORS)) {
+                    status.text = "Grant body-sensor access first, then request background sensor access."
+                } else {
+                    Permissions.requestBackgroundSensors(this@MainActivity)
+                    status.text = "Requesting background body-sensor access separately."
+                }
             }
         }
         val sync = Button(this).apply {
@@ -149,7 +165,8 @@ class MainActivity : Activity() {
             addView(LinearLayout(context).apply { addView(save); addView(webApp); addView(overlay) })
             addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
             addView(grant)
-            addView(backgroundPermissions)
+            addView(backgroundLocation)
+            addView(backgroundSensors)
             addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
             addView(specialAccess)
             addView(status)
