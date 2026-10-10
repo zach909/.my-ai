@@ -40,7 +40,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     'voiceBanking','webBrowserPublicKeyCredential','postEvent','calendarWriteOnly','calendarFullAccess',
     'remindersFullAccess','appDataContainers','appBundleManagement','systemAdminFiles','userSelectedFiles',
     'userSelectedFolders','energyKitGuidance','externalCameraMedia','fileProviderDomain',
-    'fileProviderPresence','focusStatus','gameCenterFriends','systemPolicyDeveloperFiles'
+    'fileProviderPresence','focusStatus','gameCenterFriends','systemPolicyDeveloperFiles',
+    'addressBook','developerTool','listenEvent','mediaLibrary','systemPolicyAllFiles','systemPolicyDesktopFolder',
+    'systemPolicyDocumentsFolder','systemPolicyDownloadsFolder','systemPolicyNetworkVolumes','systemPolicyRemovableVolumes'
   ].map((id) => [id, {
     status: () => ipcRenderer.invoke('macos-permission-tool', id, 'status'),
     request: () => ipcRenderer.invoke('macos-permission-tool', id, 'request'),
