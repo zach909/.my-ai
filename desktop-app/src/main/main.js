@@ -493,6 +493,147 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
 
   try {
     switch (id) {
+      case 'documents':
+      case 'desktop':
+      case 'downloads':
+      case 'pictures':
+      case 'videos':
+      case 'music':
+      case 'broadFilesystem':
+      case 'onedriveFiles': {
+        const defaultPaths = {
+          documents: app.getPath('documents'),
+          desktop: app.getPath('desktop'),
+          downloads: app.getPath('downloads'),
+          pictures: app.getPath('pictures'),
+          videos: app.getPath('videos'),
+          music: app.getPath('music'),
+          broadFilesystem: app.getPath('home'),
+          onedriveFiles: app.getPath('home'),
+        };
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openDirectory', 'createDirectory'],
+          title: 'Choose the folder .my-ai may access for this operation',
+          defaultPath: defaultPaths[id],
+        });
+        if (result.canceled || !result.filePaths[0]) return { success: false, canceled: true };
+        return { success: true, path: result.filePaths[0], scope: 'user-selected folder only', persistentGrant: false };
+      }
+      case 'createFile':
+      case 'automaticDownloads': {
+        if (typeof args.content !== 'string') return { success: false, error: 'content must be a string.' };
+        if (Buffer.byteLength(args.content, 'utf8') > 10 * 1024 * 1024) return { success: false, error: 'Content exceeds the 10 MB limit.' };
+        const result = await dialog.showSaveDialog(mainWindow, {
+          title: 'Choose where to create the new file',
+          defaultPath: typeof args.defaultPath === 'string' ? path.basename(args.defaultPath) : 'new-file.txt',
+        });
+        if (result.canceled || !result.filePath) return { success: false, canceled: true };
+        try {
+          fs.writeFileSync(result.filePath, args.content, { encoding: 'utf8', flag: 'wx' });
+          return { success: true, path: result.filePath, created: true };
+        } catch (error) {
+          if (error && error.code === 'EEXIST') return { success: false, error: 'The destination already exists; no file was overwritten.' };
+          throw error;
+        }
+      }
+      case 'updateFile': {
+        if (typeof args.content !== 'string') return { success: false, error: 'content must be a string.' };
+        if (Buffer.byteLength(args.content, 'utf8') > 10 * 1024 * 1024) return { success: false, error: 'Content exceeds the 10 MB limit.' };
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], title: 'Choose the file to update' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const target = selected.filePaths[0];
+        const stat = fs.statSync(target);
+        if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return { success: false, error: 'Choose a regular file no larger than 10 MB.' };
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Replace file contents', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Confirm file update', message: 'Replace the contents of ' + path.basename(target) + '?',
+          detail: 'The existing contents will be overwritten.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        fs.writeFileSync(target, args.content, { encoding: 'utf8', flag: 'w' });
+        return { success: true, path: target, updated: true };
+      }
+      case 'moveFile':
+      case 'renameFile': {
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], title: 'Choose the file to move or rename' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const source = selected.filePaths[0];
+        if (!fs.statSync(source).isFile()) return { success: false, error: 'Only regular files are supported.' };
+        const destination = await dialog.showSaveDialog(mainWindow, {
+          title: id === 'moveFile' ? 'Choose the destination path' : 'Choose the new file name',
+          defaultPath: path.join(path.dirname(source), path.basename(source)),
+        });
+        if (destination.canceled || !destination.filePath) return { success: false, canceled: true };
+        if (path.resolve(source).toLowerCase() === path.resolve(destination.filePath).toLowerCase()) {
+          return { success: false, error: 'Source and destination are the same path.' };
+        }
+        if (fs.existsSync(destination.filePath)) return { success: false, error: 'Destination already exists; no file was overwritten.' };
+        fs.renameSync(source, destination.filePath);
+        return { success: true, source, path: destination.filePath, moved: true };
+      }
+      case 'deleteFile': {
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], title: 'Choose the file to delete' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const target = selected.filePaths[0];
+        const stat = fs.lstatSync(target);
+        if (!stat.isFile() || stat.isSymbolicLink()) return { success: false, error: 'Only regular files can be deleted; folders and symbolic links are not supported.' };
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Delete file', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Confirm permanent deletion', message: 'Delete ' + path.basename(target) + '?',
+          detail: 'This removes the selected file and may not be reversible.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        fs.unlinkSync(target);
+        return { success: true, path: target, deleted: true };
+      }
+      case 'fileSearch':
+      case 'mediaLibrary': {
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: id === 'fileSearch' ? 'Choose a folder to search' : 'Choose a media folder to inspect' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const root = selected.filePaths[0];
+        const query = typeof args.query === 'string' ? args.query.trim().toLowerCase() : '';
+        if (id === 'fileSearch' && !query) return { success: false, error: 'query must be a non-empty file-name fragment.' };
+        const results = [];
+        let visited = 0;
+        let truncated = false;
+        const maxVisited = 50000;
+        const maxResults = 5000;
+        const walk = (directory, depth) => {
+          if (depth > 10 || visited >= maxVisited || results.length >= maxResults) { truncated = true; return; }
+          let children;
+          try { children = fs.readdirSync(directory, { withFileTypes: true }); } catch { return; }
+          for (const child of children) {
+            if (++visited > maxVisited || results.length >= maxResults) { truncated = true; return; }
+            const fullPath = path.join(directory, child.name);
+            if (child.isSymbolicLink()) continue;
+            if (id === 'fileSearch' && child.name.toLowerCase().includes(query)) {
+              results.push({ path: fullPath, name: child.name, isDirectory: child.isDirectory() });
+            } else if (id === 'mediaLibrary' && child.isFile() && /\.(mp3|wav|flac|m4a|aac|ogg|mp4|mkv|mov|avi|jpg|jpeg|png|gif|webp|bmp)$/i.test(child.name)) {
+              let stat;
+              try { stat = fs.statSync(fullPath); } catch { continue; }
+              results.push({ path: fullPath, name: child.name, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString() });
+            }
+            if (child.isDirectory()) walk(fullPath, depth + 1);
+            if (visited >= maxVisited || results.length >= maxResults) { truncated = true; return; }
+          }
+        };
+        walk(root, 0);
+        return { success: true, root, results, count: results.length, truncated, visitedEntries: visited, note: 'Only names and basic metadata were inspected; file contents were not read.' };
+      }
+      case 'networkShares':
+      case 'windowsNetworkShares': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const mapped = execFileSync('net.exe', ['use'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        let localShares = '';
+        try { localShares = execFileSync('net.exe', ['share'], { encoding: 'utf8', timeout: 7000, windowsHide: true }); } catch {}
+        return { success: true, mappedShares: mapped.slice(0, 20000), localShares: localShares.slice(0, 20000), readOnly: true };
+      }
+      case 'removableDrives': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=2' | Select-Object DeviceID,VolumeName,FileSystem,Size,FreeSpace | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, drives: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Drive metadata only; file access still follows normal Windows permissions.' };
+      }
       case 'selectFile': {
         const result = await dialog.showOpenDialog(mainWindow, {
           properties: ['openFile'],
@@ -562,6 +703,7 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         return { success: true };
       }
       case 'networkInterfaces':
+      case 'localNetwork':
         return { success: true, interfaces: require('os').networkInterfaces() };
       case 'environmentInfo': {
         const safeKeys = ['OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'ComSpec', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH'];
