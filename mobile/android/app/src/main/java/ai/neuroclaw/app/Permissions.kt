@@ -6,19 +6,10 @@ import android.content.pm.PackageManager
 import android.os.Build
 
 /**
- * "Give it access to everything": every dangerous runtime permission a
- * normal (non-system, non-privileged) app can actually be granted, requested
- * in one batch. System/signature-only permissions (REBOOT, WRITE_SECURE_SETTINGS,
- * INSTALL_PACKAGES, ...) are left out -- a normal app can declare them but the
- * OS silently refuses the grant, so asking for them does nothing but alarm
- * the user.
- *
- * Each capability still only does something once its OWN permission is
- * granted: this is what makes "constant"/always-on possible, not a promise
- * that everything is used. Two permissions here are not simple grant dialogs:
- * SYSTEM_ALERT_WINDOW (the floating bubble) and screen-capture consent (for
- * "Screen") are each their own system flow, handled from MainActivity and
- * ScreenCaptureActivity respectively.
+ * Collects the app's requestable dangerous permissions, while Android keeps
+ * system-only/signature permissions and special access under system control.
+ * Permissions are declared in AndroidManifest.xml; this list controls runtime
+ * requests only. A declaration never means the permission has been granted.
  */
 object Permissions {
     /** Every dangerous permission this app declares, that a normal install can be granted. */
@@ -33,6 +24,8 @@ object Permissions {
         if (Build.VERSION.SDK_INT >= 26) add(Manifest.permission.READ_PHONE_NUMBERS)
         if (Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACCEPT_HANDOVER)
         add(Manifest.permission.READ_SMS); add(Manifest.permission.SEND_SMS); add(Manifest.permission.RECEIVE_SMS)
+        add(Manifest.permission.RECEIVE_MMS); add(Manifest.permission.RECEIVE_WAP_PUSH)
+        add(Manifest.permission.PROCESS_OUTGOING_CALLS)
         add(Manifest.permission.ACCESS_FINE_LOCATION); add(Manifest.permission.ACCESS_COARSE_LOCATION)
         add(Manifest.permission.GET_ACCOUNTS)
         if (Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
@@ -40,6 +33,7 @@ object Permissions {
         if (Build.VERSION.SDK_INT >= 31) { add(Manifest.permission.BLUETOOTH_CONNECT); add(Manifest.permission.BLUETOOTH_SCAN); add(Manifest.permission.BLUETOOTH_ADVERTISE) }
         if (Build.VERSION.SDK_INT >= 33) {
             add(Manifest.permission.READ_MEDIA_IMAGES); add(Manifest.permission.READ_MEDIA_VIDEO); add(Manifest.permission.READ_MEDIA_AUDIO)
+            if (Build.VERSION.SDK_INT >= 34) add(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)
             add(Manifest.permission.POST_NOTIFICATIONS)
             add(Manifest.permission.NEARBY_WIFI_DEVICES)
         } else {
