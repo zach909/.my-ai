@@ -6,6 +6,92 @@
 
 const { contextBridge, ipcRenderer } = require('electron');
 
+// Bounded sensor tools run in the renderer's isolated preload context so
+// media streams never cross the contextBridge. Only the captured result crosses.
+async function captureCameraPhoto() {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    return { success: false, status: 'unsupported', error: 'Camera capture is unavailable in this renderer.' };
+  }
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Camera did not become ready in time.')), 5000);
+      video.onloadedmetadata = () => { clearTimeout(timer); resolve(); };
+      video.onerror = () => { clearTimeout(timer); reject(new Error('Could not initialize camera preview.')); };
+    });
+    await video.play();
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.min(video.videoWidth || 1280, 1920);
+    canvas.height = Math.min(video.videoHeight || 720, 1080);
+    const ctx = canvas.getContext('2d');
+    if (!ctx) throw new Error('Canvas capture is unavailable.');
+    ctx.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return { success: true, mimeType: 'image/jpeg', dataUrl: canvas.toDataURL('image/jpeg', 0.85), width: canvas.width, height: canvas.height };
+  } catch (error) {
+    return { success: false, error: error && error.message ? error.message : String(error) };
+  } finally {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+  }
+}
+
+async function recordMicrophone(args = {}) {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getUserMedia || typeof MediaRecorder === 'undefined') {
+    return { success: false, status: 'unsupported', error: 'Microphone recording is unavailable in this renderer.' };
+  }
+  const seconds = Math.max(1, Math.min(10, Number.isFinite(args.seconds) ? Math.floor(args.seconds) : 5));
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+    const recorder = new MediaRecorder(stream);
+    const chunks = [];
+    recorder.ondataavailable = (event) => { if (event.data && event.data.size) chunks.push(event.data); };
+    const finished = new Promise((resolve, reject) => {
+      recorder.onerror = () => reject(new Error('Microphone recording failed.'));
+      recorder.onstop = resolve;
+    });
+    recorder.start();
+    await new Promise((resolve) => setTimeout(resolve, seconds * 1000));
+    recorder.stop();
+    await finished;
+    const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+    const buffer = await blob.arrayBuffer();
+    const bytes = new Uint8Array(buffer);
+    let binary = '';
+    for (let offset = 0; offset < bytes.length; offset += 0x8000) {
+      binary += String.fromCharCode(...bytes.subarray(offset, offset + 0x8000));
+    }
+    return { success: true, mimeType: blob.type || 'audio/webm', seconds, base64: btoa(binary) };
+  } catch (error) {
+    return { success: false, error: error && error.message ? error.message : String(error) };
+  } finally {
+    if (stream) stream.getTracks().forEach((track) => track.stop());
+  }
+}
+
+function getCurrentLocation() {
+  if (typeof navigator === 'undefined' || !navigator.geolocation) {
+    return Promise.resolve({ success: false, status: 'unsupported', error: 'Geolocation is unavailable in this renderer.' });
+  }
+  return new Promise((resolve) => {
+    navigator.geolocation.getCurrentPosition(
+      (position) => resolve({
+        success: true,
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracyMeters: position.coords.accuracy,
+        timestamp: position.timestamp,
+      }),
+      (error) => resolve({ success: false, error: error.message, code: error.code }),
+      { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 }
+    );
+  });
+}
+
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -34,9 +120,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   windowsTools: {
     list: () => ipcRenderer.invoke('windows-tools:list'),
     status: (id) => ipcRenderer.invoke('windows-tools:status', id),
-    camera: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'camera', args),
-    microphone: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'microphone', args),
-    location: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'location', args),
+    camera: () => captureCameraPhoto(),
+    microphone: (args = {}) => recordMicrophone(args),
+    location: () => getCurrentLocation(),
     voiceActivation: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'voiceActivation', args),
     speechRecognition: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'speechRecognition', args),
     notifications: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'notifications', args),
