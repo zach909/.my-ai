@@ -142,7 +142,7 @@ export const LINUX_PERMISSION_TOOLS: LinuxPermissionTool[] = specs.map((spec) =>
       if (!context.isGranted(extensionId, spec.permission)) {
         throw new Error(`Permission denied: grant ${spec.permission} to ${extensionId} before calling ${name}.`);
       }
-      if (risk === "critical" || highRisk.has(spec.permission)) {
+      if (risk === "high" || risk === "critical" || highRisk.has(spec.permission)) {
         const approved = await context.requestApproval({ tool: name, permission: spec.permission, args, risk });
         if (!approved) throw new Error(`Human approval denied for ${name}; no operation was performed.`);
       }
