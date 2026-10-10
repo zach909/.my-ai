@@ -35,6 +35,15 @@ targets:
         # the person, so each one says, plainly, what NeuroClaw would do
         # with it.
         NSLocalNetworkUsageDescription: "Used only if you turn on the agent bridge's Wi-Fi option, so your PC can reach NeuroClaw on this phone."
+        # iOS only permits Bonjour browsing for service types declared here.
+        NSBonjourServices:
+          - _http._tcp
+          - _https._tcp
+          - _ssh._tcp
+          - _smb._tcp
+          - _workstation._tcp
+          - _ipp._tcp
+          - _printer._tcp
         NSLocationWhenInUseUsageDescription: "Used only if you ask NeuroClaw something that needs your location."
         NSLocationAlwaysAndWhenInUseUsageDescription: "Used only if you ask NeuroClaw something that needs your location, including while the app isn't open."
         NSContactsUsageDescription: "Used only if you ask NeuroClaw to look up or work with a contact."
