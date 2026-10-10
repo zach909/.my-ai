@@ -96,6 +96,82 @@ function getCurrentLocation() {
 // the ipcRenderer without exposing the entire object
 
 
+
+async function recordScreenClip(args = {}) {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia || typeof MediaRecorder === 'undefined') {
+    return { success: false, status: 'unsupported', error: 'Screen recording is unavailable in this runtime.' };
+  }
+  const requested = Number(args.durationMs);
+  const durationMs = Number.isFinite(requested) ? Math.max(1000, Math.min(15000, requested)) : 5000;
+  let stream;
+  try {
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 10 }, audio: false });
+    const videoTrack = stream.getVideoTracks()[0];
+    if (!videoTrack) return { success: false, status: 'no-video-track' };
+    const mimeType = ['video/webm;codecs=vp9', 'video/webm;codecs=vp8', 'video/webm'].find(type => MediaRecorder.isTypeSupported(type)) || '';
+    const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+    const chunks = [];
+    const completed = new Promise((resolve, reject) => {
+      recorder.ondataavailable = event => { if (event.data && event.data.size) chunks.push(event.data); };
+      recorder.onerror = event => reject(new Error(event.error && event.error.message || 'Screen recording failed.'));
+      recorder.onstop = async () => {
+        try {
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'video/webm' });
+          if (blob.size > 15 * 1024 * 1024) return resolve({ success: false, status: 'size-limit', error: 'Screen clip exceeded 15 MB.' });
+          const dataUrl = await new Promise((resolveData, rejectData) => {
+            const reader = new FileReader();
+            reader.onload = () => resolveData(reader.result);
+            reader.onerror = () => rejectData(new Error('Could not encode screen clip.'));
+            reader.readAsDataURL(blob);
+          });
+          resolve({ success: true, mimeType: blob.type || 'video/webm', dataUrl, durationMs, sourcePickerShown: true });
+        } catch (error) { reject(error); }
+      };
+    });
+    recorder.start();
+    await new Promise(resolve => setTimeout(resolve, durationMs));
+    if (recorder.state !== 'inactive') recorder.stop();
+    return await completed;
+  } catch (error) {
+    return { success: false, status: 'capture-failed-or-canceled', error: String(error && error.message || error).slice(0, 500) };
+  } finally {
+    if (stream) stream.getTracks().forEach(track => track.stop());
+  }
+}
+
+function synthesizeSpeech(args = {}) {
+  if (typeof window === 'undefined' || !window.speechSynthesis || typeof SpeechSynthesisUtterance === 'undefined') {
+    return { success: false, status: 'unsupported', error: 'Speech synthesis is unavailable in this runtime.' };
+  }
+  const text = typeof args.text === 'string' ? args.text.trim() : '';
+  if (!text || text.length > 5000) return { success: false, error: 'Provide text containing 1–5000 characters.' };
+  const utterance = new SpeechSynthesisUtterance(text);
+  if (typeof args.language === 'string' && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(args.language)) utterance.lang = args.language;
+  if (Number.isFinite(Number(args.rate))) utterance.rate = Math.max(0.5, Math.min(2, Number(args.rate)));
+  if (Number.isFinite(Number(args.pitch))) utterance.pitch = Math.max(0, Math.min(2, Number(args.pitch)));
+  return new Promise(resolve => {
+    utterance.onend = () => resolve({ success: true, spokenCharacters: text.length, language: utterance.lang, localRuntimeSpeech: true });
+    utterance.onerror = event => resolve({ success: false, status: event.error || 'speech-error', error: 'Speech synthesis failed.' });
+    try { window.speechSynthesis.cancel(); window.speechSynthesis.speak(utterance); }
+    catch (error) { resolve({ success: false, error: String(error && error.message || error).slice(0, 300) }); }
+  });
+}
+
+async function playLocalAudio(args = {}) {
+  if (typeof Audio === 'undefined') return { success: false, status: 'unsupported' };
+  const source = typeof args.dataUrl === 'string' ? args.dataUrl : '';
+  if (!/^data:audio\/[a-zA-Z0-9.+-]+;base64,[A-Za-z0-9+/=\r\n]+$/.test(source) || source.length > 14 * 1024 * 1024) {
+    return { success: false, error: 'Only a base64 audio data URL of at most 10 MB is accepted; remote URLs are not supported.' };
+  }
+  return new Promise(resolve => {
+    const audio = new Audio(source);
+    const timer = setTimeout(() => { audio.pause(); resolve({ success: false, status: 'timeout', error: 'Audio playback exceeded 30 seconds.' }); }, 30000);
+    audio.onended = () => { clearTimeout(timer); resolve({ success: true, played: true }); };
+    audio.onerror = () => { clearTimeout(timer); resolve({ success: false, status: 'playback-error', error: 'Audio could not be played.' }); };
+    audio.play().catch(error => { clearTimeout(timer); resolve({ success: false, status: 'playback-blocked', error: String(error && error.message || error).slice(0, 300) }); });
+  });
+}
+
 function runSpeechRecognition(args = {}, wakeMode = false) {
   const Recognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
   if (!Recognition) return Promise.resolve({ success: false, status: 'unsupported', error: 'SpeechRecognition is not available in this Electron runtime. No background listener was started.' });
@@ -305,7 +381,10 @@ contextBridge.exposeInMainWorld('electronAPI', {
     speechRecognition: (args = {}) => runSpeechRecognition(args, false),
     notifications: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'notifications', args),
     screenCapture: () => captureScreenFrame(),
+    screenRecording: (args = {}) => recordScreenClip(args),
     systemAudioCapture: (args = {}) => captureSystemAudio(args),
+    speechSynthesis: (args = {}) => synthesizeSpeech(args),
+    audioPlayback: (args = {}) => playLocalAudio(args),
     accessibility: (args = {}) => readAppAccessibilityTree(args),
     inputMonitoring: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'inputMonitoring', args),
     keyboardAutomation: (args = {}) => automateAppKeyboard(args),
