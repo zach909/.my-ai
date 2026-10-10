@@ -49,8 +49,30 @@ object Permissions {
         if (Build.VERSION.SDK_INT >= 34) add(Manifest.permission.BODY_SENSORS_BACKGROUND)
     }
 
-    fun missing(activity: Activity): List<String> =
-        ALL.filter { activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
+    /**
+     * Discover dangerous permissions from the installed device's permission
+     * registry rather than relying only on a compile-SDK hard-coded list.
+     * This automatically includes dangerous permissions added by the OS/OEM
+     * when they are declared in this app's manifest. Unknown, signature-only,
+     * and normal permissions are not sent to the runtime permission dialog.
+     */
+    fun missing(activity: Activity): List<String> {
+        val pm = activity.packageManager
+        val requestable = declared(activity).filter { permission ->
+            try {
+                @Suppress("DEPRECATION")
+                val info = pm.getPermissionInfo(permission, 0)
+                (info.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) ==
+                    android.content.pm.PermissionInfo.PROTECTION_DANGEROUS
+            } catch (_: Exception) {
+                false
+            }
+        }
+        val candidates = if (requestable.isNotEmpty()) requestable else ALL.toList()
+        return candidates.distinct().filter {
+            activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED
+        }
+    }
 
     /** Ask for every one not already granted, in a single system dialog batch. */
     fun requestAll(activity: Activity, requestCode: Int = 100) {
