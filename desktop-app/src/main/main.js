@@ -543,7 +543,7 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   automation: { label: 'Automation / Apple Events', pane: 'Privacy_Automation', kind: 'settings' },
   accessibility: { label: 'Accessibility', pane: 'Privacy_Accessibility', kind: 'settings' },
   inputMonitoring: { label: 'Input Monitoring', pane: 'Privacy_ListenEvent', kind: 'settings' },
-  screenRecording: { label: 'Screen & System Audio Recording', pane: 'Privacy_ScreenCapture', kind: 'settings' },
+  screenRecording: { label: 'Screen & System Audio Recording', pane: 'Privacy_ScreenCapture', kind: 'settings', statusMedia: 'screen' },
   fullDiskAccess: { label: 'Full Disk Access', pane: 'Privacy_AllFiles', kind: 'settings' },
   filesAndFolders: { label: 'Files and Folders', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
   desktopFolder: { label: 'Desktop folder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
@@ -564,7 +564,7 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   systemEvents: { label: 'System Events / Apple Events', pane: 'Privacy_Automation', kind: 'settings' },
   shortcuts: { label: 'Shortcuts', pane: 'Privacy_Automation', kind: 'settings' },
   voiceActivation: { label: 'Voice activation', pane: 'Privacy_Microphone', kind: 'media', media: 'microphone' },
-  systemAudio: { label: 'System audio capture', pane: 'Privacy_ScreenCapture', kind: 'settings' },
+  systemAudio: { label: 'System audio capture', pane: 'Privacy_ScreenCapture', kind: 'settings', statusMedia: 'screen' },
   fileSelection: { label: 'User-selected files', pane: null, kind: 'file-picker' },
   directorySelection: { label: 'User-selected folders', pane: null, kind: 'directory-picker' },
   cameraDevices: { label: 'Camera devices', pane: 'Privacy_Camera', kind: 'media', media: 'camera' },
@@ -577,7 +577,7 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   networkServer: { label: 'Incoming network connections', pane: null, kind: 'capability' },
   usbAccessories: { label: 'USB accessories', pane: null, kind: 'capability' },
   printing: { label: 'Printing', pane: null, kind: 'capability' },
-  screenCapture: { label: 'Screen capture', pane: 'Privacy_ScreenCapture', kind: 'settings' },
+  screenCapture: { label: 'Screen capture', pane: 'Privacy_ScreenCapture', kind: 'settings', statusMedia: 'screen' },
   audioInput: { label: 'Audio input', pane: 'Privacy_Microphone', kind: 'media', media: 'microphone' },
   audioOutput: { label: 'Audio output', pane: null, kind: 'capability' },
   biometricAuthentication: { label: 'Touch ID / biometric authentication', pane: null, kind: 'capability' },
@@ -588,7 +588,7 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   accessibilityAutomation: { label: 'Accessibility-based app control', pane: 'Privacy_Accessibility', kind: 'settings' },
   // Apple-documented protected-resource services from the macOS TCC service list.
   appleEvents: { label: 'Apple Events', service: 'AppleEvents', pane: 'Privacy_Automation', kind: 'settings' },
-  audioCapture: { label: 'System audio capture', service: 'AudioCapture', pane: 'Privacy_ScreenCapture', kind: 'settings' },
+  audioCapture: { label: 'System audio capture', service: 'AudioCapture', pane: 'Privacy_ScreenCapture', kind: 'settings', statusMedia: 'screen' },
   siri: { label: 'Siri', service: 'Siri', pane: null, kind: 'settings' },
   userTracking: { label: 'User tracking / advertising identifier', service: 'UserTracking', pane: null, kind: 'settings' },
   systemPolicyAppBundles: { label: 'Access and manage app bundles', service: 'SystemPolicyAppBundles', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
@@ -612,8 +612,9 @@ function getMacOSPermissionToolStatus(permission) {
   const item = MACOS_PERMISSION_TOOL_CATALOG[permission];
   if (!item) return { success: false, status: 'unknown-permission', error: 'Unknown permission tool.' };
   if (process.platform !== 'darwin') return { success: true, supported: false, status: 'unsupported-platform', permission, label: item.label };
-  if (item.media && systemPreferences && typeof systemPreferences.getMediaAccessStatus === 'function') {
-    try { return { success: true, supported: true, permission, label: item.label, status: systemPreferences.getMediaAccessStatus(item.media) }; }
+  const statusMedia = item.statusMedia || item.media;
+  if (statusMedia && systemPreferences && typeof systemPreferences.getMediaAccessStatus === 'function') {
+    try { return { success: true, supported: true, permission, label: item.label, status: systemPreferences.getMediaAccessStatus(statusMedia) }; }
     catch (error) { return { success: true, supported: true, permission, label: item.label, status: 'unknown', detail: error.message }; }
   }
   return { success: true, supported: true, permission, label: item.label, status: item.kind === 'capability' ? 'capability-check-required' : 'user-approval-or-feature-check-required', canOpenSettings: Boolean(item.pane) };
