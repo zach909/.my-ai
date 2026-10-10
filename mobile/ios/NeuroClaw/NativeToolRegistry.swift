@@ -24,7 +24,8 @@ enum NativeToolRegistry {
         ["name": "reminders.list", "description": "List reminders, optionally incomplete only. Requires Reminders permission.", "input_schema": ["type": "object", "properties": ["incomplete_only": ["type": "boolean"]]]],
         ["name": "notifications.schedule", "description": "Schedule a local notification after delay_seconds (1–604800) with title and body.", "input_schema": ["type": "object", "properties": ["title": ["type": "string"], "body": ["type": "string"], "delay_seconds": ["type": "number"]], "required": ["title", "body", "delay_seconds"]]],
         ["name": "notifications.cancel", "description": "Cancel a previously scheduled local notification by identifier.", "input_schema": ["type": "object", "properties": ["identifier": ["type": "string"]], "required": ["identifier"]]],
-        ["name": "app.open_url", "description": "Ask iOS to open a URL or registered app URL scheme. The system may show confirmation or refuse.", "input_schema": ["type": "object", "properties": ["url": ["type": "string"]], "required": ["url"]]]
+        ["name": "app.open_url", "description": "Ask iOS to open a URL or registered app URL scheme. The system may show confirmation or refuse.", "input_schema": ["type": "object", "properties": ["url": ["type": "string"]], "required": ["url"]]],
+        ["name": "settings.open_app", "description": "Open app Settings so the user can change permissions.", "input_schema": ["type": "object", "properties": [:]]]
     ]
 
     static var definitions: [[String: Any]] { baseDefinitions + ExtendedNativeTools.definitions }
@@ -62,6 +63,12 @@ enum NativeToolRegistry {
             }
             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [identifier])
             return (200, ["ok": true, "identifier": identifier])
+        case "settings.open_app":
+            guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return (500, ["error": "settings_url_unavailable"]) }
+            let opened: Bool = await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { UIApplication.shared.open(settingsURL, options: [:]) { continuation.resume(returning: $0) } }
+            }
+            return opened ? (200, ["ok": true, "settings": "app"]) : (409, ["error": "could_not_open_app_settings"])
         case "app.open_url":
             guard let text = arguments["url"] as? String, let url = URL(string: text),
                   let scheme = url.scheme?.lowercased(), ["https", "http", "maps", "mailto", "tel", "sms"].contains(scheme) else {
