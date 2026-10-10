@@ -91,6 +91,15 @@ check(getTool('voiceActivation').implementation === 'browser-permission', 'wake-
 check(getTool('accessibility').implementation === 'native', 'accessibility snapshot is limited to this app window');
 check(getTool('keyboardAutomation').implementation === 'native', 'keyboard automation is limited to the focused field in this app');
 check(getTool('pointerAutomation').implementation === 'native', 'pointer automation clicks only a uniquely labeled control in this app');
+check(getTool('screenRecording').implementation === 'browser-permission', 'screen recording uses a visible picker and bounded duration');
+check(getTool('audioRecording').implementation === 'browser-permission', 'microphone recording is bounded and permission-gated');
+check(getTool('audioPlayback').implementation === 'native', 'audio playback accepts bounded local data URLs only');
+check(getTool('speechSynthesis').implementation === 'native', 'speech synthesis bounds text and speech parameters');
+check(/screenRecording: \\(args = \\{\\}\\) => recordScreenClip/.test(preload), 'screen recording has a dedicated preload implementation');
+check(/audioRecording: \\(args = \\{\\}\\) => recordMicrophone/.test(preload), 'audio recording has a dedicated preload API');
+check(/speechSynthesis: \\(args = \\{\\}\\) => synthesizeSpeech/.test(preload), 'speech synthesis has a dedicated preload API');
+check(/audioPlayback: \\(args = \\{\\}\\) => playLocalAudio/.test(preload), 'audio playback has a dedicated preload API');
+
 check(/getDisplayMedia\\(\\{ video: \\{ frameRate: 5 \\}, audio: false \\}\\)/.test(preload), 'screen capture requests an explicit visible picker');
 check(/getDisplayMedia\\(\\{ video: true, audio: true \\}\\)/.test(preload), 'system audio capture requests a visible source picker');
 check(/Math\\.min\\(wakeMode \\? 60000 : 15000, requested\\)/.test(preload), 'speech recognition session has a bounded maximum duration');
