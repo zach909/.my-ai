@@ -12,6 +12,7 @@ const { spawn, exec, execFileSync } = require('child_process');
 const crypto = require('crypto');
 const selfsigned = require('selfsigned');
 const { startAppServer, DESKTOP_TOKEN_HEADER } = require('./app-server');
+const windowsCapabilityTools = require('./windows-capability-tools');
 
 /**
  * Best-effort blocklist for the most common catastrophic-accident shell
@@ -40,6 +41,8 @@ function isBlockedCommand(cmd) {
 let mainWindow;
 let backendProcess;
 let appServer;
+const ownedCapabilityProcesses = new Map();
+const capabilityFileWatchers = new Map();
 
 /**
  * Where the built app (dist/interface/main.js + dist/index.html) lives.
@@ -202,7 +205,10 @@ function permissionGrantKey(permission, frameUrl) {
 }
 
 function installPermissionHandlers() {
-  const appSession = session.defaultSession;
+  const appSession = session && session.defaultSession;
+  // Electron always provides defaultSession in production. Tests and minimal
+  // embeddings may omit it, so leave permissions unavailable rather than fail startup.
+  if (!appSession || typeof appSession.setPermissionRequestHandler !== 'function') return;
   appSession.setPermissionRequestHandler(async (webContents, permission, callback, details = {}) => {
     const requestingUrl = details.requestingUrl ||
       (webContents && webContents.getURL ? webContents.getURL() : '');
@@ -251,7 +257,7 @@ function installPermissionHandlers() {
     }
   });
 
-  appSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+  if (typeof appSession.setPermissionCheckHandler === 'function') appSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
     const origin = requestingOrigin || (webContents && webContents.getURL ? webContents.getURL() : '');
     if (!isTrustedAppFrame(origin)) return false;
     if (!WEB_PERMISSION_LABELS[permission]) return false;
@@ -453,6 +459,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  for (const entry of capabilityFileWatchers.values()) { try { entry.watcher.close(); } catch {} }
+  capabilityFileWatchers.clear();
   stopNeuroclaw();
 });
 
@@ -460,6 +468,922 @@ app.on('will-quit', () => {
  * IPC Handlers for Native OS Interactions
  */
 
+// Windows capability tools. New handlers are restricted to this app's own
+// BrowserWindow. Each catalog entry has its own exposed tool name; tools that
+// need a provider/native adapter return adapter-required instead of faking access.
+function isTrustedCapabilityCaller(event) {
+  return Boolean(mainWindow && !mainWindow.isDestroyed() &&
+    event && event.sender && event.sender.id === mainWindow.webContents.id);
+}
+
+ipcMain.handle('windows-tools:list', async (event) => {
+  if (!isTrustedCapabilityCaller(event)) return { success: false, error: 'Untrusted IPC caller.' };
+  return { success: true, tools: windowsCapabilityTools.listTools() };
+});
+
+ipcMain.handle('windows-tools:status', async (event, id) => {
+  if (!isTrustedCapabilityCaller(event)) return { success: false, error: 'Untrusted IPC caller.' };
+  return windowsCapabilityTools.getToolStatus(id);
+});
+
+ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
+  if (!isTrustedCapabilityCaller(event)) return { success: false, error: 'Untrusted IPC caller.' };
+  const tool = windowsCapabilityTools.getTool(id);
+  if (!tool) return { success: false, error: 'Unknown Windows capability tool.' };
+  if (!args || typeof args !== 'object' || Array.isArray(args)) {
+    return { success: false, error: 'Tool arguments must be an object.' };
+  }
+
+  try {
+    switch (id) {
+      case 'documents':
+      case 'desktop':
+      case 'downloads':
+      case 'pictures':
+      case 'videos':
+      case 'music':
+      case 'broadFilesystem':
+      case 'onedriveFiles': {
+        const defaultPaths = {
+          documents: app.getPath('documents'),
+          desktop: app.getPath('desktop'),
+          downloads: app.getPath('downloads'),
+          pictures: app.getPath('pictures'),
+          videos: app.getPath('videos'),
+          music: app.getPath('music'),
+          broadFilesystem: app.getPath('home'),
+          onedriveFiles: app.getPath('home'),
+        };
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openDirectory', 'createDirectory'],
+          title: 'Choose the folder .my-ai may access for this operation',
+          defaultPath: defaultPaths[id],
+        });
+        if (result.canceled || !result.filePaths[0]) return { success: false, canceled: true };
+        return { success: true, path: result.filePaths[0], scope: 'user-selected folder only', persistentGrant: false };
+      }
+      case 'createFile':
+      case 'automaticDownloads': {
+        if (typeof args.content !== 'string') return { success: false, error: 'content must be a string.' };
+        if (Buffer.byteLength(args.content, 'utf8') > 10 * 1024 * 1024) return { success: false, error: 'Content exceeds the 10 MB limit.' };
+        const result = await dialog.showSaveDialog(mainWindow, {
+          title: 'Choose where to create the new file',
+          defaultPath: typeof args.defaultPath === 'string' ? path.basename(args.defaultPath) : 'new-file.txt',
+        });
+        if (result.canceled || !result.filePath) return { success: false, canceled: true };
+        try {
+          fs.writeFileSync(result.filePath, args.content, { encoding: 'utf8', flag: 'wx' });
+          return { success: true, path: result.filePath, created: true };
+        } catch (error) {
+          if (error && error.code === 'EEXIST') return { success: false, error: 'The destination already exists; no file was overwritten.' };
+          throw error;
+        }
+      }
+      case 'updateFile': {
+        if (typeof args.content !== 'string') return { success: false, error: 'content must be a string.' };
+        if (Buffer.byteLength(args.content, 'utf8') > 10 * 1024 * 1024) return { success: false, error: 'Content exceeds the 10 MB limit.' };
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], title: 'Choose the file to update' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const target = selected.filePaths[0];
+        const stat = fs.statSync(target);
+        if (!stat.isFile() || stat.size > 10 * 1024 * 1024) return { success: false, error: 'Choose a regular file no larger than 10 MB.' };
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Replace file contents', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Confirm file update', message: 'Replace the contents of ' + path.basename(target) + '?',
+          detail: 'The existing contents will be overwritten.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        fs.writeFileSync(target, args.content, { encoding: 'utf8', flag: 'w' });
+        return { success: true, path: target, updated: true };
+      }
+      case 'moveFile':
+      case 'renameFile': {
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], title: 'Choose the file to move or rename' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const source = selected.filePaths[0];
+        if (!fs.statSync(source).isFile()) return { success: false, error: 'Only regular files are supported.' };
+        const destination = await dialog.showSaveDialog(mainWindow, {
+          title: id === 'moveFile' ? 'Choose the destination path' : 'Choose the new file name',
+          defaultPath: path.join(path.dirname(source), path.basename(source)),
+        });
+        if (destination.canceled || !destination.filePath) return { success: false, canceled: true };
+        if (path.resolve(source).toLowerCase() === path.resolve(destination.filePath).toLowerCase()) {
+          return { success: false, error: 'Source and destination are the same path.' };
+        }
+        if (fs.existsSync(destination.filePath)) return { success: false, error: 'Destination already exists; no file was overwritten.' };
+        fs.renameSync(source, destination.filePath);
+        return { success: true, source, path: destination.filePath, moved: true };
+      }
+      case 'deleteFile': {
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], title: 'Choose the file to delete' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const target = selected.filePaths[0];
+        const stat = fs.lstatSync(target);
+        if (!stat.isFile() || stat.isSymbolicLink()) return { success: false, error: 'Only regular files can be deleted; folders and symbolic links are not supported.' };
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Delete file', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Confirm permanent deletion', message: 'Delete ' + path.basename(target) + '?',
+          detail: 'This removes the selected file and may not be reversible.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        fs.unlinkSync(target);
+        return { success: true, path: target, deleted: true };
+      }
+      case 'fileSearch':
+      case 'mediaLibrary': {
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: id === 'fileSearch' ? 'Choose a folder to search' : 'Choose a media folder to inspect' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const root = selected.filePaths[0];
+        const query = typeof args.query === 'string' ? args.query.trim().toLowerCase() : '';
+        if (id === 'fileSearch' && !query) return { success: false, error: 'query must be a non-empty file-name fragment.' };
+        const results = [];
+        let visited = 0;
+        let truncated = false;
+        const maxVisited = 50000;
+        const maxResults = 5000;
+        const walk = (directory, depth) => {
+          if (depth > 10 || visited >= maxVisited || results.length >= maxResults) { truncated = true; return; }
+          let children;
+          try { children = fs.readdirSync(directory, { withFileTypes: true }); } catch { return; }
+          for (const child of children) {
+            if (++visited > maxVisited || results.length >= maxResults) { truncated = true; return; }
+            const fullPath = path.join(directory, child.name);
+            if (child.isSymbolicLink()) continue;
+            if (id === 'fileSearch' && child.name.toLowerCase().includes(query)) {
+              results.push({ path: fullPath, name: child.name, isDirectory: child.isDirectory() });
+            } else if (id === 'mediaLibrary' && child.isFile() && /\.(mp3|wav|flac|m4a|aac|ogg|mp4|mkv|mov|avi|jpg|jpeg|png|gif|webp|bmp)$/i.test(child.name)) {
+              let stat;
+              try { stat = fs.statSync(fullPath); } catch { continue; }
+              results.push({ path: fullPath, name: child.name, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString() });
+            }
+            if (child.isDirectory()) walk(fullPath, depth + 1);
+            if (visited >= maxVisited || results.length >= maxResults) { truncated = true; return; }
+          }
+        };
+        walk(root, 0);
+        return { success: true, root, results, count: results.length, truncated, visitedEntries: visited, note: 'Only names and basic metadata were inspected; file contents were not read.' };
+      }
+      case 'networkShares': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const mapped = execFileSync('net.exe', ['use'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        let localShares = '';
+        try { localShares = execFileSync('net.exe', ['share'], { encoding: 'utf8', timeout: 7000, windowsHide: true }); } catch {}
+        return { success: true, mappedShares: mapped.slice(0, 20000), localShares: localShares.slice(0, 20000), readOnly: true };
+      }
+      case 'removableDrives': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-CimInstance Win32_LogicalDisk -Filter 'DriveType=2' | Select-Object DeviceID,VolumeName,FileSystem,Size,FreeSpace | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, drives: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Drive metadata only; file access still follows normal Windows permissions.' };
+      }
+      case 'selectFile': {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile'],
+          title: typeof args.title === 'string' ? args.title.slice(0, 120) : 'Choose a file',
+          filters: Array.isArray(args.filters) ? args.filters : [],
+        });
+        return { success: !result.canceled, canceled: result.canceled, paths: result.filePaths };
+      }
+      case 'selectDirectory': {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openDirectory'],
+          title: typeof args.title === 'string' ? args.title.slice(0, 120) : 'Choose a folder',
+        });
+        return { success: !result.canceled, canceled: result.canceled, paths: result.filePaths };
+      }
+      case 'readSelectedFile': {
+        const result = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile'], title: 'Choose a file to read',
+        });
+        if (result.canceled || !result.filePaths[0]) return { success: false, canceled: true };
+        const stat = fs.statSync(result.filePaths[0]);
+        if (!stat.isFile() || stat.size > 10 * 1024 * 1024) {
+          return { success: false, error: 'Choose a regular file no larger than 10 MB.' };
+        }
+        return { success: true, path: result.filePaths[0], content: fs.readFileSync(result.filePaths[0], 'utf-8') };
+      }
+      case 'writeSelectedFile': {
+        const result = await dialog.showSaveDialog(mainWindow, {
+          title: 'Choose where to save text',
+          defaultPath: typeof args.defaultPath === 'string' ? path.basename(args.defaultPath) : 'output.txt',
+        });
+        if (result.canceled || !result.filePath) return { success: false, canceled: true };
+        if (typeof args.content !== 'string') return { success: false, error: 'content must be a string.' };
+        if (Buffer.byteLength(args.content, 'utf8') > 10 * 1024 * 1024) {
+          return { success: false, error: 'Content exceeds the 10 MB limit.' };
+        }
+        fs.writeFileSync(result.filePath, args.content, { encoding: 'utf8', flag: 'w' });
+        return { success: true, path: result.filePath };
+      }
+      case 'clipboardImageRead': {
+        const { clipboard } = require('electron');
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Read clipboard image', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Sensitive permission', message: 'Allow .my-ai to read the current clipboard image?',
+          detail: 'Clipboard images may contain private information. Only the current image will be returned.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const image = clipboard.readImage();
+        if (image.isEmpty()) return { success: false, error: 'The clipboard does not contain an image.' };
+        const png = image.toPNG();
+        if (png.length > 10 * 1024 * 1024) return { success: false, error: 'Clipboard image exceeds the 10 MB limit.' };
+        return { success: true, mimeType: 'image/png', width: image.getSize().width, height: image.getSize().height, base64: png.toString('base64') };
+      }
+      case 'clipboardClear': {
+        const { clipboard } = require('electron');
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Clear clipboard', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Confirm clipboard clearing', message: 'Clear the current clipboard contents?',
+          detail: 'This affects all clipboard formats currently stored in Windows.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        clipboard.clear();
+        return { success: true, cleared: true };
+      }
+      case 'clipboardRead': {
+        const { clipboard } = require('electron');
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          buttons: ['Read clipboard', 'Cancel'],
+          defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Sensitive permission',
+          message: 'Allow .my-ai to read the current clipboard text?',
+          detail: 'Clipboard contents can include private information. Only the current text value will be returned.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        return { success: true, text: clipboard.readText().slice(0, 1000000) };
+      }
+      case 'clipboardWrite': {
+        const { clipboard } = require('electron');
+        if (typeof args.text !== 'string') return { success: false, error: 'text must be a string.' };
+        clipboard.writeText(args.text.slice(0, 1000000));
+        return { success: true };
+      }
+      case 'notifications': {
+        const { Notification } = require('electron');
+        if (!Notification || !Notification.isSupported()) {
+          return { success: false, status: 'unsupported', error: 'Desktop notifications are not supported here.' };
+        }
+        const title = typeof args.title === 'string' ? args.title.slice(0, 120) : '.my-ai';
+        const body = typeof args.body === 'string' ? args.body.slice(0, 2000) : '';
+        new Notification({ title, body }).show();
+        return { success: true };
+      }
+      case 'networkInterfaces':
+      case 'localNetwork':
+        return { success: true, interfaces: require('os').networkInterfaces() };
+      case 'environmentInfo':
+      case 'environmentRead': {
+        const safeKeys = ['OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'ComSpec', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH'];
+        const env = {};
+        for (const key of safeKeys) {
+          if (process.env[key] !== undefined) env[key] = process.env[key];
+        }
+        return { success: true, environment: env };
+      }
+      case 'systemInfo':
+        return windowsCapabilityTools.getToolStatus('systemInfo');
+      case 'openUrl': {
+        if (typeof args.url !== 'string') return { success: false, error: 'url must be a string.' };
+        const parsed = new URL(args.url);
+        if (!['http:', 'https:'].includes(parsed.protocol)) return { success: false, error: 'Only http and https URLs are allowed.' };
+        await shell.openExternal(parsed.href);
+        return { success: true };
+      }
+      case 'openPath': {
+        if (typeof args.path !== 'string' || !path.isAbsolute(args.path)) {
+          return { success: false, error: 'An absolute path is required.' };
+        }
+        const error = await shell.openPath(args.path);
+        return error ? { success: false, error } : { success: true };
+      }
+      case 'launchProcess':
+      case 'appLaunch': {
+        if (typeof args.executable !== 'string' || !args.executable.trim()) {
+          return { success: false, error: 'executable must be a non-empty path or command name.' };
+        }
+        if (!Array.isArray(args.args || []) || (args.args || []).length > 128 ||
+            (args.args || []).some((arg) => typeof arg !== 'string')) {
+          return { success: false, error: 'args must be an array of up to 128 strings.' };
+        }
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning',
+          buttons: ['Launch', 'Cancel'],
+          defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Launch external program',
+          message: 'Allow .my-ai to launch ' + path.basename(args.executable) + '?',
+          detail: 'Arguments: ' + (args.args || []).join(' ').slice(0, 1000) + '\\nThe program will run with your current Windows account permissions.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const child = spawn(args.executable, args.args || [], {
+          cwd: typeof args.cwd === 'string' && path.isAbsolute(args.cwd) ? args.cwd : process.cwd(),
+          shell: false,
+          windowsHide: false,
+          stdio: 'ignore',
+        });
+        const processToken = crypto.randomUUID();
+        ownedCapabilityProcesses.set(processToken, child);
+        child.once('exit', () => ownedCapabilityProcesses.delete(processToken));
+        child.once('error', () => ownedCapabilityProcesses.delete(processToken));
+        return { success: true, processToken, pid: child.pid };
+      }
+      case 'stopOwnedProcess': {
+        if (typeof args.processToken !== 'string' || !ownedCapabilityProcesses.has(args.processToken)) {
+          return { success: false, error: 'Unknown process token; only processes launched by this tool can be stopped.' };
+        }
+        const child = ownedCapabilityProcesses.get(args.processToken);
+        try {
+          const stopped = child.kill();
+          if (stopped) ownedCapabilityProcesses.delete(args.processToken);
+          return { success: stopped, error: stopped ? undefined : 'The process could not be stopped.' };
+        } catch (error) {
+          return { success: false, error: error.message };
+        }
+      }
+      case 'processList': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const stdout = execFileSync('tasklist', ['/FO', 'CSV', '/NH'], {
+          encoding: 'utf8', timeout: 5000, maxBuffer: 4 * 1024 * 1024,
+        });
+        return { success: true, output: stdout };
+      }
+      case 'readFileMetadata': {
+        const selected = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile'], title: 'Choose a file to inspect',
+        });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const filePath = selected.filePaths[0];
+        const stat = fs.statSync(filePath);
+        return {
+          success: true, path: filePath, name: path.basename(filePath),
+          isFile: stat.isFile(), isDirectory: stat.isDirectory(), sizeBytes: stat.size,
+          createdAt: stat.birthtime.toISOString(), modifiedAt: stat.mtime.toISOString(),
+          accessedAt: stat.atime.toISOString(),
+        };
+      }
+      case 'appData':
+        return {
+          success: true,
+          userData: app.getPath('userData'),
+          logs: app.getPath('logs'),
+          temp: app.getPath('temp'),
+        };
+      case 'diskSpace': {
+        const selected = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openDirectory'], title: 'Choose a drive or folder to inspect',
+        });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        if (typeof fs.statfsSync !== 'function') {
+          return { success: false, status: 'unsupported', error: 'Filesystem statistics are unavailable in this runtime.' };
+        }
+        const stat = fs.statfsSync(selected.filePaths[0]);
+        return {
+          success: true, path: selected.filePaths[0],
+          blockSizeBytes: stat.bsize,
+          totalBytes: stat.blocks * stat.bsize,
+          freeBytes: stat.bfree * stat.bsize,
+          availableBytes: stat.bavail * stat.bsize,
+        };
+      }
+      case 'performanceMetrics': {
+        const os = require('os');
+        return {
+          success: true,
+          uptimeSeconds: os.uptime(),
+          totalMemoryBytes: os.totalmem(),
+          freeMemoryBytes: os.freemem(),
+          processMemory: process.memoryUsage(),
+          cpuCount: os.cpus().length,
+          loadAverage: os.loadavg(),
+        };
+      }
+      case 'windowsCapabilityState':
+        return { success: true, platform: process.platform, tools: windowsCapabilityTools.listTools() };
+      case 'privacySettings': {
+        if (process.platform !== 'win32') {
+          return { success: false, status: 'unsupported-on-platform', error: 'Windows privacy settings are only available on Windows.' };
+        }
+        await shell.openExternal('ms-settings:privacy');
+        return { success: true, opened: 'ms-settings:privacy' };
+      }
+      case 'windowsSecurityContext':
+      case 'uacStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const account = execFileSync('whoami.exe', ['/user'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        const groups = execFileSync('whoami.exe', ['/groups'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        const elevated = /S-1-16-12288|S-1-16-16384/.test(groups);
+        return {
+          success: true,
+          user: account.trim().slice(0, 4000),
+          groups: groups.trim().slice(0, 24000),
+          elevated,
+          note: 'Reports the current process token only; this does not grant or change privileges.',
+        };
+      }
+      case 'uacElevationRequest': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const action = args.action || 'status';
+        if (action === 'status') {
+          const groups = execFileSync('whoami.exe', ['/groups'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+          return { success: true, elevated: /S-1-16-12288|S-1-16-16384/.test(groups), action: 'status' };
+        }
+        if (action !== 'relaunch-elevated') return { success: false, error: 'Only status and relaunch-elevated are supported.' };
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Request administrator access', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Restart .my-ai as administrator?',
+          message: 'Windows will show a User Account Control (UAC) prompt.',
+          detail: 'If you approve, .my-ai will relaunch as administrator. This does not bypass UAC, grant SYSTEM privileges, or enable unrestricted access. Save your work first.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const executable = process.execPath;
+        const launchArgs = app.isPackaged ? [] : [app.getAppPath()];
+        const exe64 = Buffer.from(executable, 'utf8').toString('base64');
+        const args64 = Buffer.from(JSON.stringify(launchArgs), 'utf8').toString('base64');
+        const script = [
+          "$ErrorActionPreference = 'Stop'",
+          "$exe = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + exe64 + "'))",
+          "$raw = [Text.Encoding]::UTF8.GetString([Convert]::FromBase64String('" + args64 + "'))",
+          "$items = @(ConvertFrom-Json -InputObject $raw)",
+          "$quoted = @($items | ForEach-Object { '"' + ([string]$_).Replace('"', '\\"') + '"' })",
+          "try { Start-Process -FilePath $exe -ArgumentList ($quoted -join ' ') -Verb RunAs -ErrorAction Stop; exit 0 } catch { [Console]::Error.WriteLine($_.Exception.Message); exit 1 }"
+        ].join('\n');
+        const encoded = Buffer.from(script, 'utf16le').toString('base64');
+        try {
+          execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-EncodedCommand', encoded], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 256 * 1024 });
+          app.quit();
+          return { success: true, requested: true, relaunching: true, note: 'Windows UAC decides whether elevation is granted.' };
+        } catch (error) {
+          return { success: false, status: 'elevation-not-started', error: String(error && error.message || error).slice(0, 2000), note: 'The current process remains unelevated; no UAC bypass was attempted.' };
+        }
+      }
+      case 'fileAccessControl': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const selected = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile', 'openDirectory'], title: 'Choose a file or folder to inspect its Windows ACL',
+        });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const output = execFileSync('icacls.exe', [selected.filePaths[0]], {
+          encoding: 'utf8', timeout: 5000, windowsHide: true, maxBuffer: 1024 * 1024,
+        });
+        return { success: true, path: selected.filePaths[0], acl: output.slice(0, 50000) };
+      }
+      case 'aclPermissionCheck': {
+        const selected = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile', 'openDirectory'], title: 'Choose a path to check current-account access',
+        });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const target = selected.filePaths[0];
+        const result = { success: true, path: target, read: false, write: false, execute: false };
+        try { fs.accessSync(target, fs.constants.R_OK); result.read = true; } catch {}
+        try { fs.accessSync(target, fs.constants.W_OK); result.write = true; } catch {}
+        try { fs.accessSync(target, fs.constants.X_OK); result.execute = true; } catch {}
+        result.note = 'Best-effort access check for this process; actual access can differ for child processes, network paths, or later operations.';
+        return result;
+      }
+      case 'windowsPermissionSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const pages = {
+          camera: 'ms-settings:privacy-webcam',
+          microphone: 'ms-settings:privacy-microphone',
+          location: 'ms-settings:privacy-location',
+          contacts: 'ms-settings:privacy-contacts',
+          calendar: 'ms-settings:privacy-calendar',
+          notifications: 'ms-settings:notifications',
+          filesystem: 'ms-settings:privacy-broadfilesystemaccess',
+          general: 'ms-settings:privacy',
+        };
+        const page = typeof args.capability === 'string' ? args.capability : 'general';
+        if (!Object.prototype.hasOwnProperty.call(pages, page)) {
+          return { success: false, error: 'Unsupported settings page. Use camera, microphone, location, contacts, calendar, notifications, filesystem, or general.' };
+        }
+        await shell.openExternal(pages[page]);
+        return { success: true, opened: pages[page] };
+      }
+      case 'windowsUpdateSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        await shell.openExternal('ms-settings:windowsupdate');
+        return { success: true, opened: 'ms-settings:windowsupdate' };
+      }
+      case 'windowsSecuritySettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        await shell.openExternal('windowsdefender:');
+        return { success: true, opened: 'windowsdefender:' };
+      }
+      case 'networkProfileStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netsh.exe', ['wlan', 'show', 'interfaces'], {
+          encoding: 'utf8', timeout: 5000, windowsHide: true, maxBuffer: 1024 * 1024,
+        });
+        return { success: true, wifiInterfaceStatus: output.slice(0, 30000) };
+      }
+      case 'windowsCapabilityManifest':
+        return {
+          success: true,
+          platform: process.platform,
+          packaged: Boolean(app.isPackaged),
+          packagePath: app.getAppPath(),
+          note: 'This Electron desktop app does not automatically receive UWP/MSIX capabilities. Manifest capability requirements depend on package identity, trust level, Windows version, and API. This reports context only, not granted capabilities.',
+        };
+      case 'windowsTokenPrivileges': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('whoami.exe', ['/priv'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        return { success: true, privileges: output.slice(0, 30000), note: 'Read-only view of this process token; privileges are not enabled or changed.' };
+      }
+      case 'windowsFirewallStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netsh.exe', ['advfirewall', 'show', 'allprofiles'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        return { success: true, profiles: output.slice(0, 30000) };
+      }
+      case 'windowsDefenderStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = 'Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,AntispywareEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled,AntivirusSignatureLastUpdated | ConvertTo-Json -Compress';
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, status: JSON.parse(output.trim()) };
+      }
+      case 'windowsServiceStatus':
+      case 'windowsServiceSecurityDescriptor': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const serviceName = args.serviceName;
+        if (typeof serviceName !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(serviceName)) {
+          return { success: false, error: 'serviceName must be a simple Windows service name.' };
+        }
+        const command = id === 'windowsServiceStatus' ? 'query' : 'sdshow';
+        const output = execFileSync('sc.exe', [command, serviceName], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, serviceName, output: output.slice(0, 30000), readOnly: true };
+      }
+      case 'windowsAccountPolicy': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('net.exe', ['accounts'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        return { success: true, policy: output.slice(0, 20000), note: 'Local summary only; domain policy can override these values.' };
+      }
+      case 'windowsNetworkShares': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const mapped = execFileSync('net.exe', ['use'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        let localShares = '';
+        try { localShares = execFileSync('net.exe', ['share'], { encoding: 'utf8', timeout: 7000, windowsHide: true }); } catch {}
+        return { success: true, mappedShares: mapped.slice(0, 20000), localShares: localShares.slice(0, 20000) };
+      }
+      case 'windowsPowerShellExecutionPolicy': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = 'Get-ExecutionPolicy -List | Select-Object Scope,ExecutionPolicy | ConvertTo-Json -Compress';
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, policies: JSON.parse(output.trim()), note: 'Reports policy only; does not change or bypass it.' };
+      }
+      case 'wifiStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netsh.exe', ['wlan', 'show', 'interfaces'], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, output: output.slice(0, 30000), readOnly: true };
+      }
+      case 'bluetooth':
+      case 'usbDevices':
+      case 'audioDevices':
+      case 'microphoneDevices':
+      case 'speakerDevices': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const filters = {
+          bluetooth: "Get-PnpDevice -Class Bluetooth -PresentOnly -ErrorAction SilentlyContinue",
+          usbDevices: "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like 'USB*' -or $_.InstanceId -like 'USB\\*' }",
+          audioDevices: "Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue"
+        };
+        const command = filters[id] + " | Select-Object Status,Class,FriendlyName,InstanceId | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, devices: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Device metadata only; no device access or driver changes.' };
+      }
+      case 'printers': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-Printer -ErrorAction Stop | Select-Object Name,Type,DriverName,PortName,PrinterStatus,Shared | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, printers: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true };
+      }
+      case 'displays':
+      case 'screenMetadata': {
+        const { screen } = require('electron');
+        return { success: true, displays: screen.getAllDisplays().map((display) => ({
+          id: display.id, bounds: display.bounds, workArea: display.workArea,
+          scaleFactor: display.scaleFactor, rotation: display.rotation,
+          size: display.size, internal: display.internal,
+        })) };
+      }
+      case 'installedApps':
+      case 'appInstallInventory': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "$paths=@('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'); Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Select-Object DisplayName,DisplayVersion,Publisher,InstallDate | Sort-Object DisplayName | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, applications: output.trim() ? JSON.parse(output.trim()) : [], scope: 'visible uninstall registry entries; not a complete inventory of portable or per-user packaged apps' };
+      }
+      case 'startupSettings':
+      case 'startupPrograms': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "$run=@(); foreach($p in @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run')) { if(Test-Path $p) { $v=Get-ItemProperty $p; foreach($x in $v.PSObject.Properties) { if($x.Name -notmatch '^PS') { $run += [pscustomobject]@{RegistryPath=$p;Name=$x.Name;Command=[string]$x.Value} } } } }; $run | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, entries: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Common Run keys only; Startup folders and scheduled tasks are separate.' };
+      }
+      case 'scheduledTasks': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-ScheduledTask -ErrorAction Stop | Select-Object TaskName,TaskPath,State,Author,Description | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 20000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, tasks: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true };
+      }
+      case 'powerBattery':
+      case 'batteryStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object Name,Status,EstimatedChargeRemaining,BatteryStatus,EstimatedRunTime | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, batteries: output.trim() ? JSON.parse(output.trim()) : [], note: 'No battery data is normal on desktop PCs or systems without supported battery telemetry.' };
+      }
+      case 'firewallStatus':
+      case 'firewallProfiles': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netsh.exe', ['advfirewall', 'show', 'allprofiles'], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, profiles: output.slice(0, 30000), readOnly: true };
+      }
+      case 'securityStatus':
+      case 'defenderStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-MpComputerStatus -ErrorAction Stop | Select-Object AMServiceEnabled,AntivirusEnabled,AntispywareEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled,AntivirusSignatureLastUpdated | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, status: JSON.parse(output.trim()), readOnly: true };
+      }
+      case 'eventLogs': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-WinEvent -ListLog * -ErrorAction SilentlyContinue | Select-Object LogName,RecordCount,IsEnabled,LogType | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 20000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, logs: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Lists log metadata only; individual event reads may need additional rights.' };
+      }
+      case 'windowsServices': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-Service | Select-Object Name,DisplayName,Status,StartType | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, services: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Listing only; service control and installation are not exposed by this tool.' };
+      }
+      case 'ethernetStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-NetAdapter -ErrorAction SilentlyContinue | Select-Object Name,InterfaceDescription,Status,MacAddress,LinkSpeed,MediaType | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, adapters: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true };
+      }
+      case 'dnsConfiguration': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-DnsClientServerAddress -ErrorAction SilentlyContinue | Select-Object InterfaceAlias,AddressFamily,ServerAddresses | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, dns: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true };
+      }
+      case 'proxyConfiguration': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const winhttp = execFileSync('netsh.exe', ['winhttp', 'show', 'proxy'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        const command = "$p=Get-ItemProperty 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings' -ErrorAction SilentlyContinue; [pscustomobject]@{ProxyEnable=$p.ProxyEnable;ProxyServer=$p.ProxyServer;AutoConfigURL=$p.AutoConfigURL} | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, winHttp: winhttp.slice(0, 10000), currentUser: output.trim() ? JSON.parse(output.trim()) : null, readOnly: true };
+      }
+      case 'networkPortStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netstat.exe', ['-ano'], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, endpoints: output.slice(0, 100000), readOnly: true, note: 'Local endpoint metadata only; this does not inspect packet contents.' };
+      }
+      case 'deviceMetadata': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Select-Object Status,Class,FriendlyName,InstanceId | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, devices: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Metadata only; no device contents or driver controls are accessed.' };
+      }
+      case 'appWindowList': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-Process -ErrorAction SilentlyContinue | Where-Object { $_.MainWindowTitle } | Select-Object ProcessName,Id,MainWindowTitle | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, windows: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Visible window metadata only; this does not read other applications’ content.' };
+      }
+      case 'accountInfo':
+      case 'userAccountMetadata': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const user = execFileSync('whoami.exe', ['/user'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        const groups = execFileSync('whoami.exe', ['/groups'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        return { success: true, user: user.slice(0, 8000), groups: groups.slice(0, 20000), readOnly: true, note: 'Identity and group metadata only; no credentials or authentication tokens are returned.' };
+      }
+      case 'cameraDevices':
+      case 'inputDeviceStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = id === 'cameraDevices'
+          ? "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -in @('Camera','Image') -or $_.FriendlyName -match 'camera|webcam' } | Select-Object Status,Class,FriendlyName,InstanceId | ConvertTo-Json -Compress"
+          : "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -in @('Keyboard','Mouse','HIDClass') } | Select-Object Status,Class,FriendlyName,InstanceId | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 3 * 1024 * 1024 });
+        return { success: true, devices: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Device metadata only; no images or keystrokes are captured.' };
+      }
+      case 'processMetrics': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-Process -ErrorAction SilentlyContinue | Sort-Object WorkingSet64 -Descending | Select-Object -First 100 ProcessName,Id,CPU,WorkingSet64,PrivateMemorySize64,StartTime | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, processes: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Process metadata only; process memory and credentials are not inspected.' };
+      }
+      case 'registryRead':
+      case 'registryInspect': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const allowedKeys = {
+          userStartup: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+          machineStartup: 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+          userShellFolders: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders',
+          userInternetSettings: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        };
+        if (typeof args.key !== 'string' || !Object.prototype.hasOwnProperty.call(allowedKeys, args.key)) {
+          return { success: false, error: 'Choose an allowlisted registry category: userStartup, machineStartup, userShellFolders, or userInternetSettings.' };
+        }
+        const output = execFileSync('reg.exe', ['query', allowedKeys[args.key]], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, category: args.key, registryOutput: output.slice(0, 30000), readOnly: true, note: 'Only predefined non-secret registry locations are supported.' };
+      }
+      case 'appDiagnostics': {
+        let files = [];
+        const logPath = app.getPath('logs');
+        try {
+          files = fs.readdirSync(logPath, { withFileTypes: true }).filter((entry) => entry.isFile()).slice(0, 200).map((entry) => {
+            const fullPath = path.join(logPath, entry.name);
+            let stat;
+            try { stat = fs.statSync(fullPath); } catch { return { name: entry.name, unavailable: true }; }
+            return { name: entry.name, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString() };
+          });
+        } catch {}
+        return { success: true, appVersion: app.getVersion(), platform: process.platform, logDirectory: logPath, logFiles: files, readOnly: true, note: 'File names and metadata only; log contents are not returned.' };
+      }
+      case 'taskManager':
+        return {
+          success: true,
+          tasks: Array.from(ownedCapabilityProcesses.entries()).map(([processToken, child]) => ({
+            processToken, pid: child.pid || null, executable: child.spawnfile || null,
+            running: Boolean(child.pid && child.exitCode === null && !child.killed),
+          })),
+          scope: 'Only processes launched and tracked by this app.',
+        };
+      case 'developerTools': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const tools = [
+          ['git.exe', ['--version']], ['node.exe', ['--version']],
+          ['python.exe', ['--version']], ['py.exe', ['--version']],
+        ];
+        const results = tools.map(([executable, argv]) => {
+          try {
+            const version = execFileSync(executable, argv, { encoding: 'utf8', timeout: 5000, windowsHide: true, maxBuffer: 256 * 1024 });
+            return { executable, available: true, version: version.trim().slice(0, 1000) };
+          } catch (error) {
+            return { executable, available: false, reason: error && error.code === 'ENOENT' ? 'not-installed-or-not-on-PATH' : (error.message || String(error)).slice(0, 500) };
+          }
+        });
+        return { success: true, tools: results, readOnly: true, note: 'Only fixed version commands were run; arbitrary commands are not accepted by this tool.' };
+      }
+      case 'gitRepositories': {
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: 'Choose a Git repository folder to inspect' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const cwd = selected.filePaths[0];
+        const runGit = (argv) => execFileSync('git.exe', argv, { cwd, encoding: 'utf8', timeout: 8000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        try {
+          const root = runGit(['rev-parse', '--show-toplevel']).trim();
+          const status = runGit(['status', '--short', '--branch']).slice(0, 20000);
+          let lastCommit = '';
+          try { lastCommit = runGit(['log', '-1', '--format=%h %s']).trim().slice(0, 1000); } catch {}
+          return { success: true, repository: root, status, lastCommit, readOnly: true };
+        } catch (error) {
+          return { success: false, error: 'The selected folder is not a readable Git repository or Git is unavailable.', detail: (error.message || String(error)).slice(0, 1000) };
+        }
+      }
+      case 'windowsAppCapabilities':
+        return {
+          success: true, platform: process.platform, packaged: Boolean(app.isPackaged),
+          packagePath: app.getAppPath(),
+          note: 'Electron packaging context only. This does not claim that MSIX/AppContainer capabilities are declared or granted.',
+        };
+      case 'permissionAuditLog':
+        return { success: true, platform: process.platform, tools: windowsCapabilityTools.listTools(), note: 'Capability catalog and implementation states only; not a log of OS permission grants.' };
+      case 'permissionControls':
+      case 'appPermissions':
+      case 'locationSettings':
+      case 'accessibilitySettings':
+      case 'defaultApps':
+      case 'systemSoundSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const pages = {
+          permissionControls: 'ms-settings:privacy',
+          appPermissions: 'ms-settings:privacy',
+          locationSettings: 'ms-settings:privacy-location',
+          accessibilitySettings: 'ms-settings:easeofaccess',
+          defaultApps: 'ms-settings:defaultapps',
+          systemSoundSettings: 'ms-settings:sound',
+        };
+        await shell.openExternal(pages[id]);
+        return { success: true, opened: pages[id], note: 'The user remains in control of Windows Settings.' };
+      }
+      case 'timeZoneSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const timezone = execFileSync('tzutil.exe', ['/g'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        await shell.openExternal('ms-settings:dateandtime');
+        return { success: true, timeZone: timezone.trim(), opened: 'ms-settings:dateandtime', readOnly: true };
+      }
+      case 'localeSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-WinSystemLocale | Select-Object Name,DisplayName | ConvertTo-Json -Compress; Write-Output '---CURRENT-CULTURE---'; Get-Culture | Select-Object Name,DisplayName,DateTimeFormat | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, localeInfo: output.slice(0, 20000), readOnly: true };
+      }
+      case 'devicePowerStatus':
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        return { success: true, platform: process.platform, batteryTool: 'powerBattery', note: 'See powerBattery for supported battery telemetry.' };
+      case 'windowsUpdateStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-Service -Name wuauserv -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, service: output.trim() ? JSON.parse(output.trim()) : null, readOnly: true, note: 'Service state only; this does not report whether all updates are installed.' };
+      }
+      case 'sleepSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('powercfg.exe', ['/query'], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, powerScheme: output.slice(0, 60000), readOnly: true };
+      }
+      case 'deviceEncryptionStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('manage-bde.exe', ['-status'], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, volumes: output.slice(0, 60000), readOnly: true, note: 'Encryption status only; recovery keys are never requested or returned.' };
+      }
+      case 'secureBootStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "try { [pscustomobject]@{Supported=$true;SecureBootEnabled=[bool](Confirm-SecureBootUEFI -ErrorAction Stop)} | ConvertTo-Json -Compress } catch { [pscustomobject]@{Supported=$false;Reason=$_.Exception.Message} | ConvertTo-Json -Compress }";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, result: JSON.parse(output.trim()), readOnly: true };
+      }
+      case 'systemSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture,CsName,CsDomain,CsSystemType | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, system: JSON.parse(output.trim()), readOnly: true };
+      }
+      case 'watchFiles': {
+        const operation = typeof args.operation === 'string' ? args.operation : 'start';
+        if (operation === 'stop' || operation === 'status') {
+          if (typeof args.watchToken !== 'string' || !capabilityFileWatchers.has(args.watchToken)) return { success: false, error: 'Unknown watch token.' };
+          const entry = capabilityFileWatchers.get(args.watchToken);
+          if (operation === 'stop') { entry.watcher.close(); capabilityFileWatchers.delete(args.watchToken); return { success: true, stopped: true, path: entry.path }; }
+          const events = entry.events.splice(0, 100);
+          return { success: true, watchToken: args.watchToken, path: entry.path, events, queuedEvents: entry.events.length, active: true };
+        }
+        if (operation !== 'start') return { success: false, error: 'operation must be start, status, or stop.' };
+        if (capabilityFileWatchers.size >= 20) return { success: false, error: 'At most 20 file watches may be active.' };
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: 'Choose a folder for file-change monitoring' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const folder = selected.filePaths[0];
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Start monitoring', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Monitor folder changes', message: 'Allow .my-ai to monitor changes in this folder?',
+          detail: folder + '\nMonitoring is non-recursive. File names and change types may be recorded until you stop the watch or quit the app.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const watchToken = crypto.randomUUID();
+        const entry = { path: folder, events: [], watcher: null };
+        entry.watcher = fs.watch(folder, { persistent: false }, (eventType, filename) => {
+          if (entry.events.length >= 500) entry.events.shift();
+          entry.events.push({ eventType: String(eventType).slice(0, 40), name: filename == null ? null : String(filename).slice(0, 1024), at: new Date().toISOString() });
+        });
+        capabilityFileWatchers.set(watchToken, entry);
+        return { success: true, watchToken, path: folder, recursive: false, active: true };
+      }
+      case 'printToPdf': {
+        if (!mainWindow || mainWindow.isDestroyed()) return { success: false, error: 'The app window is not available.' };
+        const selected = await dialog.showSaveDialog(mainWindow, {
+          title: 'Export the current .my-ai window to PDF',
+          defaultPath: typeof args.defaultPath === 'string' ? path.basename(args.defaultPath).replace(/\.pdf$/i, '') + '.pdf' : 'my-ai-export.pdf',
+          filters: [{ name: 'PDF document', extensions: ['pdf'] }],
+        });
+        if (selected.canceled || !selected.filePath) return { success: false, canceled: true };
+        const outputPath = selected.filePath.toLowerCase().endsWith('.pdf') ? selected.filePath : selected.filePath + '.pdf';
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'question', buttons: ['Export PDF', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Confirm PDF export', message: 'Export the current .my-ai window to PDF?',
+          detail: 'The PDF will be written to: ' + outputPath,
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const pdf = await mainWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' });
+        if (pdf.length > 50 * 1024 * 1024) return { success: false, error: 'Generated PDF exceeds the 50 MB limit.' };
+        fs.writeFileSync(outputPath, pdf, { flag: 'wx' });
+        return { success: true, path: outputPath, bytes: pdf.length, content: 'current-app-window' };
+      }
+      case 'manageStartup': {
+        if (!['win32', 'darwin'].includes(process.platform)) return { success: false, status: 'unsupported-on-platform' };
+        if (typeof args.enabled !== 'boolean') return { success: false, error: 'enabled must be a boolean.' };
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'question', buttons: [args.enabled ? 'Enable startup' : 'Disable startup', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Change startup setting',
+          message: (args.enabled ? 'Start' : 'Do not start') + ' .my-ai when you sign in?',
+          detail: 'This changes only .my-ai’s own login-item setting. It does not install a service or scheduled task.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        app.setLoginItemSettings({ openAtLogin: args.enabled, openAsHidden: false });
+        const actual = app.getLoginItemSettings();
+        return { success: true, requested: args.enabled, openAtLogin: actual.openAtLogin, note: 'The OS or packaging format may affect whether this setting is honored.' };
+      }
+      default:
+        return {
+          success: false,
+          status: tool.implementation === 'admin-or-adapter' ? 'admin-or-adapter-required' : 'adapter-required',
+          tool: tool.toolName,
+          message: tool.description,
+        };
+    }
+  } catch (error) {
+    return { success: false, error: error && error.message ? error.message : String(error) };
 // macOS privacy permissions. Electron can request only a subset directly;
 // other protected categories must be approved by the user in System Settings.
 const MACOS_PRIVACY_SETTINGS = {
