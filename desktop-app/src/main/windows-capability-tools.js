@@ -133,7 +133,7 @@ const DEFINITIONS = [
   ["firewallProfiles","Firewall profile status","security","adapter-required","Read firewall profile status through supported Windows APIs."],
   ["eventLogQuery","Query Windows event logs","system","admin-or-adapter","Query only logs readable by the current user and scope results."],
   ["crashReports","Application crash reports","system","adapter-required","Read app-owned crash reports and user-approved diagnostics."],
-  ["performanceMetrics","System performance metrics","system","adapter-required","Read bounded CPU, memory, disk, and runtime metrics."],
+  ["performanceMetrics","System performance metrics","system","native","Read bounded CPU, memory, disk, and runtime metrics."],
   ["diskSpace","Disk space and volume metadata","system","native","Read free-space and volume metadata without reading file contents."],
   ["batteryStatus","Battery state and health","system","adapter-required","Read supported power/battery metadata."],
   ["sleepSettings","Inspect power and sleep settings","system","adapter-required","Inspect supported settings; changes need confirmation."],
