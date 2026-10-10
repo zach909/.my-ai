@@ -636,6 +636,65 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         });
         return { success: true, output: stdout };
       }
+      case 'readFileMetadata': {
+        const selected = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile'], title: 'Choose a file to inspect',
+        });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const filePath = selected.filePaths[0];
+        const stat = fs.statSync(filePath);
+        return {
+          success: true, path: filePath, name: path.basename(filePath),
+          isFile: stat.isFile(), isDirectory: stat.isDirectory(), sizeBytes: stat.size,
+          createdAt: stat.birthtime.toISOString(), modifiedAt: stat.mtime.toISOString(),
+          accessedAt: stat.atime.toISOString(),
+        };
+      }
+      case 'appData':
+        return {
+          success: true,
+          userData: app.getPath('userData'),
+          logs: app.getPath('logs'),
+          temp: app.getPath('temp'),
+        };
+      case 'diskSpace': {
+        const selected = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openDirectory'], title: 'Choose a drive or folder to inspect',
+        });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        if (typeof fs.statfsSync !== 'function') {
+          return { success: false, status: 'unsupported', error: 'Filesystem statistics are unavailable in this runtime.' };
+        }
+        const stat = fs.statfsSync(selected.filePaths[0]);
+        return {
+          success: true, path: selected.filePaths[0],
+          blockSizeBytes: stat.bsize,
+          totalBytes: stat.blocks * stat.bsize,
+          freeBytes: stat.bfree * stat.bsize,
+          availableBytes: stat.bavail * stat.bsize,
+        };
+      }
+      case 'performanceMetrics': {
+        const os = require('os');
+        return {
+          success: true,
+          uptimeSeconds: os.uptime(),
+          totalMemoryBytes: os.totalmem(),
+          freeMemoryBytes: os.freemem(),
+          processMemory: process.memoryUsage(),
+          cpuCount: os.cpus().length,
+          loadAverage: os.loadavg(),
+        };
+      }
+      case 'windowsCapabilityState':
+        return { success: true, platform: process.platform, tools: windowsCapabilityTools.listTools() };
+      case 'privacySettings': {
+        if (process.platform !== 'win32') {
+          return { success: false, status: 'unsupported-on-platform', error: 'Windows privacy settings are only available on Windows.' };
+        }
+        await shell.openExternal('ms-settings:privacy');
+        return { success: true, opened: 'ms-settings:privacy' };
+      }
       default:
         return {
           success: false,
