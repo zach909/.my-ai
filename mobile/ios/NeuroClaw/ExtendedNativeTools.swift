@@ -966,7 +966,7 @@ private final class HomeKitTools: NSObject, HMHomeManagerDelegate {
                     [
                         "type": service.serviceType,
                         "name": service.name,
-                        "characteristics": service.characteristics.map { ["type": $0.characteristicType, "description": $0.localizedDescription, "readable": $0.properties.contains(.readable), "writable": $0.properties.contains(.writable)] }
+                        "characteristics": service.characteristics.map { ["type": $0.characteristicType, "description": $0.localizedDescription, "readable": $0.properties.contains(HMCharacteristicPropertyReadable), "writable": $0.properties.contains(HMCharacteristicPropertyWritable)] }
                     ] as [String: Any]
                 }
             ] as [String: Any]
@@ -990,7 +990,7 @@ private final class HomeKitTools: NSObject, HMHomeManagerDelegate {
               let characteristic = service.characteristics.first(where: { $0.characteristicType == characteristicType }) else {
             return (404, ["error": "homekit_target_not_found"])
         }
-        guard characteristic.properties.contains(.writable) else { return (403, ["error": "characteristic_not_writable"]) }
+        guard characteristic.properties.contains(HMCharacteristicPropertyWritable) else { return (403, ["error": "characteristic_not_writable"]) }
         return await withCheckedContinuation { continuation in
             characteristic.writeValue(value) { error in
                 if let error { continuation.resume(returning: (500, ["error": "homekit_write_failed", "detail": error.localizedDescription])) }
