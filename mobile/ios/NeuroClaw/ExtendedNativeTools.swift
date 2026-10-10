@@ -1008,11 +1008,33 @@ private final class HomeKitTools: NSObject, HMHomeManagerDelegate {
             return (404, ["error": "homekit_target_not_found"])
         }
         guard characteristic.properties.contains(HMCharacteristicPropertyWritable) else { return (403, ["error": "characteristic_not_writable"]) }
+        guard await confirmControl(accessory: accessory.name, characteristic: characteristic.localizedDescription, value: String(describing: value)) else {
+            return (403, ["error": "user_did_not_confirm_accessory_control"])
+        }
         return await withCheckedContinuation { continuation in
             characteristic.writeValue(value) { error in
                 if let error { continuation.resume(returning: (500, ["error": "homekit_write_failed", "detail": error.localizedDescription])) }
                 else { continuation.resume(returning: (200, ["ok": true, "accessory": accessory.name, "characteristic": characteristicType])) }
             }
+        }
+    }
+
+
+    private static func confirmControl(accessory: String, characteristic: String, value: String) async -> Bool {
+        await withCheckedContinuation { continuation in
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            let windows = scenes.flatMap { $0.windows }
+            var presenter = windows.first(where: { $0.isKeyWindow })?.rootViewController
+            while let next = presenter?.presentedViewController { presenter = next }
+            guard let presenter else { continuation.resume(returning: false); return }
+            let alert = UIAlertController(
+                title: "Confirm Home Accessory Change",
+                message: "Change \(accessory) — \(characteristic) to \(value)?",
+                preferredStyle: .alert
+            )
+            alert.addAction(UIAlertAction(title: "Cancel", style: .cancel) { _ in continuation.resume(returning: false) })
+            alert.addAction(UIAlertAction(title: "Allow", style: .default) { _ in continuation.resume(returning: true) })
+            presenter.present(alert, animated: true)
         }
     }
 
