@@ -17,6 +17,11 @@ import android.provider.Settings
 import android.telephony.TelephonyManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.accounts.AccountManager
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -37,15 +42,31 @@ class DeviceTools(private val context: Context) {
         }
         add("device_info", "Read Android version, device model, locale, and app version.")
         add("permission_status", "List declared runtime permissions and whether each is granted.")
-        add("search_contacts", "Search contacts by name; returns names and available phone/email fields.", Manifest.permission.READ_CONTACTS)
+        add("special_access_status", "Report app-specific special access that Android exposes through settings.")
+        add("network_status", "Read current network type and whether Android reports internet connectivity.")
+        add("list_accounts", "List account types and names visible to this app.", Manifest.permission.GET_ACCOUNTS)
+        add("sensor_status", "List available device sensor types and names.")
+        add("open_voice_recognition", "Open Android speech recognition UI; the user starts and controls listening.")
+        add("open_notification_settings", "Open Android notification settings for this app.")
+        add("open_accessibility_settings", "Open Android Accessibility settings; enabling a service requires the user.")
+        add("open_usage_settings", "Open Android usage-access settings.")
+        add("open_all_files_settings", "Open Android all-files-access settings for this app.")
+        add("open_battery_settings", "Open Android battery optimization settings for this app.")
+        add("open_overlay_settings", "Open Android display-over-other-apps settings for this app.")
+        add("open_wifi_settings", "Open Android Wi-Fi settings; the OS controls radio changes.")
+        add("open_bluetooth_settings", "Open Android Bluetooth settings; the OS controls radio changes.")
+        add("search_contacts", "Search contacts by name; returns names and available phone fields.", Manifest.permission.READ_CONTACTS)
         add("list_contacts", "List a bounded page of contacts.", Manifest.permission.READ_CONTACTS)
         add("list_calendar_events", "Read upcoming calendar events.", Manifest.permission.READ_CALENDAR)
-        add("create_calendar_event", "Open Android's calendar event editor with the supplied title and times.", Manifest.permission.WRITE_CALENDAR)
+        add("create_calendar_event", "Open Android's calendar event editor with the supplied title and times; the user saves it.")
         add("get_location", "Read the most recent available device location.", Manifest.permission.ACCESS_COARSE_LOCATION)
         add("list_photos", "List recent image metadata from shared media.", Manifest.permission.READ_MEDIA_IMAGES)
+        add("list_videos", "List recent video metadata from shared media.", Manifest.permission.READ_MEDIA_VIDEO)
+        add("list_audio", "List recent audio metadata from shared media.", Manifest.permission.READ_MEDIA_AUDIO)
+        add("compose_email", "Open an email composer with recipient, subject, and body prefilled; user sends it.")
         add("list_call_log", "Read a bounded page of recent call-log entries.", Manifest.permission.READ_CALL_LOG)
-        add("dial_number", "Open the phone dialer with a number prefilled; user confirms the call.", Manifest.permission.CALL_PHONE)
-        add("compose_sms", "Open an SMS composer with recipient and message prefilled; user sends it.", Manifest.permission.SEND_SMS)
+        add("dial_number", "Open the phone dialer with a number prefilled; user confirms the call.")
+        add("compose_sms", "Open an SMS composer with recipient and message prefilled; user sends it.")
         add("list_installed_apps", "List launchable apps installed for the current Android user.")
         add("launch_app", "Open an installed app by package name.")
         add("bluetooth_status", "Read Bluetooth availability and enabled state.", Manifest.permission.BLUETOOTH_CONNECT)
@@ -60,15 +81,31 @@ class DeviceTools(private val context: Context) {
             when (name) {
                 "device_info" -> deviceInfo()
                 "permission_status" -> permissionStatus()
+                "special_access_status" -> specialAccessStatus()
+                "network_status" -> networkStatus()
+                "list_accounts" -> listAccounts()
+                "sensor_status" -> sensorStatus()
+                "open_voice_recognition" -> openVoiceRecognition()
+                "open_notification_settings" -> openSystemSettings("notification")
+                "open_accessibility_settings" -> openSystemSettings("accessibility")
+                "open_usage_settings" -> openSystemSettings("usage")
+                "open_all_files_settings" -> openSystemSettings("files")
+                "open_battery_settings" -> openSystemSettings("battery")
+                "open_overlay_settings" -> openSystemSettings("overlay")
+                "open_wifi_settings" -> openSystemSettings("wifi")
+                "open_bluetooth_settings" -> openSystemSettings("bluetooth")
                 "search_contacts" -> contacts(args.optString("query", ""), 0, 50)
                 "list_contacts" -> contacts("", args.optInt("offset", 0), bounded(args.optInt("limit", 20), 1, 50))
                 "list_calendar_events" -> calendarEvents(bounded(args.optInt("limit", 20), 1, 100))
                 "create_calendar_event" -> createCalendarEvent(args)
                 "get_location" -> getLocation()
-                "list_photos" -> listPhotos(bounded(args.optInt("limit", 20), 1, 100))
+                "list_photos" -> listMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Images.Media.DISPLAY_NAME, mediaPermission("image"), bounded(args.optInt("limit", 20), 1, 100), "photos")
+                "list_videos" -> listMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.DISPLAY_NAME, mediaPermission("video"), bounded(args.optInt("limit", 20), 1, 100), "videos")
+                "list_audio" -> listMedia(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, MediaStore.Audio.Media.DISPLAY_NAME, mediaPermission("audio"), bounded(args.optInt("limit", 20), 1, 100), "audio")
                 "list_call_log" -> callLog(bounded(args.optInt("limit", 20), 1, 50))
                 "dial_number" -> dial(args.optString("number", ""))
                 "compose_sms" -> composeSms(args.optString("number", ""), args.optString("message", ""))
+                "compose_email" -> composeEmail(args.optString("to", ""), args.optString("subject", ""), args.optString("body", ""))
                 "list_installed_apps" -> listApps()
                 "launch_app" -> launchApp(args.optString("package", ""))
                 "bluetooth_status" -> bluetoothStatus()
@@ -98,6 +135,68 @@ class DeviceTools(private val context: Context) {
     }
 
     private fun bounded(value: Int, min: Int, max: Int) = value.coerceIn(min, max)
+
+
+    private fun networkStatus(): JSONObject {
+        val manager = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = manager.activeNetwork
+        val caps = if (network != null) manager.getNetworkCapabilities(network) else null
+        return ok(JSONObject()
+            .put("connected", caps != null)
+            .put("internet", caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true)
+            .put("validated", caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true)
+            .put("wifi", caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true)
+            .put("cellular", caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true)
+            .put("ethernet", caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true))
+    }
+
+    @Suppress("DEPRECATION")
+    private fun listAccounts(): JSONObject {
+        requirePermission(Manifest.permission.GET_ACCOUNTS)
+        val rows = JSONArray()
+        for (account in AccountManager.get(appContext).accounts.take(100)) {
+            rows.put(JSONObject().put("name", account.name).put("type", account.type))
+        }
+        return ok(JSONObject().put("accounts", rows).put("returned", rows.length()))
+    }
+
+    private fun sensorStatus(): JSONObject {
+        val manager = appContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val rows = JSONArray()
+        for (sensor in manager.getSensorList(Sensor.TYPE_ALL).take(100)) {
+            rows.put(JSONObject().put("name", sensor.name).put("vendor", sensor.vendor)
+                .put("type", sensor.type).put("wake_up", sensor.isWakeUpSensor))
+        }
+        return ok(JSONObject().put("sensors", rows).put("returned", rows.length()))
+    }
+
+    private fun openVoiceRecognition(): JSONObject {
+        val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (intent.resolveActivity(appContext.packageManager) == null)
+            return JSONObject().put("ok", false).put("error", "No speech recognition activity is installed.")
+        context.startActivity(intent)
+        return ok(JSONObject().put("opened", "speech_recognition").put("user_controls_listening", true))
+    }
+
+    private fun openSystemSettings(which: String): JSONObject {
+        val action = when (which) {
+            "notification" -> Settings.ACTION_APP_NOTIFICATION_SETTINGS
+            "accessibility" -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+            "usage" -> Settings.ACTION_USAGE_ACCESS_SETTINGS
+            "files" -> if (Build.VERSION.SDK_INT >= 30) Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "battery" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "overlay" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_MANAGE_OVERLAY_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "wifi" -> Settings.ACTION_WIFI_SETTINGS
+            "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            else -> return JSONObject().put("ok", false).put("error", "Unknown settings page")
+        }
+        val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (which in setOf("notification", "files", "battery", "overlay")) intent.data = Uri.parse("package:${context.packageName}")
+        context.startActivity(intent)
+        return ok(JSONObject().put("opened_settings", which))
+    }
 
     private fun deviceInfo(): JSONObject {
         val version = try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown" } catch (_: Exception) { "unknown" }
@@ -193,6 +292,54 @@ class DeviceTools(private val context: Context) {
         val l = best ?: return ok(JSONObject().put("available", false).put("reason", "No cached location; enable Location and try again."))
         return ok(JSONObject().put("available", true).put("latitude", l.latitude).put("longitude", l.longitude)
             .put("accuracy_m", l.accuracy.toDouble()).put("timestamp_ms", l.time))
+    }
+
+
+    private fun specialAccessStatus(): JSONObject {
+        val out = JSONObject()
+            .put("overlay", Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(appContext))
+            .put("modify_system_settings", Build.VERSION.SDK_INT < 23 || Settings.System.canWrite(appContext))
+            .put("notifications_post", Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS))
+        if (Build.VERSION.SDK_INT >= 30) out.put("all_files", android.os.Environment.isExternalStorageManager())
+        if (Build.VERSION.SDK_INT >= 23) {
+            val power = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            out.put("ignoring_battery_optimizations", power.isIgnoringBatteryOptimizations(appContext.packageName))
+        }
+        return ok(out)
+    }
+
+    private fun mediaPermission(kind: String): String =
+        if (Build.VERSION.SDK_INT >= 33) when (kind) {
+            "video" -> Manifest.permission.READ_MEDIA_VIDEO
+            "audio" -> Manifest.permission.READ_MEDIA_AUDIO
+            else -> Manifest.permission.READ_MEDIA_IMAGES
+        } else Manifest.permission.READ_EXTERNAL_STORAGE
+
+    private fun listMedia(uri: Uri, nameColumn: String, permission: String, limit: Int, key: String): JSONObject {
+        requirePermission(permission)
+        val rows = JSONArray()
+        val dateColumn = when (key) {
+            "videos" -> MediaStore.Video.Media.DATE_ADDED
+            "audio" -> MediaStore.Audio.Media.DATE_ADDED
+            else -> MediaStore.Images.Media.DATE_ADDED
+        }
+        appContext.contentResolver.query(uri, arrayOf(nameColumn, dateColumn), null, null, "$dateColumn DESC")?.use { cursor ->
+            while (cursor.moveToNext() && rows.length() < limit) {
+                rows.put(JSONObject().put("name", cursor.getString(0) ?: "").put("added_seconds", cursor.getLong(1)))
+            }
+        }
+        return ok(JSONObject().put(key, rows).put("returned", rows.length()))
+    }
+
+    private fun composeEmail(to: String, subject: String, body: String): JSONObject {
+        if (to.length > 500 || subject.length > 500 || body.length > 10000)
+            return JSONObject().put("ok", false).put("error", "Email fields are too long")
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + Uri.encode(to)))
+            .putExtra(Intent.EXTRA_SUBJECT, subject)
+            .putExtra(Intent.EXTRA_TEXT, body)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+        return ok(JSONObject().put("opened", "email_composer").put("requires_user_send", true))
     }
 
     private fun listPhotos(limit: Int): JSONObject {
