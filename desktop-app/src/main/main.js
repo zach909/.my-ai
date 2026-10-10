@@ -657,6 +657,10 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   externalCameraMediaService: { label: "External camera media service", service: "ExternalCameraMedia", pane: "Privacy_Camera", kind: "settings", statusMedia: 'camera' },
 
   mainCamera: { label: 'Main camera access', pane: 'Privacy_Camera', kind: 'media', media: 'camera' },
+  bluetoothPeripheralLegacy: { label: "Legacy Bluetooth peripheral authorization", pane: "Privacy_Bluetooth", kind: "settings" },
+  locationAlwaysLegacy: { label: "Legacy always-on location authorization", pane: "Privacy_LocationServices", kind: "settings" },
+  locationTemporaryFullAccuracy: { label: "Temporary full-accuracy location authorization", pane: "Privacy_LocationServices", kind: "settings" },
+  locationAccuracyPreference: { label: "Location accuracy preference", pane: "Privacy_LocationServices", kind: "settings" },
   // Additional macOS capabilities that require entitlements, app-specific APIs, or separate OS approval.
   systemExtensionApproval: { label: "System extension installation and approval", service: "SystemExtension", pane: "Privacy_Security", kind: "capability" },
   driverExtensionApproval: { label: "Driver extension installation and approval", service: "DriverExtension", pane: "Privacy_Security", kind: "capability" },
