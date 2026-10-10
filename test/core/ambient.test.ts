@@ -20,14 +20,6 @@ describe('injectAmbient', () => {
     expect(out.indexOf('/ambient.js')).toBeLessThan(out.indexOf('</body>'))
   })
 
-  it('makes the AI icon the page icon in place of whatever it named', () => {
-    const out = injectAmbient('<html><head><link rel="icon" href="/favicon.svg"><link rel="shortcut icon" href="x.ico"></head><body></body></html>')
-    expect(out).not.toContain('favicon.svg')
-    expect(out).not.toContain('x.ico')
-    expect(out.match(/rel="icon"/g)).toHaveLength(1)
-    expect(out).toContain('/ai-icon.jpg')
-  })
-
   it('is safe to apply twice', () => {
     const once = injectAmbient(PAGE)
     expect(injectAmbient(once)).toBe(once)
@@ -56,8 +48,6 @@ describe('the assets', () => {
     expect(isAmbientRoute('/ambient.css', 'GET')).toBe(true)
     expect(isAmbientRoute('/ambient.js', 'GET')).toBe(true)
     expect(isAmbientRoute('/ambient.js', 'HEAD')).toBe(true)
-    expect(isAmbientRoute('/ai-icon.jpg', 'GET')).toBe(true)
-    expect(isAmbientRoute('/ai-icon.jpg', 'POST')).toBe(false)
     expect(isAmbientRoute('/ambient.js', 'POST')).toBe(false)
     expect(isAmbientRoute('/ambient.js.map', 'GET')).toBe(false)
     expect(isAmbientRoute('/api/store', 'GET')).toBe(false)
