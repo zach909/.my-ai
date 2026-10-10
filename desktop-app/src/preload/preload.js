@@ -39,7 +39,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     'systemPolicyAppBundles','systemPolicyAppData','systemPolicySysAdminFiles','virtualMachineNetworking',
     'voiceBanking','webBrowserPublicKeyCredential','postEvent','calendarWriteOnly','calendarFullAccess',
     'remindersFullAccess','appDataContainers','appBundleManagement','systemAdminFiles','userSelectedFiles',
-    'userSelectedFolders'
+    'userSelectedFolders','energyKitGuidance','externalCameraMedia','fileProviderDomain',
+    'fileProviderPresence','focusStatus','gameCenterFriends','systemPolicyDeveloperFiles'
   ].map((id) => [id, {
     status: () => ipcRenderer.invoke('macos-permission-tool', id, 'status'),
     request: () => ipcRenderer.invoke('macos-permission-tool', id, 'request'),
