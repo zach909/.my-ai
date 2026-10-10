@@ -43,6 +43,32 @@ check(getTool('windowsServiceSecurityDescriptor').implementation === 'native-win
 check(getTool('windowsAccountPolicy').implementation === 'native-windows', 'local account policy inspection is read-only');
 check(getTool('windowsNetworkShares').implementation === 'native-windows', 'network share inventory is read-only');
 check(getTool('windowsPowerShellExecutionPolicy').implementation === 'native-windows', 'execution policy inspection does not alter policy');
+check(getTool('createFile').implementation === 'native', 'new file creation uses a user-selected path and refuses overwrite');
+check(getTool('updateFile').implementation === 'native-consent', 'file updates require explicit confirmation');
+check(getTool('moveFile').implementation === 'native-consent', 'file moves require user-selected source and destination');
+check(getTool('renameFile').implementation === 'native-consent', 'file rename uses native file selection');
+check(getTool('fileSearch').implementation === 'native-consent', 'file search is scoped to a user-selected folder and bounded');
+check(getTool('automaticDownloads').implementation === 'native-consent', 'downloads require a user-selected save destination');
+check(getTool('documents').implementation === 'user-consent', 'Documents access is scoped to a user-selected folder');
+check(getTool('desktop').implementation === 'user-consent', 'Desktop access is scoped to a user-selected folder');
+check(getTool('downloads').implementation === 'user-consent', 'Downloads access is scoped to a user-selected folder');
+check(getTool('pictures').implementation === 'user-consent', 'Pictures access is scoped to a user-selected folder');
+check(getTool('videos').implementation === 'user-consent', 'Videos access is scoped to a user-selected folder');
+check(getTool('music').implementation === 'user-consent', 'Music access is scoped to a user-selected folder');
+check(getTool('removableDrives').implementation === 'native-windows', 'removable-drive metadata is read-only');
+check(getTool('networkShares').implementation === 'native-windows', 'network share inventory is read-only');
+check(getTool('mediaLibrary').implementation === 'user-consent', 'media inventory requires a user-selected folder and reads metadata only');
+check(getTool('onedriveFiles').implementation === 'user-consent', 'synced-folder access requires user selection');
+check(getTool('ethernetStatus').implementation === 'native-windows', 'Ethernet adapter metadata is read-only');
+check(getTool('dnsConfiguration').implementation === 'native-windows', 'DNS configuration is read-only');
+check(getTool('proxyConfiguration').implementation === 'native-windows', 'proxy configuration is read-only');
+check(getTool('networkPortStatus').implementation === 'native-windows', 'local endpoint metadata is read-only');
+check(getTool('deviceMetadata').implementation === 'native-windows', 'Plug and Play device metadata is read-only');
+check(getTool('appWindowList').implementation === 'native-windows', 'window inventory exposes metadata only');
+check(getTool('windowsUpdateStatus').implementation === 'native-windows', 'Windows Update service inspection is read-only');
+check(getTool('deviceEncryptionStatus').implementation === 'native-windows', 'volume encryption status never exposes recovery keys');
+check(getTool('secureBootStatus').implementation === 'native-windows', 'Secure Boot state is queried without changing firmware settings');
+
 check(getTool('wifiStatus').implementation === 'native-windows', 'Wi-Fi status is inspected without changing network configuration');
 check(getTool('bluetooth').implementation === 'native-windows', 'Bluetooth device metadata inspection is implemented');
 check(getTool('usbDevices').implementation === 'native-windows', 'USB device metadata inspection is implemented');
@@ -61,7 +87,7 @@ check(getTool('systemSettings').implementation === 'native-windows', 'basic Wind
 
 
 check(getToolStatus('contacts').status === 'adapter-required', 'unsupported provider tools report adapter-required status');
-check(getTool('deleteFile').implementation === 'adapter-required', 'destructive file operations are not falsely marked available');
+check(getTool('deleteFile').implementation === 'native-consent', 'file deletion is implemented with native selection and explicit confirmation');
 check(getTool('revokeAppConsent').implementation === 'adapter-required', 'consent revocation is not falsely marked implemented');
 check(tools.every((tool) => ['native','native-windows','browser-permission','native-consent','user-consent','adapter-required','admin-or-adapter','manifest'].includes(tool.implementation)), 'every capability declares a known implementation class');
 
