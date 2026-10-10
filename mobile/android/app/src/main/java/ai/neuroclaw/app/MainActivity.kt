@@ -90,6 +90,23 @@ class MainActivity : Activity() {
                 status.text = "Requesting declared runtime permissions. Answer the system dialogs; some permissions require separate Settings pages or special eligibility."
             }
         }
+        val audit = Button(this).apply {
+            text = "Audit every declared permission and special access"
+            setOnClickListener {
+                val declared = Permissions.declared(this@MainActivity)
+                val packageManagerGranted = declared.count {
+                    checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                }
+                val missing = Permissions.missing(this@MainActivity)
+                val special = DeviceTools(this@MainActivity).execute("special_access_status")
+                    .optJSONObject("value")?.toString(2) ?: "Could not read special-access state."
+                val rows = declared.joinToString("\n") { permission ->
+                    val granted = checkSelfPermission(permission) == android.content.pm.PackageManager.PERMISSION_GRANTED
+                    "$permission — PackageManager: ${if (granted) "granted" else "not granted"}"
+                }
+                status.text = "PERMISSION AUDIT\nDeclared: ${declared.size}\nPackageManager reports granted: $packageManagerGranted\nDangerous runtime permissions still missing: ${missing.size}\n${missing.joinToString("\n")}\n\nSPECIAL ACCESS (actual checks where Android exposes them)\n$special\n\nDECLARED PERMISSIONS\n$rows"
+            }
+        }
         val backgroundLocation = Button(this).apply {
             text = "Request background location"
             setOnClickListener {
@@ -165,6 +182,7 @@ class MainActivity : Activity() {
             addView(LinearLayout(context).apply { addView(save); addView(webApp); addView(overlay) })
             addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
             addView(grant)
+            addView(audit)
             addView(backgroundLocation)
             addView(backgroundSensors)
             addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
@@ -193,10 +211,13 @@ class MainActivity : Activity() {
         val brain = Shared.brain(this)
         val overlay = if (AndroidSettings.canDrawOverlays(this)) "allowed" else "not allowed yet"
         val missing = Permissions.missing(this)
+        val declared = Permissions.declared(this)
+        val packageManagerGranted = declared.count { checkSelfPermission(it) == android.content.pm.PackageManager.PERMISSION_GRANTED }
         status.text = buildString {
             append(if (brain.settings.configured) "PC for syncing: ${brain.settings.serverUrl}" else "PC: not set (everything stays on the phone)")
             append("\nOver other apps: $overlay")
-            append(if (missing.isEmpty()) "\nAll declared runtime permissions granted." else "\n${missing.size} declared runtime permission(s) not yet granted -- tap \"Grant all runtime permissions\".")
+            append("\nDeclared permissions: ${declared.size}; PackageManager reports granted: $packageManagerGranted.")
+            append(if (missing.isEmpty()) "\nAll discovered declared dangerous runtime permissions are granted." else "\n${missing.size} declared dangerous runtime permission(s) still need consent or are restricted -- tap \"Grant all runtime permissions\" and review the audit.")
             append("\nSpecial access is managed separately by Android in the buttons above.")
             append("\nAgent bridge: port ${BridgeServer.PORT}, token ${brain.settings.bridgeToken} (turn on in Accessibility settings; set NEUROCLAW_PHONE_BRIDGE_TOKEN on the PC to this token)")
             append("\n${brain.status()}")
