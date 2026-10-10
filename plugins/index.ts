@@ -33,6 +33,7 @@ import { StorePlugin } from "./store.js";
 import { GithubPublishPlugin } from "./github-publish.js";
 import { ComputerAccessPlugin } from "./computer-access.js";
 import { HivePlugin } from "./hive.js";
+import { LinuxPermissionToolsPlugin } from "./linux-permission-plugin.js";
 import type { BasePlugin } from "../plugin_manager/sdk.js";
 
 export { LocationPlugin } from "./location.js";
@@ -68,6 +69,7 @@ export { StorePlugin } from "./store.js";
 export { GithubPublishPlugin } from "./github-publish.js";
 export { ComputerAccessPlugin } from "./computer-access.js";
 export { HivePlugin } from "./hive.js";
+export { LinuxPermissionToolsPlugin } from "./linux-permission-plugin.js";
 
 export function createPluginInstance(
   name: string,
@@ -119,6 +121,7 @@ export function createPluginInstance(
   if (lower === "github" || lower === "github-publish" || lower === "github publish") return new GithubPublishPlugin(definition);
   if (lower === "computer access" || lower === "computer-access") return new ComputerAccessPlugin(definition);
   if (lower === "hive") return new HivePlugin(definition);
+  if (lower === "linux permission tools" || lower === "linux-permission-tools") return new LinuxPermissionToolsPlugin(definition);
   throw new Error(`Unknown plugin: ${name}`);
 }
 
@@ -180,6 +183,7 @@ const pluginExtensions: Record<string, PluginDefinition> = {
   // already wired into NeuroclawSystem via collaborate()/solve()/
   // autonomousTask() but previously unreachable by name from a plain message.
   hive: { id: "hive", name: "Hive", type: "api-connection", capabilities: ["hive", "delegate", "summon"] },
+  "linux-permission-tools": { id: "linux-permission-tools", name: "Linux Permission Tools", type: "api-connection", capabilities: ["linux-permissions", "linux-file-read", "linux-file-write", "linux-chmod", "linux-acl-read", "linux-acl-write", "linux-service-control", "linux-selinux-context-read", "linux-apparmor-status-read", "lennox-admin-controls", "lennox-ordering", "lennox-inventory", "lennox-pricing-visibility", "lennox-warranty-returns"] },
 };
 
 const allExtensions: ExtensionManifest[] = Object.entries(pluginExtensions).map(([key, def]) => ({

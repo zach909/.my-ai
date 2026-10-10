@@ -4,7 +4,7 @@
  * It handles native OS interactions, file system access, and process management.
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, systemPreferences } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -1384,6 +1384,69 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
     }
   } catch (error) {
     return { success: false, error: error && error.message ? error.message : String(error) };
+// macOS privacy permissions. Electron can request only a subset directly;
+// other protected categories must be approved by the user in System Settings.
+const MACOS_PRIVACY_SETTINGS = {
+  location: 'Privacy_LocationServices',
+  contacts: 'Privacy_Contacts',
+  calendars: 'Privacy_Calendars',
+  reminders: 'Privacy_Reminders',
+  photos: 'Privacy_Photos',
+  camera: 'Privacy_Camera',
+  microphone: 'Privacy_Microphone',
+  speechRecognition: 'Privacy_SpeechRecognition',
+  accessibility: 'Privacy_Accessibility',
+  inputMonitoring: 'Privacy_ListenEvent',
+  screenRecording: 'Privacy_ScreenCapture',
+  fullDiskAccess: 'Privacy_AllFiles',
+  automation: 'Privacy_Automation',
+  bluetooth: 'Privacy_Bluetooth',
+  localNetwork: 'Privacy_LocalNetwork',
+};
+
+function getMacOSPermissionStatus() {
+  if (process.platform !== 'darwin') return { supported: false, platform: process.platform, permissions: {} };
+  const permissions = {};
+  for (const permission of ['camera', 'microphone', 'screen']) {
+    try {
+      permissions[permission] = systemPreferences && typeof systemPreferences.getMediaAccessStatus === 'function'
+        ? systemPreferences.getMediaAccessStatus(permission) : 'unsupported';
+    } catch (_) {
+      permissions[permission] = 'unknown';
+    }
+  }
+  for (const permission of Object.keys(MACOS_PRIVACY_SETTINGS)) {
+    if (!(permission in permissions)) permissions[permission] = 'settings-required';
+  }
+  // Do not claim a TCC category is granted when Electron cannot query it.
+  return { supported: true, platform: 'darwin', permissions };
+}
+
+ipcMain.handle('macos-permissions-status', async () => getMacOSPermissionStatus());
+
+ipcMain.handle('macos-request-media-access', async (event, mediaType) => {
+  if (process.platform !== 'darwin') return { success: false, status: 'unsupported', error: 'This request is only supported on macOS.' };
+  if (!['camera', 'microphone'].includes(mediaType)) return { success: false, status: 'unsupported', error: 'Only camera and microphone access can be requested through this API.' };
+  try {
+    if (!systemPreferences || typeof systemPreferences.askForMediaAccess !== 'function') {
+      return { success: false, status: 'unsupported', error: 'This Electron version does not expose the required permission API.' };
+    }
+    const granted = await systemPreferences.askForMediaAccess(mediaType);
+    return { success: true, status: granted ? 'granted' : 'denied' };
+  } catch (error) {
+    return { success: false, status: 'error', error: error.message };
+  }
+});
+
+ipcMain.handle('macos-open-privacy-settings', async (event, permission) => {
+  if (process.platform !== 'darwin') return { success: false, error: 'System Privacy Settings links are only supported on macOS.' };
+  const pane = MACOS_PRIVACY_SETTINGS[permission];
+  if (!pane) return { success: false, error: 'Unknown privacy settings category.' };
+  try {
+    await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?' + pane);
+    return { success: true };
+  } catch (error) {
+    return { success: false, error: error.message };
   }
 });
 
