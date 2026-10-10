@@ -17,6 +17,7 @@ object Permissions {
         add(Manifest.permission.RECORD_AUDIO) // voice-to-text
         add(Manifest.permission.CAMERA)
         add(Manifest.permission.READ_CONTACTS); add(Manifest.permission.WRITE_CONTACTS)
+        add(Manifest.permission.ACCESS_MEDIA_LOCATION)
         add(Manifest.permission.READ_CALENDAR); add(Manifest.permission.WRITE_CALENDAR)
         add(Manifest.permission.READ_CALL_LOG); add(Manifest.permission.WRITE_CALL_LOG)
         add(Manifest.permission.READ_PHONE_STATE); add(Manifest.permission.CALL_PHONE)
