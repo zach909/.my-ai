@@ -614,6 +614,18 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   focusStatus: { label: 'Focus status', service: 'FocusStatus', pane: 'Privacy_Focus', kind: 'settings' },
   gameCenterFriends: { label: 'Game Center friends list', service: 'GameCenterFriends', pane: null, kind: 'settings' },
   systemPolicyDeveloperFiles: { label: 'Protected developer files', service: 'SystemPolicyDeveloperFiles', pane: 'Privacy_DeveloperTools', kind: 'settings' },
+
+  // Exact service-name aliases from Apple's published protected-resource reset list.
+  addressBook: { label: 'Contacts (AddressBook service)', service: 'AddressBook', pane: 'Privacy_Contacts', kind: 'settings' },
+  developerTool: { label: 'Developer Tool execution', service: 'DeveloperTool', pane: 'Privacy_DeveloperTools', kind: 'settings' },
+  listenEvent: { label: 'Input Monitoring (ListenEvent service)', service: 'ListenEvent', pane: 'Privacy_ListenEvent', kind: 'settings' },
+  mediaLibrary: { label: 'Apple Music media library', service: 'MediaLibrary', pane: 'Privacy_Media', kind: 'settings' },
+  systemPolicyAllFiles: { label: 'Full Disk Access (SystemPolicyAllFiles service)', service: 'SystemPolicyAllFiles', pane: 'Privacy_AllFiles', kind: 'settings' },
+  systemPolicyDesktopFolder: { label: 'Desktop folder protected access', service: 'SystemPolicyDesktopFolder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyDocumentsFolder: { label: 'Documents folder protected access', service: 'SystemPolicyDocumentsFolder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyDownloadsFolder: { label: 'Downloads folder protected access', service: 'SystemPolicyDownloadsFolder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyNetworkVolumes: { label: 'Network volumes protected access', service: 'SystemPolicyNetworkVolumes', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyRemovableVolumes: { label: 'Removable volumes protected access', service: 'SystemPolicyRemovableVolumes', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
 };
 
 function getMacOSPermissionToolStatus(permission) {
