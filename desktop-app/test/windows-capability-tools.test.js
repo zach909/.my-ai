@@ -15,6 +15,7 @@ const tools = listTools();
 const ids = tools.map((tool) => tool.id);
 check(tools.length >= 230, 'catalog covers 230+ individually named Windows capability tools');
 const preload = fs.readFileSync(path.join(__dirname, '../src/preload/preload.js'), 'utf8');
+const mainsource = fs.readFileSync(path.join(__dirname, '../src/main/main.js'), 'utf8');
 check(ids.every((id) => new RegExp('^\\s{4}' + id + ':\\s*\\(', 'm').test(preload)), 'every registry tool has an individual preload API method');
 check(new Set(ids).size === ids.length, 'every tool ID is unique');
 check(tools.every((tool) => tool.toolName === 'windows.' + tool.id), 'every tool has a stable namespaced tool name');
@@ -135,6 +136,10 @@ check(getTool('systemSettings').implementation === 'native-windows', 'basic Wind
 
 check(getToolStatus('contacts').status === 'adapter-required', 'unsupported provider tools report adapter-required status');
 check(getTool('deleteFile').implementation === 'native-consent', 'file deletion is implemented with native selection and explicit confirmation');
+check(getTool('watchFiles').implementation === 'native-consent', 'folder monitoring requires user-selected scope and explicit confirmation');
+check(getTool('printToPdf').implementation === 'native-consent', 'PDF export uses a save dialog, confirmation, and no-overwrite behavior');
+check(getTool('manageStartup').implementation === 'native-consent', 'startup setting changes only this app login item after confirmation');
+check(mainsource.includes("case 'watchFiles':"), 'file watching has a native handler');
 check(getTool('revokeAppConsent').implementation === 'adapter-required', 'consent revocation is not falsely marked implemented');
 check(tools.every((tool) => ['native','native-windows','browser-permission','native-consent','user-consent','adapter-required','admin-or-adapter','manifest'].includes(tool.implementation)), 'every capability declares a known implementation class');
 
