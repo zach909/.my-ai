@@ -90,6 +90,13 @@ class MainActivity : Activity() {
                 status.text = "Requesting declared runtime permissions. Answer the system dialogs; some permissions require separate Settings pages or special eligibility."
             }
         }
+        val backgroundPermissions = Button(this).apply {
+            text = "Request background location / sensor access"
+            setOnClickListener {
+                Permissions.requestBackground(this@MainActivity)
+                status.text = "Requesting eligible background permissions separately. Android may require foreground permission first or a separate Settings approval."
+            }
+        }
         val sync = Button(this).apply {
             text = "Sync now"
             setOnClickListener {
@@ -130,6 +137,9 @@ class MainActivity : Activity() {
         specialAccess.addView(settingsButton("Do Not Disturb access", "android.settings.NOTIFICATION_POLICY_ACCESS_SETTINGS"))
         specialAccess.addView(settingsButton("App details / other controls", AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, true))
         specialAccess.addView(settingsButton("Picture-in-picture settings", "android.settings.PICTURE_IN_PICTURE_SETTINGS", true))
+        specialAccess.addView(settingsButton("NFC settings", "android.settings.NFC_SETTINGS"))
+        specialAccess.addView(settingsButton("Privacy settings", "android.settings.PRIVACY_SETTINGS"))
+        specialAccess.addView(settingsButton("App permission settings", AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, true))
         specialAccess.addView(settingsButton("Screen capture consent", "android.settings.SETTINGS"))
 
         val content = LinearLayout(this).apply {
@@ -139,6 +149,7 @@ class MainActivity : Activity() {
             addView(LinearLayout(context).apply { addView(save); addView(webApp); addView(overlay) })
             addView(LinearLayout(context).apply { addView(start); addView(stop); addView(sync) })
             addView(grant)
+            addView(backgroundPermissions)
             addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
             addView(specialAccess)
             addView(status)
