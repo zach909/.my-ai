@@ -34,7 +34,10 @@ import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import { writeJsonAtomic } from "./atomic-write.js";
-import type { HyperDimensionalEngine, ZipLoopInterface } from "./onebrain.js";
+import { zipLoopIdsFor, type HyperDimensionalEngine, type ZipLoopInterface } from "./onebrain.js";
+
+/** The six neurons the Zip Loop drives and reads (bit in, bit out, and the ramp). */
+const ZIP_DOORWAY_IDS: readonly number[] = Object.values(zipLoopIdsFor({ getNeuronCount: () => 0 })).filter((v): v is number => typeof v === "number");
 
 /** What the search needs from a mesh. Small so a test can stand in a toy network for the real one. */
 export interface ContextProbe {
@@ -91,12 +94,19 @@ function norm(v: ArrayLike<number>): number {
   return Math.sqrt(s);
 }
 
+/**
+ * How alike two movements of the neurons are: the same direction AND the same
+ * amount. Direction alone would call a half-sized move a perfect match, but
+ * the point is to leave the neurons in the same state, not one pointing the
+ * same way.
+ */
 function cosine(a: ArrayLike<number>, b: ArrayLike<number>): number {
   const na = norm(a), nb = norm(b);
   if (na === 0 || nb === 0) return 0;
   let dot = 0;
   for (let i = 0; i < a.length; i++) dot += a[i] * b[i];
-  return Math.max(-1, Math.min(1, dot / (na * nb)));
+  const direction = Math.max(-1, Math.min(1, dot / (na * nb)));
+  return direction * (Math.min(na, nb) / Math.max(na, nb));
 }
 
 /**
@@ -213,14 +223,60 @@ export async function primeWithReplay(
   }
 }
 
-/** The real mesh behind the Zip Loop, as a probe. */
-export function zipLoopProbe(engine: HyperDimensionalEngine, zip: ZipLoopInterface): ContextProbe {
+/** How many neurons besides the doorway's own to watch. */
+export const WATCHED_NEURONS = 24;
+
+/** The two sides of the doorway the probe needs from the engine. */
+type ProbeEngine = Pick<HyperDimensionalEngine,
+  "getNeuronCount" | "getDimensions" | "getConnectionWeight" | "readNeuronContent" | "getNeuronEnergy" | "captureNetworkState" | "restoreNetworkState">;
+
+/**
+ * The neurons wired most tightly to the Zip Loop's own neurons. The mesh is
+ * all-to-all, so everything is connected to the doorway somehow; what matters
+ * is how strongly. These are the ones that feel a bit going in and are what
+ * the doorway's output reads from, so their state is the context.
+ */
+export function neuronsTiedToDoorway(engine: ProbeEngine, doorway: readonly number[], count: number = WATCHED_NEURONS): number[] {
+  const n = engine.getNeuronCount();
+  const dims = engine.getDimensions();   // content dimensions; the input flag is dimension 0 of the weights too, so the loop runs to <= dims
+  const own = new Set(doorway);
+  const scored: Array<{ id: number; strength: number }> = [];
+  for (let id = 0; id < n; id++) {
+    if (own.has(id)) continue;
+    let strength = 0;
+    for (const d of doorway) {
+      if (d >= n) continue;
+      for (let dim = 0; dim <= dims; dim++) {
+        strength += Math.abs(engine.getConnectionWeight(id, d, dim)) + Math.abs(engine.getConnectionWeight(d, id, dim));
+      }
+    }
+    scored.push({ id, strength });
+  }
+  scored.sort((a, b) => b.strength - a.strength || a.id - b.id);
+  return [...doorway.filter(d => d < n), ...scored.slice(0, count).map(s => s.id)];
+}
+
+/**
+ * The real mesh behind the Zip Loop, as a probe. What it reads is the whole
+ * state of the doorway's neurons and the ones wired most tightly to them
+ * (every content dimension and the energy of each), not every neuron in the
+ * mesh: those are the ones a replay has to put back.
+ */
+export function zipLoopProbe(engine: HyperDimensionalEngine, zip: ZipLoopInterface, doorway: readonly number[] = ZIP_DOORWAY_IDS): ContextProbe {
+  const watched = neuronsTiedToDoorway(engine, doorway);
+  const dims = engine.getDimensions();
+  const scratch = new Float32Array(dims);
   return {
     feedBit: bit => zip.sendBit(bit),
     signature: () => {
-      const n = engine.getNeuronCount();
-      const out = new Float64Array(n);
-      for (let i = 0; i < n; i++) out[i] = engine.getNeuronEnergy(i);
+      const out = new Float64Array(watched.length * (dims + 1));
+      let at = 0;
+      for (const id of watched) {
+        const wrote = engine.readNeuronContent(id, scratch);
+        for (let d = 0; d < wrote; d++) out[at++] = scratch[d];
+        at += dims - wrote;
+        out[at++] = engine.getNeuronEnergy(id);
+      }
       return out;
     },
     checkpoint: () => engine.captureNetworkState(),

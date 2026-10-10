@@ -11,7 +11,10 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import path from 'node:path'
+import { HyperDimensionalEngine, ZipLoopInterface, zipLoopIdsFor } from '../../models && skills/core/onebrain.js'
 import {
+  neuronsTiedToDoorway,
+  zipLoopProbe,
   compressContext,
   primeWithReplay,
   ReplayStore,
@@ -70,14 +73,23 @@ describe('compressContext', () => {
   })
 
   it('searches bit by bit when the end of the history is not close enough, still within its limits', async () => {
-    const mesh = toyMesh(0.999)   // every bit counts almost equally, so a tail is a poor stand-in
+    const mesh = toyMesh(0.95)   // about the last 60 bits matter, so short tails are only near
     const result = await compressContext(mesh.probe, history(150), {
-      maxBytes: 2, target: 0.99999, minimum: 0.5, yieldTo: noYield,
+      maxBytes: 8, target: 0.9999999, minimum: 0.5, yieldTo: noYield,
     })
 
     expect(result).not.toBeNull()
-    expect(result!.bytes.length).toBeLessThanOrEqual(2)
+    expect(result!.bytes.length).toBeLessThanOrEqual(8)
     expect(result!.trials).toBeGreaterThan(5)
+    expect(mesh.state()).toEqual(mesh.start)
+  })
+
+  it('does not call a replay a match just because it points the same way: it has to move the neurons as far', async () => {
+    const mesh = toyMesh(0.999)   // all 150 bytes pile up; one byte moves a tiny fraction as far
+    const result = await compressContext(mesh.probe, history(150), {
+      maxBytes: 1, target: 0.97, minimum: 0.5, yieldTo: noYield,
+    })
+    expect(result).toBeNull()
     expect(mesh.state()).toEqual(mesh.start)
   })
 
@@ -174,5 +186,48 @@ describe('ReplayStore', () => {
   it('digests the same text the same way', () => {
     expect(digestOf('abc')).toBe(digestOf('abc'))
     expect(digestOf('abc')).not.toBe(digestOf('abd'))
+  })
+})
+
+describe('on the real mesh', () => {
+  const config = () => ({
+    neuronCount: 16, dimensions: 8, propagationSteps: 24, convergenceThreshold: 0.01,
+    hyperGain: 1, hyperAdd: 1, hyperWaveGain: 1, hyperWaveAdd: 1,
+    waveGain: 0.1, connectionBias: true,
+  })
+  const doorway = [0, 1, 2, 3, 4, 5]
+
+  it('watches the doorway neurons first, then the ones wired most tightly to them', () => {
+    const engine = new HyperDimensionalEngine(config())
+    // 9 is tied to two of the doorway's neurons as hard as a weight can be, 10 to one, so
+    // they beat whatever small weights the mesh started with.
+    for (let dim = 0; dim <= 8; dim++) {
+      engine.setConnectionWeight(9, 0, dim, 2)
+      engine.setConnectionWeight(9, 1, dim, 2)
+      engine.setConnectionWeight(10, 5, dim, 2)
+    }
+    const watched = neuronsTiedToDoorway(engine, doorway, 2)
+
+    expect(watched.slice(0, 6)).toEqual(doorway)
+    expect(watched.slice(6)).toEqual([9, 10])
+    expect(neuronsTiedToDoorway(engine, doorway, 100).length).toBe(16)
+  })
+
+  it('reads the whole state of those neurons, and finding a replay leaves the mesh as it was', async () => {
+    const engine = new HyperDimensionalEngine(config())
+    const zip = new ZipLoopInterface(engine, zipLoopIdsFor(engine))
+    const probe = zipLoopProbe(engine, zip)
+
+    expect(probe.signature().length).toBe(16 * (8 + 1))   // every neuron is within the 24 watched, each its content plus its energy
+    const before = Array.from(probe.signature())
+    const result = await compressContext(probe, new TextEncoder().encode('Help me plan a small garden'), {
+      maxMs: 60_000, yieldTo: noYield,
+    })
+
+    expect(Array.from(probe.signature())).toEqual(before)
+    if (result) {
+      expect(result.bytes.length).toBeLessThan(27)
+      expect(result.similarity).toBeGreaterThanOrEqual(0.85)
+    }
   })
 })
