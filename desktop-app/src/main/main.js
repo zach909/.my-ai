@@ -777,6 +777,51 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
           packagePath: app.getAppPath(),
           note: 'This Electron desktop app does not automatically receive UWP/MSIX capabilities. Manifest capability requirements depend on package identity, trust level, Windows version, and API. This reports context only, not granted capabilities.',
         };
+      case 'windowsTokenPrivileges': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('whoami.exe', ['/priv'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        return { success: true, privileges: output.slice(0, 30000), note: 'Read-only view of this process token; privileges are not enabled or changed.' };
+      }
+      case 'windowsFirewallStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netsh.exe', ['advfirewall', 'show', 'allprofiles'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        return { success: true, profiles: output.slice(0, 30000) };
+      }
+      case 'windowsDefenderStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = 'Get-MpComputerStatus | Select-Object AMServiceEnabled,AntivirusEnabled,AntispywareEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled,AntivirusSignatureLastUpdated | ConvertTo-Json -Compress';
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, status: JSON.parse(output.trim()) };
+      }
+      case 'windowsServiceStatus':
+      case 'windowsServiceSecurityDescriptor': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const serviceName = args.serviceName;
+        if (typeof serviceName !== 'string' || !/^[A-Za-z0-9_.-]{1,128}$/.test(serviceName)) {
+          return { success: false, error: 'serviceName must be a simple Windows service name.' };
+        }
+        const command = id === 'windowsServiceStatus' ? 'query' : 'sdshow';
+        const output = execFileSync('sc.exe', [command, serviceName], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, serviceName, output: output.slice(0, 30000), readOnly: true };
+      }
+      case 'windowsAccountPolicy': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('net.exe', ['accounts'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        return { success: true, policy: output.slice(0, 20000), note: 'Local summary only; domain policy can override these values.' };
+      }
+      case 'windowsNetworkShares': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const mapped = execFileSync('net.exe', ['use'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
+        let localShares = '';
+        try { localShares = execFileSync('net.exe', ['share'], { encoding: 'utf8', timeout: 7000, windowsHide: true }); } catch {}
+        return { success: true, mappedShares: mapped.slice(0, 20000), localShares: localShares.slice(0, 20000) };
+      }
+      case 'windowsPowerShellExecutionPolicy': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = 'Get-ExecutionPolicy -List | Select-Object Scope,ExecutionPolicy | ConvertTo-Json -Compress';
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, policies: JSON.parse(output.trim()), note: 'Reports policy only; does not change or bypass it.' };
+      }
       default:
         return {
           success: false,
