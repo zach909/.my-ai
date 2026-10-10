@@ -25,20 +25,33 @@ export class PermissionDeniedError extends Error {
  * inert capabilities like "coding" or "skill-maker").
  */
 const SENSITIVE_PERMISSIONS: ReadonlySet<ExtensionPermission> = new Set([
-  "camera",
-  "microphone",
-  "voice-activation",
-  "location",
-  "contacts",
-  "email",
-  "phone-calls",
-  "call-history",
-  "messaging",
-  "file-system",
-  "browser",
-  "account-info",
-  "screenshots-screen-recording",
-  "passkeys",
+  // Personal data, sensors, communications, and broad data access.
+  "camera", "microphone", "voice-activation", "location", "contacts", "email",
+  "phone-calls", "call-history", "messaging", "file-system", "browser",
+  "account-info", "screenshots-screen-recording", "passkeys",
+  // Linux access that can expose private data or alter the host/security boundary.
+  "linux-file-read", "linux-file-write", "linux-file-execute",
+  "linux-file-create-delete", "linux-file-metadata", "linux-chmod", "linux-chown",
+  "linux-suid-sgid-sticky", "linux-acl-read", "linux-acl-write",
+  "linux-extended-attributes", "linux-immutable-append-only", "linux-mount-unmount",
+  "linux-removable-storage", "linux-user-group-read", "linux-user-group-admin",
+  "linux-sudo-admin", "linux-process-inspect", "linux-process-control",
+  "linux-service-control", "linux-package-management", "linux-kernel-modules",
+  "linux-sysctl", "linux-hostname-time-power", "linux-boot-configuration",
+  "linux-scheduled-jobs", "linux-environment-variables", "linux-system-logs",
+  "linux-audit-logs", "linux-system-information", "linux-backup-restore",
+  "linux-capabilities-admin", "linux-selinux-context-read", "linux-selinux-policy-admin",
+  "linux-apparmor-status-read", "linux-apparmor-policy-admin",
+  "linux-security-policy-admin", "linux-firewall-admin", "linux-network-config",
+  "linux-dbus-control", "linux-device-access", "linux-container-control",
+  "linux-namespace-control", "linux-credential-store", "linux-ssh-key-access",
+  "linux-certificate-store", "linux-cryptographic-key-access",
+  "linux-screen-capture", "linux-audio-device", "linux-input-monitoring",
+  "linux-keyboard-mouse-control", "linux-clipboard", "linux-display-settings",
+  "linux-printer-access", "linux-bluetooth", "linux-wifi",
+  // Business-system permissions can expose or change commercially sensitive records.
+  "lennox-admin-controls", "lennox-ordering", "lennox-inventory",
+  "lennox-pricing-visibility", "lennox-warranty-returns",
 ]);
 
 export class PermissionGuard {
