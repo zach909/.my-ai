@@ -75,9 +75,14 @@ object Permissions {
         return info.requestedPermissions?.toList().orEmpty().distinct().sorted()
     }
 
-    fun requestBackground(activity: Activity, requestCode: Int = 101) {
-        val need = missing(activity).filter { it in BACKGROUND }
-        if (need.isNotEmpty()) activity.requestPermissions(need.toTypedArray(), requestCode)
+    fun requestBackgroundLocation(activity: Activity, requestCode: Int = 101) {
+        val p = Manifest.permission.ACCESS_BACKGROUND_LOCATION
+        if (Build.VERSION.SDK_INT >= 29 && !has(activity, p)) activity.requestPermissions(arrayOf(p), requestCode)
+    }
+
+    fun requestBackgroundSensors(activity: Activity, requestCode: Int = 102) {
+        val p = Manifest.permission.BODY_SENSORS_BACKGROUND
+        if (Build.VERSION.SDK_INT >= 34 && !has(activity, p)) activity.requestPermissions(arrayOf(p), requestCode)
     }
 
     fun has(activity: Activity, permission: String): Boolean =
