@@ -191,3 +191,12 @@ Additional read-only Windows handlers cover removable-drive metadata, Ethernet a
 Additional handlers report the current account and group metadata, visible camera/keyboard/mouse/HID device metadata, bounded process CPU/memory metadata, app-owned log file metadata, tracked child processes, and versions of a fixed set of developer tools. Git inspection is restricted to a folder selected by the user and read-only Git commands. Clipboard image reads and clipboard clearing each require a separate confirmation dialog. Registry inspection is restricted to predefined non-secret keys; arbitrary registry paths and credential stores are not accepted.
 
 Settings shortcuts open the relevant Windows Settings page for app permissions, location, accessibility, default apps, sound, date/time, and general privacy controls. Opening a settings page does not change the setting or grant the app access. Generic UAC elevation remains marked as requiring a dedicated reviewed helper; the app does not expose a generic elevated command runner.
+
+
+## Implemented media, speech, and in-app automation adapters
+
+The preload now implements screen capture through Chromium's visible screen-sharing picker and returns one image frame before stopping the capture stream. System-audio capture uses the visible source picker and records a bounded sample (default 5 seconds, maximum 15 seconds); audio availability depends on the selected source and the Electron/Chromium/Windows version. Both return an explicit unsupported or canceled result rather than claiming access when the runtime cannot provide it.
+
+Speech recognition and wake-word detection use the runtime's SpeechRecognition API when available. These sessions are started by a direct tool invocation, bounded in duration, and return an unsupported result if the API is absent. The underlying recognition provider may use network services; these tools must not be described as guaranteed offline speech recognition. Wake-word listening is not a permanent background listener and defaults to a 15-second session (maximum 60 seconds).
+
+The accessibility tool returns a bounded snapshot of visible controls in the current .my-ai renderer, not a system-wide UI Automation tree. Keyboard automation only types into the currently focused editable field in the current app, with a 5,000-character limit. Pointer automation only clicks a uniquely labeled visible button or link in the current app. These implementations do not monitor global keystrokes, inject system-wide input, or control other applications.
