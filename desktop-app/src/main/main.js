@@ -695,6 +695,88 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         await shell.openExternal('ms-settings:privacy');
         return { success: true, opened: 'ms-settings:privacy' };
       }
+      case 'windowsSecurityContext':
+      case 'uacStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const account = execFileSync('whoami.exe', ['/user'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        const groups = execFileSync('whoami.exe', ['/groups'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        const elevated = /S-1-16-12288|S-1-16-16384/.test(groups);
+        return {
+          success: true,
+          user: account.trim().slice(0, 4000),
+          groups: groups.trim().slice(0, 24000),
+          elevated,
+          note: 'Reports the current process token only; this does not grant or change privileges.',
+        };
+      }
+      case 'fileAccessControl': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const selected = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile', 'openDirectory'], title: 'Choose a file or folder to inspect its Windows ACL',
+        });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const output = execFileSync('icacls.exe', [selected.filePaths[0]], {
+          encoding: 'utf8', timeout: 5000, windowsHide: true, maxBuffer: 1024 * 1024,
+        });
+        return { success: true, path: selected.filePaths[0], acl: output.slice(0, 50000) };
+      }
+      case 'aclPermissionCheck': {
+        const selected = await dialog.showOpenDialog(mainWindow, {
+          properties: ['openFile', 'openDirectory'], title: 'Choose a path to check current-account access',
+        });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const target = selected.filePaths[0];
+        const result = { success: true, path: target, read: false, write: false, execute: false };
+        try { fs.accessSync(target, fs.constants.R_OK); result.read = true; } catch {}
+        try { fs.accessSync(target, fs.constants.W_OK); result.write = true; } catch {}
+        try { fs.accessSync(target, fs.constants.X_OK); result.execute = true; } catch {}
+        result.note = 'Best-effort access check for this process; actual access can differ for child processes, network paths, or later operations.';
+        return result;
+      }
+      case 'windowsPermissionSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const pages = {
+          camera: 'ms-settings:privacy-webcam',
+          microphone: 'ms-settings:privacy-microphone',
+          location: 'ms-settings:privacy-location',
+          contacts: 'ms-settings:privacy-contacts',
+          calendar: 'ms-settings:privacy-calendar',
+          notifications: 'ms-settings:notifications',
+          filesystem: 'ms-settings:privacy-broadfilesystemaccess',
+          general: 'ms-settings:privacy',
+        };
+        const page = typeof args.capability === 'string' ? args.capability : 'general';
+        if (!Object.prototype.hasOwnProperty.call(pages, page)) {
+          return { success: false, error: 'Unsupported settings page. Use camera, microphone, location, contacts, calendar, notifications, filesystem, or general.' };
+        }
+        await shell.openExternal(pages[page]);
+        return { success: true, opened: pages[page] };
+      }
+      case 'windowsUpdateSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        await shell.openExternal('ms-settings:windowsupdate');
+        return { success: true, opened: 'ms-settings:windowsupdate' };
+      }
+      case 'windowsSecuritySettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        await shell.openExternal('windowsdefender:');
+        return { success: true, opened: 'windowsdefender:' };
+      }
+      case 'networkProfileStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netsh.exe', ['wlan', 'show', 'interfaces'], {
+          encoding: 'utf8', timeout: 5000, windowsHide: true, maxBuffer: 1024 * 1024,
+        });
+        return { success: true, wifiInterfaceStatus: output.slice(0, 30000) };
+      }
+      case 'windowsCapabilityManifest':
+        return {
+          success: true,
+          platform: process.platform,
+          packaged: Boolean(app.isPackaged),
+          packagePath: app.getAppPath(),
+          note: 'This Electron desktop app does not automatically receive UWP/MSIX capabilities. Manifest capability requirements depend on package identity, trust level, Windows version, and API. This reports context only, not granted capabilities.',
+        };
       default:
         return {
           success: false,
