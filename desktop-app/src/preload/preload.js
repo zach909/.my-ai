@@ -22,6 +22,27 @@ contextBridge.exposeInMainWorld('electronAPI', {
   getMacOSPermissionsStatus: () => ipcRenderer.invoke('macos-permissions-status'),
   requestMacOSMediaAccess: (mediaType) => ipcRenderer.invoke('macos-request-media-access', mediaType),
   openMacOSPrivacySettings: (permission) => ipcRenderer.invoke('macos-open-privacy-settings', permission),
+  // Individual permission tools: electronAPI.macOSPermissionTools.<toolId>.status/request/openSettings()
+  // The registry is generated from stable tool IDs, with all operations mediated by the main process.
+  getMacOSPermissionTools: () => ipcRenderer.invoke('macos-permission-tools-list'),
+  macOSPermissionTool: (permission, action, options) => ipcRenderer.invoke('macos-permission-tool', permission, action, options),
+  macOSPermissionTools: Object.fromEntries([
+    'location','contacts','calendars','reminders','photos','camera','microphone','speechRecognition',
+    'bluetooth','localNetwork','automation','accessibility','inputMonitoring','screenRecording','fullDiskAccess',
+    'filesAndFolders','desktopFolder','documentsFolder','downloadsFolder','networkVolumes','removableVolumes',
+    'mediaAppleMusic','homeKit','focus','motionFitness','developerTools','remoteDesktop','notifications','keychain',
+    'administrator','appManagement','systemEvents','shortcuts','voiceActivation','systemAudio','fileSelection',
+    'directorySelection','cameraDevices','microphoneDevices','locationWhenInUse','calendarWrite','contactsWrite',
+    'photosAddOnly','networkClient','networkServer','usbAccessories','printing','screenCapture','audioInput',
+    'audioOutput','biometricAuthentication','passwordAutoFill','systemConfiguration','kernelExtensions',
+    'backgroundItems','accessibilityAutomation'
+  ].map((id) => [id, {
+    status: () => ipcRenderer.invoke('macos-permission-tool', id, 'status'),
+    request: () => ipcRenderer.invoke('macos-permission-tool', id, 'request'),
+    openSettings: () => ipcRenderer.invoke('macos-permission-tool', id, 'open-settings'),
+    selectFile: (options) => ipcRenderer.invoke('macos-permission-tool', id, 'select-file', options),
+    selectDirectory: (options) => ipcRenderer.invoke('macos-permission-tool', id, 'select-directory', options),
+  }])) ,
   
   // Process Management
   spawnProcess: (command, args, options) => 
