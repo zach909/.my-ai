@@ -49,12 +49,18 @@ object Permissions {
         if (Build.VERSION.SDK_INT >= 34) add(Manifest.permission.BODY_SENSORS_BACKGROUND)
     }.distinct().toTypedArray()
 
+    /** Android requires background location and background body sensors to be requested separately. */
+    val BACKGROUND: Set<String> = buildSet {
+        if (Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
+        if (Build.VERSION.SDK_INT >= 34) add(Manifest.permission.BODY_SENSORS_BACKGROUND)
+    }
+
     fun missing(activity: Activity): List<String> =
         ALL.filter { activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
 
     /** Ask for every one not already granted, in a single system dialog batch. */
     fun requestAll(activity: Activity, requestCode: Int = 100) {
-        val need = missing(activity)
+        val need = missing(activity).filterNot { it in BACKGROUND }
         if (need.isNotEmpty()) activity.requestPermissions(need.toTypedArray(), requestCode)
     }
 
@@ -67,6 +73,11 @@ object Permissions {
             activity.packageManager.getPackageInfo(activity.packageName, PackageManager.GET_PERMISSIONS)
         }
         return info.requestedPermissions?.toList().orEmpty().distinct().sorted()
+    }
+
+    fun requestBackground(activity: Activity, requestCode: Int = 101) {
+        val need = missing(activity).filter { it in BACKGROUND }
+        if (need.isNotEmpty()) activity.requestPermissions(need.toTypedArray(), requestCode)
     }
 
     fun has(activity: Activity, permission: String): Boolean =
