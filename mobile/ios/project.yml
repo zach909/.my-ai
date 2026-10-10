@@ -46,6 +46,8 @@ targets:
           - _printer._tcp
         NSLocationWhenInUseUsageDescription: "Used only if you ask NeuroClaw something that needs your location."
         NSLocationAlwaysAndWhenInUseUsageDescription: "Used only if you ask NeuroClaw something that needs your location, including while the app isn't open."
+        NSLocationTemporaryUsageDescriptionDictionary:
+          AgentTask: "Used only when you ask for a task that needs a more precise location than approximate location."
         NSContactsUsageDescription: "Used only if you ask NeuroClaw to look up or work with a contact."
         NSCalendarsFullAccessUsageDescription: "Used only if you ask NeuroClaw to read or manage your calendar events."
         NSCalendarsUsageDescription: "Used only if you ask NeuroClaw to read or manage your calendar events on older supported iOS versions."
