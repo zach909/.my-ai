@@ -1087,6 +1087,83 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
         return { success: true, windows: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Visible window metadata only; this does not read other applications’ content.' };
       }
+      case 'accountInfo':
+      case 'userAccountMetadata': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const user = execFileSync('whoami.exe', ['/user'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        const groups = execFileSync('whoami.exe', ['/groups'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        return { success: true, user: user.slice(0, 8000), groups: groups.slice(0, 20000), readOnly: true, note: 'Identity and group metadata only; no credentials or authentication tokens are returned.' };
+      }
+      case 'cameraDevices':
+      case 'inputDeviceStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = id === 'cameraDevices'
+          ? "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -in @('Camera','Image') -or $_.FriendlyName -match 'camera|webcam' } | Select-Object Status,Class,FriendlyName,InstanceId | ConvertTo-Json -Compress"
+          : "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.Class -in @('Keyboard','Mouse','HIDClass') } | Select-Object Status,Class,FriendlyName,InstanceId | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 3 * 1024 * 1024 });
+        return { success: true, devices: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Device metadata only; no images or keystrokes are captured.' };
+      }
+      case 'processMetrics': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-Process -ErrorAction SilentlyContinue | Sort-Object WorkingSet64 -Descending | Select-Object -First 100 ProcessName,Id,CPU,WorkingSet64,PrivateMemorySize64,StartTime | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, processes: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Process metadata only; process memory and credentials are not inspected.' };
+      }
+      case 'registryRead':
+      case 'registryInspect': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const allowedKeys = {
+          userStartup: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+          machineStartup: 'HKLM\\Software\\Microsoft\\Windows\\CurrentVersion\\Run',
+          userShellFolders: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Explorer\\User Shell Folders',
+          userInternetSettings: 'HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Internet Settings',
+        };
+        if (typeof args.key !== 'string' || !Object.prototype.hasOwnProperty.call(allowedKeys, args.key)) {
+          return { success: false, error: 'Choose an allowlisted registry category: userStartup, machineStartup, userShellFolders, or userInternetSettings.' };
+        }
+        const output = execFileSync('reg.exe', ['query', allowedKeys[args.key]], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, category: args.key, registryOutput: output.slice(0, 30000), readOnly: true, note: 'Only predefined non-secret registry locations are supported.' };
+      }
+      case 'windowsAppCapabilities':
+        return {
+          success: true, platform: process.platform, packaged: Boolean(app.isPackaged),
+          packagePath: app.getAppPath(),
+          note: 'Electron packaging context only. This does not claim that MSIX/AppContainer capabilities are declared or granted.',
+        };
+      case 'permissionAuditLog':
+        return { success: true, platform: process.platform, tools: windowsCapabilityTools.listTools(), note: 'Capability catalog and implementation states only; not a log of OS permission grants.' };
+      case 'permissionControls':
+      case 'appPermissions':
+      case 'locationSettings':
+      case 'accessibilitySettings':
+      case 'defaultApps':
+      case 'systemSoundSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const pages = {
+          permissionControls: 'ms-settings:privacy',
+          appPermissions: 'ms-settings:privacy',
+          locationSettings: 'ms-settings:privacy-location',
+          accessibilitySettings: 'ms-settings:easeofaccess',
+          defaultApps: 'ms-settings:defaultapps',
+          systemSoundSettings: 'ms-settings:sound',
+        };
+        await shell.openExternal(pages[id]);
+        return { success: true, opened: pages[id], note: 'The user remains in control of Windows Settings.' };
+      }
+      case 'timeZoneSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const timezone = execFileSync('tzutil.exe', ['/g'], { encoding: 'utf8', timeout: 5000, windowsHide: true });
+        await shell.openExternal('ms-settings:dateandtime');
+        return { success: true, timeZone: timezone.trim(), opened: 'ms-settings:dateandtime', readOnly: true };
+      }
+      case 'localeSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-WinSystemLocale | Select-Object Name,DisplayName | ConvertTo-Json -Compress; Write-Output '---CURRENT-CULTURE---'; Get-Culture | Select-Object Name,DisplayName,DateTimeFormat | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, localeInfo: output.slice(0, 20000), readOnly: true };
+      }
+      case 'devicePowerStatus':
+        return { success: true, platform: process.platform, note: 'See powerBattery for supported battery telemetry.', ...(process.platform === 'win32' ? { batteryTool: 'powerBattery' } : { status: 'unsupported-on-platform' }) };
       case 'windowsUpdateStatus': {
         if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
         const command = "Get-Service -Name wuauserv -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json -Compress";
