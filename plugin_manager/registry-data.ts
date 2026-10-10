@@ -18,6 +18,7 @@ export const PLUGIN_LIST: string[] = [
   "Other Devices",
   "App Diagnostics",
   "File System",
+  "Linux Permission Tools",
   "Screenshots",
   "Passkeys",
   "Browser",
@@ -104,5 +105,6 @@ export const DEFAULT_PLUGIN_DEFINITIONS: Record<string, PluginDefinition> = {
   notifications: { id: "notifications", name: "Notifications", type: "api-connection", capabilities: ["notifications"] },
   browser: { id: "browser", name: "Browser", type: "api-connection", capabilities: ["browser"] },
   "file-system": { id: "file-system", name: "File System", type: "api-connection", capabilities: ["file-system"] },
+  "linux-permission-tools": { id: "linux-permission-tools", name: "Linux Permission Tools", type: "api-connection", capabilities: ["linux-permissions", "linux-file-read", "linux-file-write", "linux-chmod", "linux-acl-read", "linux-acl-write", "linux-service-control", "linux-selinux-context-read", "linux-apparmor-status-read", "lennox-admin-controls", "lennox-ordering", "lennox-inventory", "lennox-pricing-visibility", "lennox-warranty-returns"] },
   coding: { id: "coding", name: "Coding Skill", type: "skill-expert", capabilities: ["coding"] },
 };
