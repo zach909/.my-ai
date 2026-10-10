@@ -621,3 +621,155 @@ private final class BluetoothStatus: NSObject, CBCentralManagerDelegate {
         found.append(["id": peripheral.identifier.uuidString, "name": peripheral.name ?? (advertisementData[CBAdvertisementDataLocalNameKey] as? String ?? ""), "rssi": RSSI.intValue])
     }
 }
+
+
+@MainActor
+private final class DocumentPickerFlow: NSObject, UIDocumentPickerDelegate {
+    private static var active: DocumentPickerFlow?
+    private var continuation: CheckedContinuation<(Int, [String: Any]), Never>?
+    private var exportURL: URL?
+
+    static func pickFile() async -> (Int, [String: Any]) {
+        await withCheckedContinuation { continuation in
+            guard let presenter = topPresenter() else {
+                continuation.resume(returning: (409, ["error": "foreground_ui_required"]))
+                return
+            }
+            let flow = DocumentPickerFlow()
+            flow.continuation = continuation
+            active = flow
+            let picker = UIDocumentPickerViewController(forOpeningContentTypes: [UTType.item], asCopy: false)
+            picker.allowsMultipleSelection = false
+            picker.delegate = flow
+            presenter.present(picker, animated: true)
+        }
+    }
+
+    static func exportFile(_ arguments: [String: Any]) async -> (Int, [String: Any]) {
+        guard let encoded = arguments["data_base64"] as? String, let data = Data(base64Encoded: encoded) else {
+            return (400, ["error": "valid_data_base64_required"])
+        }
+        let name = (arguments["filename"] as? String).flatMap { $0.isEmpty ? nil : $0 } ?? "NeuroClaw-export.txt"
+        let url = FileManager.default.temporaryDirectory.appendingPathComponent(URL(fileURLWithPath: name).lastPathComponent)
+        do { try data.write(to: url, options: .atomic) }
+        catch { return (500, ["error": "temporary_export_write_failed", "detail": error.localizedDescription]) }
+        return await withCheckedContinuation { continuation in
+            guard let presenter = topPresenter() else {
+                try? FileManager.default.removeItem(at: url)
+                continuation.resume(returning: (409, ["error": "foreground_ui_required"]))
+                return
+            }
+            let flow = DocumentPickerFlow()
+            flow.continuation = continuation
+            flow.exportURL = url
+            active = flow
+            let picker = UIDocumentPickerViewController(forExporting: [url], asCopy: true)
+            picker.delegate = flow
+            presenter.present(picker, animated: true)
+        }
+    }
+
+    func documentPicker(_ controller: UIDocumentPickerViewController, didPickDocumentsAt urls: [URL]) {
+        guard let continuation else { return }
+        self.continuation = nil
+        if let exportURL {
+            try? FileManager.default.removeItem(at: exportURL)
+            self.exportURL = nil
+            continuation.resume(returning: (200, ["ok": true, "exported": true]))
+            Self.active = nil
+            return
+        }
+        guard let url = urls.first else {
+            continuation.resume(returning: (404, ["error": "no_file_selected"]))
+            Self.active = nil
+            return
+        }
+        let scoped = url.startAccessingSecurityScopedResource()
+        defer { if scoped { url.stopAccessingSecurityScopedResource() } }
+        do {
+            let data = try Data(contentsOf: url)
+            continuation.resume(returning: (200, [
+                "filename": url.lastPathComponent,
+                "content_type": UTType(filenameExtension: url.pathExtension)?.preferredMIMEType ?? "application/octet-stream",
+                "size_bytes": data.count,
+                "data_base64": data.base64EncodedString()
+            ]))
+        } catch {
+            continuation.resume(returning: (500, ["error": "selected_file_read_failed", "detail": error.localizedDescription]))
+        }
+        Self.active = nil
+    }
+
+    func documentPickerWasCancelled(_ controller: UIDocumentPickerViewController) {
+        guard let continuation else { return }
+        self.continuation = nil
+        if let exportURL { try? FileManager.default.removeItem(at: exportURL) }
+        continuation.resume(returning: (499, ["error": "user_cancelled"]))
+        Self.active = nil
+    }
+
+    private static func topPresenter() -> UIViewController? {
+        let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+        let windows = scenes.flatMap { $0.windows }
+        var current = windows.first(where: { $0.isKeyWindow })?.rootViewController
+        while let presented = current?.presentedViewController { current = presented }
+        return current
+    }
+}
+
+@MainActor
+private final class CameraCaptureFlow: NSObject, UIImagePickerControllerDelegate, UINavigationControllerDelegate {
+    private static var active: CameraCaptureFlow?
+    private var continuation: CheckedContinuation<(Int, [String: Any]), Never>?
+
+    static func capturePhoto() async -> (Int, [String: Any]) {
+        guard UIImagePickerController.isSourceTypeAvailable(.camera) else {
+            return (501, ["error": "camera_hardware_unavailable"])
+        }
+        let auth = AVCaptureDevice.authorizationStatus(for: .video)
+        guard auth != .denied && auth != .restricted else {
+            return (403, ["error": "camera_permission_denied"])
+        }
+        if auth == .notDetermined {
+            let granted = await withCheckedContinuation { c in
+                AVCaptureDevice.requestAccess(for: .video) { c.resume(returning: $0) }
+            }
+            guard granted else { return (403, ["error": "camera_permission_denied"]) }
+        }
+        return await withCheckedContinuation { continuation in
+            let scenes = UIApplication.shared.connectedScenes.compactMap { $0 as? UIWindowScene }
+            let windows = scenes.flatMap { $0.windows }
+            var presenter = windows.first(where: { $0.isKeyWindow })?.rootViewController
+            while let next = presenter?.presentedViewController { presenter = next }
+            guard let presenter else {
+                continuation.resume(returning: (409, ["error": "foreground_ui_required"]))
+                return
+            }
+            let flow = CameraCaptureFlow()
+            flow.continuation = continuation
+            active = flow
+            let picker = UIImagePickerController()
+            picker.sourceType = .camera
+            picker.delegate = flow
+            presenter.present(picker, animated: true)
+        }
+    }
+
+    func imagePickerController(_ picker: UIImagePickerController, didFinishPickingMediaWithInfo info: [UIImagePickerController.InfoKey: Any]) {
+        defer { Self.active = nil }
+        guard let continuation else { return }
+        self.continuation = nil
+        guard let image = info[.originalImage] as? UIImage, let data = image.jpegData(compressionQuality: 0.9) else {
+            continuation.resume(returning: (500, ["error": "camera_image_encoding_failed"]))
+            return
+        }
+        continuation.resume(returning: (200, ["captured": true, "mime_type": "image/jpeg", "data_base64": data.base64EncodedString()]))
+    }
+
+    func imagePickerControllerDidCancel(_ picker: UIImagePickerController) {
+        defer { Self.active = nil }
+        guard let continuation else { return }
+        self.continuation = nil
+        continuation.resume(returning: (499, ["error": "user_cancelled"]))
+    }
+}
