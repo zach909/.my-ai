@@ -42,6 +42,7 @@ class DeviceTools(private val context: Context) {
         }
         add("device_info", "Read Android version, device model, locale, and app version.")
         add("permission_status", "List declared runtime permissions and whether each is granted.")
+        add("special_access_status", "Report app-specific special access that Android exposes through settings.")
         add("network_status", "Read current network type and whether Android reports internet connectivity.")
         add("list_accounts", "List account types and names visible to this app.", Manifest.permission.GET_ACCOUNTS)
         add("sensor_status", "List available device sensor types and names.")
@@ -60,6 +61,9 @@ class DeviceTools(private val context: Context) {
         add("create_calendar_event", "Open Android's calendar event editor with the supplied title and times.", Manifest.permission.WRITE_CALENDAR)
         add("get_location", "Read the most recent available device location.", Manifest.permission.ACCESS_COARSE_LOCATION)
         add("list_photos", "List recent image metadata from shared media.", Manifest.permission.READ_MEDIA_IMAGES)
+        add("list_videos", "List recent video metadata from shared media.", Manifest.permission.READ_MEDIA_VIDEO)
+        add("list_audio", "List recent audio metadata from shared media.", Manifest.permission.READ_MEDIA_AUDIO)
+        add("compose_email", "Open an email composer with recipient, subject, and body prefilled; user sends it.")
         add("list_call_log", "Read a bounded page of recent call-log entries.", Manifest.permission.READ_CALL_LOG)
         add("dial_number", "Open the phone dialer with a number prefilled; user confirms the call.", Manifest.permission.CALL_PHONE)
         add("compose_sms", "Open an SMS composer with recipient and message prefilled; user sends it.", Manifest.permission.SEND_SMS)
@@ -77,6 +81,7 @@ class DeviceTools(private val context: Context) {
             when (name) {
                 "device_info" -> deviceInfo()
                 "permission_status" -> permissionStatus()
+                "special_access_status" -> specialAccessStatus()
                 "network_status" -> networkStatus()
                 "list_accounts" -> listAccounts()
                 "sensor_status" -> sensorStatus()
@@ -94,10 +99,13 @@ class DeviceTools(private val context: Context) {
                 "list_calendar_events" -> calendarEvents(bounded(args.optInt("limit", 20), 1, 100))
                 "create_calendar_event" -> createCalendarEvent(args)
                 "get_location" -> getLocation()
-                "list_photos" -> listPhotos(bounded(args.optInt("limit", 20), 1, 100))
+                "list_photos" -> listMedia(MediaStore.Images.Media.EXTERNAL_CONTENT_URI, MediaStore.Images.Media.DISPLAY_NAME, mediaPermission("image"), bounded(args.optInt("limit", 20), 1, 100), "photos")
+                "list_videos" -> listMedia(MediaStore.Video.Media.EXTERNAL_CONTENT_URI, MediaStore.Video.Media.DISPLAY_NAME, mediaPermission("video"), bounded(args.optInt("limit", 20), 1, 100), "videos")
+                "list_audio" -> listMedia(MediaStore.Audio.Media.EXTERNAL_CONTENT_URI, MediaStore.Audio.Media.DISPLAY_NAME, mediaPermission("audio"), bounded(args.optInt("limit", 20), 1, 100), "audio")
                 "list_call_log" -> callLog(bounded(args.optInt("limit", 20), 1, 50))
                 "dial_number" -> dial(args.optString("number", ""))
                 "compose_sms" -> composeSms(args.optString("number", ""), args.optString("message", ""))
+                "compose_email" -> composeEmail(args.optString("to", ""), args.optString("subject", ""), args.optString("body", ""))
                 "list_installed_apps" -> listApps()
                 "launch_app" -> launchApp(args.optString("package", ""))
                 "bluetooth_status" -> bluetoothStatus()
@@ -285,6 +293,54 @@ class DeviceTools(private val context: Context) {
         val l = best ?: return ok(JSONObject().put("available", false).put("reason", "No cached location; enable Location and try again."))
         return ok(JSONObject().put("available", true).put("latitude", l.latitude).put("longitude", l.longitude)
             .put("accuracy_m", l.accuracy.toDouble()).put("timestamp_ms", l.time))
+    }
+
+
+    private fun specialAccessStatus(): JSONObject {
+        val out = JSONObject()
+            .put("overlay", Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(appContext))
+            .put("modify_system_settings", Build.VERSION.SDK_INT < 23 || Settings.System.canWrite(appContext))
+            .put("notifications_post", Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS))
+        if (Build.VERSION.SDK_INT >= 30) out.put("all_files", android.os.Environment.isExternalStorageManager())
+        if (Build.VERSION.SDK_INT >= 23) {
+            val power = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
+            out.put("ignoring_battery_optimizations", power.isIgnoringBatteryOptimizations(appContext.packageName))
+        }
+        return ok(out)
+    }
+
+    private fun mediaPermission(kind: String): String =
+        if (Build.VERSION.SDK_INT >= 33) when (kind) {
+            "video" -> Manifest.permission.READ_MEDIA_VIDEO
+            "audio" -> Manifest.permission.READ_MEDIA_AUDIO
+            else -> Manifest.permission.READ_MEDIA_IMAGES
+        } else Manifest.permission.READ_EXTERNAL_STORAGE
+
+    private fun listMedia(uri: Uri, nameColumn: String, permission: String, limit: Int, key: String): JSONObject {
+        requirePermission(permission)
+        val rows = JSONArray()
+        val dateColumn = when (key) {
+            "videos" -> MediaStore.Video.Media.DATE_ADDED
+            "audio" -> MediaStore.Audio.Media.DATE_ADDED
+            else -> MediaStore.Images.Media.DATE_ADDED
+        }
+        appContext.contentResolver.query(uri, arrayOf(nameColumn, dateColumn), null, null, "$dateColumn DESC")?.use { cursor ->
+            while (cursor.moveToNext() && rows.length() < limit) {
+                rows.put(JSONObject().put("name", cursor.getString(0) ?: "").put("added_seconds", cursor.getLong(1)))
+            }
+        }
+        return ok(JSONObject().put(key, rows).put("returned", rows.length()))
+    }
+
+    private fun composeEmail(to: String, subject: String, body: String): JSONObject {
+        if (to.length > 500 || subject.length > 500 || body.length > 10000)
+            return JSONObject().put("ok", false).put("error", "Email fields are too long")
+        val intent = Intent(Intent.ACTION_SENDTO, Uri.parse("mailto:" + Uri.encode(to)))
+            .putExtra(Intent.EXTRA_SUBJECT, subject)
+            .putExtra(Intent.EXTRA_TEXT, body)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        context.startActivity(intent)
+        return ok(JSONObject().put("opened", "email_composer").put("requires_user_send", true))
     }
 
     private fun listPhotos(limit: Int): JSONObject {
