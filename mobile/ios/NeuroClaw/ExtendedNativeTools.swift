@@ -87,8 +87,10 @@ enum ExtendedNativeTools {
         tool("capabilities.catalog", "List supported iOS tool coverage and system-enforced limitations."),
         tool("permissions.request_all", "Request each permission category that iOS lets this app request; some require separate user flows or Apple entitlements."),
         tool("permissions.request_location", "Request location access."),
+        tool("permissions.request_precise_location", "Request temporary precise location after location access is granted."),
         tool("permissions.request_contacts", "Request Contacts access."),
         tool("permissions.request_calendar", "Request Calendar access."),
+        tool("permissions.request_calendar_write_only", "Request calendar write-only access on iOS 17 and later."),
         tool("permissions.request_reminders", "Request Reminders access."),
         tool("permissions.request_photos", "Request Photos library read and write access."),
         tool("permissions.request_photos_add_only", "Request add-only Photos library access without reading the library."),
@@ -265,6 +267,10 @@ enum ExtendedNativeTools {
             return (200, ["requested": statuses, "local_network_result": localNetwork.1, "note": "iOS may suppress repeat prompts, require foreground UI, or require separate entitlement approval. Some settings cannot be requested by apps."])
         case "permissions.request_location":
             return (200, ["permission": "location", "result": await Permissions.requestLocation()])
+        case "permissions.request_precise_location":
+            return (200, ["permission": "precise_location", "result": await Permissions.requestPreciseLocation()])
+        case "permissions.request_calendar_write_only":
+            return (200, ["permission": "calendar_write_only", "result": await Permissions.requestCalendarWriteOnly()])
         case "permissions.request_contacts":
             return (200, ["permission": "contacts", "result": await Permissions.requestContacts()])
         case "permissions.request_calendar":
