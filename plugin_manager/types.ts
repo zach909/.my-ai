@@ -49,7 +49,7 @@ export type ExtensionPermission =
   | "linux-extended-attributes" | "linux-immutable-append-only"
   | "linux-mount-unmount" | "linux-removable-storage"
   // Linux accounts, processes, and host administration
-  | "linux-user-group-read" | "linux-user-group-admin" | "linux-sudo-admin"
+  | "linux-user-group-read" | "linux-user-group-admin" | "linux-sudo-admin" | "linux-root-access-request" | "linux-polkit-elevation" | "linux-privileged-helper-manage"
   | "linux-process-inspect" | "linux-process-control" | "linux-service-control"
   | "linux-package-management" | "linux-kernel-modules" | "linux-sysctl"
   | "linux-hostname-time-power" | "linux-boot-configuration" | "linux-scheduled-jobs"
