@@ -118,6 +118,24 @@ enum ExtendedNativeTools {
         case "music.play_item":
             properties = ["persistent_id": ["type": "number", "description": "Media-library persistent ID"]]
             required = ["persistent_id"]
+        case "contacts.create":
+            properties = ["given_name": ["type": "string"], "family_name": ["type": "string"], "phone": ["type": "string"], "email": ["type": "string"]]
+            required = ["given_name"]
+        case "contacts.update":
+            properties = ["identifier": ["type": "string"], "given_name": ["type": "string"], "family_name": ["type": "string"], "phone": ["type": "string"], "email": ["type": "string"]]
+            required = ["identifier"]
+        case "calendar.create_event":
+            properties = ["title": ["type": "string"], "start": ["type": "string"], "end": ["type": "string"], "notes": ["type": "string"], "location": ["type": "string"]]
+            required = ["title", "start", "end"]
+        case "calendar.update_event":
+            properties = ["identifier": ["type": "string"], "title": ["type": "string"], "start": ["type": "string"], "end": ["type": "string"], "notes": ["type": "string"], "location": ["type": "string"]]
+            required = ["identifier"]
+        case "calendar.delete_event", "reminders.complete", "reminders.delete":
+            properties = ["identifier": ["type": "string"]]
+            required = ["identifier"]
+        case "reminders.create":
+            properties = ["title": ["type": "string"], "due": ["type": "string"], "notes": ["type": "string"]]
+            required = ["title"]
         case "bluetooth.scan":
             properties = ["seconds": ["type": "number", "minimum": 1, "maximum": 10]]
             required = []
