@@ -147,3 +147,19 @@ The registry now contains 168 individually named capability tools. Every registr
 Examples of newly split capabilities include file create/update/move/rename/delete and monitoring; OneDrive/synced folders; audio/screen capture and OCR; camera/audio device enumeration; Ethernet, DNS, proxy, VPN and network metadata; app/window control; device/scanner/NFC metadata; Windows Update, Defender, encryption and Secure Boot status; startup entries, services, scheduled tasks, registry inspection/modification; credential/passkey provider flows; app permission state, consent history/revocation, audit logs, data export/deletion and backup/restore.
 
 **Important status distinction:** all 168 are registered and callable by name, but most newly cataloged tools intentionally return `adapter-required` or `admin-or-adapter-required` until their real Windows/provider implementation is written and tested. Registration is not permission granted, and it is not proof of functional support. The implemented main-process handlers remain the subset listed above; capability tests verify registry/API coverage and honest status reporting, not hardware integration or all Windows permission paths.
+
+
+## Expanded Windows manifest and security inventory
+
+The registry additionally tracks Windows package-manifest capabilities and their applicability separately from ordinary desktop permissions. The list includes networking capabilities; broad filesystem access; appointments, contacts, account info, VoIP, chat and phone-call capabilities; media libraries; removable storage; Bluetooth, webcam, microphone, location, NFC/proximity, HID, serial, USB, GPIO, I²C, SPI, point-of-service and spatial-perception device capabilities; background media/tasks; package query/management; screen duplication; app diagnostics/capture settings; full-trust packaging; wallet, SMBIOS, enterprise authentication and certificate-related capabilities. These are not all available to an ordinary Electron desktop app. Actual applicability depends on package identity, trust level, Windows version, hardware, API availability and any restricted-capability approval.
+
+The new inventory also names Windows security mechanisms: current-token/elevation inspection, selected-path ACL inspection, best-effort current-process access checks, Windows privacy/settings shortcuts, network interface status, applicable policy inspection, and explicit UAC operation requests. Implemented read-only handlers report the current process context and do not elevate it or change permissions. The UAC request, policy inspection and most manifest capabilities still require dedicated adapters.
+
+## Microsoft references
+
+- App permissions and how desktop apps differ from Store apps: https://support.microsoft.com/en-us/windows/apps/app-permissions
+- Windows privacy settings and desktop-app caveats: https://support.microsoft.com/en-us/windows/privacy/windows-privacy-settings-that-apps-use
+- App capability declarations, including general, device, restricted and custom capabilities: https://learn.microsoft.com/en-us/windows/apps/desktop/modernize/app-capability-declarations
+- File access permissions and broad filesystem access: https://learn.microsoft.com/en-us/windows/apps/develop/files/file-access-permissions
+
+This is an inventory for the chosen .my-ai Windows desktop app, not a claim that every documented Windows capability applies to it. Windows also has security boundaries—ACLs, user tokens, UAC, group/enterprise policy, service permissions, device drivers and provider-level authorization—that are not one app permission switch. Each feature must expose its actual runtime state and fail safely if denied or unavailable.
