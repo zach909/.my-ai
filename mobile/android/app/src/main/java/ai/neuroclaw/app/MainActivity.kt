@@ -159,7 +159,7 @@ class MainActivity : Activity() {
 
         val rootControls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         rootControls.addView(TextView(this).apply {
-            text = "\\nRoot access (requires a rooted device and approval from its installed root manager):"
+            text = "\nRoot access (requires a rooted device and approval from its installed root manager):"
         })
         rootControls.addView(Button(this).apply {
             text = "Check root indicators"
@@ -184,6 +184,34 @@ class MainActivity : Activity() {
             setOnClickListener {
                 status.text = "Requesting root-manager approval to inspect effective privileges..."
                 Shared.background({ DeviceTools(this@MainActivity).execute("root_permission_audit") }) { result ->
+                    status.text = result.toString(2)
+                }
+            }
+        })
+        rootControls.addView(Button(this).apply {
+            text = "Grant all eligible declared runtime permissions using root"
+            setOnClickListener {
+                status.text = "Asking the root manager to grant eligible declared runtime permissions..."
+                Shared.background({
+                    DeviceTools(this@MainActivity).execute(
+                        "root_grant_declared_runtime_permissions",
+                        org.json.JSONObject().put("confirm", true)
+                    )
+                }) { result ->
+                    status.text = result.toString(2)
+                }
+            }
+        })
+        rootControls.addView(Button(this).apply {
+            text = "Grant eligible special AppOps using root"
+            setOnClickListener {
+                status.text = "Asking the root manager to attempt the listed special AppOps..."
+                Shared.background({
+                    DeviceTools(this@MainActivity).execute(
+                        "root_grant_eligible_appops",
+                        org.json.JSONObject().put("confirm", true)
+                    )
+                }) { result ->
                     status.text = result.toString(2)
                 }
             }
