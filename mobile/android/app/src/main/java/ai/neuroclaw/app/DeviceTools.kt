@@ -317,7 +317,7 @@ class DeviceTools(private val context: Context) {
             .put("declared_count", declaredCount)
             .put("declared_and_granted_count", grantedCount)
             .put("not_resolved_by_package_manager", unavailableCount)
-            .put("compile_sdk", Build.VERSION.SDK_INT)
+            .put("device_api_level", Build.VERSION.SDK_INT)
             .put("note", "This catalog enumerates Manifest.permission constants in the SDK used to compile this app. It does not include OEM/vendor custom permissions, newer SDK constants unavailable at compile time, or prove a permission is obtainable. Signature, privileged, role, restricted, and special-access permissions have additional OS rules."))
     }
 
