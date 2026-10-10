@@ -210,3 +210,8 @@ The accessibility tool returns a bounded snapshot of visible controls in the cur
 
 
 Screen recording is also implemented through the visible Chromium source picker with a maximum 15-second clip and 15 MB output limit. Microphone recording is exposed as its own tool and is capped at 10 seconds. Local audio playback accepts only bounded base64 audio data URLs, rejects remote URLs, and stops after 30 seconds. Text-to-speech uses the runtime's speech synthesis engine with bounded text, rate, and pitch. Runtime/device support can vary; unsupported features return an explicit status.
+
+
+## Explicit administrator elevation
+
+`uacElevationRequest` now supports `action: "status"` and `action: "relaunch-elevated"` on Windows. The relaunch path first displays an in-app confirmation, then starts the app through PowerShell `Start-Process -Verb RunAs`, which triggers the normal Windows UAC consent flow. If accepted, the elevated app relaunches and the original instance exits. This does not bypass UAC, grant SYSTEM privileges, change account membership, or provide arbitrary elevated command execution. Packaged builds and development builds can behave differently; runtime verification on Windows is still required.
