@@ -291,7 +291,7 @@ enum ExtendedNativeTools {
         case "permissions.request_notifications":
             return (200, ["permission": "notifications", "result": await Permissions.requestNotifications()])
         case "permissions.request_local_network":
-            let result = await LocalNetworkDiscovery.discover(["service_type": "_http._tcp", "seconds": 1])
+            let result = await LocalNetworkDiscovery.discover(["service_type": "_http._tcp", "seconds": 4])
             return (result.0, ["permission": "local_network", "result": result.1])
         case "permissions.request_tracking":
             return (200, ["permission": "app_tracking_transparency", "result": await Permissions.requestTracking()])
