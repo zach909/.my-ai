@@ -86,3 +86,8 @@ Apple's documented protected-resource TCC services are represented in the catalo
 ### Additional documented camera resource
 
 Added `mainCamera` for Apple's `NSMainCameraUsageDescription` protected-resource key. It uses the existing camera consent flow and opens the Camera privacy settings pane when manual approval is needed. This is a distinct documented usage-description key, not a bypass or a new grant separate from macOS camera authorization.
+
+
+### Additional Apple-documented location and Bluetooth entries
+
+Added catalog entries and property-list configuration for the legacy Bluetooth peripheral usage-description key, legacy always-on location usage-description key, temporary full-accuracy location purpose dictionary, and reduced-accuracy default setting. Apple marks some of these keys as deprecated or platform/API-specific; they do not create permission prompts on their own. The temporary-accuracy dictionary must use a purpose key that matches the native location API call, and the native location feature must be implemented before these settings have an effect.
