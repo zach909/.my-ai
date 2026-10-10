@@ -82,7 +82,8 @@ enum ExtendedNativeTools {
         tool("permissions.request_contacts", "Request Contacts access."),
         tool("permissions.request_calendar", "Request Calendar access."),
         tool("permissions.request_reminders", "Request Reminders access."),
-        tool("permissions.request_photos", "Request Photos library access."),
+        tool("permissions.request_photos", "Request Photos library read and write access."),
+        tool("permissions.request_photos_add_only", "Request add-only Photos library access without reading the library."),
         tool("permissions.request_microphone", "Request microphone access."),
         tool("permissions.request_camera", "Request camera access."),
         tool("permissions.request_speech", "Request speech recognition access."),
@@ -95,7 +96,11 @@ enum ExtendedNativeTools {
         tool("permissions.request_homekit", "Request HomeKit authorization; HomeKit entitlement and eligible signing are required."),
         tool("permissions.request_siri", "Request Siri authorization for App Intents / Shortcuts."),
         tool("permissions.request_biometrics", "Prompt for Face ID / Touch ID authentication."),
-        tool("permissions.catalog", "Return an inventory of requestable iOS permissions, user-controlled settings, entitlement-gated capabilities, and platform-blocked access.")
+        tool("permissions.catalog", "Return an inventory of requestable iOS permissions, user-controlled settings, entitlement-gated capabilities, and platform-blocked access."),
+        tool("nearby.get_capabilities", "Report Nearby Interaction support and its entitlement/session requirements."),
+        tool("nfc.get_capabilities", "Report NFC reader availability and required entitlements."),
+        tool("critical_alerts.get_capabilities", "Report critical notification alert restrictions."),
+        tool("research_sensors.get_capabilities", "Report research sensor data restrictions and entitlement requirements.")
     ]
 
     private static func tool(_ name: String, _ description: String) -> [String: Any] {
@@ -109,7 +114,7 @@ enum ExtendedNativeTools {
             properties = ["query": ["type": "string", "description": "Search text"]]
             required = ["query"]
         case "music.play_item":
-            properties = ["persistent_id": ["type": "string", "description": "Media-library persistent ID"]]
+            properties = ["persistent_id": ["type": "number", "description": "Media-library persistent ID"]]
             required = ["persistent_id"]
         case "bluetooth.scan":
             properties = ["seconds": ["type": "number", "minimum": 1, "maximum": 10]]
@@ -219,7 +224,12 @@ enum ExtendedNativeTools {
         case "permissions.request_reminders":
             return (200, ["permission": "reminders", "result": await Permissions.requestReminders()])
         case "permissions.request_photos":
-            return (200, ["permission": "photos", "result": await Permissions.requestPhotos()])
+            return (200, ["permission": "photos_read_write", "result": await Permissions.requestPhotos()])
+        case "permissions.request_photos_add_only":
+            let status = await withCheckedContinuation { continuation in
+                PHPhotoLibrary.requestAuthorization(for: .addOnly) { value in continuation.resume(returning: value) }
+            }
+            return (200, ["permission": "photos_add_only", "authorization": status.rawValue])
         case "permissions.request_microphone":
             return (200, ["permission": "microphone", "result": await Permissions.requestMicrophone()])
         case "permissions.request_camera":
@@ -246,6 +256,14 @@ enum ExtendedNativeTools {
             return (200, ["permission": "biometrics", "result": await Permissions.requestBiometrics()])
         case "permissions.catalog":
             return (200, ["requestable": ["location_when_in_use", "location_always", "contacts", "calendar", "reminders", "photos_read_write", "photos_add_only", "camera", "microphone", "speech_recognition", "motion_fitness", "healthkit_data_types", "media_library", "bluetooth", "local_network", "notifications", "app_tracking_transparency", "siri_authorization", "face_id_or_touch_id_authentication", "homekit"], "settings_only_or_system_managed": ["Background App Refresh", "Cellular data access restrictions", "per-app Local Network toggle", "notification presentation settings", "system permission changes in Settings"], "requires_entitlement_or_special_approval": ["HealthKit", "HomeKit", "critical alerts", "Nearby Interaction", "NFC reader sessions", "clinical health records", "research sensor access"], "not_available_to_ordinary_third_party_apps": ["SMS/iMessage inbox access", "system call history", "general mailbox access without provider authorization", "passwords and arbitrary device accounts", "reading current Focus mode", "unrestricted filesystem access", "arbitrary cross-app UI control or silent screen capture"], "note": "iOS has no single grant-all permission. Each authorization is separate, user-controlled, and constrained by API, entitlement, device, and App Store policy."])
+        case "nearby.get_capabilities":
+            return limitation("Nearby Interaction needs supported hardware, a valid Nearby Interaction entitlement, discovery-token exchange, and a foreground session. There is no standalone permission prompt to grant from this bridge.")
+        case "nfc.get_capabilities":
+            return limitation("NFC reader sessions require supported hardware, the matching NFC capability/entitlement, and a foreground reader session. iOS does not offer general-purpose NFC access.")
+        case "critical_alerts.get_capabilities":
+            return limitation("Critical notifications require Apple's special critical-alert entitlement and user authorization. A normal notification permission grant cannot enable them.")
+        case "research_sensors.get_capabilities":
+            return limitation("Research sensor and clinical data access is restricted to eligible programs, entitlements, APIs, and approvals. Ordinary apps cannot unlock it by requesting a generic permission.")
         case "photos.get_status":
             return (200, ["authorization": PHPhotoLibrary.authorizationStatus(for: .readWrite).rawValue])
         case "notifications.get_status":
