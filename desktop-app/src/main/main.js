@@ -160,6 +160,105 @@ function waitForBackend(port, timeoutMs = 15000) {
  * (static frontend + /api proxy to the Neuroclaw backend) rather than the
  * template's demo HTML page.
  */
+/**
+ * Explicit, per-session consent for Chromium/Electron permissions.
+ *
+ * Electron desktop apps do not have a universal Windows permission manifest.
+ * This handler governs webContents permissions only; native Windows features
+ * still need their own API, authorization, and runtime checks.
+ */
+const SESSION_PERMISSION_GRANTS = new Set();
+const SESSION_PERMISSION_DENIALS = new Set();
+const WEB_PERMISSION_LABELS = {
+  media: 'camera and/or microphone',
+  geolocation: 'location',
+  notifications: 'desktop notifications',
+  fullscreen: 'fullscreen mode',
+  pointerLock: 'pointer lock',
+  'clipboard-read': 'reading clipboard contents',
+  'clipboard-sanitized-write': 'writing to the clipboard',
+  midi: 'MIDI device access',
+  'midi-sysex': 'MIDI system-exclusive device access',
+};
+
+function isTrustedAppFrame(frameUrl) {
+  try {
+    const parsed = new URL(frameUrl);
+    if (parsed.protocol === 'file:') {
+      const rendererRoot = path.resolve(__dirname, '../renderer') + path.sep;
+      const candidate = path.resolve(decodeURIComponent(parsed.pathname));
+      return candidate.startsWith(rendererRoot);
+    }
+    return parsed.protocol === 'https:' &&
+      parsed.hostname === '127.0.0.1' &&
+      parsed.port === String(APP_PORT);
+  } catch {
+    return false;
+  }
+}
+
+function permissionGrantKey(permission, frameUrl) {
+  try { return permission + ':' + new URL(frameUrl).origin; } catch { return permission + ':' + frameUrl; }
+}
+
+function installPermissionHandlers() {
+  const appSession = session.defaultSession;
+  appSession.setPermissionRequestHandler(async (webContents, permission, callback, details = {}) => {
+    const requestingUrl = details.requestingUrl ||
+      (webContents && webContents.getURL ? webContents.getURL() : '');
+    if (!isTrustedAppFrame(requestingUrl)) {
+      callback(false);
+      return;
+    }
+
+    // Unknown permissions are denied rather than silently granted.
+    const label = WEB_PERMISSION_LABELS[permission];
+    if (!label) {
+      callback(false);
+      return;
+    }
+
+    const key = permissionGrantKey(permission, requestingUrl);
+    if (SESSION_PERMISSION_GRANTS.has(key)) {
+      callback(true);
+      return;
+    }
+    if (SESSION_PERMISSION_DENIALS.has(key) || !mainWindow || mainWindow.isDestroyed()) {
+      callback(false);
+      return;
+    }
+
+    try {
+      const result = await dialog.showMessageBox(mainWindow, {
+        type: 'question',
+        buttons: ['Allow for this session', 'Deny'],
+        defaultId: 1,
+        cancelId: 1,
+        noLink: true,
+        title: 'Permission request',
+        message: 'Allow .my-ai to use ' + label + '?',
+        detail: 'This applies only to this app session. Windows privacy settings and device availability may still block access.',
+      });
+      if (result.response === 0) {
+        SESSION_PERMISSION_GRANTS.add(key);
+        callback(true);
+      } else {
+        SESSION_PERMISSION_DENIALS.add(key);
+        callback(false);
+      }
+    } catch {
+      callback(false);
+    }
+  });
+
+  appSession.setPermissionCheckHandler((webContents, permission, requestingOrigin) => {
+    const origin = requestingOrigin || (webContents && webContents.getURL ? webContents.getURL() : '');
+    if (!isTrustedAppFrame(origin)) return false;
+    if (!WEB_PERMISSION_LABELS[permission]) return false;
+    return SESSION_PERMISSION_GRANTS.has(permissionGrantKey(permission, origin));
+  });
+}
+
 function createWindow() {
   // Stamp the per-launch token on every request this window makes -- the page,
   // its assets, and its /api calls all go through here. A browser opening the
@@ -305,6 +404,8 @@ function normalizeFingerprint(fp) {
 }
 
 app.whenReady().then(async () => {
+  installPermissionHandlers();
+
   // Window first, backend second. The other order meant the user clicked the
   // icon and got nothing at all for as long as the backend took to boot
   // (measured at 13-18s), which is indistinguishable from a failed launch.
