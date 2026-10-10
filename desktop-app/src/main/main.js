@@ -656,6 +656,7 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   energyKitGuidanceService: { label: "EnergyKit guidance service", service: "EnergyKitGuidance", pane: null, kind: "capability" },
   externalCameraMediaService: { label: "External camera media service", service: "ExternalCameraMedia", pane: "Privacy_Camera", kind: "settings", statusMedia: 'camera' },
 
+  mainCamera: { label: 'Main camera access', pane: 'Privacy_Camera', kind: 'media', media: 'camera' },
   // Additional macOS capabilities that require entitlements, app-specific APIs, or separate OS approval.
   systemExtensionApproval: { label: "System extension installation and approval", service: "SystemExtension", pane: "Privacy_Security", kind: "capability" },
   driverExtensionApproval: { label: "Driver extension installation and approval", service: "DriverExtension", pane: "Privacy_Security", kind: "capability" },
