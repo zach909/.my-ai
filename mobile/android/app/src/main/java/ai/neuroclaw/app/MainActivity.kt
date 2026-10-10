@@ -157,6 +157,66 @@ class MainActivity : Activity() {
             setOnClickListener { startService(Intent(this@MainActivity, OverlayService::class.java).setAction(OverlayService.ACTION_STOP)) }
         }
 
+        val rootControls = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
+        rootControls.addView(TextView(this).apply {
+            text = "\nRoot access (requires a rooted device and approval from its installed root manager):"
+        })
+        rootControls.addView(Button(this).apply {
+            text = "Check root indicators"
+            setOnClickListener {
+                status.text = "Checking root indicators..."
+                Shared.background({ DeviceTools(this@MainActivity).execute("root_access_status") }) { result ->
+                    status.text = result.toString(2)
+                }
+            }
+        })
+        rootControls.addView(Button(this).apply {
+            text = "Request root authorization"
+            setOnClickListener {
+                status.text = "Waiting for the device's root-manager authorization..."
+                Shared.background({ DeviceTools(this@MainActivity).execute("root_authorization_request") }) { result ->
+                    status.text = result.toString(2)
+                }
+            }
+        })
+        rootControls.addView(Button(this).apply {
+            text = "Audit root permissions"
+            setOnClickListener {
+                status.text = "Requesting root-manager approval to inspect effective privileges..."
+                Shared.background({ DeviceTools(this@MainActivity).execute("root_permission_audit") }) { result ->
+                    status.text = result.toString(2)
+                }
+            }
+        })
+        rootControls.addView(Button(this).apply {
+            text = "Grant all eligible declared runtime permissions using root"
+            setOnClickListener {
+                status.text = "Asking the root manager to grant eligible declared runtime permissions..."
+                Shared.background({
+                    DeviceTools(this@MainActivity).execute(
+                        "root_grant_declared_runtime_permissions",
+                        org.json.JSONObject().put("confirm", true)
+                    )
+                }) { result ->
+                    status.text = result.toString(2)
+                }
+            }
+        })
+        rootControls.addView(Button(this).apply {
+            text = "Grant eligible special AppOps using root"
+            setOnClickListener {
+                status.text = "Asking the root manager to attempt the listed special AppOps..."
+                Shared.background({
+                    DeviceTools(this@MainActivity).execute(
+                        "root_grant_eligible_appops",
+                        org.json.JSONObject().put("confirm", true)
+                    )
+                }) { result ->
+                    status.text = result.toString(2)
+                }
+            }
+        })
+
         val specialAccess = LinearLayout(this).apply { orientation = LinearLayout.VERTICAL }
         specialAccess.addView(TextView(this).apply { text = "\nAdvanced access (Android opens each system-controlled settings page):" })
         specialAccess.addView(settingsButton("All files access", "android.settings.MANAGE_APP_ALL_FILES_ACCESS_PERMISSION", true))
@@ -188,6 +248,7 @@ class MainActivity : Activity() {
             addView(audit)
             addView(backgroundLocation)
             addView(backgroundSensors)
+            addView(rootControls)
             addView(LinearLayout(context).apply { addView(bridge); addView(bridgeLan) })
             addView(specialAccess)
             addView(status)

@@ -31,6 +31,8 @@ import android.net.NetworkCapabilities
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
+import java.io.ByteArrayOutputStream
+import java.util.concurrent.TimeUnit
 
 /**
  * Native, permission-aware tools exposed to the local agent through BridgeServer.
@@ -47,6 +49,16 @@ class DeviceTools(private val context: Context) {
                 .put("permission", permission ?: JSONObject.NULL))
         }
         add("device_info", "Read Android version, device model, locale, and app version.")
+        add("root_access_status", "Inspect root indicators and whether common su/Magisk locations exist; this does not itself request root authorization.")
+        add("root_authorization_request", "Ask the installed su/root manager to authorize this app by running a harmless UID check; the root manager controls whether access is granted.")
+        add("root_permission_audit", "With root-manager authorization, inspect effective UID, SELinux mode, build flags, Linux capability masks, and mounted filesystems.")
+        add("root_list_packages", "List installed package paths using the root manager; requires root-manager authorization.")
+        add("root_list_processes", "List running processes using the root manager; requires root-manager authorization.")
+        add("root_system_properties", "Read Android system properties using the root manager; requires root-manager authorization.")
+        add("root_mount_inventory", "Inspect mounted filesystems using the root manager; requires root-manager authorization.")
+        add("root_read_system_logs", "Read a bounded recent system log excerpt using the root manager; logs may contain private data.")
+        add("root_grant_declared_runtime_permissions", "With confirm=true and root-manager approval, grant every declared permission classified by Android as dangerous; signature/privileged permissions are skipped.")
+        add("root_grant_eligible_appops", "With confirm=true and root-manager approval, attempt a fixed list of app-specific special-access AppOps; Android/OEM policy may reject some operations.")
         add("permission_status", "List declared runtime permissions and whether each is granted.")
         add("permission_audit", "Audit every permission declared in this installed app: grant state, protection level when available, and runtime/special-access classification.")
         add("permission_catalog", "Enumerate Android permission constants available in this app compile SDK, including undeclared and privileged permissions, with declaration/grant/protection status.")
@@ -100,6 +112,16 @@ class DeviceTools(private val context: Context) {
         return try {
             when (name) {
                 "device_info" -> deviceInfo()
+                "root_access_status" -> rootAccessStatus()
+                "root_authorization_request" -> rootAuthorizationRequest()
+                "root_permission_audit" -> rootPermissionAudit()
+                "root_list_packages" -> rootReadOnly("packages")
+                "root_list_processes" -> rootReadOnly("processes")
+                "root_system_properties" -> rootReadOnly("properties")
+                "root_mount_inventory" -> rootReadOnly("mounts")
+                "root_read_system_logs" -> rootReadOnly("logs")
+                "root_grant_declared_runtime_permissions" -> rootGrantDeclaredRuntimePermissions(args)
+                "root_grant_eligible_appops" -> rootGrantEligibleAppOps(args)
                 "permission_status" -> permissionStatus()
                 "permission_audit" -> permissionAudit()
                 "permission_catalog" -> permissionCatalog()
@@ -157,6 +179,232 @@ class DeviceTools(private val context: Context) {
         } catch (e: Exception) {
             JSONObject().put("ok", false).put("error", e.message ?: "Tool failed")
         }
+    }
+
+
+    /**
+     * Root is not implied by bootloader unlock. This check only reports local
+     * indicators and deliberately does not invoke su, which could trigger a
+     * root-manager authorization prompt.
+     */
+    private fun rootAccessStatus(): JSONObject {
+        val suPaths = listOf(
+            "/system/bin/su", "/system/xbin/su", "/sbin/su",
+            "/system_ext/bin/su", "/vendor/bin/su", "/debug_ramdisk/su"
+        )
+        val found = JSONArray()
+        suPaths.filter { java.io.File(it).exists() }.forEach { found.put(it) }
+        val magiskIndicators = listOf(
+            "/data/adb/magisk", "/data/adb/modules", "/sbin/.magisk",
+            "/debug_ramdisk/.magisk"
+        )
+        val magiskFound = JSONArray()
+        magiskIndicators.filter { java.io.File(it).exists() }.forEach { magiskFound.put(it) }
+        return ok(JSONObject()
+            .put("test_keys_build_indicator", Build.TAGS?.contains("test-keys") == true)
+            .put("build_tags", Build.TAGS ?: JSONObject.NULL)
+            .put("su_binary_paths_found", found)
+            .put("magisk_paths_visible_without_root", magiskFound)
+            .put("root_authorization_verified", false)
+            .put("note", "These indicators are not proof of root. Use root_authorization_request to ask the installed root manager and verify effective UID 0. Bootloader unlock alone is not root access."))
+    }
+
+    private fun rootAuthorizationRequest(): JSONObject {
+        val result = runRootCommand("id", 30)
+        val isRoot = result.exitCode == 0 && Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        return JSONObject()
+            .put("ok", isRoot)
+            .put("root_authorized", isRoot)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("output", result.output)
+            .put("note", if (isRoot) "The su manager granted root for this invocation." else "Root was not granted, su is unavailable, or the request timed out. Check the root manager on-device.")
+    }
+
+    private fun rootPermissionAudit(): JSONObject {
+        val command = "id; printf '\\nSELINUX='; getenforce 2>/dev/null; " +
+            "printf '\\nBUILD_TYPE='; getprop ro.build.type; " +
+            "printf '\\nDEBUGGABLE='; getprop ro.debuggable; " +
+            "printf '\\nCAPABILITIES\\n'; grep -E '^(Cap(Inh|Prm|Eff|Bnd|Amb)|NoNewPrivs):' /proc/self/status; " +
+            "printf '\\nMOUNTS\\n'; mount | head -n 120"
+        val result = runRootCommand(command, 10)
+        val isRoot = result.exitCode == 0 && Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        return JSONObject()
+            .put("ok", isRoot)
+            .put("root_authorized", isRoot)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("audit", result.output)
+            .put("note", "The output reflects the root command's effective credentials and Android SELinux policy; it does not mean every privileged operation is permitted.")
+    }
+
+    /**
+     * Root-backed operations are intentionally fixed and read-only. This keeps
+     * the agent from turning a remembered su grant into an unrestricted shell.
+     */
+    private fun rootReadOnly(operation: String): JSONObject {
+        val command = when (operation) {
+            "packages" -> "id; pm list packages -f | head -n 500"
+            "processes" -> "id; ps -A | head -n 300"
+            "properties" -> "id; getprop | head -n 500"
+            "mounts" -> "id; mount | head -n 300"
+            "logs" -> "id; logcat -d -t 200"
+            else -> return JSONObject().put("ok", false).put("error", "Unsupported root operation.")
+        }
+        val result = runRootCommand(command, 15)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        return JSONObject()
+            .put("ok", result.exitCode == 0 && !result.timedOut && isRoot)
+            .put("root_authorized", isRoot)
+            .put("operation", operation)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("output", result.output)
+            .put("output_truncated", result.truncated)
+            .put("privacy_note", if (operation == "logs") "System logs can include personal data, tokens, and app activity." else JSONObject.NULL)
+    }
+
+    private fun rootGrantDeclaredRuntimePermissions(args: JSONObject): JSONObject {
+        if (!args.optBoolean("confirm", false)) {
+            return JSONObject().put("ok", false)
+                .put("error", "Explicit confirmation is required. Review the sensitive permissions and call again with confirm=true.")
+        }
+        val flags = if (Build.VERSION.SDK_INT >= 33)
+            PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong())
+        else null
+        @Suppress("DEPRECATION")
+        val info = if (Build.VERSION.SDK_INT >= 33)
+            appContext.packageManager.getPackageInfo(appContext.packageName, flags!!)
+        else appContext.packageManager.getPackageInfo(appContext.packageName, PackageManager.GET_PERMISSIONS)
+        val declared = info.requestedPermissions ?: emptyArray()
+        val eligible = declared.distinct().filter { permission ->
+            try {
+                @Suppress("DEPRECATION")
+                val permissionInfo = appContext.packageManager.getPermissionInfo(permission, 0)
+                (permissionInfo.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) ==
+                    android.content.pm.PermissionInfo.PROTECTION_DANGEROUS
+            } catch (_: Exception) { false }
+        }
+        val missing = eligible.filter { !granted(it) }
+        if (missing.isEmpty()) {
+            return ok(JSONObject().put("already_granted", eligible.size)
+                .put("attempted", 0).put("message", "All declared dangerous runtime permissions are already granted or none are eligible."))
+        }
+        val safePackage = appContext.packageName
+        val commands = missing.joinToString("; ") { permission ->
+            if (!permission.matches(Regex("[A-Za-z0-9_.]+"))) return@joinToString ""
+            "pm grant $safePackage $permission && echo GRANTED:$permission || echo FAILED:$permission"
+        }.trim(';', ' ', '\t')
+        if (commands.isBlank()) return JSONObject().put("ok", false).put("error", "No valid grant commands were generated.")
+        val result = runRootCommand("id; $commands", 25)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        val grantedRows = JSONArray()
+        val failedRows = JSONArray()
+        for (permission in missing) {
+            when {
+                result.output.contains("GRANTED:$permission") -> grantedRows.put(permission)
+                result.output.contains("FAILED:$permission") -> failedRows.put(permission)
+                else -> failedRows.put(permission)
+            }
+        }
+        return JSONObject()
+            .put("ok", isRoot && failedRows.length() == 0 && !result.timedOut)
+            .put("root_authorized", isRoot)
+            .put("attempted", missing.size)
+            .put("granted", grantedRows)
+            .put("failed_or_unconfirmed", failedRows)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("output", result.output)
+            .put("note", "Only permissions declared by this app and classified as dangerous by Android were attempted. Signature, privileged, role-restricted, and OEM-controlled permissions are not granted by this operation.")
+    }
+
+    private fun rootGrantEligibleAppOps(args: JSONObject): JSONObject {
+        if (!args.optBoolean("confirm", false)) {
+            return JSONObject().put("ok", false)
+                .put("error", "Explicit confirmation is required. Call again with confirm=true only if you want to attempt these special-access overrides.")
+        }
+        val operations = listOf(
+            "SYSTEM_ALERT_WINDOW", "WRITE_SETTINGS", "GET_USAGE_STATS",
+            "MANAGE_EXTERNAL_STORAGE", "REQUEST_INSTALL_PACKAGES",
+            "SCHEDULE_EXACT_ALARM", "POST_NOTIFICATION",
+            "REQUEST_IGNORE_BATTERY_OPTIMIZATIONS",
+            "RUN_IN_BACKGROUND", "RUN_ANY_IN_BACKGROUND"
+        )
+        val commands = operations.joinToString("; ") { operation ->
+            "appops set ${appContext.packageName} $operation allow && echo GRANTED:$operation || echo FAILED:$operation"
+        }
+        val result = runRootCommand("id; $commands", 25)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
+        val grantedRows = JSONArray()
+        val failedRows = JSONArray()
+        for (operation in operations) {
+            if (result.output.contains("GRANTED:$operation")) grantedRows.put(operation)
+            else failedRows.put(operation)
+        }
+        return JSONObject()
+            .put("ok", isRoot && failedRows.length() == 0 && !result.timedOut)
+            .put("root_authorized", isRoot)
+            .put("attempted", operations.size)
+            .put("granted", grantedRows)
+            .put("failed_or_unconfirmed", failedRows)
+            .put("exit_code", result.exitCode)
+            .put("timed_out", result.timedOut)
+            .put("output", result.output)
+            .put("note", "AppOps names and behavior vary by Android release and OEM. A successful AppOps write does not guarantee that every related feature is enabled; verify special_access_status and Android Settings.")
+    }
+
+    private data class RootCommandResult(
+        val exitCode: Int,
+        val output: String,
+        val timedOut: Boolean,
+        val truncated: Boolean
+    )
+
+    private fun runRootCommand(command: String, timeoutSeconds: Int): RootCommandResult {
+        val process = try {
+            ProcessBuilder("su", "-c", command).redirectErrorStream(true).start()
+        } catch (e: Exception) {
+            return RootCommandResult(-1, e.message ?: "Could not start su.", false, false)
+        }
+        val output = ByteArrayOutputStream()
+        var truncated = false
+        val reader = Thread {
+            try {
+                val input = process.inputStream
+                val buffer = ByteArray(2048)
+                var total = 0
+                while (true) {
+                    val count = input.read(buffer)
+                    if (count < 0) break
+                    val remaining = 65536 - total
+                    if (remaining > 0) {
+                        val accepted = minOf(count, remaining)
+                        output.write(buffer, 0, accepted)
+                        total += accepted
+                    }
+                    if (count > remaining) truncated = true
+                }
+            } catch (_: Exception) { }
+        }
+        reader.isDaemon = true
+        reader.start()
+        val finished = try { process.waitFor(timeoutSeconds.toLong(), TimeUnit.SECONDS) } catch (_: InterruptedException) {
+            Thread.currentThread().interrupt()
+            false
+        }
+        if (!finished) {
+            process.destroy()
+            try { if (!process.waitFor(250, TimeUnit.MILLISECONDS)) process.destroyForcibly() } catch (_: Exception) { process.destroyForcibly() }
+        }
+        try { reader.join(500) } catch (_: InterruptedException) { Thread.currentThread().interrupt() }
+        val text = output.toString(Charsets.UTF_8.name())
+        return RootCommandResult(
+            if (finished) try { process.exitValue() } catch (_: Exception) { -1 } else -1,
+            text,
+            !finished,
+            truncated
+        )
     }
 
     private fun ok(value: JSONObject) = JSONObject().put("ok", true).put("value", value)
