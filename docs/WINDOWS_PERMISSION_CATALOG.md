@@ -163,3 +163,10 @@ The new inventory also names Windows security mechanisms: current-token/elevatio
 - File access permissions and broad filesystem access: https://learn.microsoft.com/en-us/windows/apps/develop/files/file-access-permissions
 
 This is an inventory for the chosen .my-ai Windows desktop app, not a claim that every documented Windows capability applies to it. Windows also has security boundaries—ACLs, user tokens, UAC, group/enterprise policy, service permissions, device drivers and provider-level authorization—that are not one app permission switch. Each feature must expose its actual runtime state and fail safely if denied or unavailable.
+
+
+## Read-only Windows security inspection tools
+
+The registry now also contains read-only tools for the current process token's privilege list, Windows Firewall profile state, Microsoft Defender status, validated service status and service security descriptors, local account-policy summary, mapped/local network shares, and PowerShell execution-policy scopes. These use Windows-native command-line interfaces from the main process, validate service names, use fixed PowerShell commands, and do not change firewall, Defender, service, account, or execution policies.
+
+The registry also includes manifest declarations that may be applicable to packaged AppContainer/MSIX applications. A manifest entry is a capability inventory item, not a grant. Microsoft's official documentation explains that most app capabilities apply to apps with package identity and that restricted capabilities can require approval; a normal full-trust desktop app does not automatically get AppContainer grants. See [Microsoft's capability declaration guide](https://learn.microsoft.com/en-us/windows/apps/package-and-deploy/app-capability-declarations) and [Microsoft's app-permissions guide](https://support.microsoft.com/en-us/windows/apps/app-permissions).
