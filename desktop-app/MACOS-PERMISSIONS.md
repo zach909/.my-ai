@@ -74,3 +74,10 @@ Apple's reference list: [Resetting access to protected resources in macOS](https
 The registry now also exposes one named tool for each remaining Apple-listed TCC service category, including Accessibility, BluetoothAlways, Calendar, Camera, Microphone, Motion, Photos and PhotosAdd, Reminders, RemoteDesktop, ScreenCapture, SpeechRecognition, HomeKit, Apple Events, AudioCapture, PostEvent, FocusStatus, File Provider services, Game Center friends, app data and bundle services, developer/system files, virtual-machine networking, Personal Voice, browser public-key credentials, EnergyKit, and external-camera media. Several aliases intentionally map to the same underlying macOS service or Settings pane; they improve discoverability and do not create new independent permissions.
 
 The usage-description dictionary also includes purpose strings for additional Apple-defined privacy categories. Some keys apply only to particular OS versions, hardware, entitlements, or APIs. The build must be validated on macOS, and a purpose string is not a substitute for the corresponding native framework integration or user authorization.
+
+
+## Additional macOS capability entries
+
+This update adds explicit entries for system-extension approval, driver-extension approval, Network Extension configuration, Endpoint Security, App Sandbox entitlements, login-item/background-task management, notification authorization, Keychain access groups, privileged helper tools, Virtualization framework access, and network client/server entitlements. These are capability/entitlement records rather than independent privacy prompts. Their actual availability depends on the macOS version, signed entitlements, provisioning, the API used, and any required user or administrator approval. The catalog does not bypass these requirements.
+
+Apple's documented protected-resource TCC services are represented in the catalog. Some catalog IDs are aliases for the same underlying service; they do not represent separate grants. The app still needs feature-specific native API calls for permission requests and access checks.
