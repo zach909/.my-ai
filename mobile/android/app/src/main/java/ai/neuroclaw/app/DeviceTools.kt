@@ -67,6 +67,7 @@ class DeviceTools(private val context: Context) {
         add("list_notifications", "List currently active notifications after the user enables notification-listener access.")
         add("open_modify_settings", "Open Android permission settings for modifying system settings.")
         add("open_picture_in_picture_settings", "Open Android picture-in-picture settings for this app.")
+        add("open_full_screen_intent_settings", "Open Android full-screen notification intent access settings where supported.")
         add("open_accessibility_settings", "Open Android Accessibility settings; enabling a service requires the user.")
         add("open_usage_settings", "Open Android usage-access settings.")
         add("open_all_files_settings", "Open Android all-files-access settings for this app.")
@@ -119,6 +120,7 @@ class DeviceTools(private val context: Context) {
                 "list_notifications" -> listNotifications()
                 "open_modify_settings" -> openSystemSettings("modify_settings")
                 "open_picture_in_picture_settings" -> openSystemSettings("picture_in_picture")
+                "open_full_screen_intent_settings" -> openSystemSettings("full_screen_intent")
                 "open_accessibility_settings" -> openSystemSettings("accessibility")
                 "open_usage_settings" -> openSystemSettings("usage")
                 "open_all_files_settings" -> openSystemSettings("files")
@@ -218,6 +220,7 @@ class DeviceTools(private val context: Context) {
             "notification_listener" -> Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS
             "modify_settings" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_MANAGE_WRITE_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             "picture_in_picture" -> if (Build.VERSION.SDK_INT >= 26) Settings.ACTION_PICTURE_IN_PICTURE_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "full_screen_intent" -> if (Build.VERSION.SDK_INT >= 34) "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT" else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             "accessibility" -> Settings.ACTION_ACCESSIBILITY_SETTINGS
             "usage" -> Settings.ACTION_USAGE_ACCESS_SETTINGS
             "files" -> if (Build.VERSION.SDK_INT >= 30) Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
@@ -234,7 +237,7 @@ class DeviceTools(private val context: Context) {
             else -> return JSONObject().put("ok", false).put("error", "Unknown settings page")
         }
         val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (which in setOf("files", "battery", "overlay", "alarms", "unknown_apps", "app", "modify_settings", "picture_in_picture")) intent.data = Uri.parse("package:${context.packageName}")
+        if (which in setOf("files", "battery", "overlay", "alarms", "unknown_apps", "app", "modify_settings", "picture_in_picture", "full_screen_intent")) intent.data = Uri.parse("package:${context.packageName}")
         if (which == "notification") intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         context.startActivity(intent)
         return ok(JSONObject().put("opened_settings", which))
@@ -583,7 +586,7 @@ class DeviceTools(private val context: Context) {
     }
 
     private fun listPhotos(limit: Int): JSONObject {
-        val imagePermission = if (Build.VERSION.SDK_INT >= 33) Manifest.permission.READ_MEDIA_IMAGES else Manifest.permission.READ_EXTERNAL_STORAGE
+        val imagePermission = mediaPermission("image")
         requirePermission(imagePermission)
         val rows = JSONArray()
         appContext.contentResolver.query(MediaStore.Images.Media.EXTERNAL_CONTENT_URI,
