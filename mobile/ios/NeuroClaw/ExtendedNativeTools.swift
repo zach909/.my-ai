@@ -889,8 +889,19 @@ private final class AudioRecordingFlow {
 private enum LocalNetworkDiscovery {
     static func discover(_ arguments: [String: Any]) async -> (Int, [String: Any]) {
         let requested = (arguments["service_type"] as? String) ?? "_http._tcp"
-        guard requested.range(of: #"^_[A-Za-z0-9-]+\._tcp$|^_[A-Za-z0-9-]+\._udp$"#, options: .regularExpression) != nil else {
-            return (400, ["error": "invalid_bonjour_service_type", "example": "_http._tcp"])
+        // iOS requires every browsed Bonjour service type to be declared in
+        // NSBonjourServices. Keep this allow-list synchronized with project.yml;
+        // accepting arbitrary syntactically-valid types would silently fail at runtime.
+        let allowedServiceTypes: Set<String> = [
+            "_http._tcp", "_https._tcp", "_ssh._tcp", "_smb._tcp",
+            "_workstation._tcp", "_ipp._tcp", "_printer._tcp"
+        ]
+        guard allowedServiceTypes.contains(requested) else {
+            return (400, [
+                "error": "bonjour_service_type_not_declared",
+                "requested": requested,
+                "allowed_service_types": allowedServiceTypes.sorted()
+            ])
         }
         let seconds = min(max((arguments["seconds"] as? NSNumber)?.doubleValue ?? 4, 1), 10)
         return await withCheckedContinuation { continuation in
