@@ -208,6 +208,14 @@ enum Permissions {
         }
     }
 
+    static func requestPhotosAddOnly() async -> String {
+        await withCheckedContinuation { continuation in
+            PHPhotoLibrary.requestAuthorization(for: .addOnly) { status in
+                continuation.resume(returning: describePhotos(status))
+            }
+        }
+    }
+
     private static func describePhotos(_ status: PHAuthorizationStatus) -> String {
         switch status {
         case .authorized: return "Granted"
