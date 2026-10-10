@@ -673,6 +673,31 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         fs.writeFileSync(result.filePath, args.content, { encoding: 'utf8', flag: 'w' });
         return { success: true, path: result.filePath };
       }
+      case 'clipboardImageRead': {
+        const { clipboard } = require('electron');
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Read clipboard image', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Sensitive permission', message: 'Allow .my-ai to read the current clipboard image?',
+          detail: 'Clipboard images may contain private information. Only the current image will be returned.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const image = clipboard.readImage();
+        if (image.isEmpty()) return { success: false, error: 'The clipboard does not contain an image.' };
+        const png = image.toPNG();
+        if (png.length > 10 * 1024 * 1024) return { success: false, error: 'Clipboard image exceeds the 10 MB limit.' };
+        return { success: true, mimeType: 'image/png', width: image.getSize().width, height: image.getSize().height, base64: png.toString('base64') };
+      }
+      case 'clipboardClear': {
+        const { clipboard } = require('electron');
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Clear clipboard', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Confirm clipboard clearing', message: 'Clear the current clipboard contents?',
+          detail: 'This affects all clipboard formats currently stored in Windows.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        clipboard.clear();
+        return { success: true, cleared: true };
+      }
       case 'clipboardRead': {
         const { clipboard } = require('electron');
         const approval = await dialog.showMessageBox(mainWindow, {
@@ -705,7 +730,8 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
       case 'networkInterfaces':
       case 'localNetwork':
         return { success: true, interfaces: require('os').networkInterfaces() };
-      case 'environmentInfo': {
+      case 'environmentInfo':
+      case 'environmentRead': {
         const safeKeys = ['OS', 'PROCESSOR_ARCHITECTURE', 'NUMBER_OF_PROCESSORS', 'ComSpec', 'SystemRoot', 'WINDIR', 'TEMP', 'TMP', 'PATH'];
         const env = {};
         for (const key of safeKeys) {
@@ -729,7 +755,8 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         const error = await shell.openPath(args.path);
         return error ? { success: false, error } : { success: true };
       }
-      case 'launchProcess': {
+      case 'launchProcess':
+      case 'appLaunch': {
         if (typeof args.executable !== 'string' || !args.executable.trim()) {
           return { success: false, error: 'executable must be a non-empty path or command name.' };
         }
@@ -1123,6 +1150,59 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         }
         const output = execFileSync('reg.exe', ['query', allowedKeys[args.key]], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
         return { success: true, category: args.key, registryOutput: output.slice(0, 30000), readOnly: true, note: 'Only predefined non-secret registry locations are supported.' };
+      }
+      case 'appDiagnostics': {
+        let files = [];
+        const logPath = app.getPath('logs');
+        try {
+          files = fs.readdirSync(logPath, { withFileTypes: true }).filter((entry) => entry.isFile()).slice(0, 200).map((entry) => {
+            const fullPath = path.join(logPath, entry.name);
+            let stat;
+            try { stat = fs.statSync(fullPath); } catch { return { name: entry.name, unavailable: true }; }
+            return { name: entry.name, sizeBytes: stat.size, modifiedAt: stat.mtime.toISOString() };
+          });
+        } catch {}
+        return { success: true, appVersion: app.getVersion(), platform: process.platform, logDirectory: logPath, logFiles: files, readOnly: true, note: 'File names and metadata only; log contents are not returned.' };
+      }
+      case 'taskManager':
+        return {
+          success: true,
+          tasks: Array.from(ownedCapabilityProcesses.entries()).map(([processToken, child]) => ({
+            processToken, pid: child.pid || null, executable: child.spawnfile || null,
+            running: Boolean(child.pid && child.exitCode === null && !child.killed),
+          })),
+          scope: 'Only processes launched and tracked by this app.',
+        };
+      case 'developerTools': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const tools = [
+          ['git.exe', ['--version']], ['node.exe', ['--version']],
+          ['python.exe', ['--version']], ['py.exe', ['--version']],
+        ];
+        const results = tools.map(([executable, argv]) => {
+          try {
+            const version = execFileSync(executable, argv, { encoding: 'utf8', timeout: 5000, windowsHide: true, maxBuffer: 256 * 1024 });
+            return { executable, available: true, version: version.trim().slice(0, 1000) };
+          } catch (error) {
+            return { executable, available: false, reason: error && error.code === 'ENOENT' ? 'not-installed-or-not-on-PATH' : (error.message || String(error)).slice(0, 500) };
+          }
+        });
+        return { success: true, tools: results, readOnly: true, note: 'Only fixed version commands were run; arbitrary commands are not accepted by this tool.' };
+      }
+      case 'gitRepositories': {
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: 'Choose a Git repository folder to inspect' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const cwd = selected.filePaths[0];
+        const runGit = (argv) => execFileSync('git.exe', argv, { cwd, encoding: 'utf8', timeout: 8000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        try {
+          const root = runGit(['rev-parse', '--show-toplevel']).trim();
+          const status = runGit(['status', '--short', '--branch']).slice(0, 20000);
+          let lastCommit = '';
+          try { lastCommit = runGit(['log', '-1', '--format=%h %s']).trim().slice(0, 1000); } catch {}
+          return { success: true, repository: root, status, lastCommit, readOnly: true };
+        } catch (error) {
+          return { success: false, error: 'The selected folder is not a readable Git repository or Git is unavailable.', detail: (error.message || String(error)).slice(0, 1000) };
+        }
       }
       case 'windowsAppCapabilities':
         return {
