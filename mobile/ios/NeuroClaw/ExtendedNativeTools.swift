@@ -12,6 +12,7 @@ import HomeKit
 import Intents
 import LocalAuthentication
 import MediaPlayer
+import Network
 import Photos
 import Speech
 import UIKit
@@ -146,6 +147,9 @@ enum ExtendedNativeTools {
         case "files.export":
             properties = ["filename": ["type": "string"], "data_base64": ["type": "string"]]
             required = ["data_base64"]
+        case "network.local_discovery":
+            properties = ["service_type": ["type": "string", "description": "Bonjour service type, such as _http._tcp"], "seconds": ["type": "number", "minimum": 1, "maximum": 10]]
+            required = []
         default:
             properties = [:]
             required = []
@@ -308,6 +312,8 @@ enum ExtendedNativeTools {
             return await AudioRecordingFlow.shared.start()
         case "microphone.stop_recording":
             return await AudioRecordingFlow.shared.stop()
+        case "network.local_discovery":
+            return await LocalNetworkDiscovery.discover(arguments)
         case "contacts.create":
             return await createContact(arguments)
         case "contacts.update":
@@ -326,7 +332,7 @@ enum ExtendedNativeTools {
             return await deleteReminder(arguments)
         case "homekit.get_status", "homekit.list_homes", "homekit.list_accessories", "homekit.control_accessory":
             return (501, ["error": "homekit_requires_foreground_setup", "detail": "HomeKit requires the entitlement and an app-owned manager lifecycle. No accessory was changed."])
-        case "network.local_discovery", "nearby.start_session", "nearby.stop_session":
+        case "nearby.start_session", "nearby.stop_session":
             return (409, ["error": "foreground_or_capability_flow_required", "detail": "This operation requires a foreground UIKit flow, a configured entitlement, or a supported user-selected resource. No device data was changed."])
         default:
             return (404, ["error": "unknown_extended_tool", "name": name])
@@ -845,6 +851,56 @@ private final class AudioRecordingFlow {
         } catch {
             try? FileManager.default.removeItem(at: url)
             return (500, ["error": "audio_recording_read_failed", "detail": error.localizedDescription])
+        }
+    }
+}
+
+
+private enum LocalNetworkDiscovery {
+    static func discover(_ arguments: [String: Any]) async -> (Int, [String: Any]) {
+        let requested = (arguments["service_type"] as? String) ?? "_http._tcp"
+        guard requested.range(of: #"^_[A-Za-z0-9-]+\._tcp$|^_[A-Za-z0-9-]+\._udp$"#, options: .regularExpression) != nil else {
+            return (400, ["error": "invalid_bonjour_service_type", "example": "_http._tcp"])
+        }
+        let seconds = min(max((arguments["seconds"] as? NSNumber)?.doubleValue ?? 4, 1), 10)
+        return await withCheckedContinuation { continuation in
+            let browser = NWBrowser(for: .bonjour(type: requested, domain: nil), using: .tcp)
+            let queue = DispatchQueue(label: "ai.neuroclaw.local-discovery")
+            let lock = NSLock()
+            var services: [[String: String]] = []
+            var finished = false
+            func finish(_ status: Int, _ extra: [String: Any]) {
+                lock.lock()
+                guard !finished else { lock.unlock(); return }
+                finished = true
+                let result = services
+                lock.unlock()
+                browser.cancel()
+                var payload: [String: Any] = ["services": result, "count": result.count, "service_type": requested]
+                extra.forEach { payload[$0.key] = $0.value }
+                continuation.resume(returning: (status, payload))
+            }
+            browser.stateUpdateHandler = { state in
+                if case .failed(let error) = state {
+                    finish(403, ["error": "local_network_browser_failed", "detail": error.localizedDescription])
+                }
+            }
+            browser.browseResultsChangedHandler = { results, _ in
+                lock.lock()
+                services = results.map { result in
+                    switch result.endpoint {
+                    case .service(let name, let type, let domain, _):
+                        return ["name": name, "type": type, "domain": domain]
+                    default:
+                        return ["endpoint": String(describing: result.endpoint)]
+                    }
+                }
+                lock.unlock()
+            }
+            browser.start(queue: queue)
+            queue.asyncAfter(deadline: .now() + seconds) {
+                finish(200, ["duration_seconds": seconds])
+            }
         }
     }
 }
