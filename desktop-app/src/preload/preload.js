@@ -94,6 +94,87 @@ function getCurrentLocation() {
 
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
+
+async function captureScreenFrame() {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
+    return { success: false, status: 'unsupported', error: 'Screen capture is unavailable in this runtime.' };
+  }
+  let stream;
+  try {
+    // Chromium/Electron displays its native source picker; no hidden capture.
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: { frameRate: 5 }, audio: false });
+    const track = stream.getVideoTracks()[0];
+    if (!track) return { success: false, status: 'no-video-track' };
+    const video = document.createElement('video');
+    video.muted = true;
+    video.playsInline = true;
+    video.srcObject = stream;
+    await new Promise((resolve, reject) => {
+      const timer = setTimeout(() => reject(new Error('Screen source did not become ready in time.')), 7000);
+      video.onloadedmetadata = () => { clearTimeout(timer); resolve(); };
+      video.onerror = () => { clearTimeout(timer); reject(new Error('Could not initialize screen preview.')); };
+    });
+    await video.play();
+    await new Promise(resolve => setTimeout(resolve, 250));
+    const canvas = document.createElement('canvas');
+    canvas.width = Math.min(video.videoWidth || 1280, 2560);
+    canvas.height = Math.min(video.videoHeight || 720, 1440);
+    const context = canvas.getContext('2d');
+    if (!context) throw new Error('Canvas capture is unavailable.');
+    context.drawImage(video, 0, 0, canvas.width, canvas.height);
+    return { success: true, mimeType: 'image/jpeg', dataUrl: canvas.toDataURL('image/jpeg', 0.85), width: canvas.width, height: canvas.height, sourcePickerShown: true };
+  } catch (error) {
+    return { success: false, status: 'capture-failed-or-canceled', error: String(error && error.message || error).slice(0, 500) };
+  } finally {
+    if (stream) stream.getTracks().forEach(track => track.stop());
+  }
+}
+
+async function captureSystemAudio(args = {}) {
+  if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia || typeof MediaRecorder === 'undefined') {
+    return { success: false, status: 'unsupported', error: 'System audio capture is unavailable in this runtime.' };
+  }
+  const requested = Number(args.durationMs);
+  const durationMs = Number.isFinite(requested) ? Math.max(1000, Math.min(15000, requested)) : 5000;
+  let stream;
+  try {
+    // Windows/Electron may expose audio only for sources that support it.
+    // The OS/Chromium picker remains visible and the user chooses the source.
+    stream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+    const audioTracks = stream.getAudioTracks();
+    if (!audioTracks.length) return { success: false, status: 'no-audio-track', error: 'The selected source did not provide system audio.' };
+    const audioStream = new MediaStream(audioTracks);
+    const mimeType = ['audio/webm;codecs=opus', 'audio/webm'].find(type => MediaRecorder.isTypeSupported(type)) || '';
+    const recorder = new MediaRecorder(audioStream, mimeType ? { mimeType } : undefined);
+    const chunks = [];
+    const completed = new Promise((resolve, reject) => {
+      recorder.ondataavailable = event => { if (event.data && event.data.size) chunks.push(event.data); };
+      recorder.onerror = event => reject(new Error(event.error && event.error.message || 'Audio recording failed.'));
+      recorder.onstop = async () => {
+        try {
+          const blob = new Blob(chunks, { type: recorder.mimeType || 'audio/webm' });
+          if (blob.size > 10 * 1024 * 1024) return resolve({ success: false, status: 'size-limit', error: 'Audio sample exceeded 10 MB.' });
+          const dataUrl = await new Promise((resolveData, rejectData) => {
+            const reader = new FileReader();
+            reader.onload = () => resolveData(reader.result);
+            reader.onerror = () => rejectData(new Error('Could not encode audio sample.'));
+            reader.readAsDataURL(blob);
+          });
+          resolve({ success: true, mimeType: blob.type || 'audio/webm', dataUrl, durationMs, sourcePickerShown: true });
+        } catch (error) { reject(error); }
+      };
+    });
+    recorder.start();
+    await new Promise(resolve => setTimeout(resolve, durationMs));
+    if (recorder.state !== 'inactive') recorder.stop();
+    return await completed;
+  } catch (error) {
+    return { success: false, status: 'capture-failed-or-canceled', error: String(error && error.message || error).slice(0, 500) };
+  } finally {
+    if (stream) stream.getTracks().forEach(track => track.stop());
+  }
+}
+
 contextBridge.exposeInMainWorld('electronAPI', {
   // File System Operations
   selectDirectory: () => ipcRenderer.invoke('select-directory'),
@@ -126,8 +207,8 @@ contextBridge.exposeInMainWorld('electronAPI', {
     voiceActivation: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'voiceActivation', args),
     speechRecognition: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'speechRecognition', args),
     notifications: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'notifications', args),
-    screenCapture: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'screenCapture', args),
-    systemAudioCapture: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'systemAudioCapture', args),
+    screenCapture: () => captureScreenFrame(),
+    systemAudioCapture: (args = {}) => captureSystemAudio(args),
     accessibility: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'accessibility', args),
     inputMonitoring: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'inputMonitoring', args),
     keyboardAutomation: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'keyboardAutomation', args),
