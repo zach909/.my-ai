@@ -42,6 +42,7 @@ let mainWindow;
 let backendProcess;
 let appServer;
 const ownedCapabilityProcesses = new Map();
+const capabilityFileWatchers = new Map();
 
 /**
  * Where the built app (dist/interface/main.js + dist/index.html) lives.
@@ -458,6 +459,8 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  for (const entry of capabilityFileWatchers.values()) { try { entry.watcher.close(); } catch {} }
+  capabilityFileWatchers.clear();
   stopNeuroclaw();
 });
 
@@ -1271,6 +1274,69 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         const command = "Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture,CsName,CsDomain,CsSystemType | ConvertTo-Json -Compress";
         const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 1024 * 1024 });
         return { success: true, system: JSON.parse(output.trim()), readOnly: true };
+      }
+      case 'watchFiles': {
+        const operation = typeof args.operation === 'string' ? args.operation : 'start';
+        if (operation === 'stop' || operation === 'status') {
+          if (typeof args.watchToken !== 'string' || !capabilityFileWatchers.has(args.watchToken)) return { success: false, error: 'Unknown watch token.' };
+          const entry = capabilityFileWatchers.get(args.watchToken);
+          if (operation === 'stop') { entry.watcher.close(); capabilityFileWatchers.delete(args.watchToken); return { success: true, stopped: true, path: entry.path }; }
+          const events = entry.events.splice(0, 100);
+          return { success: true, watchToken: args.watchToken, path: entry.path, events, queuedEvents: entry.events.length, active: true };
+        }
+        if (operation !== 'start') return { success: false, error: 'operation must be start, status, or stop.' };
+        if (capabilityFileWatchers.size >= 20) return { success: false, error: 'At most 20 file watches may be active.' };
+        const selected = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: 'Choose a folder for file-change monitoring' });
+        if (selected.canceled || !selected.filePaths[0]) return { success: false, canceled: true };
+        const folder = selected.filePaths[0];
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'warning', buttons: ['Start monitoring', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Monitor folder changes', message: 'Allow .my-ai to monitor changes in this folder?',
+          detail: folder + '\nMonitoring is non-recursive. File names and change types may be recorded until you stop the watch or quit the app.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const watchToken = crypto.randomUUID();
+        const entry = { path: folder, events: [], watcher: null };
+        entry.watcher = fs.watch(folder, { persistent: false }, (eventType, filename) => {
+          if (entry.events.length >= 500) entry.events.shift();
+          entry.events.push({ eventType: String(eventType).slice(0, 40), name: filename == null ? null : String(filename).slice(0, 1024), at: new Date().toISOString() });
+        });
+        capabilityFileWatchers.set(watchToken, entry);
+        return { success: true, watchToken, path: folder, recursive: false, active: true };
+      }
+      case 'printToPdf': {
+        if (!mainWindow || mainWindow.isDestroyed()) return { success: false, error: 'The app window is not available.' };
+        const selected = await dialog.showSaveDialog(mainWindow, {
+          title: 'Export the current .my-ai window to PDF',
+          defaultPath: typeof args.defaultPath === 'string' ? path.basename(args.defaultPath).replace(/\.pdf$/i, '') + '.pdf' : 'my-ai-export.pdf',
+          filters: [{ name: 'PDF document', extensions: ['pdf'] }],
+        });
+        if (selected.canceled || !selected.filePath) return { success: false, canceled: true };
+        const outputPath = selected.filePath.toLowerCase().endsWith('.pdf') ? selected.filePath : selected.filePath + '.pdf';
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'question', buttons: ['Export PDF', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Confirm PDF export', message: 'Export the current .my-ai window to PDF?',
+          detail: 'The PDF will be written to: ' + outputPath,
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        const pdf = await mainWindow.webContents.printToPDF({ printBackground: true, pageSize: 'A4' });
+        if (pdf.length > 50 * 1024 * 1024) return { success: false, error: 'Generated PDF exceeds the 50 MB limit.' };
+        fs.writeFileSync(outputPath, pdf, { flag: 'wx' });
+        return { success: true, path: outputPath, bytes: pdf.length, content: 'current-app-window' };
+      }
+      case 'manageStartup': {
+        if (!['win32', 'darwin', 'linux'].includes(process.platform)) return { success: false, status: 'unsupported-on-platform' };
+        if (typeof args.enabled !== 'boolean') return { success: false, error: 'enabled must be a boolean.' };
+        const approval = await dialog.showMessageBox(mainWindow, {
+          type: 'question', buttons: [args.enabled ? 'Enable startup' : 'Disable startup', 'Cancel'], defaultId: 1, cancelId: 1, noLink: true,
+          title: 'Change startup setting',
+          message: (args.enabled ? 'Start' : 'Do not start') + ' .my-ai when you sign in?',
+          detail: 'This changes only .my-ai’s own login-item setting. It does not install a service or scheduled task.',
+        });
+        if (approval.response !== 0) return { success: false, canceled: true };
+        app.setLoginItemSettings({ openAtLogin: args.enabled, openAsHidden: false });
+        const actual = app.getLoginItemSettings();
+        return { success: true, requested: args.enabled, openAtLogin: actual.openAtLogin, note: 'The OS or packaging format may affect whether this setting is honored.' };
       }
       default:
         return {
