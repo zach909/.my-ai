@@ -66,4 +66,3 @@ targets:
           - fetch
         NSAppTransportSecurity:
           NSAllowsLocalNetworking: true
-          NSAllowsArbitraryLoads: true
