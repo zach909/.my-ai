@@ -65,6 +65,12 @@
       "icon": "assets/icon.icns",
       "category": "public.app-category.utilities",
       "extendInfo": {
+        "NSAudioCaptureUsageDescription": "NeuroClaw captures system audio only when you explicitly start a feature that needs it.",
+        "NSSiriUsageDescription": "NeuroClaw integrates with Siri only when you enable a Siri-related feature.",
+        "NSUserTrackingUsageDescription": "NeuroClaw requests tracking access only if you explicitly enable a feature that requires it.",
+        "NSAppBundlesUsageDescription": "NeuroClaw accesses or manages application bundles only when you explicitly start that operation.",
+        "NSAppDataUsageDescription": "NeuroClaw accesses other applications' protected data only when you explicitly enable a supported feature.",
+        "NSSystemAdministrationUsageDescription": "NeuroClaw accesses protected system-administration files only when you explicitly start a feature that requires them.",
         "NSLocationWhenInUseUsageDescription": "NeuroClaw uses your location only when you enable location-aware features.",
         "NSContactsUsageDescription": "NeuroClaw accesses contacts only when you enable a feature that needs them.",
         "NSCalendarsUsageDescription": "NeuroClaw accesses calendars only when you enable calendar features.",
