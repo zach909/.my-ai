@@ -95,6 +95,103 @@ function getCurrentLocation() {
 // Expose protected methods that allow the renderer process to use
 // the ipcRenderer without exposing the entire object
 
+
+function runSpeechRecognition(args = {}, wakeMode = false) {
+  const Recognition = typeof window !== 'undefined' && (window.SpeechRecognition || window.webkitSpeechRecognition);
+  if (!Recognition) return Promise.resolve({ success: false, status: 'unsupported', error: 'SpeechRecognition is not available in this Electron runtime. No background listener was started.' });
+  const language = typeof args.language === 'string' && /^[a-z]{2,3}(-[A-Za-z0-9]{2,8})*$/.test(args.language) ? args.language : 'en-US';
+  const wakeWord = typeof args.wakeWord === 'string' && args.wakeWord.trim() ? args.wakeWord.trim().toLocaleLowerCase() : 'hey neuroclaw';
+  const requested = Number(args.durationMs);
+  const durationMs = Number.isFinite(requested) ? Math.max(1000, Math.min(wakeMode ? 60000 : 15000, requested)) : (wakeMode ? 15000 : 10000);
+  return new Promise(resolve => {
+    let settled = false;
+    const recognition = new Recognition();
+    recognition.lang = language;
+    recognition.continuous = wakeMode;
+    recognition.interimResults = false;
+    recognition.maxAlternatives = 1;
+    let transcript = '';
+    let timer;
+    const finish = result => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      try { recognition.stop(); } catch {}
+      resolve(result);
+    };
+    recognition.onresult = event => {
+      for (let i = event.resultIndex; i < event.results.length; i++) {
+        const result = event.results[i];
+        if (!result.isFinal || !result[0]) continue;
+        const phrase = String(result[0].transcript || '').trim();
+        if (!phrase) continue;
+        transcript = phrase;
+        if (!wakeMode) finish({ success: true, transcript, language, userStarted: true, providerMayUseNetwork: true });
+        else if (phrase.toLocaleLowerCase().includes(wakeWord)) finish({ success: true, detected: true, wakeWord, transcript: phrase, language, userStarted: true, providerMayUseNetwork: true });
+      }
+    };
+    recognition.onerror = event => finish({ success: false, status: String(event.error || 'recognition-error'), error: 'Speech recognition failed or permission was denied.' });
+    recognition.onend = () => {
+      if (wakeMode && !settled) finish({ success: true, detected: false, wakeWord, lastTranscript: transcript, timedOut: true, userStarted: true });
+      else if (!settled && transcript) finish({ success: true, transcript, language, userStarted: true, providerMayUseNetwork: true });
+      else if (!settled) finish({ success: false, status: 'no-speech', error: 'No speech was recognized.' });
+    };
+    timer = setTimeout(() => finish({ success: true, ...(wakeMode ? { detected: false, wakeWord, lastTranscript: transcript } : { transcript }), timedOut: true, userStarted: true }), durationMs);
+    try { recognition.start(); } catch (error) { finish({ success: false, status: 'start-failed', error: String(error && error.message || error).slice(0, 300) }); }
+  });
+}
+
+function readAppAccessibilityTree(args = {}) {
+  if (typeof document === 'undefined') return { success: false, status: 'unsupported' };
+  const maxItems = Number.isFinite(Number(args.maxItems)) ? Math.max(1, Math.min(300, Number(args.maxItems))) : 150;
+  const visible = element => {
+    const style = window.getComputedStyle(element);
+    const rect = element.getBoundingClientRect();
+    return style.display !== 'none' && style.visibility !== 'hidden' && Number(style.opacity) !== 0 && rect.width > 0 && rect.height > 0;
+  };
+  const nodes = Array.from(document.querySelectorAll('button,a,input,textarea,select,[role],[aria-label],[contenteditable="true"]'))
+    .filter(visible).slice(0, maxItems).map(element => ({
+      tag: element.tagName.toLowerCase(),
+      role: element.getAttribute('role') || undefined,
+      label: (element.getAttribute('aria-label') || element.innerText || element.getAttribute('placeholder') || element.getAttribute('title') || '').trim().slice(0, 300),
+      type: element.getAttribute('type') || undefined,
+      disabled: Boolean(element.disabled),
+      value: /^(INPUT|TEXTAREA|SELECT)$/.test(element.tagName) ? String(element.value || '').slice(0, 300) : undefined,
+    }));
+  return { success: true, scope: 'current .my-ai renderer only; not other Windows applications', nodes, count: nodes.length, truncated: document.querySelectorAll('button,a,input,textarea,select,[role],[aria-label],[contenteditable="true"]').length > nodes.length };
+}
+
+function automateAppKeyboard(args = {}) {
+  if (typeof document === 'undefined') return { success: false, status: 'unsupported' };
+  const active = document.activeElement;
+  const text = typeof args.text === 'string' ? args.text : '';
+  if (!active || !/^(INPUT|TEXTAREA)$/.test(active.tagName) && !active.isContentEditable) return { success: false, error: 'Focus a text input in the .my-ai window first.' };
+  if (args.action !== 'typeText' || text.length > 5000) return { success: false, error: 'Supported action is typeText with at most 5000 characters.' };
+  if (active.disabled || active.readOnly) return { success: false, error: 'The focused field is disabled or read-only.' };
+  if (active.isContentEditable) active.textContent = (active.textContent || '') + text;
+  else {
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(active), 'value')?.set;
+    if (setter) setter.call(active, active.value + text); else active.value += text;
+  }
+  active.dispatchEvent(new Event('input', { bubbles: true, composed: true }));
+  active.dispatchEvent(new Event('change', { bubbles: true }));
+  return { success: true, action: 'typeText', characters: text.length, scope: 'focused field in current .my-ai window only' };
+}
+
+function automateAppPointer(args = {}) {
+  if (typeof document === 'undefined') return { success: false, status: 'unsupported' };
+  const targetText = typeof args.targetText === 'string' ? args.targetText.trim().toLocaleLowerCase() : '';
+  if (!targetText || targetText.length > 200) return { success: false, error: 'Provide targetText (1–200 characters) matching a visible button or link.' };
+  const targets = Array.from(document.querySelectorAll('button,a,[role="button"]')).filter(element => {
+    const style = window.getComputedStyle(element), rect = element.getBoundingClientRect();
+    const label = (element.getAttribute('aria-label') || element.innerText || element.getAttribute('title') || '').trim().toLocaleLowerCase();
+    return style.display !== 'none' && style.visibility !== 'hidden' && rect.width > 0 && rect.height > 0 && !element.disabled && label === targetText;
+  });
+  if (targets.length !== 1) return { success: false, error: targets.length ? 'Target label is ambiguous; no action was taken.' : 'No visible enabled button or link exactly matched that label.' };
+  targets[0].click();
+  return { success: true, action: 'click', targetText, scope: 'current .my-ai window only' };
+}
+
 async function captureScreenFrame() {
   if (typeof navigator === 'undefined' || !navigator.mediaDevices || !navigator.mediaDevices.getDisplayMedia) {
     return { success: false, status: 'unsupported', error: 'Screen capture is unavailable in this runtime.' };
@@ -204,15 +301,15 @@ contextBridge.exposeInMainWorld('electronAPI', {
     camera: () => captureCameraPhoto(),
     microphone: (args = {}) => recordMicrophone(args),
     location: () => getCurrentLocation(),
-    voiceActivation: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'voiceActivation', args),
-    speechRecognition: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'speechRecognition', args),
+    voiceActivation: (args = {}) => runSpeechRecognition(args, true),
+    speechRecognition: (args = {}) => runSpeechRecognition(args, false),
     notifications: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'notifications', args),
     screenCapture: () => captureScreenFrame(),
     systemAudioCapture: (args = {}) => captureSystemAudio(args),
-    accessibility: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'accessibility', args),
+    accessibility: (args = {}) => readAppAccessibilityTree(args),
     inputMonitoring: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'inputMonitoring', args),
-    keyboardAutomation: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'keyboardAutomation', args),
-    pointerAutomation: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'pointerAutomation', args),
+    keyboardAutomation: (args = {}) => automateAppKeyboard(args),
+    pointerAutomation: (args = {}) => automateAppPointer(args),
     clipboardRead: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'clipboardRead', args),
     clipboardWrite: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'clipboardWrite', args),
     selectFile: (args = {}) => ipcRenderer.invoke('windows-tools:run', 'selectFile', args),
