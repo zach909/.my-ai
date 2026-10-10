@@ -656,6 +656,20 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   energyKitGuidanceService: { label: "EnergyKit guidance service", service: "EnergyKitGuidance", pane: null, kind: "capability" },
   externalCameraMediaService: { label: "External camera media service", service: "ExternalCameraMedia", pane: "Privacy_Camera", kind: "settings", statusMedia: 'camera' },
 
+  // Additional macOS capabilities that require entitlements, app-specific APIs, or separate OS approval.
+  systemExtensionApproval: { label: "System extension installation and approval", service: "SystemExtension", pane: "Privacy_Security", kind: "capability" },
+  driverExtensionApproval: { label: "Driver extension installation and approval", service: "DriverExtension", pane: "Privacy_Security", kind: "capability" },
+  networkExtensionConfiguration: { label: "Network Extension configuration", service: "NetworkExtension", pane: null, kind: "capability" },
+  endpointSecurityClient: { label: "Endpoint Security client entitlement", service: "EndpointSecurity", pane: null, kind: "capability" },
+  sandboxEntitlements: { label: "App Sandbox entitlements", service: "AppSandbox", pane: null, kind: "capability" },
+  loginItemManagement: { label: "Login item and background task management", service: "BackgroundItems", pane: null, kind: "capability" },
+  notificationAuthorization: { label: "Notification authorization", service: "Notifications", pane: null, kind: "capability" },
+  keychainItemAccess: { label: "Keychain item access groups", service: "Keychain", pane: null, kind: "capability" },
+  privilegedHelperAuthorization: { label: "Privileged helper tool installation", service: "PrivilegedHelper", pane: null, kind: "capability" },
+  virtualizationFramework: { label: "Virtualization framework entitlement", service: "Virtualization", pane: null, kind: "capability" },
+  networkClientEntitlement: { label: "Outbound network client entitlement", service: "NetworkClient", pane: null, kind: "capability" },
+  networkServerEntitlement: { label: "Inbound network server entitlement", service: "NetworkServer", pane: null, kind: "capability" },
+
   // Exact service-name aliases from Apple's published protected-resource reset list.
   addressBook: { label: 'Contacts (AddressBook service)', service: 'AddressBook', pane: 'Privacy_Contacts', kind: 'settings' },
   developerTool: { label: 'Developer Tool execution', service: 'DeveloperTool', pane: 'Privacy_DeveloperTools', kind: 'settings' },
