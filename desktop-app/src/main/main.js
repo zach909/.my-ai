@@ -1450,6 +1450,222 @@ ipcMain.handle('macos-open-privacy-settings', async (event, permission) => {
   }
 });
 
+// Comprehensive macOS permission/tool registry. This reports what Electron can verify,
+// routes explicit user-approved requests, and opens System Settings for TCC grants.
+// It never edits TCC databases or bypasses macOS consent.
+const MACOS_PERMISSION_TOOL_CATALOG = {
+  location: { label: 'Location Services', pane: 'Privacy_LocationServices', kind: 'settings' },
+  contacts: { label: 'Contacts', pane: 'Privacy_Contacts', kind: 'settings' },
+  calendars: { label: 'Calendars', pane: 'Privacy_Calendars', kind: 'settings' },
+  reminders: { label: 'Reminders', pane: 'Privacy_Reminders', kind: 'settings' },
+  photos: { label: 'Photos', pane: 'Privacy_Photos', kind: 'settings' },
+  camera: { label: 'Camera', pane: 'Privacy_Camera', kind: 'media', media: 'camera' },
+  microphone: { label: 'Microphone', pane: 'Privacy_Microphone', kind: 'media', media: 'microphone' },
+  speechRecognition: { label: 'Speech Recognition', pane: 'Privacy_SpeechRecognition', kind: 'settings' },
+  bluetooth: { label: 'Bluetooth', pane: 'Privacy_Bluetooth', kind: 'settings' },
+  localNetwork: { label: 'Local Network', pane: 'Privacy_LocalNetwork', kind: 'settings' },
+  automation: { label: 'Automation / Apple Events', pane: 'Privacy_Automation', kind: 'settings' },
+  accessibility: { label: 'Accessibility', pane: 'Privacy_Accessibility', kind: 'settings' },
+  inputMonitoring: { label: 'Input Monitoring', pane: 'Privacy_ListenEvent', kind: 'settings' },
+  screenRecording: { label: 'Screen & System Audio Recording', pane: 'Privacy_ScreenCapture', kind: 'settings', statusMedia: 'screen' },
+  fullDiskAccess: { label: 'Full Disk Access', pane: 'Privacy_AllFiles', kind: 'settings' },
+  filesAndFolders: { label: 'Files and Folders', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  desktopFolder: { label: 'Desktop folder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  documentsFolder: { label: 'Documents folder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  downloadsFolder: { label: 'Downloads folder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  networkVolumes: { label: 'Network volumes', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  removableVolumes: { label: 'Removable volumes', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  mediaAppleMusic: { label: 'Media & Apple Music', pane: 'Privacy_Media', kind: 'settings' },
+  homeKit: { label: 'HomeKit', pane: 'Privacy_HomeKit', kind: 'settings' },
+  focus: { label: 'Focus', pane: 'Privacy_Focus', kind: 'settings' },
+  motionFitness: { label: 'Motion & Fitness', pane: 'Privacy_Motion', kind: 'settings' },
+  developerTools: { label: 'Developer Tools', pane: 'Privacy_DeveloperTools', kind: 'settings' },
+  remoteDesktop: { label: 'Remote Desktop', pane: 'Privacy_RemoteDesktop', kind: 'settings' },
+  notifications: { label: 'Notifications', pane: null, kind: 'capability' },
+  keychain: { label: 'Keychain', pane: null, kind: 'capability' },
+  administrator: { label: 'Administrator authorization', pane: null, kind: 'capability' },
+  appManagement: { label: 'App Management', pane: 'Privacy_AppManagement', kind: 'settings' },
+  systemEvents: { label: 'System Events / Apple Events', pane: 'Privacy_Automation', kind: 'settings' },
+  shortcuts: { label: 'Shortcuts', pane: 'Privacy_Automation', kind: 'settings' },
+  voiceActivation: { label: 'Voice activation', pane: 'Privacy_Microphone', kind: 'media', media: 'microphone' },
+  systemAudio: { label: 'System audio capture', pane: 'Privacy_ScreenCapture', kind: 'settings', statusMedia: 'screen' },
+  fileSelection: { label: 'User-selected files', pane: null, kind: 'file-picker' },
+  directorySelection: { label: 'User-selected folders', pane: null, kind: 'directory-picker' },
+  cameraDevices: { label: 'Camera devices', pane: 'Privacy_Camera', kind: 'media', media: 'camera' },
+  microphoneDevices: { label: 'Microphone devices', pane: 'Privacy_Microphone', kind: 'media', media: 'microphone' },
+  locationWhenInUse: { label: 'Location while using the app', pane: 'Privacy_LocationServices', kind: 'settings' },
+  calendarWrite: { label: 'Calendar read/write access', pane: 'Privacy_Calendars', kind: 'settings' },
+  contactsWrite: { label: 'Contacts read/write access', pane: 'Privacy_Contacts', kind: 'settings' },
+  photosAddOnly: { label: 'Add-only photo access', pane: 'Privacy_Photos', kind: 'settings' },
+  networkClient: { label: 'Outgoing network connections', pane: null, kind: 'capability' },
+  networkServer: { label: 'Incoming network connections', pane: null, kind: 'capability' },
+  usbAccessories: { label: 'USB accessories', pane: null, kind: 'capability' },
+  printing: { label: 'Printing', pane: null, kind: 'capability' },
+  screenCapture: { label: 'Screen capture', pane: 'Privacy_ScreenCapture', kind: 'settings', statusMedia: 'screen' },
+  audioInput: { label: 'Audio input', pane: 'Privacy_Microphone', kind: 'media', media: 'microphone' },
+  audioOutput: { label: 'Audio output', pane: null, kind: 'capability' },
+  biometricAuthentication: { label: 'Touch ID / biometric authentication', pane: null, kind: 'capability' },
+  passwordAutoFill: { label: 'Password AutoFill', pane: null, kind: 'capability' },
+  systemConfiguration: { label: 'System configuration changes', pane: null, kind: 'capability' },
+  kernelExtensions: { label: 'System extensions', pane: null, kind: 'capability' },
+  backgroundItems: { label: 'Background items / login items', pane: null, kind: 'capability' },
+  accessibilityAutomation: { label: 'Accessibility-based app control', pane: 'Privacy_Accessibility', kind: 'settings' },
+  // Apple-documented protected-resource services from the macOS TCC service list.
+  appleEvents: { label: 'Apple Events', service: 'AppleEvents', pane: 'Privacy_Automation', kind: 'settings' },
+  audioCapture: { label: 'System audio capture', service: 'AudioCapture', pane: 'Privacy_ScreenCapture', kind: 'settings', statusMedia: 'screen' },
+  siri: { label: 'Siri', service: 'Siri', pane: null, kind: 'settings' },
+  userTracking: { label: 'User tracking / advertising identifier', service: 'UserTracking', pane: null, kind: 'settings' },
+  systemPolicyAppBundles: { label: 'Access and manage app bundles', service: 'SystemPolicyAppBundles', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyAppData: { label: 'Other apps’ protected container data', service: 'SystemPolicyAppData', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicySysAdminFiles: { label: 'System administration files', service: 'SystemPolicySysAdminFiles', pane: 'Privacy_AllFiles', kind: 'settings' },
+  virtualMachineNetworking: { label: 'Virtual machine networking', service: 'VirtualMachineNetworking', pane: null, kind: 'capability' },
+  voiceBanking: { label: 'Personal Voice / voice banking', service: 'VoiceBanking', pane: null, kind: 'settings' },
+  webBrowserPublicKeyCredential: { label: 'Browser passkeys / public-key credentials', service: 'WebBrowserPublicKeyCredential', pane: null, kind: 'capability' },
+  postEvent: { label: 'Post synthetic system input events', service: 'PostEvent', pane: 'Privacy_Accessibility', kind: 'settings' },
+  calendarWriteOnly: { label: 'Calendar write-only access', service: 'Calendar', pane: 'Privacy_Calendars', kind: 'settings' },
+  calendarFullAccess: { label: 'Calendar full access', service: 'Calendar', pane: 'Privacy_Calendars', kind: 'settings' },
+  remindersFullAccess: { label: 'Reminders full access', service: 'Reminders', pane: 'Privacy_Reminders', kind: 'settings' },
+  appDataContainers: { label: 'Application data containers', service: 'SystemPolicyAppData', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  appBundleManagement: { label: 'Application bundle management', service: 'SystemPolicyAppBundles', pane: 'Privacy_AppManagement', kind: 'settings' },
+  systemAdminFiles: { label: 'System administration files', service: 'SystemPolicySysAdminFiles', pane: 'Privacy_AllFiles', kind: 'settings' },
+  userSelectedFiles: { label: 'User-selected file access', service: null, pane: null, kind: 'file-picker' },
+  userSelectedFolders: { label: 'User-selected folder access', service: null, pane: null, kind: 'directory-picker' },
+  // Remaining protected-resource services in Apple's documented macOS service list.
+  energyKitGuidance: { label: 'EnergyKit energy-use guidance', service: 'EnergyKitGuidance', pane: null, kind: 'capability' },
+  externalCameraMedia: { label: 'External camera media', service: 'ExternalCameraMedia', pane: 'Privacy_Camera', kind: 'settings', statusMedia: 'camera' },
+  fileProviderDomain: { label: 'File Provider domains', service: 'FileProviderDomain', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  fileProviderPresence: { label: 'File Provider presence information', service: 'FileProviderPresence', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  focusStatus: { label: 'Focus status', service: 'FocusStatus', pane: 'Privacy_Focus', kind: 'settings' },
+  gameCenterFriends: { label: 'Game Center friends list', service: 'GameCenterFriends', pane: null, kind: 'settings' },
+  systemPolicyDeveloperFiles: { label: 'Protected developer files', service: 'SystemPolicyDeveloperFiles', pane: 'Privacy_DeveloperTools', kind: 'settings' },
+
+  // Explicit one-tool-per-service aliases for Apple TCC service names.
+  accessibilityService: { label: "Accessibility service", service: "Accessibility", pane: "Privacy_Accessibility", kind: "settings" },
+  bluetoothAlways: { label: "Bluetooth Always authorization", service: "BluetoothAlways", pane: "Privacy_Bluetooth", kind: "settings" },
+  calendarService: { label: "Calendar authorization service", service: "Calendar", pane: "Privacy_Calendars", kind: "settings" },
+  cameraService: { label: "Camera authorization service", service: "Camera", pane: "Privacy_Camera", kind: "media", media: 'camera' },
+  microphoneService: { label: "Microphone authorization service", service: "Microphone", pane: "Privacy_Microphone", kind: "media", media: 'microphone' },
+  motionService: { label: "Motion data authorization service", service: "Motion", pane: "Privacy_Motion", kind: "settings" },
+  photosService: { label: "Photos library authorization service", service: "Photos", pane: "Privacy_Photos", kind: "settings" },
+  photosAddService: { label: "Photos add-only authorization service", service: "PhotosAdd", pane: "Privacy_Photos", kind: "settings" },
+  remindersService: { label: "Reminders authorization service", service: "Reminders", pane: "Privacy_Reminders", kind: "settings" },
+  remoteDesktopService: { label: "Remote Desktop authorization service", service: "RemoteDesktop", pane: "Privacy_RemoteDesktop", kind: "settings" },
+  screenCaptureService: { label: "Screen capture authorization service", service: "ScreenCapture", pane: "Privacy_ScreenCapture", kind: "settings", statusMedia: 'screen' },
+  speechRecognitionService: { label: "Speech recognition authorization service", service: "SpeechRecognition", pane: "Privacy_SpeechRecognition", kind: "settings" },
+  homeKitService: { label: "HomeKit authorization service", service: "HomeKit", pane: "Privacy_HomeKit", kind: "settings" },
+  fileProviderDomainService: { label: "File Provider domain authorization service", service: "FileProviderDomain", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  fileProviderPresenceService: { label: "File Provider presence authorization service", service: "FileProviderPresence", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  focusStatusService: { label: "Focus status authorization service", service: "FocusStatus", pane: "Privacy_Focus", kind: "settings" },
+  gameCenterFriendsService: { label: "Game Center friends authorization service", service: "GameCenterFriends", pane: null, kind: "settings" },
+  systemPolicyAppBundlesService: { label: "App bundle protected-resource service", service: "SystemPolicyAppBundles", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  systemPolicyAppDataService: { label: "App data protected-resource service", service: "SystemPolicyAppData", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  systemPolicySysAdminFilesService: { label: "System administration protected-resource service", service: "SystemPolicySysAdminFiles", pane: "Privacy_AllFiles", kind: "settings" },
+  userTrackingService: { label: "User tracking authorization service", service: "UserTracking", pane: null, kind: "settings" },
+  appleEventsService: { label: "Apple Events automation authorization service", service: "AppleEvents", pane: "Privacy_Automation", kind: "settings" },
+  audioCaptureService: { label: "System audio capture authorization service", service: "AudioCapture", pane: "Privacy_ScreenCapture", kind: "settings", statusMedia: 'screen' },
+  postEventService: { label: "Synthetic input event authorization service", service: "PostEvent", pane: "Privacy_Accessibility", kind: "settings" },
+  developerToolService: { label: "Developer Tool authorization service", service: "DeveloperTool", pane: "Privacy_DeveloperTools", kind: "settings" },
+  listenEventService: { label: "Input Monitoring authorization service", service: "ListenEvent", pane: "Privacy_ListenEvent", kind: "settings" },
+  mediaLibraryService: { label: "Media library authorization service", service: "MediaLibrary", pane: "Privacy_Media", kind: "settings" },
+  systemPolicyDesktopFolderService: { label: "Desktop folder protected-resource service", service: "SystemPolicyDesktopFolder", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  systemPolicyDocumentsFolderService: { label: "Documents folder protected-resource service", service: "SystemPolicyDocumentsFolder", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  systemPolicyDownloadsFolderService: { label: "Downloads folder protected-resource service", service: "SystemPolicyDownloadsFolder", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  systemPolicyNetworkVolumesService: { label: "Network volume protected-resource service", service: "SystemPolicyNetworkVolumes", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  systemPolicyRemovableVolumesService: { label: "Removable volume protected-resource service", service: "SystemPolicyRemovableVolumes", pane: "Privacy_FilesAndFolders", kind: "settings" },
+  systemPolicyAllFilesService: { label: "Full Disk Access protected-resource service", service: "SystemPolicyAllFiles", pane: "Privacy_AllFiles", kind: "settings" },
+  systemPolicyDeveloperFilesService: { label: "Developer files protected-resource service", service: "SystemPolicyDeveloperFiles", pane: "Privacy_DeveloperTools", kind: "settings" },
+  virtualMachineNetworkingService: { label: "Virtual machine networking service", service: "VirtualMachineNetworking", pane: null, kind: "capability" },
+  voiceBankingService: { label: "Personal Voice / voice banking service", service: "VoiceBanking", pane: null, kind: "settings" },
+  webBrowserPublicKeyCredentialService: { label: "Browser public-key credential service", service: "WebBrowserPublicKeyCredential", pane: null, kind: "capability" },
+  energyKitGuidanceService: { label: "EnergyKit guidance service", service: "EnergyKitGuidance", pane: null, kind: "capability" },
+  externalCameraMediaService: { label: "External camera media service", service: "ExternalCameraMedia", pane: "Privacy_Camera", kind: "settings", statusMedia: 'camera' },
+
+  mainCamera: { label: 'Main camera access', pane: 'Privacy_Camera', kind: 'media', media: 'camera' },
+  bluetoothPeripheralLegacy: { label: "Legacy Bluetooth peripheral authorization", pane: "Privacy_Bluetooth", kind: "settings" },
+  locationAlwaysLegacy: { label: "Legacy always-on location authorization", pane: "Privacy_LocationServices", kind: "settings" },
+  locationTemporaryFullAccuracy: { label: "Temporary full-accuracy location authorization", pane: "Privacy_LocationServices", kind: "settings" },
+  locationAccuracyPreference: { label: "Location accuracy preference", pane: "Privacy_LocationServices", kind: "settings" },
+  // Additional macOS capabilities that require entitlements, app-specific APIs, or separate OS approval.
+  systemExtensionApproval: { label: "System extension installation and approval", service: "SystemExtension", pane: "Privacy_Security", kind: "capability" },
+  driverExtensionApproval: { label: "Driver extension installation and approval", service: "DriverExtension", pane: "Privacy_Security", kind: "capability" },
+  networkExtensionConfiguration: { label: "Network Extension configuration", service: "NetworkExtension", pane: null, kind: "capability" },
+  endpointSecurityClient: { label: "Endpoint Security client entitlement", service: "EndpointSecurity", pane: null, kind: "capability" },
+  sandboxEntitlements: { label: "App Sandbox entitlements", service: "AppSandbox", pane: null, kind: "capability" },
+  loginItemManagement: { label: "Login item and background task management", service: "BackgroundItems", pane: null, kind: "capability" },
+  notificationAuthorization: { label: "Notification authorization", service: "Notifications", pane: null, kind: "capability" },
+  keychainItemAccess: { label: "Keychain item access groups", service: "Keychain", pane: null, kind: "capability" },
+  privilegedHelperAuthorization: { label: "Privileged helper tool installation", service: "PrivilegedHelper", pane: null, kind: "capability" },
+  virtualizationFramework: { label: "Virtualization framework entitlement", service: "Virtualization", pane: null, kind: "capability" },
+  networkClientEntitlement: { label: "Outbound network client entitlement", service: "NetworkClient", pane: null, kind: "capability" },
+  networkServerEntitlement: { label: "Inbound network server entitlement", service: "NetworkServer", pane: null, kind: "capability" },
+
+  // Exact service-name aliases from Apple's published protected-resource reset list.
+  addressBook: { label: 'Contacts (AddressBook service)', service: 'AddressBook', pane: 'Privacy_Contacts', kind: 'settings' },
+  developerTool: { label: 'Developer Tool execution', service: 'DeveloperTool', pane: 'Privacy_DeveloperTools', kind: 'settings' },
+  listenEvent: { label: 'Input Monitoring (ListenEvent service)', service: 'ListenEvent', pane: 'Privacy_ListenEvent', kind: 'settings' },
+  mediaLibrary: { label: 'Apple Music media library', service: 'MediaLibrary', pane: 'Privacy_Media', kind: 'settings' },
+  systemPolicyAllFiles: { label: 'Full Disk Access (SystemPolicyAllFiles service)', service: 'SystemPolicyAllFiles', pane: 'Privacy_AllFiles', kind: 'settings' },
+  systemPolicyDesktopFolder: { label: 'Desktop folder protected access', service: 'SystemPolicyDesktopFolder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyDocumentsFolder: { label: 'Documents folder protected access', service: 'SystemPolicyDocumentsFolder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyDownloadsFolder: { label: 'Downloads folder protected access', service: 'SystemPolicyDownloadsFolder', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyNetworkVolumes: { label: 'Network volumes protected access', service: 'SystemPolicyNetworkVolumes', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyRemovableVolumes: { label: 'Removable volumes protected access', service: 'SystemPolicyRemovableVolumes', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+};
+
+function getMacOSPermissionToolStatus(permission) {
+  const item = MACOS_PERMISSION_TOOL_CATALOG[permission];
+  if (!item) return { success: false, status: 'unknown-permission', error: 'Unknown permission tool.' };
+  if (process.platform !== 'darwin') return { success: true, supported: false, status: 'unsupported-platform', permission, label: item.label };
+  const statusMedia = item.statusMedia || item.media;
+  if (statusMedia && systemPreferences && typeof systemPreferences.getMediaAccessStatus === 'function') {
+    try { return { success: true, supported: true, permission, label: item.label, status: systemPreferences.getMediaAccessStatus(statusMedia) }; }
+    catch (error) { return { success: true, supported: true, permission, label: item.label, status: 'unknown', detail: error.message }; }
+  }
+  return { success: true, supported: true, permission, label: item.label, status: item.kind === 'capability' ? 'capability-check-required' : 'user-approval-or-feature-check-required', canOpenSettings: Boolean(item.pane) };
+}
+
+async function runMacOSPermissionTool(permission, action, options = {}) {
+  const item = MACOS_PERMISSION_TOOL_CATALOG[permission];
+  if (!item) return { success: false, status: 'unknown-permission', error: 'Unknown permission tool.' };
+  if (process.platform !== 'darwin') return { success: false, status: 'unsupported-platform', error: 'This tool is macOS-specific.' };
+  if (action === 'status') return getMacOSPermissionToolStatus(permission);
+  if (action === 'open-settings') {
+    if (!item.pane) return { success: false, status: 'manual-or-feature-specific', error: 'This capability has no dedicated macOS Privacy & Security pane. Use its feature-specific API or system authorization flow.' };
+    try {
+      await shell.openExternal('x-apple.systempreferences:com.apple.preference.security?' + item.pane);
+      return { success: true, status: 'settings-opened', permission, label: item.label, nextStep: 'Review the app permission in System Settings. macOS may require restarting the app.' };
+    } catch (error) { return { success: false, status: 'error', error: error.message }; }
+  }
+  if (action === 'request') {
+    if (item.media && systemPreferences && typeof systemPreferences.askForMediaAccess === 'function') {
+      try {
+        const granted = await systemPreferences.askForMediaAccess(item.media);
+        return { success: true, status: granted ? 'granted' : 'denied', permission, label: item.label };
+      } catch (error) { return { success: false, status: 'error', error: error.message }; }
+    }
+    return { success: false, status: 'user-action-required', permission, label: item.label, message: item.pane ? 'macOS does not expose a general programmatic request for this permission. Open System Settings and approve it there.' : 'This is not a single TCC permission. Use the specific feature API and its native authorization flow.' };
+  }
+  if (action === 'select-file' && (item.kind === 'file-picker' || permission === 'filesAndFolders')) {
+    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openFile'], title: options.title || 'Choose a file', filters: Array.isArray(options.filters) ? options.filters : [] });
+    return { success: !result.canceled, status: result.canceled ? 'cancelled' : 'selected', paths: result.filePaths };
+  }
+  if (action === 'select-directory' && (item.kind === 'directory-picker' || permission === 'filesAndFolders')) {
+    const result = await dialog.showOpenDialog(mainWindow, { properties: ['openDirectory'], title: options.title || 'Choose a folder' });
+    return { success: !result.canceled, status: result.canceled ? 'cancelled' : 'selected', paths: result.filePaths };
+  }
+  return { success: false, status: 'unsupported-action', error: 'Supported actions are status, request, open-settings, select-file, and select-directory.' };
+}
+
+ipcMain.handle('macos-permission-tool', async (_event, permission, action, options) => {
+  try { return await runMacOSPermissionTool(permission, action, options || {}); }
+  catch (error) { return { success: false, status: 'error', error: error.message }; }
+});
+
+ipcMain.handle('macos-permission-tools-list', async () => ({
+  platform: process.platform,
+  tools: Object.entries(MACOS_PERMISSION_TOOL_CATALOG).map(([id, item]) => ({ id, label: item.label, actions: ['status', 'request', 'open-settings', ...(item.kind === 'file-picker' ? ['select-file'] : []), ...(item.kind === 'directory-picker' ? ['select-directory'] : [])], requestMethod: item.kind === 'media' ? 'native-request' : item.pane ? 'user-approved-settings' : 'feature-specific' })),
+}));
+
 // File System Operations
 ipcMain.handle('select-directory', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
