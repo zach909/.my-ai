@@ -2,6 +2,11 @@ package ai.neuroclaw.app
 
 import android.Manifest
 import android.app.Activity
+import android.app.AlarmManager
+import android.app.AppOpsManager
+import android.app.Notification
+import android.app.NotificationManager
+import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageManager
@@ -14,6 +19,7 @@ import android.provider.CalendarContract
 import android.provider.ContactsContract
 import android.provider.MediaStore
 import android.provider.Settings
+import android.service.notification.NotificationListenerService
 import android.telephony.TelephonyManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
@@ -57,6 +63,10 @@ class DeviceTools(private val context: Context) {
         add("sensor_status", "List available device sensor types and names.")
         add("open_voice_recognition", "Open Android speech recognition UI; the user starts and controls listening.")
         add("open_notification_settings", "Open Android notification settings for this app.")
+        add("open_notification_listener_settings", "Open Android notification-listener access; the user must enable NeuroClaw.")
+        add("list_notifications", "List currently active notifications after the user enables notification-listener access.")
+        add("open_modify_settings", "Open Android permission settings for modifying system settings.")
+        add("open_picture_in_picture_settings", "Open Android picture-in-picture settings for this app.")
         add("open_accessibility_settings", "Open Android Accessibility settings; enabling a service requires the user.")
         add("open_usage_settings", "Open Android usage-access settings.")
         add("open_all_files_settings", "Open Android all-files-access settings for this app.")
@@ -105,6 +115,10 @@ class DeviceTools(private val context: Context) {
                 "sensor_status" -> sensorStatus()
                 "open_voice_recognition" -> openVoiceRecognition()
                 "open_notification_settings" -> openSystemSettings("notification")
+                "open_notification_listener_settings" -> openSystemSettings("notification_listener")
+                "list_notifications" -> listNotifications()
+                "open_modify_settings" -> openSystemSettings("modify_settings")
+                "open_picture_in_picture_settings" -> openSystemSettings("picture_in_picture")
                 "open_accessibility_settings" -> openSystemSettings("accessibility")
                 "open_usage_settings" -> openSystemSettings("usage")
                 "open_all_files_settings" -> openSystemSettings("files")
@@ -201,6 +215,9 @@ class DeviceTools(private val context: Context) {
     private fun openSystemSettings(which: String): JSONObject {
         val action = when (which) {
             "notification" -> Settings.ACTION_APP_NOTIFICATION_SETTINGS
+            "notification_listener" -> Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS
+            "modify_settings" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_MANAGE_WRITE_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "picture_in_picture" -> if (Build.VERSION.SDK_INT >= 26) Settings.ACTION_PICTURE_IN_PICTURE_SETTINGS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
             "accessibility" -> Settings.ACTION_ACCESSIBILITY_SETTINGS
             "usage" -> Settings.ACTION_USAGE_ACCESS_SETTINGS
             "files" -> if (Build.VERSION.SDK_INT >= 30) Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
@@ -217,7 +234,8 @@ class DeviceTools(private val context: Context) {
             else -> return JSONObject().put("ok", false).put("error", "Unknown settings page")
         }
         val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-        if (which in setOf("notification", "files", "battery", "overlay", "alarms", "unknown_apps", "app")) intent.data = Uri.parse("package:${context.packageName}")
+        if (which in setOf("files", "battery", "overlay", "alarms", "unknown_apps", "app", "modify_settings", "picture_in_picture")) intent.data = Uri.parse("package:${context.packageName}")
+        if (which == "notification") intent.putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
         context.startActivity(intent)
         return ok(JSONObject().put("opened_settings", which))
     }
@@ -470,25 +488,72 @@ class DeviceTools(private val context: Context) {
     }
 
 
+    private fun listNotifications(): JSONObject {
+        val service = NeuroClawNotificationListener.current
+            ?: return ok(JSONObject().put("enabled", false).put("notifications", JSONArray())
+                .put("note", "Enable NeuroClaw notification access in Android Settings first."))
+        val rows = JSONArray()
+        val active = try { service.activeNotifications } catch (_: SecurityException) { emptyArray() }
+        for (item in active.take(100)) {
+            val extras = item.notification.extras
+            rows.put(JSONObject()
+                .put("package", item.packageName)
+                .put("id", item.id)
+                .put("posted_at_ms", item.postTime)
+                .put("title", extras?.getCharSequence(Notification.EXTRA_TITLE)?.toString() ?: "")
+                .put("text", (extras?.getCharSequence(Notification.EXTRA_TEXT)
+                    ?: extras?.getCharSequence(Notification.EXTRA_BIG_TEXT))?.toString() ?: ""))
+        }
+        return ok(JSONObject().put("enabled", true).put("notifications", rows).put("count", rows.length()))
+    }
+
     private fun specialAccessStatus(): JSONObject {
         val out = JSONObject()
             .put("overlay", Build.VERSION.SDK_INT < 23 || Settings.canDrawOverlays(appContext))
             .put("modify_system_settings", Build.VERSION.SDK_INT < 23 || Settings.System.canWrite(appContext))
             .put("notifications_post", Build.VERSION.SDK_INT < 33 || granted(Manifest.permission.POST_NOTIFICATIONS))
+            .put("app_notifications_enabled", (appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager).areNotificationsEnabled())
         if (Build.VERSION.SDK_INT >= 30) out.put("all_files", android.os.Environment.isExternalStorageManager())
         if (Build.VERSION.SDK_INT >= 23) {
             val power = appContext.getSystemService(Context.POWER_SERVICE) as android.os.PowerManager
             out.put("ignoring_battery_optimizations", power.isIgnoringBatteryOptimizations(appContext.packageName))
+            val notificationManager = appContext.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            out.put("notification_policy_access", notificationManager.isNotificationPolicyAccessGranted)
+            val appOps = appContext.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+            out.put("usage_stats_access", appOps.checkOpNoThrow(
+                AppOpsManager.OPSTR_GET_USAGE_STATS, android.os.Process.myUid(), appContext.packageName
+            ) == AppOpsManager.MODE_ALLOWED)
+            val enabledListeners = Settings.Secure.getString(appContext.contentResolver, "enabled_notification_listeners").orEmpty().split(':')
+            out.put("notification_listener_access", enabledListeners.contains(
+                ComponentName(appContext, NeuroClawNotificationListener::class.java).flattenToString()
+            ))
+            val enabledAccessibility = Settings.Secure.getString(appContext.contentResolver, Settings.Secure.ENABLED_ACCESSIBILITY_SERVICES).orEmpty().split(':')
+            out.put("agent_bridge_accessibility_enabled", enabledAccessibility.contains(
+                ComponentName(appContext, AgentBridgeService::class.java).flattenToString()
+            ))
         }
+        if (Build.VERSION.SDK_INT >= 26) out.put("install_unknown_apps_allowed", appContext.packageManager.canRequestPackageInstalls())
+        if (Build.VERSION.SDK_INT >= 31) {
+            val alarms = appContext.getSystemService(Context.ALARM_SERVICE) as AlarmManager
+            out.put("schedule_exact_alarms_allowed", alarms.canScheduleExactAlarms())
+        }
+        out.put("background_location", Build.VERSION.SDK_INT < 29 || granted(Manifest.permission.ACCESS_BACKGROUND_LOCATION))
+        out.put("background_body_sensors", Build.VERSION.SDK_INT < 34 || granted(Manifest.permission.BODY_SENSORS_BACKGROUND))
         return ok(out)
     }
 
-    private fun mediaPermission(kind: String): String =
-        if (Build.VERSION.SDK_INT >= 33) when (kind) {
+    private fun mediaPermission(kind: String): String {
+        if (Build.VERSION.SDK_INT >= 34 && kind in setOf("image", "video") &&
+            !granted(if (kind == "video") Manifest.permission.READ_MEDIA_VIDEO else Manifest.permission.READ_MEDIA_IMAGES) &&
+            granted(Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED)) {
+            return Manifest.permission.READ_MEDIA_VISUAL_USER_SELECTED
+        }
+        return if (Build.VERSION.SDK_INT >= 33) when (kind) {
             "video" -> Manifest.permission.READ_MEDIA_VIDEO
             "audio" -> Manifest.permission.READ_MEDIA_AUDIO
             else -> Manifest.permission.READ_MEDIA_IMAGES
         } else Manifest.permission.READ_EXTERNAL_STORAGE
+    }
 
     private fun listMedia(uri: Uri, nameColumn: String, permission: String, limit: Int, key: String): JSONObject {
         requirePermission(permission)
@@ -592,5 +657,24 @@ class DeviceTools(private val context: Context) {
             .putExtra(if (screen) ScreenCaptureActivity.EXTRA_NOTE else CaptureActivity.EXTRA_NOTE, note)
             .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         return ok(JSONObject().put("opened", if (screen) "screen_capture_consent" else "camera_capture"))
+    }
+}
+
+
+/** Receives notifications only after the person explicitly enables notification access in Settings. */
+class NeuroClawNotificationListener : NotificationListenerService() {
+    override fun onListenerConnected() {
+        super.onListenerConnected()
+        current = this
+    }
+
+    override fun onListenerDisconnected() {
+        if (current === this) current = null
+        super.onListenerDisconnected()
+    }
+
+    companion object {
+        @Volatile var current: NeuroClawNotificationListener? = null
+            private set
     }
 }
