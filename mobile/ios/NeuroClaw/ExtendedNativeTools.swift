@@ -76,11 +76,51 @@ enum ExtendedNativeTools {
         tool("homekit.control_accessory", "Control a HomeKit accessory with explicit confirmation."),
         tool("notifications.get_status", "Read notification authorization settings."),
         tool("voice_activation.request", "Explain user-driven Siri/Shortcuts setup for voice activation."),
-        tool("capabilities.catalog", "List supported iOS tool coverage and system-enforced limitations.")
+        tool("capabilities.catalog", "List supported iOS tool coverage and system-enforced limitations."),
+        tool("permissions.request_all", "Request each permission category that iOS lets this app request; some require separate user flows or Apple entitlements."),
+        tool("permissions.request_location", "Request location access."),
+        tool("permissions.request_contacts", "Request Contacts access."),
+        tool("permissions.request_calendar", "Request Calendar access."),
+        tool("permissions.request_reminders", "Request Reminders access."),
+        tool("permissions.request_photos", "Request Photos library access."),
+        tool("permissions.request_microphone", "Request microphone access."),
+        tool("permissions.request_camera", "Request camera access."),
+        tool("permissions.request_speech", "Request speech recognition access."),
+        tool("permissions.request_motion", "Request motion and fitness access."),
+        tool("permissions.request_music", "Request media library / Apple Music access."),
+        tool("permissions.request_notifications", "Request notification authorization; critical alerts still require Apple's entitlement."),
+        tool("permissions.request_tracking", "Request App Tracking Transparency authorization."),
+        tool("permissions.request_bluetooth", "Trigger Bluetooth authorization through the public API."),
+        tool("permissions.request_health", "Request HealthKit step-count access; HealthKit entitlement is required."),
+        tool("permissions.request_homekit", "Request HomeKit authorization; HomeKit entitlement and eligible signing are required."),
+        tool("permissions.request_siri", "Request Siri authorization for App Intents / Shortcuts."),
+        tool("permissions.request_biometrics", "Prompt for Face ID / Touch ID authentication."),
+        tool("permissions.catalog", "Return an inventory of requestable iOS permissions, user-controlled settings, entitlement-gated capabilities, and platform-blocked access.")
     ]
 
     private static func tool(_ name: String, _ description: String) -> [String: Any] {
-        ["name": name, "description": description, "input_schema": ["type": "object", "properties": [:]]]
+        let properties: [String: Any]
+        let required: [String]
+        switch name {
+        case "motion.get_steps", "health.get_steps", "calendar.list_events":
+            properties = ["start": ["type": "string", "description": "ISO-8601 start date"], "end": ["type": "string", "description": "ISO-8601 end date"]]
+            required = ["start", "end"]
+        case "music.search_library", "contacts.search":
+            properties = ["query": ["type": "string", "description": "Search text"]]
+            required = ["query"]
+        case "music.play_item":
+            properties = ["persistent_id": ["type": "string", "description": "Media-library persistent ID"]]
+            required = ["persistent_id"]
+        case "bluetooth.scan":
+            properties = ["seconds": ["type": "number", "minimum": 1, "maximum": 10]]
+            required = []
+        default:
+            properties = [:]
+            required = []
+        }
+        var schema: [String: Any] = ["type": "object", "properties": properties, "additionalProperties": false]
+        if !required.isEmpty { schema["required"] = required }
+        return ["name": name, "description": description, "input_schema": schema]
     }
 
     static func invoke(name: String, arguments: [String: Any]) async -> (Int, [String: Any]) {
@@ -167,6 +207,45 @@ enum ExtendedNativeTools {
             return limitation("iOS does not expose a universal list of device accounts, passwords, or account credentials to apps.")
         case "capabilities.catalog":
             return (200, ["implemented_tools": NativeToolRegistry.definitions.compactMap { $0["name"] as? String } + definitions.compactMap { $0["name"] as? String }, "platform_limits": ["No unrestricted filesystem access", "No reading SMS/iMessage, call history, or arbitrary email inboxes", "No arbitrary cross-app screen capture or tap injection", "No changing system permissions or settings on behalf of the user", "Background execution is scheduled and system-controlled", "HealthKit/HomeKit require valid entitlements and user authorization"]])
+        case "permissions.request_all":
+            let statuses = await Permissions.requestAll()
+            return (200, ["requested": statuses.map { ["id": $0.id, "label": $0.label, "result": $0.result] }, "note": "iOS may suppress repeat prompts, require foreground UI, or require separate entitlement approval. Some settings cannot be requested by apps."])
+        case "permissions.request_location":
+            return (200, ["permission": "location", "result": await Permissions.requestLocation()])
+        case "permissions.request_contacts":
+            return (200, ["permission": "contacts", "result": await Permissions.requestContacts()])
+        case "permissions.request_calendar":
+            return (200, ["permission": "calendar", "result": await Permissions.requestCalendar()])
+        case "permissions.request_reminders":
+            return (200, ["permission": "reminders", "result": await Permissions.requestReminders()])
+        case "permissions.request_photos":
+            return (200, ["permission": "photos", "result": await Permissions.requestPhotos()])
+        case "permissions.request_microphone":
+            return (200, ["permission": "microphone", "result": await Permissions.requestMicrophone()])
+        case "permissions.request_camera":
+            return (200, ["permission": "camera", "result": await Permissions.requestCamera()])
+        case "permissions.request_speech":
+            return (200, ["permission": "speech_recognition", "result": await Permissions.requestSpeechRecognition()])
+        case "permissions.request_motion":
+            return (200, ["permission": "motion_fitness", "result": await Permissions.requestMotion()])
+        case "permissions.request_music":
+            return (200, ["permission": "media_library", "result": await Permissions.requestAppleMusic()])
+        case "permissions.request_notifications":
+            return (200, ["permission": "notifications", "result": await Permissions.requestNotifications()])
+        case "permissions.request_tracking":
+            return (200, ["permission": "app_tracking_transparency", "result": await Permissions.requestTracking()])
+        case "permissions.request_bluetooth":
+            return (200, ["permission": "bluetooth", "result": await Permissions.requestBluetooth()])
+        case "permissions.request_health":
+            return (200, ["permission": "healthkit", "result": await Permissions.requestHealth()])
+        case "permissions.request_homekit":
+            return (200, ["permission": "homekit", "result": await Permissions.requestHomeKit()])
+        case "permissions.request_siri":
+            return (200, ["permission": "siri", "result": await Permissions.requestSiri()])
+        case "permissions.request_biometrics":
+            return (200, ["permission": "biometrics", "result": await Permissions.requestBiometrics()])
+        case "permissions.catalog":
+            return (200, ["requestable": ["location_when_in_use", "location_always", "contacts", "calendar", "reminders", "photos_read_write", "photos_add_only", "camera", "microphone", "speech_recognition", "motion_fitness", "healthkit_data_types", "media_library", "bluetooth", "local_network", "notifications", "app_tracking_transparency", "siri_authorization", "face_id_or_touch_id_authentication", "homekit"], "settings_only_or_system_managed": ["Background App Refresh", "Cellular data access restrictions", "per-app Local Network toggle", "notification presentation settings", "system permission changes in Settings"], "requires_entitlement_or_special_approval": ["HealthKit", "HomeKit", "critical alerts", "Nearby Interaction", "NFC reader sessions", "clinical health records", "research sensor access"], "not_available_to_ordinary_third_party_apps": ["SMS/iMessage inbox access", "system call history", "general mailbox access without provider authorization", "passwords and arbitrary device accounts", "reading current Focus mode", "unrestricted filesystem access", "arbitrary cross-app UI control or silent screen capture"], "note": "iOS has no single grant-all permission. Each authorization is separate, user-controlled, and constrained by API, entitlement, device, and App Store policy."])
         case "photos.get_status":
             return (200, ["authorization": PHPhotoLibrary.authorizationStatus(for: .readWrite).rawValue])
         case "notifications.get_status":
