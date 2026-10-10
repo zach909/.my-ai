@@ -1,4 +1,6 @@
 import Contacts
+import CoreLocation
+import Photos
 import EventKit
 import Foundation
 import UIKit
@@ -69,16 +71,27 @@ enum NativeToolRegistry {
         let contact = CNContactStore.authorizationStatus(for: .contacts)
         let calendar = EKEventStore.authorizationStatus(for: .event)
         let reminders = EKEventStore.authorizationStatus(for: .reminder)
-        let photos = PHAuthorizationStatus.notDetermined // Intentionally not requesting permission just to report status.
+        let photos = photoLabel(PHPhotoLibrary.authorizationStatus(for: .readWrite))
         let notifications = await UNUserNotificationCenter.current().notificationSettings()
         return [
             "contacts": contactLabel(contact),
             "calendar": eventLabel(calendar),
             "reminders": eventLabel(reminders),
-            "photos": String(describing: photos),
+            "photos": photos,
             "notifications": String(describing: notifications.authorizationStatus),
             "location": String(describing: CLLocationManager.authorizationStatus())
         ]
+    }
+
+    private static func photoLabel(_ status: PHAuthorizationStatus) -> String {
+        switch status {
+        case .authorized: return "authorized"
+        case .limited: return "limited"
+        case .denied: return "denied"
+        case .restricted: return "restricted"
+        case .notDetermined: return "not_determined"
+        @unknown default: return "unknown"
+        }
     }
 
     private static func contactLabel(_ status: CNAuthorizationStatus) -> String {
@@ -86,10 +99,12 @@ enum NativeToolRegistry {
     }
 
     private static func eventLabel(_ status: EKAuthorizationStatus) -> String {
+        if #available(iOS 17.0, *) {
+            if status == .fullAccess { return "authorized" }
+            if status == .writeOnly { return "write_only" }
+        }
         switch status {
         case .authorized: return "authorized"
-        case .fullAccess: return "authorized"
-        case .writeOnly: return "write_only"
         case .denied: return "denied"
         case .restricted: return "restricted"
         case .notDetermined: return "not_determined"
