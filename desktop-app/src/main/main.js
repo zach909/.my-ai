@@ -822,6 +822,91 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
         return { success: true, policies: JSON.parse(output.trim()), note: 'Reports policy only; does not change or bypass it.' };
       }
+      case 'wifiStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netsh.exe', ['wlan', 'show', 'interfaces'], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, output: output.slice(0, 30000), readOnly: true };
+      }
+      case 'bluetooth':
+      case 'usbDevices':
+      case 'audioDevices': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const filters = {
+          bluetooth: "Get-PnpDevice -Class Bluetooth -PresentOnly -ErrorAction SilentlyContinue",
+          usbDevices: "Get-PnpDevice -PresentOnly -ErrorAction SilentlyContinue | Where-Object { $_.InstanceId -like 'USB*' -or $_.InstanceId -like 'USB\\*' }",
+          audioDevices: "Get-PnpDevice -Class AudioEndpoint -PresentOnly -ErrorAction SilentlyContinue"
+        };
+        const command = filters[id] + " | Select-Object Status,Class,FriendlyName,InstanceId | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, devices: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Device metadata only; no device access or driver changes.' };
+      }
+      case 'printers': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-Printer -ErrorAction Stop | Select-Object Name,Type,DriverName,PortName,PrinterStatus,Shared | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, printers: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true };
+      }
+      case 'displays': {
+        const { screen } = require('electron');
+        return { success: true, displays: screen.getAllDisplays().map((display) => ({
+          id: display.id, bounds: display.bounds, workArea: display.workArea,
+          scaleFactor: display.scaleFactor, rotation: display.rotation,
+          size: display.size, internal: display.internal,
+        })) };
+      }
+      case 'installedApps': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "$paths=@('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\*'); Get-ItemProperty $paths -ErrorAction SilentlyContinue | Where-Object { $_.DisplayName } | Select-Object DisplayName,DisplayVersion,Publisher,InstallDate | Sort-Object DisplayName | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, applications: output.trim() ? JSON.parse(output.trim()) : [], scope: 'visible uninstall registry entries; not a complete inventory of portable or per-user packaged apps' };
+      }
+      case 'startupSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "$run=@(); foreach($p in @('HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run')) { if(Test-Path $p) { $v=Get-ItemProperty $p; foreach($x in $v.PSObject.Properties) { if($x.Name -notmatch '^PS') { $run += [pscustomobject]@{RegistryPath=$p;Name=$x.Name;Command=[string]$x.Value} } } } }; $run | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 2 * 1024 * 1024 });
+        return { success: true, entries: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Common Run keys only; Startup folders and scheduled tasks are separate.' };
+      }
+      case 'scheduledTasks': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-ScheduledTask -ErrorAction Stop | Select-Object TaskName,TaskPath,State,Author,Description | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 20000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, tasks: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true };
+      }
+      case 'powerBattery': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-CimInstance Win32_Battery -ErrorAction SilentlyContinue | Select-Object Name,Status,EstimatedChargeRemaining,BatteryStatus,EstimatedRunTime | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 10000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, batteries: output.trim() ? JSON.parse(output.trim()) : [], note: 'No battery data is normal on desktop PCs or systems without supported battery telemetry.' };
+      }
+      case 'firewallStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const output = execFileSync('netsh.exe', ['advfirewall', 'show', 'allprofiles'], { encoding: 'utf8', timeout: 7000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, profiles: output.slice(0, 30000), readOnly: true };
+      }
+      case 'securityStatus': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-MpComputerStatus -ErrorAction Stop | Select-Object AMServiceEnabled,AntivirusEnabled,AntispywareEnabled,RealTimeProtectionEnabled,BehaviorMonitorEnabled,IoavProtectionEnabled,NISEnabled,AntivirusSignatureLastUpdated | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 12000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, status: JSON.parse(output.trim()), readOnly: true };
+      }
+      case 'eventLogs': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-WinEvent -ListLog * -ErrorAction SilentlyContinue | Select-Object LogName,RecordCount,IsEnabled,LogType | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 20000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, logs: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Lists log metadata only; individual event reads may need additional rights.' };
+      }
+      case 'windowsServices': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-Service | Select-Object Name,DisplayName,Status,StartType | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 4 * 1024 * 1024 });
+        return { success: true, services: output.trim() ? JSON.parse(output.trim()) : [], readOnly: true, note: 'Listing only; service control and installation are not exposed by this tool.' };
+      }
+      case 'systemSettings': {
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        const command = "Get-ComputerInfo | Select-Object WindowsProductName,WindowsVersion,OsBuildNumber,OsArchitecture,CsName,CsDomain,CsSystemType | ConvertTo-Json -Compress";
+        const output = execFileSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', command], { encoding: 'utf8', timeout: 15000, windowsHide: true, maxBuffer: 1024 * 1024 });
+        return { success: true, system: JSON.parse(output.trim()), readOnly: true };
+      }
       default:
         return {
           success: false,
