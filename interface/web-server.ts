@@ -28,6 +28,7 @@ import { listRemoteOnlyBotPages, readRemoteBotPage } from '../models && skills/c
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { startAutoOffload } from '../models && skills/core/store-offload.js';
+import { AVATAR_HTML } from './avatar.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
@@ -2417,6 +2418,11 @@ export class WebServer {
 
     if (pathname.startsWith('/api/chat-groups/') && !(await this.isChatGroupsAuthorized(req))) {
       this.requireChatGroupsAuth(res);
+      return;
+    }
+
+    if (pathname === '/avatar' && method === 'GET') {
+      this.sendHtml(res, AVATAR_HTML);
       return;
     }
 

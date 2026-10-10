@@ -386,6 +386,10 @@ export class NeuroclawSystem {
     this.continuousLearner = new ContinuousLearner(this.promptFeed.lock());
     // Every other doorway shares that same lock: they all drive the one engine.
     this.doorways = new DoorwayRegistry(() => this.pipeline.getHyperEngine() ?? null, this.promptFeed.lock());
+    // The two the avatar uses (interface/avatar.ts). Sound goes in and comes out as the
+    // raw bytes it is; pictures the mesh makes come out as raw pixels. Nothing is transcribed.
+    this.doorways.declare({ name: "voice", kind: "audio", direction: "both", source: "avatar" });
+    this.doorways.declare({ name: "face", kind: "image", direction: "out", source: "avatar" });
     this.contextReplay = new ReplayStore(
       process.env.NEUROCLAW_CONTEXT_REPLAY_FILE ?? join(process.cwd(), "extension-builder", "context-replay.json"),
     );

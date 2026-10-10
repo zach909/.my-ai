@@ -36,6 +36,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
     ipcRenderer.removeAllListeners('process-output');
   },
   
+  // The floating avatar window
+  hideAvatar: () => ipcRenderer.invoke('hide-avatar'),
+
   // Platform detection helper
   platform: process.platform,
 });

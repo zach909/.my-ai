@@ -4,7 +4,7 @@
  * It handles native OS interactions, file system access, and process management.
  */
 
-const { app, BrowserWindow, ipcMain, dialog, shell, session } = require('electron');
+const { app, BrowserWindow, ipcMain, dialog, shell, session, globalShortcut, screen } = require('electron');
 const path = require('path');
 const fs = require('fs');
 const http = require('http');
@@ -160,6 +160,41 @@ function waitForBackend(port, timeoutMs = 15000) {
  * (static frontend + /api proxy to the Neuroclaw backend) rather than the
  * template's demo HTML page.
  */
+// The avatar: a small frameless window that floats over other apps, shown or
+// hidden with Ctrl/Cmd+Shift+Space. It is the backend's /avatar page, so it
+// has the same look and talks to the same AI.
+let avatarWindow;
+
+function toggleAvatar() {
+  if (SKIP_BACKEND) return;
+  if (avatarWindow && !avatarWindow.isDestroyed()) {
+    if (avatarWindow.isVisible()) avatarWindow.hide(); else { avatarWindow.show(); avatarWindow.focus(); }
+    return;
+  }
+  const { workArea } = screen.getPrimaryDisplay();
+  const width = 380, height = 560;
+  avatarWindow = new BrowserWindow({
+    width, height,
+    x: workArea.x + workArea.width - width - 24,
+    y: workArea.y + workArea.height - height - 24,
+    frame: false,
+    transparent: true,
+    resizable: false,
+    skipTaskbar: true,
+    alwaysOnTop: true,
+    hasShadow: false,
+    webPreferences: {
+      preload: path.join(__dirname, '../preload/preload.js'),
+      nodeIntegration: false,
+      contextIsolation: true,
+    },
+  });
+  avatarWindow.setAlwaysOnTop(true, 'screen-saver');
+  avatarWindow.setVisibleOnAllWorkspaces(true);
+  avatarWindow.loadURL(`https://127.0.0.1:${APP_PORT}/avatar`);
+  avatarWindow.on('closed', () => { avatarWindow = undefined; });
+}
+
 function createWindow() {
   // Stamp the per-launch token on every request this window makes -- the page,
   // its assets, and its /api calls all go through here. A browser opening the
@@ -312,6 +347,12 @@ app.whenReady().then(async () => {
   // the app once the server is actually up.
   createWindow();
 
+  // The microphone is the one permission the app grants, and only to its own pages.
+  session.defaultSession.setPermissionRequestHandler((webContents, permission, callback) => {
+    callback(permission === 'media' && webContents.getURL().startsWith(`https://127.0.0.1:${APP_PORT}/`));
+  });
+  globalShortcut.register('CommandOrControl+Shift+Space', toggleAvatar);
+
   if (!SKIP_BACKEND) {
     try {
       await startNeuroclaw();
@@ -352,6 +393,7 @@ app.on('window-all-closed', () => {
 });
 
 app.on('will-quit', () => {
+  globalShortcut.unregisterAll();
   stopNeuroclaw();
 });
 
@@ -360,6 +402,10 @@ app.on('will-quit', () => {
  */
 
 // File System Operations
+ipcMain.handle('hide-avatar', () => {
+  if (avatarWindow && !avatarWindow.isDestroyed()) avatarWindow.hide();
+});
+
 ipcMain.handle('select-directory', async () => {
   const result = await dialog.showOpenDialog(mainWindow, {
     properties: ['openDirectory'],
