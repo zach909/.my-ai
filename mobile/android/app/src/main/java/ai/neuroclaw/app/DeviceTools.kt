@@ -43,6 +43,7 @@ class DeviceTools(private val context: Context) {
         add("device_info", "Read Android version, device model, locale, and app version.")
         add("permission_status", "List declared runtime permissions and whether each is granted.")
         add("permission_audit", "Audit every permission declared in this installed app: grant state, protection level when available, and runtime/special-access classification.")
+        add("permission_catalog", "Enumerate Android permission constants available in this app compile SDK, including undeclared and privileged permissions, with declaration/grant/protection status.")
         add("check_permission", "Check the grant state of one permission declared by this app.", "permission name supplied as an argument")
         add("open_permission_settings", "Open this app's settings so the user can grant or revoke permissions.")
         add("open_exact_alarm_settings", "Open the app's exact-alarm permission settings.")
@@ -90,6 +91,7 @@ class DeviceTools(private val context: Context) {
                 "device_info" -> deviceInfo()
                 "permission_status" -> permissionStatus()
                 "permission_audit" -> permissionAudit()
+                "permission_catalog" -> permissionCatalog()
                 "check_permission" -> checkPermission(args.optString("permission", ""))
                 "open_permission_settings" -> openSystemSettings("app")
                 "open_exact_alarm_settings" -> openSystemSettings("alarms")
@@ -260,6 +262,63 @@ class DeviceTools(private val context: Context) {
         }
         return ok(JSONObject().put("permissions", rows).put("count", rows.length())
             .put("note", "This lists permissions declared by this app, not every permission in Android or permissions granted to other apps."))
+    }
+
+    /**
+     * Enumerates the permission constants shipped in the compile SDK's Manifest.permission.
+     * This is broader than the app manifest audit, but cannot enumerate OEM/custom permissions
+     * or permissions introduced by a newer SDK than the one used to compile this app.
+     */
+    private fun permissionCatalog(): JSONObject {
+        val declared = try {
+            val flags = if (Build.VERSION.SDK_INT >= 33)
+                android.content.pm.PackageManager.PackageInfoFlags.of(android.content.pm.PackageManager.GET_PERMISSIONS.toLong())
+            else null
+            @Suppress("DEPRECATION")
+            val info = if (Build.VERSION.SDK_INT >= 33)
+                appContext.packageManager.getPackageInfo(appContext.packageName, flags!!)
+            else appContext.packageManager.getPackageInfo(appContext.packageName, android.content.pm.PackageManager.GET_PERMISSIONS)
+            info.requestedPermissions.orEmpty().toSet()
+        } catch (_: Exception) { emptySet<String>() }
+        val rows = JSONArray()
+        var declaredCount = 0
+        var grantedCount = 0
+        var unavailableCount = 0
+        val fields = Manifest.permission::class.java.fields
+            .filter { java.lang.reflect.Modifier.isStatic(it.modifiers) && it.type == String::class.java }
+            .sortedBy { it.name }
+        for (field in fields) {
+            val permission = try { field.get(null) as? String } catch (_: Exception) { null } ?: continue
+            val isDeclared = permission in declared
+            val granted = appContext.packageManager.checkPermission(permission, appContext.packageName) == PackageManager.PERMISSION_GRANTED
+            var protection = "unknown_or_not_defined_on_this_device"
+            try {
+                @Suppress("DEPRECATION")
+                val pi = appContext.packageManager.getPermissionInfo(permission, 0)
+                protection = when (pi.protectionLevel and android.content.pm.PermissionInfo.PROTECTION_MASK_BASE) {
+                    android.content.pm.PermissionInfo.PROTECTION_DANGEROUS -> "dangerous_runtime"
+                    android.content.pm.PermissionInfo.PROTECTION_NORMAL -> "normal"
+                    android.content.pm.PermissionInfo.PROTECTION_SIGNATURE -> "signature_or_privileged"
+                    else -> "special_or_other"
+                }
+            } catch (_: Exception) { unavailableCount++ }
+            if (isDeclared) declaredCount++
+            if (isDeclared && granted) grantedCount++
+            rows.put(JSONObject()
+                .put("constant", field.name)
+                .put("permission", permission)
+                .put("declared_by_app", isDeclared)
+                .put("granted_to_app", isDeclared && granted)
+                .put("protection", protection))
+        }
+        return ok(JSONObject()
+            .put("permissions", rows)
+            .put("count", rows.length())
+            .put("declared_count", declaredCount)
+            .put("declared_and_granted_count", grantedCount)
+            .put("not_resolved_by_package_manager", unavailableCount)
+            .put("compile_sdk", Build.VERSION.SDK_INT)
+            .put("note", "This catalog enumerates Manifest.permission constants in the SDK used to compile this app. It does not include OEM/vendor custom permissions, newer SDK constants unavailable at compile time, or prove a permission is obtainable. Signature, privileged, role, restricted, and special-access permissions have additional OS rules."))
     }
 
     private fun checkPermission(permission: String): JSONObject {
