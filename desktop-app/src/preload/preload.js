@@ -80,6 +80,18 @@ contextBridge.exposeInMainWorld('electronAPI', {
     'webBrowserPublicKeyCredentialService',
     'energyKitGuidanceService',
     'externalCameraMediaService',
+    'systemExtensionApproval',
+    'driverExtensionApproval',
+    'networkExtensionConfiguration',
+    'endpointSecurityClient',
+    'sandboxEntitlements',
+    'loginItemManagement',
+    'notificationAuthorization',
+    'keychainItemAccess',
+    'privilegedHelperAuthorization',
+    'virtualizationFramework',
+    'networkClientEntitlement',
+    'networkServerEntitlement',
     'addressBook','developerTool','listenEvent','mediaLibrary','systemPolicyAllFiles','systemPolicyDesktopFolder',
     'systemPolicyDocumentsFolder','systemPolicyDownloadsFolder','systemPolicyNetworkVolumes','systemPolicyRemovableVolumes'
   ].map((id) => [id, {
