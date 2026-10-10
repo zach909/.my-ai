@@ -150,6 +150,12 @@ enum ExtendedNativeTools {
         case "network.local_discovery":
             properties = ["service_type": ["type": "string", "description": "Bonjour service type, such as _http._tcp"], "seconds": ["type": "number", "minimum": 1, "maximum": 10]]
             required = []
+        case "homekit.list_accessories":
+            properties = ["home_id": ["type": "string"]]
+            required = ["home_id"]
+        case "homekit.control_accessory":
+            properties = ["home_id": ["type": "string"], "accessory_id": ["type": "string"], "service_type": ["type": "string"], "characteristic_type": ["type": "string"], "value": ["type": ["string", "number", "boolean"]], "confirm": ["type": "boolean"]]
+            required = ["home_id", "accessory_id", "service_type", "characteristic_type", "value", "confirm"]
         default:
             properties = [:]
             required = []
@@ -314,6 +320,14 @@ enum ExtendedNativeTools {
             return await AudioRecordingFlow.shared.stop()
         case "network.local_discovery":
             return await LocalNetworkDiscovery.discover(arguments)
+        case "homekit.get_status":
+            return HomeKitTools.status()
+        case "homekit.list_homes":
+            return await HomeKitTools.listHomes()
+        case "homekit.list_accessories":
+            return await HomeKitTools.listAccessories(arguments)
+        case "homekit.control_accessory":
+            return await HomeKitTools.controlAccessory(arguments)
         case "contacts.create":
             return await createContact(arguments)
         case "contacts.update":
@@ -330,8 +344,7 @@ enum ExtendedNativeTools {
             return await completeReminder(arguments)
         case "reminders.delete":
             return await deleteReminder(arguments)
-        case "homekit.get_status", "homekit.list_homes", "homekit.list_accessories", "homekit.control_accessory":
-            return (501, ["error": "homekit_requires_foreground_setup", "detail": "HomeKit requires the entitlement and an app-owned manager lifecycle. No accessory was changed."])
+
         case "nearby.start_session", "nearby.stop_session":
             return (409, ["error": "foreground_or_capability_flow_required", "detail": "This operation requires a foreground UIKit flow, a configured entitlement, or a supported user-selected resource. No device data was changed."])
         default:
@@ -902,5 +915,92 @@ private enum LocalNetworkDiscovery {
                 finish(200, ["duration_seconds": seconds])
             }
         }
+    }
+}
+
+
+@MainActor
+private final class HomeKitTools: NSObject, HMHomeManagerDelegate {
+    static let shared = HomeKitTools()
+    private let manager = HMHomeManager()
+    private var readyWaiters: [CheckedContinuation<Void, Never>] = []
+    private var hasLoadedHomes = false
+
+    private override init() {
+        super.init()
+        manager.delegate = self
+    }
+
+    func homeManagerDidUpdateHomes(_ manager: HMHomeManager) {
+        hasLoadedHomes = true
+        let waiters = readyWaiters
+        readyWaiters.removeAll()
+        waiters.forEach { $0.resume() }
+    }
+
+    static func status() -> (Int, [String: Any]) {
+        guard HMHomeManager.isHomeKitAvailable() else {
+            return (501, ["available": false, "error": "homekit_unavailable_on_device"])
+        }
+        return (200, ["available": true, "home_count": shared.manager.homes.count, "note": "HomeKit access still requires the signed app entitlement and user authorization."])
+    }
+
+    static func listHomes() async -> (Int, [String: Any]) {
+        guard HMHomeManager.isHomeKitAvailable() else { return (501, ["error": "homekit_unavailable_on_device"]) }
+        await shared.waitUntilReady()
+        return (200, ["homes": shared.manager.homes.map { ["id": $0.uniqueIdentifier.uuidString, "name": $0.name] }, "count": shared.manager.homes.count])
+    }
+
+    static func listAccessories(_ arguments: [String: Any]) async -> (Int, [String: Any]) {
+        guard let homeID = arguments["home_id"] as? String else { return (400, ["error": "home_id_required"]) }
+        await shared.waitUntilReady()
+        guard let home = shared.manager.homes.first(where: { $0.uniqueIdentifier.uuidString == homeID }) else {
+            return (404, ["error": "home_not_found"])
+        }
+        let accessories = home.accessories.map { accessory in
+            [
+                "id": accessory.uniqueIdentifier.uuidString,
+                "name": accessory.name,
+                "reachable": accessory.isReachable,
+                "services": accessory.services.map { service in
+                    [
+                        "type": service.serviceType,
+                        "name": service.name,
+                        "characteristics": service.characteristics.map { ["type": $0.characteristicType, "description": $0.localizedDescription, "readable": $0.properties.contains(.readable), "writable": $0.properties.contains(.writable)] }
+                    ] as [String: Any]
+                }
+            ] as [String: Any]
+        }
+        return (200, ["accessories": accessories, "count": accessories.count])
+    }
+
+    static func controlAccessory(_ arguments: [String: Any]) async -> (Int, [String: Any]) {
+        guard (arguments["confirm"] as? Bool) == true else { return (403, ["error": "explicit_confirmation_required"]) }
+        guard let homeID = arguments["home_id"] as? String,
+              let accessoryID = arguments["accessory_id"] as? String,
+              let serviceType = arguments["service_type"] as? String,
+              let characteristicType = arguments["characteristic_type"] as? String,
+              let value = arguments["value"] else {
+            return (400, ["error": "home_id_accessory_id_service_type_characteristic_type_value_required"])
+        }
+        await shared.waitUntilReady()
+        guard let home = shared.manager.homes.first(where: { $0.uniqueIdentifier.uuidString == homeID }),
+              let accessory = home.accessories.first(where: { $0.uniqueIdentifier.uuidString == accessoryID }),
+              let service = accessory.services.first(where: { $0.serviceType == serviceType }),
+              let characteristic = service.characteristics.first(where: { $0.characteristicType == characteristicType }) else {
+            return (404, ["error": "homekit_target_not_found"])
+        }
+        guard characteristic.properties.contains(.writable) else { return (403, ["error": "characteristic_not_writable"]) }
+        return await withCheckedContinuation { continuation in
+            characteristic.writeValue(value) { error in
+                if let error { continuation.resume(returning: (500, ["error": "homekit_write_failed", "detail": error.localizedDescription])) }
+                else { continuation.resume(returning: (200, ["ok": true, "accessory": accessory.name, "characteristic": characteristicType])) }
+            }
+        }
+    }
+
+    private func waitUntilReady() async {
+        if hasLoadedHomes { return }
+        await withCheckedContinuation { continuation in readyWaiters.append(continuation) }
     }
 }
