@@ -32,6 +32,8 @@ check(getTool('appData').implementation === 'native', 'app-owned data locations 
 check(getTool('privacySettings').implementation === 'native', 'Windows privacy settings shortcut is implemented natively');
 check(getTool('windowsCapabilityState').implementation === 'native', 'capability-state inventory is implemented natively');
 check(getTool('windowsSecurityContext').implementation === 'native-windows', 'Windows security context is inspected without changing privileges');
+check(getTool('uacElevationRequest').implementation === 'native-consent', 'elevation request is a visible, consent-gated relaunch flow');
+check(mainsource.includes("case 'uacElevationRequest':") && mainsource.includes("-Verb RunAs"), 'elevation relaunch delegates to Windows UAC instead of bypassing it');
 check(getTool('fileAccessControl').implementation === 'native-windows', 'selected-path ACL inspection is implemented');
 check(getTool('aclPermissionCheck').implementation === 'native-windows', 'selected-path access check is implemented');
 check(getTool('windowsPermissionSettings').implementation === 'native', 'Windows privacy settings pages can be opened');
