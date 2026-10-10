@@ -134,9 +134,11 @@ enum Permissions {
     }
 
     /// Requests temporary precise-location access where supported.
+    private static let preciseLocationManager = CLLocationManager()
+
     static func requestPreciseLocation() async -> String {
         await withCheckedContinuation { continuation in
-            let manager = CLLocationManager()
+            let manager = preciseLocationManager
             guard manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse else {
                 continuation.resume(returning: "Location permission must be granted first")
                 return
