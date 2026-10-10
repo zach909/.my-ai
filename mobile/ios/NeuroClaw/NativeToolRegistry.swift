@@ -1,8 +1,15 @@
+import AVFoundation
+import AppTrackingTransparency
 import Contacts
+import CoreBluetooth
 import CoreLocation
+import CoreMotion
 import Photos
 import EventKit
 import Foundation
+import HealthKit
+import MediaPlayer
+import Speech
 import UIKit
 import UserNotifications
 
@@ -10,15 +17,18 @@ import UserNotifications
 /// Each tool uses public iOS APIs and returns JSON-serializable dictionaries.
 /// Sensitive data is only returned after iOS has granted the relevant permission.
 enum NativeToolRegistry {
-    static let definitions: [[String: Any]] = [
+    private static let baseDefinitions: [[String: Any]] = [
         ["name": "permissions.status", "description": "Return the current authorization state of supported iOS capabilities.", "input_schema": ["type": "object", "properties": [:]]],
         ["name": "contacts.search", "description": "Search contacts by name, email, or phone. Requires Contacts permission.", "input_schema": ["type": "object", "properties": ["query": ["type": "string"]], "required": ["query"]]],
         ["name": "calendar.list_events", "description": "List calendar events in an ISO-8601 date range. Requires Calendar permission.", "input_schema": ["type": "object", "properties": ["start": ["type": "string"], "end": ["type": "string"]], "required": ["start", "end"]]],
         ["name": "reminders.list", "description": "List reminders, optionally incomplete only. Requires Reminders permission.", "input_schema": ["type": "object", "properties": ["incomplete_only": ["type": "boolean"]]]],
         ["name": "notifications.schedule", "description": "Schedule a local notification after delay_seconds (1–604800) with title and body.", "input_schema": ["type": "object", "properties": ["title": ["type": "string"], "body": ["type": "string"], "delay_seconds": ["type": "number"]], "required": ["title", "body", "delay_seconds"]]],
         ["name": "notifications.cancel", "description": "Cancel a previously scheduled local notification by identifier.", "input_schema": ["type": "object", "properties": ["identifier": ["type": "string"]], "required": ["identifier"]]],
-        ["name": "app.open_url", "description": "Ask iOS to open a URL or registered app URL scheme. The system may show confirmation or refuse.", "input_schema": ["type": "object", "properties": ["url": ["type": "string"]], "required": ["url"]]]
+        ["name": "app.open_url", "description": "Ask iOS to open a URL or registered app URL scheme. The system may show confirmation or refuse.", "input_schema": ["type": "object", "properties": ["url": ["type": "string"]], "required": ["url"]]],
+        ["name": "settings.open_app", "description": "Open app Settings so the user can change permissions.", "input_schema": ["type": "object", "properties": [:]]]
     ]
+
+    static var definitions: [[String: Any]] { baseDefinitions + ExtendedNativeTools.definitions }
 
     static func invoke(name: String, arguments: [String: Any]) async -> (Int, [String: Any]) {
         switch name {
@@ -53,6 +63,12 @@ enum NativeToolRegistry {
             }
             UNUserNotificationCenter.current().removePendingNotificationRequests(withIdentifiers: [identifier])
             return (200, ["ok": true, "identifier": identifier])
+        case "settings.open_app":
+            guard let settingsURL = URL(string: UIApplication.openSettingsURLString) else { return (500, ["error": "settings_url_unavailable"]) }
+            let opened: Bool = await withCheckedContinuation { continuation in
+                DispatchQueue.main.async { UIApplication.shared.open(settingsURL, options: [:]) { continuation.resume(returning: $0) } }
+            }
+            return opened ? (200, ["ok": true, "settings": "app"]) : (409, ["error": "could_not_open_app_settings"])
         case "app.open_url":
             guard let text = arguments["url"] as? String, let url = URL(string: text),
                   let scheme = url.scheme?.lowercased(), ["https", "http", "maps", "mailto", "tel", "sms"].contains(scheme) else {
@@ -63,7 +79,7 @@ enum NativeToolRegistry {
             }
             return opened ? (200, ["ok": true]) : (409, ["error": "iOS could not open this URL"])
         default:
-            return (404, ["error": "unknown_tool", "name": name, "available_tools": definitions.compactMap { $0["name"] as? String }])
+            return await ExtendedNativeTools.invoke(name: name, arguments: arguments)
         }
     }
 
@@ -73,13 +89,26 @@ enum NativeToolRegistry {
         let reminders = EKEventStore.authorizationStatus(for: .reminder)
         let photos = photoLabel(PHPhotoLibrary.authorizationStatus(for: .readWrite))
         let notifications = await UNUserNotificationCenter.current().notificationSettings()
+        let location = CLLocationManager()
         return [
             "contacts": contactLabel(contact),
             "calendar": eventLabel(calendar),
             "reminders": eventLabel(reminders),
             "photos": photos,
             "notifications": String(describing: notifications.authorizationStatus),
-            "location": String(describing: CLLocationManager.authorizationStatus())
+            "location": String(describing: location.authorizationStatus),
+            "location_services_enabled": CLLocationManager.locationServicesEnabled(),
+            "camera": String(describing: AVCaptureDevice.authorizationStatus(for: .video)),
+            "microphone": String(describing: AVAudioSession.sharedInstance().recordPermission),
+            "speech_recognition": String(describing: SFSpeechRecognizer.authorizationStatus()),
+            "motion_fitness": String(describing: CMMotionActivityManager.authorizationStatus()),
+            "media_library": String(describing: MPMediaLibrary.authorizationStatus()),
+            "bluetooth": String(describing: CBManager.authorization),
+            "app_tracking_transparency": String(describing: ATTrackingManager.trackingAuthorizationStatus),
+            "healthkit_available": HKHealthStore.isHealthDataAvailable(),
+            "background_app_refresh": await MainActor.run { String(describing: UIApplication.shared.backgroundRefreshStatus) },
+            "local_network_bridge_enabled": UserDefaults.standard.bool(forKey: "bridgeLan"),
+            "note": "Some APIs deliberately hide per-data-type grant state. HealthKit read denial cannot be distinguished from an empty result; local network and cellular restrictions are system-managed."
         ]
     }
 
@@ -179,7 +208,7 @@ enum NativeToolRegistry {
                 store.requestAccess(to: .reminder) { granted, _ in continuation.resume(returning: granted) }
             }
             guard granted else { return (403, ["error": "reminders_permission_denied"]) }
-        } else if status != .authorized && status != .fullAccess {
+        } else if !hasEventReadAccess(status) {
             return (403, ["error": "reminders_permission_denied", "status": eventLabel(status)])
         }
         return await withCheckedContinuation { continuation in
