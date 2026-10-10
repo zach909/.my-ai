@@ -606,6 +606,14 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   systemAdminFiles: { label: 'System administration files', service: 'SystemPolicySysAdminFiles', pane: 'Privacy_AllFiles', kind: 'settings' },
   userSelectedFiles: { label: 'User-selected file access', service: null, pane: null, kind: 'file-picker' },
   userSelectedFolders: { label: 'User-selected folder access', service: null, pane: null, kind: 'directory-picker' },
+  // Remaining protected-resource services in Apple's documented macOS service list.
+  energyKitGuidance: { label: 'EnergyKit energy-use guidance', service: 'EnergyKitGuidance', pane: null, kind: 'capability' },
+  externalCameraMedia: { label: 'External camera media', service: 'ExternalCameraMedia', pane: 'Privacy_Camera', kind: 'settings', statusMedia: 'camera' },
+  fileProviderDomain: { label: 'File Provider domains', service: 'FileProviderDomain', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  fileProviderPresence: { label: 'File Provider presence information', service: 'FileProviderPresence', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  focusStatus: { label: 'Focus status', service: 'FocusStatus', pane: 'Privacy_Focus', kind: 'settings' },
+  gameCenterFriends: { label: 'Game Center friends list', service: 'GameCenterFriends', pane: null, kind: 'settings' },
+  systemPolicyDeveloperFiles: { label: 'Protected developer files', service: 'SystemPolicyDeveloperFiles', pane: 'Privacy_DeveloperTools', kind: 'settings' },
 };
 
 function getMacOSPermissionToolStatus(permission) {
