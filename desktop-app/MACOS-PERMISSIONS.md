@@ -81,3 +81,8 @@ The usage-description dictionary also includes purpose strings for additional Ap
 This update adds explicit entries for system-extension approval, driver-extension approval, Network Extension configuration, Endpoint Security, App Sandbox entitlements, login-item/background-task management, notification authorization, Keychain access groups, privileged helper tools, Virtualization framework access, and network client/server entitlements. These are capability/entitlement records rather than independent privacy prompts. Their actual availability depends on the macOS version, signed entitlements, provisioning, the API used, and any required user or administrator approval. The catalog does not bypass these requirements.
 
 Apple's documented protected-resource TCC services are represented in the catalog. Some catalog IDs are aliases for the same underlying service; they do not represent separate grants. The app still needs feature-specific native API calls for permission requests and access checks.
+
+
+### Additional documented camera resource
+
+Added `mainCamera` for Apple's `NSMainCameraUsageDescription` protected-resource key. It uses the existing camera consent flow and opens the Camera privacy settings pane when manual approval is needed. This is a distinct documented usage-description key, not a bypass or a new grant separate from macOS camera authorization.
