@@ -236,7 +236,7 @@ const DEFINITIONS = [
   ["windowsUpdateSettings","Open Windows Update settings","system","native","Open Windows Update Settings; the user controls updates."],
   ["windowsSecuritySettings","Open Windows Security settings","security","native","Open Windows Security; do not disable protections or silently change settings."],
   ["uacStatus","Inspect current elevation context","security","native-windows","Report whether this process is elevated; never bypass UAC."],
-  ["uacElevationRequest","Request an explicit elevated operation","security","admin-or-adapter","Requires a dedicated reviewed elevation helper and an explicit Windows UAC prompt; arbitrary elevated commands are not exposed."],
+  ["uacElevationRequest","Request an explicit elevated operation","security","native-consent","Requires a dedicated reviewed elevation helper and an explicit Windows UAC prompt; arbitrary elevated commands are not exposed."],
   ["aclPermissionCheck","Check access to a user-selected path","security","native-windows","Perform a non-destructive access check for the current account; results may be affected by ACLs and runtime conditions."],
   ["registryPermissionCheck","Check access to an allowlisted registry key","security","admin-or-adapter","Inspect access only for allowlisted keys; do not change registry permissions."],
   ["windowsCapabilityManifest","Report packaged-app capability applicability","manifest","native","Explain which manifest capabilities apply to the current packaging model without claiming grants."]
