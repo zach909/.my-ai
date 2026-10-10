@@ -56,10 +56,13 @@ enum Permissions {
     static func requestAll() async -> [Status] {
         var out: [Status] = []
         out.append(Status(id: "location", label: "Location", result: await requestLocation()))
+        out.append(Status(id: "precise_location", label: "Precise Location", result: await requestPreciseLocation()))
         out.append(Status(id: "contacts", label: "Contacts", result: await requestContacts()))
-        out.append(Status(id: "calendars", label: "Calendars", result: await requestCalendar()))
+        out.append(Status(id: "calendars", label: "Calendars Read/Write", result: await requestCalendar()))
+        out.append(Status(id: "calendar_write_only", label: "Calendar Write Only", result: await requestCalendarWriteOnly()))
         out.append(Status(id: "reminders", label: "Reminders", result: await requestReminders()))
-        out.append(Status(id: "photos", label: "Photos", result: await requestPhotos()))
+        out.append(Status(id: "photos", label: "Photos Read/Write", result: await requestPhotos()))
+        out.append(Status(id: "photos_add_only", label: "Photos Add Only", result: await requestPhotosAddOnly()))
         out.append(Status(id: "microphone", label: "Microphone", result: await requestMicrophone()))
         out.append(Status(id: "camera", label: "Camera", result: await requestCamera()))
         out.append(Status(id: "speech", label: "Speech Recognition", result: await requestSpeechRecognition()))
@@ -130,6 +133,28 @@ enum Permissions {
         }
     }
 
+    /// Requests temporary precise-location access where supported.
+    static func requestPreciseLocation() async -> String {
+        await withCheckedContinuation { continuation in
+            let manager = CLLocationManager()
+            guard manager.authorizationStatus == .authorizedAlways || manager.authorizationStatus == .authorizedWhenInUse else {
+                continuation.resume(returning: "Location permission must be granted first")
+                return
+            }
+            if #available(iOS 14.0, *) {
+                guard manager.accuracyAuthorization != .fullAccuracy else {
+                    continuation.resume(returning: "Already precise")
+                    return
+                }
+                manager.requestTemporaryFullAccuracyAuthorization(withPurposeKey: "AgentTask") { error in
+                    continuation.resume(returning: error == nil ? "Precise location granted or already allowed" : (error?.localizedDescription ?? "Precise location not granted"))
+                }
+            } else {
+                continuation.resume(returning: "Precise-location authorization is not separately available on this iOS version")
+            }
+        }
+    }
+
     // MARK: Contacts
 
     static func requestContacts() async -> String {
@@ -147,6 +172,17 @@ enum Permissions {
             // requestAccess(to:) rather than the iOS-17-only requestFullAccessToEvents,
             // since this app's deployment target is iOS 16.
             EKEventStore().requestAccess(to: .event) { granted, error in
+                continuation.resume(returning: granted ? "Granted" : (error?.localizedDescription ?? "Denied"))
+            }
+        }
+    }
+
+    static func requestCalendarWriteOnly() async -> String {
+        guard #available(iOS 17.0, *) else {
+            return "Not separately available before iOS 17; use Calendar access"
+        }
+        return await withCheckedContinuation { continuation in
+            EKEventStore().requestWriteOnlyAccessToEvents { granted, error in
                 continuation.resume(returning: granted ? "Granted" : (error?.localizedDescription ?? "Denied"))
             }
         }
