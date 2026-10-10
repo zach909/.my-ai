@@ -93,6 +93,13 @@ These require a supported local API, provider integration, or explicit user-sele
 - Device management and policy inspection only where supported and authorized
 - No silent privilege escalation, UAC bypass, security-control bypass, credential dumping, or concealment
 
+
+## Recently implemented desktop capabilities
+
+- `watchFiles`: opens a native folder picker, asks for confirmation, watches only the selected directory (not subdirectories), bounds the queued event list, and stops on explicit request or app shutdown.
+- `printToPdf`: exports the current .my-ai window using Electron's PDF renderer after the user selects a destination and confirms. It refuses to overwrite an existing file.
+- `manageStartup`: changes only the app's own login-item setting after confirmation. Electron documents this API for Windows and macOS; other platforms report unsupported.
+
 ## Implementation requirements
 
 1. Keep a capability registry with an identifier, description, required API, sensitivity level, availability check, consent state, and runtime verification.
