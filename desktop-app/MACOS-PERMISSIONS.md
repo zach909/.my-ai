@@ -62,8 +62,15 @@ Official reference: [Apple — Resetting access to protected resources in macOS]
 
 ## Final Apple-listed protected-resource coverage pass
 
-The catalog includes explicit entries for the remaining services in Apple's published macOS protected-resource reset list: EnergyKit guidance, external-camera media, File Provider domains and presence, Focus status, and Game Center friends. Protected developer-file access is also represented separately. The catalog now has **82 tool IDs** and the preload exposes the same IDs.
+The catalog includes explicit entries for the remaining services in Apple's published macOS protected-resource reset list: EnergyKit guidance, external-camera media, File Provider domains and presence, Focus status, and Game Center friends. Protected developer-file access is also represented separately. The catalog previously had 92 tool IDs; this pass adds 39 distinct explicit service aliases, and the preload exposes the same IDs.
 
 This is a coverage inventory, not 82 independent macOS permission prompts. Apple documents a finite list of protected-resource service names, while other capabilities (for example administrator rights, keychain access, network sockets, printing, biometric authentication, and background items) are governed by different APIs, entitlements, user approvals, or operating-system policies. The app must implement and test each feature-specific API; adding a registry entry does not itself implement or grant the capability.
 
 Apple's reference list: [Resetting access to protected resources in macOS](https://developer.apple.com/documentation/xcode/resetting-access-to-protected-resources-in-macos) and [Protected resources](https://developer.apple.com/documentation/bundleresources/protected-resources).
+
+
+## Additional explicit service aliases
+
+The registry now also exposes one named tool for each remaining Apple-listed TCC service category, including Accessibility, BluetoothAlways, Calendar, Camera, Microphone, Motion, Photos and PhotosAdd, Reminders, RemoteDesktop, ScreenCapture, SpeechRecognition, HomeKit, Apple Events, AudioCapture, PostEvent, FocusStatus, File Provider services, Game Center friends, app data and bundle services, developer/system files, virtual-machine networking, Personal Voice, browser public-key credentials, EnergyKit, and external-camera media. Several aliases intentionally map to the same underlying macOS service or Settings pane; they improve discoverability and do not create new independent permissions.
+
+The usage-description dictionary also includes purpose strings for additional Apple-defined privacy categories. Some keys apply only to particular OS versions, hardware, entitlements, or APIs. The build must be validated on macOS, and a purpose string is not a substitute for the corresponding native framework integration or user authorization.
