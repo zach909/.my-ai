@@ -29,12 +29,15 @@ object Permissions {
         add(Manifest.permission.READ_CALENDAR); add(Manifest.permission.WRITE_CALENDAR)
         add(Manifest.permission.READ_CALL_LOG); add(Manifest.permission.WRITE_CALL_LOG)
         add(Manifest.permission.READ_PHONE_STATE); add(Manifest.permission.CALL_PHONE)
+        if (Build.VERSION.SDK_INT >= 26) add(Manifest.permission.ANSWER_PHONE_CALLS)
+        if (Build.VERSION.SDK_INT >= 26) add(Manifest.permission.READ_PHONE_NUMBERS)
+        if (Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACCEPT_HANDOVER)
         add(Manifest.permission.READ_SMS); add(Manifest.permission.SEND_SMS); add(Manifest.permission.RECEIVE_SMS)
         add(Manifest.permission.ACCESS_FINE_LOCATION); add(Manifest.permission.ACCESS_COARSE_LOCATION)
         add(Manifest.permission.GET_ACCOUNTS)
         if (Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACCESS_BACKGROUND_LOCATION)
         if (Build.VERSION.SDK_INT >= 29) add(Manifest.permission.ACTIVITY_RECOGNITION)
-        if (Build.VERSION.SDK_INT >= 31) { add(Manifest.permission.BLUETOOTH_CONNECT); add(Manifest.permission.BLUETOOTH_SCAN) }
+        if (Build.VERSION.SDK_INT >= 31) { add(Manifest.permission.BLUETOOTH_CONNECT); add(Manifest.permission.BLUETOOTH_SCAN); add(Manifest.permission.BLUETOOTH_ADVERTISE) }
         if (Build.VERSION.SDK_INT >= 33) {
             add(Manifest.permission.READ_MEDIA_IMAGES); add(Manifest.permission.READ_MEDIA_VIDEO); add(Manifest.permission.READ_MEDIA_AUDIO)
             add(Manifest.permission.POST_NOTIFICATIONS)
@@ -43,7 +46,8 @@ object Permissions {
             add(Manifest.permission.READ_EXTERNAL_STORAGE); add(Manifest.permission.WRITE_EXTERNAL_STORAGE)
         }
         add(Manifest.permission.BODY_SENSORS)
-    }.toTypedArray()
+        if (Build.VERSION.SDK_INT >= 34) add(Manifest.permission.BODY_SENSORS_BACKGROUND)
+    }.distinct().toTypedArray()
 
     fun missing(activity: Activity): List<String> =
         ALL.filter { activity.checkSelfPermission(it) != PackageManager.PERMISSION_GRANTED }
@@ -52,6 +56,17 @@ object Permissions {
     fun requestAll(activity: Activity, requestCode: Int = 100) {
         val need = missing(activity)
         if (need.isNotEmpty()) activity.requestPermissions(need.toTypedArray(), requestCode)
+    }
+
+    /** Every permission declared in this app's installed manifest, including normal and special access. */
+    fun declared(activity: Activity): List<String> {
+        val info = if (Build.VERSION.SDK_INT >= 33) {
+            activity.packageManager.getPackageInfo(activity.packageName, android.content.pm.PackageManager.PackageInfoFlags.of(PackageManager.GET_PERMISSIONS.toLong()))
+        } else {
+            @Suppress("DEPRECATION")
+            activity.packageManager.getPackageInfo(activity.packageName, PackageManager.GET_PERMISSIONS)
+        }
+        return info.requestedPermissions?.toList().orEmpty().distinct().sorted()
     }
 
     fun has(activity: Activity, permission: String): Boolean =
