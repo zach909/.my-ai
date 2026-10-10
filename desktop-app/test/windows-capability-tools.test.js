@@ -24,6 +24,12 @@ check(getTool('contacts').implementation === 'adapter-required', 'contacts does 
 check(getTool('adminOperation').implementation === 'admin-or-adapter', 'administrative operations are explicitly gated');
 check(getToolStatus('unknown-capability').success === false, 'unknown capability IDs are rejected');
 check(getToolStatus('systemInfo').success === true && getToolStatus('systemInfo').details.arch, 'system information tool returns runtime details');
+check(getTool('readFileMetadata').implementation === 'native', 'selected-file metadata is implemented natively');
+check(getTool('diskSpace').implementation === 'native', 'disk-space metadata is implemented natively');
+check(getTool('performanceMetrics').implementation === 'native', 'basic performance metrics are implemented natively');
+check(getTool('appData').implementation === 'native', 'app-owned data locations are implemented natively');
+check(getTool('privacySettings').implementation === 'native', 'Windows privacy settings shortcut is implemented natively');
+check(getTool('windowsCapabilityState').implementation === 'native', 'capability-state inventory is implemented natively');
 check(getToolStatus('contacts').status === 'adapter-required', 'unsupported provider tools report adapter-required status');
 check(getTool('deleteFile').implementation === 'adapter-required', 'destructive file operations are not falsely marked available');
 check(getTool('revokeAppConsent').implementation === 'adapter-required', 'consent revocation is not falsely marked implemented');
