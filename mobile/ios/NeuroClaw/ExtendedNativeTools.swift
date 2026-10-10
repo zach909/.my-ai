@@ -260,7 +260,7 @@ enum ExtendedNativeTools {
             return (200, ["implemented_tools": NativeToolRegistry.definitions.compactMap { $0["name"] as? String } + definitions.compactMap { $0["name"] as? String }, "platform_limits": ["No unrestricted filesystem access", "No reading SMS/iMessage, call history, or arbitrary email inboxes", "No arbitrary cross-app screen capture or tap injection", "No changing system permissions or settings on behalf of the user", "Background execution is scheduled and system-controlled", "HealthKit/HomeKit require valid entitlements and user authorization"]])
         case "permissions.request_all":
             var statuses = await Permissions.requestAll().map { ["id": $0.id, "label": $0.label, "result": $0.result] as [String: Any] }
-            let localNetwork = await LocalNetworkDiscovery.discover(["service_type": "_http._tcp", "seconds": 1])
+            let localNetwork = await LocalNetworkDiscovery.discover(["service_type": "_http._tcp", "seconds": 4])
             statuses.append(["id": "local_network", "label": "Local Network", "result": localNetwork.0 == 200 ? "Discovery attempted; inspect local_network_result" : String(describing: localNetwork.1["error"] ?? "unavailable")])
             return (200, ["requested": statuses, "local_network_result": localNetwork.1, "note": "iOS may suppress repeat prompts, require foreground UI, or require separate entitlement approval. Some settings cannot be requested by apps."])
         case "permissions.request_location":
@@ -915,6 +915,7 @@ private enum LocalNetworkDiscovery {
             let queue = DispatchQueue(label: "ai.neuroclaw.local-discovery")
             let lock = NSLock()
             var services: [[String: String]] = []
+            var waitingError: String?
             var finished = false
             func finish(_ status: Int, _ extra: [String: Any]) {
                 lock.lock()
@@ -932,9 +933,13 @@ private enum LocalNetworkDiscovery {
                 case .failed(let error):
                     finish(403, ["error": "local_network_browser_failed", "detail": error.localizedDescription])
                 case .waiting(let error):
-                    // Local-network denial commonly leaves Network.framework waiting.
-                    // Do not report an empty discovery list as proof of authorization.
-                    finish(403, ["error": "local_network_access_unavailable_or_denied", "detail": error.localizedDescription])
+                    lock.lock()
+                    waitingError = error.localizedDescription
+                    lock.unlock()
+                case .ready:
+                    lock.lock()
+                    waitingError = nil
+                    lock.unlock()
                 default:
                     break
                 }
@@ -953,7 +958,14 @@ private enum LocalNetworkDiscovery {
             }
             browser.start(queue: queue)
             queue.asyncAfter(deadline: .now() + seconds) {
-                finish(200, ["duration_seconds": seconds])
+                lock.lock()
+                let unavailable = waitingError
+                lock.unlock()
+                if let unavailable {
+                    finish(403, ["error": "local_network_access_unavailable_or_denied", "detail": unavailable, "duration_seconds": seconds])
+                } else {
+                    finish(200, ["duration_seconds": seconds])
+                }
             }
         }
     }
