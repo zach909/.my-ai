@@ -65,6 +65,11 @@
       "icon": "assets/icon.icns",
       "category": "public.app-category.utilities",
       "extendInfo": {
+        "NSFileProviderDomainUsageDescription": "NeuroClaw accesses files managed by a file provider only when you enable a feature that needs them.",
+        "NSFileProviderPresenceUsageDescription": "NeuroClaw checks file-provider presence only when you enable a feature that needs it.",
+        "NSFocusStatusUsageDescription": "NeuroClaw reads Focus status only when you enable a feature that needs it.",
+        "NSGKFriendListUsageDescription": "NeuroClaw accesses Game Center friends only when you enable a feature that needs them.",
+        "NSPhotoLibraryAddUsageDescription": "NeuroClaw adds photos only when you explicitly choose a feature that saves them.",
         "NSAudioCaptureUsageDescription": "NeuroClaw captures system audio only when you explicitly start a feature that needs it.",
         "NSSiriUsageDescription": "NeuroClaw integrates with Siri only when you enable a Siri-related feature.",
         "NSUserTrackingUsageDescription": "NeuroClaw requests tracking access only if you explicitly enable a feature that requires it.",
