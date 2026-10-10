@@ -9,11 +9,30 @@ import { LinuxPermissionToolsPlugin } from "../../plugins/linux-permission-plugi
 
 describe("Linux permission tools", () => {
   it("registers a separate tool for every Linux and Lennox capability", () => {
-    expect(LINUX_PERMISSION_TOOLS.length).toBeGreaterThanOrEqual(60);
+    expect(LINUX_PERMISSION_TOOLS.length).toBeGreaterThanOrEqual(150);
     expect(new Set(LINUX_PERMISSION_TOOLS.map((tool) => tool.permission)).size).toBe(LINUX_PERMISSION_TOOLS.length);
     expect(listLinuxPermissionTools()).toHaveLength(LINUX_PERMISSION_TOOLS.length);
     expect(getLinuxPermissionTool("linux_chmod")).toBeDefined();
     expect(getLinuxPermissionTool("lennox_ordering")).toBeDefined();
+    expect(getLinuxPermissionTool("linux_permission_inventory")).toBeDefined();
+    expect(getLinuxPermissionTool("linux_seccomp_policy")).toBeDefined();
+    expect(getLinuxPermissionTool("linux_disk_encryption")).toBeDefined();
+    expect(getLinuxPermissionTool("linux_effective_access_check")).toBeDefined();
+  });
+
+  it("keeps the expanded privileged permission catalog opt-in", () => {
+    const sensitive = new Set([
+      "linux-disk-encryption",
+      "linux-seccomp-policy",
+      "linux-polkit-policy",
+      "linux-packet-capture",
+      "linux-permission-inventory",
+    ]);
+    for (const permission of sensitive) {
+      const tool = LINUX_PERMISSION_TOOLS.find((item) => item.permission === permission);
+      expect(tool, `missing tool for ${permission}`).toBeDefined();
+      expect(tool!.risk).toBe("high");
+    }
   });
 
   it("denies calls without a grant before reaching an adapter", async () => {
