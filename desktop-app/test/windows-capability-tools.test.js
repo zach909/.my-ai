@@ -84,6 +84,17 @@ check(getTool('systemSoundSettings').implementation === 'native', 'system sound 
 check(getTool('accessibilitySettings').implementation === 'native', 'accessibility shortcut opens Windows Settings without enabling input monitoring');
 check(getTool('locationSettings').implementation === 'native', 'location shortcut opens Windows privacy settings without enabling location');
 check(getTool('windowsAppCapabilities').implementation === 'native', 'packaging context is reported without claiming manifest grants');
+check(getTool('screenCapture').implementation === 'browser-permission', 'screen capture uses a visible source picker and stops after one frame');
+check(getTool('systemAudioCapture').implementation === 'browser-permission', 'system audio capture is bounded and source-picker gated');
+check(getTool('speechRecognition').implementation === 'browser-permission', 'speech recognition is user-started and runtime-gated');
+check(getTool('voiceActivation').implementation === 'browser-permission', 'wake-word listening is opt-in and time-bounded');
+check(getTool('accessibility').implementation === 'native', 'accessibility snapshot is limited to this app window');
+check(getTool('keyboardAutomation').implementation === 'native', 'keyboard automation is limited to the focused field in this app');
+check(getTool('pointerAutomation').implementation === 'native', 'pointer automation clicks only a uniquely labeled control in this app');
+check(/getDisplayMedia\\(\\{ video: \\{ frameRate: 5 \\}, audio: false \\}\\)/.test(preload), 'screen capture requests an explicit visible picker');
+check(/getDisplayMedia\\(\\{ video: true, audio: true \\}\\)/.test(preload), 'system audio capture requests a visible source picker');
+check(/Math\\.min\\(wakeMode \\? 60000 : 15000, requested\\)/.test(preload), 'speech recognition session has a bounded maximum duration');
+
 check(getTool('appDiagnostics').implementation === 'native', 'app diagnostics expose log metadata without log contents');
 check(getTool('developerTools').implementation === 'native', 'developer tool checks run fixed version commands only');
 check(getTool('appLaunch').implementation === 'native', 'app launch routes through user-confirmed process launch');
