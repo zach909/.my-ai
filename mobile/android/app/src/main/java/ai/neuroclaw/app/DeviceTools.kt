@@ -52,7 +52,11 @@ class DeviceTools(private val context: Context) {
         add("root_access_status", "Inspect root indicators and whether common su/Magisk locations exist; this does not itself request root authorization.")
         add("root_authorization_request", "Ask the installed su/root manager to authorize this app by running a harmless UID check; the root manager controls whether access is granted.")
         add("root_permission_audit", "With root-manager authorization, inspect effective UID, SELinux mode, build flags, Linux capability masks, and mounted filesystems.")
-        add("root_execute", "Execute a user-requested command through su after explicit per-call confirmation; requires command, reason, confirm=true, and root-manager approval.")
+        add("root_list_packages", "List installed package paths using the root manager; requires root-manager authorization.")
+        add("root_list_processes", "List running processes using the root manager; requires root-manager authorization.")
+        add("root_system_properties", "Read Android system properties using the root manager; requires root-manager authorization.")
+        add("root_mount_inventory", "Inspect mounted filesystems using the root manager; requires root-manager authorization.")
+        add("root_read_system_logs", "Read a bounded recent system log excerpt using the root manager; logs may contain private data.")
         add("permission_status", "List declared runtime permissions and whether each is granted.")
         add("permission_audit", "Audit every permission declared in this installed app: grant state, protection level when available, and runtime/special-access classification.")
         add("permission_catalog", "Enumerate Android permission constants available in this app compile SDK, including undeclared and privileged permissions, with declaration/grant/protection status.")
@@ -109,7 +113,11 @@ class DeviceTools(private val context: Context) {
                 "root_access_status" -> rootAccessStatus()
                 "root_authorization_request" -> rootAuthorizationRequest()
                 "root_permission_audit" -> rootPermissionAudit()
-                "root_execute" -> rootExecute(args)
+                "root_list_packages" -> rootReadOnly("packages")
+                "root_list_processes" -> rootReadOnly("processes")
+                "root_system_properties" -> rootReadOnly("properties")
+                "root_mount_inventory" -> rootReadOnly("mounts")
+                "root_read_system_logs" -> rootReadOnly("logs")
                 "permission_status" -> permissionStatus()
                 "permission_audit" -> permissionAudit()
                 "permission_catalog" -> permissionCatalog()
@@ -189,7 +197,7 @@ class DeviceTools(private val context: Context) {
         val magiskFound = JSONArray()
         magiskIndicators.filter { java.io.File(it).exists() }.forEach { magiskFound.put(it) }
         return ok(JSONObject()
-            .put("bootloader_unlocked_indicator", Build.TAGS?.contains("test-keys") == true)
+            .put("test_keys_build_indicator", Build.TAGS?.contains("test-keys") == true)
             .put("build_tags", Build.TAGS ?: JSONObject.NULL)
             .put("su_binary_paths_found", found)
             .put("magisk_paths_visible_without_root", magiskFound)
@@ -198,7 +206,7 @@ class DeviceTools(private val context: Context) {
     }
 
     private fun rootAuthorizationRequest(): JSONObject {
-        val result = runRootCommand("id", 8)
+        val result = runRootCommand("id", 30)
         val isRoot = result.exitCode == 0 && Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
         return JSONObject()
             .put("ok", isRoot)
@@ -226,32 +234,30 @@ class DeviceTools(private val context: Context) {
             .put("note", "The output reflects the root command's effective credentials and Android SELinux policy; it does not mean every privileged operation is permitted.")
     }
 
-    private fun rootExecute(args: JSONObject): JSONObject {
-        val command = args.optString("command", "")
-        val reason = args.optString("reason", "").trim()
-        if (args.optBoolean("confirm", false).not()) {
-            return JSONObject().put("ok", false)
-                .put("error", "Explicit per-call confirmation is required: pass confirm=true only after reviewing the command.")
+    /**
+     * Root-backed operations are intentionally fixed and read-only. This keeps
+     * the agent from turning a remembered su grant into an unrestricted shell.
+     */
+    private fun rootReadOnly(operation: String): JSONObject {
+        val command = when (operation) {
+            "packages" -> "id; pm list packages -f | head -n 500"
+            "processes" -> "id; ps -A | head -n 300"
+            "properties" -> "id; getprop | head -n 500"
+            "mounts" -> "id; mount | head -n 300"
+            "logs" -> "id; logcat -d -t 200"
+            else -> return JSONObject().put("ok", false).put("error", "Unsupported root operation.")
         }
-        if (command.isBlank() || command.length > 4096 || command.contains('\u0000')) {
-            return JSONObject().put("ok", false).put("error", "Provide a non-empty command of at most 4096 characters.")
-        }
-        if (reason.isBlank() || reason.length > 500) {
-            return JSONObject().put("ok", false).put("error", "Provide a short reason for the privileged operation.")
-        }
-        val timeout = bounded(args.optInt("timeout_seconds", 10), 1, 30)
-        val result = runRootCommand(command, timeout)
-        val isRoot = result.exitCode == 0 || result.output.contains("uid=0")
+        val result = runRootCommand(command, 15)
+        val isRoot = Regex("uid=0(?:\\(|\\s|$)").containsMatchIn(result.output)
         return JSONObject()
-            .put("ok", result.exitCode == 0 && !result.timedOut)
-            .put("root_authorized", result.output.contains("uid=0") || result.exitCode == 0)
+            .put("ok", result.exitCode == 0 && !result.timedOut && isRoot)
+            .put("root_authorized", isRoot)
+            .put("operation", operation)
             .put("exit_code", result.exitCode)
             .put("timed_out", result.timedOut)
-            .put("reason", reason)
-            .put("command", command)
             .put("output", result.output)
             .put("output_truncated", result.truncated)
-            .put("warning", "Commands run with the privileges granted by the installed su manager. A root grant can expose or change the entire device; inspect the command and its output.")
+            .put("privacy_note", if (operation == "logs") "System logs can include personal data, tokens, and app activity." else JSONObject.NULL)
     }
 
     private data class RootCommandResult(
