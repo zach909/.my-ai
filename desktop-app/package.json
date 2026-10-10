@@ -113,7 +113,13 @@
         "NSSpeechRecognitionUsageDescription": "NeuroClaw uses speech recognition only when you enable voice transcription.",
         "NSLocalNetworkUsageDescription": "NeuroClaw uses your local network to discover or connect to devices you explicitly choose.",
         "OSBundleUsageDescription": "NeuroClaw requests driver or system extension installation only when a feature requires it and macOS permits it.",
-        "NSMainCameraUsageDescription": "NeuroClaw accesses the main camera only when you explicitly start a feature that needs it."
+        "NSMainCameraUsageDescription": "NeuroClaw accesses the main camera only when you explicitly start a feature that needs it.",
+        "NSBluetoothPeripheralUsageDescription": "NeuroClaw connects to Bluetooth peripherals only when you explicitly start a feature that needs them.",
+        "NSLocationAlwaysUsageDescription": "NeuroClaw uses location in the background only when you explicitly enable a feature that requires it.",
+        "NSLocationTemporaryUsageDescriptionDictionary": {
+          "Default": "NeuroClaw requests temporary full-accuracy location only when a location feature requires it."
+        },
+        "NSLocationDefaultAccuracyReduced": false
       },
       "entitlements": "build/entitlements.mac.plist",
       "entitlementsInherit": "build/entitlements.mac.plist"
