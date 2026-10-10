@@ -70,7 +70,7 @@ enum ExtendedNativeTools {
         case "camera.get_status":
             return (200, ["authorization": AVCaptureDevice.authorizationStatus(for: .video).rawValue])
         case "microphone.get_status":
-            return (200, ["authorization": AVAudioApplication.shared.recordPermission.rawValue])
+            return (200, ["authorization": AVAudioSession.sharedInstance().recordPermission.rawValue])
         case "speech.get_status":
             return (200, ["authorization": SFSpeechRecognizer.authorizationStatus().rawValue, "available": SFSpeechRecognizer(locale: Locale.current)?.isAvailable ?? false])
         case "motion.get_status":
