@@ -240,6 +240,15 @@ const DEFINITIONS = [
   ["aclPermissionCheck","Check access to a user-selected path","security","native-windows","Perform a non-destructive access check for the current account; results may be affected by ACLs and runtime conditions."],
   ["registryPermissionCheck","Check access to an allowlisted registry key","security","admin-or-adapter","Inspect access only for allowlisted keys; do not change registry permissions."],
   ["windowsCapabilityManifest","Report packaged-app capability applicability","manifest","native","Explain which manifest capabilities apply to the current packaging model without claiming grants."]
+,
+  ["windowsTokenPrivileges","Inspect current token privileges","security","native-windows","List privileges in the current process token and whether enabled; does not enable privileges."],
+  ["windowsFirewallStatus","Inspect Windows Firewall profiles","security","native-windows","Read firewall profile state without changing firewall policy."],
+  ["windowsDefenderStatus","Inspect Microsoft Defender status","security","native-windows","Read supported Defender status fields; does not disable or reconfigure protection."],
+  ["windowsServiceStatus","Inspect a Windows service","system","native-windows","Query a named service after strict name validation; does not start or stop it."],
+  ["windowsServiceSecurityDescriptor","Inspect a Windows service security descriptor","security","native-windows","Read a named service security descriptor; does not change its ACL."],
+  ["windowsAccountPolicy","Inspect local account policy","security","native-windows","Read local account policy summary; domain policy may override local settings."],
+  ["windowsNetworkShares","Inspect network share mappings","network","native-windows","List network resource mappings visible to the current account."],
+  ["windowsPowerShellExecutionPolicy","Inspect PowerShell execution policy","security","native-windows","Report policy scopes; does not change or bypass policy."]
 ];
 
 const byId = new Map(DEFINITIONS.map(([id,label,category,implementation,description]) => [
