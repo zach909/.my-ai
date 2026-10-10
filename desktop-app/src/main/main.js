@@ -620,8 +620,7 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         walk(root, 0);
         return { success: true, root, results, count: results.length, truncated, visitedEntries: visited, note: 'Only names and basic metadata were inspected; file contents were not read.' };
       }
-      case 'networkShares':
-      case 'windowsNetworkShares': {
+      case 'networkShares': {
         if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
         const mapped = execFileSync('net.exe', ['use'], { encoding: 'utf8', timeout: 7000, windowsHide: true });
         let localShares = '';
