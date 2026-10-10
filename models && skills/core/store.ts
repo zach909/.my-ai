@@ -23,7 +23,7 @@ import { syncStorePaths, type StoreSyncResult } from "./store-sync.js";
 import { writeFileAtomic, writeJsonAtomic } from "./atomic-write.js";
 
 /** What kinds of thing the store holds. Each is a folder under `store/`. */
-export const STORE_KINDS = ["net-skills", "prompting", "mods", "plugins", "binaries", "source", "files", "wiki"] as const;
+export const STORE_KINDS = ["net-skills", "prompting", "mods", "plugins", "apps", "binaries", "source", "files", "wiki"] as const;
 export type StoreKind = (typeof STORE_KINDS)[number];
 
 /** Human labels, used by the UI so the names live in one place. */
@@ -45,6 +45,10 @@ export const STORE_KIND_LABELS: Record<StoreKind, string> = {
   // rather than being folded into "files" or "source".
   mods: "Mods",
   plugins: "Plugins & Tools",
+  // Programs that call Corona's API (corona-apps.ts). An `app.json` in the item
+  // lists the scopes it asks for. Installing one grants it nothing: the owner
+  // registers it and chooses its scopes, separately, on this device.
+  apps: "Apps",
   binaries: "Binary Skills",
   source: "Source Code",
   files: "Files",
