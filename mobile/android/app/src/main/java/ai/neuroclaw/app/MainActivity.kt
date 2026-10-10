@@ -163,6 +163,8 @@ class MainActivity : Activity() {
         specialAccess.addView(settingsButton("Modify system settings", "android.settings.action.MANAGE_WRITE_SETTINGS", true))
         specialAccess.addView(settingsButton("Usage access", "android.settings.USAGE_ACCESS_SETTINGS"))
         specialAccess.addView(settingsButton("Notification access", "android.settings.ACTION_NOTIFICATION_LISTENER_SETTINGS"))
+        specialAccess.addView(settingsButton("Accessibility service access", AndroidSettings.ACTION_ACCESSIBILITY_SETTINGS))
+        specialAccess.addView(settingsButton("Full-screen notification access", "android.settings.MANAGE_APP_USE_FULL_SCREEN_INTENT", true))
         specialAccess.addView(settingsButton("Unrestricted background data", "android.settings.IGNORE_BACKGROUND_DATA_RESTRICTIONS_SETTINGS", true))
         specialAccess.addView(settingsButton("Ignore battery optimizations", "android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS", true))
         specialAccess.addView(settingsButton("Install unknown apps", "android.settings.MANAGE_UNKNOWN_APP_SOURCES", true))
@@ -174,6 +176,7 @@ class MainActivity : Activity() {
         specialAccess.addView(settingsButton("Privacy settings", "android.settings.PRIVACY_SETTINGS"))
         specialAccess.addView(settingsButton("App permission settings", AndroidSettings.ACTION_APPLICATION_DETAILS_SETTINGS, true))
         specialAccess.addView(settingsButton("Screen capture consent", "android.settings.SETTINGS"))
+        specialAccess.addView(settingsButton("Notification channel controls", AndroidSettings.ACTION_APP_NOTIFICATION_SETTINGS, true))
 
         val content = LinearLayout(this).apply {
             orientation = LinearLayout.VERTICAL
