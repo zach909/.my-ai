@@ -351,6 +351,14 @@ contextBridge.exposeInMainWorld('electronAPI', {
     aclPermissionCheck: (args = {}) => ipcRenderer.invoke('windows-tools:run', "aclPermissionCheck", args),
     registryPermissionCheck: (args = {}) => ipcRenderer.invoke('windows-tools:run', "registryPermissionCheck", args),
     windowsCapabilityManifest: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsCapabilityManifest", args),
+    windowsTokenPrivileges: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsTokenPrivileges", args),
+    windowsFirewallStatus: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsFirewallStatus", args),
+    windowsDefenderStatus: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsDefenderStatus", args),
+    windowsServiceStatus: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsServiceStatus", args),
+    windowsServiceSecurityDescriptor: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsServiceSecurityDescriptor", args),
+    windowsAccountPolicy: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsAccountPolicy", args),
+    windowsNetworkShares: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsNetworkShares", args),
+    windowsPowerShellExecutionPolicy: (args = {}) => ipcRenderer.invoke('windows-tools:run', "windowsPowerShellExecutionPolicy", args),
   },
 
   // Event Listeners
