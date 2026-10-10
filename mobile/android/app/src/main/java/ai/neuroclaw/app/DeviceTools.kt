@@ -17,6 +17,11 @@ import android.provider.Settings
 import android.telephony.TelephonyManager
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothManager
+import android.accounts.AccountManager
+import android.hardware.Sensor
+import android.hardware.SensorManager
+import android.net.ConnectivityManager
+import android.net.NetworkCapabilities
 import org.json.JSONArray
 import org.json.JSONObject
 import java.util.Locale
@@ -37,6 +42,18 @@ class DeviceTools(private val context: Context) {
         }
         add("device_info", "Read Android version, device model, locale, and app version.")
         add("permission_status", "List declared runtime permissions and whether each is granted.")
+        add("network_status", "Read current network type and whether Android reports internet connectivity.")
+        add("list_accounts", "List account types and names visible to this app.", Manifest.permission.GET_ACCOUNTS)
+        add("sensor_status", "List available device sensor types and names.")
+        add("open_voice_recognition", "Open Android speech recognition UI; the user starts and controls listening.", Manifest.permission.RECORD_AUDIO)
+        add("open_notification_settings", "Open Android notification settings for this app.")
+        add("open_accessibility_settings", "Open Android Accessibility settings; enabling a service requires the user.")
+        add("open_usage_settings", "Open Android usage-access settings.")
+        add("open_all_files_settings", "Open Android all-files-access settings for this app.")
+        add("open_battery_settings", "Open Android battery optimization settings for this app.")
+        add("open_overlay_settings", "Open Android display-over-other-apps settings for this app.")
+        add("open_wifi_settings", "Open Android Wi-Fi settings; the OS controls radio changes.")
+        add("open_bluetooth_settings", "Open Android Bluetooth settings; the OS controls radio changes.")
         add("search_contacts", "Search contacts by name; returns names and available phone/email fields.", Manifest.permission.READ_CONTACTS)
         add("list_contacts", "List a bounded page of contacts.", Manifest.permission.READ_CONTACTS)
         add("list_calendar_events", "Read upcoming calendar events.", Manifest.permission.READ_CALENDAR)
@@ -60,6 +77,18 @@ class DeviceTools(private val context: Context) {
             when (name) {
                 "device_info" -> deviceInfo()
                 "permission_status" -> permissionStatus()
+                "network_status" -> networkStatus()
+                "list_accounts" -> listAccounts()
+                "sensor_status" -> sensorStatus()
+                "open_voice_recognition" -> openVoiceRecognition()
+                "open_notification_settings" -> openSystemSettings("notification")
+                "open_accessibility_settings" -> openSystemSettings("accessibility")
+                "open_usage_settings" -> openSystemSettings("usage")
+                "open_all_files_settings" -> openSystemSettings("files")
+                "open_battery_settings" -> openSystemSettings("battery")
+                "open_overlay_settings" -> openSystemSettings("overlay")
+                "open_wifi_settings" -> openSystemSettings("wifi")
+                "open_bluetooth_settings" -> openSystemSettings("bluetooth")
                 "search_contacts" -> contacts(args.optString("query", ""), 0, 50)
                 "list_contacts" -> contacts("", args.optInt("offset", 0), bounded(args.optInt("limit", 20), 1, 50))
                 "list_calendar_events" -> calendarEvents(bounded(args.optInt("limit", 20), 1, 100))
@@ -98,6 +127,69 @@ class DeviceTools(private val context: Context) {
     }
 
     private fun bounded(value: Int, min: Int, max: Int) = value.coerceIn(min, max)
+
+
+    private fun networkStatus(): JSONObject {
+        val manager = appContext.getSystemService(Context.CONNECTIVITY_SERVICE) as ConnectivityManager
+        val network = manager.activeNetwork
+        val caps = if (network != null) manager.getNetworkCapabilities(network) else null
+        return ok(JSONObject()
+            .put("connected", caps != null)
+            .put("internet", caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_INTERNET) == true)
+            .put("validated", caps?.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED) == true)
+            .put("wifi", caps?.hasTransport(NetworkCapabilities.TRANSPORT_WIFI) == true)
+            .put("cellular", caps?.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) == true)
+            .put("ethernet", caps?.hasTransport(NetworkCapabilities.TRANSPORT_ETHERNET) == true))
+    }
+
+    @Suppress("DEPRECATION")
+    private fun listAccounts(): JSONObject {
+        requirePermission(Manifest.permission.GET_ACCOUNTS)
+        val rows = JSONArray()
+        for (account in AccountManager.get(appContext).accounts.take(100)) {
+            rows.put(JSONObject().put("name", account.name).put("type", account.type))
+        }
+        return ok(JSONObject().put("accounts", rows).put("returned", rows.length()))
+    }
+
+    private fun sensorStatus(): JSONObject {
+        val manager = appContext.getSystemService(Context.SENSOR_SERVICE) as SensorManager
+        val rows = JSONArray()
+        for (sensor in manager.getSensorList(Sensor.TYPE_ALL).take(100)) {
+            rows.put(JSONObject().put("name", sensor.name).put("vendor", sensor.vendor)
+                .put("type", sensor.type).put("wake_up", sensor.isWakeUpSensor))
+        }
+        return ok(JSONObject().put("sensors", rows).put("returned", rows.length()))
+    }
+
+    private fun openVoiceRecognition(): JSONObject {
+        if (!granted(Manifest.permission.RECORD_AUDIO)) throw SecurityException(Manifest.permission.RECORD_AUDIO)
+        val intent = Intent(android.speech.RecognizerIntent.ACTION_RECOGNIZE_SPEECH)
+            .putExtra(android.speech.RecognizerIntent.EXTRA_LANGUAGE_MODEL, android.speech.RecognizerIntent.LANGUAGE_MODEL_FREE_FORM)
+            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (intent.resolveActivity(appContext.packageManager) == null)
+            return JSONObject().put("ok", false).put("error", "No speech recognition activity is installed.")
+        context.startActivity(intent)
+        return ok(JSONObject().put("opened", "speech_recognition").put("user_controls_listening", true))
+    }
+
+    private fun openSystemSettings(which: String): JSONObject {
+        val action = when (which) {
+            "notification" -> Settings.ACTION_APP_NOTIFICATION_SETTINGS
+            "accessibility" -> Settings.ACTION_ACCESSIBILITY_SETTINGS
+            "usage" -> Settings.ACTION_USAGE_ACCESS_SETTINGS
+            "files" -> if (Build.VERSION.SDK_INT >= 30) Settings.ACTION_MANAGE_APP_ALL_FILES_ACCESS_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "battery" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "overlay" -> if (Build.VERSION.SDK_INT >= 23) Settings.ACTION_MANAGE_OVERLAY_PERMISSION else Settings.ACTION_APPLICATION_DETAILS_SETTINGS
+            "wifi" -> Settings.ACTION_WIFI_SETTINGS
+            "bluetooth" -> Settings.ACTION_BLUETOOTH_SETTINGS
+            else -> return JSONObject().put("ok", false).put("error", "Unknown settings page")
+        }
+        val intent = Intent(action).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        if (which in setOf("notification", "files", "battery", "overlay")) intent.data = Uri.parse("package:${context.packageName}")
+        context.startActivity(intent)
+        return ok(JSONObject().put("opened_settings", which))
+    }
 
     private fun deviceInfo(): JSONObject {
         val version = try { context.packageManager.getPackageInfo(context.packageName, 0).versionName ?: "unknown" } catch (_: Exception) { "unknown" }
