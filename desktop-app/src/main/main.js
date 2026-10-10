@@ -586,6 +586,26 @@ const MACOS_PERMISSION_TOOL_CATALOG = {
   kernelExtensions: { label: 'System extensions', pane: null, kind: 'capability' },
   backgroundItems: { label: 'Background items / login items', pane: null, kind: 'capability' },
   accessibilityAutomation: { label: 'Accessibility-based app control', pane: 'Privacy_Accessibility', kind: 'settings' },
+  // Apple-documented protected-resource services from the macOS TCC service list.
+  appleEvents: { label: 'Apple Events', service: 'AppleEvents', pane: 'Privacy_Automation', kind: 'settings' },
+  audioCapture: { label: 'System audio capture', service: 'AudioCapture', pane: 'Privacy_ScreenCapture', kind: 'settings' },
+  siri: { label: 'Siri', service: 'Siri', pane: null, kind: 'settings' },
+  userTracking: { label: 'User tracking / advertising identifier', service: 'UserTracking', pane: null, kind: 'settings' },
+  systemPolicyAppBundles: { label: 'Access and manage app bundles', service: 'SystemPolicyAppBundles', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicyAppData: { label: 'Other apps’ protected container data', service: 'SystemPolicyAppData', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  systemPolicySysAdminFiles: { label: 'System administration files', service: 'SystemPolicySysAdminFiles', pane: 'Privacy_AllFiles', kind: 'settings' },
+  virtualMachineNetworking: { label: 'Virtual machine networking', service: 'VirtualMachineNetworking', pane: null, kind: 'capability' },
+  voiceBanking: { label: 'Personal Voice / voice banking', service: 'VoiceBanking', pane: null, kind: 'settings' },
+  webBrowserPublicKeyCredential: { label: 'Browser passkeys / public-key credentials', service: 'WebBrowserPublicKeyCredential', pane: null, kind: 'capability' },
+  postEvent: { label: 'Post synthetic system input events', service: 'PostEvent', pane: 'Privacy_Accessibility', kind: 'settings' },
+  calendarWriteOnly: { label: 'Calendar write-only access', service: 'Calendar', pane: 'Privacy_Calendars', kind: 'settings' },
+  calendarFullAccess: { label: 'Calendar full access', service: 'Calendar', pane: 'Privacy_Calendars', kind: 'settings' },
+  remindersFullAccess: { label: 'Reminders full access', service: 'Reminders', pane: 'Privacy_Reminders', kind: 'settings' },
+  appDataContainers: { label: 'Application data containers', service: 'SystemPolicyAppData', pane: 'Privacy_FilesAndFolders', kind: 'settings' },
+  appBundleManagement: { label: 'Application bundle management', service: 'SystemPolicyAppBundles', pane: 'Privacy_AppManagement', kind: 'settings' },
+  systemAdminFiles: { label: 'System administration files', service: 'SystemPolicySysAdminFiles', pane: 'Privacy_AllFiles', kind: 'settings' },
+  userSelectedFiles: { label: 'User-selected file access', service: null, pane: null, kind: 'file-picker' },
+  userSelectedFolders: { label: 'User-selected folder access', service: null, pane: null, kind: 'directory-picker' },
 };
 
 function getMacOSPermissionToolStatus(permission) {
