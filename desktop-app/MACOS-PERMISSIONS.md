@@ -38,4 +38,14 @@ Depending on features implemented, users may also see prompts or settings for No
 5. Do not claim “all permissions granted” based on plist declarations. Show each permission as **Granted**, **Not granted**, **Needs Settings**, **Unsupported**, or **Feature not implemented** based on a real platform check.
 6. Never attempt to bypass TCC, elevate silently, or obtain screen, audio, input, or filesystem access without user consent.
 
+## Runtime helpers now exposed to the renderer
+
+The Electron preload exposes three narrowly scoped helpers:
+
+- `getMacOSPermissionsStatus()` reports the platform and the permission states Electron can query directly. For categories Electron cannot reliably inspect, it returns `settings-required`; that is not the same as granted.
+- `requestMacOSMediaAccess('camera' | 'microphone')` invokes Electron's native consent flow for those two supported media categories and returns the actual result.
+- `openMacOSPrivacySettings(category)` opens the relevant Privacy & Security pane for supported categories such as camera, microphone, location, Accessibility, Input Monitoring, Screen Recording, Full Disk Access, Bluetooth, and Automation.
+
+These are renderer-facing APIs, not a completed permission dashboard. A UI must call them when the user enables a feature, display the returned state accurately, and handle OS-version differences. Do not use the status helper to imply access to Contacts, Calendar, files, or other categories that it cannot query directly.
+
 The entitlement file configured for Electron's hardened runtime is not a permission grant. Distribution still requires macOS build testing and, for external distribution, appropriate code signing and notarization.
