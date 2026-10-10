@@ -1163,7 +1163,8 @@ ipcMain.handle('windows-tools:run', async (event, id, args = {}) => {
         return { success: true, localeInfo: output.slice(0, 20000), readOnly: true };
       }
       case 'devicePowerStatus':
-        return { success: true, platform: process.platform, note: 'See powerBattery for supported battery telemetry.', ...(process.platform === 'win32' ? { batteryTool: 'powerBattery' } : { status: 'unsupported-on-platform' }) };
+        if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
+        return { success: true, platform: process.platform, batteryTool: 'powerBattery', note: 'See powerBattery for supported battery telemetry.' };
       case 'windowsUpdateStatus': {
         if (process.platform !== 'win32') return { success: false, status: 'unsupported-on-platform' };
         const command = "Get-Service -Name wuauserv -ErrorAction SilentlyContinue | Select-Object Name,Status,StartType | ConvertTo-Json -Compress";
