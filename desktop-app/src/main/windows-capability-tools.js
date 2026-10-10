@@ -91,13 +91,20 @@ const byId = new Map(DEFINITIONS.map(([id,label,category,implementation,descript
   id, { id, toolName: 'windows.' + id, label, category, implementation, description },
 ]));
 
+function statusForImplementation(implementation, platform = process.platform) {
+  if (implementation === 'native-windows' && platform !== 'win32') return 'unsupported-on-platform';
+  if (implementation === 'adapter-required') return 'adapter-required';
+  if (implementation === 'admin-or-adapter') return 'admin-or-adapter-required';
+  if (implementation === 'browser-permission' || implementation === 'user-consent' || implementation === 'native-consent') return 'consent-required';
+  if (implementation === 'native-windows') return 'partially-available';
+  if (implementation === 'native') return 'available';
+  return 'adapter-required';
+}
+
 function listTools() {
   return DEFINITIONS.map(([id,label,category,implementation,description]) => ({
     id, toolName: 'windows.' + id, label, category, implementation, description,
-    status: implementation === 'native' || implementation === 'native-windows'
-      ? 'partially-available'
-      : implementation === 'user-consent' || implementation === 'browser-permission'
-        ? 'consent-required' : 'adapter-required',
+    status: statusForImplementation(implementation),
   }));
 }
 
@@ -106,21 +113,18 @@ function getTool(id) { return byId.get(id) || null; }
 function getToolStatus(id) {
   const tool = getTool(id);
   if (!tool) return { success: false, error: 'Unknown Windows capability tool.' };
-  const result = { success: true, ...tool, platform: process.platform };
-  if (tool.implementation === 'native-windows' && process.platform !== 'win32') {
+  const status = statusForImplementation(tool.implementation);
+  const result = { success: true, ...tool, platform: process.platform, status };
+  if (status === 'unsupported-on-platform' || status === 'adapter-required' || status === 'admin-or-adapter-required') {
     result.available = false;
-    result.status = 'unsupported-on-platform';
-  } else if (tool.implementation === 'adapter-required' || tool.implementation === 'admin-or-adapter') {
-    result.available = false;
-    result.status = 'adapter-required';
-  } else if (id === 'systemInfo') {
+  } else {
     result.available = true;
+  }
+  if (id === 'systemInfo') {
     result.details = {
       platform: process.platform, release: os.release(), arch: os.arch(),
       hostname: os.hostname(), totalMemoryBytes: os.totalmem(), freeMemoryBytes: os.freemem(),
     };
-  } else {
-    result.available = true;
   }
   return result;
 }
