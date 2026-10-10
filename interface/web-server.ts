@@ -28,7 +28,10 @@ import { listRemoteOnlyBotPages, readRemoteBotPage } from '../models && skills/c
 import { getSharedChatStore, SharedChatError } from '../models && skills/core/shared-chat-store.js';
 import { pullStoreCatalog } from '../models && skills/core/store-fetch.js';
 import { startAutoOffload } from '../models && skills/core/store-offload.js';
+import { startScreenDonor } from '../models && skills/core/data-donor.js';
 import { AMBIENT_CSS, AMBIENT_JS, injectAmbient, isAmbientRoute } from './ambient.js';
+import { handleCoronaRoutes, isCoronaApiRoute } from './corona-routes.js';
+import { SHARING_PAGE } from './sharing-page.js';
 import { AI_ICON_JPEG } from './ai-icon.js';
 import { getRemoteAccessStore, readCookie, RemoteAccessError, SESSION_COOKIE, SESSION_TTL_MS, MIN_PASSWORD_LENGTH } from '../models && skills/core/remote-access.js';
 import { graftNetSkill, graftedSkills, type SkillNeuron } from '../models && skills/core/net-skill-graft.js';
@@ -1317,6 +1320,7 @@ export class WebServer {
   private runner: NeuroclawRunner;
   private launcher: AppLauncher;
   private server: http.Server | null = null;
+  private stopScreenDonor: (() => void) | null = null;
   private port = 0;
   // Set only when start() is given a non-localhost host and a password --
   // see start()'s doc comment for why binding remotely without one is refused.
@@ -1460,6 +1464,14 @@ export class WebServer {
     // moved off this device (once the store branch is confirmed to hold them)
     // and download again on demand. NEUROCLAW_AUTO_OFFLOAD=0 turns it off.
     startAutoOffload();
+    // The data donor's screen sampler. It does nothing until the owner switches
+    // the donor and the screen source on, and the desktop layer's own access
+    // gate (screen.observe) still decides whether a screenshot may be taken.
+    this.stopScreenDonor = startScreenDonor(async () => {
+      const { DesktopControl } = await import('../models && skills/core/desktop-control.js');
+      const { sharedAccessManager } = await import('../models && skills/core/access-settings.js');
+      return new DesktopControl(sharedAccessManager()).screenshot();
+    });
     // Same reasoning, same placement: loading every saved extension is
     // real work (parsing N files, remembering M neurons) that only makes
     // sense to pay once per actual live server process, not once per
@@ -1721,6 +1733,8 @@ export class WebServer {
     if (!this.server) throw new Error('Server not running');
     this.pytorchWorker.shutdown();
     this.selfImprovementServer.shutdown();
+    this.stopScreenDonor?.();
+    this.stopScreenDonor = null;
     return new Promise<void>((resolve) => {
       this.server?.close(() => { this.server = null; resolve(); });
     });
@@ -2244,6 +2258,9 @@ export class WebServer {
       isStorePublicRoute(pathname, method) ||
       isSharedChatPublicRoute(pathname, method) ||
       isAuthPublicRoute(pathname, method) ||
+      // Apps and borrowers carry a bearer token, not a login; corona-routes.ts
+      // checks it on every request, so the password gate has nothing to add.
+      isCoronaApiRoute(pathname) ||
       isAmbientRoute(pathname, method);
 
     // Bound remotely with no password set: only the login page answers, and
@@ -2261,6 +2278,12 @@ export class WebServer {
     }
 
     // ── Logging in ──────────────────────────────────────────────────────
+
+    // Data donor, lending and borrowing compute, and apps: one page, behind the normal gate.
+    if (pathname === '/sharing' && method === 'GET') {
+      this.sendHtml(res, SHARING_PAGE);
+      return;
+    }
 
     if (pathname === '/login' && method === 'GET') {
       this.sendHtml(res, this.loginPage());
@@ -2423,6 +2446,24 @@ export class WebServer {
     if (pathname === '/' && method === 'GET') {
       this.sendHtml(res, HTML_TEMPLATE);
       return;
+    }
+
+    // ── Apps, compute sharing, data donor ───────────────────────────────
+    // See corona-routes.ts: owner routes behind the normal gate, plus the
+    // token-checked /api/corona/v1 API that apps and borrowers call.
+    if (pathname.startsWith('/api/corona-apps') || pathname.startsWith('/api/compute') ||
+        pathname.startsWith('/api/donor') || isCoronaApiRoute(pathname)) {
+      const handled = await handleCoronaRoutes({
+        req, res, pathname, method,
+        parseBody: (r, max) => this.parseBody(r, max),
+        sendJson: (r, data, status) => this.sendJson(r, data, status),
+        chat: message => this.runner.generate(message),
+        status: () => {
+          const st = this.runner.getStatus();
+          return { running: st.running, uptime: Math.floor(st.uptime) };
+        },
+      });
+      if (handled) return;
     }
 
     // ── The public store ────────────────────────────────────────────────
